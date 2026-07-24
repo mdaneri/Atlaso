@@ -857,6 +857,58 @@ class OidcSigningKey(Base):
     publish_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class OidcAuthorizationTransaction(Base):
+    """A short-lived, server-side binding for one browser authorization request."""
+
+    __tablename__ = "oidc_authorization_transactions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    transaction_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    oidc_client_id: Mapped[int] = mapped_column(ForeignKey("oidc_clients.id", ondelete="CASCADE"), index=True)
+    subject_id: Mapped[int | None] = mapped_column(
+        ForeignKey("oidc_subjects.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    organization_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ldap_organizations.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    source: Mapped[str] = mapped_column(String(32), default="")
+    redirect_uri: Mapped[str] = mapped_column(Text)
+    scopes: Mapped[str] = mapped_column(Text)
+    state: Mapped[str] = mapped_column(Text)
+    nonce: Mapped[str] = mapped_column(Text)
+    code_challenge: Mapped[str] = mapped_column(String(160))
+    browser_session_id: Mapped[str] = mapped_column(String(128), index=True)
+    auth_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    prompt: Mapped[str] = mapped_column(String(16), default="login")
+    max_age: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    login_hint: Mapped[str] = mapped_column(String(240), default="")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class OidcAuthorizationCode(Base):
+    """A one-use code.  Only its SHA-256 digest is persisted."""
+
+    __tablename__ = "oidc_authorization_codes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    oidc_client_id: Mapped[int] = mapped_column(ForeignKey("oidc_clients.id", ondelete="CASCADE"), index=True)
+    subject_id: Mapped[int] = mapped_column(ForeignKey("oidc_subjects.id", ondelete="CASCADE"), index=True)
+    organization_id: Mapped[int | None] = mapped_column(ForeignKey("ldap_organizations.id", ondelete="RESTRICT"), nullable=True)
+    redirect_uri: Mapped[str] = mapped_column(Text)
+    scopes: Mapped[str] = mapped_column(Text)
+    state: Mapped[str] = mapped_column(Text)
+    nonce: Mapped[str] = mapped_column(Text)
+    code_challenge: Mapped[str] = mapped_column(String(160))
+    browser_session_id: Mapped[str] = mapped_column(String(128), index=True)
+    source: Mapped[str] = mapped_column(String(32))
+    auth_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    redeemed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class LdapRecoveryArchive(Base):
     __tablename__ = "ldap_recovery_archives"
 

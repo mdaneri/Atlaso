@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import base64
+from hashlib import sha256
 from ipaddress import ip_address
 import json
+import re
 from secrets import token_urlsafe
 from urllib.parse import urlsplit
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
+from authlib import __version__ as AUTHLIB_VERSION
+from joserfc import jwt
 from joserfc.jwk import RSAKey
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from labfoundry.app.models import (
@@ -18,13 +23,18 @@ from labfoundry.app.models import (
     LdapUser,
     OidcClient,
     OidcClientRedirectUri,
+    OidcAuthorizationCode,
+    OidcAuthorizationTransaction,
     OidcProviderSettings,
     OidcSigningKey,
     OidcSubject,
+    Setting,
     User,
     utcnow,
 )
 from labfoundry.app.secrets import encrypt_secret
+from labfoundry.app.secrets import decrypt_secret
+from labfoundry.app.services.identity_credentials import VerifiedIdentity, ensure_oidc_subject
 from labfoundry.app.services.appliance_settings import normalize_fqdn
 
 
@@ -32,7 +42,10 @@ OIDC_ISSUER_PATH = "/identity"
 OIDC_SCOPES = ("openid", "profile", "email", "groups")
 OIDC_SIGNING_ALGORITHM = "RS256"
 OIDC_TOKEN_ENDPOINT_AUTH_METHOD = "client_secret_basic"
-OIDC_AUTHORIZATION_FLOW_AVAILABLE = False
+OIDC_AUTHORIZATION_FLOW_AVAILABLE = True
+OIDC_TOKEN_LIFETIME_SECONDS = 300
+OIDC_PKCE_RE = re.compile(r"^[A-Za-z0-9._~-]{43,128}$")
+OIDC_CODE_CHALLENGE_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 OIDC_CLIENT_SECRET_HASHER = PasswordHasher(
     time_cost=3,
     memory_cost=65536,
@@ -142,9 +155,50 @@ def provider_validation_errors(
         )
     if not appliance.management_https_enabled:
         errors.append("Management HTTPS must be enabled before the OIDC provider can be enabled.")
+    elif not _management_https_is_applied(db, appliance):
+        errors.append("Management HTTPS and the issuer FQDN must be applied before the OIDC provider can be enabled.")
     if require_active_key and active_signing_key(db) is None:
         errors.append("Generate an active OIDC signing key before enabling the provider.")
+    elif require_active_key:
+        signing_key = active_signing_key(db)
+        try:
+            public_jwk = json.loads(signing_key.public_jwk_json) if signing_key else {}
+            if (
+                signing_key is None
+                or signing_key.algorithm != OIDC_SIGNING_ALGORITHM
+                or public_jwk.get("kid") != signing_key.kid
+                or public_jwk.get("alg") != OIDC_SIGNING_ALGORITHM
+            ):
+                raise ValueError
+            RSAKey.import_key(decrypt_secret(signing_key.private_key_encrypted))
+        except Exception:
+            errors.append("The active OIDC signing key is not protocol-ready.")
+    if provider.access_token_lifetime_seconds != OIDC_TOKEN_LIFETIME_SECONDS:
+        errors.append("OIDC access tokens must use the fixed five-minute lifetime.")
+    if provider.id_token_lifetime_seconds != OIDC_TOKEN_LIFETIME_SECONDS:
+        errors.append("OIDC ID tokens must use the fixed five-minute lifetime.")
+    if AUTHLIB_VERSION != "1.7.2":
+        errors.append("OIDC protocol readiness requires Authlib 1.7.2.")
     return errors
+
+
+def _management_https_is_applied(db: Session, appliance: ApplianceSettings) -> bool:
+    row = db.execute(
+        select(Setting).where(Setting.key == "appliance_apply.baselines.v1")
+    ).scalar_one_or_none()
+    if row is None:
+        return False
+    try:
+        baselines = json.loads(row.value)
+        preview = json.loads(baselines["appliance_settings"]["config_preview"])
+    except (KeyError, TypeError, json.JSONDecodeError):
+        return False
+    return bool(
+        preview.get("management_https_enabled") is True
+        and normalize_fqdn(str(preview.get("fqdn") or "")) == normalize_fqdn(appliance.fqdn)
+        and bool(preview.get("management_https_cert_path"))
+        and bool(preview.get("management_https_key_path"))
+    )
 
 
 def validate_enabled_provider_at_startup(db: Session) -> None:
@@ -198,21 +252,7 @@ def discovery_document(db: Session) -> dict[str, object]:
         "token_endpoint_auth_methods_supported": [OIDC_TOKEN_ENDPOINT_AUTH_METHOD],
         "code_challenge_methods_supported": ["S256"],
         "scopes_supported": list(OIDC_SCOPES),
-        "claims_supported": [
-            "iss",
-            "sub",
-            "aud",
-            "exp",
-            "iat",
-            "auth_time",
-            "nonce",
-            "preferred_username",
-            "name",
-            "email",
-            "email_verified",
-            "organization",
-            "groups",
-        ],
+        "claims_supported": ["iss", "sub", "aud", "exp", "iat", "auth_time", "nonce"],
         "claims_parameter_supported": False,
         "request_parameter_supported": False,
         "request_uri_parameter_supported": False,
@@ -541,3 +581,290 @@ def list_subjects(db: Session) -> list[dict[str, object]]:
                 }
             )
     return output
+
+
+def protocol_provider(db: Session) -> OidcProviderSettings:
+    provider = ensure_provider_settings(db)
+    if not provider.enabled:
+        raise OidcConfigurationError("OIDC provider is disabled.")
+    errors = provider_validation_errors(db, provider)
+    if errors:
+        raise OidcConfigurationError(" ".join(errors))
+    return provider
+
+
+def _token_hash(value: str) -> str:
+    return sha256(value.encode("utf-8")).hexdigest()
+
+
+def _new_opaque_value() -> str:
+    return token_urlsafe(48)
+
+
+def client_by_public_id(db: Session, client_id: str) -> OidcClient | None:
+    return db.execute(
+        select(OidcClient).where(OidcClient.client_id == client_id).options(
+            selectinload(OidcClient.redirect_uris), selectinload(OidcClient.organization)
+        )
+    ).scalar_one_or_none()
+
+
+def begin_authorization(
+    db: Session, *, client_id: str, redirect_uri: str, scope: str, state: str,
+    nonce: str, code_challenge: str, browser_session_id: str, prompt: str,
+    max_age: int | None, login_hint: str,
+) -> OidcAuthorizationTransaction:
+    protocol_provider(db)
+    client = client_by_public_id(db, client_id)
+    if client is None or not client.enabled or (client.organization and not client.organization.enabled):
+        raise OidcConfigurationError("Unknown or disabled client.")
+    if redirect_uri not in {row.uri for row in client.redirect_uris if row.kind == "redirect"}:
+        raise OidcConfigurationError("Invalid redirect URI.")
+    requested = tuple(part for part in scope.split() if part)
+    if not requested or "openid" not in requested or not set(requested).issubset(set(client.allowed_scopes.split())):
+        raise OidcConfigurationError("Invalid scope.")
+    if (
+        not state
+        or len(state) > 1024
+        or not nonce
+        or len(nonce) > 1024
+        or not OIDC_CODE_CHALLENGE_RE.fullmatch(code_challenge)
+        or prompt not in {"none", "login"}
+        or (max_age is not None and not 0 <= max_age <= 2_147_483_647)
+    ):
+        raise OidcConfigurationError("Invalid authorization request.")
+    provider = ensure_provider_settings(db)
+    now = utcnow()
+    db.execute(
+        delete(OidcAuthorizationTransaction).where(
+            OidcAuthorizationTransaction.expires_at <= now
+        )
+    )
+    db.execute(
+        delete(OidcAuthorizationCode).where(OidcAuthorizationCode.expires_at <= now)
+    )
+    row = OidcAuthorizationTransaction(
+        transaction_id=_new_opaque_value(), oidc_client_id=client.id, redirect_uri=redirect_uri,
+        scopes=" ".join(dict.fromkeys(requested)), state=state, nonce=nonce,
+        code_challenge=code_challenge, browser_session_id=browser_session_id, prompt=prompt,
+        max_age=max_age, login_hint=login_hint[:240],
+        expires_at=now + timedelta(seconds=provider.authorization_code_lifetime_seconds),
+    )
+    db.add(row); db.flush()
+    return row
+
+
+def issue_authorization_code(
+    db: Session, *, transaction: OidcAuthorizationTransaction, identity: VerifiedIdentity,
+    request_browser_session_id: str, authenticated_browser_session_id: str, auth_time: datetime,
+) -> str:
+    if (
+        _aware(transaction.expires_at) <= utcnow()
+        or transaction.browser_session_id != request_browser_session_id
+    ):
+        raise OidcConfigurationError("Authorization request expired.")
+    client = db.get(OidcClient, transaction.oidc_client_id)
+    if client is None or not client.enabled or (client.organization and not client.organization.enabled):
+        raise OidcConfigurationError("Unknown or disabled client.")
+    if client.organization_id is None and identity.source != "local":
+        raise OidcConfigurationError("Identity is not permitted for this client.")
+    if client.organization_id is not None and (identity.source != "managed_ldap" or identity.organization_id != client.organization_id):
+        raise OidcConfigurationError("Identity is not permitted for this client.")
+    raw = _new_opaque_value()
+    subject = ensure_oidc_subject(db, identity)
+    transaction.subject_id = subject.id
+    transaction.organization_id = identity.organization_id
+    transaction.source = identity.source
+    transaction.auth_time = auth_time
+    db.add(OidcAuthorizationCode(
+        code_hash=_token_hash(raw), oidc_client_id=client.id, subject_id=subject.id,
+        organization_id=identity.organization_id, redirect_uri=transaction.redirect_uri,
+        scopes=transaction.scopes, state=transaction.state, nonce=transaction.nonce,
+        code_challenge=transaction.code_challenge,
+        browser_session_id=authenticated_browser_session_id,
+        source=identity.source,
+        auth_time=auth_time,
+        expires_at=utcnow() + timedelta(seconds=client.authorization_code_lifetime_seconds),
+    ))
+    db.delete(transaction); db.flush()
+    return raw
+
+
+def redeem_authorization_code(db: Session, *, raw_code: str, client: OidcClient, redirect_uri: str, verifier: str) -> OidcAuthorizationCode:
+    # UPDATE ... RETURNING is the atomic one-use boundary even under concurrent requests.
+    if not OIDC_PKCE_RE.fullmatch(verifier):
+        raise OidcConfigurationError("Invalid authorization code.")
+    challenge = _base64url_sha256(verifier)
+    row = db.execute(
+        update(OidcAuthorizationCode)
+        .where(OidcAuthorizationCode.code_hash == _token_hash(raw_code), OidcAuthorizationCode.oidc_client_id == client.id,
+               OidcAuthorizationCode.redirect_uri == redirect_uri, OidcAuthorizationCode.code_challenge == challenge,
+               OidcAuthorizationCode.redeemed_at.is_(None), OidcAuthorizationCode.expires_at > utcnow())
+        .values(redeemed_at=utcnow()).returning(OidcAuthorizationCode)
+    ).scalar_one_or_none()
+    if row is None:
+        raise OidcConfigurationError("Invalid authorization code.")
+    return row
+
+
+def _base64url_sha256(value: str) -> str:
+    return base64.urlsafe_b64encode(sha256(value.encode("ascii")).digest()).rstrip(b"=").decode("ascii")
+
+
+def _sign_token(db: Session, claims: dict[str, object], typ: str) -> str:
+    key = active_signing_key(db)
+    if key is None or key.algorithm != OIDC_SIGNING_ALGORITHM:
+        raise OidcConfigurationError("OIDC signing key unavailable.")
+    rsa_key = RSAKey.import_key(decrypt_secret(key.private_key_encrypted))
+    return jwt.encode({"alg": OIDC_SIGNING_ALGORITHM, "kid": key.kid, "typ": typ}, claims, rsa_key, algorithms=[OIDC_SIGNING_ALGORITHM])
+
+
+def issue_tokens(db: Session, *, code: OidcAuthorizationCode, client: OidcClient) -> dict[str, object]:
+    provider = protocol_provider(db)
+    subject = db.get(OidcSubject, code.subject_id)
+    if subject is None:
+        raise OidcConfigurationError("Invalid authorization code.")
+    now = utcnow(); issued = int(now.timestamp())
+    common = {"iss": normalize_issuer_url(provider.issuer_url), "sub": subject.subject_uuid, "aud": client.client_id, "iat": issued, "auth_time": int(_aware(code.auth_time).timestamp())}
+    id_claims = common | {
+        "exp": issued + OIDC_TOKEN_LIFETIME_SECONDS,
+        "nonce": code.nonce,
+        "client_id": client.client_id,
+    }
+    access_claims = common | {
+        "exp": issued + OIDC_TOKEN_LIFETIME_SECONDS,
+        "scope": code.scopes,
+        "client_id": client.client_id,
+        "source": code.source,
+        "organization_id": code.organization_id,
+    }
+    return {
+        "token_type": "Bearer",
+        "expires_in": OIDC_TOKEN_LIFETIME_SECONDS,
+        "scope": code.scopes,
+        "id_token": _sign_token(db, id_claims, "JWT"),
+        "access_token": _sign_token(db, access_claims, "at+jwt"),
+    }
+
+
+def identity_from_source(
+    db: Session, *, source: str, source_record_id: int, organization_id: int | None
+) -> VerifiedIdentity | None:
+    if source == "local":
+        user = db.get(User, source_record_id)
+        if user is None or not user.enabled or user.auth_provider != "local" or organization_id is not None:
+            return None
+        return VerifiedIdentity(
+            source="local",
+            source_record_id=user.id,
+            username=user.username,
+            display_name=user.external_display_name or user.username,
+            email=user.external_email,
+            organization_id=None,
+            organization_name="Local",
+        )
+    if source == "managed_ldap":
+        user = db.execute(
+            select(LdapUser)
+            .where(LdapUser.id == source_record_id)
+            .options(selectinload(LdapUser.organization))
+        ).scalar_one_or_none()
+        if (
+            user is None
+            or not user.enabled
+            or user.organization is None
+            or not user.organization.enabled
+            or user.organization_id != organization_id
+        ):
+            return None
+        return VerifiedIdentity(
+            source="managed_ldap",
+            source_record_id=user.id,
+            username=user.uid,
+            display_name=user.display_name or f"{user.given_name} {user.surname}".strip() or user.uid,
+            email=user.email,
+            organization_id=user.organization_id,
+            organization_name=user.organization.name,
+        )
+    return None
+
+
+def validate_bearer_token(
+    db: Session, raw_token: str, *, expected_typ: str
+) -> dict[str, object]:
+    if not raw_token or raw_token.count(".") != 2:
+        raise OidcConfigurationError("Invalid token.")
+    try:
+        protected = json.loads(base64.urlsafe_b64decode(raw_token.split(".", 1)[0] + "=="))
+    except (ValueError, json.JSONDecodeError):
+        raise OidcConfigurationError("Invalid token.") from None
+    if protected.get("alg") != OIDC_SIGNING_ALGORITHM or protected.get("typ") != expected_typ:
+        raise OidcConfigurationError("Invalid token.")
+    kid = protected.get("kid")
+    if not isinstance(kid, str) or not kid:
+        raise OidcConfigurationError("Invalid token.")
+    key = db.execute(select(OidcSigningKey).where(OidcSigningKey.kid == kid)).scalar_one_or_none()
+    now = utcnow()
+    if key is None or key.algorithm != OIDC_SIGNING_ALGORITHM:
+        raise OidcConfigurationError("Invalid token.")
+    if key.status != "active" and not (
+        key.status == "retired"
+        and key.publish_until is not None
+        and _aware(key.publish_until) > now
+    ):
+        raise OidcConfigurationError("Invalid token.")
+    try:
+        token = jwt.decode(
+            raw_token,
+            RSAKey.import_key(json.loads(key.public_jwk_json)),
+            algorithms=[OIDC_SIGNING_ALGORITHM],
+        )
+        claims = dict(token.claims)
+        provider = protocol_provider(db)
+        exp = int(claims.get("exp", 0))
+        iat = int(claims.get("iat", 0))
+    except Exception:
+        raise OidcConfigurationError("Invalid token.") from None
+    now_epoch = int(now.timestamp())
+    if (
+        token.header.get("alg") != OIDC_SIGNING_ALGORITHM
+        or token.header.get("kid") != kid
+        or token.header.get("typ") != expected_typ
+        or claims.get("iss") != normalize_issuer_url(provider.issuer_url)
+        or exp <= now_epoch
+        or iat > now_epoch + provider.clock_skew_seconds
+        or not isinstance(claims.get("aud"), str)
+        or claims.get("aud") != claims.get("client_id")
+        or not isinstance(claims.get("sub"), str)
+    ):
+        raise OidcConfigurationError("Invalid token.")
+    return claims
+
+
+def validate_userinfo_claims(db: Session, claims: dict[str, object]) -> OidcSubject:
+    client = client_by_public_id(db, str(claims.get("client_id") or ""))
+    if client is None or not client.enabled:
+        raise OidcConfigurationError("Invalid token.")
+    subject = db.execute(
+        select(OidcSubject).where(OidcSubject.subject_uuid == claims.get("sub"))
+    ).scalar_one_or_none()
+    if subject is None:
+        raise OidcConfigurationError("Invalid token.")
+    source = str(claims.get("source") or "")
+    organization_id = claims.get("organization_id")
+    if organization_id is not None and not isinstance(organization_id, int):
+        raise OidcConfigurationError("Invalid token.")
+    source_record_id = subject.local_user_id if source == "local" else subject.ldap_user_id
+    if source_record_id is None:
+        raise OidcConfigurationError("Invalid token.")
+    identity = identity_from_source(
+        db,
+        source=source,
+        source_record_id=source_record_id,
+        organization_id=organization_id,
+    )
+    if identity is None:
+        raise OidcConfigurationError("Invalid token.")
+    if client.organization_id != identity.organization_id:
+        raise OidcConfigurationError("Invalid token.")
+    return subject
