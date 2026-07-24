@@ -6,6 +6,7 @@
   data-task-component-options='{{ task_grid_component_options | tojson }}'
   data-task-type="{{ task_grid_type|default('') }}"
   data-task-initial-component-filter="{{ task_grid_initial_component_filter|default('') }}"
+  data-task-lock-component-filter="{{ 'true' if task_grid_lock_component_filter|default(false) else 'false' }}"
   data-task-grid-height="{{ task_grid_height|default('100%') }}">
   <div class="panel-head">
     <div>

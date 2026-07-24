@@ -4321,12 +4321,23 @@ textarea {
 }
 
 #appliance-update-workspace {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   overflow-x: hidden;
 }
 
-#appliance-update-workspace > .tab-panels,
+#appliance-update-workspace > .tab-panels {
+  min-height: 0;
+}
+
 #appliance-update-workspace .tab-panel {
   max-width: 100%;
+}
+
+.appliance-update-stream-panel.active {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
 }
 
 .appliance-update-source-intro {
@@ -4626,6 +4637,10 @@ textarea {
   margin: 3px 0 0;
 }
 
+.appliance-update-schedule-guidance {
+  margin: 3px 0 0;
+}
+
 .appliance-update-task-card.success {
   border-color: #bbf7d0;
   background: #f7fef9;
@@ -4663,7 +4678,10 @@ textarea {
 
 .appliance-update-history {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 14px;
+  flex: 1 1 auto;
+  min-height: 360px;
   margin-top: 24px;
   padding: 16px;
   border: 1px solid #dbe4f0;
@@ -4680,7 +4698,7 @@ textarea {
 }
 
 .appliance-update-history .task-grid-shell {
-  min-height: 360px;
+  min-height: 0;
   border-radius: 7px;
   background: white;
 }

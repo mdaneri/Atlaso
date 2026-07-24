@@ -101,10 +101,18 @@ action to the durable task record. The Update Streams workspace also keeps a
 the shared Tasks grid, scoped to Appliance Update tasks and prefiltered to the
 Appliance Update component. It preserves the standard
 sorting, filtering, component tree, progress, row menu, and detail behavior.
+Because the embedded endpoint is already scoped to Appliance Update, the
+Task / Component column is fixed there; the full Tasks page retains its
+editable component filter.
+The grid expands through the remaining Update Streams workspace height rather
+than using a compact fixed-height embed.
 This table replaces the former single Last Update rail card.
 The stream actions use explicit **Check for updates** and **Install updates**
 labels, with distinct search and install cues and visible copy that identifies
 the check as read-only.
+The same header links recurring maintenance to the Automation Schedules
+workspace, where operators can schedule Appliance Update checks or
+installations.
 The Update Info rail card reports whether durable updater evidence is available
 and opens the full JSON through the shared preview modal, matching Validation
 instead of rendering unbounded output inline.

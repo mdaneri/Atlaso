@@ -55,6 +55,8 @@ def test_appliance_update_page_and_dry_run_job(client):
     assert "Check for updates" in page.text
     assert "Install updates" in page.text
     assert "Checking is read-only. Installing runs the selected maintenance streams." in page.text
+    assert 'href="/automation"' in page.text
+    assert "schedule update checks or installations in Automation" in page.text
     assert 'formaction="/appliance-update/check" title="Check the selected streams without installing changes"' in page.text
     assert 'formaction="/appliance-update/run" title="Install updates from the selected streams"' in page.text
     assert "https://updates.example.test/releases" in page.text
@@ -63,8 +65,11 @@ def test_appliance_update_page_and_dry_run_job(client):
     assert "No Appliance Update tasks have been recorded yet." in page.text
     assert "Appliance Update only" in page.text
     assert 'data-task-type="appliance-update"' in page.text
-    assert 'data-task-initial-component-filter="Appliance Update"' in page.text
+    assert 'data-task-lock-component-filter="true"' in page.text
+    assert 'data-task-initial-component-filter=""' in page.text
+    assert 'data-task-grid-height="100%"' in page.text
     assert 'id="tasks-table" class="tabulator-shell"' in page.text
+    assert 'class="tab-panel active appliance-update-stream-panel"' in page.text
     assert "The same task grid used by Tasks" in page.text
     assert "Last Update" not in page.text
     assert 'data-tab-target="appliance-update-streams" aria-controls="appliance-update-streams" aria-selected="true"' in page.text

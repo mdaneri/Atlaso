@@ -10180,6 +10180,7 @@ function initializeTasksPage() {
   const fallback = document.getElementById(tableElement?.dataset.fallbackId || "");
   if (tableElement instanceof HTMLElement && typeof window.Tabulator === "function") {
     const initialComponentFilter = page.dataset.taskInitialComponentFilter || "";
+    const componentFilterLocked = page.dataset.taskLockComponentFilter === "true";
     labFoundryTasksTable = new window.Tabulator(tableElement, {
       ajaxURL: "/tasks/status",
       ajaxParams: () => ({ job_id: labFoundrySelectedTaskId || page.dataset.selectedTaskId || "" }),
@@ -10196,7 +10197,7 @@ function initializeTasksPage() {
       paginationSize: 25,
       paginationCounter: "rows",
       filterMode: "remote",
-      initialHeaderFilter: initialComponentFilter ? [{ field: "id", value: initialComponentFilter }] : [],
+      initialHeaderFilter: initialComponentFilter && !componentFilterLocked ? [{ field: "id", value: initialComponentFilter }] : [],
       headerFilterLiveFilterDelay: 500,
       placeholder: "No tasks have been recorded yet.",
       selectableRows: 1,
@@ -10237,17 +10238,19 @@ function initializeTasksPage() {
           field: "id",
           minWidth: 260,
           widthGrow: 1.5,
-          headerFilter: "list",
-          headerFilterParams: {
-            values: labFoundryTaskComponentOptions,
-            autocomplete: true,
-            freetext: true,
-            allowEmpty: true,
-            clearable: true,
-            listOnEmpty: true,
-          },
-          headerFilterFunc: "like",
-          headerFilterPlaceholder: "Choose or type custom",
+          ...(componentFilterLocked ? {} : {
+            headerFilter: "list",
+            headerFilterParams: {
+              values: labFoundryTaskComponentOptions,
+              autocomplete: true,
+              freetext: true,
+              allowEmpty: true,
+              clearable: true,
+              listOnEmpty: true,
+            },
+            headerFilterFunc: "like",
+            headerFilterPlaceholder: "Choose or type custom",
+          }),
           formatter: (cell) => {
             const data = cell.getRow().getData();
             const label = data.is_step ? data.label : data.type_label;

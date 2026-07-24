@@ -155,7 +155,7 @@
     </details>
 
       </div>
-      <div id="appliance-update-streams" class="tab-panel active" role="tabpanel">
+      <div id="appliance-update-streams" class="tab-panel active appliance-update-stream-panel" role="tabpanel">
 
     {% if update_error %}
       <div class="alert error">{{ update_error }}</div>
@@ -166,6 +166,7 @@
         <div>
           <h2>Update Streams</h2>
           <p class="muted appliance-update-action-guidance">Checking is read-only. Installing runs the selected maintenance streams.</p>
+          <p class="muted appliance-update-schedule-guidance">For recurring maintenance, <a class="text-link" href="/automation">schedule update checks or installations in Automation</a>.</p>
         </div>
         <div class="apply-change-set-actions">
           <button class="button secondary appliance-update-action" type="submit" formaction="/appliance-update/check" title="Check the selected streams without installing changes">
@@ -251,8 +252,8 @@
     {% set task_grid_rows = recent_update_tasks %}
     {% set task_grid_component_options = task_component_filter_options %}
     {% set task_grid_type = "appliance-update" %}
-    {% set task_grid_initial_component_filter = "Appliance Update" %}
-    {% set task_grid_height = "360px" %}
+    {% set task_grid_lock_component_filter = true %}
+    {% set task_grid_height = "100%" %}
     {% set task_grid_scope_label = "Appliance Update only" %}
     {% set task_grid_history_url = "/tasks" %}
     {% set task_grid_empty_message = "No Appliance Update tasks have been recorded yet." %}
