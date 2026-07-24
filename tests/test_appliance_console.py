@@ -883,7 +883,8 @@ def test_console_systemd_unit_replaces_only_tty1():
     assert "systemctl mask getty@tty1.service" in provision
     assert "systemctl enable labfoundry-console.service" in provision
     assert "getty@tty2" not in provision
-    assert "tdnf -y install" in provision and "python3-curses" in provision and "procps-ng" in provision
+    assert 'run_tdnf "Photon appliance package installation"' in provision
+    assert "python3-curses" in provision and "procps-ng" in provision
     assert "ShowStatus=no" in manager
     assert "CtrlAltDelBurstAction=none" in manager
     assert "systemctl mask --force ctrl-alt-del.target" in provision

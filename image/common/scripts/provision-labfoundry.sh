@@ -26,6 +26,7 @@ BOOTSTRAP_USERNAME="${LABFOUNDRY_BOOTSTRAP_ADMIN_USERNAME:-admin}"
 BOOTSTRAP_PASSWORD="${LABFOUNDRY_BOOTSTRAP_ADMIN_PASSWORD:-}"
 BOOTSTRAP_SHELL="${LABFOUNDRY_BOOTSTRAP_ADMIN_SHELL:-/usr/bin/pwsh}"
 PIP_CACHE_DIR="${PIP_CACHE_DIR:-/var/cache/labfoundry-pip}"
+TDNF_PROGRESS_RUNNER="$LABFOUNDRY_SRC/scripts/run_tdnf_with_progress.py"
 
 log_step() {
   printf '\n==> LabFoundry appliance: %s\n' "$1"
@@ -52,8 +53,22 @@ write_pip_config() {
   chmod 0644 "$path"
 }
 
+run_tdnf() {
+  label="$1"
+  shift
+  python3 "$TDNF_PROGRESS_RUNNER" \
+    --label "$label" \
+    --cache-dir /var/cache/tdnf \
+    -- \
+    tdnf -y "$@"
+}
+
 if [ -z "$BOOTSTRAP_PASSWORD" ]; then
   echo "LABFOUNDRY_BOOTSTRAP_ADMIN_PASSWORD is required for appliance provisioning" >&2
+  exit 2
+fi
+if [ ! -r "$TDNF_PROGRESS_RUNNER" ]; then
+  echo "TDNF progress runner is missing from staged LabFoundry sources: $TDNF_PROGRESS_RUNNER" >&2
   exit 2
 fi
 
@@ -62,10 +77,10 @@ log_step "guest platform: $LABFOUNDRY_GUEST_PLATFORM"
 
 log_step "refreshing Photon package metadata"
 tdnf -y clean all || true
-tdnf -y makecache
+run_tdnf "Photon package metadata refresh" makecache
 
 log_step "applying Photon OS updates"
-tdnf -y update
+run_tdnf "Photon OS update" update
 
 log_step "installing Photon appliance packages"
 GUEST_INTEGRATION_PACKAGES=""
@@ -81,7 +96,8 @@ case "$LABFOUNDRY_GUEST_PLATFORM" in
     exit 2
     ;;
 esac
-tdnf -y install python3 python3-pip python3-devel python3-virtualenv python3-curses python3-ntp sudo openssh-server curl rsync tar gzip shadow e2fsprogs sqlite procps-ng $GUEST_INTEGRATION_PACKAGES nftables dnsmasq ntpsec nfs-utils rpcbind openldap openldap-servers ipxe syslinux nginx powershell
+run_tdnf "Photon appliance package installation" \
+  install python3 python3-pip python3-devel python3-virtualenv python3-curses python3-ntp sudo openssh-server curl rsync tar gzip shadow e2fsprogs sqlite procps-ng $GUEST_INTEGRATION_PACKAGES nftables dnsmasq ntpsec nfs-utils rpcbind openldap openldap-servers ipxe syslinux nginx powershell
 
 log_step "installing VCF PowerCLI $LABFOUNDRY_POWERCLI_VERSION"
 export LABFOUNDRY_POWERCLI_VERSION
@@ -102,7 +118,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -Command \
   '$ErrorActionPreference = "Stop"; $module = Get-Module -Name VCF.PowerCLI -ListAvailable | Where-Object Version -eq $env:LABFOUNDRY_POWERCLI_VERSION | Select-Object -First 1; if (-not $module) { throw "VCF.PowerCLI $env:LABFOUNDRY_POWERCLI_VERSION is not installed" }; Import-Module $module.Path -Force; Set-PowerCLIConfiguration -ParticipateInCeip $false -Scope AllUsers -Confirm:$false | Out-Null; $configured = Get-PowerCLIConfiguration -Scope AllUsers; if ([bool]$configured.ParticipateInCEIP) { throw "VCF.PowerCLI CEIP default was not disabled" }; if (-not (Get-Command Connect-VIServer -ErrorAction SilentlyContinue)) { throw "Connect-VIServer is not available" }; Write-Host "VCF.PowerCLI $($module.Version) verified with appliance-wide CEIP disabled"'
 
 log_step "verifying Photon OS updates after package install"
-tdnf -y update
+run_tdnf "Photon OS update verification" update
 
 log_step "leaving only Photon NTPsec available for desired-state activation"
 systemctl disable --now ntpd.service 2>/dev/null || true
