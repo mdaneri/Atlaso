@@ -270,6 +270,19 @@ write_pip_config "$LABFOUNDRY_HOME/.venv/pip.conf"
 "$LABFOUNDRY_HOME/.venv/bin/python" "$LABFOUNDRY_HOME/scripts/check_photon_compatibility.py"
 printf 'vcf_sdk=%s\n' "$("$LABFOUNDRY_HOME/.venv/bin/python" -c 'from importlib.metadata import version; print(version("vcf-sdk"))')" >>/etc/labfoundry/build-info
 
+log_step "writing third-party notices"
+NOTICE_RPM_INVENTORY="$(mktemp)"
+rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{LICENSE}\t%{URL}\n' | LC_ALL=C sort >"$NOTICE_RPM_INVENTORY"
+install -d -o root -g root -m 0755 /usr/share/doc/labfoundry
+"$LABFOUNDRY_HOME/.venv/bin/python" "$LABFOUNDRY_HOME/scripts/generate_third_party_notices.py" \
+  --version "$LABFOUNDRY_RELEASE_VERSION" \
+  --output /usr/share/doc/labfoundry/THIRD_PARTY_NOTICES.md \
+  --lock "$LABFOUNDRY_HOME/requirements-appliance.lock" \
+  --python-environment "$LABFOUNDRY_HOME/.venv" \
+  --rpm-inventory "$NOTICE_RPM_INVENTORY"
+rm -f "$NOTICE_RPM_INVENTORY"
+chmod 0644 /usr/share/doc/labfoundry/THIRD_PARTY_NOTICES.md
+
 SECRET_KEY="$("$LABFOUNDRY_HOME/.venv/bin/python" -c 'import secrets; print(secrets.token_urlsafe(48))')"
 SECRETS_KEY="$("$LABFOUNDRY_HOME/.venv/bin/python" -c 'import secrets; print(secrets.token_urlsafe(48))')"
 cat >/etc/labfoundry/labfoundry.env <<EOF
