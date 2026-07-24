@@ -28,7 +28,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 from generate_third_party_notices import generate_notice, locked_packages, vendored_records, wheel_records
 
 
-SUPPORTED_ABIS = ("cp312", "cp313", "cp314")
+SUPPORTED_ABIS = ("cp314",)
 LEGACY_BRIDGE_VERSION = "0.9.0"
 SYSTEMD_FILES = (
     ROOT / "image/hyperv/systemd/labfoundry.service",
@@ -173,7 +173,7 @@ def deterministic_tar_gz(source: Path, output: Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build a signed, offline LabFoundry appliance release bundle.")
-    parser.add_argument("--wheelhouses", type=Path, required=True, help="Directory containing cp312/cp313/cp314 wheelhouses.")
+    parser.add_argument("--wheelhouses", type=Path, required=True, help="Directory containing the cp314 wheelhouse.")
     parser.add_argument("--lock", type=Path, default=ROOT / "requirements-appliance.lock")
     parser.add_argument("--output", type=Path, default=ROOT / "dist/release")
     parser.add_argument("--repository", default="mdaneri/LabFoundry")
@@ -290,7 +290,7 @@ def main() -> int:
                 "version": version,
                 "git_commit": commit,
                 "built_at": built_at,
-                "requires_python": ">=3.12,<3.15",
+                "requires_python": ">=3.14,<3.15",
                 "wheel": f"{release_base}/{application_wheel.name}",
                 "sha256": sha256(application_wheel),
             }

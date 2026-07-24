@@ -228,7 +228,7 @@ def render_update_manifest(
         "policy": {
             "auto_reboot": False,
             "release_install_mode": "signed-offline-transactional",
-            "supported_python_abis": ["cp312", "cp313", "cp314"],
+            "supported_python_abis": ["cp314"],
             "runtime_python_indexes": False,
             "vmware_ceip_enabled": bool(settings.get("vmware_ceip_enabled", False)),
         },
