@@ -370,6 +370,8 @@ def test_photon_image_optional_pip_global_index_configuration():
     assert 'ln -sfn "releases/bootstrap-$LABFOUNDRY_RELEASE_VERSION" "$LABFOUNDRY_HOME/current"' in script
     assert 'ln -sfn "current/.venv" "$LABFOUNDRY_HOME/.venv"' in script
     assert 'write_pip_config "$LABFOUNDRY_HOME/.venv/pip.conf"' in script
+    assert '--requirement "$LABFOUNDRY_HOME/requirements-appliance.lock"' in script
+    assert 'pip install --no-deps "$LABFOUNDRY_HOME"' in script
     assert "/etc/labfoundry/update-trust.d" in script
     assert 'trust_source_dir="$LABFOUNDRY_HOME/image/common/update-trust"' in script
     assert 'for trust_key in "$trust_source_dir"/*.pem' in script

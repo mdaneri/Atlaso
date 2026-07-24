@@ -4,6 +4,17 @@
 
 LabFoundry is a Linux-based, web-managed infrastructure appliance for homelabs, VMware Cloud Foundation labs, POCs, training environments, isolated network labs, and WAN simulation testing.
 
+## Community and licensing
+
+Contributions follow the [contributing guide](CONTRIBUTING.md), [Code of
+Conduct](CODE_OF_CONDUCT.md), and [Security Policy](SECURITY.md). LabFoundry
+authored code is available under the [MIT License](LICENSE). Each released
+appliance includes an automatically generated
+`/usr/share/doc/labfoundry/THIRD_PARTY_NOTICES.md` inventory for every shipped
+Python package, Photon RPM, and bundled component; the same release-specific
+notice file is published with the signed release assets. Third-party software
+retains its own license terms, including the bundled iPXE bootloaders.
+
 The MVP is a safe runnable scaffold. It provides the FastAPI control plane, appliance-style web UI, local authentication, JWT bearer API tokens, audit logging, OpenAPI 3.1, dry-run system adapters, and Windows/Hyper-V script scaffolding. It does not apply real host networking, firewall, service, SFTP, registry, repository, DNS, DHCP, CA, or KMS changes by default.
 
 ## Photon OS Appliance Image
@@ -93,8 +104,8 @@ services, or mutate the appliance.
 
 Photon OS 5.0 GA shipped with Python 3.11, but the current Photon 5.0 updates
 stream has moved beyond that baseline. On June 21, 2026, live repository
-metadata showed `python3` as `3.14.5-2.ph5`. LabFoundry keeps
-`requires-python >=3.12`; verify the appliance stream with:
+metadata showed `python3` as `3.14.5-2.ph5`. LabFoundry targets Python 3.14
+only (`requires-python >=3.14,<3.15`); verify the appliance stream with:
 
 ```bash
 python3 scripts/check_photon_compatibility.py
@@ -205,7 +216,7 @@ Primary workflow:
 Install and run:
 
 ```bash
-python3.12 -m venv .venv
+python3.14 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 uvicorn labfoundry.app.main:app --reload --host 127.0.0.1 --port 8000

@@ -34,8 +34,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 def main() -> int:
     print(f"python={platform.python_version()} executable={sys.executable}")
-    if sys.version_info < (3, 12):
-        print("Photon compatibility requires Python >= 3.12", file=sys.stderr)
+    if sys.version_info[:2] != (3, 14):
+        print("Photon compatibility requires Python 3.14", file=sys.stderr)
         return 1
 
     with tempfile.TemporaryDirectory(prefix="labfoundry-photon-") as temp_dir:

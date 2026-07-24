@@ -133,13 +133,14 @@ LABFOUNDRY_HOME = Path("/opt/labfoundry")
 LABFOUNDRY_RELEASES_DIR = LABFOUNDRY_HOME / "releases"
 LABFOUNDRY_CURRENT_LINK = LABFOUNDRY_HOME / "current"
 LABFOUNDRY_VENV_LINK = LABFOUNDRY_HOME / ".venv"
+LABFOUNDRY_NOTICE_PATH = Path("/usr/share/doc/labfoundry/THIRD_PARTY_NOTICES.md")
 LABFOUNDRY_UPDATE_TRUST_DIR = Path("/etc/labfoundry/update-trust.d")
 LABFOUNDRY_UPDATE_BACKUP_DIR = LABFOUNDRY_STATE_DIR / "update-backups"
 LABFOUNDRY_DATABASE_PATH = LABFOUNDRY_STATE_DIR / "labfoundry.db"
 LABFOUNDRY_UPDATE_FINALIZER_PATH = LABFOUNDRY_STATE_DIR / "apply/appliance-update/finalizer-status.json"
 LABFOUNDRY_UPDATE_MAINTENANCE_PATH = Path("/run/labfoundry-update-maintenance")
 LABFOUNDRY_POWERSHELL_HOME = LABFOUNDRY_STATE_DIR / "powershell"
-SUPPORTED_RELEASE_PYTHON_ABIS = {"cp312", "cp313", "cp314"}
+SUPPORTED_RELEASE_PYTHON_ABIS = {"cp314"}
 CONSOLE_STATE_DIR = LABFOUNDRY_STATE_DIR / "console"
 CONSOLE_SERVICE_STATE_PATH = CONSOLE_STATE_DIR / "services.json"
 CONSOLE_MANAGED_SERVICE_UNITS = (
@@ -8045,6 +8046,7 @@ def _wait_for_labfoundry_health(timeout_seconds: int = 60) -> dict:
 def _install_release_owned_files(release_root: Path, backup_root: Path) -> list[tuple[Path | None, Path]]:
     owned = [
         (release_root / "bin/labfoundry-helper", Path("/opt/labfoundry/bin/labfoundry-helper"), 0o755),
+        (release_root / "THIRD_PARTY_NOTICES.md", LABFOUNDRY_NOTICE_PATH, 0o644),
         (release_root / "systemd/labfoundry.service", Path("/etc/systemd/system/labfoundry.service"), 0o644),
         (release_root / "systemd/labfoundry-worker.service", Path("/etc/systemd/system/labfoundry-worker.service"), 0o644),
         (release_root / "systemd/labfoundry-console.service", Path("/etc/systemd/system/labfoundry-console.service"), 0o644),

@@ -271,7 +271,7 @@ without a regenerated hash lock. Release CI installs only the hash-locked
 bootstrap tools, verifies every downloaded wheel or source archive against the
 checked-in lock, builds any missing pure wheel without build isolation, and
 writes an ABI-specific `requirements-wheelhouse.lock` over the resulting wheel
-bytes. It does this for CPython 3.12, 3.13, and 3.14 before running:
+bytes. It does this for the appliance's CPython 3.14 runtime before running:
 
 ```bash
 python scripts/build_release_bundle.py \

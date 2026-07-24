@@ -100,10 +100,6 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          - python: '3.12'
-            abi: cp312
-          - python: '3.13'
-            abi: cp313
           - python: '3.14'
             abi: cp314
     steps:
@@ -170,22 +166,12 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: '3.12'
+          python-version: '3.14'
           cache: pip
       - name: Install locked release tooling
         env:
           PIP_CONFIG_FILE: /dev/null
         run: python -m pip install --require-hashes --requirement requirements-release-tools.lock
-      - name: Download CPython 3.12 wheelhouse
-        uses: actions/download-artifact@v8
-        with:
-          name: wheelhouse-cp312
-          path: wheelhouses/cp312
-      - name: Download CPython 3.13 wheelhouse
-        uses: actions/download-artifact@v8
-        with:
-          name: wheelhouse-cp313
-          path: wheelhouses/cp313
       - name: Download CPython 3.14 wheelhouse
         uses: actions/download-artifact@v8
         with:

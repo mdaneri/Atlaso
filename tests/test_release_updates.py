@@ -38,7 +38,7 @@ def release_payload() -> dict:
         "git_commit": "a" * 40,
         "built_at": "2026-07-23T12:00:00Z",
         "signing_key_id": KEY_ID,
-        "supported_python_abis": ["cp312", "cp313", "cp314"],
+        "supported_python_abis": ["cp314"],
         "bundle": {
             "url": "https://github.com/mdaneri/LabFoundry/releases/download/v0.9.0/bundle.tar.gz",
             "size": 123,
@@ -133,9 +133,17 @@ def test_release_manifest_requires_complete_v2_interface(field, value, message):
         validate_release_manifest(payload)
 
 
+def test_release_manifest_rejects_non_appliance_python_abi():
+    payload = release_payload()
+    payload["supported_python_abis"] = ["cp313"]
+    with pytest.raises(ReleaseManifestError, match="supported_python_abis"):
+        validate_release_manifest(payload)
+
+
 def test_release_workflows_use_successful_main_sha_and_promote_without_rebuilding():
     publication = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
     promotion = (ROOT / ".github/workflows/promote-release.yml").read_text(encoding="utf-8")
+    ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     assert "github.event.workflow_run.head_branch == 'main'" in publication
     assert "github.event.workflow_run.event == 'push'" in publication
     assert "github.event_name == 'workflow_dispatch'" in publication
@@ -151,7 +159,12 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "<script" not in publication
     assert publication.count("ref: ${{ needs.prepare.outputs.release_sha }}") == 2
     assert "actions/upload-artifact@v7" in publication
-    assert publication.count("actions/download-artifact@v8") == 3
+    assert publication.count("actions/download-artifact@v8") == 1
+    assert "python-version: '3.14'" in publication
+    assert "python-version: '3.14'" in promotion
+    assert ci.count("python-version: '3.14'") == 2
+    assert "cp312" not in publication
+    assert "cp313" not in publication
     assert "actions/upload-artifact@v4" not in publication
     assert "actions/download-artifact@v4" not in publication
     assert '--commit "$RELEASE_SHA"' in publication

@@ -123,7 +123,7 @@ def main() -> int:
         "version": version,
         "git_commit": git_commit,
         "built_at": built_at,
-        "requires_python": ">=3.12",
+        "requires_python": ">=3.14,<3.15",
         "wheel": f"../../packages/{wheel.name}",
         "sha256": digest,
     }
