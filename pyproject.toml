@@ -1,6 +1,6 @@
 [project]
 name = "labfoundry"
-version = "0.9.6"
+version = "0.9.7"
 description = "LabFoundry Linux appliance web application MVP scaffold"
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
