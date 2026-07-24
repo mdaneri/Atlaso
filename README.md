@@ -156,6 +156,11 @@ strict `X.Y.Z` release format before creating the bootstrap release directory.
 Missing, unreadable, malformed, or invalid version metadata fails the build
 with the specific version-policy error instead of an ambiguous shell match
 failure.
+Long TDNF operations capture their raw transaction output and emit one compact
+Packer status line every 30 seconds with elapsed time and cache size. Successful
+operations report their duration; failures preserve the TDNF exit status and
+replay a normalized, bounded output tail. This avoids progress redraws appearing
+as hundreds of empty Packer-prefixed lines without hiding actionable failures.
 
 The image builder does not configure a custom pip package index by default. If
 your build network requires an internal PyPI mirror, pass `-PipGlobalIndex` or

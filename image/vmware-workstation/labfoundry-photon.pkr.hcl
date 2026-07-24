@@ -231,6 +231,11 @@ build {
   }
 
   provisioner "file" {
+    source      = "../../scripts/run_tdnf_with_progress.py"
+    destination = "/tmp/labfoundry-src/scripts/run_tdnf_with_progress.py"
+  }
+
+  provisioner "file" {
     source      = "../../third_party/ipxe"
     destination = "/tmp/labfoundry-src/third_party/ipxe"
   }
