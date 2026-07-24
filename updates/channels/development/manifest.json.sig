@@ -1,5 +1,5 @@
 {
   "key_id": "labfoundry-release-2026-01",
   "schema_version": 1,
-  "signature": "YMEeIc4XRm2xRfqfl0hObbBPOicisiETq5O+Oz7hNudmL6kLcjOBIQv6y+EyVAkYPDpbwNUfoI3MA4aaaulfDg=="
+  "signature": "5eQUKAw/KHLHattJISG2JCboai9a+TaJsx/Xvg0tEz8XPjax1Um1T8UMf6OqulgpSmDqHbgv4KPuenDiMkqVBw=="
 }
