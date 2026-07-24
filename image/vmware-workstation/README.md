@@ -49,6 +49,9 @@ The shared provisioner stages `pyproject.toml` with `scripts/version.py`, parses
 release format before it creates `/opt/labfoundry/releases/bootstrap-<version>`.
 If that metadata is missing, unreadable, malformed, or invalid, the build log
 reports the specific version-policy error.
+The template also stages `requirements-appliance.lock` with the application
+source so bootstrap dependency installation retains hash verification instead
+of falling back to unpinned packages.
 Long TDNF operations emit compact 30-second heartbeats with elapsed time and
 cache size instead of streaming terminal progress redraws through Packer.
 Successful operations report their duration, while failures retain the TDNF

@@ -184,6 +184,11 @@ build {
   }
 
   provisioner "file" {
+    source      = "../../requirements-appliance.lock"
+    destination = "/tmp/labfoundry-src/requirements-appliance.lock"
+  }
+
+  provisioner "file" {
     source      = "../../README.md"
     destination = "/tmp/labfoundry-src/README.md"
   }

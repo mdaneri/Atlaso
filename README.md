@@ -156,6 +156,10 @@ strict `X.Y.Z` release format before creating the bootstrap release directory.
 Missing, unreadable, malformed, or invalid version metadata fails the build
 with the specific version-policy error instead of an ambiguous shell match
 failure.
+Both Photon Packer targets stage `requirements-appliance.lock` with the
+application source so bootstrap dependency installation can retain
+`--require-hashes`; a missing staged lock fails the image rather than falling
+back to unpinned dependencies.
 Long TDNF operations capture their raw transaction output and emit one compact
 Packer status line every 30 seconds with elapsed time and cache size. Successful
 operations report their duration; failures preserve the TDNF exit status and
