@@ -193,7 +193,10 @@ Any failure restores the previous release link, helper/systemd files, and
 database snapshot before maintenance mode is removed. A root-owned finalizer at
 `/var/lib/labfoundry/apply/appliance-update/finalizer-status.json` records the
 definitive transaction result so the worker can persist the durable task
-outcome. Only the current and previous known-good releases are retained; the UI
+outcome. Without a matching definitive finalizer, worker startup marks an
+interrupted running parent failed even when every child step committed before
+the restart; child results remain available as recovery evidence. Only the
+current and previous known-good releases are retained; the UI
 does not expose arbitrary historical downgrades.
 
 ## Photon OS boundary

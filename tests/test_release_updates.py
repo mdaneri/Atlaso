@@ -521,6 +521,53 @@ def test_worker_restart_uses_matching_root_release_finalizer(client, monkeypatch
         assert result["release_transaction"]["verified_key_id"] == "labfoundry-release-2026-01"
 
 
+def test_worker_restart_fails_update_parent_after_children_commit(client, monkeypatch, tmp_path):
+    from labfoundry.app import worker
+    from labfoundry.app.database import SessionLocal
+    from labfoundry.app.models import Job
+    from labfoundry.app.services.appliance_update import ensure_appliance_update_job_steps
+
+    monkeypatch.setattr(
+        worker,
+        "APPLIANCE_UPDATE_FINALIZER_PATH",
+        str(tmp_path / "missing-finalizer-status.json"),
+    )
+    with SessionLocal() as db:
+        job = Job(
+            id="job_update_children_committed",
+            type="appliance-update",
+            status="running",
+            created_by="admin",
+            task_config_json=json.dumps(
+                {"selected_streams": ["powershell_modules", "photon_os"], "mode": "check"}
+            ),
+            result='{"status":"pending","success":false}',
+        )
+        db.add(job)
+        db.flush()
+        steps = ensure_appliance_update_job_steps(
+            db,
+            job=job,
+            selected_streams=["powershell_modules", "photon_os"],
+        )
+        for step in steps:
+            step.status = "succeeded"
+            step.progress_percent = 100
+            step.result = '{"status":"succeeded","success":true}'
+        db.commit()
+
+        assert worker.recover_interrupted_worker_jobs(db) == 1
+        recovered = db.get(Job, job.id)
+        assert recovered.status == "failed"
+        assert recovered.progress_percent == 100
+        assert "worker restarted" in (recovered.error or "")
+        result = json.loads(recovered.result or "{}")
+        assert result["status"] == "failed"
+        assert result["success"] is False
+        assert result["worker_recovery"] == "interrupted"
+        assert [step.status for step in recovered.steps] == ["succeeded", "succeeded"]
+
+
 def test_worker_restart_keeps_release_finalizer_scoped_to_its_child(client, monkeypatch, tmp_path):
     from sqlalchemy import select
 

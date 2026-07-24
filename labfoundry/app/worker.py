@@ -137,7 +137,11 @@ def recover_interrupted_worker_jobs(db: Session) -> int:
             all_steps_succeeded = bool(update_steps) and all(
                 step.status == JobStatus.SUCCEEDED.value for step in update_steps
             )
-            job.status = JobStatus.SUCCEEDED.value if all_steps_succeeded else JobStatus.FAILED.value
+            job.status = (
+                JobStatus.SUCCEEDED.value
+                if recovered and all_steps_succeeded
+                else JobStatus.FAILED.value
+            )
         else:
             job.status = finalizer_status if recovered else JobStatus.FAILED.value
         job.finished_at = now
