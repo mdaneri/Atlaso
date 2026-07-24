@@ -103,7 +103,7 @@
       <div>
         <h3>Readiness</h3>
         {% if oidc_validation_errors %}
-          <ul class="error-list">{% for error in oidc_validation_errors %}<li>{{ error }}</li>{% endfor %}</ul>
+          <div class="error-list" role="list">{% for error in oidc_validation_errors %}<div role="listitem">{{ error }}</div>{% endfor %}</div>
         {% else %}
           <p class="muted">Preparatory configuration is valid. Provider enablement remains blocked by the staged rollout.</p>
         {% endif %}

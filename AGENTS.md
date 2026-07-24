@@ -11,6 +11,7 @@
 - Keep the help inline and compact: use hover/focus tooltips for short explanations instead of adding persistent instructional text to the page.
 - Text-edit form controls, including text, number, password, select, and textarea controls, should use the standard LabFoundry sans font and compact app control sizing unless the field is intentionally a monospace config/code preview. Check computed styles when Tailwind/runtime defaults may override form-control CSS.
 - Prefer consistent control types: switch controls for binary settings, selects/list editors for short enumerations, inputs for exact free-form values, textareas for multiline config, tabs for mutually exclusive editing modes, and Tabulator for editable data grids.
+- Give server-rendered tab controls literal initial `aria-selected` values and let the shared tab script update them after restoring persisted state. For authored CSS, pair supported WebKit compatibility properties with their standard declarations and avoid nonessential scroll styling that has no cross-browser fallback.
 
 ## Appliance Configuration UX
 

@@ -52,8 +52,24 @@ def test_appliance_update_page_and_dry_run_job(client):
     assert "Python Libraries" not in page.text
     assert "PowerShell Modules" in page.text
     assert "LabFoundry Release" in page.text
+    assert "Check for updates" in page.text
+    assert "Install updates" in page.text
+    assert "Checking is read-only. Installing runs the selected maintenance streams." in page.text
+    assert 'formaction="/appliance-update/check" title="Check the selected streams without installing changes"' in page.text
+    assert 'formaction="/appliance-update/run" title="Install updates from the selected streams"' in page.text
     assert "https://updates.example.test/releases" in page.text
     assert "channels/&lt;channel&gt;/manifest.json" in page.text
+    assert "Recent update tasks" in page.text
+    assert "No Appliance Update tasks have been recorded yet." in page.text
+    assert "Appliance Update only" in page.text
+    assert 'data-task-type="appliance-update"' in page.text
+    assert 'data-task-initial-component-filter="Appliance Update"' in page.text
+    assert 'id="tasks-table" class="tabulator-shell"' in page.text
+    assert "The same task grid used by Tasks" in page.text
+    assert "Last Update" not in page.text
+    assert 'data-tab-target="appliance-update-streams" aria-controls="appliance-update-streams" aria-selected="true"' in page.text
+    assert 'data-tab-target="appliance-update-sources" aria-controls="appliance-update-sources" aria-selected="false"' in page.text
+    assert "streams_tab_active" not in page.text
     assert "labfoundry-helper appliance-update check" not in page.text
 
     csrf = csrf_from_page(page.text)
@@ -67,6 +83,8 @@ def test_appliance_update_page_and_dry_run_job(client):
     assert response.status_code == 200
     assert "Appliance update pending" in response.text
     assert "recorded as dry-run" in response.text
+    assert 'class="appliance-update-task-card info"' in response.text
+    assert ">Open task</a>" in response.text
 
     from labfoundry.app.models import Job, JobStep
     from labfoundry.app.worker import run_worker_once
@@ -80,6 +98,10 @@ def test_appliance_update_page_and_dry_run_job(client):
             select(JobStep).where(JobStep.job_id == job.id).order_by(JobStep.position)
         ).scalars().all()
     assert payload["mode"] == "run"
+    assert f'href="/tasks?job_id={job.id}"' in response.text
+    assert 'class="appliance-update-history task-grid-section"' in response.text
+    assert "Install updates" in response.text
+    assert "Open full task history" in response.text
     assert payload["dry_run"] is True
     assert [(step.component_key, step.status) for step in steps] == [
         ("labfoundry_release", "succeeded"),
@@ -545,6 +567,10 @@ def test_software_source_and_managed_module_lifecycle(client):
     assert 'class="source-option-grid"' in grouped_page.text
     assert 'class="source-editor-footer"' in grouped_page.text
     assert "Repository behavior" in grouped_page.text
+    assert "Module behavior" in grouped_page.text
+    assert 'class="source-option-grid managed-package-option-grid"' in grouped_page.text
+    assert 'class="apply-unit-card source-editor-form managed-package-editor"' in grouped_page.text
+    assert "appliance-update-task-card" in app_css
     assert ".source-editor-grid {\n  display: grid;" in app_css
     assert ".source-option-grid {\n  display: grid;" in app_css
     assert ".source-editor-footer {\n  display: flex;" in app_css

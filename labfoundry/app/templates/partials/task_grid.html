@@ -1,0 +1,54 @@
+<section class="{{ task_grid_class|default('panel tasks-panel') }}"
+  data-tasks-page
+  data-selected-task-id="{{ task_grid_selected_task_id|default('') }}"
+  data-csrf="{{ csrf_token }}"
+  data-tasks='{{ task_grid_rows | tojson }}'
+  data-task-component-options='{{ task_grid_component_options | tojson }}'
+  data-task-type="{{ task_grid_type|default('') }}"
+  data-task-initial-component-filter="{{ task_grid_initial_component_filter|default('') }}"
+  data-task-grid-height="{{ task_grid_height|default('100%') }}">
+  <div class="panel-head">
+    <div>
+      <h2{% if task_grid_title_id|default("") %} id="{{ task_grid_title_id }}"{% endif %}>{{ task_grid_title }}</h2>
+      <p class="muted">{{ task_grid_description }}</p>
+    </div>
+    <div class="task-grid-heading-actions">
+      {% if task_grid_scope_label|default("") %}<span class="status-pill muted">{{ task_grid_scope_label }}</span>{% endif %}
+      {% if task_grid_history_url|default("") %}<a class="text-link" href="{{ task_grid_history_url }}">{{ task_grid_history_label|default("Open full task history") }}</a>{% endif %}
+      <span class="status-pill muted" data-tasks-count>{{ task_grid_rows|length }} tasks</span>
+    </div>
+  </div>
+
+  <div class="task-grid-shell">
+    <div id="tasks-table" class="tabulator-shell" data-fallback-id="tasks-fallback"></div>
+    <table id="tasks-fallback" class="data-table compact">
+      <thead>
+        <tr><th>Status</th><th>Task / component</th><th>State</th><th>Progress</th><th>Created</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+        {% for task in task_grid_rows %}
+          <tr>
+            <td><span class="status-pill {{ task.status_pill }}">{{ task.status }}</span></td>
+            <td><strong>{{ task.type_label }}</strong><br><code>{{ task.id }}</code></td>
+            <td>{{ task.state }}</td>
+            <td>{{ task.progress_percent }}%</td>
+            <td>{{ task.created_at or "—" }}</td>
+            <td><a class="button secondary compact-button" href="/tasks?job_id={{ task.id }}">Open</a></td>
+          </tr>
+          {% for step in task._children %}
+            <tr>
+              <td><span class="status-pill {{ step.status_pill }}">{{ step.status }}</span></td>
+              <td>&nbsp;&nbsp;↳ <strong>{{ step.label }}</strong><br><code>{{ step.id }}</code></td>
+              <td>{{ step.state }}</td>
+              <td>{{ step.progress_percent }}%</td>
+              <td>{{ step.created_at or "—" }}</td>
+              <td>—</td>
+            </tr>
+          {% endfor %}
+        {% else %}
+          <tr><td colspan="6" class="muted">{{ task_grid_empty_message|default("No tasks have been recorded yet.") }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>

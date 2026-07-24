@@ -227,10 +227,10 @@
               <strong data-vcf-depot-tool-archive-name>{{ vcf_depot_settings_json.tool_archive_name or "no package staged" }}</strong>
               <small class="muted">Expected file: {{ vcf_depot_archive_pattern }}</small>
             </div>
-            <span class="file-upload-control compact-file-upload">
+            <label class="file-upload-control compact-file-upload">
               <input class="file-upload-input" type="file" name="tool_archive_file" accept=".gz,application/gzip,application/x-gzip" data-file-upload-input>
               <span class="file-upload-surface"><span class="file-upload-copy"><strong data-vcf-depot-tool-upload-action>{{ "Update" if vcf_depot_settings.tool_archive_path else "Add" }}</strong><small data-file-upload-name data-vcf-depot-tool-upload-name>{{ vcf_depot_settings_json.tool_archive_name or vcf_depot_archive_pattern }}</small></span></span>
-            </span>
+            </label>
           </div>
           <button class="button danger compact-button {{ '' if vcf_depot_settings.tool_archive_path else 'hidden' }}" type="button" data-vcf-depot-tool-reset-modal-open data-vcf-depot-tool-reset-action>Reset</button>
           <div class="vcfdt-tool-reset-note {{ '' if vcf_depot_settings.tool_archive_path else 'hidden' }}" data-vcf-depot-tool-reset-panel>

@@ -10072,8 +10072,12 @@ async function refreshTasksPage({ reopen = false } = {}) {
 }
 
 async function requestTasksTableData(_url, _config, params = {}) {
+  const page = document.querySelector("[data-tasks-page]");
   const query = new URLSearchParams();
-  query.set("job_id", labFoundrySelectedTaskId || document.querySelector("[data-tasks-page]")?.dataset.selectedTaskId || "");
+  query.set("job_id", labFoundrySelectedTaskId || page?.dataset.selectedTaskId || "");
+  if (page?.dataset.taskType) {
+    query.set("task_type", page.dataset.taskType);
+  }
   query.set("page", String(params.page || 1));
   query.set("size", String(params.size || 25));
   query.set("filters", JSON.stringify(params.filters || params.filter || []));
@@ -10175,6 +10179,7 @@ function initializeTasksPage() {
   const tableElement = document.getElementById("tasks-table");
   const fallback = document.getElementById(tableElement?.dataset.fallbackId || "");
   if (tableElement instanceof HTMLElement && typeof window.Tabulator === "function") {
+    const initialComponentFilter = page.dataset.taskInitialComponentFilter || "";
     labFoundryTasksTable = new window.Tabulator(tableElement, {
       ajaxURL: "/tasks/status",
       ajaxParams: () => ({ job_id: labFoundrySelectedTaskId || page.dataset.selectedTaskId || "" }),
@@ -10185,12 +10190,13 @@ function initializeTasksPage() {
         return response;
       },
       layout: "fitColumns",
-      height: "100%",
+      height: page.dataset.taskGridHeight || "100%",
       pagination: true,
       paginationMode: "remote",
       paginationSize: 25,
       paginationCounter: "rows",
       filterMode: "remote",
+      initialHeaderFilter: initialComponentFilter ? [{ field: "id", value: initialComponentFilter }] : [],
       headerFilterLiveFilterDelay: 500,
       placeholder: "No tasks have been recorded yet.",
       selectableRows: 1,

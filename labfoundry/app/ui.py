@@ -128,7 +128,6 @@ from labfoundry.app.services.appliance_update import (
     UPDATE_STREAMS,
     current_version_info,
     ensure_appliance_update_job_steps,
-    parse_latest_update_result,
     photon_repository_details,
     photon_repository_summary,
     read_appliance_file,
@@ -7945,13 +7944,15 @@ def appliance_update_settings(db: Session) -> dict[str, Any]:
     return settings
 
 
-def latest_appliance_update_job(db: Session) -> Job | None:
-    return db.execute(select(Job).where(Job.type == "appliance-update").order_by(desc(Job.created_at))).scalars().first()
-
-
 def appliance_update_context(db: Session) -> dict[str, Any]:
     settings = appliance_update_settings(db)
-    latest_job = latest_appliance_update_job(db)
+    recent_jobs = db.execute(
+        select(Job)
+        .options(selectinload(Job.steps))
+        .where(Job.type == "appliance-update")
+        .order_by(desc(Job.created_at))
+        .limit(8)
+    ).scalars().all()
     sources = source_rows(db)
     packages = managed_package_rows(db)
     source_payloads = [update_source_payload(source) for source in sources]
@@ -7980,8 +7981,9 @@ def appliance_update_context(db: Session) -> dict[str, Any]:
         "current_version_info": current_version_info(),
         "appliance_update_manifest_preview": manifest_preview,
         "appliance_update_staged_config_path": APPLIANCE_UPDATE_STAGED_CONFIG_PATH,
-        "latest_update_job": latest_job,
-        "latest_update_result": parse_latest_update_result(latest_job),
+        "recent_update_tasks": [_task_row(job) for job in recent_jobs],
+        "task_component_filter_options": _task_component_filter_options(db),
+        "appliance_update_info_path": APPLIANCE_UPDATE_INFO_PATH,
         "update_info_file": read_appliance_file(APPLIANCE_UPDATE_INFO_PATH),
         "update_settings_errors": validate_update_settings(settings),
         "system_adapter_dry_run": get_settings().dry_run_system_adapters,
@@ -18367,22 +18369,29 @@ def tasks_page(
 @router.get("/tasks/status", response_class=JSONResponse, response_model=None)
 def tasks_status(
     job_id: str = Query(""),
+    task_type: str = Query(""),
     filters: str = Query("[]"),
     page: int = Query(1, ge=1),
     size: int = Query(25, ge=1, le=100),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    normalized_task_type = task_type.strip()
+    if len(normalized_task_type) > 100:
+        raise HTTPException(status_code=400, detail="Task type filter is too long.")
+    scope_clauses = [Job.type == normalized_task_type] if normalized_task_type else []
     clauses = _task_filter_clauses(filters)
-    total_count = int(db.scalar(select(func.count(Job.id))) or 0)
-    filtered_count = int(db.scalar(select(func.count(Job.id)).where(*clauses)) or 0)
-    active_count = int(db.scalar(select(func.count(Job.id)).where(Job.status.in_(ACTIVE_JOB_STATUSES))) or 0)
+    total_count = int(db.scalar(select(func.count(Job.id)).where(*scope_clauses)) or 0)
+    filtered_count = int(db.scalar(select(func.count(Job.id)).where(*scope_clauses, *clauses)) or 0)
+    active_count = int(
+        db.scalar(select(func.count(Job.id)).where(*scope_clauses, Job.status.in_(ACTIVE_JOB_STATUSES))) or 0
+    )
     last_page = max(1, (filtered_count + size - 1) // size)
     effective_page = min(page, last_page)
     jobs = db.execute(
         select(Job)
         .options(selectinload(Job.steps))
-        .where(*clauses)
+        .where(*scope_clauses, *clauses)
         .order_by(desc(Job.created_at))
         .offset((effective_page - 1) * size)
         .limit(size)

@@ -93,6 +93,22 @@ discovered runtime data, followed by one grouped **Repository behavior** row.
 Autosave and synchronization state remain together in a separated footer, with
 repository deletion isolated as the destructive action.
 
+Managed PowerShell module editors follow the same hierarchy: module identity
+and version policy first, then a grouped **Module behavior** switch and a
+separated autosave/delete footer. After an update or repository synchronization
+is submitted, the result card links both the task identifier and **Open task**
+action to the durable task record. The Update Streams workspace also keeps a
+the shared Tasks grid, scoped to Appliance Update tasks and prefiltered to the
+Appliance Update component. It preserves the standard
+sorting, filtering, component tree, progress, row menu, and detail behavior.
+This table replaces the former single Last Update rail card.
+The stream actions use explicit **Check for updates** and **Install updates**
+labels, with distinct search and install cues and visible copy that identifies
+the check as read-only.
+The Update Info rail card reports whether durable updater evidence is available
+and opens the full JSON through the shared preview modal, matching Validation
+instead of rendering unbounded output inline.
+
 ## Trust contract
 
 Appliances contain named Ed25519 public keys under:
