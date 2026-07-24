@@ -1,6 +1,6 @@
 # Constrained OpenID Connect provider
 
-LabFoundry is delivering an in-process OpenID Connect provider for appliance integrations and VCF lab environments in five reviewable phases. The first phase provides the authentication boundary and administration skeleton only. It does not accept authorization requests, publish discovery or JWKS documents, or allow provider enablement. The Authentication page labels that boundary explicitly.
+LabFoundry is delivering an in-process OpenID Connect provider for appliance integrations and VCF lab environments in five reviewable phases. Phase 2 provides the constrained Authorization Code protocol surface. Provider enablement requires the applied management HTTPS setting, canonical issuer, active RS256 key, and protocol readiness.
 
 ## Architecture and trust boundaries
 
@@ -31,13 +31,21 @@ Redirect and post-logout records are stored individually. Matching in the protoc
 
 Signing keys are 3072-bit RSA keys fixed to RS256. LabFoundry encrypts private PKCS#8 PEM with `LABFOUNDRY_SECRETS_KEY` and stores only a public JWK alongside it. A uniqueness constraint permits one active key. Rotation retires the prior key and keeps its public JWK publishable for the greater of the configured overlap or the longest ID/access-token lifetime plus clock skew. The default overlap is one hour.
 
-Discovery and JWKS builders are present for validation and testing, but both public routes return `404` while the protocol feature gate is off. An API request, UI action, restored state, or startup state cannot enable this phase. Startup fails explicitly if an archive or database nevertheless contains `enabled=true`.
+Discovery and JWKS are published only after the provider passes its enablement validation. The issuer is never derived from request headers.
 
 Initial protocol defaults are a 60-second authorization code, five-minute ID and access tokens, two-minute clock skew, RS256, mandatory PKCE S256, and scopes `openid profile email groups`.
 
 ## Dependency decision
 
-PR 1 uses `joserfc` directly for RSA/JWK generation and declares it as a runtime dependency. Authlib 1.7.2 is the selected Phase 2 OAuth/OIDC protocol core, but is intentionally not installed before code uses it. Authlib supplies authorization-server adapters for Flask and Django, not FastAPI; Phase 2 will put its framework-neutral protocol core behind a narrow FastAPI adapter rather than importing either web framework. See the [Authlib authorization-server documentation](https://docs.authlib.org/en/v1.7.0/oauth2/authorization-server/index.html).
+The runtime lock includes Authlib 1.7.2. RSA/JWK handling remains fixed to `joserfc`, RS256, and an explicit `kid`; no algorithm negotiation is accepted.
+
+## Authorization Code browser flow
+
+Only `response_type=code`, query response mode, confidential `client_secret_basic`, and PKCE `S256` are accepted. Every request has an exact stored redirect URI, `state`, `nonce`, and a server-side short-lived authorization transaction bound to the signed browser session. Codes are random opaque values whose SHA-256 digest is stored; redemption uses one conditional `UPDATE ... RETURNING` operation, so a code can succeed once even when two token requests race.
+
+`/identity/authorize`, `/identity/token`, `/identity/userinfo`, and `/identity/logout` require HTTPS. A forwarded HTTPS indication is trusted only from the loopback management proxy. Browser authentication rotates the OIDC session identifier and CSRF value and never sets an operator UI user session. Unbound clients permit local identities only; an organization-bound client permits only its fixed enabled managed-LDAP organization.
+
+ID and access tokens have five-minute lifetimes, client ID audience, and fixed `JWT` / `at+jwt` types. UserInfo validates the signing key, fixed algorithm, issuer, audience, expiry, source, organization and subject before returning claims. Logout requires a valid ID-token hint for a post-logout redirect and matches that URI byte-for-byte before returning optional state.
 
 ## Backup, restore, reset, and key custody
 

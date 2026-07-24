@@ -231,7 +231,6 @@ class HttpClient:
                 continue
             return status, response_body, response_headers
         raise LifecycleError(f"{method} {path} exceeded redirect limit")
-
     def request(
         self,
         method: str,
@@ -297,6 +296,10 @@ class HttpClient:
         if status >= 400:
             raise LifecycleError(f"{method} {path} failed with HTTP {status}: {body[:500]}")
         return json.loads(body) if body else None
+
+
+def header_value(headers: dict[str, str], name: str) -> str:
+    return next((value for key, value in headers.items() if key.lower() == name.lower()), "")
 
 
 class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -519,6 +522,7 @@ def lifecycle_plan(args: argparse.Namespace) -> dict[str, Any]:
             "ESXi PXE desired state, DHCP boot options, TFTP artifacts, and Hyper-V PXE VM smoke",
             "ESX NFS 3 and 4.1 desired state, blank-disk initialization, equal IPv4/IPv6 DNS targets, exports, sockets, firewall rules, and persistence evidence",
             "passwordless admin web terminal on management and one selected extra interface",
+            "OIDC Authorization Code, PKCE S256, signed browser session, five-minute RS256 tokens, UserInfo, replay rejection, and exact logout redirect",
             "client DNS/DHCP/routing probes",
             "optional signed release preview upgrade plus deliberately broken development rollback with database identity verification",
         ],
@@ -943,7 +947,7 @@ def configure_routing_permissions(client: HttpClient, args: argparse.Namespace) 
         follow_redirects=False,
     )
     if status in {302, 303}:
-        return {"created_or_updated": True, "routing_rule": payload, "location": headers.get("Location", "")}
+        return {"created_or_updated": True, "routing_rule": payload, "location": header_value(headers, "Location")}
     if status == 409 or "already exists" in response_body.lower():
         return {"created_or_updated": False, "routing_rule": payload, "reason": "already exists"}
     if status >= 400:
@@ -1153,7 +1157,7 @@ def management_https_check(client: HttpClient, args: argparse.Namespace) -> dict
     http_status, _http_body, http_headers = http_client.request("GET", "/openapi.json", follow_redirects=False)
     if http_status not in {301, 302, 307, 308}:
         raise LifecycleError(f"HTTP management endpoint should redirect after HTTPS apply, got HTTP {http_status}")
-    location = http_headers.get("Location", "")
+    location = header_value(http_headers, "Location")
     if not location.lower().startswith("https://"):
         raise LifecycleError(f"HTTP management redirect did not point at HTTPS: {location}")
     https_url = f"https://{host}/openapi.json"
@@ -1162,6 +1166,162 @@ def management_https_check(client: HttpClient, args: argparse.Namespace) -> dict
         raise LifecycleError(f"HTTPS management endpoint failed with HTTP {https_status}")
     client.base_url = f"https://{host}"
     return {"http_status": http_status, "redirect_location": location, "https_status": https_status, "https_url": https_url}
+
+
+def oidc_authorization_code_check(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
+    signing_keys = client.json_request("GET", "/api/v1/oidc/signing-keys")
+    if not any(row.get("status") == "active" for row in signing_keys):
+        client.json_request("POST", "/api/v1/oidc/signing-keys")
+    redirect_uri = "https://rp.lifecycle.invalid/callback"
+    logout_uri = "https://rp.lifecycle.invalid/logout"
+    created = client.json_request(
+        "POST",
+        "/api/v1/oidc/clients",
+        json_body={
+            "name": "Lifecycle OIDC client",
+            "redirect_uris": [redirect_uri],
+            "post_logout_redirect_uris": [logout_uri],
+            "allowed_scopes": ["openid", "profile"],
+            "allow_loopback_redirects": False,
+            "access_token_lifetime_seconds": 300,
+            "id_token_lifetime_seconds": 300,
+            "authorization_code_lifetime_seconds": 60,
+            "enabled": True,
+        },
+    )
+    oidc_client = created["client"]
+    client_secret = created["client_secret"]
+    provider = client.json_request("GET", "/api/v1/oidc/provider")
+    provider["enabled"] = True
+    provider["issuer_url"] = "https://labfoundry.labfoundry.internal/identity"
+    for read_only in (
+        "authorization_flow_available",
+        "valid",
+        "validation_errors",
+        "discovery_url",
+        "authorization_endpoint",
+        "token_endpoint",
+        "userinfo_endpoint",
+        "jwks_uri",
+        "end_session_endpoint",
+    ):
+        provider.pop(read_only, None)
+    enabled = client.json_request("PUT", "/api/v1/oidc/provider", json_body=provider)
+    if not enabled.get("enabled") or not enabled.get("valid"):
+        raise LifecycleError(f"OIDC provider did not become ready: {enabled.get('validation_errors')}")
+
+    verifier = "lifecycle-pkce-verifier-" + ("x" * 48)
+    challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode("ascii")).digest()
+    ).rstrip(b"=").decode("ascii")
+    query = urllib.parse.urlencode(
+        {
+            "response_type": "code",
+            "response_mode": "query",
+            "client_id": oidc_client["client_id"],
+            "redirect_uri": redirect_uri,
+            "scope": "openid profile",
+            "state": "lifecycle-state",
+            "nonce": "lifecycle-nonce",
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+            "prompt": "login",
+            "login_hint": args.username,
+        }
+    )
+    status, body, headers = client.request(
+        "GET", f"/identity/authorize?{query}", follow_redirects=False
+    )
+    if status != 200:
+        raise LifecycleError(f"OIDC authorization page failed with HTTP {status}: {body[:300]}")
+    transaction_match = re.search(r'name="transaction" value="([^"]+)"', body)
+    csrf_match = re.search(r'name="csrf" value="([^"]+)"', body)
+    cookie = header_value(headers, "Set-Cookie")
+    if not transaction_match or not csrf_match:
+        raise LifecycleError("OIDC authorization page did not include the bound transaction and CSRF fields.")
+    cookie_lower = cookie.lower()
+    if not all(flag in cookie_lower for flag in ("secure", "httponly", "samesite=lax")):
+        raise LifecycleError("OIDC browser cookie did not retain Secure, HttpOnly, and SameSite=Lax.")
+    login_status, _login_body, login_headers = client.request(
+        "POST",
+        "/identity/authorize",
+        form={
+            "transaction": transaction_match.group(1),
+            "csrf": csrf_match.group(1),
+            "username": args.username,
+            "password": args.password,
+        },
+        follow_redirects=False,
+    )
+    callback = header_value(login_headers, "Location")
+    if login_status != 303 or not callback.startswith(redirect_uri):
+        raise LifecycleError(f"OIDC browser authentication did not return the exact callback: {callback}")
+    callback_query = urllib.parse.parse_qs(urllib.parse.urlparse(callback).query)
+    if callback_query.get("state") != ["lifecycle-state"] or not callback_query.get("code"):
+        raise LifecycleError("OIDC callback did not preserve state and return a code.")
+    code = callback_query["code"][0]
+    basic = base64.b64encode(
+        f"{oidc_client['client_id']}:{client_secret}".encode("utf-8")
+    ).decode("ascii")
+    token_form = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": redirect_uri,
+        "code_verifier": verifier,
+    }
+    token_status, token_body, _token_headers = client.request(
+        "POST",
+        "/identity/token",
+        form=token_form,
+        headers={"Authorization": f"Basic {basic}"},
+        follow_redirects=False,
+    )
+    if token_status != 200:
+        raise LifecycleError(f"OIDC token exchange failed with HTTP {token_status}: {token_body[:300]}")
+    tokens = json.loads(token_body)
+    if tokens.get("expires_in") != 300 or not tokens.get("id_token") or not tokens.get("access_token"):
+        raise LifecycleError("OIDC token response did not contain five-minute ID and access tokens.")
+    userinfo_status, userinfo_body, _userinfo_headers = client.request(
+        "GET",
+        "/identity/userinfo",
+        headers={"Authorization": f"Bearer {tokens['access_token']}"},
+        follow_redirects=False,
+    )
+    if userinfo_status != 200 or not json.loads(userinfo_body).get("sub"):
+        raise LifecycleError(f"OIDC UserInfo failed with HTTP {userinfo_status}: {userinfo_body[:300]}")
+    replay_status, _replay_body, _replay_headers = client.request(
+        "POST",
+        "/identity/token",
+        form=token_form,
+        headers={"Authorization": f"Basic {basic}"},
+        follow_redirects=False,
+    )
+    if replay_status != 400:
+        raise LifecycleError(f"OIDC authorization-code replay returned HTTP {replay_status}, expected 400.")
+    logout_query = urllib.parse.urlencode(
+        {
+            "id_token_hint": tokens["id_token"],
+            "post_logout_redirect_uri": logout_uri,
+            "state": "lifecycle-logout-state",
+        }
+    )
+    logout_status, _logout_body, logout_headers = client.request(
+        "GET", f"/identity/logout?{logout_query}", follow_redirects=False
+    )
+    expected_logout = f"{logout_uri}?state=lifecycle-logout-state"
+    logout_location = header_value(logout_headers, "Location")
+    if logout_status != 303 or logout_location != expected_logout:
+        raise LifecycleError(
+            f"OIDC logout did not return the exact registered redirect and state: {logout_location}"
+        )
+    return {
+        "client_id": oidc_client["client_id"],
+        "issuer": enabled.get("issuer_url"),
+        "token_lifetime_seconds": tokens.get("expires_in"),
+        "userinfo_subject_present": True,
+        "replay_status": replay_status,
+        "logout_redirect": expected_logout,
+    }
 
 
 def web_terminal_check(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
@@ -3296,6 +3456,7 @@ def run_full_lifecycle(results: list[StepResult], client: HttpClient, args: argp
     run_step(results, "configure-management-https", configure_management_https, client, args)
     run_step(results, "apply-appliance-settings-unit", apply_units, client, ["appliance_settings", "firewall", "public_services"], args)
     run_step(results, "management-https-check", management_https_check, client, args)
+    run_step(results, "oidc-authorization-code-check", oidc_authorization_code_check, client, args)
     run_step(results, "web-terminal-check", web_terminal_check, client, args)
     if args.signed_release_repository_url:
         run_step(results, "signed-release-update-check", signed_release_update_check, client, args)
