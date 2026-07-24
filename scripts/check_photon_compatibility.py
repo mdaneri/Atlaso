@@ -14,6 +14,7 @@ from pathlib import Path
 
 DEPENDENCY_IMPORTS = [
     "argon2",
+    "authlib",
     "cryptography",
     "fastapi",
     "itsdangerous",

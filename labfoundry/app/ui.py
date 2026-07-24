@@ -17514,6 +17514,7 @@ def authentication_context(
 @router.post("/authentication/oidc/provider", response_model=None)
 def update_oidc_provider_from_ui(
     request: Request,
+    enabled: bool = Form(False),
     issuer_url: str = Form(...),
     access_token_lifetime_seconds: int = Form(300),
     id_token_lifetime_seconds: int = Form(300),
@@ -17538,9 +17539,17 @@ def update_oidc_provider_from_ui(
     )
     provider.clock_skew_seconds = max(0, min(clock_skew_seconds, 300))
     provider.signing_key_overlap_seconds = max(300, min(signing_key_overlap_seconds, 604800))
-    provider.enabled = False
+    provider.enabled = enabled
     provider.updated_at = utcnow()
     db.add(provider)
+    db.flush()
+    validation_errors = oidc_provider_validation_errors(db, provider)
+    if enabled and validation_errors:
+        provider.enabled = False
+        validation_errors = [
+            "Provider enablement was rejected until every readiness check passes.",
+            *validation_errors,
+        ]
     db.commit()
     record_audit(
         db,
@@ -17551,8 +17560,9 @@ def update_oidc_provider_from_ui(
     )
     payload = {
         "saved": True,
-        "valid": not oidc_provider_validation_errors(db, provider),
-        "validation_errors": oidc_provider_validation_errors(db, provider),
+        "valid": not validation_errors,
+        "enabled": provider.enabled,
+        "validation_errors": validation_errors,
     }
     if request.headers.get("X-LabFoundry-Autosave") == "1":
         return JSONResponse(payload)
