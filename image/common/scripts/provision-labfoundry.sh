@@ -266,7 +266,10 @@ printf '{\n  "schema_version": 1,\n  "version": "%s",\n  "bootstrap": true,\n  "
 ln -sfn "releases/bootstrap-$LABFOUNDRY_RELEASE_VERSION" "$LABFOUNDRY_HOME/current"
 ln -sfn "current/.venv" "$LABFOUNDRY_HOME/.venv"
 write_pip_config "$LABFOUNDRY_HOME/.venv/pip.conf"
-"$LABFOUNDRY_HOME/.venv/bin/python" -m pip install "$LABFOUNDRY_HOME"
+"$LABFOUNDRY_HOME/.venv/bin/python" -m pip install \
+  --require-hashes \
+  --requirement "$LABFOUNDRY_HOME/requirements-appliance.lock"
+"$LABFOUNDRY_HOME/.venv/bin/python" -m pip install --no-deps "$LABFOUNDRY_HOME"
 "$LABFOUNDRY_HOME/.venv/bin/python" "$LABFOUNDRY_HOME/scripts/check_photon_compatibility.py"
 printf 'vcf_sdk=%s\n' "$("$LABFOUNDRY_HOME/.venv/bin/python" -c 'from importlib.metadata import version; print(version("vcf-sdk"))')" >>/etc/labfoundry/build-info
 
