@@ -68,19 +68,20 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     docs = Path("image/hyperv/README.md").read_text(encoding="utf-8")
     root_docs = Path("README.md").read_text(encoding="utf-8")
 
-    assert "tdnf -y install" in script and "nginx" in script
-    assert "tdnf -y install" in script and "ntpsec" in script
-    assert "tdnf -y install" in script and "python3-ntp" in script
+    assert 'run_tdnf "Photon appliance package installation"' in script
+    assert "nginx" in script
+    assert "ntpsec" in script
+    assert "python3-ntp" in script
     assert "systemctl disable --now ntpd.service" in script
     assert "systemctl disable --now systemd-timesyncd.service" in script
     assert "systemctl disable --now chronyd.service" in script
     assert '"$LABFOUNDRY_STATE/apply/ntpd"' in script
-    assert "tdnf -y install" in script and "openldap-servers" in script
-    assert "tdnf -y install" in script and "nfs-utils" in script and "rpcbind" in script
+    assert "openldap-servers" in script
+    assert "nfs-utils" in script and "rpcbind" in script
     assert "99-labfoundry-disk-identity.rules" in script
     assert 'IMPORT{builtin}="path_id"' in script
     assert 'SYMLINK+="disk/by-id/labfoundry-path-$env{ID_PATH_TAG}"' in script
-    assert "tdnf -y install" in script and "powershell" in script
+    assert "powershell" in script
     assert "VCF.PowerCLI" in script
     assert "9.1.0.25380678" in script
     assert "Connect-VIServer" in script
@@ -89,8 +90,8 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert "LABFOUNDRY_POWERCLI_MODULE_SOURCE" in script
     assert "chmod 0755 /usr/local/share/powershell /usr/local/share/powershell/Modules" in script
     assert "chmod -R a+rX,go-w /usr/local/share/powershell/Modules" in script
-    assert "tdnf -y install" in script and "ipxe" in script
-    assert "tdnf -y install" in script and "syslinux" in script
+    assert "ipxe" in script
+    assert "syslinux" in script
     assert "IPXE_BOOTLOADER_SOURCE_DIR=\"$LABFOUNDRY_HOME/third_party/ipxe/bootloaders\"" in script
     assert "IPXE_BOOTLOADER_TARGET_DIR=\"$LABFOUNDRY_STATE/pxe/bootloaders\"" in script
     assert "staging bundled iPXE bootloaders" in script
@@ -193,7 +194,8 @@ def test_photon_provisioning_prepares_attached_data_disks():
     vmware_docs = Path("image/vmware-workstation/README.md").read_text(encoding="utf-8")
     root_docs = Path("README.md").read_text(encoding="utf-8")
 
-    assert "tdnf -y install" in provision and "e2fsprogs" in provision
+    assert 'run_tdnf "Photon appliance package installation"' in provision
+    assert "e2fsprogs" in provision
     assert "labfoundry-mount-data-disks" in provision
     assert "labfoundry-data-disks.service" in provision
     assert "systemctl enable labfoundry-data-disks.service" in provision
@@ -383,6 +385,8 @@ def test_photon_image_optional_pip_global_index_configuration():
     for packer_template in (template, vmware_template):
         assert 'source      = "../../scripts/version.py"' in packer_template
         assert 'destination = "/tmp/labfoundry-src/scripts/version.py"' in packer_template
+        assert 'source      = "../../scripts/run_tdnf_with_progress.py"' in packer_template
+        assert 'destination = "/tmp/labfoundry-src/scripts/run_tdnf_with_progress.py"' in packer_template
         assert 'source      = "../common/update-trust"' in packer_template
         assert 'destination = "/tmp/labfoundry-src/image/common/update-trust"' in packer_template
     assert "LabFoundry release trust source directory is missing" in script
@@ -395,6 +399,12 @@ def test_photon_image_optional_pip_global_index_configuration():
     assert "packages.vcfd.broadcom.net/artifactory" not in wrapper
     assert "packages.vcfd.broadcom.net/artifactory" not in template
     assert "packages.vcfd.broadcom.net/artifactory" not in script
+    assert 'TDNF_PROGRESS_RUNNER="$LABFOUNDRY_SRC/scripts/run_tdnf_with_progress.py"' in script
+    assert 'run_tdnf "Photon package metadata refresh" makecache' in script
+    assert 'run_tdnf "Photon OS update" update' in script
+    assert 'run_tdnf "Photon appliance package installation"' in script
+    assert 'run_tdnf "Photon OS update verification" update' in script
+    assert "\ntdnf -y update" not in script
 
 
 def test_vmware_builder_uses_nat_gateway_dns_by_default():
