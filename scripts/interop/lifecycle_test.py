@@ -2008,6 +2008,16 @@ def _submit_signed_release_update(
         raise LifecycleError(
             f"Signed release task {job_id} ended {task.get('status')}; expected {expected_status}: {detail}"
         )
+    children = list(task.get("_children") or [])
+    if len(children) != 1 or children[0].get("component_key") != "labfoundry_release":
+        raise LifecycleError(
+            f"Signed release task {job_id} did not expose exactly one LabFoundry Release child step."
+        )
+    if children[0].get("status") != expected_status:
+        raise LifecycleError(
+            f"Signed release child step for {job_id} ended {children[0].get('status')}; "
+            f"expected {expected_status}."
+        )
     return task
 
 

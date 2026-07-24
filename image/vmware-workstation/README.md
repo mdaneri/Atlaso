@@ -150,6 +150,9 @@ pass `-ReadinessTimeoutSeconds 120`.
 Appliance Update uses signed GitHub release bundles, retained ABI-specific
 wheelhouses, `/opt/labfoundry/releases/<version>`, and transactional rollback;
 it does not use this direct wheel deployment path.
+Manual and scheduled checks/installations retain one parent task with separate
+LabFoundry Release, PowerShell Modules, and Photon OS child steps so failures
+and skipped Photon work remain independently visible.
 The Packer build explicitly stages `image/common/update-trust` and fails when
 no valid public release key is available.
 

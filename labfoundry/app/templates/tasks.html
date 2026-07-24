@@ -2,100 +2,12 @@
 {% block page_title %}Tasks{% endblock %}
 
 {% block content %}
-<section class="panel tasks-panel" data-tasks-page data-selected-task-id="{{ selected_task_id }}" data-csrf="{{ csrf_token }}" data-tasks='{{ task_rows | tojson }}' data-task-component-options='{{ task_component_filter_options | tojson }}'>
-  <div class="panel-head">
-    <div>
-      <h2>Tasks</h2>
-      <p class="muted">Current and historical LabFoundry background work. Double-click a row for details, or use the row context menu for details, logs, and cancellation.</p>
-    </div>
-    <span class="status-pill muted" data-tasks-count>{{ task_rows|length }} tasks</span>
-  </div>
-
-  <div class="task-grid-shell">
-    <div id="tasks-table" class="tabulator-shell" data-fallback-id="tasks-fallback"></div>
-    <table id="tasks-fallback" class="data-table compact">
-      <thead>
-        <tr><th>Status</th><th>Task / component</th><th>State</th><th>Progress</th><th>Created</th><th>Actions</th></tr>
-      </thead>
-      <tbody>
-        {% for task in task_rows %}
-          <tr>
-            <td><span class="status-pill {{ task.status_pill }}">{{ task.status }}</span></td>
-            <td><strong>{{ task.type_label }}</strong><br><code>{{ task.id }}</code></td>
-            <td>{{ task.state }}</td>
-            <td>{{ task.progress_percent }}%</td>
-            <td>{{ task.created_at or "—" }}</td>
-            <td><a class="button secondary compact-button" href="/tasks?job_id={{ task.id }}">Open</a></td>
-          </tr>
-          {% for step in task._children %}
-            <tr>
-              <td><span class="status-pill {{ step.status_pill }}">{{ step.status }}</span></td>
-              <td>&nbsp;&nbsp;↳ <strong>{{ step.label }}</strong><br><code>{{ step.id }}</code></td>
-              <td>{{ step.state }}</td>
-              <td>{{ step.progress_percent }}%</td>
-              <td>{{ step.created_at or "—" }}</td>
-              <td>—</td>
-            </tr>
-          {% endfor %}
-        {% else %}
-          <tr><td colspan="6" class="muted">No tasks have been recorded yet.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</section>
-
-<dialog id="task-detail-modal" class="confirm-modal wide-modal task-modal" aria-labelledby="task-detail-title">
-  <div class="confirm-modal-panel form-stack">
-    <div class="confirm-modal-body">
-      <p class="kicker">Task detail</p>
-      <div class="task-modal-title-row">
-        <h2 id="task-detail-title" data-task-detail-title>Task</h2>
-        <span class="status-pill muted" data-task-detail-status>unknown</span>
-      </div>
-      <p class="muted" data-task-detail-summary></p>
-      <div class="settings-list compact-settings-list task-detail-facts" data-task-detail-facts></div>
-      <details class="task-result-details hidden" data-task-detail-errors open>
-        <summary>Redacted error messages</summary>
-        <div class="terminal-note task-result-preview">
-          <code class="language-labfoundry-log" data-task-detail-errors-content></code>
-        </div>
-      </details>
-      <details class="task-result-details hidden" data-task-detail-console open>
-        <summary>Console output</summary>
-        <div class="terminal-note task-result-preview">
-          <code class="language-labfoundry-log" data-task-detail-console-content></code>
-          <code class="task-console-stderr hidden" data-task-detail-console-error-content></code>
-        </div>
-      </details>
-      <details class="task-result-details">
-        <summary>Redacted result payload</summary>
-        <div class="terminal-note task-result-preview" data-terminal-note-open="false">
-          <code class="language-json" data-task-detail-result>{}</code>
-        </div>
-      </details>
-    </div>
-    <div class="confirm-modal-actions">
-      <button class="button danger hidden" type="button" data-task-detail-cancel>Cancel task</button>
-      <button class="button secondary" type="button" data-task-detail-log>View log</button>
-      <button class="button ghost" type="button" data-task-detail-close>Close</button>
-    </div>
-  </div>
-</dialog>
-
-<dialog id="task-log-modal" class="confirm-modal wide-modal task-modal" aria-labelledby="task-log-title">
-  <div class="confirm-modal-panel form-stack">
-    <div class="confirm-modal-body">
-      <p class="kicker">Task log</p>
-      <h2 id="task-log-title" data-task-log-title>Task log</h2>
-      <p class="muted" data-task-log-meta></p>
-      <div class="terminal-note task-log-preview" data-terminal-note-open="false">
-        <code class="language-labfoundry-log" data-task-log-content>Loading task log…</code>
-      </div>
-    </div>
-    <div class="confirm-modal-actions">
-      <button class="button ghost" type="button" data-task-log-close>Close</button>
-    </div>
-  </div>
-</dialog>
+{% set task_grid_class = "panel tasks-panel" %}
+{% set task_grid_title = "Tasks" %}
+{% set task_grid_description = "Current and historical LabFoundry background work. Double-click a row for details, or use the row context menu for details, logs, and cancellation." %}
+{% set task_grid_rows = task_rows %}
+{% set task_grid_component_options = task_component_filter_options %}
+{% set task_grid_selected_task_id = selected_task_id %}
+{% include "partials/task_grid.html" %}
+{% include "partials/task_modals.html" %}
 {% endblock %}

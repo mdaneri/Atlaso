@@ -14,8 +14,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from sqlalchemy.orm import Session
+
 from labfoundry import __version__
-from labfoundry.app.models import Job
+from labfoundry.app.models import Job, JobStatus, JobStep
 
 
 APPLIANCE_UPDATE_SETTINGS_KEY = "appliance_update.settings.v1"
@@ -27,11 +29,57 @@ PHOTON_REPOSITORY_DIR = Path("/etc/yum.repos.d")
 DEFAULT_LABFOUNDRY_RELEASE_URL = "https://mdaneri.github.io/LabFoundry/updates"
 DEFAULT_LABFOUNDRY_MANIFEST_URL = f"{DEFAULT_LABFOUNDRY_RELEASE_URL}/channels/stable/manifest.json"
 UPDATE_STREAMS = ("photon_os", "powershell_modules", "labfoundry_release")
+APPLIANCE_UPDATE_EXECUTION_ORDER = ("labfoundry_release", "powershell_modules", "photon_os")
 UPDATE_STREAM_LABELS = {
     "photon_os": "Photon OS",
     "powershell_modules": "PowerShell Modules",
     "labfoundry_release": "LabFoundry Release",
 }
+
+
+def ensure_appliance_update_job_steps(
+    db: Session,
+    *,
+    job: Job,
+    selected_streams: list[str] | tuple[str, ...],
+) -> list[JobStep]:
+    selected = set(selected_update_streams(selected_streams))
+    existing = {step.component_key: step for step in job.steps}
+    steps: list[JobStep] = []
+    for position, stream in enumerate(
+        (stream for stream in APPLIANCE_UPDATE_EXECUTION_ORDER if stream in selected),
+        start=1,
+    ):
+        step = existing.get(stream)
+        if step is None:
+            step = JobStep(
+                id=f"{job.id}:{stream}",
+                job=job,
+                component_key=stream,
+                label=UPDATE_STREAM_LABELS[stream],
+                position=position,
+                status=JobStatus.PENDING.value,
+                progress_percent=0,
+                result=json.dumps(
+                    {
+                        "unit_id": stream,
+                        "label": UPDATE_STREAM_LABELS[stream],
+                        "status": JobStatus.PENDING.value,
+                        "success": False,
+                        "commands": [],
+                    },
+                    indent=2,
+                    sort_keys=True,
+                ),
+            )
+            db.add(step)
+        else:
+            step.position = position
+            step.label = UPDATE_STREAM_LABELS[stream]
+        steps.append(step)
+    return steps
+
+
 DEFAULT_UPDATE_SETTINGS = {
     "photon_source": "configured Photon repositories",
     "labfoundry_manifest_url": DEFAULT_LABFOUNDRY_MANIFEST_URL,

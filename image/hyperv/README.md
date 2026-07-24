@@ -244,11 +244,16 @@ under `/etc/labfoundry/update-trust.d` and creates the versioned
 compatibility symlinks. Release updates verify signed channel and release
 manifests, build from a hash-locked offline ABI wheelhouse, atomically switch
 the release, and restore the previous release and SQLite snapshot on failure.
+Manual and scheduled checks/installations retain one parent task with separate
+LabFoundry Release, PowerShell Modules, and Photon OS child steps; failed
+earlier streams leave Photon explicitly skipped instead of ambiguously pending.
 The Packer build explicitly stages `image/common/update-trust` and fails if no
 valid public key is available, so a completed image cannot silently reject the
 published signed channels as untrusted.
 Photon updates fail closed when their candidate Python ABI is not in the active
-release and never perform automatic RPM rollback or reboot.
+release. Candidate discovery uses the Photon-supported
+`tdnf repoquery python3` form. Photon maintenance never performs automatic RPM
+rollback or reboot.
 Pass `-SignedReleaseRepositoryUrl https://<fixture>/updates` to
 `scripts/windows/hyperv/invoke-lifecycle-test.ps1` to add a signed preview
 upgrade and deliberately broken development-channel rollback. The fixture

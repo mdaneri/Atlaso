@@ -117,6 +117,7 @@ from labfoundry.app.services.appliance_settings import (
     web_terminal_listener_interfaces,
 )
 from labfoundry.app.services.appliance_update import (
+    APPLIANCE_UPDATE_EXECUTION_ORDER,
     APPLIANCE_UPDATE_FINALIZER_PATH,
     APPLIANCE_UPDATE_INFO_PATH,
     APPLIANCE_UPDATE_SETTINGS_KEY,
@@ -126,7 +127,7 @@ from labfoundry.app.services.appliance_update import (
     UPDATE_STREAM_LABELS,
     UPDATE_STREAMS,
     current_version_info,
-    parse_latest_update_result,
+    ensure_appliance_update_job_steps,
     photon_repository_details,
     photon_repository_summary,
     read_appliance_file,
@@ -5834,13 +5835,14 @@ def _job_step_row(step: JobStep) -> dict[str, Any]:
         error_messages.append(str(error))
     status_value = str(step.status or JobStatus.PENDING.value)
     console_stdout, console_stderr = _task_console_streams(result)
+    is_appliance_update = step.job is not None and step.job.type == "appliance-update"
     return {
         "id": step.id,
         "job_id": step.job_id,
         "component_key": step.component_key,
         "label": step.label,
-        "type": "appliance-apply-step",
-        "type_label": "Apply component",
+        "type": "appliance-update-step" if is_appliance_update else "appliance-apply-step",
+        "type_label": "Update stream" if is_appliance_update else "Apply component",
         "status": status_value,
         "status_pill": _task_status_pill(status_value),
         "state": status_value,
@@ -7942,13 +7944,15 @@ def appliance_update_settings(db: Session) -> dict[str, Any]:
     return settings
 
 
-def latest_appliance_update_job(db: Session) -> Job | None:
-    return db.execute(select(Job).where(Job.type == "appliance-update").order_by(desc(Job.created_at))).scalars().first()
-
-
 def appliance_update_context(db: Session) -> dict[str, Any]:
     settings = appliance_update_settings(db)
-    latest_job = latest_appliance_update_job(db)
+    recent_jobs = db.execute(
+        select(Job)
+        .options(selectinload(Job.steps))
+        .where(Job.type == "appliance-update")
+        .order_by(desc(Job.created_at))
+        .limit(8)
+    ).scalars().all()
     sources = source_rows(db)
     packages = managed_package_rows(db)
     source_payloads = [update_source_payload(source) for source in sources]
@@ -7977,8 +7981,9 @@ def appliance_update_context(db: Session) -> dict[str, Any]:
         "current_version_info": current_version_info(),
         "appliance_update_manifest_preview": manifest_preview,
         "appliance_update_staged_config_path": APPLIANCE_UPDATE_STAGED_CONFIG_PATH,
-        "latest_update_job": latest_job,
-        "latest_update_result": parse_latest_update_result(latest_job),
+        "recent_update_tasks": [_task_row(job) for job in recent_jobs],
+        "task_component_filter_options": _task_component_filter_options(db),
+        "appliance_update_info_path": APPLIANCE_UPDATE_INFO_PATH,
         "update_info_file": read_appliance_file(APPLIANCE_UPDATE_INFO_PATH),
         "update_settings_errors": validate_update_settings(settings),
         "system_adapter_dry_run": get_settings().dry_run_system_adapters,
@@ -8186,9 +8191,11 @@ def execute_appliance_update_job(
             parsed_finalizer = {}
         if isinstance(parsed_finalizer, dict) and (not job_id or parsed_finalizer.get("job_id") == job_id):
             release_transaction = parsed_finalizer
+    unit_id = selected_stream_ids[0] if len(selected_stream_ids) == 1 else "appliance_update"
+    label = UPDATE_STREAM_LABELS[unit_id] if unit_id in UPDATE_STREAM_LABELS else "Appliance Update"
     return {
-        "unit_id": "appliance_update",
-        "label": "Appliance Update",
+        "unit_id": unit_id,
+        "label": label,
         "mode": mode,
         "selected_streams": selected_stream_ids,
         "selected_labels": [UPDATE_STREAM_LABELS[stream] for stream in selected_stream_ids],
@@ -8205,15 +8212,82 @@ def execute_appliance_update_job(
     }
 
 
+def aggregate_appliance_update_results(
+    *,
+    selected_stream_ids: list[str],
+    settings: dict[str, str],
+    actor: str,
+    mode: str,
+    stream_results: list[dict[str, Any]],
+    job_id: str = "",
+) -> dict[str, Any]:
+    selected = selected_update_streams(selected_stream_ids)
+    results_by_stream = {
+        str(result.get("unit_id") or ""): result
+        for result in stream_results
+        if str(result.get("unit_id") or "") in UPDATE_STREAM_LABELS
+    }
+    ordered_results = [
+        results_by_stream[stream]
+        for stream in APPLIANCE_UPDATE_EXECUTION_ORDER
+        if stream in selected and stream in results_by_stream
+    ]
+    succeeded = len(ordered_results) == len(selected) and all(
+        bool(result.get("success")) and result.get("status") == JobStatus.SUCCEEDED.value
+        for result in ordered_results
+    )
+    release_transaction = next(
+        (
+            result.get("release_transaction")
+            for result in ordered_results
+            if isinstance(result.get("release_transaction"), dict) and result.get("release_transaction")
+        ),
+        {},
+    )
+    return {
+        "unit_id": "appliance_update",
+        "label": "Appliance Update",
+        "mode": mode,
+        "selected_streams": selected,
+        "selected_labels": [UPDATE_STREAM_LABELS[stream] for stream in selected],
+        "status": JobStatus.SUCCEEDED.value if succeeded else JobStatus.FAILED.value,
+        "success": succeeded,
+        "dry_run": any(bool(result.get("dry_run")) for result in ordered_results),
+        "restart_after_commit": mode == "run"
+        and succeeded
+        and bool({"labfoundry_release", "photon_os"} & set(selected)),
+        "commands": [
+            command
+            for result in ordered_results
+            for command in result.get("commands", [])
+            if isinstance(command, dict)
+        ],
+        "config_path": APPLIANCE_UPDATE_STAGED_CONFIG_PATH,
+        "config_preview": render_update_manifest(
+            selected_streams=selected,
+            settings=settings,
+            actor=actor,
+            job_id=job_id,
+        ),
+        "release_transaction": release_transaction,
+        "stream_results": {stream: results_by_stream[stream] for stream in results_by_stream},
+    }
+
+
 def complete_appliance_update_task(db: Session, *, job: Job, update_result: dict[str, Any]) -> Job:
     now = utcnow()
     if update_result.get("mode") == "source_sync":
-        for source in db.execute(select(UpdateSource).where(UpdateSource.enabled.is_(True))).scalars().all():
+        for source in db.execute(
+            select(UpdateSource).where(
+                UpdateSource.enabled.is_(True),
+                UpdateSource.kind.in_(["photon", "powershell"]),
+            )
+        ).scalars().all():
             source.validation_status = "valid" if update_result["success"] else "invalid"
             source.validation_message = (
                 "Source definition validated in dry-run; host package clients were not changed."
                 if update_result["success"] and update_result.get("dry_run")
-                else "Source synchronized with its appliance package client."
+                else "Repository synchronized with its appliance package client."
                 if update_result["success"]
                 else "Source synchronization failed. Review the task output."
             )
@@ -8278,10 +8352,12 @@ def appliance_update_exception_result(
     exc: Exception,
 ) -> dict[str, Any]:
     manifest_preview = render_update_manifest(selected_streams=selected_stream_ids, settings=settings, actor=actor)
+    unit_id = selected_stream_ids[0] if len(selected_stream_ids) == 1 else "appliance_update"
+    label = UPDATE_STREAM_LABELS[unit_id] if unit_id in UPDATE_STREAM_LABELS else "Appliance Update"
     command = ["stage-appliance-update", APPLIANCE_UPDATE_STAGED_CONFIG_PATH]
     return {
-        "unit_id": "appliance_update",
-        "label": "Appliance Update",
+        "unit_id": unit_id,
+        "label": label,
         "mode": mode,
         "selected_streams": selected_stream_ids,
         "selected_labels": [UPDATE_STREAM_LABELS[stream] for stream in selected_stream_ids],
@@ -9767,9 +9843,10 @@ def submit_appliance_update(
     identity: Identity,
     db: Session,
     mode: str,
-) -> HTMLResponse:
+) -> HTMLResponse | JSONResponse:
     verify_csrf(request, csrf)
     require_admin_identity(identity)
+    wants_json = "application/json" in request.headers.get("accept", "")
     selected = selected_update_streams(selected_streams)
     settings = appliance_update_settings(db)
     errors = validate_update_settings(settings)
@@ -9780,6 +9857,8 @@ def submit_appliance_update(
     if "powershell_modules" in selected and not str(settings.get("powershell_repository_url") or "").strip():
         errors.append("Configure an enabled PowerShell repository before selecting PowerShell Modules.")
     if errors:
+        if wants_json:
+            return JSONResponse({"status": "error", "errors": errors, "detail": " ".join(errors)}, status_code=422)
         return render(
             request,
             "appliance_update.html",
@@ -9798,6 +9877,9 @@ def submit_appliance_update(
         )
     ).scalars().first()
     if active is not None:
+        detail = f"Appliance update task {active.id} is already pending or running."
+        if wants_json:
+            return JSONResponse({"status": "active", "job_id": active.id, "detail": detail}, status_code=409)
         return render(
             request,
             "appliance_update.html",
@@ -9805,7 +9887,7 @@ def submit_appliance_update(
                 "identity": identity,
                 **appliance_update_context(db),
                 "selected_update_stream_ids": selected,
-                "update_error": f"Appliance update task {active.id} is already pending or running.",
+                "update_error": detail,
             },
             status_code=409,
         )
@@ -9832,6 +9914,8 @@ def submit_appliance_update(
         result=json.dumps(update_result, indent=2),
     )
     db.add(job)
+    db.flush()
+    ensure_appliance_update_job_steps(db, job=job, selected_streams=selected)
     db.commit()
     record_audit(
         db,
@@ -9841,6 +9925,16 @@ def submit_appliance_update(
         resource_id=job.id,
         detail=f"streams={','.join(selected)}",
     )
+    if wants_json:
+        return JSONResponse(
+            {
+                "status": JobStatus.PENDING.value,
+                "job_id": job.id,
+                "mode": mode,
+                "selected_streams": selected,
+            },
+            status_code=202,
+        )
     return render(
         request,
         "appliance_update.html",
@@ -9862,7 +9956,7 @@ def check_appliance_update(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> HTMLResponse:
+) -> HTMLResponse | JSONResponse:
     return submit_appliance_update(
         request=request,
         selected_streams=selected_streams,
@@ -9880,7 +9974,7 @@ def run_appliance_update(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> HTMLResponse:
+) -> HTMLResponse | JSONResponse:
     return submit_appliance_update(
         request=request,
         selected_streams=selected_streams,
@@ -18291,22 +18385,29 @@ def tasks_page(
 @router.get("/tasks/status", response_class=JSONResponse, response_model=None)
 def tasks_status(
     job_id: str = Query(""),
+    task_type: str = Query(""),
     filters: str = Query("[]"),
     page: int = Query(1, ge=1),
     size: int = Query(25, ge=1, le=100),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    normalized_task_type = task_type.strip()
+    if len(normalized_task_type) > 100:
+        raise HTTPException(status_code=400, detail="Task type filter is too long.")
+    scope_clauses = [Job.type == normalized_task_type] if normalized_task_type else []
     clauses = _task_filter_clauses(filters)
-    total_count = int(db.scalar(select(func.count(Job.id))) or 0)
-    filtered_count = int(db.scalar(select(func.count(Job.id)).where(*clauses)) or 0)
-    active_count = int(db.scalar(select(func.count(Job.id)).where(Job.status.in_(ACTIVE_JOB_STATUSES))) or 0)
+    total_count = int(db.scalar(select(func.count(Job.id)).where(*scope_clauses)) or 0)
+    filtered_count = int(db.scalar(select(func.count(Job.id)).where(*scope_clauses, *clauses)) or 0)
+    active_count = int(
+        db.scalar(select(func.count(Job.id)).where(*scope_clauses, Job.status.in_(ACTIVE_JOB_STATUSES))) or 0
+    )
     last_page = max(1, (filtered_count + size - 1) // size)
     effective_page = min(page, last_page)
     jobs = db.execute(
         select(Job)
         .options(selectinload(Job.steps))
-        .where(*clauses)
+        .where(*scope_clauses, *clauses)
         .order_by(desc(Job.created_at))
         .offset((effective_page - 1) * size)
         .limit(size)

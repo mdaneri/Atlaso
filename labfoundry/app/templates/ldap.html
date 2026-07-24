@@ -97,7 +97,7 @@
         </div>
         <div class="tab-buttons zone-tabs" role="tablist" aria-label="LDAP organizations" data-ldap-organization-tabs>
           {% for organization in ldap_organizations %}
-            <a class="tab-button {{ 'active' if ldap_selected_organization and organization.id == ldap_selected_organization.id else '' }}" role="tab" aria-selected="{{ 'true' if ldap_selected_organization and organization.id == ldap_selected_organization.id else 'false' }}" href="/ldap?organization_id={{ organization.id }}#ldap-directory-panel" data-ldap-organization-id="{{ organization.id }}">{{ organization.name }}</a>
+            <a class="tab-button {{ 'active' if ldap_selected_organization and organization.id == ldap_selected_organization.id else '' }}" role="tab" {% if ldap_selected_organization and organization.id == ldap_selected_organization.id %}aria-selected="true"{% else %}aria-selected="false"{% endif %} href="/ldap?organization_id={{ organization.id }}#ldap-directory-panel" data-ldap-organization-id="{{ organization.id }}">{{ organization.name }}</a>
           {% endfor %}
           <button class="tab-button" type="button" role="tab" data-tab-target="ldap-organization-new" aria-controls="ldap-organization-new" aria-selected="false">+ Organization</button>
         </div>
