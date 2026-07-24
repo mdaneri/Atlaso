@@ -171,20 +171,48 @@ def _clear_oidc_cookie(response: Response) -> None:
     )
 
 
-def _login_throttled(session_id: str, username: str) -> bool:
+def _login_bucket_key(
+    *, client_id: str, source: str, organization_id: int | None, username: str
+) -> str:
+    return f"{client_id}:{source}:{organization_id or 0}:{username.strip().casefold()}"
+
+
+def _login_throttled(
+    *, client_id: str, source: str, organization_id: int | None, username: str
+) -> bool:
     now = monotonic()
-    key = f"{session_id}:{username.strip().casefold()}"
+    key = _login_bucket_key(
+        client_id=client_id,
+        source=source,
+        organization_id=organization_id,
+        username=username,
+    )
     attempts = _OIDC_LOGIN_BUCKETS.setdefault(key, deque())
     while attempts and attempts[0] <= now - OIDC_LOGIN_WINDOW_SECONDS:
         attempts.popleft()
     if len(attempts) >= OIDC_LOGIN_ATTEMPTS:
         _OIDC_LOGIN_BUCKETS.move_to_end(key)
         return True
+    return False
+
+
+def _record_login_failure(
+    *, client_id: str, source: str, organization_id: int | None, username: str
+) -> None:
+    now = monotonic()
+    key = _login_bucket_key(
+        client_id=client_id,
+        source=source,
+        organization_id=organization_id,
+        username=username,
+    )
+    attempts = _OIDC_LOGIN_BUCKETS.setdefault(key, deque())
+    while attempts and attempts[0] <= now - OIDC_LOGIN_WINDOW_SECONDS:
+        attempts.popleft()
     attempts.append(now)
     _OIDC_LOGIN_BUCKETS.move_to_end(key)
     while len(_OIDC_LOGIN_BUCKETS) > OIDC_LOGIN_BUCKET_LIMIT:
         _OIDC_LOGIN_BUCKETS.popitem(last=False)
-    return False
 
 
 def _session_identity(db: Session, session: dict[str, object]):
@@ -353,7 +381,12 @@ async def authorize_post(request: Request, db: Session = Depends(get_db)) -> Res
         return _oidc_error(transaction.redirect_uri, "invalid_request", transaction.state)
     source = "managed_ldap" if client.organization_id is not None else "local"
     username = str(form.get("username", ""))
-    if _login_throttled(str(session["sid"]), username):
+    if _login_throttled(
+        client_id=client.client_id,
+        source=source,
+        organization_id=client.organization_id,
+        username=username,
+    ):
         return _authorize_login_page(
             transaction,
             session,
@@ -368,6 +401,12 @@ async def authorize_post(request: Request, db: Session = Depends(get_db)) -> Res
         password=str(form.get("password", "")),
     )
     if identity is None:
+        _record_login_failure(
+            client_id=client.client_id,
+            source=source,
+            organization_id=client.organization_id,
+            username=username,
+        )
         return _authorize_login_page(
             transaction, session, error="Invalid username or password.", status_code=401
         )
@@ -499,7 +538,6 @@ async def _logout_response(request: Request, db: Session) -> Response:
         params.update({key: str(value) for key, value in (await request.form()).items()})
     uri = params.get("post_logout_redirect_uri", "")
     state_value = params.get("state", "")
-    request.session.clear()
     response: Response
     hint = params.get("id_token_hint", "")
     claims: dict[str, object] | None = None

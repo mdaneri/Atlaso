@@ -14,7 +14,7 @@ from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatc
 from authlib import __version__ as AUTHLIB_VERSION
 from joserfc import jwt
 from joserfc.jwk import RSAKey
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from labfoundry.app.models import (
@@ -634,12 +634,21 @@ def begin_authorization(
     ):
         raise OidcConfigurationError("Invalid authorization request.")
     provider = ensure_provider_settings(db)
+    now = utcnow()
+    db.execute(
+        delete(OidcAuthorizationTransaction).where(
+            OidcAuthorizationTransaction.expires_at <= now
+        )
+    )
+    db.execute(
+        delete(OidcAuthorizationCode).where(OidcAuthorizationCode.expires_at <= now)
+    )
     row = OidcAuthorizationTransaction(
         transaction_id=_new_opaque_value(), oidc_client_id=client.id, redirect_uri=redirect_uri,
         scopes=" ".join(dict.fromkeys(requested)), state=state, nonce=nonce,
         code_challenge=code_challenge, browser_session_id=browser_session_id, prompt=prompt,
         max_age=max_age, login_hint=login_hint[:240],
-        expires_at=utcnow() + timedelta(seconds=provider.authorization_code_lifetime_seconds),
+        expires_at=now + timedelta(seconds=provider.authorization_code_lifetime_seconds),
     )
     db.add(row); db.flush()
     return row

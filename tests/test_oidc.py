@@ -798,6 +798,19 @@ def test_userinfo_rejects_algorithm_and_kid_confusion(client):
 def test_logout_requires_valid_hint_and_exact_registered_redirect(client):
     from labfoundry.app.oidc import OIDC_SESSION_COOKIE
 
+    operator_login = client.get("/login")
+    operator_csrf = operator_login.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    signed_in = client.post(
+        "/login",
+        data={
+            "username": "admin",
+            "password": "labfoundry-admin",
+            "csrf": operator_csrf,
+        },
+        follow_redirects=False,
+    )
+    assert signed_in.status_code == 303
+
     client_id, secret = _configure_protocol_client()
     verifier = "t" * 64
     transaction, csrf, _cookie = _start_login(
@@ -819,6 +832,7 @@ def test_logout_requires_valid_hint_and_exact_registered_redirect(client):
     )
     assert invalid.status_code == 400
     assert OIDC_SESSION_COOKIE not in client.cookies
+    assert client.get("/dashboard").status_code == 200
 
     valid = client.get(
         "https://testserver/identity/logout",
@@ -831,6 +845,7 @@ def test_logout_requires_valid_hint_and_exact_registered_redirect(client):
     )
     assert valid.status_code == 303
     assert valid.headers["location"] == "https://rp.example.test/logout?state=logout-state"
+    assert client.get("/dashboard").status_code == 200
 
 
 def test_fixed_organization_managed_ldap_flow_never_creates_operator_session(client, monkeypatch):
@@ -961,3 +976,77 @@ def test_oidc_login_throttle_is_bounded_and_never_persists_password(client):
         ):
             values = db.execute(text(f"SELECT * FROM {table}")).all()
             assert password not in repr(values)
+
+
+def test_oidc_login_throttle_survives_browser_session_renewal(client):
+    from labfoundry.app.oidc import OIDC_SESSION_COOKIE
+
+    client_id, _secret = _configure_protocol_client()
+    params = _authorization_parameters(client_id, "q" * 64)
+    transaction, csrf, _cookie = _start_login(client, params)
+    for _attempt in range(5):
+        response = client.post(
+            "https://testserver/identity/authorize",
+            data={
+                "transaction": transaction,
+                "csrf": csrf,
+                "username": "renewal-test-user",
+                "password": "Invalid-Password!",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 401
+
+    client.cookies.delete(OIDC_SESSION_COOKIE)
+    renewed_transaction, renewed_csrf, renewed_cookie = _start_login(client, params)
+    assert renewed_cookie != _cookie
+    limited = client.post(
+        "https://testserver/identity/authorize",
+        data={
+            "transaction": renewed_transaction,
+            "csrf": renewed_csrf,
+            "username": "renewal-test-user",
+            "password": "Invalid-Password!",
+        },
+        follow_redirects=False,
+    )
+    assert limited.status_code == 429
+
+
+def test_begin_authorization_purges_expired_transactions_and_codes(client):
+    from labfoundry.app.database import SessionLocal
+    from labfoundry.app.models import OidcAuthorizationCode, OidcAuthorizationTransaction, utcnow
+
+    client_id, _secret = _configure_protocol_client()
+    params = _authorization_parameters(client_id, "r" * 64)
+    expired_transaction, _csrf, _cookie = _start_login(client, params)
+    with SessionLocal() as db:
+        row = db.execute(
+            select(OidcAuthorizationTransaction).where(
+                OidcAuthorizationTransaction.transaction_id == expired_transaction
+            )
+        ).scalar_one()
+        row.expires_at = utcnow() - timedelta(seconds=1)
+        db.commit()
+
+    live_transaction, live_csrf, _cookie = _start_login(client, params)
+    with SessionLocal() as db:
+        transaction_ids = set(
+            db.execute(select(OidcAuthorizationTransaction.transaction_id)).scalars()
+        )
+        assert transaction_ids == {live_transaction}
+
+    login = _finish_local_login(client, live_transaction, live_csrf)
+    assert login.status_code == 303
+    with SessionLocal() as db:
+        code = db.execute(select(OidcAuthorizationCode)).scalar_one()
+        code.expires_at = utcnow() - timedelta(seconds=1)
+        db.commit()
+
+    newest_transaction, _csrf, _cookie = _start_login(client, params)
+    with SessionLocal() as db:
+        assert db.execute(select(OidcAuthorizationCode)).scalar_one_or_none() is None
+        assert (
+            db.execute(select(OidcAuthorizationTransaction.transaction_id)).scalar_one()
+            == newest_transaction
+        )
