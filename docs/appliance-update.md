@@ -256,11 +256,14 @@ The protected workflows use these checked-in inputs:
 requirements-appliance.lock
 requirements-appliance-bootstrap.in
 requirements-appliance-bootstrap.lock
+requirements-release-tools.in
 requirements-release-tools.lock
 image/common/update-trust/
 ```
 
-The CI declaration fingerprint prevents dependency or Python-range changes
+These dependency inputs and hash locks are committed public release inputs:
+they contain package metadata and integrity hashes, never credentials or private
+package-index configuration. The CI declaration fingerprint prevents dependency or Python-range changes
 without a regenerated hash lock. Release CI installs only the hash-locked
 bootstrap tools, verifies every downloaded wheel or source archive against the
 checked-in lock, builds any missing pure wheel without build isolation, and
