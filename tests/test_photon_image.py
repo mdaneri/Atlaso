@@ -690,13 +690,18 @@ def test_vmware_deploy_wheel_supports_password_backed_noninteractive_deploy():
     assert "openssl pkey -pubin" in script
     assert "LabFoundry release trust key is not Ed25519" in script
     assert "--local-runtime-dependency" in script
+    assert "'authlib-*.whl'" in script
     assert "'joserfc-*.whl'" in script
-    assert '"$python" -m pip install --force-reinstall --no-deps "$runtime_dependency_path" "$wheel"' in script
+    assert "Matched local and remote runtime dependency wheels are required." in script
+    assert '"$python" -m pip install --force-reinstall --no-deps "$runtime_dependency_path"' in script
+    assert '"$python" -m pip install --force-reinstall --no-deps "$wheel"' in script
     assert "systemctl enable labfoundry-worker.service" in script
     assert "systemctl restart labfoundry-worker.service" in script
     assert "systemctl is-active labfoundry-worker.service" in script
     assert "LABFOUNDRY_DEPLOY_SSH_PASSWORD" in script
     assert "client.set_missing_host_key_policy(paramiko.AutoAddPolicy())" in script
+    assert "allow_agent=False" in script
+    assert "look_for_keys=False" in script
     assert "sudo -S -p '' sh" in script
     assert "sanitized(stdout_text, password)" in script
     assert "if (-not $SshPassword) {" in script
