@@ -80,16 +80,24 @@ def test_appliance_update_page_and_dry_run_job(client):
     csrf = csrf_from_page(page.text)
     response = client.post(
         "/appliance-update/run",
+        headers={"Accept": "application/json"},
         data={
             "csrf": csrf,
             "selected_streams": ["photon_os", "labfoundry_release"],
         },
     )
-    assert response.status_code == 200
-    assert "Appliance update pending" in response.text
-    assert "recorded as dry-run" in response.text
-    assert 'class="appliance-update-task-card info"' in response.text
-    assert ">Open task</a>" in response.text
+    assert response.status_code == 202
+    submitted = response.json()
+    assert submitted["status"] == "pending"
+    assert submitted["mode"] == "run"
+    assert submitted["selected_streams"] == ["photon_os", "labfoundry_release"]
+    duplicate = client.post(
+        "/appliance-update/check",
+        headers={"Accept": "application/json"},
+        data={"csrf": csrf, "selected_streams": ["photon_os"]},
+    )
+    assert duplicate.status_code == 409
+    assert duplicate.json()["job_id"] == submitted["job_id"]
 
     from labfoundry.app.models import Job, JobStep
     from labfoundry.app.worker import run_worker_once
@@ -102,11 +110,15 @@ def test_appliance_update_page_and_dry_run_job(client):
         steps = db.execute(
             select(JobStep).where(JobStep.job_id == job.id).order_by(JobStep.position)
         ).scalars().all()
+    assert submitted["job_id"] == job.id
     assert payload["mode"] == "run"
-    assert f'href="/tasks?job_id={job.id}"' in response.text
-    assert 'class="appliance-update-history task-grid-section"' in response.text
-    assert "Install updates" in response.text
-    assert "Open full task history" in response.text
+    refreshed_page = client.get("/appliance-update")
+    assert refreshed_page.status_code == 200
+    assert job.id in refreshed_page.text
+    assert 'class="appliance-update-history task-grid-section"' in refreshed_page.text
+    assert "Install updates" in refreshed_page.text
+    assert "Open full task history" in refreshed_page.text
+    assert "appliance-update-task-card" not in refreshed_page.text
     assert payload["dry_run"] is True
     assert [(step.component_key, step.status) for step in steps] == [
         ("labfoundry_release", "succeeded"),
@@ -187,7 +199,8 @@ def test_appliance_update_real_helper_failure_is_logged(client, monkeypatch, cap
         assert run_worker_once()
 
     assert response.status_code == 200
-    assert "Appliance update pending" in response.text
+    assert "Recent update tasks" in response.text
+    assert "appliance-update-task-card" not in response.text
     assert "manifest refused connection" in caplog.text
     assert "completed status=failed mode=check streams=photon_os" in caplog.text
 
@@ -218,7 +231,8 @@ def test_appliance_update_staging_exception_records_failed_job_and_logs(client, 
         assert run_worker_once()
 
     assert response.status_code == 200
-    assert "Appliance update pending" in response.text
+    assert "Recent update tasks" in response.text
+    assert "appliance-update-task-card" not in response.text
     assert "failed before helper completion" in caplog.text
     assert "staging ownership repair failed" in caplog.text
 
@@ -489,7 +503,8 @@ def test_source_sync_is_queued_and_records_validation_status(client):
     csrf = csrf_from_page(page.text)
     response = client.post("/appliance-update/source-sync", data={"csrf": csrf})
     assert response.status_code == 200
-    assert "Appliance update pending" in response.text
+    assert "Recent update tasks" in response.text
+    assert "appliance-update-task-card" not in response.text
     assert run_worker_once() is not None
     with SessionLocal() as db:
         job = db.execute(select(Job).where(Job.type == "appliance-update")).scalar_one()
@@ -575,7 +590,8 @@ def test_software_source_and_managed_module_lifecycle(client):
     assert "Module behavior" in grouped_page.text
     assert 'class="source-option-grid managed-package-option-grid"' in grouped_page.text
     assert 'class="apply-unit-card source-editor-form managed-package-editor"' in grouped_page.text
-    assert "appliance-update-task-card" in app_css
+    assert "appliance-update-task-card" not in app_css
+    assert ".appliance-update-history .tabulator-row.task-grid-new-task" in app_css
     assert ".source-editor-grid {\n  display: grid;" in app_css
     assert ".source-option-grid {\n  display: grid;" in app_css
     assert ".source-editor-footer {\n  display: flex;" in app_css

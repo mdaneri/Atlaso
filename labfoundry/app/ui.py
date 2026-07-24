@@ -9843,9 +9843,10 @@ def submit_appliance_update(
     identity: Identity,
     db: Session,
     mode: str,
-) -> HTMLResponse:
+) -> HTMLResponse | JSONResponse:
     verify_csrf(request, csrf)
     require_admin_identity(identity)
+    wants_json = "application/json" in request.headers.get("accept", "")
     selected = selected_update_streams(selected_streams)
     settings = appliance_update_settings(db)
     errors = validate_update_settings(settings)
@@ -9856,6 +9857,8 @@ def submit_appliance_update(
     if "powershell_modules" in selected and not str(settings.get("powershell_repository_url") or "").strip():
         errors.append("Configure an enabled PowerShell repository before selecting PowerShell Modules.")
     if errors:
+        if wants_json:
+            return JSONResponse({"status": "error", "errors": errors, "detail": " ".join(errors)}, status_code=422)
         return render(
             request,
             "appliance_update.html",
@@ -9874,6 +9877,9 @@ def submit_appliance_update(
         )
     ).scalars().first()
     if active is not None:
+        detail = f"Appliance update task {active.id} is already pending or running."
+        if wants_json:
+            return JSONResponse({"status": "active", "job_id": active.id, "detail": detail}, status_code=409)
         return render(
             request,
             "appliance_update.html",
@@ -9881,7 +9887,7 @@ def submit_appliance_update(
                 "identity": identity,
                 **appliance_update_context(db),
                 "selected_update_stream_ids": selected,
-                "update_error": f"Appliance update task {active.id} is already pending or running.",
+                "update_error": detail,
             },
             status_code=409,
         )
@@ -9919,6 +9925,16 @@ def submit_appliance_update(
         resource_id=job.id,
         detail=f"streams={','.join(selected)}",
     )
+    if wants_json:
+        return JSONResponse(
+            {
+                "status": JobStatus.PENDING.value,
+                "job_id": job.id,
+                "mode": mode,
+                "selected_streams": selected,
+            },
+            status_code=202,
+        )
     return render(
         request,
         "appliance_update.html",
@@ -9940,7 +9956,7 @@ def check_appliance_update(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> HTMLResponse:
+) -> HTMLResponse | JSONResponse:
     return submit_appliance_update(
         request=request,
         selected_streams=selected_streams,
@@ -9958,7 +9974,7 @@ def run_appliance_update(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> HTMLResponse:
+) -> HTMLResponse | JSONResponse:
     return submit_appliance_update(
         request=request,
         selected_streams=selected_streams,

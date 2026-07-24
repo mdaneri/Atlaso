@@ -160,7 +160,7 @@
     {% if update_error %}
       <div class="alert error">{{ update_error }}</div>
     {% endif %}
-    <form class="form-stack" method="post">
+    <form class="form-stack" method="post" data-appliance-update-submit-form>
       <input type="hidden" name="csrf" value="{{ csrf_token }}">
       <div class="panel-head compact">
         <div>
@@ -169,11 +169,11 @@
           <p class="muted appliance-update-schedule-guidance">For recurring maintenance, <a class="text-link" href="/automation">schedule update checks or installations in Automation</a>.</p>
         </div>
         <div class="apply-change-set-actions">
-          <button class="button secondary appliance-update-action" type="submit" formaction="/appliance-update/check" title="Check the selected streams without installing changes">
+          <button class="button secondary appliance-update-action" type="submit" formaction="/appliance-update/check" title="Check the selected streams without installing changes" data-appliance-update-action>
             <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
             <span>Check for updates</span>
           </button>
-          <button class="button primary appliance-update-action" type="submit" formaction="/appliance-update/run" title="Install updates from the selected streams">
+          <button class="button primary appliance-update-action" type="submit" formaction="/appliance-update/run" title="Install updates from the selected streams" data-appliance-update-action>
             <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
             <span>Install updates</span>
           </button>
@@ -203,47 +203,6 @@
         {% endfor %}
       </div>
     </form>
-
-    {% if appliance_update_task %}
-      <div class="appliance-update-task-card {{ 'success' if appliance_update_task.status == 'succeeded' else ('error' if appliance_update_task.status == 'failed' else 'info') }}">
-        <div class="appliance-update-task-head">
-          <div>
-            <strong>{{ "Repository synchronization" if appliance_update_task_result.mode == "source_sync" else "Appliance update" }} {{ appliance_update_task.status }}</strong>
-            <p>
-              {% if appliance_update_task_result.selected_labels %}
-                {{ appliance_update_task_result.selected_labels|join(", ") }}
-              {% elif appliance_update_task_result.mode == "source_sync" %}
-                Photon and PowerShell repository configuration
-              {% else %}
-                The selected maintenance work has been queued.
-              {% endif %}
-              {% if appliance_update_task_result.dry_run %} · recorded as dry-run{% endif %}
-            </p>
-          </div>
-          <span class="status-pill {{ 'good' if appliance_update_task.status == 'succeeded' else ('error' if appliance_update_task.status == 'failed' else 'warn') }}">{{ appliance_update_task.status }}</span>
-        </div>
-        <div class="appliance-update-task-footer">
-          <span>Task <a class="text-link task-id-link" href="/tasks?job_id={{ appliance_update_task.id }}">{{ appliance_update_task.id }}</a></span>
-          <a class="button secondary compact" href="/tasks?job_id={{ appliance_update_task.id }}">Open task</a>
-        </div>
-      </div>
-      {% if appliance_update_failures %}
-        <div class="apply-failure-list">
-          {% for failure in appliance_update_failures %}
-            <div class="apply-failure-item">
-              <strong>{{ failure.label }} failed</strong>
-              {% for command in failure.commands %}
-                <details class="apply-failure-command">
-                  <summary>{{ command.command_line }} exited {{ command.returncode }}</summary>
-                  {% if command.stderr %}<code>{{ command.stderr }}</code>{% endif %}
-                  {% if command.stdout %}<code>{{ command.stdout }}</code>{% endif %}
-                </details>
-              {% endfor %}
-            </div>
-          {% endfor %}
-        </div>
-      {% endif %}
-    {% endif %}
 
     {% set task_grid_class = "appliance-update-history task-grid-section" %}
     {% set task_grid_title = "Recent update tasks" %}

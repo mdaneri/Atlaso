@@ -95,18 +95,18 @@ repository deletion isolated as the destructive action.
 
 Managed PowerShell module editors follow the same hierarchy: module identity
 and version policy first, then a grouped **Module behavior** switch and a
-separated autosave/delete footer. After an update or repository synchronization
-is submitted, the result card links both the task identifier and **Open task**
-action to the durable task record. The Update Streams workspace also keeps a
-the shared Tasks grid, scoped to Appliance Update tasks and prefiltered to the
-Appliance Update component. It preserves the standard
+separated autosave/delete footer. The Update Streams workspace keeps the shared
+Tasks grid, server-scoped to Appliance Update tasks. It preserves the standard
 sorting, filtering, component tree, progress, row menu, and detail behavior.
 Because the embedded endpoint is already scoped to Appliance Update, the
 Task / Component column is fixed there; the full Tasks page retains its
 editable component filter.
 The grid expands through the remaining Update Streams workspace height rather
 than using a compact fixed-height embed.
-This table replaces the former single Last Update rail card.
+This table replaces the former Last Update rail and submission-result cards.
+Checks and installations submit asynchronously: only grid data refreshes, the
+new task is highlighted, and both action buttons remain disabled until that
+task succeeds, fails, or is cancelled.
 The stream actions use explicit **Check for updates** and **Install updates**
 labels, with distinct search and install cues and visible copy that identifies
 the check as read-only.
