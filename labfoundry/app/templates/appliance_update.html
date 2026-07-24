@@ -3,13 +3,12 @@
 {% block content %}
 <section class="split-workspace">
   <div class="panel wide-panel" id="appliance-update-workspace">
-    {% set streams_tab_active = true %}
     <div class="tab-buttons zone-tabs" role="tablist" aria-label="Appliance update workspace" data-tab-storage-key="labfoundry:appliance-update:workspace-tab">
-      <button class="tab-button {{ 'active' if streams_tab_active else '' }}" type="button" role="tab" data-tab-target="appliance-update-streams" aria-controls="appliance-update-streams" aria-selected="{{ 'true' if streams_tab_active else 'false' }}">Update Streams</button>
-      <button class="tab-button {{ '' if streams_tab_active else 'active' }}" type="button" role="tab" data-tab-target="appliance-update-sources" aria-controls="appliance-update-sources" aria-selected="{{ 'false' if streams_tab_active else 'true' }}">Update Sources</button>
+      <button class="tab-button active" type="button" role="tab" data-tab-target="appliance-update-streams" aria-controls="appliance-update-streams" aria-selected="true">Update Streams</button>
+      <button class="tab-button" type="button" role="tab" data-tab-target="appliance-update-sources" aria-controls="appliance-update-sources" aria-selected="false">Update Sources</button>
     </div>
     <div class="tab-panels">
-      <div id="appliance-update-sources" class="tab-panel {{ '' if streams_tab_active else 'active' }}" role="tabpanel" {{ 'hidden' if streams_tab_active else '' }}>
+      <div id="appliance-update-sources" class="tab-panel" role="tabpanel" hidden>
     <div class="panel-head">
       <div>
         <h2>Update Sources</h2>
@@ -30,28 +29,50 @@
           <summary><span><strong>{{ group.kind|upper }}</strong> · repositories</span><span class="status-pill muted">{{ group.sources|length }} configured</span></summary>
           <div class="managed-package-content">
             <div class="tab-buttons zone-tabs" role="tablist" aria-label="{{ group.kind }} repositories" data-tab-storage-key="labfoundry:appliance-update:{{ group.kind }}-repository-tab">
-              {% for source in group.sources %}<button class="tab-button {{ 'active' if loop.first else '' }}" type="button" role="tab" data-tab-target="update-source-{{ source.id }}" aria-controls="update-source-{{ source.id }}" aria-selected="{{ 'true' if loop.first else 'false' }}">{{ source.name }}</button>{% endfor %}
-              <button class="tab-button {{ 'active' if not group.sources else '' }}" type="button" role="tab" data-tab-target="update-source-{{ group.kind }}-new" aria-controls="update-source-{{ group.kind }}-new" aria-selected="{{ 'true' if not group.sources else 'false' }}" {% if group.kind == 'powershell' %}data-powershell-source-new-tab{% endif %}>+ Repository</button>
+              {% for source in group.sources %}<button class="tab-button {{ 'active' if loop.first else '' }}" type="button" role="tab" data-tab-target="update-source-{{ source.id }}" aria-controls="update-source-{{ source.id }}" {% if loop.first %}aria-selected="true"{% else %}aria-selected="false"{% endif %}>{{ source.name }}</button>{% endfor %}
+              <button class="tab-button {{ 'active' if not group.sources else '' }}" type="button" role="tab" data-tab-target="update-source-{{ group.kind }}-new" aria-controls="update-source-{{ group.kind }}-new" {% if not group.sources %}aria-selected="true"{% else %}aria-selected="false"{% endif %} {% if group.kind == 'powershell' %}data-powershell-source-new-tab{% endif %}>+ Repository</button>
             </div>
             <div class="tab-panels">
               {% for source in group.sources %}
                 <div id="update-source-{{ source.id }}" class="tab-panel {{ 'active' if loop.first else '' }}" role="tabpanel" {{ 'hidden' if not loop.first else '' }}>
-                  <form class="form-grid aligned-control-grid" action="/appliance-update/sources/{{ source.id }}" method="post" data-autosave-form data-autosave-status-id="update-source-status-{{ source.id }}">
+                  <form class="source-editor-form" action="/appliance-update/sources/{{ source.id }}" method="post" data-autosave-form data-autosave-status-id="update-source-status-{{ source.id }}">
                     <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="enabled_present" value="1">
-                    <label><span class="field-label"><span>Source name</span><button class="help-icon" type="button" data-help="Names this repository in LabFoundry and in update task results. PowerShell uses this as its registered repository name.">i</button></span><input name="name" value="{{ source.name }}" autocomplete="off" required></label>
-                    {% if source.kind == 'photon' and not source.settings.managed %}
-                      <label><span class="field-label"><span>Enabled tdnf repositories</span><button class="help-icon" type="button" data-help="Read directly from enabled definitions under /etc/yum.repos.d. Each line shows repository id, name, and baseurl, mirrorlist, or metalink. LabFoundry does not rewrite these inherited definitions.">i</button></span><textarea rows="{{ photon_repository_rows }}" disabled aria-disabled="true" data-runtime-photon-repositories>{{ photon_repository_summary }}</textarea><input type="hidden" name="url" value=""></label>
-                    {% else %}
-                      <label><span class="field-label"><span>{{ 'Signed release base URL' if source.kind == 'labfoundry' else 'Source URL' }}</span><button class="help-icon" type="button" data-help="{{ 'HTTPS location containing signed LabFoundry channel pointers. The appliance verifies the channel and immutable release manifests with its pinned Ed25519 trust key before downloading a bundle.' if source.kind == 'labfoundry' else 'HTTP(S) repository location used by this package ecosystem.' }}">i</button></span><input name="url" value="{{ source.url }}" autocomplete="off"></label>
-                    {% endif %}
-                    <label><span class="field-label"><span>Priority</span><button class="help-icon" type="button" data-help="Lower values are considered first among repositories in this ecosystem.">i</button></span><input type="number" name="priority" min="0" max="100" value="{{ source.priority }}"></label>
-                    {% if source.kind == 'labfoundry' %}<label><span class="field-label"><span>Release channel</span><button class="help-icon" type="button" data-help="Selects the signed channel pointer below this base URL. Stable and preview move only through explicit GitHub promotion; development follows each successful main release.">i</button></span><select name="channel">{% for channel in labfoundry_channels %}<option value="{{ channel }}" {{ 'selected' if source.settings.channel|default('stable') == channel else '' }}>{{ channel }}</option>{% endfor %}</select></label>{% endif %}
-                    {% if source.kind == 'powershell' %}<label class="switch-field"><span class="field-label"><span>Trusted repository</span><button class="help-icon" type="button" data-help="Registers this repository as Trusted for non-interactive module installation. Enable only for a controlled source.">i</button></span><input class="switch-input" type="checkbox" name="trusted" {{ 'checked' if source.settings.trusted else '' }}><span class="switch-track" aria-hidden="true"></span></label>{% endif %}
-                    {% if source.kind == 'photon' %}<label class="switch-field"><span class="field-label"><span>LabFoundry-managed repository</span><button class="help-icon" type="button" data-help="Writes this repository into LabFoundry's owned Photon repo file.">i</button></span><input class="switch-input" type="checkbox" name="managed" {{ 'checked' if source.settings.managed else '' }}><span class="switch-track" aria-hidden="true"></span></label><label class="switch-field"><span class="field-label"><span>Verify RPM signatures</span><button class="help-icon" type="button" data-help="Requires RPM signature validation for this managed Photon repository.">i</button></span><input class="switch-input" type="checkbox" name="gpgcheck" {{ 'checked' if source.settings.gpgcheck|default(true) else '' }}><span class="switch-track" aria-hidden="true"></span></label><label><span class="field-label"><span>GPG key URL</span><button class="help-icon" type="button" data-help="Key reference written into the managed Photon repository definition.">i</button></span><input name="gpgkey" value="{{ source.settings.gpgkey|default('') }}" autocomplete="off"></label>{% endif %}
-                    {% if source.kind == 'photon' %}<label class="switch-field"><span class="field-label"><span>Verify TLS</span><button class="help-icon" type="button" data-help="Requires certificate validation when connecting to this source.">i</button></span><input class="switch-input" type="checkbox" name="tls_verify" {{ 'checked' if source.settings.tls_verify|default(true) else '' }}><span class="switch-track" aria-hidden="true"></span></label>{% endif %}
-                    <label class="switch-field"><span class="field-label"><span>Source enabled</span><button class="help-icon" type="button" data-help="Includes this repository in source synchronization and update work.">i</button></span><input class="switch-input" type="checkbox" name="enabled" {{ 'checked' if source.enabled else '' }}><span class="switch-track" aria-hidden="true"></span></label>
-                    <p id="update-source-status-{{ source.id }}" class="autosave-status full" data-state="idle">Changes save automatically.</p>
-                    <div class="form-actions full"><span class="status-pill {{ 'good' if source.validation_status == 'valid' else 'muted' }}">{{ source.validation_status|replace('_', ' ') }}</span><button class="button danger compact" type="submit" form="delete-update-source-{{ source.id }}">Delete repository</button></div>
+                    <div class="source-editor-grid source-editor-identity">
+                      <label><span class="field-label"><span>Source name</span><button class="help-icon" type="button" data-help="Names this repository in LabFoundry and in update task results. PowerShell uses this as its registered repository name.">i</button></span><input name="name" value="{{ source.name }}" autocomplete="off" required></label>
+                      <label><span class="field-label"><span>Priority</span><button class="help-icon" type="button" data-help="Lower values are considered first among repositories in this ecosystem.">i</button></span><input type="number" name="priority" min="0" max="100" value="{{ source.priority }}"></label>
+                    </div>
+                    <div class="source-editor-grid source-editor-location">
+                      {% if source.kind == 'photon' and not source.settings.managed %}
+                        <label class="source-editor-full"><span class="field-label"><span>Enabled tdnf repositories</span><button class="help-icon" type="button" data-help="Read directly from enabled definitions under /etc/yum.repos.d. Each line shows repository id, name, and baseurl, mirrorlist, or metalink. LabFoundry does not rewrite these inherited definitions.">i</button></span><textarea rows="{{ photon_repository_rows }}" disabled aria-disabled="true" data-runtime-photon-repositories>{{ photon_repository_summary }}</textarea><input type="hidden" name="url" value=""></label>
+                      {% else %}
+                        <label class="{{ '' if source.kind == 'labfoundry' else 'source-editor-full' }}"><span class="field-label"><span>{{ 'Signed release base URL' if source.kind == 'labfoundry' else 'Source URL' }}</span><button class="help-icon" type="button" data-help="{{ 'HTTPS location containing signed LabFoundry channel pointers. The appliance verifies the channel and immutable release manifests with its pinned Ed25519 trust key before downloading a bundle.' if source.kind == 'labfoundry' else 'HTTP(S) repository location used by this package ecosystem.' }}">i</button></span><input name="url" value="{{ source.url }}" autocomplete="off"></label>
+                      {% endif %}
+                      {% if source.kind == 'labfoundry' %}<label><span class="field-label"><span>Release channel</span><button class="help-icon" type="button" data-help="Selects the signed channel pointer below this base URL. Stable and preview move only through explicit GitHub promotion; development follows each successful main release.">i</button></span><select name="channel">{% for channel in labfoundry_channels %}<option value="{{ channel }}" {{ 'selected' if source.settings.channel|default('stable') == channel else '' }}>{{ channel }}</option>{% endfor %}</select></label>{% endif %}
+                      {% if source.kind == 'photon' %}<label class="source-editor-full"><span class="field-label"><span>GPG key URL</span><button class="help-icon" type="button" data-help="Key reference written into the managed Photon repository definition. It is used only when LabFoundry manages this source.">i</button></span><input name="gpgkey" value="{{ source.settings.gpgkey|default('') }}" autocomplete="off"></label>{% endif %}
+                    </div>
+                    <fieldset class="source-editor-options">
+                      <legend>Repository behavior</legend>
+                      <div class="source-option-grid">
+                        {% if source.kind == 'powershell' %}<label class="switch-field source-option"><span class="field-label"><span>Trusted repository</span><button class="help-icon" type="button" data-help="Registers this repository as Trusted for non-interactive module installation. Enable only for a controlled source.">i</button></span><input class="switch-input" type="checkbox" name="trusted" {{ 'checked' if source.settings.trusted else '' }}><span class="switch-track" aria-hidden="true"></span></label>{% endif %}
+                        {% if source.kind == 'photon' %}<label class="switch-field source-option"><span class="field-label"><span>LabFoundry managed</span><button class="help-icon" type="button" data-help="Writes this repository into LabFoundry's owned Photon repo file.">i</button></span><input class="switch-input" type="checkbox" name="managed" {{ 'checked' if source.settings.managed else '' }}><span class="switch-track" aria-hidden="true"></span></label><label class="switch-field source-option"><span class="field-label"><span>Verify RPM signatures</span><button class="help-icon" type="button" data-help="Requires RPM signature validation for this managed Photon repository.">i</button></span><input class="switch-input" type="checkbox" name="gpgcheck" {{ 'checked' if source.settings.gpgcheck|default(true) else '' }}><span class="switch-track" aria-hidden="true"></span></label><label class="switch-field source-option"><span class="field-label"><span>Verify TLS</span><button class="help-icon" type="button" data-help="Requires certificate validation when connecting to this source.">i</button></span><input class="switch-input" type="checkbox" name="tls_verify" {{ 'checked' if source.settings.tls_verify|default(true) else '' }}><span class="switch-track" aria-hidden="true"></span></label>{% endif %}
+                        <label class="switch-field source-option"><span class="field-label"><span>Source enabled</span><button class="help-icon" type="button" data-help="Includes this repository in source synchronization and update work.">i</button></span><input class="switch-input" type="checkbox" name="enabled" {{ 'checked' if source.enabled else '' }}><span class="switch-track" aria-hidden="true"></span></label>
+                      </div>
+                    </fieldset>
+                    <div class="source-editor-footer">
+                      <div class="source-editor-state">
+                        <p id="update-source-status-{{ source.id }}" class="autosave-status" data-state="idle">Changes save automatically.</p>
+                        {% if source.kind == 'labfoundry' %}
+                          <span class="source-validation-state"><span class="status-pill muted">Checked during update</span><button class="help-icon" type="button" data-help="Signed release sources are verified when an update check or installation reads the channel. Synchronize repositories does not write this source into a package client.">i</button></span>
+                        {% elif source.validation_status == 'valid' %}
+                          <span class="source-validation-state"><span class="status-pill good">Synchronized</span><button class="help-icon" type="button" data-help="{{ source.validation_message or 'This repository was synchronized with its appliance package client.' }}">i</button></span>
+                        {% elif source.validation_status == 'invalid' %}
+                          <span class="source-validation-state"><span class="status-pill error">Synchronization failed</span><button class="help-icon" type="button" data-help="{{ source.validation_message or 'The last repository synchronization failed. Review its task output before retrying.' }}">i</button></span>
+                        {% else %}
+                          <span class="source-validation-state"><span class="status-pill muted">Not synchronized</span><button class="help-icon" type="button" data-help="{{ source.validation_message or 'Run Synchronize repositories to validate and write this repository into its appliance package client.' }}">i</button></span>
+                        {% endif %}
+                      </div>
+                      <button class="button danger compact" type="submit" form="delete-update-source-{{ source.id }}">Delete repository</button>
+                    </div>
                   </form>
                   <form id="delete-update-source-{{ source.id }}" class="hidden" action="/appliance-update/sources/{{ source.id }}/delete" method="post" data-confirm-modal data-confirm-title="Delete {{ source.name }}?" data-confirm-message="This removes the repository from LabFoundry. Packages assigned to it block deletion." data-confirm-label="Delete repository"><input type="hidden" name="csrf" value="{{ csrf_token }}"></form>
                 </div>
@@ -80,36 +101,52 @@
         <p class="muted">Select a module tab to edit its repository and version policy, or open the final tab to add another module.</p>
         <div class="tab-buttons zone-tabs" role="tablist" aria-label="Managed PowerShell modules" data-tab-storage-key="labfoundry:appliance-update:powershell-module-tab">
           {% for package in powershell_packages %}
-            <button class="tab-button {{ 'active' if loop.first else '' }}" type="button" role="tab" data-tab-target="powershell-module-{{ package.id }}" aria-controls="powershell-module-{{ package.id }}" aria-selected="{{ 'true' if loop.first else 'false' }}">{{ package.name }}</button>
+            <button class="tab-button {{ 'active' if loop.first else '' }}" type="button" role="tab" data-tab-target="powershell-module-{{ package.id }}" aria-controls="powershell-module-{{ package.id }}" {% if loop.first %}aria-selected="true"{% else %}aria-selected="false"{% endif %}>{{ package.name }}</button>
           {% endfor %}
-          <button class="tab-button {{ 'active' if not powershell_packages else '' }}" type="button" role="tab" data-tab-target="powershell-module-new" aria-controls="powershell-module-new" aria-selected="{{ 'true' if not powershell_packages else 'false' }}">+ Module</button>
+          <button class="tab-button {{ 'active' if not powershell_packages else '' }}" type="button" role="tab" data-tab-target="powershell-module-new" aria-controls="powershell-module-new" {% if not powershell_packages %}aria-selected="true"{% else %}aria-selected="false"{% endif %}>+ Module</button>
         </div>
         <div class="tab-panels">
           {% for package in powershell_packages %}
             <div id="powershell-module-{{ package.id }}" class="tab-panel {{ 'active' if loop.first else '' }}" role="tabpanel" {{ 'hidden' if not loop.first else '' }}>
-              <form class="apply-unit-card form-grid aligned-control-grid" action="/appliance-update/packages/{{ package.id }}" method="post" data-autosave-form data-autosave-status-id="managed-package-status-{{ package.id }}" data-managed-package-form>
+              <form class="apply-unit-card source-editor-form managed-package-editor" action="/appliance-update/packages/{{ package.id }}" method="post" data-autosave-form data-autosave-status-id="managed-package-status-{{ package.id }}" data-managed-package-form>
                 <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="enabled_present" value="1">
-                <label><span class="field-label"><span>Module name</span><button class="help-icon" type="button" data-help="Exact PowerShell module name passed to Find-Module and Install-Module.">i</button></span><input name="name" value="{{ package.name }}" required autocomplete="off"></label>
-                <label><span class="field-label"><span>Repository</span><button class="help-icon" type="button" data-help="Registered PowerShell repository used to resolve and install this module. Configure repositories in the PowerShell source tabs above.">i</button></span><select name="source_id">{% for source in powershell_sources %}<option value="{{ source.id }}" {{ 'selected' if package.source_id == source.id else '' }}>{{ source.name }}{{ '' if source.enabled else ' (disabled)' }}</option>{% endfor %}</select></label>
-                <label><span class="field-label"><span>Version policy</span><button class="help-icon" type="button" data-help="Pinned installs the exact target version. Latest resolves the newest version exposed by the selected repository.">i</button></span><select name="policy" data-managed-package-policy><option value="pinned" {{ 'selected' if package.policy == 'pinned' else '' }}>Pinned</option><option value="latest" {{ 'selected' if package.policy == 'latest' else '' }}>Latest</option></select></label>
-                <label data-managed-package-target-label><span class="field-label"><span>Target version</span><button class="help-icon" type="button" data-help="Required for pinned policy. Latest resolves the repository version and disables this field.">i</button></span><input name="target_version" value="{{ package.target_version }}" autocomplete="off" data-managed-package-target></label>
-                <label class="switch-field"><span class="field-label"><span>Module enabled</span><button class="help-icon" type="button" data-help="Includes this module in PowerShell update checks and installation runs.">i</button></span><input class="switch-input" type="checkbox" name="enabled" {{ 'checked' if package.enabled else '' }}><span class="switch-track" aria-hidden="true"></span></label>
-                <p id="managed-package-status-{{ package.id }}" class="autosave-status full" data-state="idle">Changes save automatically.</p>
-                <div class="form-actions full"><button class="button danger compact" type="submit" form="delete-managed-package-{{ package.id }}">Delete module</button></div>
+                <div class="source-editor-grid">
+                  <label><span class="field-label"><span>Module name</span><button class="help-icon" type="button" data-help="Exact PowerShell module name passed to Find-Module and Install-Module.">i</button></span><input name="name" value="{{ package.name }}" required autocomplete="off"></label>
+                  <label><span class="field-label"><span>Repository</span><button class="help-icon" type="button" data-help="Registered PowerShell repository used to resolve and install this module. Configure repositories in the PowerShell source tabs above.">i</button></span><select name="source_id">{% for source in powershell_sources %}<option value="{{ source.id }}" {{ 'selected' if package.source_id == source.id else '' }}>{{ source.name }}{{ '' if source.enabled else ' (disabled)' }}</option>{% endfor %}</select></label>
+                  <label><span class="field-label"><span>Version policy</span><button class="help-icon" type="button" data-help="Pinned installs the exact target version. Latest resolves the newest version exposed by the selected repository.">i</button></span><select name="policy" data-managed-package-policy><option value="pinned" {{ 'selected' if package.policy == 'pinned' else '' }}>Pinned</option><option value="latest" {{ 'selected' if package.policy == 'latest' else '' }}>Latest</option></select></label>
+                  <label data-managed-package-target-label><span class="field-label"><span>Target version</span><button class="help-icon" type="button" data-help="Required for pinned policy. Latest resolves the repository version and disables this field.">i</button></span><input name="target_version" value="{{ package.target_version }}" autocomplete="off" data-managed-package-target></label>
+                </div>
+                <fieldset class="source-editor-options">
+                  <legend>Module behavior</legend>
+                  <div class="source-option-grid managed-package-option-grid">
+                    <label class="switch-field source-option"><span class="field-label"><span>Module enabled</span><button class="help-icon" type="button" data-help="Includes this module in PowerShell update checks and installation runs.">i</button></span><input class="switch-input" type="checkbox" name="enabled" {{ 'checked' if package.enabled else '' }}><span class="switch-track" aria-hidden="true"></span></label>
+                  </div>
+                </fieldset>
+                <div class="source-editor-footer">
+                  <p id="managed-package-status-{{ package.id }}" class="autosave-status" data-state="idle">Changes save automatically.</p>
+                  <button class="button danger compact" type="submit" form="delete-managed-package-{{ package.id }}">Delete module</button>
+                </div>
               </form>
               <form id="delete-managed-package-{{ package.id }}" class="hidden" action="/appliance-update/packages/{{ package.id }}/delete" method="post" data-confirm-modal data-confirm-title="Stop managing {{ package.name }}?" data-confirm-message="This removes the module from future update checks and runs. It does not uninstall an already installed module from the appliance." data-confirm-label="Delete managed module"><input type="hidden" name="csrf" value="{{ csrf_token }}"></form>
             </div>
           {% endfor %}
           <div id="powershell-module-new" class="tab-panel {{ 'active' if not powershell_packages else '' }}" role="tabpanel" {{ 'hidden' if powershell_packages else '' }}>
             {% if powershell_sources %}
-              <form class="form-grid aligned-control-grid" action="/appliance-update/packages" method="post" data-managed-package-form>
+              <form class="source-editor-form managed-package-editor" action="/appliance-update/packages" method="post" data-managed-package-form>
                 <input type="hidden" name="csrf" value="{{ csrf_token }}">
-                <label><span class="field-label"><span>Module name</span><button class="help-icon" type="button" data-help="Exact module name published by the selected repository.">i</button></span><input name="name" required autocomplete="off"></label>
-                <label><span class="field-label"><span>Repository</span><button class="help-icon" type="button" data-help="Registered PowerShell repository that owns this managed module. Configure repositories in the PowerShell source tabs above.">i</button></span><select name="source_id">{% for source in powershell_sources %}<option value="{{ source.id }}">{{ source.name }}{{ '' if source.enabled else ' (disabled)' }}</option>{% endfor %}</select></label>
-                <label><span class="field-label"><span>Version policy</span><button class="help-icon" type="button" data-help="Use pinned for reproducible appliance state or latest to follow repository releases.">i</button></span><select name="policy" data-managed-package-policy><option value="pinned">Pinned</option><option value="latest">Latest</option></select></label>
-                <label data-managed-package-target-label><span class="field-label"><span>Target version</span><button class="help-icon" type="button" data-help="Exact module version required when policy is pinned. Latest disables this field.">i</button></span><input name="target_version" autocomplete="off" data-managed-package-target></label>
-                <label class="switch-field"><span class="field-label"><span>Module enabled</span><button class="help-icon" type="button" data-help="An enabled module participates in update checks and installation runs after its repository is synchronized.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
-                <div class="form-actions full"><button class="button primary" type="submit">Add managed module</button></div>
+                <div class="source-editor-grid">
+                  <label><span class="field-label"><span>Module name</span><button class="help-icon" type="button" data-help="Exact module name published by the selected repository.">i</button></span><input name="name" required autocomplete="off"></label>
+                  <label><span class="field-label"><span>Repository</span><button class="help-icon" type="button" data-help="Registered PowerShell repository that owns this managed module. Configure repositories in the PowerShell source tabs above.">i</button></span><select name="source_id">{% for source in powershell_sources %}<option value="{{ source.id }}">{{ source.name }}{{ '' if source.enabled else ' (disabled)' }}</option>{% endfor %}</select></label>
+                  <label><span class="field-label"><span>Version policy</span><button class="help-icon" type="button" data-help="Use pinned for reproducible appliance state or latest to follow repository releases.">i</button></span><select name="policy" data-managed-package-policy><option value="pinned">Pinned</option><option value="latest">Latest</option></select></label>
+                  <label data-managed-package-target-label><span class="field-label"><span>Target version</span><button class="help-icon" type="button" data-help="Exact module version required when policy is pinned. Latest disables this field.">i</button></span><input name="target_version" autocomplete="off" data-managed-package-target></label>
+                </div>
+                <fieldset class="source-editor-options">
+                  <legend>Module behavior</legend>
+                  <div class="source-option-grid managed-package-option-grid">
+                    <label class="switch-field source-option"><span class="field-label"><span>Module enabled</span><button class="help-icon" type="button" data-help="An enabled module participates in update checks and installation runs after its repository is synchronized.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
+                  </div>
+                </fieldset>
+                <div class="source-editor-footer source-editor-footer-submit"><span class="muted">The module becomes part of desired update state after creation.</span><button class="button primary" type="submit">Add managed module</button></div>
               </form>
             {% else %}<p class="muted">Create a PowerShell source before adding modules.</p>{% endif %}
           </div>
@@ -118,20 +155,28 @@
     </details>
 
       </div>
-      <div id="appliance-update-streams" class="tab-panel {{ 'active' if streams_tab_active else '' }}" role="tabpanel" {{ '' if streams_tab_active else 'hidden' }}>
+      <div id="appliance-update-streams" class="tab-panel active appliance-update-stream-panel" role="tabpanel">
 
     {% if update_error %}
       <div class="alert error">{{ update_error }}</div>
     {% endif %}
-    <form class="form-stack" method="post">
+    <form class="form-stack" method="post" data-appliance-update-submit-form>
       <input type="hidden" name="csrf" value="{{ csrf_token }}">
       <div class="panel-head compact">
         <div>
           <h2>Update Streams</h2>
+          <p class="muted appliance-update-action-guidance">Checking is read-only. Installing runs the selected maintenance streams.</p>
+          <p class="muted appliance-update-schedule-guidance">For recurring maintenance, <a class="text-link" href="/automation">schedule update checks or installations in Automation</a>.</p>
         </div>
         <div class="apply-change-set-actions">
-          <button class="button secondary" type="submit" formaction="/appliance-update/check">Check selected</button>
-          <button class="button primary" type="submit" formaction="/appliance-update/run">Run selected</button>
+          <button class="button secondary appliance-update-action" type="submit" formaction="/appliance-update/check" title="Check the selected streams without installing changes" data-appliance-update-action>
+            <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            <span>Check for updates</span>
+          </button>
+          <button class="button primary appliance-update-action" type="submit" formaction="/appliance-update/run" title="Install updates from the selected streams" data-appliance-update-action>
+            <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+            <span>Install updates</span>
+          </button>
         </div>
       </div>
       <div class="apply-unit-list compact-list">
@@ -159,28 +204,20 @@
       </div>
     </form>
 
-    {% if appliance_update_task %}
-      <div class="alert {{ 'success' if appliance_update_task.status == 'succeeded' else ('error' if appliance_update_task.status == 'failed' else 'info') }}">
-        <strong>Appliance update {{ appliance_update_task.status }}</strong>
-        <p>{{ appliance_update_task.id }}{% if appliance_update_task_result.dry_run %} recorded as dry-run.{% endif %}</p>
-      </div>
-      {% if appliance_update_failures %}
-        <div class="apply-failure-list">
-          {% for failure in appliance_update_failures %}
-            <div class="apply-failure-item">
-              <strong>{{ failure.label }} failed</strong>
-              {% for command in failure.commands %}
-                <details class="apply-failure-command">
-                  <summary>{{ command.command_line }} exited {{ command.returncode }}</summary>
-                  {% if command.stderr %}<code>{{ command.stderr }}</code>{% endif %}
-                  {% if command.stdout %}<code>{{ command.stdout }}</code>{% endif %}
-                </details>
-              {% endfor %}
-            </div>
-          {% endfor %}
-        </div>
-      {% endif %}
-    {% endif %}
+    {% set task_grid_class = "appliance-update-history task-grid-section" %}
+    {% set task_grid_title = "Recent update tasks" %}
+    {% set task_grid_title_id = "appliance-update-history-title" %}
+    {% set task_grid_description = "The same task grid used by Tasks, scoped to Appliance Update checks, installations, and repository synchronizations." %}
+    {% set task_grid_rows = recent_update_tasks %}
+    {% set task_grid_component_options = task_component_filter_options %}
+    {% set task_grid_type = "appliance-update" %}
+    {% set task_grid_lock_component_filter = true %}
+    {% set task_grid_height = "100%" %}
+    {% set task_grid_scope_label = "Appliance Update only" %}
+    {% set task_grid_history_url = "/tasks" %}
+    {% set task_grid_empty_message = "No Appliance Update tasks have been recorded yet." %}
+    {% include "partials/task_grid.html" %}
+    {% include "partials/task_modals.html" %}
 
       </div>
     </div>
@@ -202,33 +239,17 @@
 
     <div class="panel detail-panel">
       <div class="panel-head">
-        <h2>Last Update</h2>
-        <span class="status-pill {{ 'good' if latest_update_job and latest_update_job.status == 'succeeded' else 'warn' }}">{{ latest_update_job.status if latest_update_job else "none" }}</span>
-      </div>
-      {% if latest_update_job %}
-        <div class="settings-list">
-          <div><span>Job</span><strong>{{ latest_update_job.id }}</strong></div>
-          <div><span>Created by</span><strong>{{ latest_update_job.created_by }}</strong></div>
-          <div><span>Finished</span><strong>{{ latest_update_job.finished_at }}</strong></div>
-        </div>
-        {% if latest_update_result %}
-          <details class="config-diff">
-            <summary>Job result</summary>
-            <pre><code class="language-json">{{ latest_update_result | tojson(indent=2) }}</code></pre>
-          </details>
-        {% endif %}
-      {% else %}
-        <p class="muted">No appliance update job has been recorded.</p>
-      {% endif %}
-    </div>
-
-    <div class="panel detail-panel">
-      <div class="panel-head">
         <h2>Update Info</h2>
         <span class="status-pill {{ 'good' if update_info_file.available else 'warn' }}">{{ "available" if update_info_file.available else "missing" }}</span>
       </div>
       {% if update_info_file.available %}
-        <pre><code class="language-json">{{ update_info_file.content }}</code></pre>
+        <p class="muted">Recorded release, compatibility, and recovery evidence from the appliance updater.</p>
+        {% set preview_label = "Appliance update evidence" %}
+        {% set preview_path = appliance_update_info_path %}
+        {% set preview_title = "Appliance Update evidence" %}
+        {% set preview_text = update_info_file.content %}
+        {% set preview_code_class = "language-json" %}
+        {% include "partials/config_preview_action.html" %}
       {% else %}
         <p class="muted">{{ update_info_file.error }}</p>
       {% endif %}

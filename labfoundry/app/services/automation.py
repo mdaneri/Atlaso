@@ -20,6 +20,7 @@ from labfoundry.app.models import (
     Schedule,
     utcnow,
 )
+from labfoundry.app.services.appliance_update import ensure_appliance_update_job_steps
 
 
 SCHEDULE_TASK_TYPES = {
@@ -320,6 +321,12 @@ def enqueue_schedule_now(db: Session, *, schedule: Schedule, actor: str, now: da
     )
     db.add(job)
     db.flush()
+    if job.type == "appliance-update":
+        ensure_appliance_update_job_steps(
+            db,
+            job=job,
+            selected_streams=[str(value) for value in config.get("selected_streams", [])],
+        )
     schedule.last_run_at = current
     schedule.last_job_id = job.id
     schedule.updated_at = current
@@ -393,6 +400,12 @@ def enqueue_due_schedules(db: Session, *, now: datetime | None = None) -> list[J
         )
         db.add(job)
         db.flush()
+        if job.type == "appliance-update":
+            ensure_appliance_update_job_steps(
+                db,
+                job=job,
+                selected_streams=[str(value) for value in config.get("selected_streams", [])],
+            )
         schedule.last_job_id = job.id
         db.add(
             AuditEvent(

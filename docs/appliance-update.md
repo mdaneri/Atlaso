@@ -3,9 +3,12 @@
 Appliance Update is audited runtime maintenance, separate from desired-state
 enforcement and `/appliance-apply`. The web process queues work, and
 `labfoundry-worker.service` executes it as a durable `appliance-update` task.
-The task retains the selected channel and release, verified key ID, checksums,
-Python compatibility, service checks, rollback result, and bounded redacted
-helper output.
+Each manual or scheduled check/install is one parent task with an ordered child
+step for every selected stream. The child owns its status, progress, timestamps,
+compatibility evidence, error, and bounded redacted helper output. The parent
+retains the shared source snapshot and aggregates the selected channel and
+release, verified key ID, checksums, service checks, rollback result, and final
+outcome.
 
 ## Update streams
 
@@ -20,11 +23,20 @@ LabFoundry has three update streams:
   their selected repositories. After installing or updating `VCF.PowerCLI`,
   the helper reapplies and verifies the centralized VMware CEIP preference at
   PowerCLI `AllUsers` scope. Explicit `User` and `Session` overrides remain
-  outside LabFoundry ownership.
+  outside LabFoundry ownership. Privileged PowerShell work uses the root-owned
+  home `/var/lib/labfoundry/powershell`, so synchronized repository state
+  persists without depending on the service's read-only `/root` view.
 
 The appliance never performs a broad runtime `pip --upgrade` and never contacts
 PyPI during a LabFoundry release update. Application dependencies and bootstrap
 tools are exact, hash-locked wheels inside the release bundle.
+
+Checks execute every selected child even when another check fails, which keeps
+diagnostics independent. Installations preserve the safety order LabFoundry
+Release, PowerShell Modules, then Photon OS. PowerShell remains independently
+observable after a release failure, while Photon is marked **skipped** with an
+explicit reason if either earlier selected stream failed. The parent succeeds
+only when every selected child succeeds.
 
 ## Release sources and channels
 
@@ -71,8 +83,39 @@ manifests, tasks, audits, URLs, or helper output.
 
 Photon and PowerShell source fields autosave as desired runtime-maintenance
 configuration. **Synchronize repositories** explicitly writes only
-LabFoundry-owned tdnf and PowerShell client configuration. Signed LabFoundry
-sources are read directly and do not configure pip.
+LabFoundry-owned tdnf and PowerShell client configuration. Their source cards
+show whether that synchronization has not run, succeeded, or failed. Signed
+LabFoundry sources are read directly, are checked during each update, and do not
+configure pip or report package-client synchronization state.
+
+Each source editor presents repository identity first, then its location or
+discovered runtime data, followed by one grouped **Repository behavior** row.
+Autosave and synchronization state remain together in a separated footer, with
+repository deletion isolated as the destructive action.
+
+Managed PowerShell module editors follow the same hierarchy: module identity
+and version policy first, then a grouped **Module behavior** switch and a
+separated autosave/delete footer. The Update Streams workspace keeps the shared
+Tasks grid, server-scoped to Appliance Update tasks. It preserves the standard
+sorting, filtering, component tree, progress, row menu, and detail behavior.
+Because the embedded endpoint is already scoped to Appliance Update, the
+Task / Component column is fixed there; the full Tasks page retains its
+editable component filter.
+The grid expands through the remaining Update Streams workspace height rather
+than using a compact fixed-height embed.
+This table replaces the former Last Update rail and submission-result cards.
+Checks and installations submit asynchronously: only grid data refreshes, the
+new task is highlighted, and both action buttons remain disabled until that
+task succeeds, fails, or is cancelled.
+The stream actions use explicit **Check for updates** and **Install updates**
+labels, with distinct search and install cues and visible copy that identifies
+the check as read-only.
+The same header links recurring maintenance to the Automation Schedules
+workspace, where operators can schedule Appliance Update checks or
+installations.
+The Update Info rail card reports whether durable updater evidence is available
+and opens the full JSON through the shared preview modal, matching Validation
+instead of rendering unbounded output inline.
 
 ## Trust contract
 
@@ -150,15 +193,20 @@ Any failure restores the previous release link, helper/systemd files, and
 database snapshot before maintenance mode is removed. A root-owned finalizer at
 `/var/lib/labfoundry/apply/appliance-update/finalizer-status.json` records the
 definitive transaction result so the worker can persist the durable task
-outcome. Only the current and previous known-good releases are retained; the UI
+outcome. Without a matching definitive finalizer, worker startup marks an
+interrupted running parent failed even when every child step committed before
+the restart; child results remain available as recovery evidence. Only the
+current and previous known-good releases are retained; the UI
 does not expose arbitrary historical downgrades.
 
 ## Photon OS boundary
 
 Manual and scheduled Photon checks/installations remain available. Before
 mutation, the helper records an inspection of the proposed tdnf transaction and
-queries its candidate `python3` minor ABI. It fails closed if that ABI is not
-listed in the active signed LabFoundry bundle.
+queries all repository candidates with the Photon-supported
+`tdnf repoquery python3` interface, then deterministically selects the highest
+advertised minor ABI. It fails closed if that ABI is not listed in the active
+signed LabFoundry bundle.
 
 If Photon changes Python to another supported ABI, the helper reconstructs the
 active virtualenv from the retained offline wheelhouse before restarting and
@@ -196,7 +244,8 @@ The fixture must use the appliance's named test trust key. Its signed
 `preview` channel must select a healthy release newer than the image baseline;
 its signed `development` channel must select a candidate that reaches database
 startup and then fails the service-health probe. The lifecycle runner proves
-the preview upgrade, expects the development task to fail with
+that each release task exposes a LabFoundry Release child step, proves the
+preview upgrade, expects the development parent and child to fail with
 `rolled_back=true`, and compares the active release, compatibility virtualenv,
 database schema hash, and user identities before and after rollback. It then
 rechecks the web, worker, console, internal `/openapi.json`, and host-facing

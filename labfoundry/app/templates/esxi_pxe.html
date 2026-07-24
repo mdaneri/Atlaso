@@ -256,7 +256,7 @@
                   <td>*</td>
                   <td>DHCP</td>
                   <td>
-                    <select name="kickstart_id" {{ "disabled" if not esxi_can_write else "" }}>
+                    <select name="kickstart_id" aria-label="Kickstart for default ESXi PXE host" {{ "disabled" if not esxi_can_write else "" }}>
                       <option value="">No Kickstart</option>
                       {% for kickstart in esxi_kickstarts %}
                         <option value="{{ kickstart.id }}" {{ "selected" if esxi_pxe_default_host.kickstart_id == kickstart.id else "" }}>{{ kickstart.name }}</option>
@@ -264,7 +264,7 @@
                     </select>
                   </td>
                   <td>
-                    <select name="installer_iso_path" {{ "disabled" if not esxi_can_write else "" }}>
+                    <select name="installer_iso_path" aria-label="Installer ISO for default ESXi PXE host" {{ "disabled" if not esxi_can_write else "" }}>
                       <option value="">No ISO selected</option>
                       {% for iso in esxi_installer_isos %}
                         <option value="{{ iso.path }}" {{ "selected" if esxi_pxe_default_host.installer_iso_path == iso.path else "" }}>{{ iso.relative_path }}</option>
@@ -272,7 +272,7 @@
                     </select>
                   </td>
                   <td></td>
-                  <td><input type="checkbox" name="enabled" {{ "checked" if esxi_pxe_default_host.enabled else "" }} {{ "disabled" if not esxi_can_write else "" }}></td>
+                  <td><input type="checkbox" name="enabled" aria-label="Enable default ESXi PXE host" {{ "checked" if esxi_pxe_default_host.enabled else "" }} {{ "disabled" if not esxi_can_write else "" }}></td>
                   <td><button class="button tiny secondary" type="submit" {{ "disabled" if not esxi_can_write else "" }}>Update</button></td>
                 </form>
               </tr>
@@ -280,11 +280,11 @@
                 <tr>
                   <form action="/esxi-pxe/hosts/{{ host.id }}" method="post">
                     <input type="hidden" name="csrf" value="{{ csrf_token }}">
-                    <td><input name="hostname" value="{{ host.hostname }}" {{ "disabled" if not esxi_can_write else "" }}></td>
-                    <td><input name="mac_address" value="{{ host.mac_address }}" {{ "disabled" if not esxi_can_write else "" }}></td>
-                    <td><input name="ip_address" value="{{ host.ip_address or '' }}" placeholder="DHCP" {{ "disabled" if not esxi_can_write else "" }}></td>
+                    <td><input name="hostname" value="{{ host.hostname }}" aria-label="ESXi PXE hostname" {{ "disabled" if not esxi_can_write else "" }}></td>
+                    <td><input name="mac_address" value="{{ host.mac_address }}" aria-label="ESXi PXE MAC address" {{ "disabled" if not esxi_can_write else "" }}></td>
+                    <td><input name="ip_address" value="{{ host.ip_address or '' }}" placeholder="DHCP" aria-label="ESXi PXE IP address" {{ "disabled" if not esxi_can_write else "" }}></td>
                     <td>
-                      <select name="kickstart_id" {{ "disabled" if not esxi_can_write else "" }}>
+                      <select name="kickstart_id" aria-label="Kickstart for ESXi PXE host" {{ "disabled" if not esxi_can_write else "" }}>
                         <option value="">No Kickstart</option>
                         {% for kickstart in esxi_kickstarts %}
                           <option value="{{ kickstart.id }}" {{ "selected" if host.kickstart_id == kickstart.id else "" }}>{{ kickstart.name }}</option>
@@ -292,15 +292,15 @@
                       </select>
                     </td>
                     <td>
-                      <select name="installer_iso_path" {{ "disabled" if not esxi_can_write else "" }}>
+                      <select name="installer_iso_path" aria-label="Installer ISO for ESXi PXE host" {{ "disabled" if not esxi_can_write else "" }}>
                         <option value="">No ISO selected</option>
                         {% for iso in esxi_installer_isos %}
                           <option value="{{ iso.path }}" {{ "selected" if host.installer_iso_path == iso.path else "" }}>{{ iso.relative_path }}</option>
                         {% endfor %}
                       </select>
                     </td>
-                    <td><input name="variables" value="{{ host.variables_json or '{}' }}" {{ "disabled" if not esxi_can_write else "" }}></td>
-                    <td><input type="checkbox" name="enabled" {{ "checked" if host.enabled else "" }} {{ "disabled" if not esxi_can_write else "" }}></td>
+                    <td><input name="variables" value="{{ host.variables_json or '{}' }}" aria-label="Variables for ESXi PXE host" {{ "disabled" if not esxi_can_write else "" }}></td>
+                    <td><input type="checkbox" name="enabled" aria-label="Enable ESXi PXE host" {{ "checked" if host.enabled else "" }} {{ "disabled" if not esxi_can_write else "" }}></td>
                     <td>
                       <button class="button tiny secondary" type="submit" {{ "disabled" if not esxi_can_write else "" }}>Update</button>
                       {% if esxi_can_write %}

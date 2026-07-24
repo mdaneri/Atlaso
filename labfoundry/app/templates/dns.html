@@ -74,13 +74,11 @@
                 <strong>Generated authoritative records</strong>
                 <span class="status-pill good">SOA + NS + {{ group.authority.glue_addresses | length }} glue</span>
               </div>
-              <dl class="dns-authority-records">
-                <div><dt>SOA</dt><dd><code>{{ group.authority.server }}. {{ group.authority.contact }}. {{ group.authority.serial }} {{ group.authority.refresh }} {{ group.authority.retry }} {{ group.authority.expire }} {{ group.authority.ttl }}</code></dd></div>
-                <div><dt>NS</dt><dd><code>{{ group.authority.server }}.</code></dd></div>
-                {% for address in group.authority.glue_addresses %}
-                  <div><dt>{{ "AAAA" if ":" in address else "A" }}</dt><dd><code>{{ group.authority.server }}. {{ address }}</code></dd></div>
-                {% endfor %}
-              </dl>
+              <div class="dns-authority-records" role="list">
+                <div role="listitem"><span class="dns-authority-term">SOA</span><code>{{ group.authority.server }}. {{ group.authority.contact }}. {{ group.authority.serial }} {{ group.authority.refresh }} {{ group.authority.retry }} {{ group.authority.expire }} {{ group.authority.ttl }}</code></div>
+                <div role="listitem"><span class="dns-authority-term">NS</span><code>{{ group.authority.server }}.</code></div>
+                {% for address in group.authority.glue_addresses %}<div role="listitem"><span class="dns-authority-term">{{ "AAAA" if ":" in address else "A" }}</span><code>{{ group.authority.server }}. {{ address }}</code></div>{% endfor %}
+              </div>
             </div>
           {% endif %}
 

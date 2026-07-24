@@ -9905,11 +9905,37 @@ let labFoundryTasksTable = null;
 let labFoundryTasks = [];
 let labFoundryTaskComponentOptions = [];
 let labFoundrySelectedTaskId = "";
+let labFoundryNewTaskId = "";
 let labFoundryTasksRefreshTimer = 0;
 let labFoundryTasksReopenSelected = false;
 
 function taskStatusActive(status) {
   return ["pending", "running"].includes(String(status || ""));
+}
+
+function setApplianceUpdateActionsDisabled(disabled) {
+  const form = document.querySelector("[data-appliance-update-submit-form]");
+  if (!(form instanceof HTMLFormElement)) {
+    return;
+  }
+  if (disabled) {
+    form.setAttribute("aria-busy", "true");
+  } else {
+    form.removeAttribute("aria-busy");
+  }
+  form.querySelectorAll("[data-appliance-update-action]").forEach((button) => {
+    if (button instanceof HTMLButtonElement) {
+      button.disabled = disabled;
+    }
+  });
+}
+
+function updateApplianceUpdateActions(tasks = labFoundryTasks) {
+  const page = document.querySelector("[data-tasks-page]");
+  if (page?.dataset.taskType !== "appliance-update") {
+    return;
+  }
+  setApplianceUpdateActionsDisabled(tasks.some((task) => !task.is_step && taskStatusActive(task.status)));
 }
 
 function taskById(taskId) {
@@ -10045,6 +10071,7 @@ function applyTasksStatusPayload(payload, { reopen = false } = {}) {
       openTaskDetail(selected);
     }
   }
+  updateApplianceUpdateActions(labFoundryTasks);
   window.clearTimeout(labFoundryTasksRefreshTimer);
   if (labFoundryTasks.some((task) => taskStatusActive(task.status))) {
     labFoundryTasksRefreshTimer = window.setTimeout(() => refreshTasksPage().catch(() => {}), 2000);
@@ -10072,8 +10099,12 @@ async function refreshTasksPage({ reopen = false } = {}) {
 }
 
 async function requestTasksTableData(_url, _config, params = {}) {
+  const page = document.querySelector("[data-tasks-page]");
   const query = new URLSearchParams();
-  query.set("job_id", labFoundrySelectedTaskId || document.querySelector("[data-tasks-page]")?.dataset.selectedTaskId || "");
+  query.set("job_id", labFoundrySelectedTaskId || page?.dataset.selectedTaskId || "");
+  if (page?.dataset.taskType) {
+    query.set("task_type", page.dataset.taskType);
+  }
   query.set("page", String(params.page || 1));
   query.set("size", String(params.size || 25));
   query.set("filters", JSON.stringify(params.filters || params.filter || []));
@@ -10175,6 +10206,8 @@ function initializeTasksPage() {
   const tableElement = document.getElementById("tasks-table");
   const fallback = document.getElementById(tableElement?.dataset.fallbackId || "");
   if (tableElement instanceof HTMLElement && typeof window.Tabulator === "function") {
+    const initialComponentFilter = page.dataset.taskInitialComponentFilter || "";
+    const componentFilterLocked = page.dataset.taskLockComponentFilter === "true";
     labFoundryTasksTable = new window.Tabulator(tableElement, {
       ajaxURL: "/tasks/status",
       ajaxParams: () => ({ job_id: labFoundrySelectedTaskId || page.dataset.selectedTaskId || "" }),
@@ -10185,12 +10218,13 @@ function initializeTasksPage() {
         return response;
       },
       layout: "fitColumns",
-      height: "100%",
+      height: page.dataset.taskGridHeight || "100%",
       pagination: true,
       paginationMode: "remote",
       paginationSize: 25,
       paginationCounter: "rows",
       filterMode: "remote",
+      initialHeaderFilter: initialComponentFilter && !componentFilterLocked ? [{ field: "id", value: initialComponentFilter }] : [],
       headerFilterLiveFilterDelay: 500,
       placeholder: "No tasks have been recorded yet.",
       selectableRows: 1,
@@ -10231,21 +10265,24 @@ function initializeTasksPage() {
           field: "id",
           minWidth: 260,
           widthGrow: 1.5,
-          headerFilter: "list",
-          headerFilterParams: {
-            values: labFoundryTaskComponentOptions,
-            autocomplete: true,
-            freetext: true,
-            allowEmpty: true,
-            clearable: true,
-            listOnEmpty: true,
-          },
+          ...(componentFilterLocked ? {} : {
+            headerFilter: "list",
+            headerFilterParams: {
+              values: labFoundryTaskComponentOptions,
+              autocomplete: true,
+              freetext: true,
+              allowEmpty: true,
+              clearable: true,
+              listOnEmpty: true,
+            },
           headerFilterFunc: "like",
-          headerFilterPlaceholder: "Choose or type custom",
+            headerFilterPlaceholder: "Choose or type custom",
+          }),
           formatter: (cell) => {
             const data = cell.getRow().getData();
             const label = data.is_step ? data.label : data.type_label;
-            return `<span class="service-name-cell"><strong>${escapeHtml(label || "Task")}</strong><small>${escapeHtml(data.id || "")}</small></span>`;
+            const newBadge = data.id === labFoundryNewTaskId ? '<span class="status-pill info task-grid-new-badge">New</span>' : "";
+            return `<span class="service-name-cell"><strong>${escapeHtml(label || "Task")}${newBadge}</strong><small>${escapeHtml(data.id || "")}</small></span>`;
           },
         },
         {
@@ -10263,6 +10300,20 @@ function initializeTasksPage() {
       ],
       dataTree: true,
       dataTreeStartExpanded: false,
+      rowFormatter: (row) => {
+        row.getElement().classList.toggle("task-grid-new-task", row.getData().id === labFoundryNewTaskId);
+      },
+    });
+    labFoundryTasksTable.on("dataLoaded", () => {
+      updateApplianceUpdateActions();
+      if (!labFoundryNewTaskId) {
+        return;
+      }
+      const row = labFoundryTasksTable.getRow(labFoundryNewTaskId);
+      if (row) {
+        row.select();
+        row.scrollTo("top", false).catch(() => {});
+      }
     });
     labFoundryTasksTable.on("rowClick", (_event, row) => {
       labFoundrySelectedTaskId = row.getData().id || "";
@@ -10448,6 +10499,44 @@ function updateVcfDepotCredentialStatus(payload = {}) {
       ? `${staged.join(" · ")}. Runtime files refresh during Appliance Apply or profile download.`
       : "No Broadcom credentials staged.";
   }
+}
+
+function initializeApplianceUpdateSubmission() {
+  const form = document.querySelector("[data-appliance-update-submit-form]");
+  if (!(form instanceof HTMLFormElement)) {
+    return;
+  }
+  updateApplianceUpdateActions();
+  form.addEventListener("submit", async (event) => {
+    const submitter = event.submitter;
+    if (!(submitter instanceof HTMLButtonElement)) {
+      return;
+    }
+    event.preventDefault();
+    setApplianceUpdateActionsDisabled(true);
+    try {
+      const response = await fetch(submitter.formAction, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { Accept: "application/json" },
+        body: new FormData(form),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.detail || "Unable to start the appliance update task.");
+      }
+      labFoundryNewTaskId = payload.job_id || "";
+      labFoundrySelectedTaskId = labFoundryNewTaskId;
+      const page = document.querySelector("[data-tasks-page]");
+      if (page instanceof HTMLElement) {
+        page.dataset.selectedTaskId = labFoundryNewTaskId;
+      }
+      await refreshTasksPage();
+    } catch (error) {
+      updateApplianceUpdateActions();
+      window.alert(error instanceof Error ? error.message : "Unable to start the appliance update task.");
+    }
+  });
 }
 
 function setVcfDepotToolDependentActions(toolAvailable) {
@@ -15589,6 +15678,7 @@ document.addEventListener("DOMContentLoaded", initializeVcfDepotProfilesTable);
 document.addEventListener("DOMContentLoaded", initializeVcfDepotTasksTable);
 document.addEventListener("DOMContentLoaded", initializeVcfDepotTaskLogModal);
 document.addEventListener("DOMContentLoaded", initializeTasksPage);
+document.addEventListener("DOMContentLoaded", initializeApplianceUpdateSubmission);
 document.addEventListener("DOMContentLoaded", initializeServerTime);
 document.addEventListener("DOMContentLoaded", initializeFirewallRulesTable);
 document.addEventListener("DOMContentLoaded", initializeManagedFirewallRulesTable);

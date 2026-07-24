@@ -2239,6 +2239,44 @@ def test_powercli_helper_actions_receive_writable_root_configuration_environment
     assert commands[0].index("--setenv=HOME=/root") < helper_index
 
 
+def test_appliance_update_receives_writable_powershell_environment(monkeypatch, tmp_path):
+    helper = load_helper_module()
+    config_path = tmp_path / "labfoundry-update.json"
+    config_path.write_text("{}\n", encoding="utf-8")
+    powershell_home = tmp_path / "powershell"
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(helper, "LABFOUNDRY_POWERSHELL_HOME", powershell_home)
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: "/usr/bin/systemd-run" if command == "systemd-run" else None,
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: (
+            commands.append(command)
+            or subprocess.CompletedProcess(command, 0, "", "")
+        ),
+    )
+
+    assert helper._run_real_action_with_systemd(
+        "appliance-update",
+        "check",
+        [str(config_path)],
+    ) == 0
+
+    assert f"--property=WorkingDirectory={powershell_home}" in commands[0]
+    assert f"--setenv=HOME={powershell_home}" in commands[0]
+    assert f"--setenv=XDG_CACHE_HOME={powershell_home / '.cache'}" in commands[0]
+    assert f"--setenv=XDG_CONFIG_HOME={powershell_home / '.config'}" in commands[0]
+    assert f"--setenv=XDG_DATA_HOME={powershell_home / '.local' / 'share'}" in commands[0]
+    assert "--setenv=HOME=/root" not in commands[0]
+    assert powershell_home.is_dir()
+    assert (powershell_home / ".cache").is_dir()
+
+
 def test_network_helper_renders_systemd_networkd_files(tmp_path):
     helper = load_helper_module()
     config_path = tmp_path / "labfoundry-network.conf"

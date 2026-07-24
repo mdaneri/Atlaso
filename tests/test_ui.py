@@ -117,7 +117,7 @@ def test_login_and_dashboard_render(client):
     assert "Python " in response.text
     assert '<link rel="icon" href="/favicon.ico" type="image/svg+xml">' in response.text
     assert '<link rel="manifest" href="/manifest.webmanifest">' in response.text
-    assert '<meta name="theme-color" content="#1f4f7a">' in response.text
+    assert '<meta name="theme-color"' not in response.text
     assert "/static/pwa.js?v=pwa-20260627-1" in response.text
     assert "LF</span>" not in response.text
     assert "/static/vendor/prism/prism-core.min.js" in response.text
@@ -608,6 +608,16 @@ def test_tasks_page_lists_redacts_logs_and_cancels(client):
     assert 'label: "Cancel task"' in tasks_table_js
     assert 'filterMode: "remote"' in tasks_table_js
     assert "ajaxRequestFunc: requestTasksTableData" in tasks_table_js
+    assert 'query.set("task_type", page.dataset.taskType);' in app_js
+    assert 'const componentFilterLocked = page.dataset.taskLockComponentFilter === "true";' in tasks_table_js
+    assert 'initialHeaderFilter: initialComponentFilter && !componentFilterLocked ? [{ field: "id", value: initialComponentFilter }] : []' in tasks_table_js
+    assert '...(componentFilterLocked ? {} : {' in tasks_table_js
+    assert "function initializeApplianceUpdateSubmission()" in app_js
+    assert 'headers: { Accept: "application/json" }' in app_js
+    assert 'setApplianceUpdateActionsDisabled(true);' in app_js
+    assert 'row.getElement().classList.toggle("task-grid-new-task"' in tasks_table_js
+    assert "task-grid-new-badge" in tasks_table_js
+    assert 'height: page.dataset.taskGridHeight || "100%"' in tasks_table_js
     assert 'query.set("filters", JSON.stringify(params.filters || params.filter || []));' in app_js
     assert 'headerFilterPlaceholder: "Choose or type custom"' in tasks_table_js
     assert "values: labFoundryTaskComponentOptions" in tasks_table_js
@@ -666,6 +676,17 @@ def test_tasks_page_lists_redacts_logs_and_cancels(client):
     )
     assert status_filter.status_code == 200
     assert [row["id"] for row in status_filter.json()["tasks"]] == ["job_taskgrid_leaf"]
+
+    scoped_filter = client.get("/tasks/status", params={"task_type": "appliance-update"})
+    assert scoped_filter.status_code == 200
+    scoped_payload = scoped_filter.json()
+    assert [row["id"] for row in scoped_payload["tasks"]] == ["job_taskgrid_leaf"]
+    assert scoped_payload["active_count"] == 0
+    assert scoped_payload["filtered_count"] == 1
+    assert scoped_payload["total_count"] == 1
+
+    invalid_task_type = client.get("/tasks/status", params={"task_type": "x" * 101})
+    assert invalid_task_type.status_code == 400
 
     invalid_filter = client.get(
         "/tasks/status",
@@ -756,7 +777,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "LABFOUNDRY_CACHE" in service_worker.text
-    assert "labfoundry-pwa-v158" in service_worker.text
+    assert "labfoundry-pwa-v164" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -768,8 +789,8 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/codemirror/labfoundry-codemirror.min.js" in service_worker.text
-    assert "/static/app.css?v=esx-storage-ui-20260723-2" in service_worker.text
-    assert "/static/app.js?v=esx-storage-ui-20260723-2" in service_worker.text
+    assert "/static/app.css?v=appliance-update-ui-20260724-4" in service_worker.text
+    assert "/static/app.js?v=appliance-update-ui-20260724-4" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -778,7 +799,37 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=esx-storage-ui-20260723-2" in offline.text
+    assert "/static/app.css?v=appliance-update-ui-20260724-4" in offline.text
+
+
+def test_reported_template_accessibility_contracts():
+    from pathlib import Path
+
+    templates = Path("labfoundry/app/templates")
+    appliance_update = (templates / "appliance_update.html").read_text(encoding="utf-8")
+    logs = (templates / "logs.html").read_text(encoding="utf-8")
+    ldap = (templates / "ldap.html").read_text(encoding="utf-8")
+    esxi_pxe = (templates / "esxi_pxe.html").read_text(encoding="utf-8")
+    vcf_depot = (templates / "vcf_offline_depot.html").read_text(encoding="utf-8")
+    dns = (templates / "dns.html").read_text(encoding="utf-8")
+    authentication = (templates / "authentication.html").read_text(encoding="utf-8")
+
+    assert 'aria-selected="{{' not in appliance_update
+    assert "Recorded release, compatibility, and recovery evidence" in appliance_update
+    assert '{% set preview_label = "Appliance update evidence" %}' in appliance_update
+    assert '{% set preview_title = "Appliance Update evidence" %}' in appliance_update
+    assert '<pre><code class="language-json">{{ update_info_file.content }}</code></pre>' not in appliance_update
+    assert 'aria-selected="{{' not in logs
+    assert 'aria-disabled="{{' not in logs
+    assert 'aria-selected="{{' not in ldap
+    assert 'aria-label="ESXi PXE hostname"' in esxi_pxe
+    assert 'aria-label="Installer ISO for ESXi PXE host"' in esxi_pxe
+    assert 'aria-label="Enable ESXi PXE host"' in esxi_pxe
+    assert '<label class="file-upload-control compact-file-upload">' in vcf_depot
+    assert '<div class="dns-authority-records" role="list">' in dns
+    assert '<dl class="dns-authority-records">' not in dns
+    assert '<div class="error-list" role="list">' in authentication
+    assert '<ul class="error-list">' not in authentication
 
 
 def test_monitor_page_renders_and_data_endpoint(client):
@@ -814,8 +865,8 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=esx-storage-ui-20260723-2" in page.text
-    assert "/static/app.js?v=esx-storage-ui-20260723-2" in page.text
+    assert "/static/app.css?v=appliance-update-ui-20260724-4" in page.text
+    assert "/static/app.js?v=appliance-update-ui-20260724-4" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -898,7 +949,7 @@ def test_login_page_includes_pwa_metadata(client):
     response = client.get("/login")
     assert response.status_code == 200
     assert '<link rel="manifest" href="/manifest.webmanifest">' in response.text
-    assert '<meta name="theme-color" content="#1f4f7a">' in response.text
+    assert '<meta name="theme-color"' not in response.text
     assert "/static/pwa.js?v=pwa-20260627-1" in response.text
 
 
@@ -2732,6 +2783,9 @@ def test_esxi_pxe_ui_create_apply_and_job_redaction(client):
     assert '<button class="tab-button active" type="button" role="tab" data-tab-target="esxi-pxe-hosts-panel"' in page.text
     assert 'id="esxi-pxe-hosts-panel" class="tab-panel active" role="tabpanel">' in page.text
     assert 'id="esxi-pxe-editor-panel" class="tab-panel" role="tabpanel" hidden' in page.text
+    assert 'aria-label="Kickstart for default ESXi PXE host"' in page.text
+    assert 'aria-label="Installer ISO for default ESXi PXE host"' in page.text
+    assert 'aria-label="Enable default ESXi PXE host"' in page.text
     assert "# Sample scripted installation file" in page.text
     assert "vmaccepteula" in page.text
     assert "rootpw vmware01!" in page.text
@@ -5016,8 +5070,10 @@ def test_logs_page_renders_refreshable_fixed_source_tabs_and_redacts_logs(client
     assert "grid-template-rows: minmax(0, 1fr);" in css.text
     assert "grid-template-rows: auto minmax(0, 1fr);" in css.text
     assert "overflow-y: auto;" in css.text
-    assert "scrollbar-gutter: stable;" in css.text
-    assert "scrollbar-width: thin;" in css.text
+    assert "scrollbar-gutter: stable;" not in css.text
+    assert "scrollbar-width: thin;" not in css.text
+    assert "scrollbar-color:" not in css.text
+    assert "overscroll-behavior:" not in css.text
     assert "::-webkit-scrollbar-thumb" in css.text
     assert "white-space: nowrap;" in css.text
 
@@ -5362,6 +5418,8 @@ def test_dns_and_dhcp_pages_render(client):
     assert ".confirm-modal" in app_css.text
     assert ".confirm-modal::backdrop" in app_css.text
     assert ".appliance-apply-modal::backdrop" in app_css.text
+    assert "-webkit-user-select: none;" in app_css.text
+    assert "-webkit-backdrop-filter: blur(2px);" in app_css.text
     assert "backdrop-filter: blur(2px);" in app_css.text
     assert "background: var(--surface);" in app_css.text
     assert "width: min(1180px, calc(100vw - 40px));" in app_css.text
@@ -7457,6 +7515,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "Tool & Credentials" not in page.text
     assert "Review appliance changes" in page.text
     assert "VCF Download Tool" in page.text
+    assert '<label class="file-upload-control compact-file-upload">' in page.text
     assert "Add or update the VCF Download Tool package" in page.text
     assert "no package staged" in page.text
     assert ">Add</strong>" in page.text
@@ -10144,7 +10203,7 @@ def test_firewall_settings_autosave_updates_desired_state_preview(client):
     page = client.get("/firewall")
     assert page.status_code == 200
     assert "data-firewall-enabled-status" in page.text
-    assert "esx-storage-ui-20260723-2" in page.text
+    assert "appliance-update-ui-20260724-4" in page.text
     codemirror = client.get("/static/vendor/codemirror/labfoundry-codemirror.min.js")
     assert codemirror.status_code == 200
     assert "LabFoundryCodeMirror" in codemirror.text

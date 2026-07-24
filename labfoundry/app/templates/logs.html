@@ -33,7 +33,7 @@
     {% endif %}
     <div class="tab-buttons tool-tabs" role="tablist" aria-label="Log sources" data-tab-storage-key="labfoundry:logs:active-tab">
       {% for source in log_sources %}
-        <button class="tab-button {{ 'active' if active_log_tab.id == source.id else '' }}" type="button" role="tab" data-tab-target="logs-{{ source.id }}-panel" data-log-source-tab="{{ source.id }}" aria-selected="{{ 'true' if active_log_tab.id == source.id else 'false' }}" aria-disabled="{{ 'false' if source.available else 'true' }}" title="{{ source.path }}{{ '' if source.available else ' (unavailable)' }}" {{ "disabled" if not source.available else "" }}>{{ source.label }}</button>
+        <button class="tab-button {{ 'active' if active_log_tab.id == source.id else '' }}" type="button" role="tab" data-tab-target="logs-{{ source.id }}-panel" data-log-source-tab="{{ source.id }}" {% if active_log_tab.id == source.id %}aria-selected="true"{% else %}aria-selected="false"{% endif %} {% if source.available %}aria-disabled="false"{% else %}aria-disabled="true"{% endif %} title="{{ source.path }}{{ '' if source.available else ' (unavailable)' }}" {{ "disabled" if not source.available else "" }}>{{ source.label }}</button>
       {% endfor %}
     </div>
 

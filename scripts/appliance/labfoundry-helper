@@ -138,6 +138,7 @@ LABFOUNDRY_UPDATE_BACKUP_DIR = LABFOUNDRY_STATE_DIR / "update-backups"
 LABFOUNDRY_DATABASE_PATH = LABFOUNDRY_STATE_DIR / "labfoundry.db"
 LABFOUNDRY_UPDATE_FINALIZER_PATH = LABFOUNDRY_STATE_DIR / "apply/appliance-update/finalizer-status.json"
 LABFOUNDRY_UPDATE_MAINTENANCE_PATH = Path("/run/labfoundry-update-maintenance")
+LABFOUNDRY_POWERSHELL_HOME = LABFOUNDRY_STATE_DIR / "powershell"
 SUPPORTED_RELEASE_PYTHON_ABIS = {"cp312", "cp313", "cp314"}
 CONSOLE_STATE_DIR = LABFOUNDRY_STATE_DIR / "console"
 CONSOLE_SERVICE_STATE_PATH = CONSOLE_STATE_DIR / "services.json"
@@ -418,6 +419,29 @@ def _should_run_real_action_with_systemd(action: str) -> bool:
     )
 
 
+def _appliance_update_powershell_environment() -> dict[str, str]:
+    directories = [
+        LABFOUNDRY_POWERSHELL_HOME,
+        LABFOUNDRY_POWERSHELL_HOME / ".cache",
+        LABFOUNDRY_POWERSHELL_HOME / ".config",
+        LABFOUNDRY_POWERSHELL_HOME / ".local",
+        LABFOUNDRY_POWERSHELL_HOME / ".local" / "share",
+    ]
+    for directory in directories:
+        directory.mkdir(parents=True, exist_ok=True)
+        directory.chmod(0o700)
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(LABFOUNDRY_POWERSHELL_HOME),
+            "XDG_CACHE_HOME": str(LABFOUNDRY_POWERSHELL_HOME / ".cache"),
+            "XDG_CONFIG_HOME": str(LABFOUNDRY_POWERSHELL_HOME / ".config"),
+            "XDG_DATA_HOME": str(LABFOUNDRY_POWERSHELL_HOME / ".local" / "share"),
+        }
+    )
+    return env
+
+
 def _run_real_action_with_systemd(group: str, action: str, args: list[str]) -> int:
     helper_path = str(Path(__file__).resolve())
     command = [
@@ -429,7 +453,18 @@ def _run_real_action_with_systemd(group: str, action: str, args: list[str]) -> i
         "--service-type=exec",
         f"--setenv={SYSTEMD_RUN_CHILD_ENV}=1",
     ]
-    if group in {"appliance-settings", "appliance-update"}:
+    if group == "appliance-update":
+        powershell_env = _appliance_update_powershell_environment()
+        command.extend(
+            [
+                f"--property=WorkingDirectory={LABFOUNDRY_POWERSHELL_HOME}",
+                f"--setenv=HOME={powershell_env['HOME']}",
+                f"--setenv=XDG_CACHE_HOME={powershell_env['XDG_CACHE_HOME']}",
+                f"--setenv=XDG_CONFIG_HOME={powershell_env['XDG_CONFIG_HOME']}",
+                f"--setenv=XDG_DATA_HOME={powershell_env['XDG_DATA_HOME']}",
+            ]
+        )
+    elif group == "appliance-settings":
         command.extend(
             [
                 "--setenv=HOME=/root",
@@ -7584,7 +7619,12 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
             f"else {{ Register-PSRepository -Name $name -SourceLocation $url -InstallationPolicy {policy} }}; "
             "Get-PSRepository -Name $name | Select-Object Name,SourceLocation,InstallationPolicy | ConvertTo-Json -Compress"
         )
-        commands.append(_command_payload([pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)]))
+        commands.append(
+            _command_payload(
+                [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)],
+                env=_appliance_update_powershell_environment(),
+            )
+        )
     if pwsh is not None:
         for name in sorted(previous_powershell_names - current_powershell_names):
             script = (
@@ -7594,7 +7634,12 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
                 "if ($existing) { Unregister-PSRepository -Name $name }; "
                 "[pscustomobject]@{Name=$name;Removed=[bool]$existing} | ConvertTo-Json -Compress"
             )
-            commands.append(_command_payload([pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)]))
+            commands.append(
+                _command_payload(
+                    [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)],
+                    env=_appliance_update_powershell_environment(),
+                )
+            )
     UPDATE_SOURCE_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     UPDATE_SOURCE_STATE_PATH.write_text(
         json.dumps({"powershell_repositories": sorted(current_powershell_names)}, indent=2, sort_keys=True) + "\n",
@@ -7638,11 +7683,11 @@ def _check_appliance_update(payload: dict, credentials: dict[str, dict[str, str]
             )
             source = next((item for item in _enabled_sources(payload, "powershell") if str(item.get("name") or "") == repository), {})
             credential = _source_credential(source, credentials)
-            env = os.environ.copy()
+            env = _appliance_update_powershell_environment()
             if credential:
                 env.update({"LF_REPO_USER": str(credential.get("username") or ""), "LF_REPO_SECRET": str(credential["secret"])})
             command_args = [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)]
-            command = _command_payload(command_args, env=env) if credential else _command_payload(command_args)
+            command = _command_payload(command_args, env=env)
             commands.append(command)
             module_checks.append({"name": name, "repository": repository, "target_version": target, "success": command["success"]})
         checks["powershell_modules"] = module_checks
@@ -7693,11 +7738,11 @@ def _apply_powershell_modules(payload: dict, credentials: dict[str, dict[str, st
         )
         source = next((item for item in _enabled_sources(payload, "powershell") if str(item.get("name") or "") == repository), {})
         credential = _source_credential(source, credentials)
-        env = os.environ.copy()
+        env = _appliance_update_powershell_environment()
         if credential:
             env.update({"LF_REPO_USER": str(credential.get("username") or ""), "LF_REPO_SECRET": str(credential["secret"])})
         command_args = [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)]
-        commands.append(_command_payload(command_args, env=env) if credential else _command_payload(command_args))
+        commands.append(_command_payload(command_args, env=env))
     if any(command.get("success") for command in commands):
         chmod = _command_path("chmod") or "chmod"
         commands.append(
@@ -7739,7 +7784,7 @@ def _active_release_metadata() -> tuple[Path, dict]:
 
 def _candidate_photon_python_abi() -> tuple[dict, str]:
     tdnf = _command_path("tdnf") or "tdnf"
-    command = _command_payload([tdnf, "repoquery", "--latest-limit", "1", "python3"])
+    command = _command_payload([tdnf, "repoquery", "python3"])
     if not command["success"]:
         return command, ""
     versions = [
