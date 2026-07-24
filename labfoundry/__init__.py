@@ -6,7 +6,7 @@ try:
     from labfoundry._build import BUILD_TIME_UTC, BUILD_VERSION, GIT_COMMIT
 except ImportError:
     BUILD_TIME_UTC = ""
-    BUILD_VERSION = "0.9.10"
+    BUILD_VERSION = "0.9.11"
     GIT_COMMIT = ""
 
 __version__ = BUILD_VERSION

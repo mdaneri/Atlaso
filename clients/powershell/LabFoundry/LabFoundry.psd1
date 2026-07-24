@@ -1,6 +1,6 @@
 @{
     RootModule = 'LabFoundry.psm1'
-    ModuleVersion = '0.9.10'
+    ModuleVersion = '0.9.11'
     GUID = 'f55945ee-ff8d-4ce1-9b5e-296c6f0a6f5a'
     Author = 'LabFoundry'
     CompanyName = 'LabFoundry'
