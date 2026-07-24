@@ -150,6 +150,12 @@ rebuilt in one command. Use
 when you want Packer to fail instead of replacing an existing output directory.
 Use `-PackerOnError abort` to keep a failed builder VM for debugging, or
 `-PackerOnError ask` to choose the failure action interactively.
+During provisioning, the shared Photon path reads `[project].version` from the
+staged `pyproject.toml` with Python's TOML parser and validates the repository's
+strict `X.Y.Z` release format before creating the bootstrap release directory.
+Missing, unreadable, malformed, or invalid version metadata fails the build
+with the specific version-policy error instead of an ambiguous shell match
+failure.
 
 The image builder does not configure a custom pip package index by default. If
 your build network requires an internal PyPI mirror, pass `-PipGlobalIndex` or
