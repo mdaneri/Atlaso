@@ -1,10 +1,10 @@
 {
   "channel": "development",
-  "git_commit": "2d9edc2469927067b5a43ce824a1e6ee49feaec5",
-  "issued_at": "2026-07-24T17:39:57Z",
+  "git_commit": "f23d9266e9620bf6aa9d423082f34973fce314f1",
+  "issued_at": "2026-07-24T19:16:50Z",
   "kind": "labfoundry-channel",
-  "release_manifest_url": "https://github.com/mdaneri/LabFoundry/releases/download/v0.9.9/release-manifest.json",
+  "release_manifest_url": "https://github.com/mdaneri/LabFoundry/releases/download/v0.9.10/release-manifest.json",
   "schema_version": 2,
   "signing_key_id": "labfoundry-release-2026-01",
-  "version": "0.9.9"
+  "version": "0.9.10"
 }
