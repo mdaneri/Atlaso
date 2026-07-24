@@ -365,6 +365,11 @@ def test_photon_image_optional_pip_global_index_configuration():
     assert 'printf \'cache-dir = %s\\n\' "$PIP_CACHE_DIR"' in script
     assert 'write_pip_config /etc/pip.conf' in script
     assert 'python3 -m venv "$LABFOUNDRY_RELEASE_DIR/.venv"' in script
+    assert (
+        'python3 "$LABFOUNDRY_HOME/scripts/version.py" project-get --root "$LABFOUNDRY_HOME"'
+        in script
+    )
+    assert "sed -n 's/^version" not in script
     assert 'LABFOUNDRY_RELEASE_DIR="$LABFOUNDRY_HOME/releases/bootstrap-$LABFOUNDRY_RELEASE_VERSION"' in script
     assert '"$LABFOUNDRY_RELEASE_DIR/bundle-metadata.json"' in script
     assert 'ln -sfn "releases/bootstrap-$LABFOUNDRY_RELEASE_VERSION" "$LABFOUNDRY_HOME/current"' in script
@@ -376,6 +381,8 @@ def test_photon_image_optional_pip_global_index_configuration():
     assert 'trust_source_dir="$LABFOUNDRY_HOME/image/common/update-trust"' in script
     assert 'for trust_key in "$trust_source_dir"/*.pem' in script
     for packer_template in (template, vmware_template):
+        assert 'source      = "../../scripts/version.py"' in packer_template
+        assert 'destination = "/tmp/labfoundry-src/scripts/version.py"' in packer_template
         assert 'source      = "../common/update-trust"' in packer_template
         assert 'destination = "/tmp/labfoundry-src/image/common/update-trust"' in packer_template
     assert "LabFoundry release trust source directory is missing" in script

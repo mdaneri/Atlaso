@@ -244,9 +244,10 @@ fi
 log_step "installing LabFoundry Python environment"
 install -d -o root -g root -m 0755 "$PIP_CACHE_DIR"
 install -d -o root -g root -m 0755 "$LABFOUNDRY_HOME/releases"
-LABFOUNDRY_RELEASE_VERSION="$(sed -n 's/^version = "\([0-9][0-9.]*\)"$/\1/p' "$LABFOUNDRY_HOME/pyproject.toml" | head -n 1)"
-if [ -z "$LABFOUNDRY_RELEASE_VERSION" ]; then
-  echo "Could not determine LabFoundry release version from pyproject.toml" >&2
+if ! LABFOUNDRY_RELEASE_VERSION="$(
+  python3 "$LABFOUNDRY_HOME/scripts/version.py" project-get --root "$LABFOUNDRY_HOME"
+)"; then
+  echo "Could not determine LabFoundry release version from staged repository metadata" >&2
   exit 2
 fi
 LABFOUNDRY_RELEASE_DIR="$LABFOUNDRY_HOME/releases/bootstrap-$LABFOUNDRY_RELEASE_VERSION"

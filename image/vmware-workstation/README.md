@@ -44,6 +44,11 @@ The original Photon source ISO is shared with the Hyper-V image path under
 written under this image directory.
 Workstation builds show the VMware console by default so boot/install progress
 is visible; pass `-Headless` for unattended runs.
+The shared provisioner stages `pyproject.toml` with `scripts/version.py`, parses
+`[project].version` as TOML, and requires the repository's strict `X.Y.Z`
+release format before it creates `/opt/labfoundry/releases/bootstrap-<version>`.
+If that metadata is missing, unreadable, malformed, or invalid, the build log
+reports the specific version-policy error.
 
 ```powershell
 powershell.exe -ExecutionPolicy Bypass `

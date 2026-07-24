@@ -199,6 +199,11 @@ build {
   }
 
   provisioner "file" {
+    source      = "../../scripts/version.py"
+    destination = "/tmp/labfoundry-src/scripts/version.py"
+  }
+
+  provisioner "file" {
     source      = "../../third_party/ipxe"
     destination = "/tmp/labfoundry-src/third_party/ipxe"
   }
