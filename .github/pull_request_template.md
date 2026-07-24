@@ -16,3 +16,4 @@ Every pull request must close at least one pre-existing, labeled issue.
 - [ ] `git diff --check` passed.
 - [ ] Relevant documentation is updated.
 - [ ] The linked issue has exactly one type label: `bug`, `enhancement`, or `documentation`.
+- [ ] If an automated contributor or coding agent participated, it completed the `AGENTS.md` Mandatory Agent Startup Gate before implementation.

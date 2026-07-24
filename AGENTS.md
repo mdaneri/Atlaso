@@ -1,8 +1,17 @@
 # LabFoundry Agent Notes
 
+## Mandatory Agent Startup Gate
+
+- These instructions apply to every agent, subagent, delegated agent, automated contributor, and resumed task.
+- Before planning implementation or changing repository or external state, read this `AGENTS.md` completely, then read [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and [SECURITY.md](SECURITY.md). Treat all four documents as mandatory instructions, not optional reference material.
+- In the first progress update, confirm that the policy files were read, classify the work as `bug`, `enhancement`, `documentation`, or security-sensitive work, and identify the linked GitHub issue. Read-only inspection needed to identify the repository, applicable instructions, or issue is allowed before that confirmation.
+- Repeat this startup gate whenever the repository, worktree, or working directory changes, or when any of the policy files changes during the task.
+- A delegating agent must include this startup gate in every delegated prompt and verify that the delegated agent completed it before accepting or using its work. Delegation never bypasses repository policy.
+- If a policy is unavailable, conflicting, or unclear, stop before implementation and ask for maintainer direction. Never silently bypass a policy.
+
 ## Repository Delivery Workflow
 
-- Every repository change requires a GitHub issue created or linked before implementation begins, relevant documentation updated in the same change, and a pull request linked with `Closes #<issue>`. Do not commit changes directly to `main`.
+- [CONTRIBUTING.md](CONTRIBUTING.md) is the canonical delivery workflow. Every repository change requires a GitHub issue created or linked before implementation begins, exactly one applicable type label, relevant documentation updated in the same change, and a pull request linked with `Closes #<issue>`. Do not commit changes directly to `main`.
 
 ## UI Defaults
 

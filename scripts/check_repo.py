@@ -59,6 +59,33 @@ TEXT_SUFFIXES = {
 
 MARKDOWN_LINK_RE = re.compile(r"!?\[[^\]]+\]\(([^)]+)\)")
 
+REQUIRED_POLICY_MARKERS = {
+    Path("AGENTS.md"): (
+        "## Mandatory Agent Startup Gate",
+        "CONTRIBUTING.md",
+        "CODE_OF_CONDUCT.md",
+        "SECURITY.md",
+        "first progress update",
+        "delegating agent",
+    ),
+    Path("CONTRIBUTING.md"): (
+        "## Automated contributors and coding agents",
+        "Mandatory Agent Startup Gate",
+        "delegated agent",
+    ),
+    Path(".github/copilot-instructions.md"): (
+        "Mandatory Agent Startup Gate",
+        "CONTRIBUTING.md",
+        "CODE_OF_CONDUCT.md",
+        "SECURITY.md",
+        "linked GitHub issue",
+    ),
+    Path(".github/pull_request_template.md"): (
+        "Closes #",
+        "Mandatory Agent Startup Gate",
+    ),
+}
+
 
 @dataclass(frozen=True)
 class Finding:
@@ -279,6 +306,24 @@ def check_file(path: Path) -> list[Finding]:
     return findings
 
 
+def check_agent_policy_gate(root: Path) -> list[Finding]:
+    """Require agent policy entry points and their non-negotiable markers."""
+    findings: list[Finding] = []
+    for relative_path, markers in REQUIRED_POLICY_MARKERS.items():
+        path = root / relative_path
+        text, error = read_text(path)
+        if error is not None:
+            findings.append(Finding(path, "required agent policy entry point is missing or unreadable"))
+            continue
+        assert text is not None
+        for marker in markers:
+            if marker not in text:
+                findings.append(
+                    Finding(path, f"required agent policy marker is missing: {marker}")
+                )
+    return findings
+
+
 def check_xmlish_svg(path: Path, text: str) -> list[Finding]:
     import xml.etree.ElementTree as ET
 
@@ -298,6 +343,7 @@ def main(argv: list[str] | None = None) -> int:
     findings: list[Finding] = []
     for path in files:
         findings.extend(check_file(path))
+    findings.extend(check_agent_policy_gate(ROOT))
 
     if findings:
         print(f"Repository checks failed with {len(findings)} issue(s):", file=sys.stderr)
