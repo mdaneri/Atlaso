@@ -62,27 +62,48 @@ MARKDOWN_LINK_RE = re.compile(r"!?\[[^\]]+\]\(([^)]+)\)")
 REQUIRED_POLICY_MARKERS = {
     Path("AGENTS.md"): (
         "## Mandatory Agent Startup Gate",
+        "## Mandatory UI Design Guide Gate",
         "CONTRIBUTING.md",
         "CODE_OF_CONDUCT.md",
         "SECURITY.md",
+        "docs/ui-design-guide.md",
         "first progress update",
         "delegating agent",
+        "direct-edit Tabulator",
+        "explicit maintainer approval",
     ),
     Path("CONTRIBUTING.md"): (
         "## Automated contributors and coding agents",
+        "## User-interface contributions",
         "Mandatory Agent Startup Gate",
+        "Mandatory UI Design Guide Gate",
+        "docs/ui-design-guide.md",
         "delegated agent",
     ),
     Path(".github/copilot-instructions.md"): (
         "Mandatory Agent Startup Gate",
+        "Mandatory UI Design Guide Gate",
         "CONTRIBUTING.md",
         "CODE_OF_CONDUCT.md",
         "SECURITY.md",
+        "docs/ui-design-guide.md",
         "linked GitHub issue",
     ),
     Path(".github/pull_request_template.md"): (
         "Closes #",
         "Mandatory Agent Startup Gate",
+        "docs/ui-design-guide.md",
+    ),
+    Path("docs/ui-design-guide.md"): (
+        "# Atlaso UI Design Guide",
+        "Tabulator is the only data-grid implementation",
+        "Physical Interfaces",
+        "ESX Storage",
+        "Tasks",
+        "Audit Events",
+        "Automation Schedules",
+        "Reviewed semantic-table exemptions",
+        "explicit maintainer approval",
     ),
 }
 

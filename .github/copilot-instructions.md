@@ -9,6 +9,12 @@ the policy files were read in the first progress update, classify the work, and
 identify the linked GitHub issue. Repeat the gate after changing repositories,
 worktrees, or working directories.
 
+For changes affecting templates, authored CSS, browser JavaScript, controls,
+layouts, data grids, dialogs, wizards, or visible copy, also complete the
+**Mandatory UI Design Guide Gate** in `AGENTS.md` and read
+`docs/ui-design-guide.md` before planning implementation. Classify the
+interaction and name the existing Atlaso reference being reused.
+
 `AGENTS.md` and `CONTRIBUTING.md` are authoritative. In particular:
 
 - create or link the labeled issue before implementation;

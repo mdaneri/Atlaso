@@ -9,6 +9,14 @@
 - A delegating agent must include this startup gate in every delegated prompt and verify that the delegated agent completed it before accepting or using its work. Delegation never bypasses repository policy.
 - If a policy is unavailable, conflicting, or unclear, stop before implementation and ask for maintainer direction. Never silently bypass a policy.
 
+## Mandatory UI Design Guide Gate
+
+- Any change affecting templates, authored CSS, browser JavaScript, controls, layouts, data grids, dialogs, wizards, or visible copy must read [docs/ui-design-guide.md](docs/ui-design-guide.md) before planning implementation.
+- In the first progress update for UI work, confirm that the guide was read, classify the interaction as `direct-edit Tabulator`, `wizard-backed Tabulator`, `read-only Tabulator`, or `non-grid settings`, and name the existing Atlaso reference being reused.
+- Tabulator is the only data-grid implementation. Custom data grids and interaction patterns not defined by the guide require explicit maintainer approval before implementation.
+- A delegating agent must include this UI gate in every UI-related delegated prompt and verify that the delegated agent read the guide, classified the interaction, and identified the reused reference before accepting or using its work.
+- Repeat this gate when the guide changes during a task. If the guide is unavailable, conflicting, or unclear, stop before UI implementation and ask for maintainer direction.
+
 ## Repository Delivery Workflow
 
 - [CONTRIBUTING.md](CONTRIBUTING.md) is the canonical delivery workflow. Every repository change requires a GitHub issue created or linked before implementation begins, exactly one applicable type label, relevant documentation updated in the same change, and a pull request linked with `Closes #<issue>`. Do not commit changes directly to `main`.
