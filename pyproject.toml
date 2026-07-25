@@ -1,6 +1,6 @@
 [project]
 name = "labfoundry"
-version = "0.9.16"
+version = "0.9.17"
 description = "LabFoundry Linux appliance web application MVP scaffold"
 readme = "README.md"
 license = "MIT"
