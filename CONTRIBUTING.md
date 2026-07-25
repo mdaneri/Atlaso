@@ -47,6 +47,26 @@ discussion state and do not replace a type label on active work.
 `main` accepts squash merges only after required checks pass. Do not commit
 directly to `main`.
 
+## User-interface contributions
+
+Any change affecting templates, authored CSS, browser JavaScript, controls,
+layouts, data grids, dialogs, wizards, or visible copy must follow the
+mandatory [Atlaso UI Design Guide](docs/ui-design-guide.md).
+
+Before planning the change, classify it as **direct-edit Tabulator**,
+**wizard-backed Tabulator**, **read-only Tabulator**, **non-grid settings**, or
+approval-only **custom/other**, and identify the established Atlaso reference
+being reused. Include both in the pull-request summary. For **custom/other**,
+cite explicit maintainer approval and the closest related Atlaso reference.
+Tabulator is the only data-grid implementation. A custom data grid or
+interaction pattern not defined by the guide requires explicit maintainer
+approval before implementation.
+
+Preserve desired-state and global appliance-apply boundaries, permissions,
+server-rendered fallbacks, validation recovery, keyboard access, and responsive
+behavior. Use the guide's pull-request checklist and provide desktop and narrow
+viewport evidence for affected flows.
+
 ## Automated contributors and coding agents
 
 Every automated contributor, coding agent, subagent, and delegated agent must
@@ -54,6 +74,10 @@ complete the **Mandatory Agent Startup Gate** in [AGENTS.md](AGENTS.md) before
 planning implementation or changing repository or external state. Its first
 progress update must confirm the policy files were read, classify the work, and
 identify the linked issue.
+
+For UI work, the agent must also complete the **Mandatory UI Design Guide Gate**
+in `AGENTS.md`, read the UI guide before planning implementation, classify the
+interaction, and name the existing Atlaso reference being reused.
 
 A delegating agent is responsible for including the startup gate in delegated
 prompts and verifying compliance before accepting the delegated work. Changing
