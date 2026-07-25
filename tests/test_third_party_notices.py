@@ -120,3 +120,57 @@ def test_generator_rejects_wheel_without_license(monkeypatch, tmp_path):
             ],
         )
         module.main()
+
+
+@pytest.mark.parametrize(
+    "site_packages_relative",
+    (
+        "lib/python3.14/site-packages",
+        "lib64/python3.14/site-packages",
+        "Lib/site-packages",
+    ),
+)
+def test_installed_records_ignore_nested_vendored_distribution_metadata(
+    tmp_path,
+    site_packages_relative,
+):
+    module = load_module()
+    environment = tmp_path / "environment"
+    site_packages = environment / site_packages_relative
+    installed_metadata = site_packages / "wheel-0.45.1.dist-info/METADATA"
+    installed_metadata.parent.mkdir(parents=True)
+    installed_metadata.write_text(
+        "\n".join(
+            [
+                "Metadata-Version: 2.4",
+                "Name: wheel",
+                "Version: 0.45.1",
+                "License-Expression: MIT",
+                "Home-page: https://github.com/pypa/wheel",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    vendored_metadata = site_packages / "setuptools/_vendor/wheel-0.46.3.dist-info/METADATA"
+    vendored_metadata.parent.mkdir(parents=True)
+    vendored_metadata.write_text(
+        "\n".join(
+            [
+                "Metadata-Version: 2.4",
+                "Name: wheel",
+                "Version: 0.46.3",
+                "License-Expression: MIT",
+                "Home-page: https://github.com/pypa/wheel",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    records = module.installed_python_records(
+        environment,
+        {"wheel": ("0.45.1", "wheel")},
+    )
+
+    assert records["wheel"]["version"] == "0.45.1"
