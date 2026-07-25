@@ -86,7 +86,10 @@ Omit both pip options for standard/default pip behavior.
 Image provisioning uses Photon's installed pip inside the LabFoundry virtual
 environment and does not upgrade pip as a separate bootstrap step, so transient
 public PyPI release downloads do not block the appliance build before the actual
-LabFoundry package install begins.
+LabFoundry package install begins. The Packer template stages
+`requirements-appliance.lock` with the application source so bootstrap
+dependency installation retains hash verification instead of falling back to
+unpinned packages.
 
 The wrapper keeps `LABFOUNDRY_DRY_RUN_SYSTEM_ADAPTERS=true` by default so a
 first-boot image records host-mutation command intent instead of changing
