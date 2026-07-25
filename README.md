@@ -747,6 +747,10 @@ powershell.exe -ExecutionPolicy Bypass `
 ```
 
 Before a forced Workstation rebuild deletes the output directory, the wrapper finds any existing output VMX and unregisters it with `vmrun -T ws unregister` through the same VMware Workstation discovery path used by the rest of the VMware scripts. The cleanup is scoped to the configured image output directory so stale template registrations do not survive a rebuild.
+The remastered kickstart disables Photon's socket-activated SSH unit and enables
+the normal `sshd.service`, ensuring Packer receives a deterministic SSH daemon
+after the first installed-system boot. The temporary Photon root/build password
+remains separate from the Atlaso web bootstrap administrator password.
 
 Lifecycle testing uses VMX/VMDK artifacts and `vmrun.exe`:
 

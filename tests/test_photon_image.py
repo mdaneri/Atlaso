@@ -251,6 +251,17 @@ def test_packer_templates_stage_shared_boot_branding_assets():
         assert 'destination = "/tmp/atlaso-src/image/common/boot"' in template
 
 
+def test_photon_kickstart_uses_deterministic_build_time_sshd_service():
+    build_module = Path("scripts/windows/common/Atlaso.PhotonImage.psm1").read_text(encoding="utf-8")
+
+    disable_socket = "'systemctl disable sshd.socket'"
+    enable_service = "'systemctl enable sshd.service'"
+    assert disable_socket in build_module
+    assert enable_service in build_module
+    assert "'systemctl enable sshd'" not in build_module
+    assert build_module.index(disable_socket) < build_module.index(enable_service)
+
+
 def test_packer_build_uses_atlaso_management_network_by_default():
     template = Path("image/hyperv/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
     docs = Path("image/hyperv/README.md").read_text(encoding="utf-8")

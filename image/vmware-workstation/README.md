@@ -49,6 +49,11 @@ The shared provisioner stages `pyproject.toml` with `scripts/version.py`, parses
 release format before it creates `/opt/atlaso/releases/bootstrap-<version>`.
 If that metadata is missing, unreadable, malformed, or invalid, the build log
 reports the specific version-policy error.
+The remastered kickstart disables `sshd.socket` and enables `sshd.service`.
+Photon must not enable both conflicting units: the normal daemon provides
+deterministic password-authenticated SSH for Packer after the installed-system
+boot. The Photon root/build password remains separate from the Atlaso web
+bootstrap administrator password.
 The template also stages `requirements-appliance.lock` with the application
 source so bootstrap dependency installation retains hash verification instead
 of falling back to unpinned packages. It stages the third-party notice generator
