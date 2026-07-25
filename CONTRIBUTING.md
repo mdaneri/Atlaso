@@ -45,6 +45,20 @@ discussion state and do not replace a type label on active work.
 `main` accepts squash merges only after required checks pass. Do not commit
 directly to `main`.
 
+## Automated contributors and coding agents
+
+Every automated contributor, coding agent, subagent, and delegated agent must
+complete the **Mandatory Agent Startup Gate** in [AGENTS.md](AGENTS.md) before
+planning implementation or changing repository or external state. Its first
+progress update must confirm the policy files were read, classify the work, and
+identify the linked issue.
+
+A delegating agent is responsible for including the startup gate in delegated
+prompts and verifying compliance before accepting the delegated work. Changing
+repositories, worktrees, or working directories requires the gate to be
+repeated. Automation does not waive the issue, label, documentation, validation,
+version, review, security, or conduct requirements in this guide.
+
 ## Security and conduct
 
 Read the [Security Policy](SECURITY.md) before reporting a vulnerability. Read
