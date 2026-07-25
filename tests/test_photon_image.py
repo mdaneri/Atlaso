@@ -383,6 +383,8 @@ def test_photon_image_optional_pip_global_index_configuration():
     assert 'trust_source_dir="$LABFOUNDRY_HOME/image/common/update-trust"' in script
     assert 'for trust_key in "$trust_source_dir"/*.pem' in script
     for packer_template in (template, vmware_template):
+        assert 'source      = "../../requirements-appliance.lock"' in packer_template
+        assert 'destination = "/tmp/labfoundry-src/requirements-appliance.lock"' in packer_template
         assert 'source      = "../../scripts/version.py"' in packer_template
         assert 'destination = "/tmp/labfoundry-src/scripts/version.py"' in packer_template
         assert 'source      = "../../scripts/run_tdnf_with_progress.py"' in packer_template
