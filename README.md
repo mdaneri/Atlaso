@@ -159,7 +159,9 @@ failure.
 Both Photon Packer targets stage `requirements-appliance.lock` with the
 application source so bootstrap dependency installation can retain
 `--require-hashes`; a missing staged lock fails the image rather than falling
-back to unpinned dependencies.
+back to unpinned dependencies. They also stage the third-party notice generator
+and its vendored-component inventory so the image can generate the required
+Python, Photon RPM, and bundled-component notice at build time.
 Long TDNF operations capture their raw transaction output and emit one compact
 Packer status line every 30 seconds with elapsed time and cache size. Successful
 operations report their duration; failures preserve the TDNF exit status and

@@ -204,6 +204,16 @@ build {
   }
 
   provisioner "file" {
+    source      = "../../scripts/generate_third_party_notices.py"
+    destination = "/tmp/labfoundry-src/scripts/generate_third_party_notices.py"
+  }
+
+  provisioner "file" {
+    source      = "../../scripts/third_party_notices.json"
+    destination = "/tmp/labfoundry-src/scripts/third_party_notices.json"
+  }
+
+  provisioner "file" {
     source      = "../../scripts/version.py"
     destination = "/tmp/labfoundry-src/scripts/version.py"
   }
