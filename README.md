@@ -291,6 +291,10 @@ parsing, Markdown fence/local-link checks, SVG XML parsing, UTF-8 validation,
 and unresolved merge-conflict marker detection. It skips vendored static assets,
 bundled third-party payloads, build output, and test-result artifacts.
 
+GitHub-managed CodeQL default setup scans the repository's GitHub Actions,
+JavaScript/TypeScript, and Python sources with the default query suite on pull
+requests, pushes to `main`, and the managed weekly schedule.
+
 ### Pull requests and versions
 
 `main` is protected and accepts squash merges only after the version policy,
