@@ -54,11 +54,13 @@ layouts, data grids, dialogs, wizards, or visible copy must follow the
 mandatory [Atlaso UI Design Guide](docs/ui-design-guide.md).
 
 Before planning the change, classify it as **direct-edit Tabulator**,
-**wizard-backed Tabulator**, **read-only Tabulator**, or **non-grid settings**,
-and identify the established Atlaso reference being reused. Include both in the
-pull-request summary. Tabulator is the only data-grid implementation. A custom
-data grid or interaction pattern not defined by the guide requires explicit
-maintainer approval before implementation.
+**wizard-backed Tabulator**, **read-only Tabulator**, **non-grid settings**, or
+approval-only **custom/other**, and identify the established Atlaso reference
+being reused. Include both in the pull-request summary. For **custom/other**,
+cite explicit maintainer approval and the closest related Atlaso reference.
+Tabulator is the only data-grid implementation. A custom data grid or
+interaction pattern not defined by the guide requires explicit maintainer
+approval before implementation.
 
 Preserve desired-state and global appliance-apply boundaries, permissions,
 server-rendered fallbacks, validation recovery, keyboard access, and responsive

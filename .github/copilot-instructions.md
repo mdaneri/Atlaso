@@ -13,7 +13,9 @@ For changes affecting templates, authored CSS, browser JavaScript, controls,
 layouts, data grids, dialogs, wizards, or visible copy, also complete the
 **Mandatory UI Design Guide Gate** in `AGENTS.md` and read
 `docs/ui-design-guide.md` before planning implementation. Classify the
-interaction and name the existing Atlaso reference being reused.
+interaction and name the existing Atlaso reference being reused. Approval-only
+`custom/other` work must cite explicit maintainer approval and the closest
+related Atlaso reference.
 
 `AGENTS.md` and `CONTRIBUTING.md` are authoritative. In particular:
 

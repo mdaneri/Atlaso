@@ -70,6 +70,7 @@ REQUIRED_POLICY_MARKERS = {
         "first progress update",
         "delegating agent",
         "direct-edit Tabulator",
+        "custom/other",
         "explicit maintainer approval",
     ),
     Path("CONTRIBUTING.md"): (
@@ -78,6 +79,7 @@ REQUIRED_POLICY_MARKERS = {
         "Mandatory Agent Startup Gate",
         "Mandatory UI Design Guide Gate",
         "docs/ui-design-guide.md",
+        "custom/other",
         "delegated agent",
     ),
     Path(".github/copilot-instructions.md"): (
@@ -87,12 +89,14 @@ REQUIRED_POLICY_MARKERS = {
         "CODE_OF_CONDUCT.md",
         "SECURITY.md",
         "docs/ui-design-guide.md",
+        "custom/other",
         "linked GitHub issue",
     ),
     Path(".github/pull_request_template.md"): (
         "Closes #",
         "Mandatory Agent Startup Gate",
         "docs/ui-design-guide.md",
+        "custom/other",
     ),
     Path("docs/ui-design-guide.md"): (
         "# Atlaso UI Design Guide",
@@ -103,6 +107,7 @@ REQUIRED_POLICY_MARKERS = {
         "Audit Events",
         "Automation Schedules",
         "Reviewed semantic-table exemptions",
+        "Custom/other",
         "explicit maintainer approval",
     ),
 }

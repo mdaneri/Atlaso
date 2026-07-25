@@ -18,9 +18,11 @@ Before planning a UI change:
    [AGENTS.md](../AGENTS.md).
 2. Classify the work as one of the established patterns:
    **direct-edit Tabulator**, **wizard-backed Tabulator**,
-   **read-only Tabulator**, or **non-grid settings**.
+   **read-only Tabulator**, or **non-grid settings**. If none is truthful,
+   classify it as approval-only **custom/other**.
 3. Name the existing Atlaso reference that will be reused in the first progress
-   update and in the pull request.
+   update and in the pull request. For **custom/other**, cite the explicit
+   maintainer approval and name the closest related Atlaso reference.
 4. Obtain explicit maintainer approval before introducing a custom data grid or
    an interaction pattern that is not defined here.
 
@@ -35,10 +37,17 @@ the guide in the delegated prompt and verify compliance before using the work.
 | Wizard-backed Tabulator | A collection remains useful to browse in a grid, but add or edit requires dependent choices, discovery, credentials, safety decisions, or a review step. | **ESX Storage**; **Automation Schedules** |
 | Read-only Tabulator | A primary resource or operational collection is inspected, filtered, sorted, paginated, or opened for detail without inline mutation. | **Tasks**; **Audit Events** |
 | Non-grid settings | A small set of singleton service or appliance settings is edited as desired state rather than as a resource collection. | **DNS** service settings and validation rail |
+| Custom/other (approval required) | The work is not truthfully a collection or settings pattern, such as a dashboard, chart, public portal, or standalone dialog, and no established Atlaso interaction applies. | Cite explicit maintainer approval and name the closest related Atlaso surface. |
 
 Tabulator is the only data-grid implementation. This restriction does not
 prevent CSS Grid from being used for page layout; it prevents new bespoke HTML,
 CSS, or JavaScript resource grids.
+
+**Custom/other** is an approval escape hatch, not a default category. First
+reuse any applicable page shell, control, dialog, status, accessibility, and
+responsive behavior defined by this guide. The approval must record why the
+four established patterns are not truthful and what new interaction contract
+future work should follow.
 
 Use a semantic HTML table only for a small, non-interactive summary or review
 preview that is not a browsable or editable resource collection. A collection
@@ -254,8 +263,10 @@ wizard with step navigation, validation, and a final review.
 For every UI change:
 
 - [ ] The interaction is classified as direct-edit Tabulator,
-      wizard-backed Tabulator, read-only Tabulator, or non-grid settings.
-- [ ] The pull request names the existing Atlaso reference being reused.
+      wizard-backed Tabulator, read-only Tabulator, non-grid settings, or
+      approval-only custom/other.
+- [ ] The pull request names the existing Atlaso reference being reused, or for
+      custom/other cites maintainer approval and the closest related reference.
 - [ ] No custom grid or new interaction pattern was added without explicit
       maintainer approval.
 - [ ] Desired-state, autosave, permission, confirmation, validation, and global

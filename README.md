@@ -254,9 +254,10 @@ Primary workflow:
 UI work must follow the mandatory
 [Atlaso UI Design Guide](docs/ui-design-guide.md). Classify each affected
 interaction as direct-edit Tabulator, wizard-backed Tabulator, read-only
-Tabulator, or non-grid settings, and reuse the guide's named reference instead
-of creating a page-specific grid or interaction. Existing-surface remediation
-is tracked in
+Tabulator, non-grid settings, or approval-only custom/other. Reuse the guide's
+named reference instead of creating a page-specific grid or interaction;
+custom/other must cite maintainer approval and the closest related reference.
+Existing-surface remediation is tracked in
 [GitHub issue #115](https://github.com/mdaneri/Atlaso/issues/115).
 
 Install and run:

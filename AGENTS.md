@@ -12,9 +12,9 @@
 ## Mandatory UI Design Guide Gate
 
 - Any change affecting templates, authored CSS, browser JavaScript, controls, layouts, data grids, dialogs, wizards, or visible copy must read [docs/ui-design-guide.md](docs/ui-design-guide.md) before planning implementation.
-- In the first progress update for UI work, confirm that the guide was read, classify the interaction as `direct-edit Tabulator`, `wizard-backed Tabulator`, `read-only Tabulator`, or `non-grid settings`, and name the existing Atlaso reference being reused.
+- In the first progress update for UI work, confirm that the guide was read, classify the interaction as `direct-edit Tabulator`, `wizard-backed Tabulator`, `read-only Tabulator`, `non-grid settings`, or approval-only `custom/other`, and name the existing Atlaso reference being reused. For `custom/other`, cite the explicit maintainer approval and name the closest related Atlaso reference.
 - Tabulator is the only data-grid implementation. Custom data grids and interaction patterns not defined by the guide require explicit maintainer approval before implementation.
-- A delegating agent must include this UI gate in every UI-related delegated prompt and verify that the delegated agent read the guide, classified the interaction, and identified the reused reference before accepting or using its work.
+- A delegating agent must include this UI gate in every UI-related delegated prompt and verify that the delegated agent read the guide, classified the interaction, identified the reused or closest related reference, and cited maintainer approval for `custom/other` before accepting or using its work.
 - Repeat this gate when the guide changes during a task. If the guide is unavailable, conflicting, or unclear, stop before UI implementation and ask for maintainer direction.
 
 ## Repository Delivery Workflow
