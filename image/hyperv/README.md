@@ -91,7 +91,9 @@ LabFoundry package install begins. The Packer template stages
 dependency installation retains hash verification instead of falling back to
 unpinned packages. It also stages the third-party notice generator and
 vendored-component inventory as mandatory build inputs rather than skipping
-notice generation when either is missing.
+notice generation when either is missing. Notice lock verification inventories
+only top-level virtual-environment distributions and ignores package-internal
+vendored metadata.
 
 The wrapper keeps `LABFOUNDRY_DRY_RUN_SYSTEM_ADAPTERS=true` by default so a
 first-boot image records host-mutation command intent instead of changing

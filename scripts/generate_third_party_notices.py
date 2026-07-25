@@ -114,7 +114,16 @@ def installed_python_records(
     environment: Path, expected: dict[str, tuple[str, str]] | None = None
 ) -> dict[str, dict[str, str]]:
     records: dict[str, dict[str, str]] = {}
-    for metadata_path in sorted(environment.rglob("*.dist-info/METADATA")):
+    metadata_paths = {
+        metadata_path
+        for pattern in (
+            "lib/python*/site-packages/*.dist-info/METADATA",
+            "lib64/python*/site-packages/*.dist-info/METADATA",
+            "Lib/site-packages/*.dist-info/METADATA",
+        )
+        for metadata_path in environment.glob(pattern)
+    }
+    for metadata_path in sorted(metadata_paths):
         metadata = Parser().parsestr(metadata_path.read_text(encoding="utf-8"))
         name = (metadata.get("Name") or "").strip()
         version = (metadata.get("Version") or "").strip()
@@ -131,7 +140,11 @@ def installed_python_records(
         source = source_from_metadata(metadata)
         if not license_name or not source:
             raise ValueError(f"installed metadata is missing license or source for {name} {version}")
-        records[key] = {"name": name, "version": version, "license": license_name, "source": source}
+        record = {"name": name, "version": version, "license": license_name, "source": source}
+        previous = records.get(key)
+        if previous is not None and previous != record:
+            raise ValueError(f"installed environment has conflicting metadata for {name}")
+        records[key] = record
     if not records:
         raise ValueError(f"no installed Python metadata found under {environment}")
     if expected is not None:

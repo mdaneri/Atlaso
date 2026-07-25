@@ -53,7 +53,9 @@ The template also stages `requirements-appliance.lock` with the application
 source so bootstrap dependency installation retains hash verification instead
 of falling back to unpinned packages. It stages the third-party notice generator
 and vendored-component inventory as mandatory build inputs rather than skipping
-notice generation when either is missing.
+notice generation when either is missing. Notice lock verification inventories
+only top-level virtual-environment distributions and ignores package-internal
+vendored metadata.
 Long TDNF operations emit compact 30-second heartbeats with elapsed time and
 cache size instead of streaming terminal progress redraws through Packer.
 Successful operations report their duration, while failures retain the TDNF
