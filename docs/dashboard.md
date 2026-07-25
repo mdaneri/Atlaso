@@ -1,6 +1,6 @@
 # Dashboard
 
-`/dashboard` is LabFoundry's authenticated operations command center. It is a
+`/dashboard` is Atlaso's authenticated operations command center. It is a
 read-only orientation surface: operators can see current health and follow
 links into the owning workflow, but the dashboard never applies configuration,
 restarts a service, or mutates appliance state.

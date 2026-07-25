@@ -1,5 +1,5 @@
-from labfoundry.app.models import VcfPrivateRegistrySettings, VcfRegistryBundle
-from labfoundry.app.services.vcf_private_registry import (
+from atlaso.app.models import VcfPrivateRegistrySettings, VcfRegistryBundle
+from atlaso.app.services.vcf_private_registry import (
     render_harbor_config,
     render_imgpkg_relocation_preview,
     validate_vcf_registry_state,
@@ -8,7 +8,7 @@ from labfoundry.app.services.vcf_private_registry import (
 
 def test_vcf_private_registry_harbor_preview_redacts_secrets():
     settings = VcfPrivateRegistrySettings(
-        hostname="registry.labfoundry.internal",
+        hostname="registry.atlaso.internal",
         listen_interface="eth2",
         listen_address="192.168.50.1",
         harbor_project="vcf-supervisor-services",
@@ -17,8 +17,8 @@ def test_vcf_private_registry_harbor_preview_redacts_secrets():
 
     preview = render_harbor_config(settings)
 
-    assert "hostname: registry.labfoundry.internal" in preview
-    assert "harbor_admin_password: <provisioned-by-labfoundry-helper>" in preview
+    assert "hostname: registry.atlaso.internal" in preview
+    assert "harbor_admin_password: <provisioned-by-atlaso-helper>" in preview
     assert "robot$vcf-supervisor-services" in preview
     assert "password123" not in preview.lower()
     assert "token" not in preview.lower()
@@ -26,7 +26,7 @@ def test_vcf_private_registry_harbor_preview_redacts_secrets():
 
 def test_vcf_private_registry_relocation_preview_uses_imgpkg():
     settings = VcfPrivateRegistrySettings(
-        hostname="registry.labfoundry.internal",
+        hostname="registry.atlaso.internal",
         harbor_project="vcf-supervisor-services",
     )
     bundles = [
@@ -41,20 +41,20 @@ def test_vcf_private_registry_relocation_preview_uses_imgpkg():
     preview = render_imgpkg_relocation_preview(settings, bundles)
 
     assert "imgpkg copy -b projects.registry.vmware.com/vcf/service-a:1.0.0" in preview
-    assert "--to-repo registry.labfoundry.internal/vcf-supervisor-services/service-a" in preview
+    assert "--to-repo registry.atlaso.internal/vcf-supervisor-services/service-a" in preview
 
 
 def test_vcf_private_registry_validation_errors_and_warnings():
     settings = VcfPrivateRegistrySettings(
         enabled=True,
-        hostname="registry.labfoundry.local",
+        hostname="registry.atlaso.local",
         listen_interface="eth9",
         listen_address="not-an-ip",
         port=70000,
         harbor_project="Bad Project",
         storage_path="relative/path",
-        config_path="/etc/labfoundry/harbor/harbor.yml",
-        ca_bundle_path="/etc/labfoundry/ca/ca-bundle.pem",
+        config_path="/etc/atlaso/harbor/harbor.yml",
+        ca_bundle_path="/etc/atlaso/ca/ca-bundle.pem",
         server_certificate="",
         robot_account="",
     )

@@ -1,14 +1,14 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [string]$Name = 'LabFoundry'
+    [string]$Name = 'Atlaso'
 )
 
 $ErrorActionPreference = 'Stop'
 
 $adapters = @(
-    @{ Name = 'SiteA'; SwitchName = 'LabFoundry-SiteA' },
-    @{ Name = 'SiteB'; SwitchName = 'LabFoundry-SiteB' },
-    @{ Name = 'Trunk'; SwitchName = 'LabFoundry-Trunk' }
+    @{ Name = 'SiteA'; SwitchName = 'Atlaso-SiteA' },
+    @{ Name = 'SiteB'; SwitchName = 'Atlaso-SiteB' },
+    @{ Name = 'Trunk'; SwitchName = 'Atlaso-Trunk' }
 )
 
 foreach ($adapter in $adapters) {

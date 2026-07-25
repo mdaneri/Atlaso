@@ -7,9 +7,9 @@ param(
     [Parameter()]
     [string]$IsoChecksum = 'sha512:6a7a258399a258da742032987c043ab25503698d35edafaf1ae000f12127da1a161d8b84caa17fd8f23d129e81e1faa7ab087c20ab9229772a643f8f9475305f',
 
-    [string]$SshPassword = 'VMware01!',
+    [string]$SshPassword = 'PhotonBuild01!',
     [string]$BootstrapAdminPassword = 'VMware01!',
-    [string]$VmName = 'LabFoundry-Photon-Builder-VMware',
+    [string]$VmName = 'Atlaso-Photon-Builder-VMware',
     [string]$OutputDirectory = '',
     [string]$SshHost = '',
     [string]$SharedSourceDirectory = '',
@@ -43,7 +43,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-Import-Module (Join-Path $PSScriptRoot '..\common\LabFoundry.PhotonImage.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot '..\common\Atlaso.PhotonImage.psm1') -Force
 
 function ConvertTo-WorkstationVmnetName {
     param(
@@ -109,7 +109,7 @@ function Get-Ipv4CidrFromSubnetOffset {
     $prefix = Get-Ipv4PrefixLength -Netmask $Netmask
     $hostBits = 32 - $prefix
     if ($hostBits -lt 2) {
-        throw "VMware network $Subnet/$prefix does not have enough host addresses for a static LabFoundry appliance address."
+        throw "VMware network $Subnet/$prefix does not have enough host addresses for a static Atlaso appliance address."
     }
 
     $hostCapacity = [uint64]1 -shl $hostBits
@@ -166,7 +166,7 @@ function Resolve-WorkstationOutputDirectory {
     )
 
     $effectiveOutput = if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
-        Join-Path $PackerDirectory 'output\labfoundry-photon-vmware-workstation'
+        Join-Path $PackerDirectory 'output\atlaso-photon-vmware-workstation'
     } elseif ([System.IO.Path]::IsPathRooted($OutputDirectory)) {
         $OutputDirectory
     } else {
@@ -352,7 +352,7 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly -and -not $KeepExistingOutput) 
     Unregister-ExistingWorkstationTemplate -ResolvedVmrunPath $resolvedVmrunPath -OutputDirectory $workstationOutputDirectory -VmName $VmName
 }
 
-Invoke-LabFoundryPhotonImageBuild `
+Invoke-AtlasoPhotonImageBuild `
     -IsoUrl $IsoUrl `
     -IsoChecksum $IsoChecksum `
     -PackerDirectory $PackerDirectory `

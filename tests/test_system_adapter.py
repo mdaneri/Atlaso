@@ -1,10 +1,10 @@
 import subprocess
 
-from labfoundry.app.adapters.system import SystemAdapter
+from atlaso.app.adapters.system import SystemAdapter
 
 
 def test_esx_storage_inventory_executes_read_only_helper_during_dry_run(monkeypatch):
-    import labfoundry.app.adapters.system as system_adapter
+    import atlaso.app.adapters.system as system_adapter
 
     commands: list[list[str]] = []
 
@@ -24,7 +24,7 @@ def test_esx_storage_inventory_executes_read_only_helper_during_dry_run(monkeypa
 
 
 def test_real_appliance_power_action_uses_sudo_helper(monkeypatch):
-    import labfoundry.app.adapters.system as system_adapter
+    import atlaso.app.adapters.system as system_adapter
 
     commands: list[list[str]] = []
 
@@ -56,7 +56,7 @@ def test_appliance_power_action_rejects_unknown_action():
 
 
 def test_real_dhcp_leases_use_unprivileged_helper_first(monkeypatch):
-    import labfoundry.app.adapters.system as system_adapter
+    import atlaso.app.adapters.system as system_adapter
 
     commands: list[list[str]] = []
 
@@ -65,7 +65,7 @@ def test_real_dhcp_leases_use_unprivileged_helper_first(monkeypatch):
         return subprocess.CompletedProcess(
             command,
             0,
-            "1893456000 02:15:5d:00:20:40 192.168.50.140 live-client.labfoundry.internal *\n",
+            "1893456000 02:15:5d:00:20:40 192.168.50.140 live-client.atlaso.internal *\n",
             "",
         )
 
@@ -77,11 +77,11 @@ def test_real_dhcp_leases_use_unprivileged_helper_first(monkeypatch):
     assert result.dry_run is False
     assert result.command == [SystemAdapter.HELPER_PATH, "dnsmasq", "leases", "--real"]
     assert commands == [[SystemAdapter.HELPER_PATH, "dnsmasq", "leases", "--real"]]
-    assert "live-client.labfoundry.internal" in result.stdout
+    assert "live-client.atlaso.internal" in result.stdout
 
 
 def test_real_ntpd_logs_use_privileged_fixed_helper_action(monkeypatch):
-    import labfoundry.app.adapters.system as system_adapter
+    import atlaso.app.adapters.system as system_adapter
 
     commands: list[list[str]] = []
 
@@ -100,7 +100,7 @@ def test_real_ntpd_logs_use_privileged_fixed_helper_action(monkeypatch):
 
 
 def test_real_ldap_logs_use_privileged_fixed_helper_action(monkeypatch):
-    import labfoundry.app.adapters.system as system_adapter
+    import atlaso.app.adapters.system as system_adapter
 
     commands: list[list[str]] = []
 
@@ -119,7 +119,7 @@ def test_real_ldap_logs_use_privileged_fixed_helper_action(monkeypatch):
 
 
 def test_managed_ldap_authentication_password_uses_stdin_not_argv(monkeypatch):
-    import labfoundry.app.adapters.system as system_adapter
+    import atlaso.app.adapters.system as system_adapter
 
     captured: dict[str, object] = {}
 
@@ -140,7 +140,7 @@ def test_managed_ldap_authentication_password_uses_stdin_not_argv(monkeypatch):
 
 
 def test_real_dnsmasq_logs_use_privileged_fixed_helper_action(monkeypatch):
-    import labfoundry.app.adapters.system as system_adapter
+    import atlaso.app.adapters.system as system_adapter
 
     commands: list[list[str]] = []
 
@@ -159,7 +159,7 @@ def test_real_dnsmasq_logs_use_privileged_fixed_helper_action(monkeypatch):
 
 
 def test_real_nginx_logs_use_privileged_fixed_helper_action(monkeypatch):
-    import labfoundry.app.adapters.system as system_adapter
+    import atlaso.app.adapters.system as system_adapter
 
     commands: list[list[str]] = []
 
@@ -178,7 +178,7 @@ def test_real_nginx_logs_use_privileged_fixed_helper_action(monkeypatch):
 
 
 def test_real_nginx_http_logs_use_privileged_fixed_helper_actions(monkeypatch):
-    import labfoundry.app.adapters.system as system_adapter
+    import atlaso.app.adapters.system as system_adapter
 
     commands: list[list[str]] = []
 
@@ -198,7 +198,7 @@ def test_real_nginx_http_logs_use_privileged_fixed_helper_actions(monkeypatch):
 
 
 def test_real_ntpd_capabilities_use_unprivileged_fixed_helper_action(monkeypatch):
-    import labfoundry.app.adapters.system as system_adapter
+    import atlaso.app.adapters.system as system_adapter
 
     commands: list[list[str]] = []
 
@@ -215,7 +215,7 @@ def test_real_ntpd_capabilities_use_unprivileged_fixed_helper_action(monkeypatch
 
 
 def test_real_dhcp_leases_fall_back_to_sudo_helper(monkeypatch):
-    import labfoundry.app.adapters.system as system_adapter
+    import atlaso.app.adapters.system as system_adapter
 
     commands: list[list[str]] = []
 
@@ -226,7 +226,7 @@ def test_real_dhcp_leases_fall_back_to_sudo_helper(monkeypatch):
         return subprocess.CompletedProcess(
             command,
             0,
-            "1893456000 02:15:5d:00:20:41 192.168.50.141 fallback-client.labfoundry.internal *\n",
+            "1893456000 02:15:5d:00:20:41 192.168.50.141 fallback-client.atlaso.internal *\n",
             "",
         )
 
@@ -240,11 +240,11 @@ def test_real_dhcp_leases_fall_back_to_sudo_helper(monkeypatch):
         [SystemAdapter.HELPER_PATH, "dnsmasq", "leases", "--real"],
         ["sudo", "-n", SystemAdapter.HELPER_PATH, "dnsmasq", "leases", "--real"],
     ]
-    assert "fallback-client.labfoundry.internal" in result.stdout
+    assert "fallback-client.atlaso.internal" in result.stdout
 
 
 def test_real_dhcp_leases_sudo_password_error_becomes_operator_guidance(monkeypatch):
-    import labfoundry.app.adapters.system as system_adapter
+    import atlaso.app.adapters.system as system_adapter
 
     def fake_run(command, check, capture_output, text):
         if command[0] == SystemAdapter.HELPER_PATH:
@@ -257,12 +257,12 @@ def test_real_dhcp_leases_sudo_password_error_becomes_operator_guidance(monkeypa
 
     assert result.returncode == 1
     assert result.command == ["sudo", "-n", SystemAdapter.HELPER_PATH, "dnsmasq", "leases", "--real"]
-    assert "updated LabFoundry sudoers helper rule" in result.stderr
+    assert "updated Atlaso sudoers helper rule" in result.stderr
     assert "sudo: a password is required" not in result.stderr
 
 
 def test_real_vcf_backup_apply_uses_sudo_helper(monkeypatch):
-    import labfoundry.app.adapters.system as system_adapter
+    import atlaso.app.adapters.system as system_adapter
 
     commands: list[list[str]] = []
 
@@ -272,7 +272,7 @@ def test_real_vcf_backup_apply_uses_sudo_helper(monkeypatch):
 
     monkeypatch.setattr(system_adapter.subprocess, "run", fake_run)
 
-    result = SystemAdapter(dry_run=False).apply_vcf_backup_config("/var/lib/labfoundry/apply/vcf-backups/labfoundry-vcf-backups-sshd.conf")
+    result = SystemAdapter(dry_run=False).apply_vcf_backup_config("/var/lib/atlaso/apply/vcf-backups/atlaso-vcf-backups-sshd.conf")
 
     assert result.returncode == 0
     assert result.dry_run is False
@@ -283,13 +283,13 @@ def test_real_vcf_backup_apply_uses_sudo_helper(monkeypatch):
         "vcf-backups",
         "apply",
         "--real",
-        "/var/lib/labfoundry/apply/vcf-backups/labfoundry-vcf-backups-sshd.conf",
+        "/var/lib/atlaso/apply/vcf-backups/atlaso-vcf-backups-sshd.conf",
     ]
     assert commands == [result.command]
 
 
 def test_real_ldap_apply_uses_constrained_helper(monkeypatch):
-    import labfoundry.app.adapters.system as system_adapter
+    import atlaso.app.adapters.system as system_adapter
 
     commands: list[list[str]] = []
 
@@ -298,7 +298,7 @@ def test_real_ldap_apply_uses_constrained_helper(monkeypatch):
         return subprocess.CompletedProcess(command, 0, '{"ldap":"apply complete"}\n', "")
 
     monkeypatch.setattr(system_adapter.subprocess, "run", fake_run)
-    path = "/var/lib/labfoundry/apply/ldap/labfoundry-ldap.json"
+    path = "/var/lib/atlaso/apply/ldap/atlaso-ldap.json"
 
     result = SystemAdapter(dry_run=False).apply_ldap_config(path)
 
@@ -308,7 +308,7 @@ def test_real_ldap_apply_uses_constrained_helper(monkeypatch):
 
 
 def test_real_local_user_authentication_passes_password_only_on_stdin(monkeypatch):
-    import labfoundry.app.adapters.system as system_adapter
+    import atlaso.app.adapters.system as system_adapter
 
     calls: list[tuple[list[str], str | None]] = []
 

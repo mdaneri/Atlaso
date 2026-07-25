@@ -3,7 +3,7 @@ PowerShell transcript start
 Start time: 20260620111221
 Username: CORSAIR\m_dan
 RunAs User: CORSAIR\m_dan
-Configuration Name: 
+Configuration Name:
 Machine: CORSAIR (Microsoft Windows NT 10.0.26200.0)
 Host Application: C:\Program Files\PowerShell\7\pwsh.dll -WorkingDirectory ~
 Process ID: 26436
@@ -18,7 +18,7 @@ SerializationVersion: 1.1.0.1
 WSManStackVersion: 3.0
 **********************
 Transcript started, output file is .\hyperv-admin-check.txt
-PS C:\Users\m_dan\Documents\LabFoundry> Get-Command Get-VM,New-VM,Get-VMSwitch,New-VMSwitch
+PS C:\Users\m_dan\Documents\Atlaso> Get-Command Get-VM,New-VM,Get-VMSwitch,New-VMSwitch
 
 CommandType     Name                                               Version    Source
 -----------     ----                                               -------    ------
@@ -27,21 +27,21 @@ Cmdlet          New-VM                                             2.0.0.0    Hy
 Cmdlet          Get-VMSwitch                                       2.0.0.0    Hyper-V
 Cmdlet          New-VMSwitch                                       2.0.0.0    Hyper-V
 
-PS C:\Users\m_dan\Documents\LabFoundry> Get-VMHost
+PS C:\Users\m_dan\Documents\Atlaso> Get-VMHost
 
 Name    LogicalProcessorCount MemoryCapacity(M) VirtualMachineMigrationEnabled
 ----    --------------------- ----------------- ------------------------------
 CORSAIR 24                    49070.546875      False
 
-PS C:\Users\m_dan\Documents\LabFoundry> Get-VMSwitch | Format-Table Name,SwitchType,NetAdapterInterfaceDescription -Auto
+PS C:\Users\m_dan\Documents\Atlaso> Get-VMSwitch | Format-Table Name,SwitchType,NetAdapterInterfaceDescription -Auto
 
 Name                   SwitchType NetAdapterInterfaceDescription
 ----                   ---------- ------------------------------
 Default Switch           Internal
 WSL (Hyper-V firewall)   Internal
 
-PS C:\Users\m_dan\Documents\LabFoundry> Get-VM | Format-Table Name,State,Generation,ProcessorCount,MemoryStartup -Auto
-PS C:\Users\m_dan\Documents\LabFoundry> Stop-Transcript
+PS C:\Users\m_dan\Documents\Atlaso> Get-VM | Format-Table Name,State,Generation,ProcessorCount,MemoryStartup -Auto
+PS C:\Users\m_dan\Documents\Atlaso> Stop-Transcript
 **********************
 PowerShell transcript end
 End time: 20260620111225

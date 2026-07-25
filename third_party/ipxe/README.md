@@ -1,11 +1,11 @@
 # iPXE bootloader artifacts
 
-LabFoundry vendors two iPXE first-stage PXE boot artifacts for ESXi PXE bootstrap:
+Atlaso vendors two iPXE first-stage PXE boot artifacts for ESXi PXE bootstrap:
 
 - `bootloaders/undionly.kpxe`
 - `bootloaders/snponly.efi`
 
-Photon 5's `ipxe` package does not currently ship these filenames, while LabFoundry's ESXi PXE defaults and dnsmasq rendering expect them. Photon image provisioning stages these files into `/var/lib/labfoundry/pxe/bootloaders`, where `labfoundry-helper esxi-pxe validate|apply` searches before package paths.
+Photon 5's `ipxe` package does not currently ship these filenames, while Atlaso's ESXi PXE defaults and dnsmasq rendering expect them. Photon image provisioning stages these files into `/var/lib/atlaso/pxe/bootloaders`, where `atlaso-helper esxi-pxe validate|apply` searches before package paths.
 
 ## Source
 

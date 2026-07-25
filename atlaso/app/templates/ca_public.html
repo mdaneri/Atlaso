@@ -1,0 +1,67 @@
+{% set public_login_href = '/ca/login' %}
+{% set public_logout_action = '/requests/logout' %}
+{% set public_logout_next = '/ca' %}
+{% extends "public_portal_base.html" %}
+
+{% block title %}Atlaso - Certificate Authority{% endblock %}
+
+{% block public_content %}
+  <div class="topbar public-portal-title">
+    <div>
+      <p class="kicker">Public certificate authority</p>
+      <h1>Certificate Authority</h1>
+    </div>
+    <span class="status-pill {{ 'good' if root_available else 'warn' }}">{{ "available" if root_available else "not available" }}</span>
+  </div>
+
+  <section class="ca-home-layout">
+    <div class="panel ca-home-hero">
+      <div class="panel-head">
+        <div>
+          <p class="kicker">Atlaso Certificate Authority</p>
+          <h2>{{ ca_settings.root_common_name }}</h2>
+          <p class="muted">Download public trust material for Atlaso-managed service certificates. Private keys are never exposed from this portal.</p>
+        </div>
+      </div>
+      <div class="ca-trust-grid">
+        <div>
+          <span>Portal hostname</span>
+          <strong>{{ portal_hostname }}</strong>
+        </div>
+        <div>
+          <span>Issued</span>
+          <strong>{{ root_issued_at.strftime("%Y-%m-%d") if root_issued_at else "not generated" }}</strong>
+        </div>
+        <div>
+          <span>Expires</span>
+          <strong>{{ root_expires_at.strftime("%Y-%m-%d") if root_expires_at else "not generated" }}</strong>
+        </div>
+        <div class="ca-fingerprint-block">
+          <span>Fingerprint</span>
+          <div class="ca-fingerprint-value">
+            <strong>{{ root_fingerprint or "not generated" }}</strong>
+            {% if root_fingerprint %}
+              <button class="button secondary icon-button" type="button" data-copy-value="{{ root_fingerprint }}" aria-label="Copy fingerprint" title="Copy fingerprint">
+                <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              </button>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      <div class="button-row">
+        <a class="button primary {{ 'disabled' if not root_available else '' }}" href="/ca/downloads/root-ca.pem">Download root CA</a>
+        <a class="button secondary {{ 'disabled' if not root_available else '' }}" href="/ca/downloads/ca-bundle.pem">Download CA bundle</a>
+      </div>
+    </div>
+
+    <a class="panel public-link-panel" href="/requests" aria-label="Open certificate requests">
+      <div class="panel-head">
+        <div>
+          <h2>Certificate Requests</h2>
+          <p class="muted">Certificate operators can submit new certificate requests and revoke issued certificates from the independent request portal.</p>
+        </div>
+        <span class="status-pill {{ 'good' if identity else 'warn' }}">{{ "signed in" if identity else "sign-in required" }}</span>
+      </div>
+    </a>
+  </section>
+{% endblock %}

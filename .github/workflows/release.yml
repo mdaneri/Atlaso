@@ -40,7 +40,7 @@ jobs:
         with:
           ref: ${{ inputs.release_sha || github.event.workflow_run.head_sha }}
           fetch-depth: 0
-      - name: Validate successful main CI and bridge ordering
+      - name: Validate successful main CI release target
         id: target
         env:
           GH_TOKEN: ${{ github.token }}
@@ -70,25 +70,6 @@ jobs:
             fi
           fi
           VERSION="$(python scripts/version.py get)"
-          if test "$VERSION" != "0.9.0"; then
-            if ! LEGACY_MANIFEST="$(
-              gh api \
-                "repos/${{ github.repository }}/contents/updates/manifest.json?ref=gh-pages" \
-                --jq '.content' 2>/dev/null |
-                base64 --decode
-            )"; then
-              echo "::error::Publish or recover the v0.9.0 bridge release before v${VERSION}."
-              exit 1
-            fi
-            LEGACY_VERSION="$(
-              printf '%s' "$LEGACY_MANIFEST" |
-                python -c 'import json,sys; print(json.load(sys.stdin)["version"])'
-            )"
-            if test "$LEGACY_VERSION" != "0.9.0"; then
-              echo "::error::The legacy bridge manifest must remain pinned to v0.9.0."
-              exit 1
-            fi
-          fi
           echo "release_sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
 
   wheelhouse:
@@ -187,7 +168,7 @@ jobs:
       - name: Build and sign the immutable release
         env:
           RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
-          RELEASE_KEY_ID: labfoundry-release-2026-01
+          RELEASE_KEY_ID: atlaso-release-2026-01
         run: |
           BUILT_AT="$(git show -s --format=%cI "$RELEASE_SHA")"
           python scripts/build_release_bundle.py \
@@ -201,21 +182,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
         run: |
-          # The v0.9.0 recovery checks out the original publisher, so provide
-          # runner-local identity in addition to the script's self-contained fix.
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           python scripts/publish_release.py --commit "$RELEASE_SHA" --assets dist/release
       - name: Advance the signed development channel
         env:
-          RELEASE_KEY_ID: labfoundry-release-2026-01
+          RELEASE_KEY_ID: atlaso-release-2026-01
         run: |
           VERSION="$(python scripts/version.py get)"
           SITE_ROOT="$RUNNER_TEMP/site"
           git clone --branch gh-pages --single-branch \
             "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" \
             "$SITE_ROOT" 2>/dev/null || git init "$SITE_ROOT"
-          if test "$VERSION" = "0.9.0"; then
+          if test "$VERSION" = "0.9.18"; then
             git -C "$SITE_ROOT" rm -r --ignore-unmatch .
           fi
           python scripts/promote_release_channel.py \
@@ -228,29 +207,27 @@ jobs:
             --site-root "$SITE_ROOT/updates" \
             --signing-key "$RUNNER_TEMP/release-signing-key.pem" \
             --signing-key-id "$RELEASE_KEY_ID"
-          if test "$VERSION" = "0.9.0"; then
-            install -m 0644 dist/release/legacy-manifest.json "$SITE_ROOT/updates/manifest.json"
-          else
-            test "$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$SITE_ROOT/updates/manifest.json")" = "0.9.0"
-          fi
+          install -m 0644 docs/assets/brand/atlaso-logo-horizontal-light.svg "$SITE_ROOT/atlaso-logo.svg"
           cat > "$SITE_ROOT/index.html" <<'EOF'
           <!doctype html>
           <html lang="en">
           <head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>LabFoundry Release Repository</title>
+            <title>Atlaso Release Repository</title>
             <style>
               :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
-              body { margin: 0; background: #f4f7fb; color: #162033; }
+              body { margin: 0; background: #f3f8fb; color: #071a3a; }
               main { width: min(720px, calc(100% - 40px)); margin: 12vh auto; }
-              article { padding: 40px; background: #fff; border: 1px solid #dce3ed; border-radius: 18px; box-shadow: 0 18px 50px rgb(25 44 74 / 8%); }
-              p { line-height: 1.65; color: #526075; }
+              article { padding: 40px; background: #fff; border: 1px solid #cbdce8; border-radius: 18px; box-shadow: 0 18px 50px rgb(7 26 58 / 10%); }
+              .logo { width: min(320px, 80%); height: auto; margin-bottom: 28px; }
+              p { line-height: 1.65; color: #38506c; }
               h1 { margin: 8px 0 12px; font-size: clamp(2rem, 6vw, 3.5rem); line-height: 1.05; letter-spacing: -.04em; }
-              .eyebrow { color: #315cbd; font-size: .78rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
-              .source { display: block; overflow-wrap: anywhere; margin: 24px 0; padding: 14px 16px; background: #f1f5fb; border-radius: 10px; color: #243959; }
+              .eyebrow { color: #1769e0; font-size: .78rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+              .capabilities { color: #008f95; font-weight: 700; }
+              .source { display: block; overflow-wrap: anywhere; margin: 24px 0; padding: 14px 16px; background: #edf8fa; border-radius: 10px; color: #071a3a; }
               nav { display: flex; flex-wrap: wrap; gap: 12px; }
-              a { color: #244fa8; font-weight: 650; text-decoration: none; }
+              a { color: #1769e0; font-weight: 650; text-decoration: none; }
               a:hover, a:focus-visible { text-decoration: underline; }
               footer { margin-top: 28px; font-size: .875rem; }
             </style>
@@ -258,14 +235,16 @@ jobs:
           <body>
             <main>
               <article>
-                <div class="eyebrow">LabFoundry appliance updates</div>
-                <h1>Signed release repository</h1>
-                <p>This site publishes machine-readable channel pointers for transactional LabFoundry appliance updates. Appliances verify every pointer and release manifest with a named Ed25519 trust key before installation.</p>
-                <code class="source">https://mdaneri.github.io/LabFoundry/updates</code>
+                <img class="logo" src="./atlaso-logo.svg" alt="Atlaso">
+                <div class="eyebrow">Atlaso appliance updates</div>
+                <h1>Everything your virtualization lab needs.</h1>
+                <p class="capabilities">Infrastructure • Storage • Identity • Networking • Lifecycle</p>
+                <p>Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation. This site publishes machine-readable channel pointers for transactional Atlaso appliance updates.</p>
+                <code class="source">https://mdaneri.github.io/Atlaso/updates</code>
                 <nav aria-label="Release repository links">
                   <a href="./updates/channels/development/manifest.json">Development channel</a>
-                  <a href="https://github.com/mdaneri/LabFoundry/releases">GitHub Releases</a>
-                  <a href="https://github.com/mdaneri/LabFoundry">Source repository</a>
+                  <a href="https://github.com/mdaneri/Atlaso/releases">GitHub Releases</a>
+                  <a href="https://github.com/mdaneri/Atlaso">Source repository</a>
                 </nav>
                 <footer><p>The HTML page is informational. Signed JSON documents under <code>/updates</code> remain the appliance protocol.</p></footer>
               </article>

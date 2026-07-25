@@ -19,7 +19,7 @@ LOCK_PATH = ROOT / "requirements-appliance.lock"
 BOOTSTRAP_LOCK_PATH = ROOT / "requirements-appliance-bootstrap.lock"
 PIN_RE = re.compile(r"^([A-Za-z0-9_.-]+)==([^\s\\]+)")
 HASH_RE = re.compile(r"--hash=sha256:[0-9a-f]{64}")
-DECLARATION_HASH_RE = re.compile(r"^# labfoundry-declarations-sha256: ([0-9a-f]{64})$")
+DECLARATION_HASH_RE = re.compile(r"^# atlaso-declarations-sha256: ([0-9a-f]{64})$")
 
 
 def locked_names(lines: list[str]) -> set[str]:

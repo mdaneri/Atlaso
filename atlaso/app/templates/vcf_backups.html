@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% block page_title %}VCF Backups{% endblock %}
+{% block content %}
+<section class="split-workspace">
+  <div class="panel wide-panel">
+    <div class="panel-head">
+      <div>
+        <h2>VCF Backup SFTP</h2>
+        <p class="muted">Expose a simple SFTP endpoint for VMware Cloud Foundation backups. Authentication uses one local Atlaso user from Users.</p>
+      </div>
+      <span class="status-pill {{ 'good' if vcf_backup_settings.enabled else 'muted' }}">{{ "enabled" if vcf_backup_settings.enabled else "disabled" }}</span>
+    </div>
+
+    <div class="metric-grid service-summary-grid">
+      <div class="metric">
+        <span>Endpoint</span>
+        <strong data-vcf-endpoint>{{ vcf_backup_primary_listen_address or "no interface IP" }}:{{ vcf_backup_settings.port }}</strong>
+        <small data-vcf-interface>{{ vcf_backup_bind_label }}</small>
+      </div>
+      <div class="metric">
+        <span>SFTP user</span>
+        <strong data-vcf-sftp-user>{{ vcf_backup_settings.sftp_user.username if vcf_backup_settings.sftp_user else "not selected" }}</strong>
+        <small>local Atlaso user</small>
+      </div>
+      <div class="metric">
+        <span>Backup volume</span>
+        <strong data-vcf-storage-path>{{ vcf_backup_settings.storage_path }}</strong>
+        <small data-vcf-chroot-label>{{ "appliance mount, chroot enabled" if vcf_backup_settings.chroot_enabled else "appliance mount" }}</small>
+      </div>
+      <div class="metric">
+        <span>Auth methods</span>
+        <strong data-vcf-auth-methods>{% if vcf_backup_settings.allow_password_auth %}password{% endif %}{% if vcf_backup_settings.allow_password_auth and vcf_backup_settings.allow_public_key_auth %} + {% endif %}{% if vcf_backup_settings.allow_public_key_auth %}public key{% endif %}</strong>
+        <small data-vcf-max-sessions>{{ vcf_backup_settings.max_sessions }} max sessions</small>
+      </div>
+    </div>
+
+    <section class="info-band">
+      <div>
+        <h2>VCF SFTP target</h2>
+        <p class="muted">Configure SDDC Manager or other VCF components to use this endpoint after global appliance apply completes.</p>
+      </div>
+      <div class="settings-list">
+        <div><span>Host</span><strong data-vcf-host>{{ vcf_backup_primary_listen_address or "no interface IP" }}</strong></div>
+        <div><span>Port</span><strong data-vcf-port>{{ vcf_backup_settings.port }}</strong></div>
+        <div><span>Username</span><strong data-vcf-target-user>{{ vcf_backup_settings.sftp_user.username if vcf_backup_settings.sftp_user else "select a user" }}</strong></div>
+        <div><span>Remote directory</span><strong data-vcf-remote-directory>{{ vcf_backup_remote_directory }}</strong></div>
+      </div>
+    </section>
+  </div>
+
+  <aside class="side-stack">
+    <div class="panel detail-panel">
+      <div class="panel-head">
+        <h2>SFTP Settings</h2>
+        <span class="status-pill {{ 'good' if vcf_backup_settings.enabled else 'muted' }}">{{ "enabled" if vcf_backup_settings.enabled else "disabled" }}</span>
+      </div>
+      <form class="form-stack" action="/vcf-backups/settings" method="post" data-autosave-form data-vcf-backup-settings data-autosave-status-id="vcf-backup-settings-status">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+        <label class="switch-field"><span class="field-label"><span>Service enabled</span><button class="help-icon" type="button" data-help="Controls whether Atlaso treats the VCF backup SFTP endpoint as enabled desired state. The host is not changed until global appliance apply runs.">i</button></span><input class="switch-input" type="checkbox" name="enabled" {{ "checked" if vcf_backup_settings.enabled else "" }}><span class="switch-track" aria-hidden="true"></span></label>
+        <label>
+          <span class="field-label"><span>SFTP user</span><button class="help-icon" type="button" data-help="Local Atlaso user allowed to authenticate to the VCF backup SFTP endpoint. Manage accounts and passwords on the Users page.">i</button></span>
+          <select name="sftp_user_id">
+            <option value="">Select local user</option>
+            {% for user in vcf_backup_users %}
+              <option value="{{ user.id }}" {{ "selected" if vcf_backup_settings.sftp_user_id == user.id else "" }}>{{ user.username }}{% if not user.enabled %} (disabled){% endif %}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <input type="hidden" name="listen_interfaces_present" value="1">
+        <div class="service-bind-editor stacked-service-bind-editor" data-service-bind>
+          <div class="form-field">
+            <span class="field-label"><span>Listen interfaces</span><button class="help-icon" type="button" data-help="One or more access-mode physical interfaces and VLAN interfaces with configured IP addresses can host the SFTP endpoint. Trunk physical NICs are not direct bind targets; management is reserved for the Atlaso UI.">i</button></span>
+            <div class="tag-editor" data-tag-editor data-tag-name="listen_interfaces" data-service-bind-interface>
+              <div class="tag-editor-tags" data-tag-list>
+                {% for interface_name in selected_vcf_backup_interfaces %}
+                  <span class="tag-token" data-value="{{ interface_name }}">
+                    <span>{{ interface_name }}</span>
+                    <button type="button" data-tag-remove aria-label="Remove {{ interface_name }}">×</button>
+                    <input type="hidden" name="listen_interfaces" value="{{ interface_name }}">
+                  </span>
+                {% endfor %}
+              </div>
+              <input class="tag-editor-input" type="text" placeholder="Add interface..." list="vcf-backup-interface-options" data-tag-entry autocomplete="off">
+              <button class="tag-add-button" type="button" data-tag-menu-toggle aria-label="Add existing interface">+</button>
+              <div class="tag-suggestions" data-tag-menu hidden>
+                {% for interface in available_interfaces %}
+                  <button type="button" data-tag-option="{{ interface.name }}" data-service-bind-address="{{ interface.address }}" data-service-bind-addresses="{{ interface.addresses|join(',') }}">
+                    <strong>{{ interface.name }}</strong>
+                    <small>{{ interface.label }}</small>
+                  </button>
+                {% endfor %}
+              </div>
+            </div>
+            <datalist id="vcf-backup-interface-options">
+              {% for interface in available_interfaces %}
+                <option value="{{ interface.name }}">{{ interface.label }}</option>
+              {% endfor %}
+            </datalist>
+          </div>
+          <div class="form-field">
+            <span class="field-label"><span>Listen addresses</span><button class="help-icon" type="button" data-help="Read-only addresses resolved from selected interface IPv4 and IPv6 CIDRs. The first address is shown as the primary VCF target.">i</button></span>
+            <div class="derived-field fixed-value-field">
+              <strong data-derived-listen-addresses>{{ selected_vcf_backup_addresses|join(", ") if selected_vcf_backup_addresses else "No interface address selected" }}</strong>
+            </div>
+          </div>
+        </div>
+        <label>
+          <span class="field-label"><span>Port</span><button class="help-icon" type="button" data-help="TCP port exposed for SFTP. Port 22 is standard; choose another only if SSH on this appliance is separated.">i</button></span>
+          <input type="number" name="port" value="{{ vcf_backup_settings.port }}" min="1" max="65535">
+        </label>
+        <div class="derived-field fixed-value-field">
+          <span class="field-label"><span>Backup volume mount</span><button class="help-icon" type="button" data-help="Fixed appliance volume mount used to store VCF backup files. Create or attach this volume during appliance provisioning; VCF clients only see the remote directory.">i</button></span>
+          <strong data-vcf-storage-path>{{ vcf_backup_settings.storage_path }}</strong>
+        </div>
+        <div class="derived-field fixed-value-field">
+          <span class="field-label"><span>Remote directory</span><button class="help-icon" type="button" data-help="Directory configured in VCF. With chroot enabled this is short and stable even though files land on the appliance backup volume.">i</button></span>
+          <strong data-vcf-remote-directory>{{ vcf_backup_remote_directory }}</strong>
+        </div>
+        <label class="switch-field"><span class="field-label"><span>Chroot user</span><button class="help-icon" type="button" data-help="Restricts the SFTP user to the backup storage tree. This is recommended for appliance backup targets.">i</button></span><input class="switch-input" type="checkbox" name="chroot_enabled" {{ "checked" if vcf_backup_settings.chroot_enabled else "" }}><span class="switch-track" aria-hidden="true"></span></label>
+        <label class="switch-field"><span class="field-label"><span>Password authentication</span><button class="help-icon" type="button" data-help="Allows the selected local Atlaso user password for SFTP login. Disable if VCF will use SSH keys only.">i</button></span><input class="switch-input" type="checkbox" name="allow_password_auth" {{ "checked" if vcf_backup_settings.allow_password_auth else "" }}><span class="switch-track" aria-hidden="true"></span></label>
+        <label class="switch-field"><span class="field-label"><span>Public key authentication</span><button class="help-icon" type="button" data-help="Allows SSH public key authentication for the selected user once key material is provisioned on the appliance.">i</button></span><input class="switch-input" type="checkbox" name="allow_public_key_auth" {{ "checked" if vcf_backup_settings.allow_public_key_auth else "" }}><span class="switch-track" aria-hidden="true"></span></label>
+        <label>
+          <span class="field-label"><span>Max sessions</span><button class="help-icon" type="button" data-help="Maximum concurrent SFTP sessions for the selected backup user.">i</button></span>
+          <input type="number" name="max_sessions" value="{{ vcf_backup_settings.max_sessions }}" min="1" max="64">
+        </label>
+        <p id="vcf-backup-settings-status" class="autosave-status" data-state="idle">Changes save automatically.</p>
+      </form>
+    </div>
+
+    {% include "partials/appliance_apply_status.html" %}
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Validation</h2>
+        <span class="status-pill {{ 'good' if not vcf_backup_validation_errors else 'warn' }}" data-vcf-validation-status>{{ "valid" if not vcf_backup_validation_errors else "needs attention" }}</span>
+      </div>
+      {% if vcf_backup_validation_errors %}
+        <div class="error-list" role="list" data-vcf-validation-errors>
+          {% for error in vcf_backup_validation_errors %}
+            <div role="listitem">{{ error }}</div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="muted" data-vcf-validation-message>The desired VCF backup SFTP state passes Atlaso validation. Appliance validation still runs through the allowlisted OpenSSH helper before apply.</p>
+      {% endif %}
+      {% set preview_label = "OpenSSH drop-in" %}
+      {% set preview_path = vcf_backup_settings.config_path %}
+      {% set preview_path_attr = "data-vcf-config-path" %}
+      {% set preview_title = "VCF Backup rendered config" %}
+      {% set preview_button_label = "config" %}
+      {% set preview_text = vcf_backup_config_preview %}
+      {% set preview_data_attr = "data-vcf-config-preview" %}
+      {% include "partials/config_preview_action.html" %}
+    </div>
+  </aside>
+</section>
+{% endblock %}

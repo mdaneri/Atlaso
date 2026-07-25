@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the fixed-size LabFoundry GRUB background from the product mark."""
+"""Generate the fixed-size Atlaso GRUB background from the product mark."""
 
 from __future__ import annotations
 
@@ -30,64 +30,68 @@ def _centered(draw: ImageDraw.ImageDraw, y: int, text: str, font: ImageFont.Imag
     draw.text(((WIDTH * SCALE - (box[2] - box[0])) / 2, y * SCALE), text, font=font, fill=fill)
 
 
-def generate(output: Path, photon_logo_path: Path) -> None:
+def _scaled_asset(path: Path, max_width: int, max_height: int) -> Image.Image:
+    asset = Image.open(path).convert("RGBA")
+    alpha_box = asset.getchannel("A").point(lambda alpha: 255 if alpha >= 16 else 0).getbbox()
+    if alpha_box:
+        asset = asset.crop(alpha_box)
+    asset_scale = min(
+        max_width * SCALE / asset.width,
+        max_height * SCALE / asset.height,
+    )
+    return asset.resize(
+        (
+            max(1, round(asset.width * asset_scale)),
+            max(1, round(asset.height * asset_scale)),
+        ),
+        Image.Resampling.LANCZOS,
+    )
+
+
+def generate(output: Path, photon_logo_path: Path, brand_icon_path: Path) -> None:
     width = WIDTH * SCALE
     height = HEIGHT * SCALE
-    image = Image.new("RGB", (width, height), "#0f172a")
+    image = Image.new("RGB", (width, height), "#071A3A")
     pixels = image.load()
     for y in range(height):
         progress = y / max(height - 1, 1)
         for x in range(width):
             glow = max(0.0, 1.0 - (((x - width / 2) / (width * 0.7)) ** 2 + ((y - height * 0.32) / (height * 0.8)) ** 2))
             pixels[x, y] = (
-                int(15 + 17 * glow),
-                int(23 + 49 * glow),
-                int(42 + 80 * glow + 10 * progress),
+                int(7 + 8 * glow),
+                int(26 + 24 * glow),
+                int(58 + 44 * glow + 4 * progress),
             )
 
     draw = ImageDraw.Draw(image)
-    mark_left = 272 * SCALE
-    mark_top = 48 * SCALE
-    mark_size = 96 * SCALE
-    draw.rounded_rectangle(
-        (mark_left, mark_top, mark_left + mark_size, mark_top + mark_size),
-        radius=22 * SCALE,
-        fill="#dbeafe",
-        outline="#93c5fd",
-        width=2 * SCALE,
+    brand_icon = _scaled_asset(brand_icon_path, 112, 112)
+    image.paste(
+        brand_icon,
+        (int((width - brand_icon.width) / 2), 32 * SCALE),
+        brand_icon,
     )
-    for row in (78, 96, 114):
-        draw.line((294 * SCALE, row * SCALE, 346 * SCALE, row * SCALE), fill="#1d4ed8", width=4 * SCALE)
-    draw.line((320 * SCALE, 68 * SCALE, 320 * SCALE, 126 * SCALE), fill="#60a5fa", width=3 * SCALE)
-    for x in (294, 346):
-        for y in (78, 114):
-            draw.ellipse(
-                ((x - 6) * SCALE, (y - 6) * SCALE, (x + 6) * SCALE, (y + 6) * SCALE),
-                fill="#ffffff",
-                outline="#2563eb",
-                width=3 * SCALE,
-            )
-    draw.polygon(
-        ((320 * SCALE, 72 * SCALE), (307 * SCALE, 96 * SCALE), (312 * SCALE, 115 * SCALE), (320 * SCALE, 124 * SCALE),
-         (328 * SCALE, 115 * SCALE), (333 * SCALE, 96 * SCALE)),
-        fill="#f59e0b",
-    )
-    draw.ellipse((309 * SCALE, 91 * SCALE, 331 * SCALE, 121 * SCALE), fill="#0f766e", outline="#ffffff", width=3 * SCALE)
 
-    _centered(draw, 168, "LabFoundry", _font(40, bold=True), "#f8fafc")
-    draw.rounded_rectangle((154 * SCALE, 230 * SCALE, 486 * SCALE, 234 * SCALE), radius=2 * SCALE, fill="#2563eb")
-    _centered(draw, 404, "Powered by", _font(13), "#bfdbfe")
-    photon_logo = Image.open(photon_logo_path).convert("RGBA")
-    # Ignore nearly transparent edge noise when trimming the supplied artwork.
-    alpha_box = photon_logo.getchannel("A").point(lambda alpha: 255 if alpha >= 16 else 0).getbbox()
-    if alpha_box:
-        photon_logo = photon_logo.crop(alpha_box)
-    max_logo_width = 210 * SCALE
-    max_logo_height = 34 * SCALE
-    logo_scale = min(max_logo_width / photon_logo.width, max_logo_height / photon_logo.height)
-    target_width = max(1, round(photon_logo.width * logo_scale))
-    target_height = max(1, round(photon_logo.height * logo_scale))
-    photon_logo = photon_logo.resize((target_width, target_height), Image.Resampling.LANCZOS)
+    _centered(draw, 156, "ATLASO", _font(42, bold=True), "#FFFFFF")
+    _centered(
+        draw,
+        216,
+        "Everything your virtualization lab needs.",
+        _font(17, bold=True),
+        "#16C7BC",
+    )
+    draw.rounded_rectangle(
+        (154 * SCALE, 262 * SCALE, 486 * SCALE, 266 * SCALE),
+        radius=2 * SCALE,
+        fill="#1769E0",
+    )
+    draw.rounded_rectangle(
+        (320 * SCALE, 262 * SCALE, 486 * SCALE, 266 * SCALE),
+        radius=2 * SCALE,
+        fill="#16C7BC",
+    )
+
+    _centered(draw, 404, "Powered by", _font(13), "#FFFFFF")
+    photon_logo = _scaled_asset(photon_logo_path, 210, 34)
     logo_x = int((width - photon_logo.width) / 2)
     logo_y = int(427 * SCALE + (42 * SCALE - photon_logo.height) / 2)
     badge_padding = 14 * SCALE
@@ -113,8 +117,14 @@ def main() -> int:
         type=Path,
         default=Path(__file__).resolve().parents[1] / "image/common/boot/grub/photon-os-logo.png",
     )
+    parser.add_argument(
+        "--brand-icon",
+        type=Path,
+        default=Path(__file__).resolve().parents[1]
+        / "docs/assets/brand/atlaso-app-icon-dark-512.png",
+    )
     args = parser.parse_args()
-    generate(args.output, args.photon_logo)
+    generate(args.output, args.photon_logo, args.brand_icon)
     return 0
 
 

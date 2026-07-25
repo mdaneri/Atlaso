@@ -1,0 +1,65 @@
+{% set public_login_href = '/PROD/login?next=' ~ depot_path if not depot_allow_unauthenticated_access else '' %}
+{% set public_logout_action = '/PROD/logout' %}
+{% set public_logout_next = '/' %}
+{% extends "public_portal_base.html" %}
+
+{% block title %}Atlaso - VCF Offline Depot{% endblock %}
+
+{% block public_content %}
+  <div class="topbar public-portal-title">
+    <div>
+      <p class="kicker">Static Broadcom depot mirror</p>
+      <h1>VCF Offline Depot</h1>
+    </div>
+    <span class="status-pill good">enabled</span>
+  </div>
+
+  <section class="ca-home-layout">
+    <div class="panel ca-home-hero">
+      <div class="panel-head">
+        <div>
+          <p class="kicker">Browsing</p>
+          <h2>{{ depot_path }}</h2>
+          <p class="muted">Directory browsing is styled for operators; artifact downloads remain served directly from the depot path.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>Contents</h2>
+          <p class="muted">{{ depot_entries|length }} {{ "item" if depot_entries|length == 1 else "items" }}</p>
+        </div>
+      </div>
+      <table class="data-table compact">
+        <thead>
+          <tr><th>Name</th><th>Type</th><th>Modified</th><th>Size</th></tr>
+        </thead>
+        <tbody>
+          {% if depot_parent_href %}
+            <tr>
+              <td><a class="text-link" href="{{ depot_parent_href }}">../</a></td>
+              <td><span class="status-pill muted">Directory</span></td>
+              <td></td>
+              <td>-</td>
+            </tr>
+          {% endif %}
+          {% for entry in depot_entries %}
+            <tr>
+              <td><a class="text-link" href="{{ entry.href }}">{{ entry.name }}</a></td>
+              <td><span class="status-pill {{ entry.pill }}">{{ entry.kind }}</span></td>
+              <td>{{ entry.modified }}</td>
+              <td>{{ entry.size }}</td>
+            </tr>
+          {% endfor %}
+          {% if not depot_entries and not depot_parent_href %}
+            <tr>
+              <td colspan="4">No depot content is available in this directory.</td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}

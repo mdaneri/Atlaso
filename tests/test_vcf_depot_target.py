@@ -1,9 +1,9 @@
 import pytest
 
-from labfoundry.app.services import vcf_depot_target as service
+from atlaso.app.services import vcf_depot_target as service
 
 
-LOCAL = service.LocalDepotEndpoint("depot.labfoundry.internal", 443, "https://depot.labfoundry.internal", "vcf-depot")
+LOCAL = service.LocalDepotEndpoint("depot.atlaso.internal", 443, "https://depot.atlaso.internal", "vcf-depot")
 
 
 def remote(host="old.example", status="DEPOT_CONNECTION_SUCCESSFUL"):
@@ -18,7 +18,7 @@ def test_depot_sanitization_never_returns_passwords():
     payload["offlineAccount"]["password"] = "secret"
     sanitized = service.sanitize_remote_depot(payload)
     assert "password" not in sanitized
-    assert service.depot_matches(remote("depot.labfoundry.internal"), LOCAL)
+    assert service.depot_matches(remote("depot.atlaso.internal"), LOCAL)
 
 
 def test_configure_target_updates_syncs_and_verifies(monkeypatch):
@@ -85,7 +85,7 @@ def test_update_depot_uses_authenticated_fqdn_port_payload_without_url():
         "offlineAccount": {"username": "vcf-depot", "password": "one-time"},
         "depotConfiguration": {
             "isOfflineDepot": True,
-            "hostname": "depot.labfoundry.internal",
+            "hostname": "depot.atlaso.internal",
             "port": 443,
         },
     }

@@ -1,0 +1,398 @@
+{% extends "base.html" %}
+{% block page_title %}DNS{% endblock %}
+{% block content %}
+<section class="split-workspace">
+  <div class="panel wide-panel">
+    <div class="panel-head">
+      <div>
+        <h2>DNS Zones</h2>
+        <p class="muted">Each domain owns its records, hosts import, and zone file editor.</p>
+      </div>
+      <span class="status-pill {{ 'good' if dns_settings.enabled else 'muted' }}">{{ "enabled" if dns_settings.enabled else "disabled" }}</span>
+    </div>
+    <div id="dns-record-error" class="alert error hidden"></div>
+    {% if form_error %}
+      <div class="alert error">{{ form_error }}</div>
+    {% endif %}
+
+    <div class="tab-buttons zone-tabs" role="tablist" aria-label="DNS domains">
+      {% for group in dns_record_groups %}
+        {% if loop.first %}
+          <button class="tab-button active" type="button" role="tab" data-tab-target="dns-zone-{{ loop.index }}" data-domain="{{ group.domain }}" aria-selected="true">{{ group.domain }}</button>
+        {% else %}
+          <button class="tab-button" type="button" role="tab" data-tab-target="dns-zone-{{ loop.index }}" data-domain="{{ group.domain }}" aria-selected="false">{{ group.domain }}</button>
+        {% endif %}
+      {% endfor %}
+      <button class="tab-button" type="button" role="tab" data-tab-target="dns-reverse-zones" aria-controls="dns-reverse-zones" aria-selected="false">Reverse Zones</button>
+      <button class="tab-button" type="button" role="tab" data-tab-target="dns-zone-new" aria-controls="dns-zone-new" aria-selected="false">+ Domain</button>
+    </div>
+
+    <div class="tab-panels">
+      {% for group in dns_record_groups %}
+        <div id="dns-zone-{{ loop.index }}" class="tab-panel {{ 'active' if loop.first else '' }}" role="tabpanel" {{ "hidden" if not loop.first else "" }}>
+          <div class="zone-head">
+            <div>
+              <strong>{{ group.domain }}</strong>
+              <span class="muted">relative hostnames are saved inside this domain</span>
+            </div>
+            <div class="zone-actions">
+              <span class="status-pill muted">{{ group.records | length }} records</span>
+              <form
+                action="/dns/zones/delete"
+                method="post"
+                data-confirm-modal
+                data-confirm-title="Delete {{ group.domain }}?"
+                data-confirm-message="This removes {{ group.domain }} and {{ group.records | length }} scoped DNS records from Atlaso desired state. It will not touch the appliance until global appliance apply runs."
+                data-confirm-label="Delete domain"
+              >
+                <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                <input type="hidden" name="domain" value="{{ group.domain }}">
+                <button class="button tiny danger" type="submit">Delete domain</button>
+              </form>
+            </div>
+          </div>
+          {% if group.domain.endswith(".local") %}
+            <div class="alert warning">
+              <strong>Avoid .local for VCF.</strong>
+              Use a domain such as <code>{{ group.domain[:-6] }}.internal</code>. VMware Cloud Foundation does not work reliably with <code>.local</code> domains.
+              <span class="standards-note">
+                <code>.local</code> is reserved for multicast DNS/link-local naming by
+                <a href="https://datatracker.ietf.org/doc/html/rfc6762" target="_blank" rel="noopener noreferrer">RFC 6762</a>
+                and appears in the
+                <a href="https://www.iana.org/assignments/special-use-domain-names" target="_blank" rel="noopener noreferrer">IANA Special-Use Domain Names registry</a>
+                created by <a href="https://datatracker.ietf.org/doc/html/rfc6761" target="_blank" rel="noopener noreferrer">RFC 6761</a>.
+                <code>.internal</code> is the
+                <a href="https://www.icann.org/en/announcements/details/icann-seeks-feedback-on-proposed-top-level-domain-string-for-private-use-24-01-2024-en" target="_blank" rel="noopener noreferrer">ICANN/IANA private-use TLD selection</a>
+                for internal networks, not an mDNS name.
+              </span>
+            </div>
+          {% endif %}
+
+          {% if group.authority %}
+            <div class="dns-authority-summary" aria-label="Generated authoritative records for {{ group.domain }}">
+              <div class="dns-authority-summary-head">
+                <strong>Generated authoritative records</strong>
+                <span class="status-pill good">SOA + NS + {{ group.authority.glue_addresses | length }} glue</span>
+              </div>
+              <div class="dns-authority-records" role="list">
+                <div role="listitem"><span class="dns-authority-term">SOA</span><code>{{ group.authority.server }}. {{ group.authority.contact }}. {{ group.authority.serial }} {{ group.authority.refresh }} {{ group.authority.retry }} {{ group.authority.expire }} {{ group.authority.ttl }}</code></div>
+                <div role="listitem"><span class="dns-authority-term">NS</span><code>{{ group.authority.server }}.</code></div>
+                {% for address in group.authority.glue_addresses %}<div role="listitem"><span class="dns-authority-term">{{ "AAAA" if ":" in address else "A" }}</span><code>{{ group.authority.server }}. {{ address }}</code></div>{% endfor %}
+              </div>
+            </div>
+          {% endif %}
+
+          <div class="tab-buttons tool-tabs" role="tablist" aria-label="{{ group.domain }} tools">
+            <button class="tab-button active" type="button" role="tab" data-tab-target="dns-zone-{{ loop.index }}-records" aria-selected="true">Records</button>
+            <button class="tab-button" type="button" role="tab" data-tab-target="dns-zone-{{ loop.index }}-hosts" aria-selected="false">Import Hosts</button>
+            <button class="tab-button" type="button" role="tab" data-tab-target="dns-zone-{{ loop.index }}-file" aria-selected="false">Import Zone File</button>
+          </div>
+
+          <div class="tab-panels zone-tool-panels">
+            <div id="dns-zone-{{ loop.index }}-records" class="tab-panel active" role="tabpanel">
+              <div
+                id="dns-records-table-{{ loop.index }}"
+                class="tabulator-shell dns-records-table"
+                data-domain="{{ group.domain }}"
+                data-records='{{ group.records | tojson }}'
+                data-suggested-ipv4="{{ group.suggested_ipv4 }}"
+                data-csrf="{{ csrf_token }}"
+                data-fallback-id="dns-records-fallback-{{ loop.index }}"
+              ></div>
+              <table id="dns-records-fallback-{{ loop.index }}" class="data-table dns-fallback-table">
+                <thead>
+                  <tr><th>Host</th><th>Type</th><th>Value</th><th>Reverse/PTR</th><th>Status</th><th>Description</th><th>Actions</th></tr>
+                </thead>
+                <tbody>
+                  {% for record in group.records %}
+                    <tr>
+                      <td><input class="table-input" name="hostname" value="{{ record.host_label }}" form="dns-record-edit-{{ record.id }}" aria-label="Host label for {{ record.host_label or record.hostname or 'DNS record' }}"></td>
+                      <td>
+                        <select class="table-input short" name="record_type" form="dns-record-edit-{{ record.id }}" aria-label="Record type for {{ record.host_label or record.hostname or 'DNS record' }}">
+                          <option value="A" {{ "selected" if record.record_type == "A" else "" }}>A (IPv4)</option>
+                          <option value="AAAA" {{ "selected" if record.record_type == "AAAA" else "" }}>AAAA (IPv6)</option>
+                          <option value="CNAME" {{ "selected" if record.record_type == "CNAME" else "" }}>CNAME (alias)</option>
+                          <option value="TXT" {{ "selected" if record.record_type == "TXT" else "" }}>TXT</option>
+                          <option value="SRV" {{ "selected" if record.record_type == "SRV" else "" }}>SRV</option>
+                          <option value="MX" {{ "selected" if record.record_type == "MX" else "" }}>MX</option>
+                          <option value="CAA" {{ "selected" if record.record_type == "CAA" else "" }}>CAA</option>
+                          <option value="PTR" {{ "selected" if record.record_type == "PTR" else "" }}>PTR</option>
+                        </select>
+                      </td>
+                      <td><input class="table-input" name="address" value="{{ record.address }}" form="dns-record-edit-{{ record.id }}" aria-label="Record value for {{ record.host_label or record.hostname or 'DNS record' }}"></td>
+                      <td>
+                        {% if record.reverse_status == "generated" %}
+                          <span class="reverse-status good" title="{{ record.reverse_ptr }}">{{ record.reverse_ptr }}</span>
+                        {% elif record.reverse_status == "invalid" %}
+                          <span class="reverse-status warn">invalid address</span>
+                        {% elif record.reverse_status == "disabled" %}
+                          <span class="reverse-status muted">disabled</span>
+                        {% else %}
+                          <span class="reverse-status muted">not applicable</span>
+                        {% endif %}
+                      </td>
+                      <td>
+                        <label class="inline-check">
+                          <input class="switch-input" type="checkbox" name="enabled" form="dns-record-edit-{{ record.id }}" aria-label="Enable {{ record.host_label or record.hostname or 'DNS record' }}" {{ "checked" if record.enabled else "" }}>
+                          <span class="switch-track" aria-hidden="true"></span>
+                        </label>
+                      </td>
+                      <td><input class="table-input" name="description" value="{{ record.description or '' }}" form="dns-record-edit-{{ record.id }}" aria-label="Description for {{ record.host_label or record.hostname or 'DNS record' }}"></td>
+                      <td class="button-row">
+                        <form id="dns-record-edit-{{ record.id }}" action="/dns/records/{{ record.id }}/edit" method="post">
+                          <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                          <input type="hidden" name="domain" value="{{ group.domain }}">
+                        </form>
+                        <button class="button tiny primary" type="submit" form="dns-record-edit-{{ record.id }}">Save</button>
+                        <form action="/dns/records/{{ record.id }}/delete" method="post">
+                          <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                          <button class="button tiny" type="submit">Delete</button>
+                        </form>
+                      </td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+
+            <div id="dns-zone-{{ loop.index }}-hosts" class="tab-panel" role="tabpanel" hidden>
+              {% if bulk_error %}
+                <div class="alert error">{{ bulk_error }}</div>
+              {% endif %}
+              <form class="form-stack dns-import-form" action="/dns/records/import" method="post">
+                <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                <input type="hidden" name="domain" value="{{ group.domain }}">
+                <div class="form-grid dns-import-controls">
+                  <label>
+                    <span class="field-label"><span>Hosts file</span><button class="help-icon" type="button" data-help="Loads a local hosts-style text file into the editor without uploading it until you import. Relative names are saved in this domain.">i</button></span>
+                    <input class="hosts-file-input" type="file" accept=".hosts,.txt" data-editor-id="hosts-editor-{{ loop.index }}">
+                  </label>
+                  <label class="switch-field">
+                    <span class="field-label"><span>Replace this domain</span><button class="help-icon" type="button" data-help="When enabled, imported host entries replace records only in this domain. Other domains are left alone.">i</button></span>
+                    <input class="switch-input" type="checkbox" name="replace_existing" checked><span class="switch-track" aria-hidden="true"></span>
+                  </label>
+                </div>
+                <label>
+                  <span class="field-label"><span>Entries</span><button class="help-icon" type="button" data-help="Hosts-file syntax: IP address followed by one or more hostnames. Relative names are scoped to this domain.">i</button></span>
+                  <textarea id="hosts-editor-{{ loop.index }}" class="monospace-textarea" name="hosts_text" rows="9" data-codemirror-editor data-codemirror-language="atlaso-hosts">{{ group.hosts_editor_text }}</textarea>
+                </label>
+                <button class="button primary" type="submit">Import into {{ group.domain }}</button>
+              </form>
+            </div>
+
+            <div id="dns-zone-{{ loop.index }}-file" class="tab-panel" role="tabpanel" hidden>
+              {% if bulk_error %}
+                <div class="alert error">{{ bulk_error }}</div>
+              {% endif %}
+              <form class="form-stack dns-import-form" action="/dns/zones/import" method="post">
+                <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                <input type="hidden" name="domain" value="{{ group.domain }}">
+                <div class="form-grid dns-import-controls">
+                  <label>
+                    <span class="field-label"><span>Zone file</span><button class="help-icon" type="button" data-help="Loads a local BIND-style zone text file into the editor without importing it until you submit. Paste text directly when you already have the zone contents.">i</button></span>
+                    <input class="hosts-file-input" type="file" accept=".zone,.db,.txt" data-editor-id="zone-file-editor-{{ loop.index }}">
+                  </label>
+                  <label class="switch-field inline-switch">
+                    <span class="field-label"><span>Replace this domain</span><button class="help-icon" type="button" data-help="When enabled, this zone file becomes the desired record set for this domain only.">i</button></span>
+                    <input class="switch-input" type="checkbox" name="replace_existing" checked><span class="switch-track" aria-hidden="true"></span>
+                  </label>
+                </div>
+                <label>
+                    <span class="field-label"><span>Zone contents</span><button class="help-icon" type="button" data-help="Paste BIND-style zone records. Atlaso imports A, AAAA, CNAME, TXT, SRV, MX, CAA, and PTR records into this managed domain.">i</button></span>
+                  <textarea id="zone-file-editor-{{ loop.index }}" class="monospace-textarea" name="zone_text" rows="12" data-codemirror-editor data-codemirror-language="atlaso-zone">{{ zone_editor_text if active_zone_import_domain == group.domain else group.zone_file_text }}</textarea>
+                </label>
+                <button class="button primary" type="submit">Import zone file into {{ group.domain }}</button>
+              </form>
+            </div>
+          </div>
+        </div>
+      {% endfor %}
+
+      <div id="dns-reverse-zones" class="tab-panel" role="tabpanel" hidden>
+        <div class="zone-head">
+          <div>
+            <strong>Reverse Zones</strong>
+            <span class="muted">PTR records are generated automatically for every enabled A and AAAA record.</span>
+          </div>
+          <span class="status-pill muted">{{ reverse_zone_groups | length }} zones</span>
+        </div>
+        {% if reverse_zone_groups %}
+          {% for group in reverse_zone_groups %}
+            <details class="reverse-zone-card">
+              <summary class="reverse-zone-summary">
+                <div>
+                  <strong>{{ group.zone }}</strong>
+                  <span class="muted">{{ group.records | length }} PTR records</span>
+                </div>
+                <span class="reverse-zone-chevron" aria-hidden="true"></span>
+              </summary>
+              <div class="reverse-zone-records">
+                <table class="data-table compact">
+                  <thead>
+                    <tr><th>Owner</th><th>Address</th><th>PTR target</th><th>Type</th></tr>
+                  </thead>
+                  <tbody>
+                    {% for record in group.records %}
+                      <tr>
+                        <td>{{ record.owner }}</td>
+                        <td>{{ record.address }}</td>
+                        <td>{{ record.target }}</td>
+                        <td>{{ record.record_type }}</td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          {% endfor %}
+        {% else %}
+          <div class="empty-state">
+            <p class="muted">No reverse zones yet. Add enabled A or AAAA records to generate PTR records.</p>
+          </div>
+        {% endif %}
+      </div>
+
+      <div id="dns-zone-new" class="tab-panel" role="tabpanel" hidden>
+        <div class="empty-state zone-create">
+          <div>
+            <h2>New Domain</h2>
+            <p class="muted">Create a managed DNS domain. A tab will be added for records, hosts import, and zone file editing.</p>
+          </div>
+          <form class="form-stack" action="/dns/zones" method="post">
+            <input type="hidden" name="csrf" value="{{ csrf_token }}">
+            <label>
+              <span class="field-label"><span>Domain name</span><button class="help-icon" type="button" data-help="Use an internal DNS suffix such as atlaso.internal or sitea.internal. Avoid .local for VCF labs.">i</button></span>
+              <input name="domain" placeholder="sitea.internal">
+            </label>
+            <button class="button primary" type="submit">Create domain</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <aside class="side-stack">
+    <div class="panel detail-panel">
+      <div class="panel-head">
+        <h2>DNS Settings</h2>
+        <span class="status-pill {{ 'good' if dns_settings.enabled else 'muted' }}">{{ "enabled" if dns_settings.enabled else "disabled" }}</span>
+      </div>
+      <form class="form-stack" action="/dns/settings" method="post" data-autosave-form data-autosave-status-id="dns-settings-autosave-status">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+        <input type="hidden" name="listen_interfaces_present" value="1">
+        <label class="switch-field"><span class="field-label"><span>Service enabled</span><button class="help-icon" type="button" data-help="Controls whether Atlaso renders DNS as enabled desired state for dnsmasq.">i</button></span><input class="switch-input" type="checkbox" name="enabled" {{ "checked" if dns_settings.enabled else "" }}><span class="switch-track" aria-hidden="true"></span></label>
+        <div class="form-field">
+          <span class="field-label"><span>Listen interfaces</span><button class="help-icon" type="button" data-help="One or more access-mode physical interfaces and VLAN interfaces with configured IP addresses dnsmasq should bind to. Management is reserved for the Atlaso UI; DHCP remains bound to its own selected lab interface.">i</button></span>
+          <div class="tag-editor" data-tag-editor data-tag-name="listen_interfaces">
+            <div class="tag-editor-tags" data-tag-list>
+              {% for interface_name in selected_dns_interfaces %}
+                <span class="tag-token" data-value="{{ interface_name }}">
+                  <span>{{ interface_name }}</span>
+                  <button type="button" data-tag-remove aria-label="Remove {{ interface_name }}">×</button>
+                  <input type="hidden" name="listen_interfaces" value="{{ interface_name }}">
+                </span>
+              {% endfor %}
+            </div>
+            <input class="tag-editor-input" type="text" placeholder="Add interface..." list="dns-interface-options" data-tag-entry autocomplete="off">
+            <button class="tag-add-button" type="button" data-tag-menu-toggle aria-label="Add existing interface">+</button>
+            <div class="tag-suggestions" data-tag-menu data-tag-empty-message="No interfaces available." hidden>
+              {% for interface in available_interfaces %}
+                <button type="button" data-tag-option="{{ interface.name }}">
+                  <strong>{{ interface.name }}</strong>
+                  <small>{{ interface.label }}</small>
+                </button>
+              {% endfor %}
+            </div>
+          </div>
+          <datalist id="dns-interface-options">
+            {% for interface in available_interfaces %}
+              <option value="{{ interface.name }}">{{ interface.label }}</option>
+            {% endfor %}
+          </datalist>
+        </div>
+        <div class="form-field">
+          <span class="field-label"><span>Listen addresses</span><button class="help-icon" type="button" data-help="Read-only addresses resolved from the selected interface IPv4 and IPv6 CIDRs. Change the interface CIDRs on Physical Interfaces or VLAN Interfaces.">i</button></span>
+          <div class="derived-field fixed-value-field">
+            <strong data-derived-listen-addresses>{{ selected_dns_addresses|join(", ") if selected_dns_addresses else "No interface address selected" }}</strong>
+          </div>
+        </div>
+        <label><span class="field-label"><span>Upstream servers</span><button class="help-icon" type="button" data-help="External DNS resolvers used when a name is not served by Atlaso records. Leave empty on management DHCP to use the lease-provided resolver servers during global appliance apply.">i</button></span><textarea name="upstream_servers" rows="3"{% if observed_dhcp_upstream_servers %} placeholder="DHCP: {{ observed_dhcp_upstream_servers|join(', ') }}"{% endif %}>{{ upstream_servers }}</textarea></label>
+        <div class="runtime-source-list {{ 'hidden' if not observed_dhcp_upstream_servers else '' }}" data-dns-dhcp-upstreams>
+          <span>from DHCP</span>
+          <span>
+            {% for server in observed_dhcp_upstream_servers %}
+              <code>{{ server }}</code>
+            {% endfor %}
+          </span>
+        </div>
+        <label><span class="field-label"><span>Conditional forwarders</span><button class="help-icon" type="button" data-help="Routes a DNS domain and its subdomains to specific upstream resolvers. Use one domain=server1,server2 entry per line; global upstream servers still handle everything else.">i</button></span><textarea name="conditional_forwarders" rows="3" placeholder="sddc.internal=192.168.10.10,192.168.10.11">{{ conditional_forwarders }}</textarea></label>
+        <label><span class="field-label"><span>Cache size</span><button class="help-icon" type="button" data-help="Maximum number of DNS responses dnsmasq keeps in memory to speed repeated lookups.">i</button></span><input type="number" name="cache_size" min="0" value="{{ dns_settings.cache_size }}"></label>
+        <label class="switch-field"><span class="field-label"><span>Expand hosts</span><button class="help-icon" type="button" data-help="Adds the primary managed domain to simple hostnames so short names can resolve inside the lab.">i</button></span><input class="switch-input" type="checkbox" name="expand_hosts" {{ "checked" if dns_settings.expand_hosts else "" }}><span class="switch-track" aria-hidden="true"></span></label>
+        <label class="switch-field"><span class="field-label"><span>Authoritative</span><button class="help-icon" type="button" data-help="Serves every managed forward domain as a dnsmasq authoritative zone. Generated SOA, NS, and nameserver glue become active only after global appliance apply.">i</button></span><input class="switch-input" type="checkbox" name="authoritative" {{ "checked" if dns_settings.authoritative else "" }}><span class="switch-track" aria-hidden="true"></span></label>
+        <fieldset class="form-stack authoritative-dns-fields">
+          <legend>Authoritative DNS</legend>
+          <label><span class="field-label"><span>Primary nameserver</span><button class="help-icon" type="button" data-help="Shared primary NS identity for all managed zones. It must belong to one managed zone; A and AAAA glue is generated from selected DNS listen addresses.">i</button></span><input name="authoritative_server" value="{{ dns_settings.authoritative_server }}" placeholder="ns1.{{ dns_record_groups[0].domain if dns_record_groups else 'atlaso.internal' }}"></label>
+          <label><span class="field-label"><span>SOA administrator</span><button class="help-icon" type="button" data-help="DNS-form administrator name placed in generated SOA records, for example hostmaster.example.internal. The first dot represents the email @ convention.">i</button></span><input name="authoritative_contact" value="{{ dns_settings.authoritative_contact }}" placeholder="hostmaster.{{ dns_record_groups[0].domain if dns_record_groups else 'atlaso.internal' }}"></label>
+          <div class="form-grid compact-grid">
+            <label><span class="field-label"><span>TTL</span><button class="help-icon" type="button" data-help="Shared authoritative answer and generated zone-file TTL in seconds.">i</button></span><input type="number" name="authoritative_ttl" min="1" max="2147483647" value="{{ dns_settings.authoritative_ttl }}"></label>
+            <label><span class="field-label"><span>Serial</span><button class="help-icon" type="button" data-help="Server-managed SOA serial. Atlaso advances it monotonically whenever authoritative settings, zones, or records change.">i</button></span><input type="number" value="{{ dns_settings.authoritative_serial }}" readonly aria-readonly="true"></label>
+            <label><span class="field-label"><span>Refresh</span><button class="help-icon" type="button" data-help="SOA refresh interval in seconds. Reserved for authoritative metadata; secondary transfers are outside v1.">i</button></span><input type="number" name="authoritative_refresh" min="1" max="2147483647" value="{{ dns_settings.authoritative_refresh }}"></label>
+            <label><span class="field-label"><span>Retry</span><button class="help-icon" type="button" data-help="SOA retry interval in seconds. It must be positive and lower than expiry.">i</button></span><input type="number" name="authoritative_retry" min="1" max="2147483647" value="{{ dns_settings.authoritative_retry }}"></label>
+            <label><span class="field-label"><span>Expiry</span><button class="help-icon" type="button" data-help="SOA expiry interval in seconds. It must be greater than refresh and retry.">i</button></span><input type="number" name="authoritative_expire" min="1" max="2147483647" value="{{ dns_settings.authoritative_expire }}"></label>
+          </div>
+        </fieldset>
+        <label class="switch-field"><span class="field-label"><span>DNSSEC validation</span><button class="help-icon" type="button" data-help="Renders dnsmasq DNSSEC validation and uses package-provided trust anchors during appliance validation. Existing labs stay unchanged until this desired state is applied.">i</button></span><input class="switch-input" type="checkbox" name="dnssec_enabled" {{ "checked" if dns_settings.dnssec_enabled else "" }}><span class="switch-track" aria-hidden="true"></span></label>
+        <label class="switch-field"><span class="field-label"><span>Rebind protection</span><button class="help-icon" type="button" data-help="Blocks upstream DNS answers that point public names at private addresses. Add exemptions for intentional split-horizon lab domains before applying.">i</button></span><input class="switch-input" type="checkbox" name="rebind_protection_enabled" {{ "checked" if dns_settings.rebind_protection_enabled else "" }}><span class="switch-track" aria-hidden="true"></span></label>
+        <label><span class="field-label"><span>Rebind exemptions</span><button class="help-icon" type="button" data-help="One domain per line that may legitimately resolve to private or lab addresses through upstream DNS when rebind protection is enabled.">i</button></span><textarea name="rebind_domain_exemptions" rows="2" placeholder="corp.example.com">{{ dns_settings.rebind_domain_exemptions }}</textarea></label>
+        <label><span class="field-label"><span>Query logging</span><button class="help-icon" type="button" data-help="Temporarily logs DNS queries with extra detail for troubleshooting. Query names can be sensitive and log volume can grow quickly.">i</button></span>
+          <select name="query_logging_mode">
+            <option value="off" {{ "selected" if dns_settings.query_logging_mode == "off" else "" }}>off</option>
+            <option value="queries-extra" {{ "selected" if dns_settings.query_logging_mode == "queries-extra" else "" }}>log queries with extra detail</option>
+          </select>
+        </label>
+        <p id="dns-settings-autosave-status" class="autosave-status" aria-live="polite">Changes save automatically.</p>
+      </form>
+    </div>
+
+    {% include "partials/appliance_apply_status.html" %}
+
+    <div class="panel" data-dns-validation-panel>
+      <div class="panel-head">
+        <h2>Validation</h2>
+        <span class="status-pill {{ 'good' if not validation_errors else 'warn' }}" data-dns-validation-status>{{ "valid" if not validation_errors else "needs attention" }}</span>
+      </div>
+      <div class="alert error {{ 'hidden' if not validation_errors else '' }}" data-dns-validation-errors>
+      {% if validation_errors %}
+          {% for error in validation_errors %}
+            <div>{{ error }}</div>
+          {% endfor %}
+      {% endif %}
+      </div>
+      <div class="alert warning {{ 'hidden' if not dns_warnings else '' }}" data-dns-validation-warnings>
+      {% if dns_warnings %}
+          {% for warning in dns_warnings %}
+            <div>{{ warning }}</div>
+          {% endfor %}
+      {% endif %}
+      </div>
+      <p class="muted" data-dns-validation-message>
+        {% if not validation_errors %}
+          {% if not dns_warnings %}
+            The desired DNS/DHCP state passes Atlaso validation. Host validation still runs through <code>dnsmasq --test</code> on the appliance.
+          {% else %}
+            The desired DNS/DHCP state is valid, but review the warning before using this domain with VCF.
+          {% endif %}
+        {% endif %}
+      </p>
+      {% set preview_label = "dnsmasq config" %}
+      {% set preview_path = dns_settings.config_path %}
+      {% set preview_path_attr = "data-dns-config-path" %}
+      {% set preview_title = "DNS/DHCP rendered config" %}
+      {% set preview_button_label = "config" %}
+      {% set preview_text = config_preview %}
+      {% set preview_data_attr = "data-dns-config-preview" %}
+      {% include "partials/config_preview_action.html" %}
+    </div>
+  </aside>
+</section>
+{% endblock %}

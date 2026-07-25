@@ -1,0 +1,261 @@
+{% extends "base.html" %}
+{% block page_title %}Firewall{% endblock %}
+{% block content %}
+<section class="split-workspace firewall-workspace">
+  <div class="panel wide-panel firewall-main-panel">
+    <div class="panel-head">
+      <div>
+        <h2>Firewall Rules</h2>
+        <p class="muted">Edit nftables desired state directly in the grid. The bottom row creates a new rule once required fields are filled.</p>
+      </div>
+      <span class="status-pill {{ 'good' if firewall_settings.enabled else 'muted' }}" data-firewall-enabled-status>{{ "enabled" if firewall_settings.enabled else "disabled" }}</span>
+    </div>
+    <div id="firewall-rule-error" class="alert hidden"></div>
+    <div
+      id="firewall-rules-table"
+      class="tabulator-shell"
+      data-rules='{{ firewall_rules_json | tojson }}'
+      data-directions='{{ firewall_directions | tojson }}'
+      data-actions='{{ firewall_actions | tojson }}'
+      data-protocols='{{ firewall_protocols | tojson }}'
+      data-interfaces='{{ firewall_interface_options | map(attribute="name") | list | tojson }}'
+      data-groups='{{ firewall_source_groups | tojson }}'
+      data-csrf="{{ csrf_token }}"
+      data-fallback-id="firewall-rules-fallback"
+    ></div>
+    <table id="firewall-rules-fallback" class="data-table compact dns-fallback-table">
+      <thead>
+        <tr><th>Name</th><th>Direction</th><th>Action</th><th>Protocol</th><th>Source</th><th>Destination</th><th>Ports</th><th>Interface</th><th>Priority</th><th>Enabled</th></tr>
+      </thead>
+      <tbody>
+        {% for rule in firewall_rules %}
+          <tr>
+            <td>{{ rule.name }}</td>
+            <td>{{ rule.direction }}</td>
+            <td>{{ rule.action }}</td>
+            <td>{{ rule.protocol }}</td>
+            <td>{{ rule.source }}</td>
+            <td>{{ rule.destination }}</td>
+            <td>{{ rule.destination_port or "any" }}</td>
+            <td>{{ rule.interface_name or "any" }}</td>
+            <td>{{ rule.priority }}</td>
+            <td><span class="status-pill {{ 'good' if rule.enabled else 'muted' }}">{{ "enabled" if rule.enabled else "disabled" }}</span></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if firewall_managed_rule_rows %}
+      <div class="subsection firewall-managed-section">
+        <div class="panel-head compact">
+          <h3>Managed Service Rules</h3>
+          <span class="status-pill muted">{{ firewall_managed_rule_rows|length }} managed</span>
+        </div>
+        <div
+          id="managed-firewall-rules-table"
+          class="tabulator-shell readonly-tabulator-shell"
+          data-rules='{{ firewall_managed_rule_rows | tojson }}'
+          data-source-groups='{{ firewall_source_groups | tojson }}'
+          data-csrf="{{ csrf_token }}"
+          data-fallback-id="managed-firewall-rules-fallback"
+        ></div>
+        <table id="managed-firewall-rules-fallback" class="data-table compact dns-fallback-table">
+          <thead>
+            <tr><th>Status</th><th>Name</th><th>Source</th><th>Direction</th><th>Action</th><th>Protocol</th><th>Ports</th><th>Interface</th><th>Priority</th><th>Enabled</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            {% for rule in firewall_managed_rule_rows %}
+              <tr class="{{ 'managed-rule-replaced' if rule.managed_state == 'replaced' else 'managed-rule-generated' }}">
+                <td>{{ rule.managed_status }}</td>
+                <td>{{ rule.name }}</td>
+                <td>{{ rule.source_group_name }}</td>
+                <td>{{ rule.direction }}</td>
+                <td>{{ rule.action }}</td>
+                <td>{{ rule.protocol }}</td>
+                <td>{{ rule.destination_port }}</td>
+                <td>{{ rule.interface_name }}</td>
+                <td>{{ rule.priority }}</td>
+                <td><span class="status-pill {{ 'good' if rule.enabled else 'muted' }}">{{ "enabled" if rule.enabled else "disabled" }}</span></td>
+                <td>{{ rule.description }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </div>
+
+  <aside class="side-stack">
+    <div class="panel detail-panel">
+      <div class="panel-head">
+        <h2>Firewall Settings</h2>
+        <span class="status-pill {{ firewall_service_status.pill }}">{{ firewall_service_status.label }}</span>
+      </div>
+      <form class="form-stack" action="/firewall/settings" method="post" data-autosave-form data-autosave-status-id="firewall-settings-status">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+        <label class="switch-field"><span class="field-label"><span>Service enabled</span><button class="help-icon" type="button" data-help="Controls whether Atlaso treats firewall desired state as enabled. The MVP records intent until global appliance apply runs.">i</button></span><input class="switch-input" type="checkbox" name="enabled" {{ "checked" if firewall_settings.enabled else "" }}><span class="switch-track" aria-hidden="true"></span></label>
+        <label>
+          <span class="field-label"><span>Input policy</span><button class="help-icon" type="button" data-help="Default policy for traffic destined to the appliance. Drop is safer once explicit management rules exist.">i</button></span>
+          <select name="default_input_policy">
+            {% for policy in firewall_policies %}
+              <option value="{{ policy }}" {{ "selected" if firewall_settings.default_input_policy == policy else "" }}>{{ policy }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>
+          <span class="field-label"><span>Forward policy</span><button class="help-icon" type="button" data-help="Default policy for routed traffic crossing the appliance between lab networks.">i</button></span>
+          <select name="default_forward_policy">
+            {% for policy in firewall_policies %}
+              <option value="{{ policy }}" {{ "selected" if firewall_settings.default_forward_policy == policy else "" }}>{{ policy }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>
+          <span class="field-label"><span>Output policy</span><button class="help-icon" type="button" data-help="Default policy for traffic originated by the appliance itself.">i</button></span>
+          <select name="default_output_policy">
+            {% for policy in firewall_policies %}
+              <option value="{{ policy }}" {{ "selected" if firewall_settings.default_output_policy == policy else "" }}>{{ policy }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="switch-field"><span class="field-label"><span>Established traffic</span><button class="help-icon" type="button" data-help="Allows established and related traffic so replies to permitted sessions continue to work.">i</button></span><input class="switch-input" type="checkbox" name="allow_established" {{ "checked" if firewall_settings.allow_established else "" }}><span class="switch-track" aria-hidden="true"></span></label>
+        <label class="switch-field"><span class="field-label"><span>Loopback</span><button class="help-icon" type="button" data-help="Allows local loopback traffic on the appliance. Usually keep this enabled.">i</button></span><input class="switch-input" type="checkbox" name="allow_loopback" {{ "checked" if firewall_settings.allow_loopback else "" }}><span class="switch-track" aria-hidden="true"></span></label>
+        <label class="switch-field"><span class="field-label"><span>ICMP diagnostics</span><button class="help-icon" type="button" data-help="Allows ping and IPv6 neighbor-discovery style diagnostics.">i</button></span><input class="switch-input" type="checkbox" name="allow_icmp" {{ "checked" if firewall_settings.allow_icmp else "" }}><span class="switch-track" aria-hidden="true"></span></label>
+        <label class="switch-field"><span class="field-label"><span>Log dropped packets</span><button class="help-icon" type="button" data-help="Adds nftables log statements before default-drop chain endings. Enable only when troubleshooting.">i</button></span><input class="switch-input" type="checkbox" name="log_dropped" {{ "checked" if firewall_settings.log_dropped else "" }}><span class="switch-track" aria-hidden="true"></span></label>
+        <p id="firewall-settings-status" class="autosave-status" data-state="idle">Changes save automatically.</p>
+      </form>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Groups</h2>
+        <span class="status-pill muted">{{ firewall_source_groups|length }} groups</span>
+      </div>
+      <form class="form-stack source-group-create-form" action="/firewall/source-groups" method="post">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+        <input type="hidden" name="action" value="create">
+        <input type="hidden" name="group_entries" value="any">
+        <label>
+          <span class="field-label"><span>Add group</span><button class="help-icon" type="button" data-help="Creates a reusable firewall group. New groups start with any and can later be narrowed to CIDRs or other groups.">i</button></span>
+          <input type="text" name="group_name" placeholder="Group name" required>
+        </label>
+        <button class="button secondary compact-button" type="submit">Add group</button>
+        <p id="firewall-source-groups-status" class="autosave-status" data-state="idle">Changes save automatically.</p>
+      </form>
+      <div class="source-group-manager" data-source-group-manager>
+        {% set editable_source_groups = firewall_source_groups | rejectattr("builtin") | list %}
+        {% if editable_source_groups %}
+          <label>
+            <span class="field-label"><span>Edit group</span><button class="help-icon" type="button" data-help="Select a user-created firewall group to rename or edit. Rules default to Any until you assign another group in the grid.">i</button></span>
+            <select data-source-group-select>
+              {% for group in editable_source_groups %}
+                <option value="{{ group.id }}">{{ group.name }}</option>
+              {% endfor %}
+            </select>
+          </label>
+        {% else %}
+          <p class="muted">No custom groups yet.</p>
+        {% endif %}
+        {% for group in firewall_source_groups %}
+          {% if not group.builtin %}
+          <section class="source-group-editor {{ 'active' if editable_source_groups and group.id == editable_source_groups[0].id else '' }}" data-source-group-editor data-source-group-id="{{ group.id }}" {{ "" if editable_source_groups and group.id == editable_source_groups[0].id else "hidden" }}>
+            <form class="form-stack" action="/firewall/source-groups" method="post" data-autosave-form data-autosave-trigger="change" data-firewall-source-groups data-autosave-status-id="firewall-source-groups-status">
+              <input type="hidden" name="csrf" value="{{ csrf_token }}">
+              <input type="hidden" name="action" value="update">
+              <input type="hidden" name="group_id" value="{{ group.id }}">
+              <input type="hidden" name="group_name" value="{{ group.name }}">
+              <div>
+                <span class="field-label"><span>Entries</span><button class="help-icon" type="button" data-help="Entries may be any, an IPv4 or IPv6 address/CIDR, or another firewall group. These entries are expanded into firewall rules during preview and appliance apply.">i</button></span>
+                <div class="source-group-entry-list" data-source-group-entry-list>
+                  {% for entry in group.entries %}
+                    <div class="source-group-entry-row">
+                      <input type="hidden" name="group_entries" value="{{ entry }}">
+                      <span class="source-group-entry-label">{{ entry }}</span>
+                      <button class="icon-button source-group-entry-remove" type="button" data-source-group-remove-entry aria-label="Remove entry">x</button>
+                    </div>
+                  {% endfor %}
+                </div>
+              </div>
+              <div class="source-group-add-controls">
+                <div class="inline-add-control">
+                  <input type="text" data-source-group-cidr-input placeholder="CIDR or address">
+                  <button class="button secondary compact-button" type="button" data-source-group-add-cidr>Add CIDR</button>
+                </div>
+                <div class="inline-add-control source-group-add-ref-control">
+                  <select data-source-group-ref-select aria-label="Source group reference">
+                    <option value="">Select group</option>
+                    {% for other in firewall_source_groups %}
+                      {% if other.id != group.id and not other.builtin %}
+                        <option value="group:{{ other.id }}">{{ other.name }}</option>
+                      {% endif %}
+                    {% endfor %}
+                  </select>
+                  <div class="source-group-inline-actions">
+                    <button class="button ghost compact-button" type="button" data-source-group-add-any>Add any</button>
+                    <button class="button secondary compact-button" type="button" data-source-group-add-ref>Add group</button>
+                  </div>
+                </div>
+              </div>
+            </form>
+            <div class="source-group-actions">
+              <button class="button secondary compact-button" type="button" data-source-group-rename data-group-id="{{ group.id }}" data-group-name="{{ group.name }}">Rename group</button>
+              <form action="/firewall/source-groups" method="post" data-confirm-modal data-confirm-title="Remove {{ group.name }}?" data-confirm-message="This removes the firewall group from desired state and moves managed rules using it back to Any. The appliance changes only after global appliance apply." data-confirm-label="Remove group">
+                <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                <input type="hidden" name="action" value="delete">
+                <input type="hidden" name="group_id" value="{{ group.id }}">
+                <button class="button ghost danger compact-button" type="submit">Remove group</button>
+              </form>
+            </div>
+          </section>
+          {% endif %}
+        {% endfor %}
+      </div>
+      <dialog id="firewall-rename-group-modal" class="confirm-modal" aria-labelledby="firewall-rename-group-title">
+        <form class="confirm-modal-panel" action="/firewall/source-groups" method="post">
+          <input type="hidden" name="csrf" value="{{ csrf_token }}">
+          <input type="hidden" name="action" value="rename">
+          <input type="hidden" name="group_id" value="">
+          <div class="confirm-modal-body">
+            <p class="kicker">Firewall group</p>
+            <h2 id="firewall-rename-group-title">Rename group</h2>
+            <label>
+              <span class="field-label"><span>Group name</span><button class="help-icon" type="button" data-help="Changes the label shown in rule group selectors. Existing rule assignments stay attached to this group.">i</button></span>
+              <input type="text" name="group_name" value="" required data-firewall-rename-group-input>
+            </label>
+          </div>
+          <div class="confirm-modal-actions">
+            <button class="button ghost" type="button" data-firewall-rename-group-cancel>Cancel</button>
+            <button class="button primary" type="submit">Rename group</button>
+          </div>
+        </form>
+      </dialog>
+    </div>
+
+    {% include "partials/appliance_apply_status.html" %}
+
+    <div class="panel" data-firewall-validation-panel>
+      <div class="panel-head">
+        <h2>Validation</h2>
+        <span class="status-pill {{ 'good' if not firewall_validation_errors else 'warn' }}" data-firewall-validation-status>{{ "valid" if not firewall_validation_errors else "needs attention" }}</span>
+      </div>
+      {% if firewall_validation_errors %}
+        <div class="error-list" role="list" data-firewall-validation-errors>
+          {% for error in firewall_validation_errors %}
+            <div role="listitem">{{ error }}</div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="muted" data-firewall-validation-message>The desired firewall state passes Atlaso validation. Appliance validation still runs through the allowlisted nftables helper before apply.</p>
+      {% endif %}
+      <p class="autosave-status validation-refresh-status" data-firewall-validation-refresh data-state="idle">Preview matches current desired state.</p>
+      {% set preview_label = "nftables config" %}
+      {% set preview_path = firewall_settings.config_path %}
+      {% set preview_path_attr = "data-firewall-config-path" %}
+      {% set preview_title = "Firewall rendered config" %}
+      {% set preview_button_label = "config" %}
+      {% set preview_text = firewall_config_preview %}
+      {% set preview_data_attr = "data-firewall-config-preview" %}
+      {% include "partials/config_preview_action.html" %}
+    </div>
+  </aside>
+</section>
+{% endblock %}

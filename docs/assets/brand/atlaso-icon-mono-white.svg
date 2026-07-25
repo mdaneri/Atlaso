@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+      <defs>
+        <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#16C7BC"/>
+          <stop offset="100%" stop-color="#1769E0"/>
+        </linearGradient>
+      </defs>
+      <rect width="100%" height="100%" fill="#071A3A" />
+      <polyline points="256.0,93.8 396.5,174.9 396.5,337.1 256.0,418.2 115.5,337.1 115.5,174.9 256.0,93.8"
+                fill="none" stroke="#FFFFFF" stroke-width="16.6"
+                stroke-linejoin="round" stroke-linecap="round"/>
+      <path d="M 256.0,171.7 L 187.9,340.3
+               M 256.0,171.7 L 324.1,340.3
+               M 218.7,280.3 L 293.3,280.3"
+            fill="none" stroke="#FFFFFF" stroke-width="38.7"
+            stroke-linecap="square" stroke-linejoin="miter"/>
+      <g fill="none" stroke="#FFFFFF" stroke-width="8.8" stroke-linecap="round">
+        <path d="M 312.8,239.8 L 369.5,239.8 L 389.0,210.6"/>
+        <path d="M 317.6,269.0 L 382.5,269.0"/>
+        <path d="M 304.7,301.4 L 358.2,301.4 L 389.0,330.6"/>
+      </g>
+      <g fill="#071A3A" stroke="#FFFFFF" stroke-width="7.4">
+        <circle cx="395.5" cy="200.9" r="12.9"/>
+        <circle cx="389.0" cy="269.0" r="12.9"/>
+        <circle cx="395.5" cy="337.1" r="12.9"/>
+      </g>
+
+    </svg>

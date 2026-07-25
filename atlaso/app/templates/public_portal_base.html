@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Atlaso - Public Services{% endblock %}</title>
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="apple-touch-icon" href="/static/brand/atlaso-app-icon-light-180.png">
+    <link rel="icon" href="/favicon.ico" type="image/x-icon">
+    <link rel="icon" href="/static/brand/atlaso-icon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/static/app.css?v=atlaso-brand-20260725-1">
+    {% block extra_head %}{% endblock %}
+  </head>
+  <body>
+    <div class="public-portal-shell">
+      <header class="public-portal-header">
+        <a class="brand" href="/">
+          {% include "partials/brand_mark.html" %}
+          <span>
+            <strong>Atlaso</strong>
+            <small>Photon appliance</small>
+          </span>
+        </a>
+        <div class="public-portal-actions">
+          {% if public_address_mode_switch %}
+            <div class="public-address-mode-toggle" data-public-address-mode-toggle>
+              <button type="button" data-public-address-mode-option="name" aria-pressed="true">Name</button>
+              <button type="button" data-public-address-mode-option="ip" aria-pressed="false">IP</button>
+            </div>
+          {% endif %}
+          {% block public_actions %}
+            {% if identity %}
+              <form action="{{ public_logout_action|default('/requests/logout') }}" method="post">
+                <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                <input type="hidden" name="next" value="{{ public_logout_next|default('/') }}">
+                <button class="button ghost" type="submit">Sign out</button>
+              </form>
+            {% elif public_login_href %}
+              <a class="button secondary" href="{{ public_login_href }}">
+                <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/></svg>
+                <span>Login</span>
+              </a>
+            {% endif %}
+          {% endblock %}
+        </div>
+      </header>
+
+      <main class="public-portal-main">
+        {% block public_content %}{% endblock %}
+        <footer class="public-info-footnote" aria-label="Appliance information">
+          <span>Atlaso {{ current_version_info.base_version|default(current_version_info.version) }}</span>
+          <span>{{ current_version_info.public_label or "source checkout" }}</span>
+          <a href="{{ public_github_url }}" target="_blank" rel="noopener" title="GitHub project">
+            <svg class="public-info-link-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 1.8a10.2 10.2 0 0 0-3.2 19.9c.5.1.7-.2.7-.5v-1.8c-2.8.6-3.4-1.2-3.4-1.2-.5-1.1-1.1-1.4-1.1-1.4-.9-.6.1-.6.1-.6 1 0 1.6 1.1 1.6 1.1.9 1.5 2.4 1.1 3 .8.1-.7.4-1.1.7-1.4-2.2-.3-4.6-1.1-4.6-5 0-1.1.4-2 1.1-2.8-.1-.3-.5-1.3.1-2.7 0 0 .9-.3 2.9 1.1a10 10 0 0 1 5.2 0c2-1.4 2.9-1.1 2.9-1.1.6 1.4.2 2.4.1 2.7.7.8 1.1 1.7 1.1 2.8 0 3.9-2.4 4.7-4.6 5 .4.3.7 1 .7 2v2.5c0 .3.2.6.7.5A10.2 10.2 0 0 0 12 1.8Z"/></svg>
+            <span>GitHub</span>
+          </a>
+          {% if public_management_url %}
+            <a href="{{ public_management_url }}" title="Management portal">
+              <svg class="public-info-link-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 22h8"/><path d="M12 18v4"/></svg>
+              <span>Management</span>
+            </a>
+          {% endif %}
+          <a href="{{ public_swagger_url|default('/api/docs') }}" title="Swagger UI">
+            <svg class="public-info-link-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M10 13l-2 2 2 2"/><path d="M14 13l2 2-2 2"/></svg>
+            <span>Swagger</span>
+          </a>
+          <a href="https://www.python.org/" target="_blank" rel="noopener" title="Python website">
+            <svg class="public-info-link-icon python-link-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.1 2c-4.1 0-3.9 1.8-3.9 1.8v1.9h4v.6H6.6S4 6 4 10.2c0 4.1 2.3 4 2.3 4h1.4v-2s-.1-2.3 2.3-2.3h3.9s2.2 0 2.2-2.2V3.9S16.4 2 12.1 2Zm-2.2 1.2a.8.8 0 1 1 0 1.6.8.8 0 0 1 0-1.6Z"/><path d="M12 22c4.1 0 3.9-1.8 3.9-1.8v-1.9h-4v-.6h5.6s2.5.3 2.5-3.9-2.3-4-2.3-4h-1.4v2s.1 2.3-2.3 2.3h-3.9s-2.2 0-2.2 2.2v3.8S7.7 22 12 22Zm2.2-1.2a.8.8 0 1 1 0-1.6.8.8 0 0 1 0 1.6Z"/></svg>
+            <span>Python {{ current_version_info.python }}</span>
+          </a>
+        </footer>
+      </main>
+    </div>
+
+    {% block public_after_main %}{% endblock %}
+    <script src="/static/app.js?v=atlaso-brand-20260725-1"></script>
+    <script src="/static/pwa.js?v=atlaso-brand-20260725-1"></script>
+  </body>
+</html>

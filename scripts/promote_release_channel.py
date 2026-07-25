@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from labfoundry.app.services.release_updates import validate_release_manifest, verify_signed_json
+from atlaso.app.services.release_updates import validate_release_manifest, verify_signed_json
 
 
 def canonical_json(payload: dict) -> bytes:
@@ -24,7 +24,7 @@ def canonical_json(payload: dict) -> bytes:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Promote an immutable LabFoundry release into a signed Pages channel.")
+    parser = argparse.ArgumentParser(description="Promote an immutable Atlaso release into a signed Pages channel.")
     parser.add_argument("--channel", required=True, choices=("stable", "preview", "development"))
     parser.add_argument("--release-manifest-url", required=True)
     parser.add_argument("--release-manifest", type=Path)
@@ -60,7 +60,7 @@ def main() -> int:
         raise SystemExit("verified release manifest does not match the promotion input")
     channel = {
         "schema_version": 2,
-        "kind": "labfoundry-channel",
+        "kind": "atlaso-channel",
         "channel": args.channel,
         "version": release["version"],
         "git_commit": release["git_commit"],

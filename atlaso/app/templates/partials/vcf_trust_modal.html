@@ -1,0 +1,79 @@
+<dialog id="vcf-trust-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="vcf-trust-modal-title" {% if vcf_trust_auto_open %}data-vcf-trust-auto-open{% endif %}>
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="/vcf-trust/root-ca" method="post" data-vcf-trust-form>
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="confirmed_tls_fingerprint" value="" data-vcf-trust-confirmed-tls-fingerprint>
+    <input type="hidden" name="awaiting_job_id" value="">
+
+    <aside class="vcf-sddc-wizard-rail" aria-label="VCF certificate trust steps">
+      <p class="kicker">Remote VCF maintenance</p>
+      <h2 id="vcf-trust-modal-title">VCF Certificate Trust</h2>
+      <ol class="vcf-sddc-step-list">
+        <li><button class="vcf-sddc-step-button active" type="button" data-vcf-trust-step-nav data-step="target"><span>1</span><strong>Target</strong><small>Appliance and CA</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-vcf-trust-step-nav data-step="api" disabled><span>2</span><strong>API</strong><small>Administrator login</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-vcf-trust-step-nav data-step="review" disabled><span>3</span><strong>Review</strong><small>TLS and queue</small></button></li>
+      </ol>
+    </aside>
+
+    <div class="vcf-sddc-wizard-main">
+      <div class="confirm-modal-body vcf-sddc-wizard-body">
+        <div class="vcf-sddc-wizard-heading">
+          <p class="kicker" data-vcf-trust-step-kicker>Step 1 of 3</p>
+          <h3 data-vcf-trust-step-title>Target and root CA</h3>
+          <p class="muted" data-vcf-trust-step-description>Choose the VCF appliance and review the active Atlaso root CA.</p>
+        </div>
+
+        {% if vcf_trust_errors %}
+          <div class="alert error" data-vcf-trust-server-errors>{% for error in vcf_trust_errors %}<div>{{ error }}</div>{% endfor %}</div>
+        {% endif %}
+        <div class="alert error hidden" data-vcf-trust-form-errors></div>
+
+        <section class="vcf-sddc-step-page" data-vcf-trust-step="target">
+          <div class="form-grid">
+            <label><span class="field-label"><span>VCF appliance endpoint</span><button class="help-icon" type="button" data-help="The VCF 9 Installer or SDDC Manager API endpoint that receives the Atlaso root CA. Accepts host, host:port, or https://host:port; default port is 443.">i</button></span><input name="address" required></label>
+          </div>
+          {% if vcf_trust_ca %}
+            <div class="settings-list compact-settings-list">
+              <div><span>Root CA subject</span><strong>{{ vcf_trust_ca.subject }}</strong></div>
+              <div><span>Expires</span><strong>{{ vcf_trust_ca.expires_at }}</strong></div>
+              <div><span>SHA-256 fingerprint</span><strong class="mono-text">{{ vcf_trust_ca.fingerprint }}</strong></div>
+            </div>
+          {% else %}
+            <div class="alert error">{{ vcf_trust_ca_error }}</div>
+          {% endif %}
+          <label class="switch-field"><span class="field-label"><span>Snapshot exists</span><button class="help-icon" type="button" data-help="Confirm a current snapshot or equivalent rollback exists before changing trust on an existing remote appliance.">i</button></span><input class="switch-input" type="checkbox" name="snapshot_acknowledged" required><span class="switch-track" aria-hidden="true"></span></label>
+        </section>
+
+        <section class="vcf-sddc-step-page hidden" data-vcf-trust-step="api">
+          <div class="form-grid">
+            <label><span class="field-label"><span>API administrator</span><button class="help-icon" type="button" data-help="VCF identity used only to obtain a temporary API token and call the trusted-certificate API. It is never stored.">i</button></span><input name="api_username" value="admin@local" autocomplete="username" required></label>
+            <label><span class="field-label"><span>API password</span><button class="help-icon" type="button" data-help="One-time VCF API password. It is never written to jobs, logs, audits, or the database.">i</button></span><input name="api_password" type="password" autocomplete="new-password" required></label>
+          </div>
+        </section>
+
+        <section class="vcf-sddc-step-page hidden" data-vcf-trust-step="review">
+          <div class="settings-list compact-settings-list">
+            <div><span>Target</span><strong data-vcf-trust-review-target>Not inspected yet</strong></div>
+            <div><span>HTTPS port</span><strong data-vcf-trust-review-port>443</strong></div>
+            <div><span>Role</span><strong data-vcf-trust-review-role>Inspect target to verify</strong></div>
+            <div><span>Version</span><strong data-vcf-trust-review-version>Inspect target to verify</strong></div>
+          </div>
+          <label class="vcf-sddc-tls-check hidden" data-vcf-trust-tls-confirmation>
+            <input type="checkbox" data-vcf-trust-tls-confirm required>
+            <span>
+              <strong>Confirm VCF API TLS fingerprint</strong>
+              <small>Verify this SHA-256 fingerprint before queueing: <code data-vcf-trust-tls-fingerprint></code></small>
+            </span>
+          </label>
+          <p class="muted">VCF 9.x only. Atlaso imports and verifies the active root CA through the VCF API.</p>
+        </section>
+      </div>
+
+      <div class="confirm-modal-actions vcf-sddc-wizard-actions">
+        <button class="button ghost" type="button" data-vcf-trust-cancel>Close</button>
+        <button class="button secondary hidden" type="button" data-vcf-trust-back>Back</button>
+        <button class="button primary" type="button" data-vcf-trust-next>Next</button>
+        <button class="button primary hidden" type="submit" data-vcf-trust-submit>Run trust task</button>
+      </div>
+    </div>
+  </form>
+</dialog>

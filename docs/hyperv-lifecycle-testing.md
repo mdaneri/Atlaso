@@ -1,20 +1,20 @@
 # Hyper-V Lifecycle Testing
 
-LabFoundry lifecycle interop tests use a separate Hyper-V lab set. They must not
-reuse or destroy the normal `LabFoundry` test appliance VM.
+Atlaso lifecycle interop tests use a separate Hyper-V lab set. They must not
+reuse or destroy the normal `Atlaso` test appliance VM.
 
 ## Topology
 
 The default lifecycle lab creates these VMs:
 
-- `LabFoundryLifecycle-Appliance`
-- `LabFoundryLifecycle-ClientA`
-- `LabFoundryLifecycle-ClientB`
+- `AtlasoLifecycle-Appliance`
+- `AtlasoLifecycle-ClientA`
+- `AtlasoLifecycle-ClientB`
 
-The appliance attaches to `LabFoundry-Mgmt`, `LabFoundry-SiteA`,
-`LabFoundry-Trunk`, and `LabFoundry-SiteB`. Client A attaches to its SSH
+The appliance attaches to `Atlaso-Mgmt`, `Atlaso-SiteA`,
+`Atlaso-Trunk`, and `Atlaso-SiteB`. Client A attaches to its SSH
 management switch, SiteA, an access VLAN on the trunk switch, and a dedicated
-LabFoundry management test NIC used only for the CA request path. Client B
+Atlaso management test NIC used only for the CA request path. Client B
 attaches to a management switch plus the WAN-test switch.
 
 The default SiteA test network is tagged VLAN 12 on appliance interface
@@ -32,7 +32,7 @@ VMs boot with SSH access and the test NIC DHCP refresh helper.
 The default client parent image path is:
 
 ```text
-image/hyperv/clients/alpine-cloud/labfoundry-tiny-linux-client.vhdx
+image/hyperv/clients/alpine-cloud/atlaso-tiny-linux-client.vhdx
 ```
 
 Prepare or refresh that image with:
@@ -73,7 +73,7 @@ inspect a failed lab. Default two-pass runs write `initial/result.json`,
 `restored/result.json`, `settings-backup.json`, and
 `restored/restored-settings-backup.json` under the timestamped result directory.
 
-The wrapper defaults the LabFoundry admin and SSH passwords to the local Hyper-V
+The wrapper defaults the Atlaso admin and SSH passwords to the local Hyper-V
 lab password. The VCF Backup SFTP test password defaults to a separate
 policy-compliant value because Local Users enforces the appliance password
 policy before OS sync. Override them with `-AdminPassword`, `-SshPassword`, and
@@ -87,17 +87,17 @@ when testing a different management front door.
 Useful single-purpose commands:
 
 ```powershell
-# Create or repair the LabFoundry Hyper-V switches and management NAT only.
+# Create or repair the Atlaso Hyper-V switches and management NAT only.
 powershell.exe -ExecutionPolicy Bypass `
   -File scripts/windows/hyperv/invoke-lifecycle-test.ps1 `
   -PrepareNetworksOnly
 
-# Remove only LabFoundryLifecycle* VMs; keep Hyper-V switches and NAT.
+# Remove only AtlasoLifecycle* VMs; keep Hyper-V switches and NAT.
 powershell.exe -ExecutionPolicy Bypass `
   -File scripts/windows/hyperv/invoke-lifecycle-test.ps1 `
   -CleanupVmsOnly
 
-# Remove LabFoundry switches and management NAT; refuses if VMs are attached.
+# Remove Atlaso switches and management NAT; refuses if VMs are attached.
 powershell.exe -ExecutionPolicy Bypass `
   -File scripts/windows/hyperv/invoke-lifecycle-test.ps1 `
   -CleanupNetworksOnly
@@ -105,7 +105,7 @@ powershell.exe -ExecutionPolicy Bypass `
 
 Pass `-CleanupNetworksAfterTest` to remove the switches/NAT after a successful
 test as well as the VMs. Network cleanup is intentionally opt-in because the
-normal `LabFoundry` VM can also be attached to the shared LabFoundry switches.
+normal `Atlaso` VM can also be attached to the shared Atlaso switches.
 
 Use `-PlanOnly` first to print the VM names, VHDX parents, and result path
 without creating or modifying VMs. Use `-ApplianceVhdxPath` when you want a
@@ -120,7 +120,7 @@ input:
 ```powershell
 powershell.exe -ExecutionPolicy Bypass `
   -File scripts/windows/hyperv/run-lifecycle-test.ps1 `
-  -ApplianceVhdxPath image/hyperv/output/labfoundry-photon-hyperv/"Virtual Hard Disks"/LabFoundry-Photon-Builder.vhdx `
+  -ApplianceVhdxPath image/hyperv/output/atlaso-photon-hyperv/"Virtual Hard Disks"/Atlaso-Photon-Builder.vhdx `
   -AdminPassword '<bootstrap-admin-password>' `
   -SshPassword '<bootstrap-admin-password>' `
   -CleanupCreatedLab
@@ -141,16 +141,16 @@ PuTTY's cached host key state.
 The low-level script only cleans up when `-CleanupCreatedLab` is present. That
 flag removes only VM names created during the current run that start with the
 lifecycle lab prefix. Both scripts refuse to use reserved names such as
-`LabFoundry` and `LabFoundry-Photon-Builder`.
+`Atlaso` and `Atlaso-Photon-Builder`.
 
 ## What It Validates
 
 The lifecycle runner records structured evidence in
 `test-results/hyperv-lifecycle/<timestamp>/result.json`:
 
-- appliance boot, SSH, `labfoundry.service`, `/openapi.json`, and dashboard API
+- appliance boot, SSH, `atlaso.service`, `/openapi.json`, and dashboard API
 - physical interface refresh, access NICs, trunk NIC, and VLAN desired state
-- tty1 LabFoundry console service ownership, masked tty1 getty, untouched tty2 getty template, installed console executable, and non-isolated recovery state
+- tty1 Atlaso console service ownership, masked tty1 getty, untouched tty2 getty template, installed console executable, and non-isolated recovery state
 - DNS and DHCP desired state plus dnsmasq host-state checks
 - first-boot `vcf-sdk` plus unprivileged appliance-user VCF PowerCLI
   version/import checks, including `Connect-VIServer` without sudo
@@ -163,7 +163,7 @@ The lifecycle runner records structured evidence in
 - CA enablement, root CA generation/download metadata, Client A CSR request
   submission over its lifecycle management test NIC, global `ca` appliance
   apply, issued certificate download from Client A, runner-side certificate
-  signature/subject validation, and CA files under `/etc/labfoundry`
+  signature/subject validation, and CA files under `/etc/atlaso`
 - CA-backed management HTTPS desired state, the global `appliance_settings`
   apply unit, HTTP-to-HTTPS redirect behavior on the management front door, and
   HTTPS `/openapi.json` reachability with the locally issued appliance
@@ -192,7 +192,7 @@ ESX Storage acceptance records the global job IDs, stable disk identity and fing
 
 ## Dry-Run Boundary
 
-First-boot images may still have `LABFOUNDRY_DRY_RUN_SYSTEM_ADAPTERS=true`.
+First-boot images may still have `ATLASO_DRY_RUN_SYSTEM_ADAPTERS=true`.
 That is useful for control-plane smoke testing, but a real lifecycle interop run
 should use an appliance image built with `-EnableRealSystemAdapters`. If a
 deliberate dry-run pass is needed, pass `-AllowDryRunApply`; otherwise the

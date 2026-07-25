@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""LabFoundry Hyper-V lifecycle interop runner.
+"""Atlaso Hyper-V lifecycle interop runner.
 
 The Windows Hyper-V script owns VM topology. This runner owns appliance and
 guest assertions so failures produce reusable evidence instead of console fog.
@@ -102,7 +102,7 @@ def utc_now() -> str:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run LabFoundry appliance lifecycle interop checks.")
+    parser = argparse.ArgumentParser(description="Run Atlaso appliance lifecycle interop checks.")
     parser.add_argument("--appliance-url", default="https://192.168.49.1")
     parser.add_argument("--username", default="admin")
     parser.add_argument("--password", required=True)
@@ -115,7 +115,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--site-ipv6-cidr", default="fd00:50::1/64")
     parser.add_argument("--vlan-cidr", default="192.168.60.1/24")
     parser.add_argument("--wan-cidr", default="172.31.50.1/24")
-    parser.add_argument("--domain", default="labfoundry.internal")
+    parser.add_argument("--domain", default="atlaso.internal")
     parser.add_argument("--client-a-host", default="")
     parser.add_argument("--client-b-host", default="")
     parser.add_argument("--client-ca-request-interface", default="eth3")
@@ -261,7 +261,7 @@ class HttpClient:
         fields: dict[str, str],
         files: dict[str, tuple[str, bytes, str]],
     ) -> tuple[int, str, dict[str, str]]:
-        boundary = f"----LabFoundryLifecycle{random.randrange(0, 1_000_000_000):09d}"
+        boundary = f"----AtlasoLifecycle{random.randrange(0, 1_000_000_000):09d}"
         chunks: list[bytes] = []
         for name, value in fields.items():
             chunks.extend(
@@ -744,7 +744,7 @@ def configure_esxi_pxe(client: HttpClient, args: argparse.Namespace) -> dict[str
         ("listen_interfaces", args.site_interface),
         ("listen_addresses_present", "1"),
         ("listen_addresses", site_ip),
-        ("tftp_root", "/var/lib/labfoundry/pxe/tftp"),
+        ("tftp_root", "/var/lib/atlaso/pxe/tftp"),
         ("http_port", "8080"),
         ("bios_bootfile", "undionly.kpxe"),
         ("uefi_bootfile", "snponly.efi"),
@@ -756,7 +756,7 @@ def configure_esxi_pxe(client: HttpClient, args: argparse.Namespace) -> dict[str
         "POST",
         "/esxi-pxe/boot-settings",
         form=form,
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     if status >= 400:
         raise LifecycleError(f"ESXi PXE boot settings update failed with HTTP {status}: {response_body[:500]}")
@@ -823,11 +823,11 @@ def configure_esxi_pxe(client: HttpClient, args: argparse.Namespace) -> dict[str
 
 def lifecycle_esxi_kickstart_content() -> str:
     return """#
-# LabFoundry lifecycle ESXi scripted install.
+# Atlaso lifecycle ESXi scripted install.
 vmaccepteula
 rootpw vmware01!
 install --firstdisk --overwritevmfs
-network --bootproto=dhcp --device=vmnic0 --hostname=pxe-client.labfoundry.internal
+network --bootproto=dhcp --device=vmnic0 --hostname=pxe-client.atlaso.internal
 reboot
 
 %firstboot --interpreter=busybox
@@ -841,7 +841,7 @@ def ensure_lifecycle_esxi_kickstart(client: HttpClient) -> dict[str, Any]:
     name = "Lifecycle ESXi install"
     payload = {
         "name": name,
-        "description": "Created by the LabFoundry lifecycle ESXi PXE install check.",
+        "description": "Created by the Atlaso lifecycle ESXi PXE install check.",
         "content": lifecycle_esxi_kickstart_content(),
         "enabled": True,
     }
@@ -1018,8 +1018,8 @@ def configure_ca(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]
         "enabled": "on",
         "listen_interfaces_present": "1",
         "listen_interfaces": [args.site_interface],
-        "root_common_name": "LabFoundry Lifecycle Root CA",
-        "organization": "LabFoundry",
+        "root_common_name": "Atlaso Lifecycle Root CA",
+        "organization": "Atlaso",
         "organizational_unit": "Interop",
         "country": "US",
         "state": "California",
@@ -1068,7 +1068,7 @@ def configure_ntp(client: HttpClient, args: argparse.Namespace) -> dict[str, Any
         "POST",
         "/ntp/settings",
         form=form,
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     if status >= 400:
         raise LifecycleError(f"NTP settings update failed with HTTP {status}: {response_body[:500]}")
@@ -1092,7 +1092,7 @@ def configure_management_https(client: HttpClient, args: argparse.Namespace) -> 
     settings_payload = client.json_request("GET", "/api/v1/settings")
     management_interface = str(settings_payload.get("management_interface") or "eth0")
     form = {
-        "fqdn": "labfoundry.labfoundry.internal",
+        "fqdn": "core.atlaso.internal",
         "management_https_enabled": "on",
         "web_terminal_enabled": "on",
         "web_terminal_interfaces_present": "1",
@@ -1104,7 +1104,7 @@ def configure_management_https(client: HttpClient, args: argparse.Namespace) -> 
         "POST",
         "/settings",
         form=form,
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     if status >= 400:
         raise LifecycleError(f"Management HTTPS settings update failed with HTTP {status}: {response_body[:500]}")
@@ -1119,7 +1119,7 @@ def configure_management_https(client: HttpClient, args: argparse.Namespace) -> 
         "POST",
         "/settings/vmware-ceip",
         form={"csrf": csrf},
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     if ceip_status >= 400:
         raise LifecycleError(f"VMware CEIP settings update failed with HTTP {ceip_status}: {ceip_body[:500]}")
@@ -1193,7 +1193,7 @@ def oidc_authorization_code_check(client: HttpClient, args: argparse.Namespace) 
     client_secret = created["client_secret"]
     provider = client.json_request("GET", "/api/v1/oidc/provider")
     provider["enabled"] = True
-    provider["issuer_url"] = "https://labfoundry.labfoundry.internal/identity"
+    provider["issuer_url"] = "https://core.atlaso.internal/identity"
     for read_only in (
         "authorization_flow_available",
         "valid",
@@ -1332,7 +1332,7 @@ def web_terminal_check(client: HttpClient, args: argparse.Namespace) -> dict[str
     host_evidence = ssh_command(
         args.appliance_ssh_host,
         args,
-        "/opt/labfoundry/bin/labfoundry-helper web-terminal status --real && sshd -T | grep -i '^trustedusercakeys '",
+        "/opt/atlaso/bin/atlaso-helper web-terminal status --real && sshd -T | grep -i '^trustedusercakeys '",
         role="appliance",
     )
     require_success(host_evidence, "web terminal OpenSSH CA state")
@@ -1403,7 +1403,7 @@ def create_client_csr(common_name: str) -> str:
             x509.Name(
                 [
                     x509.NameAttribute(NameOID.COMMON_NAME, common_name),
-                    x509.NameAttribute(NameOID.ORGANIZATION_NAME, "LabFoundry"),
+                    x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Atlaso"),
                     x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, "Lifecycle Client"),
                 ]
             )
@@ -1594,9 +1594,9 @@ def stage_vcf_backup_password_via_appliance(args: argparse.Namespace) -> dict[st
     python_script = f"""
 from sqlalchemy import select
 
-from labfoundry.app.database import SessionLocal
-from labfoundry.app.models import User, VcfBackupSettings
-from labfoundry.app.services.local_users import stage_user_os_password
+from atlaso.app.database import SessionLocal
+from atlaso.app.models import User, VcfBackupSettings
+from atlaso.app.services.local_users import stage_user_os_password
 
 password = {password_literal}
 with SessionLocal() as db:
@@ -1617,8 +1617,8 @@ with SessionLocal() as db:
 """
     encoded_script = base64.b64encode(python_script.encode("utf-8")).decode("ascii")
     script = (
-        "set -a; . /etc/labfoundry/labfoundry.env; set +a; "
-        f"printf %s {shell_single_quote(encoded_script)} | base64 -d | /opt/labfoundry/.venv/bin/python -"
+        "set -a; . /etc/atlaso/atlaso.env; set +a; "
+        f"printf %s {shell_single_quote(encoded_script)} | base64 -d | /opt/atlaso/.venv/bin/python -"
     )
     result = ssh_command(args.appliance_ssh_host, args, script, role="appliance", redact_values=[args.vcf_backup_password])
     require_success(result, "appliance VCF backup password staging")
@@ -1653,9 +1653,9 @@ def stage_vcf_depot_password_via_appliance(args: argparse.Namespace, password: s
     python_script = f"""
 from sqlalchemy import select
 
-from labfoundry.app.database import SessionLocal
-from labfoundry.app.models import User, VcfOfflineDepotSettings
-from labfoundry.app.services.local_users import stage_user_os_password
+from atlaso.app.database import SessionLocal
+from atlaso.app.models import User, VcfOfflineDepotSettings
+from atlaso.app.services.local_users import stage_user_os_password
 
 password = {password_literal}
 with SessionLocal() as db:
@@ -1676,8 +1676,8 @@ with SessionLocal() as db:
 """
     encoded_script = base64.b64encode(python_script.encode("utf-8")).decode("ascii")
     script = (
-        "set -a; . /etc/labfoundry/labfoundry.env; set +a; "
-        f"printf %s {shell_single_quote(encoded_script)} | base64 -d | /opt/labfoundry/.venv/bin/python -"
+        "set -a; . /etc/atlaso/atlaso.env; set +a; "
+        f"printf %s {shell_single_quote(encoded_script)} | base64 -d | /opt/atlaso/.venv/bin/python -"
     )
     result = ssh_command(args.appliance_ssh_host, args, script, role="appliance", redact_values=[password])
     require_success(result, "appliance VCF depot password staging")
@@ -1739,7 +1739,7 @@ def configure_vcf_offline_depot(client: HttpClient, args: argparse.Namespace) ->
             "http_user_id": user_id,
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     if status >= 400:
         raise LifecycleError(f"VCF Offline Depot settings update failed with HTTP {status}: {response_body[:500]}")
@@ -1779,7 +1779,7 @@ def configure_vcf_backups(client: HttpClient, args: argparse.Namespace) -> dict[
             "max_sessions": "4",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     if status >= 400:
         raise LifecycleError(f"VCF Backup settings update failed with HTTP {status}: {response_body[:500]}")
@@ -1816,7 +1816,7 @@ def configure_kms(client: HttpClient, args: argparse.Namespace) -> dict[str, Any
             "allow_register": "on",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     if status >= 400:
         raise LifecycleError(f"KMS settings update failed with HTTP {status}: {response_body[:500]}")
@@ -1828,7 +1828,7 @@ def configure_kms(client: HttpClient, args: argparse.Namespace) -> dict[str, Any
         "/kms/clients",
         form={
             "name": "vcf-management",
-            "certificate_subject": f"CN=vcf-management.{args.domain},O=LabFoundry",
+            "certificate_subject": f"CN=vcf-management.{args.domain},O=Atlaso",
             "role": "service",
             "allowed_operations": "locate,get,register,create,activate",
             "description": "Hyper-V lifecycle KMIP client",
@@ -2069,12 +2069,12 @@ def _configure_signed_release_source(
     if status >= 400:
         raise LifecycleError(f"GET /appliance-update failed with HTTP {status}")
     section_match = re.search(
-        r'<details\b[^>]*data-update-source-group="labfoundry"[^>]*>(.*?)</details>',
+        r'<details\b[^>]*data-update-source-group="atlaso"[^>]*>(.*?)</details>',
         body,
         flags=re.DOTALL,
     )
     if not section_match:
-        raise LifecycleError("LabFoundry release source group was not found in Appliance Update.")
+        raise LifecycleError("Atlaso release source group was not found in Appliance Update.")
     section = section_match.group(1)
     source_match = re.search(
         r'<form\b[^>]*action="/appliance-update/sources/(\d+)"[^>]*>(.*?)</form>',
@@ -2082,7 +2082,7 @@ def _configure_signed_release_source(
         flags=re.DOTALL,
     )
     if not source_match:
-        raise LifecycleError("No configured LabFoundry release source was found.")
+        raise LifecycleError("No configured Atlaso release source was found.")
     source_id, form_body = source_match.groups()
 
     def field_value(name: str, default: str) -> str:
@@ -2104,7 +2104,7 @@ def _configure_signed_release_source(
             "enabled": "on",
             "channel": channel,
         },
-        headers={"X-LabFoundry-Autosave": "1", "Accept": "application/json"},
+        headers={"X-Atlaso-Autosave": "1", "Accept": "application/json"},
         follow_redirects=False,
     )
     if status != 200:
@@ -2134,7 +2134,7 @@ def _submit_signed_release_update(
     status, response_body, _headers = client.request(
         "POST",
         "/appliance-update/run",
-        form=[("csrf", csrf), ("selected_streams", "labfoundry_release")],
+        form=[("csrf", csrf), ("selected_streams", "atlaso_release")],
         follow_redirects=False,
         timeout=30,
     )
@@ -2169,9 +2169,9 @@ def _submit_signed_release_update(
             f"Signed release task {job_id} ended {task.get('status')}; expected {expected_status}: {detail}"
         )
     children = list(task.get("_children") or [])
-    if len(children) != 1 or children[0].get("component_key") != "labfoundry_release":
+    if len(children) != 1 or children[0].get("component_key") != "atlaso_release":
         raise LifecycleError(
-            f"Signed release task {job_id} did not expose exactly one LabFoundry Release child step."
+            f"Signed release task {job_id} did not expose exactly one Atlaso Release child step."
         )
     if children[0].get("status") != expected_status:
         raise LifecycleError(
@@ -2188,7 +2188,7 @@ import json
 import os
 import sqlite3
 
-database = "/var/lib/labfoundry/labfoundry.db"
+database = "/var/lib/atlaso/atlaso.db"
 connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
 try:
     schema = connection.execute(
@@ -2200,8 +2200,8 @@ finally:
     connection.close()
 canonical_schema = json.dumps(schema, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
 print(json.dumps({
-    "current_release": os.path.realpath("/opt/labfoundry/current"),
-    "compatibility_venv": os.path.realpath("/opt/labfoundry/.venv"),
+    "current_release": os.path.realpath("/opt/atlaso/current"),
+    "compatibility_venv": os.path.realpath("/opt/atlaso/.venv"),
     "schema_sha256": hashlib.sha256(canonical_schema).hexdigest(),
     "users": users,
 }, sort_keys=True))
@@ -2233,7 +2233,7 @@ def signed_release_update_check(client: HttpClient, args: argparse.Namespace) ->
     time.sleep(8)
     after_success = _release_database_identity(args)
     if after_success["current_release"] == before["current_release"]:
-        raise LifecycleError("The preview lifecycle release did not switch /opt/labfoundry/current.")
+        raise LifecycleError("The preview lifecycle release did not switch /opt/atlaso/current.")
 
     broken_source = _configure_signed_release_source(client, args, channel="development")
     broken_baseline = _release_database_identity(args)
@@ -2271,9 +2271,9 @@ def appliance_health(client: HttpClient, args: argparse.Namespace) -> dict[str, 
     ssh = ssh_command(
         args.appliance_ssh_host,
         args,
-        "systemctl is-active labfoundry && "
-        "systemctl is-active labfoundry-worker && "
-        "systemctl is-enabled labfoundry-worker && "
+        "systemctl is-active atlaso && "
+        "systemctl is-active atlaso-worker && "
+        "systemctl is-enabled atlaso-worker && "
         "curl -fsS http://127.0.0.1:8000/openapi.json >/dev/null",
         role="appliance",
     )
@@ -2480,11 +2480,11 @@ def run_host_checks(
 
 
 def managed_ldap_helper_authentication_check(args: argparse.Namespace) -> dict[str, Any]:
-    user_dn = "uid=operator,ou=users,dc=lifecycle-org-a,dc=ldap,dc=labfoundry,dc=internal"
+    user_dn = "uid=operator,ou=users,dc=lifecycle-org-a,dc=ldap,dc=atlaso,dc=internal"
     helper_command = (
         "IFS= read -r ldap_password; "
         "printf '%s\\n' \"$ldap_password\" | "
-        f"/opt/labfoundry/bin/labfoundry-helper ldap authenticate --real {shell_single_quote(user_dn)}"
+        f"/opt/atlaso/bin/atlaso-helper ldap authenticate --real {shell_single_quote(user_dn)}"
     )
     user = ssh_username(args, "appliance")
     host = args.appliance_ssh_host
@@ -2614,17 +2614,17 @@ def routing_host_check_commands(args: argparse.Namespace) -> dict[str, str]:
     return {
         "network": "ip -br addr && ip route",
         "routing_tables": (
-            'ip rule show | grep -E "lookup (100|labfoundry_mgmt)" && '
-            'ip rule show | grep -E "lookup (200|labfoundry_lab)" && '
+            'ip rule show | grep -E "lookup (100|atlaso_mgmt)" && '
+            'ip rule show | grep -E "lookup (200|atlaso_lab)" && '
             f'ip route show table 200 | grep -F "{wan_network}" && '
             '! ip route show table 200 | grep -q "^default" && '
             'sysctl -n net.ipv4.ip_forward | grep "^1$"'
         ),
         "firewall": (
-            "nft list ruleset | tee /tmp/labfoundry-lifecycle-nft.txt | head -n 200 && "
-            'grep -F "comment \\"isolate-" /tmp/labfoundry-lifecycle-nft.txt && '
-            'grep -F "comment \\"route-" /tmp/labfoundry-lifecycle-nft.txt && '
-            'grep -F "masquerade" /tmp/labfoundry-lifecycle-nft.txt'
+            "nft list ruleset | tee /tmp/atlaso-lifecycle-nft.txt | head -n 200 && "
+            'grep -F "comment \\"isolate-" /tmp/atlaso-lifecycle-nft.txt && '
+            'grep -F "comment \\"route-" /tmp/atlaso-lifecycle-nft.txt && '
+            'grep -F "masquerade" /tmp/atlaso-lifecycle-nft.txt'
         ),
         "wan": (
             f"sysctl net.ipv4.ip_forward; "
@@ -2655,50 +2655,50 @@ def host_state_checks(args: argparse.Namespace) -> dict[str, Any]:
     checks = {
         **routing_host_check_commands(args),
         "local_console": (
-            "systemctl is-active labfoundry-console.service && "
-            "systemctl is-enabled labfoundry-console.service && "
+            "systemctl is-active atlaso-console.service && "
+            "systemctl is-enabled atlaso-console.service && "
             "test \"$(systemctl is-enabled getty@tty1.service 2>/dev/null)\" = masked && "
             "test \"$(systemctl show getty@tty2.service -p LoadState --value)\" = loaded && "
             "test \"$(systemctl show getty@tty2.service -p UnitFileState --value)\" != masked && "
-            "test -x /opt/labfoundry/.venv/bin/labfoundry-console && "
-            "/opt/labfoundry/bin/labfoundry-helper console status --real | "
+            "test -x /opt/atlaso/.venv/bin/atlaso-console && "
+            "/opt/atlaso/bin/atlaso-helper console status --real | "
             "grep -F '\"maintenance_isolation\": false'"
         ),
         "vcf_trust_dependencies": (
-            f"printf %s {httpx_probe} | base64 -d | /opt/labfoundry/.venv/bin/python -"
+            f"printf %s {httpx_probe} | base64 -d | /opt/atlaso/.venv/bin/python -"
         ),
         "vcf_automation_tooling": (
-            f"printf %s {vcf_sdk_probe} | base64 -d | /opt/labfoundry/.venv/bin/python -"
+            f"printf %s {vcf_sdk_probe} | base64 -d | /opt/atlaso/.venv/bin/python -"
         ),
-        "ca": "test -f /etc/labfoundry/ca/ca-bundle.pem && openssl x509 -in /etc/labfoundry/ca/root-ca.pem -noout -subject",
+        "ca": "test -f /etc/atlaso/ca/ca-bundle.pem && openssl x509 -in /etc/atlaso/ca/root-ca.pem -noout -subject",
         "ntpsec": (
             "rpm -q ntpsec && systemctl is-active ntpd.service && "
             "ntpq -pn && ntpq -c rv && ntpq -c ntsinfo && "
-            f"test \"$(stat -c '%U:%G %a' /etc/labfoundry/ntp/certs/ntp.{args.domain}.key)\" = 'root:ntp 640' && "
+            f"test \"$(stat -c '%U:%G %a' /etc/atlaso/ntp/certs/ntp.{args.domain}.key)\" = 'root:ntp 640' && "
             "nft list ruleset | grep -F 'ntpd-' && nft list ruleset | grep -F 'ntpd-nts-'"
         ),
         "kms_files": (
             "for path in "
-            "/etc/labfoundry/kms/pykmip.conf "
+            "/etc/atlaso/kms/pykmip.conf "
             "/etc/pykmip/server.conf "
-            "/etc/labfoundry/kms/certs/kms.labfoundry.internal.crt "
-            "/etc/labfoundry/kms/certs/kms.labfoundry.internal.key "
-            "/etc/labfoundry/kms/clients/certs/vcf-management.crt "
-            "/etc/labfoundry/kms/clients/certs/vcf-management.key; "
+            "/etc/atlaso/kms/certs/kms.atlaso.internal.crt "
+            "/etc/atlaso/kms/certs/kms.atlaso.internal.key "
+            "/etc/atlaso/kms/clients/certs/vcf-management.crt "
+            "/etc/atlaso/kms/clients/certs/vcf-management.key; "
             "do test -f \"$path\" || { echo \"missing $path\"; exit 1; }; done"
         ),
-        "kms_service": "systemctl is-active labfoundry-kms.service || (systemctl status labfoundry-kms.service --no-pager; journalctl -u labfoundry-kms.service -n 80 --no-pager; exit 1)",
+        "kms_service": "systemctl is-active atlaso-kms.service || (systemctl status atlaso-kms.service --no-pager; journalctl -u atlaso-kms.service -n 80 --no-pager; exit 1)",
         "kms_tls": (
             f"timeout 10 openssl s_client -connect {site_ip}:5696 "
-            "-cert /etc/labfoundry/kms/clients/certs/vcf-management.crt "
-            "-key /etc/labfoundry/kms/clients/certs/vcf-management.key "
-            "-CAfile /etc/labfoundry/ca/root.crt -verify_return_error </dev/null"
+            "-cert /etc/atlaso/kms/clients/certs/vcf-management.crt "
+            "-key /etc/atlaso/kms/clients/certs/vcf-management.key "
+            "-CAfile /etc/atlaso/ca/root.crt -verify_return_error </dev/null"
         ),
         "ldap_files": (
             "for path in "
-            "/etc/labfoundry/ldap/tls/server.crt "
-            "/etc/labfoundry/ldap/tls/server.key "
-            "/etc/systemd/system/slapd.service.d/labfoundry.conf; "
+            "/etc/atlaso/ldap/tls/server.crt "
+            "/etc/atlaso/ldap/tls/server.key "
+            "/etc/systemd/system/slapd.service.d/atlaso.conf; "
             "do test -f \"$path\" || { echo \"missing $path\"; exit 1; }; done"
         ),
         "ldap_service": "systemctl is-active slapd.service || (systemctl status slapd.service --no-pager; journalctl -u slapd.service -n 100 --no-pager; exit 1)",
@@ -2709,27 +2709,27 @@ def host_state_checks(args: argparse.Namespace) -> dict[str, Any]:
         "ldap_tls": (
             f"timeout 10 openssl s_client -connect {site_ip}:636 "
             f"-servername ldap.{args.domain} -verify_hostname ldap.{args.domain} "
-            "-CAfile /etc/labfoundry/ca/root.crt -verify_return_error </dev/null"
+            "-CAfile /etc/atlaso/ca/root.crt -verify_return_error </dev/null"
         ),
         "ldap_suffixes_and_nested_groups": (
             "ldapsearch -LLL -Y EXTERNAL -H ldapi:/// "
-            "-b dc=lifecycle-org-a,dc=ldap,dc=labfoundry,dc=internal '(uid=operator)' dn && "
+            "-b dc=lifecycle-org-a,dc=ldap,dc=atlaso,dc=internal '(uid=operator)' dn && "
             "ldapsearch -LLL -Y EXTERNAL -H ldapi:/// "
-            "-b dc=lifecycle-org-b,dc=ldap,dc=labfoundry,dc=internal '(uid=operator)' dn && "
+            "-b dc=lifecycle-org-b,dc=ldap,dc=atlaso,dc=internal '(uid=operator)' dn && "
             "ldapsearch -LLL -Y EXTERNAL -H ldapi:/// "
-            "-b ou=groups,dc=lifecycle-org-a,dc=ldap,dc=labfoundry,dc=internal "
+            "-b ou=groups,dc=lifecycle-org-a,dc=ldap,dc=atlaso,dc=internal "
             "'(cn=Lifecycle Nested Administrators)' member"
         ),
         "vcf_backups": (
-            "test -f /etc/ssh/sshd_config.d/labfoundry-vcf-backups.conf && "
-            "grep -F Match\\ User\\ vcf-backup /etc/ssh/sshd_config.d/labfoundry-vcf-backups.conf && "
-            "grep -F ForceCommand\\ internal-sftp /etc/ssh/sshd_config.d/labfoundry-vcf-backups.conf && "
+            "test -f /etc/ssh/sshd_config.d/atlaso-vcf-backups.conf && "
+            "grep -F Match\\ User\\ vcf-backup /etc/ssh/sshd_config.d/atlaso-vcf-backups.conf && "
+            "grep -F ForceCommand\\ internal-sftp /etc/ssh/sshd_config.d/atlaso-vcf-backups.conf && "
             "id vcf-backup && "
-            "test -d /mnt/labfoundry-vcf-backups/backups && "
+            "test -d /mnt/atlaso-vcf-backups/backups && "
             "systemctl is-active sshd"
         ),
     }
-    checks["dnsmasq"] = "test -f /etc/labfoundry/dnsmasq.d/labfoundry.conf && systemctl is-active dnsmasq"
+    checks["dnsmasq"] = "test -f /etc/atlaso/dnsmasq.d/atlaso.conf && systemctl is-active dnsmasq"
     if args.esx_storage_test:
         site_ipv6 = str(ip_interface(args.site_ipv6_cidr).ip)
         ipv4_target = f"nfs-{site_ip.replace('.', '-')}.{args.domain}"
@@ -2737,9 +2737,9 @@ def host_state_checks(args: argparse.Namespace) -> dict[str, Any]:
         ipv6_target = f"nfs-{ipv6_token}.{args.domain}"
         checks["esx_storage"] = (
             "systemctl is-active rpcbind.service && systemctl is-active nfs-server.service && "
-            "/opt/labfoundry/bin/labfoundry-helper esx-storage status --real && "
-            "exportfs -v && grep -F lifecycle-nfs3 /etc/exports.d/labfoundry-esx-storage.exports && "
-            "grep -F lifecycle-nfs41 /etc/exports.d/labfoundry-esx-storage.exports && "
+            "/opt/atlaso/bin/atlaso-helper esx-storage status --real && "
+            "exportfs -v && grep -F lifecycle-nfs3 /etc/exports.d/atlaso-esx-storage.exports && "
+            "grep -F lifecycle-nfs41 /etc/exports.d/atlaso-esx-storage.exports && "
             "ss -lnt | grep -E ':(111|2049|20048)[[:space:]]' && "
             "nft list ruleset | grep -F esx-nfs- && "
             f"dig +short A {ipv4_target} @127.0.0.1 | grep -Fx {site_ip} && "
@@ -2820,10 +2820,10 @@ def vcf_depot_auth_check(client: HttpClient, args: argparse.Namespace, password:
     site_ip = str(ip_interface(args.site_cidr).ip)
     depot_url = f"https://{site_ip}"
     artifact_command = (
-        "install -d -m 0755 /mnt/labfoundry-vcf-offline-depot/PROD && "
-        "printf lifecycle-auth-ok >/mnt/labfoundry-vcf-offline-depot/PROD/lifecycle-auth.txt && "
-        "chmod 0755 /mnt/labfoundry-vcf-offline-depot /mnt/labfoundry-vcf-offline-depot/PROD && "
-        "chmod 0644 /mnt/labfoundry-vcf-offline-depot/PROD/lifecycle-auth.txt"
+        "install -d -m 0755 /mnt/atlaso-vcf-offline-depot/PROD && "
+        "printf lifecycle-auth-ok >/mnt/atlaso-vcf-offline-depot/PROD/lifecycle-auth.txt && "
+        "chmod 0755 /mnt/atlaso-vcf-offline-depot /mnt/atlaso-vcf-offline-depot/PROD && "
+        "chmod 0644 /mnt/atlaso-vcf-offline-depot/PROD/lifecycle-auth.txt"
     )
     artifact_result = ssh_command(args.appliance_ssh_host, args, artifact_command, role="appliance")
     require_success(artifact_result, "VCF depot lifecycle artifact creation")
@@ -2911,7 +2911,7 @@ def verify_certificate_signed_by_root(certificate_pem: str, root_ca_pem: str, co
     certificate = x509.load_pem_x509_certificate(certificate_pem.encode("utf-8"))
     root = x509.load_pem_x509_certificate(root_ca_pem.encode("utf-8"))
     if certificate.issuer != root.subject:
-        raise LifecycleError("Issued client certificate issuer does not match the LabFoundry root CA.")
+        raise LifecycleError("Issued client certificate issuer does not match the Atlaso root CA.")
     root.public_key().verify(
         certificate.signature,
         certificate.tbs_certificate_bytes,
@@ -3024,7 +3024,7 @@ def client_a_access_to_wan_command(args: argparse.Namespace, *, expect_success: 
     expectation = "" if expect_success else '; rc=$?; test "$rc" -ne 0'
     return (
         f"ELEV=\"$({elevation_probe()})\"; test -n \"$ELEV\"; "
-        "$ELEV /usr/local/sbin/labfoundry-refresh-test-dhcp 2>/dev/null || /usr/local/sbin/labfoundry-refresh-test-dhcp 2>/dev/null || true; "
+        "$ELEV /usr/local/sbin/atlaso-refresh-test-dhcp 2>/dev/null || /usr/local/sbin/atlaso-refresh-test-dhcp 2>/dev/null || true; "
         f"$ELEV ip route replace {wan.network} via {site_ip} dev eth1; "
         f"ping -c 2 -W 2 {wan_peer_ip}{expectation}"
     )
@@ -3091,10 +3091,10 @@ def client_checks(args: argparse.Namespace) -> dict[str, Any]:
     if args.client_a_host:
         command = (
             f"ELEV=\"$({elevate})\"; "
-            "$ELEV /usr/local/sbin/labfoundry-refresh-test-dhcp 2>/dev/null || /usr/local/sbin/labfoundry-refresh-test-dhcp 2>/dev/null || true; "
+            "$ELEV /usr/local/sbin/atlaso-refresh-test-dhcp 2>/dev/null || /usr/local/sbin/atlaso-refresh-test-dhcp 2>/dev/null || true; "
             f"$ELEV ip route replace {wan.network} via {site_ip} dev eth1; "
             "ip -br addr; "
-            "getent hosts interop-appliance.labfoundry.internal; "
+            "getent hosts interop-appliance.atlaso.internal; "
             f"nslookup interop-appliance.{args.domain} {site_ip}; "
             f"ping -c 2 {site_ip}; "
             f"ping -c 2 {wan_peer_ip}; "
@@ -3120,12 +3120,12 @@ def ntp_client_checks(args: argparse.Namespace) -> dict[str, Any]:
     command = (
         f"ELEV=\"$({elevate})\"; test -n \"$ELEV\"; "
         "command -v chronyd; chronyd -v; "
-        f"curl -ksS --connect-timeout 10 --max-time 30 https://{site_ip}/ca/downloads/root-ca.pem -o /tmp/labfoundry-root-ca.pem; "
-        "grep -F 'BEGIN CERTIFICATE' /tmp/labfoundry-root-ca.pem; "
-        f"printf '%s\\n' 'server {hostname} iburst nts' 'ntstrustedcerts /tmp/labfoundry-root-ca.pem' 'driftfile /tmp/labfoundry-chrony-nts.drift' > /tmp/labfoundry-chrony-nts.conf; "
-        "$ELEV timeout 90 chronyd -Q -t 75 -f /tmp/labfoundry-chrony-nts.conf; "
-        f"printf '%s\\n' 'server {site_ip} iburst' 'driftfile /tmp/labfoundry-chrony-ntp.drift' > /tmp/labfoundry-chrony-ntp.conf; "
-        "$ELEV timeout 45 chronyd -Q -t 30 -f /tmp/labfoundry-chrony-ntp.conf"
+        f"curl -ksS --connect-timeout 10 --max-time 30 https://{site_ip}/ca/downloads/root-ca.pem -o /tmp/atlaso-root-ca.pem; "
+        "grep -F 'BEGIN CERTIFICATE' /tmp/atlaso-root-ca.pem; "
+        f"printf '%s\\n' 'server {hostname} iburst nts' 'ntstrustedcerts /tmp/atlaso-root-ca.pem' 'driftfile /tmp/atlaso-chrony-nts.drift' > /tmp/atlaso-chrony-nts.conf; "
+        "$ELEV timeout 90 chronyd -Q -t 75 -f /tmp/atlaso-chrony-nts.conf; "
+        f"printf '%s\\n' 'server {site_ip} iburst' 'driftfile /tmp/atlaso-chrony-ntp.drift' > /tmp/atlaso-chrony-ntp.conf; "
+        "$ELEV timeout 45 chronyd -Q -t 30 -f /tmp/atlaso-chrony-ntp.conf"
     )
     result = ssh_command(args.client_a_host, args, command, role="client")
     require_success(result, "client A NTS-authenticated and ordinary NTP probes")
@@ -3156,14 +3156,14 @@ def wan_packet_loss_check(client: HttpClient, args: argparse.Namespace) -> dict[
     )
     loss_ping = (
         f"ELEV=\"$({elevate})\"; test -n \"$ELEV\"; "
-        "$ELEV /usr/local/sbin/labfoundry-refresh-test-dhcp 2>/dev/null || /usr/local/sbin/labfoundry-refresh-test-dhcp 2>/dev/null || true; "
+        "$ELEV /usr/local/sbin/atlaso-refresh-test-dhcp 2>/dev/null || /usr/local/sbin/atlaso-refresh-test-dhcp 2>/dev/null || true; "
         f"$ELEV ip route replace {wan.network} via {site_ip} dev eth1; "
         f"ping -c 3 -W 1 {wan_peer_ip}; rc=$?; "
         "test \"$rc\" -ne 0"
     )
     recovery_ping = (
         f"ELEV=\"$({elevate})\"; test -n \"$ELEV\"; "
-        "$ELEV /usr/local/sbin/labfoundry-refresh-test-dhcp 2>/dev/null || /usr/local/sbin/labfoundry-refresh-test-dhcp 2>/dev/null || true; "
+        "$ELEV /usr/local/sbin/atlaso-refresh-test-dhcp 2>/dev/null || /usr/local/sbin/atlaso-refresh-test-dhcp 2>/dev/null || true; "
         f"$ELEV ip route replace {wan.network} via {site_ip} dev eth1; "
         f"ping -c 2 -W 2 {wan_peer_ip}"
     )
@@ -3174,10 +3174,10 @@ def wan_packet_loss_check(client: HttpClient, args: argparse.Namespace) -> dict[
         evidence["loss_policy"] = set_lifecycle_wan_policy(wan_client, packet_loss_percent=100.0)
         evidence["loss_apply"] = apply_units(wan_client, ["wan"], args)
         loss_command = (
-            f"tc qdisc show dev {args.wan_interface} > /tmp/labfoundry-wan-loss-check.txt && "
-            "grep netem /tmp/labfoundry-wan-loss-check.txt && "
-            "grep loss /tmp/labfoundry-wan-loss-check.txt && "
-            "grep 100 /tmp/labfoundry-wan-loss-check.txt"
+            f"tc qdisc show dev {args.wan_interface} > /tmp/atlaso-wan-loss-check.txt && "
+            "grep netem /tmp/atlaso-wan-loss-check.txt && "
+            "grep loss /tmp/atlaso-wan-loss-check.txt && "
+            "grep 100 /tmp/atlaso-wan-loss-check.txt"
         )
         try:
             loss_host = ssh_until_success(
@@ -3203,7 +3203,7 @@ def wan_packet_loss_check(client: HttpClient, args: argparse.Namespace) -> dict[
                 helper_apply = ssh_command(
                     args.appliance_ssh_host,
                     args,
-                    "/opt/labfoundry/bin/labfoundry-helper wan apply --real /var/lib/labfoundry/apply/wan/labfoundry-wan.conf",
+                    "/opt/atlaso/bin/atlaso-helper wan apply --real /var/lib/atlaso/apply/wan/atlaso-wan.conf",
                     role="appliance",
                 )
                 require_success(helper_apply, "host WAN helper reapply")
@@ -3231,11 +3231,11 @@ def wan_packet_loss_check(client: HttpClient, args: argparse.Namespace) -> dict[
             restore_host = ssh_until_success(
                 args.appliance_ssh_host,
                 args,
-                f"tc qdisc show dev {args.wan_interface} > /tmp/labfoundry-wan-restore-check.txt && "
-                "grep netem /tmp/labfoundry-wan-restore-check.txt && "
-                "grep delay /tmp/labfoundry-wan-restore-check.txt && "
-                "grep 25ms /tmp/labfoundry-wan-restore-check.txt && "
-                "! grep 'loss 100' /tmp/labfoundry-wan-restore-check.txt",
+                f"tc qdisc show dev {args.wan_interface} > /tmp/atlaso-wan-restore-check.txt && "
+                "grep netem /tmp/atlaso-wan-restore-check.txt && "
+                "grep delay /tmp/atlaso-wan-restore-check.txt && "
+                "grep 25ms /tmp/atlaso-wan-restore-check.txt && "
+                "! grep 'loss 100' /tmp/atlaso-wan-restore-check.txt",
                 role="appliance",
                 label="host WAN loss restore check",
             )

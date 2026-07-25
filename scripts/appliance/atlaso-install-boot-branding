@@ -1,0 +1,38 @@
+#!/bin/sh
+set -eu
+
+theme_source="${1:?GRUB theme source path required}"
+background_source="${2:?GRUB background source path required}"
+grub_config="${ATLASO_GRUB_CONFIG:-/boot/grub2/grub.cfg}"
+theme_dir="${ATLASO_GRUB_THEME_DIR:-/boot/grub2/themes/atlaso}"
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "Atlaso boot branding installation requires root." >&2
+    exit 2
+fi
+if [ ! -f "$theme_source" ] || [ ! -f "$background_source" ]; then
+    echo "Atlaso boot branding assets are missing." >&2
+    exit 2
+fi
+if [ ! -f "$grub_config" ]; then
+    echo "Photon GRUB configuration not found: $grub_config" >&2
+    exit 2
+fi
+if ! grep -Eq '^set theme=' "$grub_config"; then
+    echo "Photon GRUB configuration does not declare a theme." >&2
+    exit 2
+fi
+
+install -d -o root -g root -m 0755 "$theme_dir"
+install -o root -g root -m 0644 "$theme_source" "$theme_dir/theme.txt"
+install -o root -g root -m 0644 "$background_source" "$theme_dir/atlaso.png"
+
+if [ ! -f "$grub_config.atlaso-backup" ]; then
+    install -o root -g root -m 0644 "$grub_config" "$grub_config.atlaso-backup"
+fi
+sed -i 's#^set theme=.*#set theme=/grub2/themes/atlaso/theme.txt#' "$grub_config"
+sed -i '/^menuentry "\(Photon\|Atlaso Appliance\|Atlaso\)" {/s//menuentry " " {/' "$grub_config"
+
+grep -q '^set theme=/grub2/themes/atlaso/theme.txt$' "$grub_config"
+grep -q '^menuentry " " {$' "$grub_config"
+printf 'Installed Atlaso GRUB branding in %s\n' "$theme_dir"

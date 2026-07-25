@@ -11,7 +11,7 @@ on:
           - preview
           - stable
       version:
-        description: Existing LabFoundry release version without the v prefix
+        description: Existing Atlaso release version without the v prefix
         required: true
         type: string
 
@@ -58,7 +58,7 @@ jobs:
         env:
           RELEASE_CHANNEL: ${{ inputs.channel }}
           RELEASE_VERSION: ${{ inputs.version }}
-          RELEASE_KEY_ID: labfoundry-release-2026-01
+          RELEASE_KEY_ID: atlaso-release-2026-01
         run: |
           SITE_ROOT="$RUNNER_TEMP/site"
           git clone --branch gh-pages --single-branch \

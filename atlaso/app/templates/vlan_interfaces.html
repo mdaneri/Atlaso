@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block page_title %}VLAN Interfaces{% endblock %}
+{% block content %}
+<section class="split-workspace">
+  <div class="panel wide-panel">
+    <div class="panel-head">
+      <div>
+        <h2>VLAN Interfaces</h2>
+        <p class="muted">Create tagged lab networks on trunk parent interfaces. For standard access-mode NICs, assign IPv4/IPv6 CIDR on Physical Interfaces instead.</p>
+      </div>
+      <span class="status-pill muted">{{ vlan_interfaces|length }} VLANs</span>
+    </div>
+    <div class="inline-help-row">
+      <span class="field-label"><span>Trunk parents</span><button class="help-icon" type="button" data-help="Only physical NICs marked as trunk are available here. On the Photon appliance, use the Hyper-V trunk NIC for tagged lab networks.">i</button></span>
+      <span class="field-label"><span>Desired VLAN state</span><button class="help-icon" type="button" data-help="Creating or editing a VLAN stores desired state and updates validation previews. The host is changed only by the global appliance apply workflow.">i</button></span>
+    </div>
+    {% if trunk_parent_options %}
+      <div class="compact-summary-list">
+        {% for parent in trunk_parent_options %}
+          <span class="status-pill muted">{{ parent.label }}</span>
+        {% endfor %}
+      </div>
+    {% endif %}
+    {% if form_error %}
+      <div class="alert error">{{ form_error }}</div>
+    {% endif %}
+    <div id="vlan-interface-error" class="alert error hidden"></div>
+    <div
+      id="vlan-interfaces-table"
+      class="tabulator-shell vlan-interfaces-table"
+      data-vlans='{{ vlan_interface_rows | tojson }}'
+      data-parent-options='{{ trunk_parent_options | tojson }}'
+      data-role-options='{{ vlan_roles | tojson }}'
+      data-csrf="{{ csrf_token }}"
+      data-fallback-id="vlan-interfaces-fallback"
+    ></div>
+    <table id="vlan-interfaces-fallback" class="data-table dns-fallback-table">
+      <thead>
+        <tr><th>Name</th><th>Parent</th><th>VLAN ID</th><th>IPv4 CIDR</th><th>IPv6 CIDR</th><th>MTU</th><th>Role</th><th>Admin Up</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+        {% for vlan in vlan_interfaces %}
+          <tr>
+            <td>{{ vlan.name }}</td>
+            <td>{{ vlan.parent_interface }}</td>
+            <td>{{ vlan.vlan_id }}</td>
+            <td>{{ vlan.ip_cidr or "" }}</td>
+            <td>{{ vlan.ipv6_cidr or "" }}</td>
+            <td>{{ vlan.mtu }}</td>
+            <td>{{ vlan.role }}</td>
+            <td>
+              {% if vlan.enabled %}
+                <span class="network-state-icon up" title="up"><span class="state-symbol" aria-hidden="true">&#8593;</span><span class="state-label">up</span></span>
+              {% else %}
+                <span class="network-state-icon down" title="down"><span class="state-symbol" aria-hidden="true">&#8595;</span><span class="state-label">down</span></span>
+              {% endif %}
+            </td>
+            <td>
+              <form
+                action="/vlan-interfaces/{{ vlan.id }}/delete"
+                method="post"
+                data-confirm-modal
+                data-confirm-title="Delete {{ vlan.name }}?"
+                data-confirm-message="This removes VLAN {{ vlan.name }} from Atlaso desired state. It will not touch the appliance until global appliance apply runs."
+                data-confirm-label="Delete VLAN"
+              >
+                <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                <button class="button tiny danger" type="submit">Delete</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <aside class="side-stack">
+    {% include "partials/appliance_apply_status.html" %}
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Validation</h2>
+        <span class="status-pill {{ 'good' if not network_validation_errors else 'warn' }}">{{ "valid" if not network_validation_errors else "needs attention" }}</span>
+      </div>
+      {% if network_validation_errors %}
+        <div class="alert error">
+          {% for error in network_validation_errors %}
+            <div>{{ error }}</div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="muted">The desired VLAN state passes Atlaso validation.</p>
+      {% endif %}
+      {% set preview_label = "networkd config" %}
+      {% set preview_path = network_config_path %}
+      {% set preview_path_attr = "" %}
+      {% set preview_title = "VLAN Interfaces rendered config" %}
+      {% set preview_button_label = "config" %}
+      {% set preview_text = network_config_preview %}
+      {% set preview_data_attr = "" %}
+      {% include "partials/config_preview_action.html" %}
+    </div>
+  </aside>
+</section>
+{% endblock %}

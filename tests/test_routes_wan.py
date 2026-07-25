@@ -1,5 +1,5 @@
-from labfoundry.app.models import NatRule, Route, RoutingRule
-from labfoundry.app.services.routes_wan import render_wan_config, validate_nat_source, validate_wan_state
+from atlaso.app.models import NatRule, Route, RoutingRule
+from atlaso.app.services.routes_wan import render_wan_config, validate_nat_source, validate_wan_state
 
 
 def test_render_wan_config_uses_ipv6_route_commands():
@@ -58,8 +58,8 @@ def test_render_wan_config_keeps_management_and_lab_route_tables_separate():
         ],
     )
 
-    assert "management=100 labfoundry_mgmt" in config
-    assert "lab=200 labfoundry_lab" in config
+    assert "management=100 atlaso_mgmt" in config
+    assert "lab=200 atlaso_lab" in config
     assert "  gateway=192.168.49.254" in config
     assert "ip rule add from 192.168.49.0/24 table 100 priority 1000" in config
     assert "ip route replace 192.168.49.0/24 dev eth0 table 100" in config

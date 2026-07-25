@@ -1,0 +1,81 @@
+SERVICE_STATE_DEFAULTS = [
+    {"service": "routing", "display_name": "Routing", "running": True, "enabled": True, "health": "healthy"},
+    {"service": "firewall", "display_name": "Firewall", "running": True, "enabled": True, "health": "healthy"},
+    {"service": "dns", "display_name": "DNS", "running": False, "enabled": False, "health": "disabled"},
+    {"service": "dhcp", "display_name": "DHCP", "running": False, "enabled": False, "health": "disabled"},
+    {
+        "service": "ntpd",
+        "display_name": "NTP / NTS",
+        "running": False,
+        "enabled": False,
+        "health": "disabled",
+        "detail": "ntpd.service / UDP 123",
+    },
+    {
+        "service": "kms",
+        "display_name": "KMS / KMIP",
+        "running": False,
+        "enabled": False,
+        "health": "planned",
+        "detail": "PyKMIP lab backend",
+    },
+    {
+        "service": "repository",
+        "display_name": "VCF Offline Depot",
+        "running": False,
+        "enabled": False,
+        "health": "planned",
+        "detail": "/mnt/atlaso-vcf-offline-depot",
+    },
+    {
+        "service": "esxi-pxe",
+        "display_name": "ESXi PXE",
+        "running": False,
+        "enabled": False,
+        "health": "planned",
+        "detail": "/var/lib/atlaso/pxe/http/esxi/ks",
+    },
+    {
+        "service": "esx-storage",
+        "display_name": "ESX Storage NFS",
+        "running": False,
+        "enabled": False,
+        "health": "disabled",
+        "detail": "NFS 3 / 4.1 · IPv4 / IPv6",
+    },
+    {
+        "service": "vcf-private-registry",
+        "display_name": "VCF Private Registry",
+        "running": False,
+        "enabled": False,
+        "health": "planned",
+        "detail": "Harbor / vcf-supervisor-services",
+    },
+    {
+        "service": "vcf-backups",
+        "display_name": "VCF Backup SFTP",
+        "running": False,
+        "enabled": False,
+        "health": "disabled",
+        "detail": "/mnt/atlaso-vcf-backups",
+    },
+    {"service": "ca", "display_name": "Certificate Authority", "running": False, "enabled": False, "health": "planned"},
+    {
+        "service": "ldap",
+        "display_name": "Managed LDAP",
+        "running": False,
+        "enabled": False,
+        "health": "disabled",
+        "detail": "OpenLDAP / configurable LDAP and LDAPS listeners",
+    },
+    {"service": "auth", "display_name": "Authentication", "running": True, "enabled": True, "health": "healthy"},
+]
+
+SERVICE_STATE_IDS = frozenset(row["service"] for row in SERVICE_STATE_DEFAULTS)
+RETIRED_SERVICE_IDS = frozenset({"chronyd"})
+SERVICE_SYSTEMD_UNITS = {
+    "ntpd": "ntpd.service",
+    "kms": "atlaso-kms.service",
+    "ldap": "slapd.service",
+    "esx-storage": "nfs-server.service",
+}

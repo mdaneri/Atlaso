@@ -28,12 +28,12 @@ def write_baseline(path: Path, *, fingerprint: str = "abc123") -> None:
       "name": "ca-client-certificate-check",
       "status": "passed",
       "evidence": {
-        "common_name": "client-a.labfoundry.internal",
+        "common_name": "client-a.atlaso.internal",
         "certificate": {
           "serial_number": "01",
           "sha256_fingerprint": "%s",
-          "subject": "CN=client-a.labfoundry.internal",
-          "issuer": "CN=LabFoundry Internal Root CA"
+          "subject": "CN=client-a.atlaso.internal",
+          "issuer": "CN=Atlaso Internal Root CA"
         }
       }
     }
@@ -54,12 +54,12 @@ def test_restored_certificate_baseline_check_matches_fingerprint(tmp_path):
     evidence = lifecycle.restored_certificate_baseline_check(
         args,
         {
-            "common_name": "client-a.labfoundry.internal",
+            "common_name": "client-a.atlaso.internal",
             "certificate": {
                 "serial_number": "01",
                 "sha256_fingerprint": "abc123",
-                "subject": "CN=client-a.labfoundry.internal",
-                "issuer": "CN=LabFoundry Internal Root CA",
+                "subject": "CN=client-a.atlaso.internal",
+                "issuer": "CN=Atlaso Internal Root CA",
             },
         },
     )
@@ -77,12 +77,12 @@ def test_restored_certificate_baseline_check_rejects_changed_fingerprint(tmp_pat
         lifecycle.restored_certificate_baseline_check(
             args,
             {
-                "common_name": "client-a.labfoundry.internal",
+                "common_name": "client-a.atlaso.internal",
                 "certificate": {
                     "serial_number": "01",
                     "sha256_fingerprint": "changed",
-                    "subject": "CN=client-a.labfoundry.internal",
-                    "issuer": "CN=LabFoundry Internal Root CA",
+                    "subject": "CN=client-a.atlaso.internal",
+                    "issuer": "CN=Atlaso Internal Root CA",
                 },
             },
         )
@@ -168,8 +168,8 @@ def test_release_database_identity_uses_privileged_appliance_command(monkeypatch
             "returncode": 0,
             "stdout": json.dumps(
                 {
-                    "current_release": "/opt/labfoundry/releases/0.9.0",
-                    "compatibility_venv": "/opt/labfoundry/releases/0.9.0/venv",
+                    "current_release": "/opt/atlaso/releases/0.9.0",
+                    "compatibility_venv": "/opt/atlaso/releases/0.9.0/venv",
                     "schema_sha256": "abc123",
                     "users": [[1, "admin"]],
                 }
@@ -255,7 +255,7 @@ def test_authoritative_dns_lifecycle_probe_covers_authority_reverse_nxdomain_and
     import base64
 
     lifecycle = load_lifecycle_module()
-    command = lifecycle.authoritative_dns_probe_command("labfoundry.internal", "192.168.50.1", "192.168.50.1")
+    command = lifecycle.authoritative_dns_probe_command("atlaso.internal", "192.168.50.1", "192.168.50.1")
     encoded = command.split()[2]
     script = base64.b64decode(encoded).decode("utf-8")
 
@@ -353,7 +353,7 @@ def test_host_state_checks_verify_vcf_trust_runtime_dependencies(monkeypatch):
 
     lifecycle.host_state_checks(args)
 
-    assert "/opt/labfoundry/.venv/bin/python" in captured["vcf_trust_dependencies"]
+    assert "/opt/atlaso/.venv/bin/python" in captured["vcf_trust_dependencies"]
     encoded_httpx_probe = lifecycle.base64.b64encode(b"import httpx; print(httpx.__version__)").decode("ascii")
     assert encoded_httpx_probe in captured["vcf_trust_dependencies"]
     assert "paramiko" not in captured["vcf_trust_dependencies"]
@@ -373,7 +373,7 @@ def test_host_state_checks_verify_vcf_trust_runtime_dependencies(monkeypatch):
     assert "slapd.service" in captured["ldap_service"]
     assert "636" in captured["ldap_listeners"]
     assert "389" in captured["ldap_listeners"]
-    assert "-verify_hostname ldap.labfoundry.internal" in captured["ldap_tls"]
+    assert "-verify_hostname ldap.atlaso.internal" in captured["ldap_tls"]
     assert encoded_powercli_probe in captured["vcf_powercli_user"]
     assert execution_contexts["vcf_powercli_user"] is False
 
@@ -405,7 +405,7 @@ def test_managed_ldap_lifecycle_check_sends_directory_password_only_through_stdi
     assert lifecycle.LIFECYCLE_LDAP_PASSWORD not in json.dumps(evidence)
     assert evidence["password_transport"] == "stdin-only"
     assert evidence["bind_transport"] == "ldapi:///"
-    assert "labfoundry-helper ldap authenticate --real" in " ".join(captured["command"])
+    assert "atlaso-helper ldap authenticate --real" in " ".join(captured["command"])
 
 
 def test_appliance_user_ssh_command_does_not_wrap_with_sudo(monkeypatch):
@@ -464,7 +464,7 @@ def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():
             "--pxe-client-mac",
             "00:50:56:20:01:02",
             "--pxe-installer-iso-path",
-            "/mnt/labfoundry-vcf-offline-depot/PROD/COMP/ESX_HOST/esxi.iso",
+            "/mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST/esxi.iso",
         ]
     )
 

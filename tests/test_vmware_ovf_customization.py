@@ -6,11 +6,11 @@ import pytest
 
 
 def load_customizer():
-    path = Path("scripts/appliance/labfoundry-vmware-ovf-customize.py")
-    spec = importlib.util.spec_from_file_location("labfoundry_vmware_ovf_customize", path)
+    path = Path("scripts/appliance/atlaso-vmware-ovf-customize.py")
+    spec = importlib.util.spec_from_file_location("atlaso_vmware_ovf_customize", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
-    sys.modules["labfoundry_vmware_ovf_customize"] = module
+    sys.modules["atlaso_vmware_ovf_customize"] = module
     spec.loader.exec_module(module)
     return module
 
@@ -20,13 +20,13 @@ OVF_ENV = """<?xml version="1.0" encoding="UTF-8"?>
   xmlns="http://schemas.dmtf.org/ovf/environment/1"
   xmlns:oe="http://schemas.dmtf.org/ovf/environment/1">
   <PropertySection>
-    <Property oe:key="labfoundry.management_mode" oe:value="static" />
-    <Property oe:key="labfoundry.cidr" oe:value="192.168.10.10/24" />
-    <Property oe:key="labfoundry.gateway" oe:value="192.168.10.1" />
-    <Property oe:key="labfoundry.fqdn" oe:value="appliance.labfoundry.internal" />
-    <Property oe:key="labfoundry.dns_servers" oe:value="192.168.10.2,192.168.10.3" />
-    <Property oe:key="labfoundry.admin_password" oe:value="admin-secret" />
-    <Property oe:key="labfoundry.root_password" oe:value="root-secret1" />
+    <Property oe:key="atlaso.management_mode" oe:value="static" />
+    <Property oe:key="atlaso.cidr" oe:value="192.168.10.10/24" />
+    <Property oe:key="atlaso.gateway" oe:value="192.168.10.1" />
+    <Property oe:key="atlaso.fqdn" oe:value="appliance.atlaso.internal" />
+    <Property oe:key="atlaso.dns_servers" oe:value="192.168.10.2,192.168.10.3" />
+    <Property oe:key="atlaso.admin_password" oe:value="admin-secret" />
+    <Property oe:key="atlaso.root_password" oe:value="root-secret1" />
   </PropertySection>
 </Environment>
 """
@@ -42,7 +42,7 @@ def test_vmware_ovf_customizer_parses_and_validates_properties_without_logging_s
     assert config["management_mode"] == "static"
     assert config["cidr"] == "192.168.10.10/24"
     assert config["gateway"] == "192.168.10.1"
-    assert config["fqdn"] == "appliance.labfoundry.internal"
+    assert config["fqdn"] == "appliance.atlaso.internal"
     assert config["dns_servers"] == ["192.168.10.2", "192.168.10.3"]
     assert config["management_source_cidr"] == "192.168.10.0/24"
     assert summary["admin_password_set"] is True
@@ -54,10 +54,10 @@ def test_vmware_ovf_customizer_parses_and_validates_properties_without_logging_s
 def test_vmware_ovf_customizer_supports_dhcp_management_by_default():
     customizer = load_customizer()
     properties = customizer.parse_ovf_environment(OVF_ENV)
-    properties.pop("labfoundry.management_mode")
-    properties.pop("labfoundry.cidr")
-    properties.pop("labfoundry.gateway")
-    properties.pop("labfoundry.dns_servers")
+    properties.pop("atlaso.management_mode")
+    properties.pop("atlaso.cidr")
+    properties.pop("atlaso.gateway")
+    properties.pop("atlaso.dns_servers")
 
     config = customizer.validate_properties(properties)
 
@@ -72,12 +72,12 @@ def test_vmware_ovf_customizer_rejects_empty_or_whitespace_passwords():
     customizer = load_customizer()
 
     for key, value in (
-        ("labfoundry.admin_password", ""),
-        ("labfoundry.admin_password", "   "),
-        ("labfoundry.root_password", ""),
-        ("labfoundry.root_password", "   "),
-        ("labfoundry.admin_password", "Short1!"),
-        ("labfoundry.root_password", "Short1!"),
+        ("atlaso.admin_password", ""),
+        ("atlaso.admin_password", "   "),
+        ("atlaso.root_password", ""),
+        ("atlaso.root_password", "   "),
+        ("atlaso.admin_password", "Short1!"),
+        ("atlaso.root_password", "Short1!"),
     ):
         properties = customizer.parse_ovf_environment(OVF_ENV)
         properties[key] = value
@@ -93,20 +93,20 @@ def test_vmware_ovf_customizer_rejects_empty_or_whitespace_passwords():
 def test_vmware_ovf_customizer_ignores_legacy_mode_and_derives_ipv4_from_cidr():
     customizer = load_customizer()
     properties = customizer.parse_ovf_environment(OVF_ENV)
-    properties["labfoundry.management_mode"] = "dhcp"
+    properties["atlaso.management_mode"] = "dhcp"
 
     config = customizer.validate_properties(properties)
 
     assert config["management_mode"] == "static"
-    properties.pop("labfoundry.cidr")
-    properties.pop("labfoundry.gateway")
+    properties.pop("atlaso.cidr")
+    properties.pop("atlaso.gateway")
     assert customizer.validate_properties(properties)["management_mode"] == "dhcp"
 
 
 def test_vmware_ovf_customizer_rejects_incomplete_ipv4_pairs():
     customizer = load_customizer()
     properties = customizer.parse_ovf_environment(OVF_ENV)
-    properties.pop("labfoundry.gateway")
+    properties.pop("atlaso.gateway")
     try:
         customizer.validate_properties(properties)
     except customizer.OvfCustomizationError as exc:
@@ -114,8 +114,8 @@ def test_vmware_ovf_customizer_rejects_incomplete_ipv4_pairs():
     else:
         raise AssertionError("static IPv4 without a gateway should fail")
 
-    properties.pop("labfoundry.cidr")
-    properties["labfoundry.gateway"] = "192.168.10.1"
+    properties.pop("atlaso.cidr")
+    properties["atlaso.gateway"] = "192.168.10.1"
     try:
         customizer.validate_properties(properties)
     except customizer.OvfCustomizationError as exc:
@@ -134,14 +134,14 @@ def test_vmware_ovf_customizer_supports_disabled_auto_and_static_ipv6(tmp_path):
     assert "IPv6AcceptRA=no" in customizer.NETWORKD_PATH.read_text(encoding="utf-8")
     assert "LinkLocalAddressing=no" in customizer.NETWORKD_PATH.read_text(encoding="utf-8")
 
-    properties["labfoundry.ipv6_enabled"] = "true"
+    properties["atlaso.ipv6_enabled"] = "true"
     automatic = customizer.validate_properties(properties)
     customizer.write_networkd_config(automatic)
     assert automatic["ipv6_mode"] == "auto"
     assert "IPv6AcceptRA=yes" in customizer.NETWORKD_PATH.read_text(encoding="utf-8")
 
-    properties["labfoundry.ipv6_cidr"] = "fd00:10::10/64"
-    properties["labfoundry.ipv6_gateway"] = "fe80::1"
+    properties["atlaso.ipv6_cidr"] = "fd00:10::10/64"
+    properties["atlaso.ipv6_gateway"] = "fe80::1"
     static = customizer.validate_properties(properties)
     customizer.write_networkd_config(static)
     rendered = customizer.NETWORKD_PATH.read_text(encoding="utf-8")
@@ -150,7 +150,7 @@ def test_vmware_ovf_customizer_supports_disabled_auto_and_static_ipv6(tmp_path):
     assert "Gateway=fe80::1" in rendered
     assert "IPv6AcceptRA=no" in rendered
 
-    properties["labfoundry.ipv6_gateway"] = ""
+    properties["atlaso.ipv6_gateway"] = ""
     static_without_gateway = customizer.validate_properties(properties)
     customizer.write_networkd_config(static_without_gateway)
     assert "Address=fd00:10::10/64" in customizer.NETWORKD_PATH.read_text(encoding="utf-8")
@@ -160,7 +160,7 @@ def test_vmware_ovf_customizer_supports_disabled_auto_and_static_ipv6(tmp_path):
 def test_vmware_ovf_customizer_rejects_contradictory_or_incomplete_ipv6():
     customizer = load_customizer()
     properties = customizer.parse_ovf_environment(OVF_ENV)
-    properties["labfoundry.ipv6_cidr"] = "fd00:10::10/64"
+    properties["atlaso.ipv6_cidr"] = "fd00:10::10/64"
     try:
         customizer.validate_properties(properties)
     except customizer.OvfCustomizationError as exc:
@@ -168,26 +168,26 @@ def test_vmware_ovf_customizer_rejects_contradictory_or_incomplete_ipv6():
     else:
         raise AssertionError("disabled IPv6 with a CIDR should fail")
 
-    properties["labfoundry.ipv6_enabled"] = "true"
+    properties["atlaso.ipv6_enabled"] = "true"
     static_without_gateway = customizer.validate_properties(properties)
     assert static_without_gateway["ipv6_gateway"] == ""
 
-    properties["labfoundry.ipv6_gateway"] = "fd00:20::1"
+    properties["atlaso.ipv6_gateway"] = "fd00:20::1"
     with pytest.raises(customizer.OvfCustomizationError, match="link-local or on-link"):
         customizer.validate_properties(properties)
 
-    properties["labfoundry.ipv6_gateway"] = "fd00:10::10"
+    properties["atlaso.ipv6_gateway"] = "fd00:10::10"
     with pytest.raises(customizer.OvfCustomizationError, match="cannot equal"):
         customizer.validate_properties(properties)
 
 
 def test_vmware_ovf_customizer_renders_family_specific_management_firewall(tmp_path):
     customizer = load_customizer()
-    customizer.FIREWALL_CONFIG_PATH = tmp_path / "labfoundry.nft"
+    customizer.FIREWALL_CONFIG_PATH = tmp_path / "atlaso.nft"
     properties = customizer.parse_ovf_environment(OVF_ENV)
-    properties["labfoundry.ipv6_enabled"] = "true"
-    properties["labfoundry.ipv6_cidr"] = "fd00:10::10/64"
-    properties["labfoundry.ipv6_gateway"] = "fe80::1"
+    properties["atlaso.ipv6_enabled"] = "true"
+    properties["atlaso.ipv6_cidr"] = "fd00:10::10/64"
+    properties["atlaso.ipv6_gateway"] = "fe80::1"
 
     customizer.write_initial_firewall_config(customizer.validate_properties(properties))
 
@@ -198,7 +198,7 @@ def test_vmware_ovf_customizer_renders_family_specific_management_firewall(tmp_p
 
 def test_vmware_ovf_customizer_configures_and_validates_root_ssh(tmp_path, monkeypatch):
     customizer = load_customizer()
-    customizer.SSHD_ROOT_LOGIN_CONFIG_PATH = tmp_path / "sshd_config.d" / "labfoundry-root-login.conf"
+    customizer.SSHD_ROOT_LOGIN_CONFIG_PATH = tmp_path / "sshd_config.d" / "atlaso-root-login.conf"
     commands = []
 
     def fake_run(command, **kwargs):
@@ -220,18 +220,18 @@ def test_vmware_ovf_customizer_requires_static_network_properties_only_for_stati
     customizer = load_customizer()
     properties = customizer.parse_ovf_environment(OVF_ENV)
 
-    properties.pop("labfoundry.cidr")
+    properties.pop("atlaso.cidr")
     try:
         customizer.validate_properties(properties)
     except customizer.OvfCustomizationError as exc:
-        assert "labfoundry.cidr" in str(exc)
+        assert "atlaso.cidr" in str(exc)
     else:
         raise AssertionError("missing static CIDR should fail validation")
 
 
 def test_vmware_ovf_customizer_renders_initial_firewall_for_ovf_subnet(tmp_path):
     customizer = load_customizer()
-    firewall_path = tmp_path / "labfoundry.nft"
+    firewall_path = tmp_path / "atlaso.nft"
     customizer.FIREWALL_CONFIG_PATH = firewall_path
     properties = customizer.parse_ovf_environment(OVF_ENV)
     config = customizer.validate_properties(properties)
@@ -247,12 +247,12 @@ def test_vmware_ovf_customizer_renders_initial_firewall_for_ovf_subnet(tmp_path)
 
 def test_vmware_ovf_customizer_renders_dhcp_network_and_interface_scoped_firewall(tmp_path):
     customizer = load_customizer()
-    customizer.NETWORKD_PATH = tmp_path / "00-labfoundry-mgmt.network"
-    customizer.FIREWALL_CONFIG_PATH = tmp_path / "labfoundry.nft"
+    customizer.NETWORKD_PATH = tmp_path / "00-atlaso-mgmt.network"
+    customizer.FIREWALL_CONFIG_PATH = tmp_path / "atlaso.nft"
     properties = customizer.parse_ovf_environment(OVF_ENV)
-    properties["labfoundry.management_mode"] = "dhcp"
-    properties.pop("labfoundry.cidr")
-    properties.pop("labfoundry.gateway")
+    properties["atlaso.management_mode"] = "dhcp"
+    properties.pop("atlaso.cidr")
+    properties.pop("atlaso.gateway")
     config = customizer.validate_properties(properties)
 
     customizer.write_networkd_config(config)
@@ -267,13 +267,13 @@ def test_vmware_ovf_customizer_renders_dhcp_network_and_interface_scoped_firewal
 
 def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path):
     customizer = load_customizer()
-    customizer.ENV_PATH = tmp_path / "labfoundry.env"
-    customizer.NETWORKD_PATH = tmp_path / "00-labfoundry-mgmt.network"
+    customizer.ENV_PATH = tmp_path / "atlaso.env"
+    customizer.NETWORKD_PATH = tmp_path / "00-atlaso-mgmt.network"
     customizer.RESOLV_CONF_PATH = tmp_path / "resolv.conf"
     customizer.NGINX_MANAGEMENT_PATH = tmp_path / "management.conf"
-    customizer.FIREWALL_CONFIG_PATH = tmp_path / "labfoundry.nft"
+    customizer.FIREWALL_CONFIG_PATH = tmp_path / "atlaso.nft"
     customizer.MARKER_PATH = tmp_path / "marker.json"
-    customizer.NGINX_MANAGEMENT_PATH.write_text("server_name labfoundry.internal _;\n", encoding="utf-8")
+    customizer.NGINX_MANAGEMENT_PATH.write_text("server_name atlaso.internal _;\n", encoding="utf-8")
     generated = iter(["rotated-secret-key", "rotated-secrets-key"])
     customizer.generate_secret_key = lambda: next(generated)
     customizer.set_password = lambda username, password: None
@@ -282,38 +282,38 @@ def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path):
     customizer.ENV_PATH.write_text(
         "\n".join(
             [
-                'LABFOUNDRY_SECRET_KEY="baked-secret"',
-                'LABFOUNDRY_SECRETS_KEY="baked-secrets-key"',
-                'LABFOUNDRY_BOOTSTRAP_ADMIN_USERNAME="admin"',
+                'ATLASO_SECRET_KEY="baked-secret"',
+                'ATLASO_SECRETS_KEY="baked-secrets-key"',
+                'ATLASO_BOOTSTRAP_ADMIN_USERNAME="admin"',
             ]
         )
         + "\n",
         encoding="utf-8",
     )
     properties = customizer.parse_ovf_environment(OVF_ENV)
-    properties["labfoundry.ipv6_enabled"] = "true"
-    properties["labfoundry.root_ssh_enabled"] = "true"
+    properties["atlaso.ipv6_enabled"] = "true"
+    properties["atlaso.root_ssh_enabled"] = "true"
     config = customizer.validate_properties(properties)
 
     summary = customizer.apply_customization(config)
 
     rendered = customizer.ENV_PATH.read_text(encoding="utf-8")
-    assert 'LABFOUNDRY_SECRET_KEY="rotated-secret-key"' in rendered
-    assert 'LABFOUNDRY_SECRETS_KEY="rotated-secrets-key"' in rendered
+    assert 'ATLASO_SECRET_KEY="rotated-secret-key"' in rendered
+    assert 'ATLASO_SECRETS_KEY="rotated-secrets-key"' in rendered
     assert "baked-secret" not in rendered
     assert "baked-secrets-key" not in rendered
     assert "rotated-secret-key" not in str(summary)
     assert "rotated-secrets-key" not in str(summary)
-    assert 'LABFOUNDRY_APPLIANCE_MANAGEMENT_IPV6_ENABLED="true"' in rendered
-    assert 'LABFOUNDRY_APPLIANCE_ROOT_SSH_ENABLED="true"' in rendered
+    assert 'ATLASO_APPLIANCE_MANAGEMENT_IPV6_ENABLED="true"' in rendered
+    assert 'ATLASO_APPLIANCE_ROOT_SSH_ENABLED="true"' in rendered
 
 
 def test_vmware_ovf_export_and_image_plumbing_are_present():
     export_script = Path("scripts/windows/vmware/export-ovf.ps1").read_text(encoding="utf-8")
-    packer_template = Path("image/vmware-workstation/labfoundry-photon.pkr.hcl").read_text(encoding="utf-8")
-    provision_script = Path("image/common/scripts/provision-labfoundry.sh").read_text(encoding="utf-8")
-    bootstrap_script = Path("scripts/appliance/labfoundry-bootstrap-https").read_text(encoding="utf-8")
-    vmware_unit = Path("image/vmware-workstation/systemd/labfoundry-vmware-ovf-customize.service").read_text(encoding="utf-8")
+    packer_template = Path("image/vmware-workstation/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
+    provision_script = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
+    bootstrap_script = Path("scripts/appliance/atlaso-bootstrap-https").read_text(encoding="utf-8")
+    vmware_unit = Path("image/vmware-workstation/systemd/atlaso-vmware-ovf-customize.service").read_text(encoding="utf-8")
     docs = Path("image/vmware-workstation/README.md").read_text(encoding="utf-8")
     gitignore = Path(".gitignore").read_text(encoding="utf-8")
 
@@ -330,25 +330,25 @@ def test_vmware_ovf_export_and_image_plumbing_are_present():
         "root_ssh_enabled",
     ):
         assert f"-Key '{key}'" in export_script
-        assert f"-Key 'labfoundry.{key}'" not in export_script
-        assert f"`labfoundry.{key}`" in docs
+        assert f"-Key 'atlaso.{key}'" not in export_script
+        assert f"`atlaso.{key}`" in docs
 
     assert "-Key 'management_mode'" not in export_script
-    assert "PROPERTY_MANAGEMENT_MODE" in Path("scripts/appliance/labfoundry-vmware-ovf-customize.py").read_text(encoding="utf-8")
+    assert "PROPERTY_MANAGEMENT_MODE" in Path("scripts/appliance/atlaso-vmware-ovf-customize.py").read_text(encoding="utf-8")
     assert "-Boolean $true -DefaultValue 'false'" in export_script
 
     assert "ovftool was not found" in export_script
     assert "VMware Workstation\\OVFTool\\ovftool.exe" in export_script
     assert "Join-Path $Path 'ovftool.exe'" in export_script
-    assert "Add-LabFoundryOvfProperties" in export_script
-    assert "Set-LabFoundryOvfHardware" in export_script
-    assert "Ensure-LabFoundryOvfEmptyDataDisks" in export_script
-    assert "Assert-LabFoundryOvfDiskTopology" in export_script
+    assert "Add-AtlasoOvfProperties" in export_script
+    assert "Set-AtlasoOvfHardware" in export_script
+    assert "Ensure-AtlasoOvfEmptyDataDisks" in export_script
+    assert "Assert-AtlasoOvfDiskTopology" in export_script
     assert "exactly three disks (Photon OS, VCF Offline Depot, and VCF Backups)" in export_script
     assert "Hard disk 2 - VCF Offline Depot" in export_script
     assert "Hard disk 3 - VCF Backups" in export_script
-    assert "labfoundry-depot" in export_script
-    assert "labfoundry-backups" in export_script
+    assert "atlaso-depot" in export_script
+    assert "atlaso-backups" in export_script
     assert "RemoveAttribute('fileRef', $ovfNamespace)" in export_script
     assert "Set-OvfAttribute -Document $Document -Element $disk -Name 'format' -Value $diskFormat" in export_script
     assert "@('fileRef', 'parentRef', 'populatedSize')" in export_script
@@ -357,23 +357,23 @@ def test_vmware_ovf_export_and_image_plumbing_are_present():
     assert "'ResourceSubType' -Value 'VirtualSCSI'" in export_script
     assert "'ResourceType') -eq '15'" in export_script
     assert "ResourceType') -in @('5', '20')" in export_script
-    assert "Ensure-LabFoundryOvfNetworks" in export_script
+    assert "Ensure-AtlasoOvfNetworks" in export_script
     assert "SelectSingleNode('/ovf:Envelope/ovf:NetworkSection'" in export_script
     assert "envelope.InsertBefore($networkSection, $VirtualSystem)" in export_script
     assert "VirtualSystem.InsertBefore($networkSection, $HardwareSection)" not in export_script
-    assert "Add-LabFoundryOvfCategory" in export_script
+    assert "Add-AtlasoOvfCategory" in export_script
     assert "Management network" in export_script
     assert "Appliance identity" in export_script
     assert "Initial credentials" in export_script
     assert "Leave blank to use DHCPv4" in export_script
-    assert "-Name 'class' -Value 'labfoundry'" in export_script
+    assert "-Name 'class' -Value 'atlaso'" in export_script
     assert "$propertyType = if ($Password) { 'password' } elseif ($Boolean) { 'boolean' } else { 'string' }" in export_script
     assert "$property.RemoveAttribute('password', $vmwNamespace)" in export_script
     assert "-Key 'admin_password'" in export_script and "-Password $true -MinLength 12" in export_script
     assert "-Key 'root_password'" in export_script and "-Password $true -MinLength 12" in export_script
     assert "-Name 'qualifiers' -Value \"MinLen($MinLength)\"" in export_script
-    assert "LabFoundry Management Network" in export_script
-    assert "LabFoundry Services Network" in export_script
+    assert "Atlaso Management Network" in export_script
+    assert "Atlaso Services Network" in export_script
     assert "$serviceAdapter = $networkAdapters[1]" in export_script
     assert "Network adapter 2" in export_script
     assert "Remove-NamespacedChildElement -Parent $serviceAdapter -LocalName 'Address'" in export_script
@@ -386,19 +386,19 @@ def test_vmware_ovf_export_and_image_plumbing_are_present():
     assert "'transport' -Value 'com.vmware.guestInfo'" in export_script
     assert "com.vmware.guestInfo" in export_script
     assert "vmw:password" not in docs
-    assert "labfoundry-vmware-ovf-customize.py" in provision_script
-    assert "labfoundry-bootstrap-https" in provision_script
-    assert "labfoundry-bootstrap-https.service" in provision_script
+    assert "atlaso-vmware-ovf-customize.py" in provision_script
+    assert "atlaso-bootstrap-https" in provision_script
+    assert "atlaso-bootstrap-https.service" in provision_script
     assert 'for action in ("validate", "apply")' in bootstrap_script
     assert 'str(HELPER_PATH), "ca", action, str(CA_STAGED_CONFIG_PATH), "--real"' in bootstrap_script
-    assert "systemctl enable labfoundry-vmware-ovf-customize.service" in provision_script
-    assert "systemctl enable labfoundry-bootstrap-https.service" in provision_script
+    assert "systemctl enable atlaso-vmware-ovf-customize.service" in provision_script
+    assert "systemctl enable atlaso-bootstrap-https.service" in provision_script
     assert "Before=network-pre.target" in vmware_unit
-    assert "labfoundry-bootstrap-https.service" in vmware_unit
+    assert "atlaso-bootstrap-https.service" in vmware_unit
     assert "/image/vmware-workstation/ovf" in gitignore
     assert "VMware Workstation\\OVFTool" in docs
-    assert "LabFoundry Management Network" in docs
-    assert "LabFoundry Services Network" in docs
+    assert "Atlaso Management Network" in docs
+    assert "Atlaso Services Network" in docs
     assert 'guest_os_type        = "vmware-photon-64"' in packer_template
     assert 'disk_adapter_type    = "pvscsi"' in packer_template
     assert '"sata0:0.present" = "FALSE"' in packer_template

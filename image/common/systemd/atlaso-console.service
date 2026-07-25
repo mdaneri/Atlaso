@@ -1,0 +1,24 @@
+[Unit]
+Description=Atlaso local appliance console on tty1
+Documentation=file:/opt/atlaso/docs/appliance-console.md
+After=systemd-user-sessions.service systemd-networkd.service
+Conflicts=getty@tty1.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/atlaso/atlaso.env
+ExecStart=/opt/atlaso/.venv/bin/atlaso-console
+Restart=always
+RestartSec=2
+StandardInput=tty
+StandardOutput=tty
+StandardError=journal
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+UtmpIdentifier=tty1
+UtmpMode=user
+
+[Install]
+WantedBy=multi-user.target

@@ -1,5 +1,5 @@
-from labfoundry.app.models import CaSettings, PhysicalInterface, VcfOfflineDepotSettings, VcfPrivateRegistrySettings
-from labfoundry.app.services.public_services import public_service_entries, render_public_services_nginx_config
+from atlaso.app.models import CaSettings, PhysicalInterface, VcfOfflineDepotSettings, VcfPrivateRegistrySettings
+from atlaso.app.services.public_services import public_service_entries, render_public_services_nginx_config
 
 
 def test_public_service_entries_scope_services_to_matching_address():
@@ -12,7 +12,7 @@ def test_public_service_entries_scope_services_to_matching_address():
     depot_settings = VcfOfflineDepotSettings(enabled=True, listen_interface="eth2", listen_address="192.168.87.32", port=8443)
     registry_settings = VcfPrivateRegistrySettings(
         enabled=True,
-        hostname="registry.labfoundry.internal",
+        hostname="registry.atlaso.internal",
         listen_interface="eth3",
         listen_address="192.168.88.32",
         port=9443,
@@ -32,17 +32,17 @@ def test_public_service_entries_scope_services_to_matching_address():
     assert by_address["192.168.87.32"] == {"ca", "esxi_pxe", "vcf_offline_depot"}
     assert by_address["192.168.88.32"] == {"vcf_private_registry"}
     services_by_id = {service["id"]: service for entry in entries for service in entry["services"]}
-    assert services_by_id["ca"]["dns_names"] == ["ca.labfoundry.internal"]
+    assert services_by_id["ca"]["dns_names"] == ["ca.atlaso.internal"]
     assert services_by_id["ca"]["port"] == 443
-    assert services_by_id["esxi_pxe"]["dns_names"] == ["esxi-pxe.labfoundry.internal"]
+    assert services_by_id["esxi_pxe"]["dns_names"] == ["esxi-pxe.atlaso.internal"]
     assert services_by_id["esxi_pxe"]["scheme"] == "http"
     assert services_by_id["esxi_pxe"]["port"] == 8081
-    assert services_by_id["vcf_offline_depot"]["dns_names"] == ["depot.labfoundry.internal"]
+    assert services_by_id["vcf_offline_depot"]["dns_names"] == ["depot.atlaso.internal"]
     assert services_by_id["vcf_offline_depot"]["scheme"] == "https"
     assert services_by_id["vcf_offline_depot"]["port"] == 8443
     assert services_by_id["vcf_offline_depot"]["allow_unauthenticated_access"] is False
     assert "allow_unauthenticated_access" not in services_by_id["esxi_pxe"]
-    assert services_by_id["vcf_private_registry"]["dns_names"] == ["registry.labfoundry.internal"]
+    assert services_by_id["vcf_private_registry"]["dns_names"] == ["registry.atlaso.internal"]
     assert services_by_id["vcf_private_registry"]["port"] == 9443
 
     depot_settings.allow_unauthenticated_access = True
@@ -79,15 +79,15 @@ def test_public_services_nginx_config_contains_per_ip_scoped_locations():
                 "services": [{"id": "vcf_private_registry"}],
             },
         ],
-        depot_store_path="/mnt/labfoundry-vcf-offline-depot",
-        ca_certificate_path="/etc/labfoundry/ca-portal/certs/ca.labfoundry.internal.crt",
-        ca_key_path="/etc/labfoundry/ca-portal/certs/ca.labfoundry.internal.key",
+        depot_store_path="/mnt/atlaso-vcf-offline-depot",
+        ca_certificate_path="/etc/atlaso/ca-portal/certs/ca.atlaso.internal.crt",
+        ca_key_path="/etc/atlaso/ca-portal/certs/ca.atlaso.internal.key",
     )
 
     assert "listen 192.168.87.32:443 ssl;" in config
-    assert "server_name ca.labfoundry.internal;" in config
-    assert "ssl_certificate /etc/labfoundry/ca-portal/certs/ca.labfoundry.internal.crt;" in config
-    assert "ssl_certificate_key /etc/labfoundry/ca-portal/certs/ca.labfoundry.internal.key;" in config
+    assert "server_name ca.atlaso.internal;" in config
+    assert "ssl_certificate /etc/atlaso/ca-portal/certs/ca.atlaso.internal.crt;" in config
+    assert "ssl_certificate_key /etc/atlaso/ca-portal/certs/ca.atlaso.internal.key;" in config
     assert "IP-scoped HTTPS public services front door." in config
     assert "server_name _ 192.168.87.32;" in config
     assert "location = /ca {" in config
@@ -112,26 +112,26 @@ def test_public_services_nginx_config_contains_per_ip_scoped_locations():
     assert "location = /pxe/esxi {" in config
     assert "return 301 /pxe/esxi/;" in config
     assert "location = /pxe/esxi/ {" in config
-    assert "LabFoundry ESXi PXE HTTP root" in config
-    assert "alias /var/lib/labfoundry/pxe/http/esxi/;" in config
+    assert "Atlaso ESXi PXE HTTP root" in config
+    assert "alias /var/lib/atlaso/pxe/http/esxi/;" in config
     assert "location = /PROD" in config
     assert "return 301 /PROD/;" in config
     assert "location = /PROD/login {" in config
     assert "location = /PROD/logout {" in config
-    assert "location = /_labfoundry_depot_auth {" in config
+    assert "location = /_atlaso_depot_auth {" in config
     assert "proxy_pass http://127.0.0.1:8000/PROD/auth-check;" in config
-    assert "location = /_labfoundry_depot_login {" in config
+    assert "location = /_atlaso_depot_login {" in config
     assert "proxy_pass http://127.0.0.1:8000/PROD/auth-failure;" in config
     assert "location = /PROD/ {" in config
     assert "location ~ ^/PROD/.*/$ {" in config
     assert "location ~ ^/PROD/(?!login$|logout$|auth-check$)(.+[^/])$ {" in config
-    assert "auth_request /_labfoundry_depot_auth;" in config
-    assert "error_page 401 = /_labfoundry_depot_login;" in config
+    assert "auth_request /_atlaso_depot_auth;" in config
+    assert "error_page 401 = /_atlaso_depot_login;" in config
     assert "satisfy any;" in config
     assert 'auth_basic "VCF Offline Depot";' in config
-    assert "auth_basic_user_file /etc/labfoundry/nginx/htpasswd/vcf-offline-depot.htpasswd;" in config
-    assert "proxy_set_header X-LabFoundry-Depot-Basic-User $remote_user;" in config
-    assert "alias /mnt/labfoundry-vcf-offline-depot/PROD/$1;" in config
+    assert "auth_basic_user_file /etc/atlaso/nginx/htpasswd/vcf-offline-depot.htpasswd;" in config
+    assert "proxy_set_header X-Atlaso-Depot-Basic-User $remote_user;" in config
+    assert "alias /mnt/atlaso-vcf-offline-depot/PROD/$1;" in config
     assert "autoindex off;" in config
     assert "/registry" not in config
 
@@ -151,11 +151,11 @@ def test_public_services_nginx_config_brackets_ipv6_https_and_http_listeners():
                 "web_terminal": True,
             }
         ],
-        depot_store_path="/mnt/labfoundry-vcf-offline-depot",
-        ca_certificate_path="/etc/labfoundry/ca-portal/certs/ca.labfoundry.internal.crt",
-        ca_key_path="/etc/labfoundry/ca-portal/certs/ca.labfoundry.internal.key",
-        terminal_certificate_path="/etc/labfoundry/https/certs/appliance.crt",
-        terminal_key_path="/etc/labfoundry/https/private/appliance.key",
+        depot_store_path="/mnt/atlaso-vcf-offline-depot",
+        ca_certificate_path="/etc/atlaso/ca-portal/certs/ca.atlaso.internal.crt",
+        ca_key_path="/etc/atlaso/ca-portal/certs/ca.atlaso.internal.key",
+        terminal_certificate_path="/etc/atlaso/https/certs/appliance.crt",
+        terminal_key_path="/etc/atlaso/https/private/appliance.key",
     )
 
     assert "listen [fd87::254]:443 ssl;" in config
@@ -174,7 +174,7 @@ def test_public_services_nginx_config_skips_non_pxe_http_services():
                 "services": [{"id": "vcf_offline_depot", "allow_unauthenticated_access": True}],
             },
         ],
-        depot_store_path="/mnt/labfoundry-vcf-offline-depot",
+        depot_store_path="/mnt/atlaso-vcf-offline-depot",
     )
 
     assert "server {" not in config
@@ -195,9 +195,9 @@ def test_public_services_nginx_config_omits_ip_depot_routes_when_depot_uses_diff
                 ],
             },
         ],
-        depot_store_path="/mnt/labfoundry-vcf-offline-depot",
-        ca_certificate_path="/etc/labfoundry/ca-portal/certs/ca.labfoundry.internal.crt",
-        ca_key_path="/etc/labfoundry/ca-portal/certs/ca.labfoundry.internal.key",
+        depot_store_path="/mnt/atlaso-vcf-offline-depot",
+        ca_certificate_path="/etc/atlaso/ca-portal/certs/ca.atlaso.internal.crt",
+        ca_key_path="/etc/atlaso/ca-portal/certs/ca.atlaso.internal.key",
     )
 
     assert "CA portal HTTPS front door." in config
@@ -217,20 +217,20 @@ def test_public_services_nginx_config_can_expose_terminal_only_on_selected_addre
                 "web_terminal": True,
             }
         ],
-        terminal_certificate_path="/etc/labfoundry/ca/certs/appliance.crt",
-        terminal_key_path="/etc/labfoundry/ca/private/appliance.key",
+        terminal_certificate_path="/etc/atlaso/ca/certs/appliance.crt",
+        terminal_key_path="/etc/atlaso/ca/private/appliance.key",
     )
 
     assert "# Terminal-only HTTPS front door." in config
     assert "listen 192.168.87.32:443 ssl;" in config
-    assert "ssl_certificate /etc/labfoundry/ca/certs/appliance.crt;" in config
-    assert "ssl_certificate_key /etc/labfoundry/ca/private/appliance.key;" in config
+    assert "ssl_certificate /etc/atlaso/ca/certs/appliance.crt;" in config
+    assert "ssl_certificate_key /etc/atlaso/ca/private/appliance.key;" in config
     assert "location = /login {" in config
     assert "location = /terminal {" in config
     assert "location = /terminal/tickets {" in config
     assert "location = /terminal/ws {" in config
     assert "proxy_set_header Upgrade $http_upgrade;" in config
-    assert "proxy_set_header X-LabFoundry-Listener-Address $server_addr;" in config
+    assert "proxy_set_header X-Atlaso-Listener-Address $server_addr;" in config
     assert "location ^~ /static/ {" in config
     assert "location = /dashboard {" not in config
     assert "location = /api/" not in config
@@ -250,10 +250,10 @@ def test_public_services_nginx_config_merges_terminal_without_duplicate_static_l
                 "web_terminal": True,
             }
         ],
-        ca_certificate_path="/etc/labfoundry/ca-portal/certs/ca.labfoundry.internal.crt",
-        ca_key_path="/etc/labfoundry/ca-portal/certs/ca.labfoundry.internal.key",
-        terminal_certificate_path="/etc/labfoundry/https/certs/appliance.crt",
-        terminal_key_path="/etc/labfoundry/https/private/appliance.key",
+        ca_certificate_path="/etc/atlaso/ca-portal/certs/ca.atlaso.internal.crt",
+        ca_key_path="/etc/atlaso/ca-portal/certs/ca.atlaso.internal.key",
+        terminal_certificate_path="/etc/atlaso/https/certs/appliance.crt",
+        terminal_key_path="/etc/atlaso/https/private/appliance.key",
     )
 
     assert "# Terminal-only HTTPS front door." not in config

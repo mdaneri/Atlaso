@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Embed LabFoundry kickstart and auto-install GRUB config into Photon ISO."""
+"""Embed Atlaso kickstart and auto-install GRUB config into Photon ISO."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pathlib import Path
 GRUB_BOOT_CONFIG = """set default=0
 set timeout=1
 
-menuentry 'Install LabFoundry Photon OS with kickstart' {
+menuentry 'Install Atlaso Photon OS with kickstart' {
     linux /isolinux/vmlinuz root=/dev/ram0 loglevel=3 ks=cdrom:/photon-ks.json insecure_installation=1 photon.media=cdrom
     initrd /isolinux/initrd.img
 }
@@ -75,7 +75,7 @@ def replace_grub_config(iso) -> str:
 
     targets = ", ".join(iso_path for iso_path, _ in GRUB_CONFIG_TARGETS)
     detail = "; ".join(failures)
-    raise RuntimeError(f"Could not embed LabFoundry GRUB config. Tried: {targets}. {detail}")
+    raise RuntimeError(f"Could not embed Atlaso GRUB config. Tried: {targets}. {detail}")
 
 
 def unlink_with_retry(path: Path) -> None:

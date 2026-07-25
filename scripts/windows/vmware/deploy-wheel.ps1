@@ -14,7 +14,7 @@ param(
     [switch]$SkipConsoleAssetSync,
     [switch]$SkipBootBrandingSync,
     [string]$WheelPath = '',
-    [string]$SshPassword = $env:LABFOUNDRY_DEPLOY_SSH_PASSWORD,
+    [string]$SshPassword = $env:ATLASO_DEPLOY_SSH_PASSWORD,
     [switch]$SkipHostCheck
 )
 
@@ -76,24 +76,24 @@ function Invoke-CheckedCommand {
     }
 }
 
-function Get-LabFoundryRunningVmx {
+function Get-AtlasoRunningVmx {
     param([string]$ResolvedVmrun)
 
     $running = @(& $ResolvedVmrun -T ws list 2>$null | Select-Object -Skip 1)
     if ($LASTEXITCODE -ne 0) {
         throw "vmrun list failed with exit code $LASTEXITCODE."
     }
-    $candidates = @($running | Where-Object { $_ -match '(?i)LabFoundry' })
+    $candidates = @($running | Where-Object { $_ -match '(?i)Atlaso' })
     if ($candidates.Count -eq 1) {
         return $candidates[0]
     }
     if ($candidates.Count -gt 1) {
-        throw "Multiple running LabFoundry VMware VMs found. Pass -VmxPath explicitly: $($candidates -join '; ')"
+        throw "Multiple running Atlaso VMware VMs found. Pass -VmxPath explicitly: $($candidates -join '; ')"
     }
     if ($running.Count -eq 1) {
         return $running[0]
     }
-    throw 'No running LabFoundry VMware VM was found. Pass -IpAddress or -VmxPath.'
+    throw 'No running Atlaso VMware VM was found. Pass -IpAddress or -VmxPath.'
 }
 
 function Get-GuestIpAddress {
@@ -121,11 +121,11 @@ function Get-WheelPath {
         }
         return (Resolve-Path -LiteralPath $Path).Path
     }
-    $wheel = Get-ChildItem -LiteralPath (Join-Path $Root 'dist') -Filter 'labfoundry-*.whl' -File |
+    $wheel = Get-ChildItem -LiteralPath (Join-Path $Root 'dist') -Filter 'atlaso-*.whl' -File |
         Sort-Object LastWriteTime -Descending |
         Select-Object -First 1
     if (-not $wheel) {
-        throw "No LabFoundry wheel found under $(Join-Path $Root 'dist'). Run without -SkipBuild or pass -WheelPath."
+        throw "No Atlaso wheel found under $(Join-Path $Root 'dist'). Run without -SkipBuild or pass -WheelPath."
     }
     return $wheel.FullName
 }
@@ -200,7 +200,7 @@ function Initialize-PasswordDeployPythonPath {
 
     $wheelDirectory = Join-Path $WorkingDirectory 'dist'
     if (-not (Test-Path -LiteralPath $wheelDirectory -PathType Container)) {
-        throw "Paramiko is not installed and the local wheel directory does not exist: $wheelDirectory. Rerun without -SkipBuild or install the LabFoundry Python dependencies."
+        throw "Paramiko is not installed and the local wheel directory does not exist: $wheelDirectory. Rerun without -SkipBuild or install the Atlaso Python dependencies."
     }
 
     $dependencyDirectory = Join-Path $TemporaryDirectory 'python-dependencies'
@@ -216,7 +216,7 @@ function Initialize-PasswordDeployPythonPath {
             'paramiko>=3.5.0'
         ) | Out-Host
     } catch {
-        throw "Unable to prepare the temporary Paramiko runtime from $wheelDirectory. Rerun without -SkipBuild so dependency wheels are downloaded, or install the LabFoundry Python dependencies. $($_.Exception.Message)"
+        throw "Unable to prepare the temporary Paramiko runtime from $wheelDirectory. Rerun without -SkipBuild so dependency wheels are downloaded, or install the Atlaso Python dependencies. $($_.Exception.Message)"
     }
     return $dependencyDirectory
 }
@@ -253,7 +253,7 @@ function Invoke-PasswordBackedDeploy {
         [Parameter(Mandatory = $true)][string]$WorkingDirectory
     )
 
-    $pythonDeploy = Join-Path (Split-Path -Parent $LocalScriptPath) 'labfoundry-paramiko-deploy.py'
+    $pythonDeploy = Join-Path (Split-Path -Parent $LocalScriptPath) 'atlaso-paramiko-deploy.py'
     $pythonDeploySource = @'
 import argparse
 import os
@@ -271,7 +271,7 @@ try:
 except ImportError as exc:
     raise SystemExit(
         "Paramiko could not be loaded for password-backed deployment after dependency preparation. "
-        "Rerun without -SkipBuild or install the LabFoundry Python dependencies."
+        "Rerun without -SkipBuild or install the Atlaso Python dependencies."
     ) from exc
 
 
@@ -312,13 +312,13 @@ parser.add_argument("--poll", type=int, required=True)
 args = parser.parse_args()
 
 if not args.local_trust_key or len(args.local_trust_key) != len(args.remote_trust_key):
-    raise SystemExit("At least one matched local and remote LabFoundry release trust key is required.")
+    raise SystemExit("At least one matched local and remote Atlaso release trust key is required.")
 if not args.local_runtime_dependency or len(args.local_runtime_dependency) != len(args.remote_runtime_dependency):
     raise SystemExit("Matched local and remote runtime dependency wheels are required.")
 
-password = os.environ.get("LABFOUNDRY_DEPLOY_SSH_PASSWORD", "")
+password = os.environ.get("ATLASO_DEPLOY_SSH_PASSWORD", "")
 if not password:
-    raise SystemExit("LABFOUNDRY_DEPLOY_SSH_PASSWORD is required for password-backed deployment.")
+    raise SystemExit("ATLASO_DEPLOY_SSH_PASSWORD is required for password-backed deployment.")
 
 uploads = [
     (pathlib.Path(args.local_wheel), args.remote_wheel),
@@ -414,10 +414,10 @@ finally:
         -PythonCommand $PythonCommand `
         -WorkingDirectory $WorkingDirectory `
         -TemporaryDirectory (Split-Path -Parent $LocalScriptPath)
-    $previousPassword = $env:LABFOUNDRY_DEPLOY_SSH_PASSWORD
+    $previousPassword = $env:ATLASO_DEPLOY_SSH_PASSWORD
     $previousPythonPath = $env:PYTHONPATH
     try {
-        $env:LABFOUNDRY_DEPLOY_SSH_PASSWORD = $Password
+        $env:ATLASO_DEPLOY_SSH_PASSWORD = $Password
         if ($temporaryPythonPath) {
             $env:PYTHONPATH = if ($previousPythonPath) {
                 "$temporaryPythonPath$([System.IO.Path]::PathSeparator)$previousPythonPath"
@@ -466,9 +466,9 @@ finally:
         Invoke-CheckedCommand -FilePath $PythonCommand -WorkingDirectory $WorkingDirectory -Arguments $deployArguments
     } finally {
         if ($null -eq $previousPassword) {
-            Remove-Item Env:\LABFOUNDRY_DEPLOY_SSH_PASSWORD -ErrorAction SilentlyContinue
+            Remove-Item Env:\ATLASO_DEPLOY_SSH_PASSWORD -ErrorAction SilentlyContinue
         } else {
-            $env:LABFOUNDRY_DEPLOY_SSH_PASSWORD = $previousPassword
+            $env:ATLASO_DEPLOY_SSH_PASSWORD = $previousPassword
         }
         if ($null -eq $previousPythonPath) {
             Remove-Item Env:\PYTHONPATH -ErrorAction SilentlyContinue
@@ -482,7 +482,7 @@ $resolvedRepoRoot = Resolve-RepoRoot -Path $RepoRoot
 
 if (-not $SkipBuild) {
     New-Item -ItemType Directory -Force -Path (Join-Path $resolvedRepoRoot 'dist') | Out-Null
-    Write-Host "Building LabFoundry wheel..."
+    Write-Host "Building Atlaso wheel..."
     Invoke-CheckedCommand -FilePath $Python -Arguments @('-m', 'pip', 'wheel', '.', '-w', 'dist') -WorkingDirectory $resolvedRepoRoot
 }
 
@@ -504,36 +504,36 @@ $runtimeDependencyNames = @($runtimeDependencies | Select-Object -ExpandProperty
 if ($runtimeDependencyPaths.Count -ne 2) {
     throw 'Exactly the Authlib and joserfc runtime dependency wheels are required.'
 }
-$helperPath = Join-Path $resolvedRepoRoot 'scripts\appliance\labfoundry-helper'
-$consoleManagerPath = Join-Path $resolvedRepoRoot 'image\common\systemd\labfoundry-console-manager.conf'
-$bootInstallerPath = Join-Path $resolvedRepoRoot 'scripts\appliance\labfoundry-install-boot-branding'
+$helperPath = Join-Path $resolvedRepoRoot 'scripts\appliance\atlaso-helper'
+$consoleManagerPath = Join-Path $resolvedRepoRoot 'image\common\systemd\atlaso-console-manager.conf'
+$bootInstallerPath = Join-Path $resolvedRepoRoot 'scripts\appliance\atlaso-install-boot-branding'
 $bootThemePath = Join-Path $resolvedRepoRoot 'image\common\boot\grub\theme.txt'
-$bootBackgroundPath = Join-Path $resolvedRepoRoot 'image\common\boot\grub\labfoundry.png'
+$bootBackgroundPath = Join-Path $resolvedRepoRoot 'image\common\boot\grub\atlaso.png'
 $trustKeyDirectory = Join-Path $resolvedRepoRoot 'image\common\update-trust'
 $trustKeyPaths = @(
     Get-ChildItem -LiteralPath $trustKeyDirectory -Filter '*.pem' -File -ErrorAction SilentlyContinue |
         Sort-Object Name |
         Select-Object -ExpandProperty FullName
 )
-$workerServicePath = Join-Path $resolvedRepoRoot 'image\common\systemd\labfoundry-worker.service'
+$workerServicePath = Join-Path $resolvedRepoRoot 'image\common\systemd\atlaso-worker.service'
 if (-not $SkipHelperSync -and -not (Test-Path -LiteralPath $helperPath -PathType Leaf)) {
-    throw "LabFoundry helper script not found: $helperPath"
+    throw "Atlaso helper script not found: $helperPath"
 }
 if (-not $SkipConsoleAssetSync -and -not (Test-Path -LiteralPath $consoleManagerPath -PathType Leaf)) {
-    throw "LabFoundry console manager config not found: $consoleManagerPath"
+    throw "Atlaso console manager config not found: $consoleManagerPath"
 }
 if (-not $SkipBootBrandingSync) {
     foreach ($bootAsset in @($bootInstallerPath, $bootThemePath, $bootBackgroundPath)) {
         if (-not (Test-Path -LiteralPath $bootAsset -PathType Leaf)) {
-            throw "LabFoundry boot branding asset not found: $bootAsset"
+            throw "Atlaso boot branding asset not found: $bootAsset"
         }
     }
 }
 if (-not (Test-Path -LiteralPath $workerServicePath -PathType Leaf)) {
-    throw "LabFoundry worker service not found: $workerServicePath"
+    throw "Atlaso worker service not found: $workerServicePath"
 }
 if ($trustKeyPaths.Count -eq 0) {
-    throw "No LabFoundry release trust keys found under: $trustKeyDirectory"
+    throw "No Atlaso release trust keys found under: $trustKeyDirectory"
 }
 $remoteWheelPath = "$($RemoteDirectory.TrimEnd('/'))/$wheelName"
 $remoteRuntimeDependencyPaths = @(
@@ -541,23 +541,23 @@ $remoteRuntimeDependencyPaths = @(
         "$($RemoteDirectory.TrimEnd('/'))/$_"
     }
 )
-$remoteHelperPath = "$($RemoteDirectory.TrimEnd('/'))/labfoundry-helper"
-$remoteConsoleManagerPath = "$($RemoteDirectory.TrimEnd('/'))/labfoundry-console-manager.conf"
-$remoteBootInstallerPath = "$($RemoteDirectory.TrimEnd('/'))/labfoundry-install-boot-branding"
-$remoteBootThemePath = "$($RemoteDirectory.TrimEnd('/'))/labfoundry-grub-theme.txt"
-$remoteBootBackgroundPath = "$($RemoteDirectory.TrimEnd('/'))/labfoundry-grub.png"
+$remoteHelperPath = "$($RemoteDirectory.TrimEnd('/'))/atlaso-helper"
+$remoteConsoleManagerPath = "$($RemoteDirectory.TrimEnd('/'))/atlaso-console-manager.conf"
+$remoteBootInstallerPath = "$($RemoteDirectory.TrimEnd('/'))/atlaso-install-boot-branding"
+$remoteBootThemePath = "$($RemoteDirectory.TrimEnd('/'))/atlaso-grub-theme.txt"
+$remoteBootBackgroundPath = "$($RemoteDirectory.TrimEnd('/'))/atlaso-grub.png"
 $remoteTrustKeyPaths = @(
     $trustKeyPaths | ForEach-Object {
         "$($RemoteDirectory.TrimEnd('/'))/$(Split-Path -Leaf $_)"
     }
 )
-$remoteWorkerServicePath = "$($RemoteDirectory.TrimEnd('/'))/labfoundry-worker.service"
-$remoteScriptPath = "$($RemoteDirectory.TrimEnd('/'))/labfoundry-deploy-wheel.sh"
+$remoteWorkerServicePath = "$($RemoteDirectory.TrimEnd('/'))/atlaso-worker.service"
+$remoteScriptPath = "$($RemoteDirectory.TrimEnd('/'))/atlaso-deploy-wheel.sh"
 
 if (-not $IpAddress) {
     $resolvedVmrun = Resolve-VmrunPath -Path $VmrunPath
     if (-not $VmxPath) {
-        $VmxPath = Get-LabFoundryRunningVmx -ResolvedVmrun $resolvedVmrun
+        $VmxPath = Get-AtlasoRunningVmx -ResolvedVmrun $resolvedVmrun
     }
     $resolvedVmxPath = (Resolve-Path -LiteralPath $VmxPath).Path
     $IpAddress = Get-GuestIpAddress -ResolvedVmrun $resolvedVmrun -ResolvedVmxPath $resolvedVmxPath
@@ -583,11 +583,11 @@ boot_background_path="${8:-}"
 worker_service_path="${9:?worker service path required}"
 runtime_dependency_paths="${10:?runtime dependency wheel paths required}"
 trust_key_paths="${11:?release trust key paths required}"
-venv="/opt/labfoundry/.venv"
+venv="/opt/atlaso/.venv"
 python="$venv/bin/python"
 
 if [ ! -x "$python" ]; then
-    echo "LabFoundry venv python not found or not executable: $python" >&2
+    echo "Atlaso venv python not found or not executable: $python" >&2
     exit 2
 fi
 
@@ -599,90 +599,90 @@ done
 IFS="$old_ifs"
 "$python" -m pip install --force-reinstall --no-deps "$wheel"
 if [ -n "$helper_path" ]; then
-    install -o root -g root -m 0755 "$helper_path" /opt/labfoundry/bin/labfoundry-helper
-    sed -i 's/\r$//' /opt/labfoundry/bin/labfoundry-helper
+    install -o root -g root -m 0755 "$helper_path" /opt/atlaso/bin/atlaso-helper
+    sed -i 's/\r$//' /opt/atlaso/bin/atlaso-helper
 fi
 if [ -n "$console_manager_path" ]; then
     install -d -o root -g root -m 0755 /etc/systemd/system.conf.d
-    install -o root -g root -m 0644 "$console_manager_path" /etc/systemd/system.conf.d/labfoundry-console.conf
-    sed -i 's/\r$//' /etc/systemd/system.conf.d/labfoundry-console.conf
+    install -o root -g root -m 0644 "$console_manager_path" /etc/systemd/system.conf.d/atlaso-console.conf
+    sed -i 's/\r$//' /etc/systemd/system.conf.d/atlaso-console.conf
     systemctl mask --force ctrl-alt-del.target
     systemctl daemon-reexec
 fi
 if [ -n "$boot_installer_path" ]; then
-    install -o root -g root -m 0755 "$boot_installer_path" /opt/labfoundry/bin/labfoundry-install-boot-branding
-    sed -i 's/\r$//' /opt/labfoundry/bin/labfoundry-install-boot-branding
-    /opt/labfoundry/bin/labfoundry-install-boot-branding "$boot_theme_path" "$boot_background_path"
+    install -o root -g root -m 0755 "$boot_installer_path" /opt/atlaso/bin/atlaso-install-boot-branding
+    sed -i 's/\r$//' /opt/atlaso/bin/atlaso-install-boot-branding
+    /opt/atlaso/bin/atlaso-install-boot-branding "$boot_theme_path" "$boot_background_path"
 fi
-install -d -o root -g root -m 0755 /etc/labfoundry/update-trust.d
+install -d -o root -g root -m 0755 /etc/atlaso/update-trust.d
 old_ifs="$IFS"
 IFS=:
 for trust_key_path in $trust_key_paths; do
     if [ ! -f "$trust_key_path" ]; then
-        echo "LabFoundry release trust key upload is missing: $trust_key_path" >&2
+        echo "Atlaso release trust key upload is missing: $trust_key_path" >&2
         exit 1
     fi
     trust_key_name="$(basename "$trust_key_path")"
     case "$trust_key_name" in
         *.pem) ;;
         *)
-            echo "LabFoundry release trust key must use a .pem filename: $trust_key_name" >&2
+            echo "Atlaso release trust key must use a .pem filename: $trust_key_name" >&2
             exit 1
             ;;
     esac
     if ! trust_key_details="$(openssl pkey -pubin -in "$trust_key_path" -text -noout 2>/dev/null)"; then
-        echo "LabFoundry release trust key is not a valid public key: $trust_key_name" >&2
+        echo "Atlaso release trust key is not a valid public key: $trust_key_name" >&2
         exit 1
     fi
     case "$trust_key_details" in
         *ED25519*) ;;
         *)
-            echo "LabFoundry release trust key is not Ed25519: $trust_key_name" >&2
+            echo "Atlaso release trust key is not Ed25519: $trust_key_name" >&2
             exit 1
             ;;
     esac
-    install -o root -g root -m 0644 "$trust_key_path" "/etc/labfoundry/update-trust.d/$trust_key_name"
+    install -o root -g root -m 0644 "$trust_key_path" "/etc/atlaso/update-trust.d/$trust_key_name"
 done
 IFS="$old_ifs"
-if ! getent group labfoundry-automation >/dev/null 2>&1; then
-    groupadd --system labfoundry-automation
+if ! getent group atlaso-automation >/dev/null 2>&1; then
+    groupadd --system atlaso-automation
 fi
-if ! id labfoundry-automation >/dev/null 2>&1; then
-    useradd --system --gid labfoundry-automation --home-dir /var/lib/labfoundry/automation --shell /sbin/nologin labfoundry-automation
+if ! id atlaso-automation >/dev/null 2>&1; then
+    useradd --system --gid atlaso-automation --home-dir /var/lib/atlaso/automation --shell /sbin/nologin atlaso-automation
 fi
-usermod -a -G labfoundry-automation labfoundry
-install -d -o labfoundry -g labfoundry-automation -m 0750 /var/lib/labfoundry/automation /var/lib/labfoundry/automation/scripts
-install -d -o labfoundry-automation -g labfoundry-automation -m 0750 /var/lib/labfoundry/automation/runs
-install -o root -g root -m 0644 "$worker_service_path" /etc/systemd/system/labfoundry-worker.service
-sed -i 's/\r$//' /etc/systemd/system/labfoundry-worker.service
+usermod -a -G atlaso-automation atlaso
+install -d -o atlaso -g atlaso-automation -m 0750 /var/lib/atlaso/automation /var/lib/atlaso/automation/scripts
+install -d -o atlaso-automation -g atlaso-automation -m 0750 /var/lib/atlaso/automation/runs
+install -o root -g root -m 0644 "$worker_service_path" /etc/systemd/system/atlaso-worker.service
+sed -i 's/\r$//' /etc/systemd/system/atlaso-worker.service
 systemctl daemon-reload
 find "$venv" -type d -exec chmod 755 {} \;
 find "$venv" -type f -exec chmod 644 {} \;
 find "$venv/bin" -type f -exec chmod 755 {} \;
-if systemctl cat labfoundry-console.service >/dev/null 2>&1; then
-    systemctl restart labfoundry-console.service
-    systemctl is-active labfoundry-console.service
+if systemctl cat atlaso-console.service >/dev/null 2>&1; then
+    systemctl restart atlaso-console.service
+    systemctl is-active atlaso-console.service
 fi
-systemctl restart labfoundry
-systemctl is-active labfoundry
-systemctl enable labfoundry-worker.service
-systemctl restart labfoundry-worker.service
-systemctl is-active labfoundry-worker.service
+systemctl restart atlaso
+systemctl is-active atlaso
+systemctl enable atlaso-worker.service
+systemctl restart atlaso-worker.service
+systemctl is-active atlaso-worker.service
 deadline=$(( $(date +%s) + timeout_seconds ))
 while ! curl -fsS http://127.0.0.1:8000/openapi.json >/dev/null; do
     if [ "$(date +%s)" -ge "$deadline" ]; then
-        echo "LabFoundry service is active, but loopback OpenAPI did not become reachable within ${timeout_seconds}s." >&2
-        journalctl -u labfoundry -n 80 --no-pager >&2 || true
+        echo "Atlaso service is active, but loopback OpenAPI did not become reachable within ${timeout_seconds}s." >&2
+        journalctl -u atlaso -n 80 --no-pager >&2 || true
         exit 1
     fi
     sleep "$poll_seconds"
 done
-echo "LabFoundry service restarted and loopback OpenAPI is reachable."
+echo "Atlaso service restarted and loopback OpenAPI is reachable."
 '@
 
-$tempDeployDirectory = Join-Path ([System.IO.Path]::GetTempPath()) "labfoundry-deploy-$([guid]::NewGuid().ToString('N'))"
+$tempDeployDirectory = Join-Path ([System.IO.Path]::GetTempPath()) "atlaso-deploy-$([guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $tempDeployDirectory | Out-Null
-$tempScript = Join-Path $tempDeployDirectory 'labfoundry-deploy-wheel.sh'
+$tempScript = Join-Path $tempDeployDirectory 'atlaso-deploy-wheel.sh'
 [System.IO.File]::WriteAllText($tempScript, ($deployScript -replace "`r?`n", "`n"), [System.Text.UTF8Encoding]::new($false))
 $sshControlPath = Join-Path ([System.IO.Path]::GetTempPath()) "lf-ssh-$([guid]::NewGuid().ToString('N')).sock"
 $sshConnectionArguments = Get-SshConnectionArguments -ControlPath $sshControlPath
@@ -751,7 +751,7 @@ try {
             Invoke-CheckedCommand -FilePath 'scp' -Arguments @($sshConnectionArguments + $bootBackgroundPath + "${SshUser}@${IpAddress}:$remoteBootBackgroundPath")
         }
 
-        Write-Host "Installing wheel and restarting labfoundry.service..."
+        Write-Host "Installing wheel and restarting atlaso.service..."
         $remoteRuntimeDependenciesArgument = $remoteRuntimeDependencyPaths -join ':'
         Invoke-CheckedCommand -FilePath 'ssh' -Arguments @($sshConnectionArguments + '-t', "${SshUser}@${IpAddress}", "sudo sh '$remoteScriptPath' '$remoteWheelPath' '$ReadinessTimeoutSeconds' '$ReadinessPollSeconds' '$remoteHelperArgument' '$remoteConsoleManagerArgument' '$remoteBootInstallerArgument' '$remoteBootThemeArgument' '$remoteBootBackgroundArgument' '$remoteWorkerServicePath' '$remoteRuntimeDependenciesArgument' '$remoteTrustKeysArgument'")
     }
@@ -761,7 +761,7 @@ try {
         Invoke-HostOpenApiCheck -HostAddress $IpAddress
     }
 
-    Write-Host "Deployed $wheelName to $IpAddress and verified labfoundry.service."
+    Write-Host "Deployed $wheelName to $IpAddress and verified atlaso.service."
 } finally {
     if ($sshConnectionArguments.Count -gt 0) {
         & ssh @sshConnectionArguments -O exit "${SshUser}@${IpAddress}" 2>$null | Out-Null

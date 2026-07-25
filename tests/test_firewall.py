@@ -1,4 +1,4 @@
-from labfoundry.app.models import (
+from atlaso.app.models import (
     DhcpScope,
     DhcpSettings,
     DnsSettings,
@@ -14,7 +14,7 @@ from labfoundry.app.models import (
     VcfPrivateRegistrySettings,
     VlanInterface,
 )
-from labfoundry.app.services.firewall import (
+from atlaso.app.services.firewall import (
     ca_portal_firewall_interfaces,
     dhcp_firewall_rules,
     managed_routing_firewall_rules,
@@ -37,7 +37,7 @@ def test_dhcp_firewall_rules_follow_scope_interface_and_replace_legacy_rule():
         interface_name="eth1",
         priority=20,
         enabled=True,
-        description="Allow SiteA clients to reach LabFoundry DNS and DHCP.",
+        description="Allow SiteA clients to reach Atlaso DNS and DHCP.",
     )
     scopes = [
         DhcpScope(
@@ -50,7 +50,7 @@ def test_dhcp_firewall_rules_follow_scope_interface_and_replace_legacy_rule():
     ]
     generated_rules = dhcp_firewall_rules(DhcpSettings(enabled=True), scopes)
 
-    config = render_nftables_config(settings, [legacy_rule], generated_rules, replace_labfoundry_dhcp_rules=True)
+    config = render_nftables_config(settings, [legacy_rule], generated_rules, replace_atlaso_dhcp_rules=True)
 
     assert 'iifname "eth2.50" udp dport 67 accept comment "sitea-dns-dhcp"' in config
     assert 'iifname "eth1" ip saddr 192.168.50.0/24 udp dport { 53, 67 } accept comment "sitea-dns-dhcp"' not in config
@@ -70,14 +70,14 @@ def test_dhcp_firewall_rules_use_dhcpv6_port_for_ipv6_zones():
     ]
 
     generated_rules = dhcp_firewall_rules(DhcpSettings(enabled=True), scopes)
-    config = render_nftables_config(settings, [], generated_rules, replace_labfoundry_dhcp_rules=True)
+    config = render_nftables_config(settings, [], generated_rules, replace_atlaso_dhcp_rules=True)
 
     assert generated_rules[0].name == "ipv6lab-dns-dhcpv6"
     assert generated_rules[0].destination_port == "547"
     assert 'iifname "eth2" udp dport 547 accept comment "ipv6lab-dns-dhcpv6"' in config
 
 
-def test_disabled_dhcp_removes_labfoundry_managed_dns_dhcp_rule():
+def test_disabled_dhcp_removes_atlaso_managed_dns_dhcp_rule():
     settings = FirewallSettings(enabled=True, default_input_policy="drop", default_forward_policy="drop", default_output_policy="accept")
     legacy_rule = FirewallRule(
         name="sitea-dns-dhcp",
@@ -90,11 +90,11 @@ def test_disabled_dhcp_removes_labfoundry_managed_dns_dhcp_rule():
         interface_name="eth1",
         priority=20,
         enabled=True,
-        description="Allow SiteA clients to reach LabFoundry DNS and DHCP.",
+        description="Allow SiteA clients to reach Atlaso DNS and DHCP.",
     )
     generated_rules = dhcp_firewall_rules(DhcpSettings(enabled=False), [])
 
-    config = render_nftables_config(settings, [legacy_rule], generated_rules, replace_labfoundry_dhcp_rules=True)
+    config = render_nftables_config(settings, [legacy_rule], generated_rules, replace_atlaso_dhcp_rules=True)
 
     assert "sitea-dns-dhcp" not in config
     assert 'iifname "eth1"' not in config
@@ -105,7 +105,7 @@ def test_default_management_firewall_source_cidr_can_follow_image_network():
 
     config = render_nftables_config(settings, [], management_source_cidr="192.168.167.0/24")
 
-    assert 'ip saddr 192.168.167.0/24 tcp dport { 22, 80, 443 } accept comment "LabFoundry management access"' in config
+    assert 'ip saddr 192.168.167.0/24 tcp dport { 22, 80, 443 } accept comment "Atlaso management access"' in config
     assert "192.168.49.0/24" not in config
 
 
@@ -167,7 +167,7 @@ def test_managed_routing_firewall_rules_isolate_management_and_allow_route_role_
     ]
 
     rules = managed_routing_firewall_rules(interfaces, [])
-    config = render_nftables_config(settings, [], rules, replace_labfoundry_service_rules=True)
+    config = render_nftables_config(settings, [], rules, replace_atlaso_service_rules=True)
 
     assert 'iifname "eth1" ip saddr 172.20.1.0/24 ip daddr 192.168.49.0/24 drop comment "isolate-eth1-to-eth0"' in config
     assert 'iifname "eth0" ip saddr 192.168.49.0/24 ip daddr 172.20.1.0/24 drop comment "isolate-eth0-to-eth1"' in config
@@ -304,7 +304,7 @@ def test_managed_service_firewall_rules_use_assigned_source_group():
         source_group_assignments={"vcf-backups-sftp": "custom:managed-clients"},
     )
     settings = FirewallSettings(enabled=True, default_input_policy="drop")
-    config = render_nftables_config(settings, [], rules, replace_labfoundry_service_rules=True)
+    config = render_nftables_config(settings, [], rules, replace_atlaso_service_rules=True)
 
     assert 'iifname "eth2.50" ip saddr { 10.10.0.0/16, 10.20.0.0/16 } tcp dport 22 accept comment "vcf-backups-sftp-eth2.50"' in config
 

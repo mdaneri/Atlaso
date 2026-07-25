@@ -137,9 +137,9 @@ function Find-LatestApplianceVhdx {
 
 if (-not $LabName) {
     if ($PSCmdlet.ParameterSetName -eq 'CleanupVms') {
-        $LabName = 'LabFoundryLifecycle'
+        $LabName = 'AtlasoLifecycle'
     } else {
-        $LabName = "LabFoundryLifecycle-$(Get-Date -Format 'yyyyMMddHHmmss')"
+        $LabName = "AtlasoLifecycle-$(Get-Date -Format 'yyyyMMddHHmmss')"
     }
 }
 
@@ -177,7 +177,7 @@ if (-not $ApplianceVhdxPath) {
     $ApplianceVhdxPath = Find-LatestApplianceVhdx
 }
 if (-not $ClientVhdxPath) {
-    $ClientVhdxPath = Join-Path $repoRoot 'image\hyperv\clients\alpine-cloud\labfoundry-tiny-linux-client.vhdx'
+    $ClientVhdxPath = Join-Path $repoRoot 'image\hyperv\clients\alpine-cloud\atlaso-tiny-linux-client.vhdx'
 }
 if ($EsxIsoPath) {
     $EsxIsoPath = (Resolve-Path -LiteralPath $EsxIsoPath).Path

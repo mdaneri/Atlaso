@@ -1,5 +1,5 @@
 name: Bug report
-description: Report incorrect, unsafe, or regressed LabFoundry behavior.
+description: Report incorrect, unsafe, or regressed Atlaso behavior.
 title: "[Bug]: "
 labels: ["bug", "needs triage"]
 body:
@@ -29,6 +29,6 @@ body:
   - type: input
     id: version
     attributes:
-      label: LabFoundry version or commit
+      label: Atlaso version or commit
     validations:
       required: true

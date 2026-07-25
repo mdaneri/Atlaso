@@ -1,4 +1,4 @@
 image/hyperv/scripts/*.sh text eol=lf
 image/hyperv/sudoers.d/* text eol=lf
 image/hyperv/systemd/* text eol=lf
-scripts/appliance/labfoundry-helper text eol=lf
+scripts/appliance/atlaso-helper text eol=lf

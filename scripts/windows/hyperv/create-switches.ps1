@@ -3,17 +3,17 @@ param(
     [string]$MgmtHostIPAddress = '192.168.49.254',
     [int]$MgmtPrefixLength = 24,
     [bool]$ConfigureMgmtNat = $true,
-    [string]$MgmtNatName = 'LabFoundry-Mgmt-NAT'
+    [string]$MgmtNatName = 'Atlaso-Mgmt-NAT'
 )
 
 $ErrorActionPreference = 'Stop'
 
 $switches = @(
-    @{ Name = 'LabFoundry-Mgmt'; Type = 'Internal' },
-    @{ Name = 'LabFoundry-Services'; Type = 'Private' },
-    @{ Name = 'LabFoundry-SiteA'; Type = 'Private' },
-    @{ Name = 'LabFoundry-SiteB'; Type = 'Private' },
-    @{ Name = 'LabFoundry-Trunk'; Type = 'Private' }
+    @{ Name = 'Atlaso-Mgmt'; Type = 'Internal' },
+    @{ Name = 'Atlaso-Services'; Type = 'Private' },
+    @{ Name = 'Atlaso-SiteA'; Type = 'Private' },
+    @{ Name = 'Atlaso-SiteB'; Type = 'Private' },
+    @{ Name = 'Atlaso-Trunk'; Type = 'Private' }
 )
 
 foreach ($switch in $switches) {
@@ -29,7 +29,7 @@ foreach ($switch in $switches) {
     }
 }
 
-$mgmtAdapterName = 'vEthernet (LabFoundry-Mgmt)'
+$mgmtAdapterName = 'vEthernet (Atlaso-Mgmt)'
 $mgmtAdapter = Get-NetAdapter -Name $mgmtAdapterName -ErrorAction SilentlyContinue
 if (-not $mgmtAdapter) {
     Write-Warning "Host adapter not found: $mgmtAdapterName"
@@ -91,7 +91,7 @@ if ($ConfigureMgmtNat) {
 }
 
 Write-Host ""
-Write-Host "LabFoundry management network summary:"
+Write-Host "Atlaso management network summary:"
 Get-NetIPAddress -InterfaceAlias $mgmtAdapterName -AddressFamily IPv4 -ErrorAction SilentlyContinue |
     Select-Object InterfaceAlias, IPAddress, PrefixLength |
     Format-Table -AutoSize

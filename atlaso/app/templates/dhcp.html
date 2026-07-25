@@ -1,0 +1,376 @@
+{% extends "base.html" %}
+{% block page_title %}DHCP{% endblock %}
+{% block content %}
+<section class="split-workspace">
+  <div class="panel wide-panel">
+    <div class="panel-head">
+      <div>
+        <h2>DHCP IP Zones</h2>
+        <p class="muted">Each IP zone owns its address family, interface, gateway, lease range, DNS options, and domain suffix.</p>
+      </div>
+      <span class="status-pill {{ 'good' if dhcp_settings.enabled else 'muted' }}">{{ "enabled" if dhcp_settings.enabled else "disabled" }}</span>
+    </div>
+    {% if form_error %}
+      <div class="alert error">{{ form_error }}</div>
+    {% endif %}
+    <div class="tab-buttons tool-tabs" role="tablist" aria-label="DHCP views">
+      <button class="tab-button active" type="button" role="tab" data-tab-target="dhcp-desired-state" aria-controls="dhcp-desired-state" aria-selected="true">Desired State</button>
+      <button class="tab-button" type="button" role="tab" data-tab-target="dhcp-generated-pxe" aria-controls="dhcp-generated-pxe" aria-selected="false">Generated PXE</button>
+      <button class="tab-button" type="button" role="tab" data-tab-target="dhcp-actual-leases" aria-controls="dhcp-actual-leases" aria-selected="false">Actual Leases</button>
+    </div>
+    <div class="tab-panels">
+      <div id="dhcp-desired-state" class="tab-panel active" role="tabpanel">
+    <div class="section-head">
+      <div>
+        <h2>Managed IP Zones</h2>
+        <p class="muted">Edit zones directly in the grid. The bottom row creates a new zone once required fields are filled.</p>
+      </div>
+      <span class="status-pill muted">{{ dhcp_scopes|length }} zones</span>
+    </div>
+    <div id="dhcp-scope-error" class="alert error hidden"></div>
+    <div
+      id="dhcp-scopes-table"
+      class="tabulator-shell dhcp-scopes-table"
+      data-scopes='{{ dhcp_scope_rows | tojson }}'
+      data-interface-options='{{ available_interfaces | map(attribute="name") | list | tojson }}'
+      data-scope-defaults='{{ dhcp_scope_grid_defaults | tojson }}'
+      data-domain-options='{{ dns_domain_options | tojson }}'
+      data-csrf="{{ csrf_token }}"
+      data-fallback-id="dhcp-scopes-fallback"
+    ></div>
+    <table id="dhcp-scopes-fallback" class="data-table dns-fallback-table">
+      <thead>
+        <tr><th>Zone</th><th>Family</th><th>Interface</th><th>Gateway</th><th>Prefix</th><th>Range</th><th>Lease</th><th>DNS</th><th>NTP</th><th>Domain</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+        {% for scope in dhcp_scopes %}
+          <tr>
+            <td>{{ scope.name }}</td>
+            <td>{{ "IPv6" if scope.address_family == "ipv6" else "IPv4" }}</td>
+            <td>{{ scope.interface_name }}</td>
+            <td>{{ scope.site_address }}</td>
+            <td>/{{ scope.prefix_length }}</td>
+            <td>{{ scope.range_expression }}</td>
+            <td>{{ scope.lease_time }}</td>
+            <td>{{ scope.dns_server }}</td>
+            <td>{{ scope.ntp_server or "" }}</td>
+            <td>{{ scope.domain_name }}</td>
+            <td>
+              <form
+                action="/dhcp/scopes/{{ scope.id }}/delete"
+                method="post"
+                data-confirm-modal
+                data-confirm-title="Delete {{ scope.name }} IP zone?"
+                data-confirm-message="This removes the DHCP IP zone {{ scope.name }} from Atlaso desired state. It will not touch the appliance until global appliance apply runs."
+                data-confirm-label="Delete IP zone"
+              >
+                <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                <button class="button tiny danger" type="submit">Delete</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div class="section-head">
+      <div>
+        <h2>DHCP Options</h2>
+        <p class="muted">Add global options or tag them to a specific IP zone. Options save into desired state immediately.</p>
+      </div>
+      <span class="status-pill muted">{{ dhcp_options|length }} options</span>
+    </div>
+    <div id="dhcp-option-error" class="alert error hidden"></div>
+    <div
+      id="dhcp-options-table"
+      class="tabulator-shell dhcp-options-table"
+      data-options='{{ dhcp_option_rows | tojson }}'
+      data-scope-options='{{ dhcp_option_scope_choices | tojson }}'
+      data-csrf="{{ csrf_token }}"
+      data-fallback-id="dhcp-options-fallback"
+    ></div>
+    <table id="dhcp-options-fallback" class="data-table dns-fallback-table">
+      <thead>
+        <tr><th>Applies to</th><th>Option</th><th>Value</th><th>Status</th><th>Description</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+        {% for option in dhcp_options %}
+          <tr>
+            <td>{{ "Global defaults" if option.scope_id is none else (dhcp_scopes | selectattr("id", "equalto", option.scope_id) | map(attribute="name") | first) }}</td>
+            <td>{{ option.option_code }}</td>
+            <td>{{ option.value }}</td>
+            <td><span class="status-pill {{ 'good' if option.enabled else 'muted' }}">{{ "enabled" if option.enabled else "disabled" }}</span></td>
+            <td>{{ option.description or "" }}</td>
+            <td>
+              <form
+                action="/dhcp/options/{{ option.id }}/delete"
+                method="post"
+                data-confirm-modal
+                data-confirm-title="Delete DHCP option {{ option.option_code }}?"
+                data-confirm-message="This removes the DHCP option from Atlaso desired state. It will not touch the appliance until global appliance apply runs."
+                data-confirm-label="Delete option"
+              >
+                <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                <button class="button tiny danger" type="submit">Delete</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div class="section-head">
+      <div>
+        <h2>Reservations</h2>
+        <p class="muted">Reservations use DNS names. If the matching A or AAAA record is missing, Atlaso creates it from the reservation IP.</p>
+      </div>
+      <span class="status-pill muted">{{ dhcp_reservations|length }} entries</span>
+    </div>
+    <div id="dhcp-reservation-error" class="alert error hidden"></div>
+    <div
+      id="dhcp-reservations-table"
+      class="tabulator-shell dhcp-reservations-table"
+      data-reservations='{{ dhcp_reservation_rows | tojson }}'
+      data-csrf="{{ csrf_token }}"
+      data-fallback-id="dhcp-reservations-fallback"
+    ></div>
+    <table id="dhcp-reservations-fallback" class="data-table dns-fallback-table">
+      <thead>
+        <tr><th>DNS name / FQDN</th><th>MAC</th><th>IP</th><th>Zone</th><th>Status</th><th>Description</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+        {% for reservation in dhcp_reservation_rows %}
+          <tr>
+            <td>{{ reservation.hostname }}</td>
+            <td>{{ reservation.mac_address }}</td>
+            <td>{{ reservation.ip_address }}</td>
+            <td>{{ reservation.zone_name or "-" }}</td>
+            <td><span class="status-pill {{ 'good' if reservation.enabled else 'muted' }}">{{ "enabled" if reservation.enabled else "disabled" }}</span></td>
+            <td>{{ reservation.description or "" }}</td>
+            <td>
+              <form
+                action="/dhcp/reservations/{{ reservation.id }}/delete"
+                method="post"
+                data-confirm-modal
+                data-confirm-title="Delete {{ reservation.hostname }} reservation?"
+                data-confirm-message="This removes the DHCP reservation for {{ reservation.mac_address }} from Atlaso desired state. It will not touch the appliance until global appliance apply runs."
+                data-confirm-label="Delete reservation"
+              >
+                <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                <button class="button tiny danger" type="submit">Delete</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+      </div>
+      <div id="dhcp-generated-pxe" class="tab-panel" role="tabpanel" hidden>
+        <div class="generated-options-panel">
+        <div class="section-head compact">
+          <div>
+            <h3>Generated PXE Boot Options</h3>
+            <p class="muted">Owned by ESXi PXE settings and rendered into dnsmasq during global appliance apply.</p>
+          </div>
+          <span class="status-pill {{ 'good' if dhcp_generated_pxe_options else 'muted' }}">{{ dhcp_generated_pxe_options|length }} generated</span>
+        </div>
+        {% if dhcp_generated_pxe_options %}
+        <table class="data-table compact generated-options-table">
+          <thead>
+            <tr><th>Applies to</th><th>Flow</th><th>Rendered line</th><th>Purpose</th></tr>
+          </thead>
+          <tbody>
+            {% for option in dhcp_generated_pxe_options %}
+              <tr>
+                <td>{{ option.applies_to }}</td>
+                <td>{{ option.flow }}</td>
+                <td><code>{{ option.line }}</code></td>
+                <td>{{ option.note }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+          <div class="empty-state compact">
+            <p class="muted">No generated PXE boot options. Enable ESXi PXE and select a DHCP IP zone to render scoped boot options here.</p>
+          </div>
+        {% endif %}
+      </div>
+      </div>
+      <div id="dhcp-actual-leases" class="tab-panel" role="tabpanel" hidden>
+        <div class="section-head">
+          <div>
+            <h2>Actual Leases</h2>
+            <p class="muted">Read-only leases reported by dnsmasq. This view does not change desired state.</p>
+          </div>
+          <span class="status-pill {{ 'warn' if dhcp_lease_dry_run else 'good' }}">{{ "dry-run" if dhcp_lease_dry_run else "live" }}</span>
+        </div>
+        <p class="muted">Source command: <code>{{ dhcp_lease_command }}</code></p>
+        {% if dhcp_lease_error %}
+          <div class="alert error">{{ dhcp_lease_error }}</div>
+        {% endif %}
+        <div
+          id="dhcp-leases-table"
+          class="tabulator-shell dhcp-leases-table"
+          data-leases='{{ dhcp_lease_rows | tojson }}'
+          data-csrf="{{ csrf_token }}"
+          data-fallback-id="dhcp-leases-fallback"
+        ></div>
+        <table id="dhcp-leases-fallback" class="data-table compact">
+          <thead>
+            <tr><th>Status</th><th>DNS name / FQDN</th><th>IP</th><th>Zone</th><th>MAC</th><th>Expires</th><th>Client ID</th><th>Actions</th></tr>
+          </thead>
+          <tbody>
+            {% for lease in dhcp_lease_rows %}
+              <tr>
+                <td><span class="status-pill {{ 'good' if lease.status == 'active' else 'muted' }}">{{ lease.status }}</span></td>
+                <td>{{ lease.hostname or "-" }}</td>
+                <td>{{ lease.ip_address }}</td>
+                <td>{{ lease.zone_name or "-" }}</td>
+                <td>{{ lease.mac_address }}</td>
+                <td>{{ lease.expires_at }}</td>
+                <td>{{ lease.client_id or "-" }}</td>
+                <td class="lease-action-cell">
+                  <div class="lease-action-menu" data-lease-action-menu>
+                    <button class="row-menu-button" type="button" title="Lease actions" aria-label="Lease actions" data-lease-menu-toggle>...</button>
+                    <div class="lease-row-menu" hidden data-lease-menu>
+                      <button
+                        type="button"
+                        data-dhcp-lease-reservation
+                        data-hostname="{{ lease.hostname }}"
+                        data-ip-address="{{ lease.ip_address }}"
+                        data-mac-address="{{ lease.mac_address }}"
+                      >Create reservation</button>
+                      <button
+                        type="button"
+                        data-dhcp-lease-pxe-host
+                        data-hostname="{{ lease.hostname }}"
+                        data-ip-address="{{ lease.ip_address }}"
+                        data-mac-address="{{ lease.mac_address }}"
+                      >Create PXE entry</button>
+                      <form
+                        action="/dhcp/leases/deny"
+                        method="post"
+                        data-confirm-modal
+                        data-confirm-title="Deny DHCP for {{ lease.mac_address }}?"
+                        data-confirm-message="This adds a Atlaso desired-state dnsmasq ignore rule for this MAC. It will not affect the appliance until global appliance apply runs."
+                        data-confirm-label="Deny DHCP"
+                      >
+                        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                        <input type="hidden" name="hostname" value="{{ lease.hostname }}">
+                        <input type="hidden" name="ip_address" value="{{ lease.ip_address }}">
+                        <input type="hidden" name="mac_address" value="{{ lease.mac_address }}">
+                        <button class="danger" type="submit">Deny DHCP for MAC</button>
+                      </form>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="7" class="muted">No DHCP leases reported.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <dialog id="dhcp-lease-reservation-modal" class="confirm-modal" aria-labelledby="dhcp-lease-reservation-title">
+          <form class="confirm-modal-panel" action="/dhcp/reservations" method="post">
+            <input type="hidden" name="csrf" value="{{ csrf_token }}">
+            <input type="hidden" name="mac_address" data-dhcp-lease-modal-mac-input>
+            <input type="hidden" name="ip_address" data-dhcp-lease-modal-ip-input>
+            <input type="hidden" name="enabled" value="on">
+            <input type="hidden" name="description" data-dhcp-lease-modal-description-input>
+            <div class="confirm-modal-body">
+              <p class="kicker">DHCP lease</p>
+              <h2 id="dhcp-lease-reservation-title">Create reservation</h2>
+              <p class="muted">Create a desired-state DHCP reservation from this live lease. The appliance changes only after global appliance apply.</p>
+              <div class="lease-reservation-summary">
+                <span>IP <strong data-dhcp-lease-modal-ip></strong></span>
+                <span>MAC <strong data-dhcp-lease-modal-mac></strong></span>
+              </div>
+              <label>
+                <span class="field-label"><span>DNS name / FQDN</span><button class="help-icon" type="button" data-help="The reservation is stored with a DNS name. Atlaso creates the matching managed DNS record from the reserved IP.">i</button></span>
+                <input name="hostname" data-dhcp-lease-modal-hostname required placeholder="client.atlaso.internal">
+              </label>
+            </div>
+            <div class="confirm-modal-actions">
+              <button class="button secondary" type="button" data-dhcp-lease-modal-cancel>Cancel</button>
+              <button class="button primary" type="submit">Create reservation</button>
+            </div>
+          </form>
+        </dialog>
+        <dialog id="dhcp-lease-pxe-modal" class="confirm-modal" aria-labelledby="dhcp-lease-pxe-title">
+          <form class="confirm-modal-panel" action="/dhcp/leases/pxe-host" method="post">
+            <input type="hidden" name="csrf" value="{{ csrf_token }}">
+            <input type="hidden" name="mac_address" data-dhcp-lease-pxe-mac-input>
+            <input type="hidden" name="ip_address" data-dhcp-lease-pxe-ip-input>
+            <div class="confirm-modal-body">
+              <p class="kicker">DHCP lease</p>
+              <h2 id="dhcp-lease-pxe-title">Create PXE entry</h2>
+              <p class="muted">Create a desired-state ESXi PXE host entry from this live lease. The appliance changes only after global appliance apply.</p>
+              <div class="lease-reservation-summary">
+                <span>IP <strong data-dhcp-lease-pxe-ip></strong></span>
+                <span>MAC <strong data-dhcp-lease-pxe-mac></strong></span>
+              </div>
+              <label>
+                <span class="field-label"><span>Hostname</span><button class="help-icon" type="button" data-help="Atlaso proposes a hostname from the lease DNS name when present, otherwise from the MAC address. The PXE host entry and managed DNS record use this name.">i</button></span>
+                <input name="hostname" data-dhcp-lease-pxe-hostname required placeholder="esxi-client.atlaso.internal">
+              </label>
+            </div>
+            <div class="confirm-modal-actions">
+              <button class="button secondary" type="button" data-dhcp-lease-pxe-cancel>Cancel</button>
+              <button class="button primary" type="submit">Create PXE entry</button>
+            </div>
+          </form>
+        </dialog>
+      </div>
+    </div>
+  </div>
+
+  <aside class="side-stack">
+    <div class="panel detail-panel">
+      <div class="panel-head">
+        <h2>DHCP Settings</h2>
+        <span class="status-pill {{ 'good' if dhcp_settings.enabled else 'muted' }}">{{ 'enabled' if dhcp_settings.enabled else 'disabled' }}</span>
+      </div>
+      <form class="form-stack" action="/dhcp/settings" method="post" data-autosave-form data-autosave-status-id="dhcp-settings-autosave-status">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+        <label class="switch-field"><span class="field-label"><span>Service enabled</span><button class="help-icon" type="button" data-help="Controls whether Atlaso renders DHCP as enabled desired state for dnsmasq.">i</button></span><input class="switch-input" type="checkbox" name="enabled" {{ "checked" if dhcp_settings.enabled else "" }}><span class="switch-track" aria-hidden="true"></span></label>
+        <input type="hidden" name="interface_name" value="{{ dhcp_settings.interface_name }}">
+        <input type="hidden" name="site_address" value="{{ dhcp_settings.site_address }}">
+        <input type="hidden" name="prefix_length" value="{{ dhcp_settings.prefix_length }}">
+        <input type="hidden" name="lease_time" value="{{ dhcp_settings.lease_time }}">
+        <input type="hidden" name="domain_name" value="{{ dhcp_settings.domain_name }}">
+        <input type="hidden" name="dns_server" value="{{ dhcp_settings.dns_server }}">
+        <label class="switch-field"><span class="field-label"><span>Authoritative</span><button class="help-icon" type="button" data-help="Tells dnsmasq it is the authoritative DHCP server for the configured SiteA scope.">i</button></span><input class="switch-input" type="checkbox" name="authoritative" {{ "checked" if dhcp_settings.authoritative else "" }}><span class="switch-track" aria-hidden="true"></span></label>
+        <p id="dhcp-settings-autosave-status" class="autosave-status" aria-live="polite">Changes save automatically.</p>
+      </form>
+    </div>
+
+    {% include "partials/appliance_apply_status.html" %}
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Validation</h2>
+        <span class="status-pill {{ 'good' if not validation_errors else 'warn' }}">{{ "valid" if not validation_errors else "needs attention" }}</span>
+      </div>
+      {% if validation_errors %}
+        <div class="alert error">
+          {% for error in validation_errors %}
+            <div>{{ error }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+      {% if not validation_errors %}
+        <p class="muted">The desired DNS/DHCP state passes Atlaso validation. Host validation still runs through <code>dnsmasq --test</code> on the appliance.</p>
+      {% endif %}
+      {% set preview_label = "dnsmasq config" %}
+      {% set preview_path = dhcp_settings.config_path %}
+      {% set preview_path_attr = "" %}
+      {% set preview_title = "DHCP rendered config" %}
+      {% set preview_button_label = "config" %}
+      {% set preview_text = config_preview %}
+      {% set preview_data_attr = "" %}
+      {% include "partials/config_preview_action.html" %}
+    </div>
+  </aside>
+</section>
+{% endblock %}

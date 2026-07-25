@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a NoCloud seed ISO for LabFoundry lifecycle client VMs."""
+"""Create a NoCloud seed ISO for Atlaso lifecycle client VMs."""
 
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ packages:
   - openssh-client
   - sshpass
 write_files:
-  - path: /usr/local/sbin/labfoundry-refresh-test-dhcp
+  - path: /usr/local/sbin/atlaso-refresh-test-dhcp
     permissions: '0755'
     content: |
       #!/bin/sh
@@ -74,7 +74,7 @@ write_files:
 runcmd:
   - rc-update add sshd default || true
   - rc-service sshd restart || true
-  - /usr/local/sbin/labfoundry-refresh-test-dhcp || true
+  - /usr/local/sbin/atlaso-refresh-test-dhcp || true
 """
 
     return {

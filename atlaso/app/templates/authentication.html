@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+{% block page_title %}Authentication{% endblock %}
+{% block content %}
+<section class="content-grid two-column">
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Local Authentication</h2>
+      <span class="status-pill good">enabled</span>
+    </div>
+    <p class="muted">Authentication decides how Atlaso operators sign in. Local accounts remain the only enabled sign-in provider in v1.</p>
+    <div class="settings-list">
+      <div><span>Local users</span><strong><a class="text-link" href="/users">managed separately</a></strong></div>
+      <div><span>Atlaso LDAP sign-in</span><strong>not available; operator UI remains local-only</strong></div>
+      <div><span>Managed VCF LDAP service</span><strong><a class="text-link" href="/ldap">configured separately</a></strong></div>
+      <div><span>OIDC provider</span><strong>Authorization Code protocol available</strong></div>
+      <div><span>Provider role mapping</span><strong>shadow users with mapped roles</strong></div>
+      <div><span>API bearer tokens</span><strong>enabled</strong></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Create API Token</h2>
+      <span class="status-pill warn">shown once</span>
+    </div>
+    {% if raw_token %}
+      <div class="alert success">
+        <strong>Copy this bearer token now.</strong>
+        <textarea readonly rows="5" aria-label="Generated bearer token">{{ raw_token }}</textarea>
+      </div>
+    {% endif %}
+    <form class="form-stack" action="/authentication/api-tokens" method="post">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <label><span>Name</span><input name="name" value="Windows automation"></label>
+      <label><span>Description</span><input name="description" value="PowerShell and Hyper-V lab automation"></label>
+      <label><span>Scopes</span><textarea name="scopes" rows="3">read:dashboard read:routes read:wan read:services read:audit</textarea></label>
+      <button class="button primary" type="submit">Create token</button>
+    </form>
+  </div>
+</section>
+
+{% if oidc_admin %}
+<section class="panel" id="oidc-provider">
+  <div class="panel-head">
+    <div>
+      <h2>OpenID Connect Provider</h2>
+      <p class="muted">The constrained Authorization Code flow is available after issuer, applied management HTTPS, active signing key, and protocol readiness checks pass.</p>
+    </div>
+    <span class="status-pill {{ 'good' if oidc_provider.enabled else 'warn' }}">{{ 'enabled' if oidc_provider.enabled else 'disabled' }}</span>
+  </div>
+  {% if oidc_error %}<div class="alert error"><strong>OIDC configuration was not saved.</strong><p>{{ oidc_error }}</p></div>{% endif %}
+  {% if oidc_client_secret %}
+    <div class="alert success">
+      <strong>Copy the confidential client secret now.</strong>
+      <p class="muted">Client ID: <code>{{ oidc_client_id }}</code>. This plaintext secret is not stored and cannot be shown again.</p>
+      <textarea readonly rows="4" aria-label="Generated OIDC client secret">{{ oidc_client_secret }}</textarea>
+    </div>
+  {% endif %}
+  <div class="content-grid two-column">
+    <form class="form-stack" action="/authentication/oidc/provider" method="post" data-autosave-form data-autosave-status-id="oidc-provider-autosave-status">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <label class="switch-field">
+        <span class="field-label"><span>Provider enabled</span><button class="help-icon" type="button" data-help="Publishes discovery, JWKS, and identity endpoints only after the issuer, applied management HTTPS configuration, active RS256 key, and protocol readiness all validate.">i</button></span>
+        <input class="switch-input" type="checkbox" name="enabled" {% if oidc_provider.enabled %}checked{% endif %}>
+        <span class="switch-track" aria-hidden="true"></span>
+      </label>
+      <label>
+        <span class="field-label"><span>Issuer URL</span><button class="help-icon" type="button" data-help="Must exactly equal https:// plus the applied Appliance Settings FQDN plus /identity. Request Host and forwarded headers are never trusted for issuer construction.">i</button></span>
+        <input name="issuer_url" value="{{ oidc_provider.issuer_url }}" required>
+      </label>
+      <label>
+        <span class="field-label"><span>Authorization code lifetime</span><button class="help-icon" type="button" data-help="Desired lifetime in seconds for single-use authorization codes once Phase 2 is available. This setting does not enable protocol traffic.">i</button></span>
+        <input type="number" name="authorization_code_lifetime_seconds" min="30" max="300" value="{{ oidc_provider.authorization_code_lifetime_seconds }}">
+      </label>
+      <label>
+        <span class="field-label"><span>ID token lifetime</span><button class="help-icon" type="button" data-help="Desired ID token lifetime in seconds. Signing-key publication overlap is enforced beyond the longest token lifetime and clock skew.">i</button></span>
+        <input type="number" name="id_token_lifetime_seconds" min="300" max="300" value="300" readonly>
+      </label>
+      <label>
+        <span class="field-label"><span>Access token lifetime</span><button class="help-icon" type="button" data-help="Desired JWT access token lifetime in seconds. UserInfo will revalidate current source and organization enablement in Phase 2.">i</button></span>
+        <input type="number" name="access_token_lifetime_seconds" min="300" max="300" value="300" readonly>
+      </label>
+      <label>
+        <span class="field-label"><span>Clock skew</span><button class="help-icon" type="button" data-help="Validation tolerance in seconds used when enforcing key publication overlap and token time claims.">i</button></span>
+        <input type="number" name="clock_skew_seconds" min="0" max="300" value="{{ oidc_provider.clock_skew_seconds }}">
+      </label>
+      <label>
+        <span class="field-label"><span>Signing-key overlap</span><button class="help-icon" type="button" data-help="Configured retired-key publication period in seconds. Rotation always raises the effective overlap to at least the longest token lifetime plus clock skew.">i</button></span>
+        <input type="number" name="signing_key_overlap_seconds" min="300" max="604800" value="{{ oidc_provider.signing_key_overlap_seconds }}">
+      </label>
+      <span class="autosave-status" id="oidc-provider-autosave-status" aria-live="polite">Changes autosave.</span>
+    </form>
+    <div class="form-stack">
+      <div class="settings-list">
+        <div><span>Issuer</span><strong><code>{{ oidc_urls.issuer }}</code></strong></div>
+        <div><span>Discovery</span><strong><code>{{ oidc_urls.discovery_url }}</code></strong></div>
+        <div><span>JWKS</span><strong><code>{{ oidc_urls.jwks_uri }}</code></strong></div>
+        <div><span>Authorization</span><strong><code>{{ oidc_urls.authorization_endpoint }}</code></strong></div>
+        <div><span>Token</span><strong><code>{{ oidc_urls.token_endpoint }}</code></strong></div>
+        <div><span>UserInfo</span><strong><code>{{ oidc_urls.userinfo_endpoint }}</code></strong></div>
+        <div><span>Logout</span><strong><code>{{ oidc_urls.end_session_endpoint }}</code></strong></div>
+      </div>
+      <div>
+        <h3>Readiness</h3>
+        {% if oidc_validation_errors %}
+          <div class="error-list" role="list">{% for error in oidc_validation_errors %}<div role="listitem">{{ error }}</div>{% endfor %}</div>
+        {% else %}
+          <p class="muted">Protocol readiness checks pass. The provider can be enabled.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="content-grid two-column">
+  <div class="panel">
+    <div class="panel-head"><h2>Register Confidential Client</h2><span class="status-pill warn">secret shown once</span></div>
+    <form class="form-stack" action="/authentication/oidc/clients" method="post">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <label>
+        <span class="field-label"><span>Integration preset</span><button class="help-icon" type="button" data-help="The VCF 9.1 preset fixes the constrained scopes and confidential-client posture, but still requires the exact redirect URI reported by VCF. Atlaso never guesses it.">i</button></span>
+        <select name="preset"><option value="vcf-9.1">VCF 9.1 Identity Broker</option><option value="custom">Custom appliance integration</option></select>
+      </label>
+      <label>
+        <span class="field-label"><span>Client name</span><button class="help-icon" type="button" data-help="Operator-facing label for this appliance integration. It is not sent as an identity claim.">i</button></span>
+        <input name="name" value="VCF 9.1 Identity Broker" required>
+      </label>
+      <label>
+        <span class="field-label"><span>Bound organization</span><button class="help-icon" type="button" data-help="Optionally limits authentication to one enabled integrated OpenLDAP organization. Leave unbound to support Local plus explicit organization selection in Phase 3.">i</button></span>
+        <select name="organization_id"><option value="">Unbound</option>{% for organization in oidc_organizations %}<option value="{{ organization.id }}">{{ organization.name }}</option>{% endfor %}</select>
+      </label>
+      <label>
+        <span class="field-label"><span>Exact redirect URI</span><button class="help-icon" type="button" data-help="Paste the exact URI supplied by the relying party. Comparison is byte-for-byte; wildcards, fragments, and guessed VCF paths are rejected. Enter one URI per line.">i</button></span>
+        <textarea name="redirect_uris" rows="3" required placeholder="Paste the exact VCF Identity Broker redirect URI"></textarea>
+      </label>
+      <label>
+        <span class="field-label"><span>Exact post-logout URI</span><button class="help-icon" type="button" data-help="Optional exact RP-initiated logout return destination reserved for Phase 2. Enter one URI per line.">i</button></span>
+        <textarea name="post_logout_redirect_uris" rows="2"></textarea>
+      </label>
+      <button class="button primary" type="submit">Register confidential client</button>
+    </form>
+  </div>
+  <div class="panel" id="oidc-keys">
+    <div class="panel-head"><h2>Signing Keys</h2><span class="muted">{{ oidc_keys|length }} records</span></div>
+    <p class="muted">Private 3072-bit RSA PEM is encrypted with the appliance secrets key. Only public JWK material is publishable.</p>
+    {% if oidc_keys %}
+      <form action="/authentication/oidc/signing-keys" method="post" data-confirm-modal data-confirm-title="Rotate OIDC signing key?" data-confirm-message="A new active RSA key is generated. The previous public key remains published through the enforced overlap; its encrypted private material remains in backup custody." data-confirm-label="Rotate signing key">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="rotate" value="true">
+        <button class="button secondary" type="submit">Rotate signing key</button>
+      </form>
+    {% else %}
+      <form action="/authentication/oidc/signing-keys" method="post">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+        <button class="button primary" type="submit">Generate first signing key</button>
+      </form>
+    {% endif %}
+    <table class="data-table">
+      <thead><tr><th>Key ID</th><th>Algorithm</th><th>Status</th><th>Published until</th></tr></thead>
+      <tbody>{% for key in oidc_keys %}<tr><td><code>{{ key.kid }}</code></td><td>{{ key.algorithm }}</td><td>{{ key.status }}</td><td>{{ key.publish_until or "active" }}</td></tr>{% else %}<tr><td colspan="4" class="muted">No signing key generated.</td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
+</section>
+
+<section id="oidc-clients" class="panel">
+  <div class="panel-head"><h2>OIDC Clients</h2><span class="muted">{{ oidc_clients|length }} records</span></div>
+  <table class="data-table">
+    <thead><tr><th>Name</th><th>Client ID</th><th>Organization</th><th>Exact redirects</th><th>Status</th><th>Actions</th></tr></thead>
+    <tbody>
+      {% for client in oidc_clients %}
+        <tr>
+          <td>{{ client.name }}</td><td><code>{{ client.client_id }}</code></td><td>{{ client.organization_slug or "Unbound" }}</td>
+          <td>{% for uri in client.redirect_uris %}<code>{{ uri }}</code>{% if not loop.last %}<br>{% endif %}{% endfor %}</td>
+          <td><span class="status-pill {{ 'good' if client.enabled else 'muted' }}">{{ "enabled" if client.enabled else "disabled" }}</span></td>
+          <td class="button-row">
+            <form action="/authentication/oidc/clients/{{ client.id }}/rotate-secret" method="post" data-confirm-modal data-confirm-title="Rotate secret for {{ client.name }}?" data-confirm-message="The previous secret stops working immediately. The replacement is shown once and must be copied into the relying party." data-confirm-label="Rotate client secret"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="button tiny secondary" type="submit">Rotate secret</button></form>
+            <form action="/authentication/oidc/clients/{{ client.id }}/delete" method="post" data-confirm-modal data-confirm-title="Delete OIDC client {{ client.name }}?" data-confirm-message="This permanently removes the confidential client, its secret hash, and exact redirect records from Atlaso. The relying party can no longer start new authorization requests. No appliance service is changed and global appliance apply is not required." data-confirm-label="Delete OIDC client"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="button tiny danger" type="submit">Delete client</button></form>
+          </td>
+        </tr>
+      {% else %}<tr><td colspan="6" class="muted">No confidential clients registered.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <div class="panel-head"><h2>Stable Subjects</h2><span class="muted">{{ oidc_subjects|length }} linked principals</span></div>
+  <p class="muted">Opaque subject UUIDs link to enabled local users or users in Atlaso’s integrated OpenLDAP organizations. Managed LDAP principals do not gain operator UI access.</p>
+  <table class="data-table"><thead><tr><th>Subject</th><th>Source</th><th>Username</th><th>Organization</th></tr></thead><tbody>{% for subject in oidc_subjects %}<tr><td><code>{{ subject.subject }}</code></td><td>{{ subject.source }}</td><td>{{ subject.username }}</td><td>{{ subject.organization_name }}</td></tr>{% else %}<tr><td colspan="4" class="muted">Subjects are created only after a credential is verified for OIDC.</td></tr>{% endfor %}</tbody></table>
+</section>
+{% endif %}
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>API Tokens</h2>
+    <span class="muted">{{ tokens|length }} records</span>
+  </div>
+  <table class="data-table">
+    <thead>
+      <tr><th>Name</th><th>Owner</th><th>Role</th><th>Scopes</th><th>Expires</th><th>Status</th><th>Actions</th></tr>
+    </thead>
+    <tbody>
+      {% for token in tokens %}
+        <tr>
+          <td>{{ token.name }}</td>
+          <td>{{ token.owner_username }}</td>
+          <td>{{ token.role }}</td>
+          <td class="scope-cell">{{ token.scopes }}</td>
+          <td>{{ token.expires_at.strftime("%Y-%m-%d") }}</td>
+          <td><span class="status-pill {{ 'good' if token.enabled and not token.revoked_at else 'muted' }}">{{ "active" if token.enabled and not token.revoked_at else "revoked" }}</span></td>
+          <td>
+            {% if token.enabled and not token.revoked_at %}
+              <form action="/authentication/api-tokens/{{ token.id }}/revoke" method="post">
+                <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                <button class="button tiny" type="submit">Revoke</button>
+              </form>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

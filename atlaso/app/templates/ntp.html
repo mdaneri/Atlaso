@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% block page_title %}NTP / NTS{% endblock %}
+{% block content %}
+<section class="split-workspace">
+  <div class="panel wide-panel ntp-main-panel">
+    <div class="panel-head">
+      <div>
+        <h2>NTP / NTS</h2>
+        <p class="muted">Provide a Atlaso-managed NTP endpoint for lab systems through Photon NTPsec.</p>
+      </div>
+      <span class="status-pill {{ 'good' if ntp_settings.enabled else 'muted' }}">{{ "enabled" if ntp_settings.enabled else "disabled" }}</span>
+    </div>
+
+    <div class="metric-grid service-summary-grid">
+      <div class="metric">
+        <span>Endpoints</span>
+        <strong>NTP {{ ntp_primary_listen_address or "no interface IP" }}:{{ ntp_settings.port }}</strong>
+        <small>{% if ntp_settings.nts_server_enabled %}NTS-KE {{ ntp_settings.hostname }}:{{ ntp_settings.nts_ke_port }} · {% else %}NTS-KE disabled · {% endif %}{{ ntp_bind_label }}</small>
+      </div>
+      <div class="metric">
+        <span>Hostname</span>
+        <strong>{{ ntp_settings.hostname }}</strong>
+        <small>client-facing name</small>
+      </div>
+      <div class="metric">
+        <span>Upstreams</span>
+        <strong>{{ ntp_settings_json.upstream_servers|length }}</strong>
+        <small>server lines</small>
+      </div>
+      <div class="metric">
+        <span>Client sources</span>
+        <strong>{{ ntp_settings.allow_clients }}</strong>
+        <small>firewall still applies</small>
+      </div>
+    </div>
+
+    <div class="section-block ntp-upstreams-section">
+      <div class="panel-head table-head">
+        <div>
+          <h2>Upstream sources <button class="help-icon" type="button" data-help="{% if ntp_nts_supported %}NTPsec time sources used after global appliance apply. Enable NTS per source when the upstream supports Network Time Security; disabled rows stay in desired state but are not rendered.{% else %}NTPsec time sources used after global appliance apply. NTS controls are disabled because the installed ntpd binary does not include NTS support.{% endif %}">i</button></h2>
+        </div>
+      </div>
+      <div
+        id="ntp-upstreams-table"
+        class="tabulator-shell ntp-upstreams-table"
+        data-ntp-upstreams='{{ ntp_settings_json.upstream_sources | tojson }}'
+        data-ntp-nts-supported="{{ 'true' if ntp_nts_supported else 'false' }}"
+        data-fallback-id="ntp-upstreams-fallback"
+      ></div>
+      <table id="ntp-upstreams-fallback" class="data-table compact dns-fallback-table">
+        <thead>
+          <tr><th>Source</th><th>NTS</th><th>Enabled</th><th>Description</th></tr>
+        </thead>
+        <tbody>
+          {% for source in ntp_settings_json.upstream_sources + [{"source": "", "enabled": false, "use_nts": false, "description": ""}] %}
+            <tr>
+              <td><input class="table-input" name="upstream_source" value="{{ source.source }}" placeholder="time.example.com[:4460]" form="ntp-settings-form"></td>
+              <td>
+                <label class="inline-check">
+                  <input type="checkbox" name="upstream_use_nts" value="{{ loop.index0 }}"{% if source.use_nts %} checked{% endif %}{% if not ntp_nts_supported %} disabled{% endif %} form="ntp-settings-form">
+                  <span>NTS</span>
+                </label>
+              </td>
+              <td>
+                <label class="inline-check">
+                  <input type="checkbox" name="upstream_enabled" value="{{ loop.index0 }}" {{ "checked" if source.enabled else "" }} form="ntp-settings-form">
+                  <span>enabled</span>
+                </label>
+              </td>
+              <td><input class="table-input" name="upstream_description" value="{{ source.description }}" placeholder="optional note" form="ntp-settings-form"></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <aside class="side-stack">
+    <div class="panel detail-panel">
+      <div class="panel-head">
+        <h2>NTP / NTS Settings</h2>
+        <span class="status-pill {{ ntp_service_status.pill }}">{{ ntp_service_status.label }}</span>
+      </div>
+      <form id="ntp-settings-form" class="form-stack" action="/ntp/settings" method="post" data-autosave-form data-ntp-settings data-autosave-status-id="ntp-settings-autosave-status">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+        <label class="switch-field"><span class="field-label"><span>NTP service enabled</span><button class="help-icon" type="button" data-help="Controls the standard NTPsec NTP service on UDP 123. This does not enable NTS. The host service changes only after global appliance apply.">i</button></span><input class="switch-input" type="checkbox" name="enabled" {{ "checked" if ntp_settings.enabled else "" }}><span class="switch-track" aria-hidden="true"></span></label>
+        {% if not ntp_nts_supported %}
+          <div class="runtime-source-list" data-ntp-nts-unavailable>
+            <span class="status-pill muted">NTS unavailable</span>
+            <span>Installed ntpd has no NTS support.</span>
+          </div>
+        {% endif %}
+        <label class="switch-field{% if not ntp_nts_supported %} disabled-field{% endif %}"{% if not ntp_nts_supported %} aria-disabled="true"{% endif %}><span class="field-label"><span>NTS server{% if not ntp_nts_supported %} (disabled){% endif %}</span><button class="help-icon" type="button" data-help="{% if ntp_nts_supported %}Enables NTPsec NTS-KE for lab clients using CA-managed certificate material. Host listeners and TCP 4460 firewall rules change only after global appliance apply.{% else %}Unavailable because the installed ntpd binary does not include NTS support. Rebuild the appliance with an NTS-capable NTPsec package to enable this setting.{% endif %}">i</button></span><input class="switch-input" type="checkbox" name="nts_server_enabled"{% if ntp_settings.nts_server_enabled %} checked{% endif %}{% if not ntp_nts_supported %} disabled{% endif %}><span class="switch-track" aria-hidden="true"></span></label>
+        <label class="compact-service-field">
+          <span class="field-label"><span>Hostname</span><button class="help-icon" type="button" data-help="DNS name lab clients can use for the NTP endpoint. It is recorded in desired state and previews; DNS records remain owned by the DNS page.">i</button></span>
+          <input name="hostname" value="{{ ntp_settings.hostname }}" autocomplete="off">
+        </label>
+        <div class="form-grid compact-form-grid ntp-port-grid">
+          <label>
+            <span class="field-label"><span>NTP port</span><button class="help-icon" type="button" data-help="NTP uses UDP 123. Atlaso keeps NTPsec fixed on this protocol port for predictable firewall and client behavior.">i</button></span>
+            <input type="number" name="port" value="{{ ntp_settings.port }}" min="123" max="123">
+          </label>
+          <label>
+            <span class="field-label"><span>NTS-KE port</span><button class="help-icon" type="button" data-help="NTPsec NTS Key Establishment uses TCP 4460. Firewall apply owns exposure for this port when NTS server mode is enabled.">i</button></span>
+            <input type="number" value="{{ ntp_settings.nts_ke_port }}" min="4460" max="4460" readonly{% if not ntp_nts_supported %} disabled{% endif %} aria-label="NTS-KE port">
+          </label>
+        </div>
+        <input type="hidden" name="listen_interfaces_present" value="1">
+        <div class="service-bind-editor stacked-service-bind-editor" data-service-bind>
+          <div class="form-field">
+            <span class="field-label"><span>Listen interfaces</span><button class="help-icon" type="button" data-help="One or more access-mode physical interfaces and VLAN interfaces with configured IP addresses where UDP 123 should be reachable. Trunk physical NICs are not direct bind targets; management is reserved for the Atlaso UI.">i</button></span>
+            <div class="tag-editor" data-tag-editor data-tag-name="listen_interfaces" data-service-bind-interface>
+              <div class="tag-editor-tags" data-tag-list>
+                {% for interface_name in selected_ntp_interfaces %}
+                  <span class="tag-token" data-value="{{ interface_name }}">
+                    <span>{{ interface_name }}</span>
+                    <button type="button" data-tag-remove aria-label="Remove {{ interface_name }}">x</button>
+                    <input type="hidden" name="listen_interfaces" value="{{ interface_name }}">
+                  </span>
+                {% endfor %}
+              </div>
+              <input class="tag-editor-input" type="text" placeholder="Add interface..." list="ntp-interface-options" data-tag-entry autocomplete="off">
+              <button class="tag-add-button" type="button" data-tag-menu-toggle aria-label="Add existing interface">+</button>
+              <div class="tag-suggestions" data-tag-menu hidden>
+                {% for interface in available_interfaces %}
+                  <button type="button" data-tag-option="{{ interface.name }}" data-service-bind-address="{{ interface.address }}" data-service-bind-addresses="{{ interface.addresses|join(',') }}">
+                    <strong>{{ interface.name }}</strong>
+                    <small>{{ interface.label }}</small>
+                  </button>
+                {% endfor %}
+              </div>
+            </div>
+            <datalist id="ntp-interface-options">
+              {% for interface in available_interfaces %}
+                <option value="{{ interface.name }}">{{ interface.label }}</option>
+              {% endfor %}
+            </datalist>
+          </div>
+          <div class="form-field">
+            <span class="field-label"><span>Listen addresses</span><button class="help-icon" type="button" data-help="Read-only addresses resolved from selected interface IPv4 and IPv6 CIDRs. Global Firewall apply opens UDP 123 on the same selected interfaces.">i</button></span>
+            <div class="derived-field fixed-value-field">
+              <strong data-derived-listen-addresses>{{ selected_ntp_addresses|join(", ") if selected_ntp_addresses else "No interface address selected" }}</strong>
+            </div>
+          </div>
+        </div>
+        <input type="hidden" name="upstream_servers" value="{{ ntp_settings.upstream_servers }}">
+        <input type="hidden" name="upstream_sources_json" value='{{ ntp_settings_json.upstream_sources | tojson }}' data-ntp-upstreams-json>
+        <label>
+          <span class="field-label"><span>Allowed clients</span><button class="help-icon" type="button" data-help="Use any or one IPv4/IPv6 CIDR per line for NTPsec allow rules. Firewall source groups can still narrow UDP 123 exposure during Firewall apply.">i</button></span>
+          <textarea name="allow_clients" rows="4">{{ ntp_settings.allow_clients }}</textarea>
+        </label>
+        <label>
+          <span class="field-label"><span>Minimum sources</span><button class="help-icon" type="button" data-help="Optional NTPsec minimum sane source count, rendered as tos minsane. Leave blank for NTPsec's default source-selection behavior.">i</button></span>
+          <input type="number" name="minsources" min="1" value="{{ ntp_settings.minsources or '' }}">
+        </label>
+        <p id="ntp-settings-autosave-status" class="autosave-status" data-state="idle">Changes save automatically.</p>
+      </form>
+    </div>
+
+    {% include "partials/appliance_apply_status.html" %}
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Validation</h2>
+        <span class="status-pill {{ 'good' if not ntp_validation_errors else 'warn' }}" data-ntp-validation-status>{{ "valid" if not ntp_validation_errors else "needs attention" }}</span>
+      </div>
+      {% if ntp_validation_errors %}
+        <div class="error-list" role="list" data-ntp-validation-errors>
+          {% for error in ntp_validation_errors %}
+            <div role="listitem">{{ error }}</div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="muted" data-ntp-validation-message>The desired NTPsec state passes Atlaso validation. Appliance validation still runs through the allowlisted NTPsec helper before apply.</p>
+      {% endif %}
+      {% set preview_label = "ntp config" %}
+      {% set preview_path = ntp_settings.config_path %}
+      {% set preview_path_attr = "data-ntp-config-path" %}
+      {% set preview_title = "NTP / NTS rendered config" %}
+      {% set preview_button_label = "config" %}
+      {% set preview_text = ntp_config_preview %}
+      {% set preview_data_attr = "data-ntp-config-preview" %}
+      {% include "partials/config_preview_action.html" %}
+    </div>
+  </aside>
+</section>
+{% endblock %}

@@ -3,8 +3,8 @@ import logging
 
 import pytest
 
-from labfoundry.app.models import ApplianceSettings, AuditEvent, CaSettings, DhcpScope, DhcpSettings, DnsSettings, Job, KmsSettings, NatRule, PhysicalInterface, Route, RoutingRule, Setting, VlanInterface
-from labfoundry.app.services.networking import (
+from atlaso.app.models import ApplianceSettings, AuditEvent, CaSettings, DhcpScope, DhcpSettings, DnsSettings, Job, KmsSettings, NatRule, PhysicalInterface, Route, RoutingRule, Setting, VlanInterface
+from atlaso.app.services.networking import (
     HostPhysicalInterface,
     NETWORK_INVENTORY_CLEANUP_WARNING_KEY,
     normalize_interface_role,
@@ -193,13 +193,13 @@ def test_reconcile_host_inventory_tracks_renumbered_nics_by_mac():
 def test_sync_host_inventory_cleans_removed_nic_bindings_and_retargets_survivors(monkeypatch, tmp_path, caplog):
     from sqlalchemy import select
 
-    import labfoundry.app.database as database
-    from labfoundry.app.config import get_settings
+    import atlaso.app.database as database
+    from atlaso.app.config import get_settings
 
-    db_path = tmp_path / "labfoundry-renumber.db"
-    monkeypatch.setenv("LABFOUNDRY_DATABASE_URL", f"sqlite:///{db_path}")
-    monkeypatch.setenv("LABFOUNDRY_SECRET_KEY", "test-secret-key-with-enough-length")
-    monkeypatch.setenv("LABFOUNDRY_BOOTSTRAP_ADMIN_PASSWORD", "labfoundry-admin")
+    db_path = tmp_path / "atlaso-renumber.db"
+    monkeypatch.setenv("ATLASO_DATABASE_URL", f"sqlite:///{db_path}")
+    monkeypatch.setenv("ATLASO_SECRET_KEY", "test-secret-key-with-enough-length")
+    monkeypatch.setenv("ATLASO_BOOTSTRAP_ADMIN_PASSWORD", "atlaso-admin")
     get_settings.cache_clear()
     database.engine.dispose()
     database.engine = database.create_engine(
@@ -223,7 +223,7 @@ def test_sync_host_inventory_cleans_removed_nic_bindings_and_retargets_survivors
             )
         ]
 
-    monkeypatch.setattr("labfoundry.app.services.networking.discover_host_physical_interfaces", fake_discover)
+    monkeypatch.setattr("atlaso.app.services.networking.discover_host_physical_interfaces", fake_discover)
 
     with database.SessionLocal() as db:
         db.add_all(
@@ -261,7 +261,7 @@ def test_sync_host_inventory_cleans_removed_nic_bindings_and_retargets_survivors
         )
         db.commit()
 
-        with caplog.at_level(logging.WARNING, logger="labfoundry.networking"):
+        with caplog.at_level(logging.WARNING, logger="atlaso.networking"):
             sync_host_physical_interfaces(db)
 
         survivor = db.execute(select(PhysicalInterface).where(PhysicalInterface.mac_address == "00:15:5d:01:1d:15")).scalar_one()
@@ -330,13 +330,13 @@ def test_sync_host_inventory_cleans_removed_nic_bindings_and_retargets_survivors
 def test_sync_host_inventory_commits_two_nic_name_swap(monkeypatch, tmp_path):
     from sqlalchemy import select
 
-    import labfoundry.app.database as database
-    from labfoundry.app.config import get_settings
+    import atlaso.app.database as database
+    from atlaso.app.config import get_settings
 
-    db_path = tmp_path / "labfoundry-swap.db"
-    monkeypatch.setenv("LABFOUNDRY_DATABASE_URL", f"sqlite:///{db_path}")
-    monkeypatch.setenv("LABFOUNDRY_SECRET_KEY", "test-secret-key-with-enough-length")
-    monkeypatch.setenv("LABFOUNDRY_BOOTSTRAP_ADMIN_PASSWORD", "labfoundry-admin")
+    db_path = tmp_path / "atlaso-swap.db"
+    monkeypatch.setenv("ATLASO_DATABASE_URL", f"sqlite:///{db_path}")
+    monkeypatch.setenv("ATLASO_SECRET_KEY", "test-secret-key-with-enough-length")
+    monkeypatch.setenv("ATLASO_BOOTSTRAP_ADMIN_PASSWORD", "atlaso-admin")
     get_settings.cache_clear()
     database.engine.dispose()
     database.engine = database.create_engine(
@@ -373,7 +373,7 @@ def test_sync_host_inventory_commits_two_nic_name_swap(monkeypatch, tmp_path):
             ),
         ]
 
-    monkeypatch.setattr("labfoundry.app.services.networking.discover_host_physical_interfaces", fake_discover)
+    monkeypatch.setattr("atlaso.app.services.networking.discover_host_physical_interfaces", fake_discover)
 
     with database.SessionLocal() as db:
         db.add_all(
@@ -422,15 +422,15 @@ def test_sync_host_inventory_commits_two_nic_name_swap(monkeypatch, tmp_path):
 def test_startup_host_inventory_refreshes_appliance_seed_without_apply_job(monkeypatch, tmp_path):
     from sqlalchemy import select
 
-    import labfoundry.app.database as database
-    from labfoundry.app.config import get_settings
-    from labfoundry.app.main import refresh_startup_host_inventory
-    from labfoundry.app.seed import seed_initial_data
+    import atlaso.app.database as database
+    from atlaso.app.config import get_settings
+    from atlaso.app.main import refresh_startup_host_inventory
+    from atlaso.app.seed import seed_initial_data
 
-    db_path = tmp_path / "labfoundry-startup.db"
-    monkeypatch.setenv("LABFOUNDRY_DATABASE_URL", f"sqlite:///{db_path}")
-    monkeypatch.setenv("LABFOUNDRY_SECRET_KEY", "test-secret-key-with-enough-length")
-    monkeypatch.setenv("LABFOUNDRY_BOOTSTRAP_ADMIN_PASSWORD", "labfoundry-admin")
+    db_path = tmp_path / "atlaso-startup.db"
+    monkeypatch.setenv("ATLASO_DATABASE_URL", f"sqlite:///{db_path}")
+    monkeypatch.setenv("ATLASO_SECRET_KEY", "test-secret-key-with-enough-length")
+    monkeypatch.setenv("ATLASO_BOOTSTRAP_ADMIN_PASSWORD", "atlaso-admin")
     get_settings.cache_clear()
 
     database.engine.dispose()
@@ -455,7 +455,7 @@ def test_startup_host_inventory_refreshes_appliance_seed_without_apply_job(monke
             )
         ]
 
-    monkeypatch.setattr("labfoundry.app.services.networking.discover_host_physical_interfaces", fake_discover)
+    monkeypatch.setattr("atlaso.app.services.networking.discover_host_physical_interfaces", fake_discover)
 
     with database.SessionLocal() as db:
         seed_initial_data(db, include_examples=False)
@@ -474,18 +474,18 @@ def test_startup_host_inventory_refreshes_appliance_seed_without_apply_job(monke
 def test_appliance_seed_preserves_ovf_auto_ipv6_and_root_ssh(monkeypatch, tmp_path):
     from sqlalchemy import select
 
-    import labfoundry.app.database as database
-    from labfoundry.app.config import get_settings
-    from labfoundry.app.seed import seed_initial_data
+    import atlaso.app.database as database
+    from atlaso.app.config import get_settings
+    from atlaso.app.seed import seed_initial_data
 
-    db_path = tmp_path / "labfoundry-ovf-seed.db"
-    monkeypatch.setenv("LABFOUNDRY_DATABASE_URL", f"sqlite:///{db_path}")
-    monkeypatch.setenv("LABFOUNDRY_SECRET_KEY", "test-secret-key-with-enough-length")
-    monkeypatch.setenv("LABFOUNDRY_BOOTSTRAP_ADMIN_PASSWORD", "labfoundry-admin")
-    monkeypatch.setenv("LABFOUNDRY_APPLIANCE_MANAGEMENT_CIDR", "dhcp")
-    monkeypatch.setenv("LABFOUNDRY_APPLIANCE_MANAGEMENT_IPV6_ENABLED", "true")
-    monkeypatch.setenv("LABFOUNDRY_APPLIANCE_MANAGEMENT_IPV6_CIDR", "")
-    monkeypatch.setenv("LABFOUNDRY_APPLIANCE_ROOT_SSH_ENABLED", "true")
+    db_path = tmp_path / "atlaso-ovf-seed.db"
+    monkeypatch.setenv("ATLASO_DATABASE_URL", f"sqlite:///{db_path}")
+    monkeypatch.setenv("ATLASO_SECRET_KEY", "test-secret-key-with-enough-length")
+    monkeypatch.setenv("ATLASO_BOOTSTRAP_ADMIN_PASSWORD", "atlaso-admin")
+    monkeypatch.setenv("ATLASO_APPLIANCE_MANAGEMENT_CIDR", "dhcp")
+    monkeypatch.setenv("ATLASO_APPLIANCE_MANAGEMENT_IPV6_ENABLED", "true")
+    monkeypatch.setenv("ATLASO_APPLIANCE_MANAGEMENT_IPV6_CIDR", "")
+    monkeypatch.setenv("ATLASO_APPLIANCE_ROOT_SSH_ENABLED", "true")
     get_settings.cache_clear()
     database.engine.dispose()
     database.engine = database.create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})

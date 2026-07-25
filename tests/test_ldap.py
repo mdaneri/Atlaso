@@ -2,8 +2,8 @@ import io
 import json
 import tarfile
 
-from labfoundry.app.models import LdapGroup, LdapGroupMembership, LdapOrganization, LdapSettings, LdapUser
-from labfoundry.app.services.ldap import (
+from atlaso.app.models import LdapGroup, LdapGroupMembership, LdapOrganization, LdapSettings, LdapUser
+from atlaso.app.services.ldap import (
     clear_pending_ldap_password,
     decrypt_recovery_payload,
     encrypt_recovery_payload,
@@ -20,7 +20,7 @@ from labfoundry.app.services.ldap import (
 
 def api_token(client, scopes: list[str]) -> str:
     response = client.post(
-        "/api/v1/auth/login?username=admin&password=labfoundry-admin",
+        "/api/v1/auth/login?username=admin&password=atlaso-admin",
         json={"name": "LDAP tests", "scopes": scopes},
     )
     assert response.status_code == 200, response.text
@@ -49,7 +49,7 @@ def test_ldap_api_manages_isolated_organizations_users_groups_and_vcf_mapping(cl
     )
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
+    from atlaso.app.database import SessionLocal
 
     with SessionLocal() as db:
         stored = db.execute(select(LdapOrganization).where(LdapOrganization.id == org_a.json()["id"])).scalar_one()
@@ -140,7 +140,7 @@ def test_ldap_api_rejects_cross_organization_membership_and_nested_cycle(client)
 def test_ldap_uid_change_marks_applied_password_not_staged(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
+    from atlaso.app.database import SessionLocal
 
     token = api_token(client, ["read:ldap", "write:ldap"])
     headers = {"Authorization": f"Bearer {token}"}
@@ -180,8 +180,8 @@ def test_ldap_password_policy_and_renderer_never_expose_unstaged_hashes():
         id=1,
         name="Org A",
         slug="org-a",
-        suffix_dn="dc=org-a,dc=ldap,dc=labfoundry,dc=internal",
-        bind_dn="uid=vcf-bind,ou=service-accounts,dc=org-a,dc=ldap,dc=labfoundry,dc=internal",
+        suffix_dn="dc=org-a,dc=ldap,dc=atlaso,dc=internal",
+        bind_dn="uid=vcf-bind,ou=service-accounts,dc=org-a,dc=ldap,dc=atlaso,dc=internal",
         bind_password_encrypted="encrypted-value",
     )
     user = LdapUser(
@@ -208,7 +208,7 @@ def test_ldap_password_policy_and_renderer_never_expose_unstaged_hashes():
     assert plaintext_vcf["definedSettings"]["ssl"] is False
     assert plaintext_vcf["definedSettings"]["port"] == 1389
     bundle = manual_vcf_bundle(settings, organization, root_ca_pem="test-ca")
-    assert bundle["endpoint"]["url"] == "ldap://ldap.labfoundry.internal:1389"
+    assert bundle["endpoint"]["url"] == "ldap://ldap.atlaso.internal:1389"
     assert bundle["endpoint"]["rootCaFilename"] == ""
     assert bundle["rootCaPem"] == ""
 
@@ -225,7 +225,7 @@ def test_ldap_nested_group_cycle_detection():
 def test_plaintext_only_ldap_does_not_require_ca_but_requires_one_external_protocol():
     settings = LdapSettings(
         enabled=True,
-        hostname="ldap.labfoundry.internal",
+        hostname="ldap.atlaso.internal",
         listen_interface="eth2",
         listen_address="192.168.50.1",
         ldaps_enabled=False,
@@ -241,8 +241,8 @@ def test_plaintext_only_ldap_does_not_require_ca_but_requires_one_external_proto
     organization = LdapOrganization(
         name="Org A",
         slug="org-a",
-        suffix_dn="dc=org-a,dc=ldap,dc=labfoundry,dc=internal",
-        bind_dn="uid=vcf-bind,ou=service-accounts,dc=org-a,dc=ldap,dc=labfoundry,dc=internal",
+        suffix_dn="dc=org-a,dc=ldap,dc=atlaso,dc=internal",
+        bind_dn="uid=vcf-bind,ou=service-accounts,dc=org-a,dc=ldap,dc=atlaso,dc=internal",
         bind_password_encrypted="encrypted",
     )
     organization.users = []
@@ -269,7 +269,7 @@ def test_plaintext_only_ldap_does_not_require_ca_but_requires_one_external_proto
 def test_ldap_validation_aggregates_users_with_missing_staged_passwords():
     settings = LdapSettings(
         enabled=False,
-        hostname="ldap.labfoundry.internal",
+        hostname="ldap.atlaso.internal",
         listen_interface="",
         listen_address="",
         ldaps_enabled=True,
@@ -286,8 +286,8 @@ def test_ldap_validation_aggregates_users_with_missing_staged_passwords():
         id=1,
         name="Synthetic Org",
         slug="synthetic",
-        suffix_dn="dc=synthetic,dc=ldap,dc=labfoundry,dc=internal",
-        bind_dn="uid=vcf-bind,ou=service-accounts,dc=synthetic,dc=ldap,dc=labfoundry,dc=internal",
+        suffix_dn="dc=synthetic,dc=ldap,dc=atlaso,dc=internal",
+        bind_dn="uid=vcf-bind,ou=service-accounts,dc=synthetic,dc=ldap,dc=atlaso,dc=internal",
         bind_password_encrypted="encrypted",
     )
     organization.users = [
@@ -312,7 +312,7 @@ def test_ldap_recovery_envelope_and_manifest_validation():
     with tarfile.open(fileobj=payload_buffer, mode="w:gz") as archive:
         manifest = json.dumps(
             {
-                "format": "labfoundry-ldap-slapcat-v1",
+                "format": "atlaso-ldap-slapcat-v1",
                 "databases": [{"index": 1, "suffix": "dc=org-a,dc=example", "filename": "database-1.ldif"}],
             }
         ).encode()
@@ -324,7 +324,7 @@ def test_ldap_recovery_envelope_and_manifest_validation():
         ldif_info.size = len(ldif)
         archive.addfile(ldif_info, io.BytesIO(ldif))
     payload = payload_buffer.getvalue()
-    assert validate_ldap_recovery_payload(payload)["format"] == "labfoundry-ldap-slapcat-v1"
+    assert validate_ldap_recovery_payload(payload)["format"] == "atlaso-ldap-slapcat-v1"
 
     encrypted = encrypt_recovery_payload(payload, "A sufficiently long recovery passphrase")
     assert payload not in encrypted
@@ -334,8 +334,8 @@ def test_ldap_recovery_envelope_and_manifest_validation():
 def test_ldap_api_settings_reject_management_and_accept_addressed_access_interface(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import PhysicalInterface
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
 
     with SessionLocal() as db:
         interface = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == "eth0")).scalar_one()
@@ -354,7 +354,7 @@ def test_ldap_api_settings_reject_management_and_accept_addressed_access_interfa
         headers={"Authorization": f"Bearer {token}"},
         json={
             "enabled": False,
-            "hostname": "ldap.labfoundry.internal",
+            "hostname": "ldap.atlaso.internal",
             "listen_interfaces": ["eth0"],
             "listen_addresses": [],
             "port": 636,
@@ -377,7 +377,7 @@ def test_ldap_api_settings_reject_management_and_accept_addressed_access_interfa
         headers={"Authorization": f"Bearer {token}"},
         json={
             "enabled": False,
-            "hostname": "ldap.labfoundry.internal",
+            "hostname": "ldap.atlaso.internal",
             "listen_interfaces": ["eth0"],
             "listen_addresses": [],
             "ldaps_enabled": True,
@@ -400,9 +400,9 @@ def test_ldap_api_settings_reject_management_and_accept_addressed_access_interfa
 def test_ldap_dns_reconciliation_does_not_change_ldap_snapshot_timestamp(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import LdapSettings, PhysicalInterface
-    from labfoundry.app.ui import ldap_context
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import LdapSettings, PhysicalInterface
+    from atlaso.app.ui import ldap_context
 
     with SessionLocal() as db:
         interface = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == "eth0")).scalar_one()

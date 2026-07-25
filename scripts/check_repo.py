@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Repository-wide syntax and content checks for LabFoundry.
+"""Repository-wide syntax and content checks for Atlaso.
 
 The checker is intentionally lightweight so it can run as a pre-commit hook on
 changed files and as a full-repo smoke test before pushing a branch.
@@ -35,7 +35,7 @@ SKIP_PARTS = {
 }
 
 SKIP_PREFIXES = (
-    Path("labfoundry/app/static/vendor"),
+    Path("atlaso/app/static/vendor"),
     Path("third_party"),
     Path("VCFDT"),
     Path("vcfDownloadTool"),
@@ -335,7 +335,7 @@ def check_xmlish_svg(path: Path, text: str) -> list[Finding]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run LabFoundry repository checks.")
+    parser = argparse.ArgumentParser(description="Run Atlaso repository checks.")
     parser.add_argument("paths", nargs="*", help="Optional files or directories to check.")
     args = parser.parse_args(argv)
 

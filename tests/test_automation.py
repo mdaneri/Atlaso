@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 
-from labfoundry.app.services.automation import next_cron_run, parse_cron_expression, parse_script_arguments
+from atlaso.app.services.automation import next_cron_run, parse_cron_expression, parse_script_arguments
 
 
 def login(client):
@@ -13,7 +13,7 @@ def login(client):
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
         "/login",
-        data={"username": "admin", "password": "labfoundry-admin", "csrf": csrf},
+        data={"username": "admin", "password": "atlaso-admin", "csrf": csrf},
         follow_redirects=False,
     )
     assert response.status_code == 303
@@ -58,9 +58,9 @@ def test_cron_uses_selected_timezone_and_standard_day_or_weekday_behavior():
 
 
 def test_managed_script_rejects_content_larger_than_one_mibibyte(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import AutomationScript
-    from labfoundry.app.services.automation import create_script_revision
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AutomationScript
+    from atlaso.app.services.automation import create_script_revision
 
     client.get("/login")
     with SessionLocal() as db:
@@ -79,9 +79,9 @@ def test_managed_script_rejects_content_larger_than_one_mibibyte(client):
 
 
 def test_managed_script_revision_is_immutable_enabled_and_run_by_worker(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import AutomationScript, AutomationScriptRevision, Job
-    from labfoundry.app.worker import run_worker_once
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AutomationScript, AutomationScriptRevision, Job
+    from atlaso.app.worker import run_worker_once
 
     login(client)
     page = client.get("/automation")
@@ -189,8 +189,8 @@ def test_managed_script_revision_is_immutable_enabled_and_run_by_worker(client):
 
 
 def test_manual_script_run_collects_parameters_and_exposes_revision_diff(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import AutomationScript, AutomationScriptRevision, Job
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AutomationScript, AutomationScriptRevision, Job
 
     login(client)
     page = client.get("/automation")
@@ -245,7 +245,7 @@ def test_manual_script_run_collects_parameters_and_exposes_revision_diff(client)
     assert row["revisions"][1]["content"].endswith("Write-Output $args.Count")
     assert all(revision["created_at"] for revision in row["revisions"])
 
-    app_js = Path("labfoundry/app/static/app.js").read_text()
+    app_js = Path("atlaso/app/static/app.js").read_text()
     assert 'label: "Run latest revision"' in app_js
     assert 'label: "Compare latest revisions"' in app_js
     assert 'class="automation-revision-button"' in app_js
@@ -274,9 +274,9 @@ def test_manual_script_run_collects_parameters_and_exposes_revision_diff(client)
 
 
 def test_due_schedule_queues_one_job_and_skips_overlap(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, JobStep, Schedule
-    from labfoundry.app.services.automation import enqueue_due_schedules
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStep, Schedule
+    from atlaso.app.services.automation import enqueue_due_schedules
 
     # Initialize and seed the fixture database.
     client.get("/login")
@@ -315,10 +315,10 @@ def test_due_schedule_queues_one_job_and_skips_overlap(client):
 
 
 def test_worker_rejects_queued_vcf_download_when_profile_was_disabled(client, monkeypatch):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, JobStatus, VcfDepotDownloadProfile
-    from labfoundry.app.worker import run_worker_once
-    import labfoundry.app.ui as ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, VcfDepotDownloadProfile
+    from atlaso.app.worker import run_worker_once
+    import atlaso.app.ui as ui
 
     client.get("/login")
     called = []
@@ -348,9 +348,9 @@ def test_worker_rejects_queued_vcf_download_when_profile_was_disabled(client, mo
 
 
 def test_schedule_edit_run_now_and_script_dependency_guards(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import AutomationScript, AutomationScriptRevision, Job, Schedule
-    from labfoundry.app.worker import run_worker_once
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AutomationScript, AutomationScriptRevision, Job, Schedule
+    from atlaso.app.worker import run_worker_once
 
     login(client)
     csrf = csrf_from_page(client.get("/automation").text)
@@ -417,15 +417,15 @@ def test_schedule_edit_run_now_and_script_dependency_guards(client):
 
 
 def test_settings_archive_restores_sources_and_automation_disabled(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import AutomationScript, AutomationScriptRevision, Schedule, UpdateSource
-    from labfoundry.app.services.automation import create_script_revision
-    from labfoundry.app.services.settings_archive import export_settings_archive, restore_settings_archive
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AutomationScript, AutomationScriptRevision, Schedule, UpdateSource
+    from atlaso.app.services.automation import create_script_revision
+    from atlaso.app.services.settings_archive import export_settings_archive, restore_settings_archive
 
     client.get("/login")
     with SessionLocal() as db:
-        source = db.execute(select(UpdateSource).where(UpdateSource.kind == "labfoundry")).scalar_one()
-        source.url = "https://updates.example.test/labfoundry"
+        source = db.execute(select(UpdateSource).where(UpdateSource.kind == "atlaso")).scalar_one()
+        source.url = "https://updates.example.test/atlaso"
         source.credential_encrypted = "must-not-leave-appliance"
         db.add(source)
         script = AutomationScript(name="archive-script", description="archive test", created_by="admin")
@@ -456,16 +456,16 @@ def test_settings_archive_restores_sources_and_automation_disabled(client):
         db.commit()
         archive = export_settings_archive(db, actor="admin")
 
-        source_payload = next(row for row in archive["data"]["update_sources"] if row["kind"] == "labfoundry")
+        source_payload = next(row for row in archive["data"]["update_sources"] if row["kind"] == "atlaso")
         assert "credential_encrypted" not in source_payload
         restore_settings_archive(db, archive)
 
-        restored_source = db.execute(select(UpdateSource).where(UpdateSource.kind == "labfoundry")).scalar_one()
+        restored_source = db.execute(select(UpdateSource).where(UpdateSource.kind == "atlaso")).scalar_one()
         restored_revision = db.execute(
             select(AutomationScriptRevision).join(AutomationScript).where(AutomationScript.name == "archive-script")
         ).scalar_one()
         restored_schedule = db.execute(select(Schedule).where(Schedule.name == "archive-schedule")).scalar_one()
-        assert restored_source.url == "https://updates.example.test/labfoundry"
+        assert restored_source.url == "https://updates.example.test/atlaso"
         assert restored_source.credential_encrypted == ""
         assert restored_revision.enabled is False
         assert restored_schedule.enabled is False

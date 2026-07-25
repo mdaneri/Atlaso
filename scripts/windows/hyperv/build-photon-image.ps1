@@ -7,13 +7,13 @@ param(
     [Parameter()]
     [string]$IsoChecksum = 'sha512:6a7a258399a258da742032987c043ab25503698d35edafaf1ae000f12127da1a161d8b84caa17fd8f23d129e81e1faa7ab087c20ab9229772a643f8f9475305f',
 
-    [string]$SshPassword = 'VMware01!',
+    [string]$SshPassword = 'PhotonBuild01!',
     [string]$BootstrapAdminPassword = 'VMware01!',
-    [string]$VmName = 'LabFoundry-Photon-Builder',
+    [string]$VmName = 'Atlaso-Photon-Builder',
     [string]$OutputDirectory = '',
     [string]$SshHost = '',
     [string]$SharedSourceDirectory = '',
-    [string]$SwitchName = 'LabFoundry-Mgmt',
+    [string]$SwitchName = 'Atlaso-Mgmt',
     [string]$BuilderStaticIp = '192.168.49.30/24',
     [string]$BuilderStaticNetmask = '255.255.255.0',
     [string]$BuilderStaticGateway = '192.168.49.254',
@@ -36,7 +36,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-Import-Module (Join-Path $PSScriptRoot '..\common\LabFoundry.PhotonImage.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot '..\common\Atlaso.PhotonImage.psm1') -Force
 
 if ([string]::IsNullOrWhiteSpace($PackerDirectory)) {
     $PackerDirectory = Join-Path $PSScriptRoot '..\..\..\image\hyperv'
@@ -46,7 +46,7 @@ $packerVariables = @{
     switch_name = $SwitchName
 }
 
-Invoke-LabFoundryPhotonImageBuild `
+Invoke-AtlasoPhotonImageBuild `
     -IsoUrl $IsoUrl `
     -IsoChecksum $IsoChecksum `
     -PackerDirectory $PackerDirectory `

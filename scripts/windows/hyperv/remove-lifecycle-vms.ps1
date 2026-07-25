@@ -1,15 +1,15 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [string]$LabName = 'LabFoundryLifecycle'
+    [string]$LabName = 'AtlasoLifecycle'
 )
 
 $ErrorActionPreference = 'Stop'
 
-if (-not $LabName.StartsWith('LabFoundryLifecycle')) {
-    throw "Refusing VM cleanup for prefix '$LabName'. Cleanup is limited to LabFoundryLifecycle* VM names."
+if (-not $LabName.StartsWith('AtlasoLifecycle')) {
+    throw "Refusing VM cleanup for prefix '$LabName'. Cleanup is limited to AtlasoLifecycle* VM names."
 }
 
-$reserved = @('LabFoundry', 'LabFoundry-Photon-Builder')
+$reserved = @('Atlaso', 'Atlaso-Photon-Builder')
 $vms = Get-VM -ErrorAction SilentlyContinue |
     Where-Object { $_.Name.StartsWith($LabName) -and $reserved -notcontains $_.Name } |
     Sort-Object -Property Name

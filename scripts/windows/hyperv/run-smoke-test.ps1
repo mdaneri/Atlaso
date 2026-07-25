@@ -1,14 +1,14 @@
 [CmdletBinding()]
 param(
-    [string]$Name = 'LabFoundry',
-    [string]$ManagementUrl = 'https://labfoundry.internal/'
+    [string]$Name = 'Atlaso',
+    [string]$ManagementUrl = 'https://atlaso.internal/'
 )
 
 $ErrorActionPreference = 'Stop'
 
 $vm = Get-VM -Name $Name -ErrorAction Stop
 if ($vm.State -ne 'Running') {
-    throw "LabFoundry VM is not running. Current state: $($vm.State)"
+    throw "Atlaso VM is not running. Current state: $($vm.State)"
 }
 
 Write-Host "Smoke test scaffold for $Name"

@@ -70,7 +70,7 @@ def main() -> int:
                 tag,
                 args.commit,
                 "-m",
-                f"LabFoundry {tag}",
+                f"Atlaso {tag}",
             ]
         )
         run(["git", "push", "origin", f"refs/tags/{tag}"])
@@ -86,7 +86,7 @@ def main() -> int:
             raise SystemExit(
                 f"{tag} already has different assets: expected {sorted(expected_names)}, found {sorted(actual_names)}"
             )
-        with tempfile.TemporaryDirectory(prefix="labfoundry-release-verify-") as temp_value:
+        with tempfile.TemporaryDirectory(prefix="atlaso-release-verify-") as temp_value:
             temp = Path(temp_value)
             run(["gh", "release", "download", tag, "--dir", str(temp)])
             mismatches = [
@@ -108,7 +108,7 @@ def main() -> int:
             *[str(path) for path in assets],
             "--verify-tag",
             "--title",
-            f"LabFoundry {tag}",
+            f"Atlaso {tag}",
             "--notes",
             f"Signed appliance release built from `{args.commit}`.",
         ]

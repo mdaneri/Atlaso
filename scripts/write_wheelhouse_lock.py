@@ -62,7 +62,7 @@ def main() -> int:
 
     output = args.wheelhouse / args.output_name
     lines = [
-        "# Generated from verified wheels; consumed offline by labfoundry-helper.",
+        "# Generated from verified wheels; consumed offline by atlaso-helper.",
         *[
             f"{name}=={version} --hash=sha256:{sha256(wheel)}"
             for name, (version, wheel) in sorted(wheels.items())

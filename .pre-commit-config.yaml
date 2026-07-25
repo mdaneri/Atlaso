@@ -1,10 +1,10 @@
 repos:
   - repo: local
     hooks:
-      - id: labfoundry-repo-check
-        name: LabFoundry repository checks
+      - id: atlaso-repo-check
+        name: Atlaso repository checks
         entry: python scripts/check_repo.py
         language: system
         pass_filenames: true
         files: '\.(css|html?|js|json|md|ps1|py|svg|toml|ya?ml)$'
-        exclude: '^(labfoundry/app/static/vendor/|third_party/|VCFDT/|vcfDownloadTool/|dist/|build/|test-results/)'
+        exclude: '^(atlaso/app/static/vendor/|third_party/|VCFDT/|vcfDownloadTool/|dist/|build/|test-results/)'

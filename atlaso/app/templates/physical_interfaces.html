@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block page_title %}Physical Interfaces{% endblock %}
+{% block content %}
+<section class="split-workspace">
+  <div class="panel wide-panel">
+    <div class="panel-head">
+      <div>
+        <h2>Physical Interfaces</h2>
+        <p class="muted">Review observed Photon NICs, then edit desired access, trunk, IPv4/IPv6 addressing and management gateways, and admin state for global appliance apply.</p>
+      </div>
+      <div class="button-row">
+        <form action="/physical-interfaces/refresh" method="post">
+          <input type="hidden" name="csrf" value="{{ csrf_token }}">
+          <button class="button secondary" type="submit">Refresh host inventory</button>
+        </form>
+        <span class="status-pill muted">{{ physical_interfaces|length }} interfaces</span>
+      </div>
+    </div>
+    <div class="inline-help-row">
+      <span class="field-label"><span>Host inventory</span><button class="help-icon" type="button" data-help="Reads current Linux network devices through safe host inventory commands, matching NICs by MAC so Linux eth renumbering does not move desired state. Missing NICs are marked for review; refresh does not apply network changes.">i</button></span>
+      <span class="field-label"><span>Desired state</span><button class="help-icon" type="button" data-help="Editable access/trunk, IPv4 addressing, IPv6 enablement and CIDR, MTU, and admin state values are stored in Atlaso and enforced only through global appliance apply. Enabled IPv6 with a blank CIDR uses RA/SLAAC.">i</button></span>
+      <span class="field-label"><span>Management gateways</span><button class="help-icon" type="button" data-help="Sets optional IPv4 and IPv6 default gateways for static management addresses. IPv4 must be on-link; IPv6 may be link-local or on-link. Atlaso installs each configured gateway in the main table and management table 100.">i</button></span>
+      <span class="field-label"><span>IPv6</span><button class="help-icon" type="button" data-help="The IPv6 switch controls the selected physical interface only. Disabled blocks router advertisements and link-local IPv6; enabled with a blank CIDR uses RA/SLAAC; enabled with a CIDR and optional gateway enforces static IPv6 during global appliance apply.">i</button></span>
+    </div>
+    {% if form_error %}
+      <div class="alert error">{{ form_error }}</div>
+    {% endif %}
+    <div id="physical-interface-error" class="alert error hidden"></div>
+    <div
+      id="physical-interfaces-table"
+      class="tabulator-shell physical-interfaces-table"
+      data-interfaces='{{ physical_interface_rows | tojson }}'
+      data-role-options='{{ interface_roles | tojson }}'
+      data-mode-options='{{ interface_modes | tojson }}'
+      data-ipv4-method-options='{{ ipv4_methods | tojson }}'
+      data-csrf="{{ csrf_token }}"
+      data-fallback-id="physical-interfaces-fallback"
+    ></div>
+    <table id="physical-interfaces-fallback" class="data-table dns-fallback-table">
+      <thead>
+        <tr><th>Name</th><th>MAC</th><th>Driver</th><th>Speed</th><th>Observed IPv4</th><th>Observed IPv6</th><th>IPv4 Method</th><th>IPv4 CIDR</th><th>IPv4 Gateway</th><th>IPv6</th><th>IPv6 CIDR</th><th>IPv6 Gateway</th><th>Role</th><th>Link Type</th><th>MTU</th><th>Admin Up</th><th>Oper</th><th>Source</th></tr>
+      </thead>
+      <tbody>
+        {% for interface in physical_interface_rows %}
+          <tr>
+            <td>{{ interface["name"] }}</td>
+            <td>{{ interface["mac_address"] }}</td>
+            <td>{{ interface["driver"] or "" }}</td>
+            <td>{{ interface["speed"] or "" }}</td>
+            <td>{{ interface["host_ip_cidr"] or "" }}</td>
+            <td>{{ interface["host_ipv6_cidr"] or "" }}</td>
+            <td>{{ interface["ipv4_method"] }}</td>
+            <td>{{ interface["ip_cidr"] or "" }}</td>
+            <td>{{ interface["gateway"] or "" }}</td>
+            <td>{{ "enabled" if interface["ipv6_enabled"] else "disabled" }}</td>
+            <td>{{ interface["ipv6_cidr"] or "" }}</td>
+            <td>{{ interface["ipv6_gateway"] or "" }}</td>
+            <td>{{ interface["role"] }}</td>
+            <td>{{ interface["mode"] }}</td>
+            <td>{{ interface["mtu"] }}</td>
+            <td>
+              {% if interface["admin_up"] %}
+                <span class="network-state-icon up" title="up"><span class="state-symbol" aria-hidden="true">&#8593;</span><span class="state-label">up</span></span>
+              {% else %}
+                <span class="network-state-icon down" title="down"><span class="state-symbol" aria-hidden="true">&#8595;</span><span class="state-label">down</span></span>
+              {% endif %}
+            </td>
+            <td>
+              {% if interface["oper_state"] == "up" %}
+                <span class="network-state-icon up" title="up"><span class="state-symbol" aria-hidden="true">&#8593;</span><span class="state-label">up</span></span>
+              {% elif interface["oper_state"] == "down" %}
+                <span class="network-state-icon down" title="down"><span class="state-symbol" aria-hidden="true">&#8595;</span><span class="state-label">down</span></span>
+              {% elif interface["oper_state"] == "missing" %}
+                <span class="network-state-icon missing" title="missing from host inventory"><span class="state-symbol" aria-hidden="true">!</span><span class="state-label">missing</span></span>
+              {% else %}
+                <span class="network-state-icon unknown" title="{{ interface['oper_state'] }}"><span class="state-symbol" aria-hidden="true">?</span><span class="state-label">{{ interface["oper_state"] }}</span></span>
+              {% endif %}
+            </td>
+            <td>{{ interface["inventory_source"] }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <aside class="side-stack">
+    {% include "partials/appliance_apply_status.html" %}
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Validation</h2>
+        <span class="status-pill {{ 'good' if not network_validation_errors else 'warn' }}">{{ "valid" if not network_validation_errors else "needs attention" }}</span>
+      </div>
+      {% if network_validation_errors %}
+        <div class="alert error">
+          {% for error in network_validation_errors %}
+            <div>{{ error }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+      {% if network_inventory_cleanup_warning %}
+        <div class="alert warning">{{ network_inventory_cleanup_warning }}</div>
+      {% endif %}
+      {% if not network_validation_errors %}
+        {% if not network_inventory_cleanup_warning %}
+          <p class="muted">The desired physical interface and VLAN state passes Atlaso validation.</p>
+        {% else %}
+          <p class="muted">The desired physical interface and VLAN state passes validation after inventory cleanup.</p>
+        {% endif %}
+      {% else %}
+      {% endif %}
+      {% set preview_label = "networkd config" %}
+      {% set preview_path = network_config_path %}
+      {% set preview_path_attr = "" %}
+      {% set preview_title = "Physical Interfaces rendered config" %}
+      {% set preview_button_label = "config" %}
+      {% set preview_text = network_config_preview %}
+      {% set preview_data_attr = "" %}
+      {% include "partials/config_preview_action.html" %}
+    </div>
+  </aside>
+</section>
+{% endblock %}

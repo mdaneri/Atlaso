@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Atlaso - Sign in</title>
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Atlaso">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="apple-touch-icon" href="/static/brand/atlaso-app-icon-light-180.png">
+    <link rel="icon" href="/favicon.ico" type="image/x-icon">
+    <link rel="icon" href="/static/brand/atlaso-icon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/static/app.css?v=atlaso-brand-20260725-1">
+  </head>
+  <body>
+    <main class="login-shell">
+      <section class="login-panel">
+        <div class="brand login-brand">
+          {% include "partials/brand_mark.html" %}
+          <span>
+            <strong>Atlaso</strong>
+            <small>Infrastructure appliance</small>
+          </span>
+        </div>
+        <img class="login-graphic" src="/static/brand/atlaso-logo-horizontal-light.svg" alt="">
+        <p class="brand-headline">Everything your virtualization lab needs.</p>
+        <p class="brand-capabilities">Infrastructure • Storage • Identity • Networking • Lifecycle</p>
+        <h1>Sign in to the appliance</h1>
+        <p class="muted">Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation.</p>
+        {% if error %}
+          <div class="alert error">{{ error }}</div>
+        {% endif %}
+        <form class="form-stack" action="/login" method="post">
+          <input type="hidden" name="csrf" value="{{ csrf_token }}">
+          <input type="hidden" name="next" value="{{ return_to or '/' }}">
+          <label>
+            <span>Username</span>
+            <input name="username" autocomplete="username" required autofocus>
+          </label>
+          <label>
+            <span>Password</span>
+            <input name="password" type="password" autocomplete="current-password" required>
+          </label>
+          <button class="button primary" type="submit">Sign in</button>
+        </form>
+        <p class="hint">Development default: admin / atlaso-admin. Appliance images use the bootstrap admin password set during image build.</p>
+      </section>
+    </main>
+    <script src="/static/pwa.js?v=atlaso-brand-20260725-1"></script>
+  </body>
+</html>

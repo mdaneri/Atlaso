@@ -1,5 +1,5 @@
-desktop-image: "labfoundry.png"
-desktop-color: "#0f172a"
+desktop-image: "atlaso.png"
+desktop-color: "#071A3A"
 title-text: " "
 
 + boot_menu {

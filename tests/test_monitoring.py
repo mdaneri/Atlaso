@@ -1,11 +1,11 @@
 from datetime import timedelta
 
-from labfoundry.app.models import utcnow
+from atlaso.app.models import utcnow
 from sqlalchemy import select
 
-from labfoundry.app.config import get_settings
-from labfoundry.app.models import MonitorSample
-from labfoundry.app.services.monitoring import (
+from atlaso.app.config import get_settings
+from atlaso.app.models import MonitorSample
+from atlaso.app.services.monitoring import (
     CpuCoreCounters,
     CpuCounters,
     DiskUsage,
@@ -37,7 +37,7 @@ class FakeMonitorCollector:
             "sys_vendor": "VMware, Inc.",
             "product_name": "VMware Virtual Platform",
             "vmtools_version": "VMware Tools 13.0",
-            "hostname": "labfoundry-test",
+            "hostname": "atlaso-test",
             "platform": "Linux-test",
         }
 
@@ -67,7 +67,7 @@ def test_monitor_parsers_handle_linux_proc_shapes():
 
 
 def test_monitor_samples_persist_rates_and_payload(client, monkeypatch):
-    from labfoundry.app.database import SessionLocal
+    from atlaso.app.database import SessionLocal
 
     now = utcnow()
     snapshots = [
@@ -143,7 +143,7 @@ def test_monitor_samples_persist_rates_and_payload(client, monkeypatch):
 
 
 def test_monitor_payload_disabled_does_not_collect_or_write(client):
-    from labfoundry.app.database import SessionLocal
+    from atlaso.app.database import SessionLocal
 
     with SessionLocal() as db:
         payload = monitor_payload(db, hours=6, collector=FakeMonitorCollector([]))

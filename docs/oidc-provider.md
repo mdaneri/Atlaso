@@ -1,6 +1,6 @@
 # Constrained OpenID Connect provider
 
-LabFoundry is delivering an in-process OpenID Connect provider for appliance integrations and VCF lab environments in five reviewable phases. Phase 2 provides the constrained Authorization Code protocol surface. Provider enablement requires the applied management HTTPS setting, canonical issuer, active RS256 key, and protocol readiness.
+Atlaso is delivering an in-process OpenID Connect provider for appliance integrations and VCF lab environments in five reviewable phases. Phase 2 provides the constrained Authorization Code protocol surface. Provider enablement requires the applied management HTTPS setting, canonical issuer, active RS256 key, and protocol readiness.
 
 ## Architecture and trust boundaries
 
@@ -9,11 +9,11 @@ The canonical issuer is exactly `https://<applied-appliance-fqdn>/identity`. It 
 One credential-verification service resolves only two persisted identity types:
 
 - enabled local `User` records, verified through the existing stdin-only Photon password helper with bootstrap compatibility; and
-- enabled users in enabled LabFoundry-managed OpenLDAP organizations.
+- enabled users in enabled Atlaso-managed OpenLDAP organizations.
 
-Managed LDAP means the integrated organizations under `/ldap`; external LDAP sources are outside the design. Before a bind, the control plane resolves the organization and user from the database and rejects disabled or missing records. It then calls only `labfoundry-helper ldap authenticate <generated-user-dn>`. The helper reads the password from stdin, writes it to a mode-`0600` temporary file, invokes `ldapwhoami -x -H ldapi:/// -D <dn> -y <file>`, suppresses command output, and removes the file. Passwords never enter argv, application storage, task or audit payloads, or logs.
+Managed LDAP means the integrated organizations under `/ldap`; external LDAP sources are outside the design. Before a bind, the control plane resolves the organization and user from the database and rejects disabled or missing records. It then calls only `atlaso-helper ldap authenticate <generated-user-dn>`. The helper reads the password from stdin, writes it to a mode-`0600` temporary file, invokes `ldapwhoami -x -H ldapi:/// -D <dn> -y <file>`, suppresses command output, and removes the file. Passwords never enter argv, application storage, task or audit payloads, or logs.
 
-Managed LDAP credentials are exposed to OIDC only. They do not create an operator UI session. Existing LabFoundry operator authentication remains local-only.
+Managed LDAP credentials are exposed to OIDC only. They do not create an operator UI session. Existing Atlaso operator authentication remains local-only.
 
 Each successfully resolved source record receives one opaque UUID in `oidc_subjects`. The UUID links to the database identity record rather than mutable username, email, display name, DN, hostname, or organization label. Those metadata changes therefore preserve `sub`. Deleting the source cascades to the subject; recreating the identity creates a new UUID.
 
@@ -29,7 +29,7 @@ Redirect and post-logout records are stored individually. Matching in the protoc
 
 ## Signing keys and public metadata
 
-Signing keys are 3072-bit RSA keys fixed to RS256. LabFoundry encrypts private PKCS#8 PEM with `LABFOUNDRY_SECRETS_KEY` and stores only a public JWK alongside it. A uniqueness constraint permits one active key. Rotation retires the prior key and keeps its public JWK publishable for the greater of the configured overlap or the longest ID/access-token lifetime plus clock skew. The default overlap is one hour.
+Signing keys are 3072-bit RSA keys fixed to RS256. Atlaso encrypts private PKCS#8 PEM with `ATLASO_SECRETS_KEY` and stores only a public JWK alongside it. A uniqueness constraint permits one active key. Rotation retires the prior key and keeps its public JWK publishable for the greater of the configured overlap or the longest ID/access-token lifetime plus clock skew. The default overlap is one hour.
 
 Discovery and JWKS are published only after the provider passes its enablement validation. The issuer is never derived from request headers.
 
@@ -49,7 +49,7 @@ ID and access tokens have five-minute lifetimes, client ID audience, and fixed `
 
 ## Backup, restore, reset, and key custody
 
-Settings backup includes provider settings, stable subject mappings, confidential-client metadata and Argon2 hashes, exact redirects, and encrypted signing private keys. It never includes plaintext client secrets or identity passwords. A restored signing key is usable only with the same `LABFOUNDRY_SECRETS_KEY`; preserve that key through the appliance recovery process.
+Settings backup includes provider settings, stable subject mappings, confidential-client metadata and Argon2 hashes, exact redirects, and encrypted signing private keys. It never includes plaintext client secrets or identity passwords. A restored signing key is usable only with the same `ATLASO_SECRETS_KEY`; preserve that key through the appliance recovery process.
 
 Factory reset deletes provider settings, clients, redirects, subjects, and signing keys before reseeding disabled defaults. Normal database upgrades are additive: older binaries ignore the new tables. Do not destructively drop OIDC tables during ordinary downgrade. If complete rollback requires their removal, restore the pre-upgrade SQLite snapshot.
 
@@ -61,4 +61,4 @@ Factory reset deletes provider settings, clients, redirects, subjects, and signi
 4. Administration and lifecycle completion, issuer/applied-certificate validation, centralized redaction, and integration export.
 5. VCF 9.1 interoperability and all acceptance scenarios.
 
-Until the final phase succeeds, LabFoundry does not claim VCF OIDC compatibility. The constrained design excludes implicit, password, device, client-credentials, token-exchange, and dynamic-registration flows; refresh tokens; consent; external LDAP sources; social/federated identity; SAML; SCIM; wildcard redirects; front-channel logout; and back-channel logout.
+Until the final phase succeeds, Atlaso does not claim VCF OIDC compatibility. The constrained design excludes implicit, password, device, client-credentials, token-exchange, and dynamic-registration flows; refresh tokens; consent; external LDAP sources; social/federated identity; SAML; SCIM; wildcard redirects; front-channel logout; and back-channel logout.

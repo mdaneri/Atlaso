@@ -1,4 +1,4 @@
-"""Check LabFoundry's runtime shape on Photon OS."""
+"""Check Atlaso's runtime shape on Photon OS."""
 
 from __future__ import annotations
 
@@ -31,6 +31,8 @@ DEPENDENCY_IMPORTS = [
 ]
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 
 def main() -> int:
@@ -39,13 +41,13 @@ def main() -> int:
         print("Photon compatibility requires Python 3.14", file=sys.stderr)
         return 1
 
-    with tempfile.TemporaryDirectory(prefix="labfoundry-photon-") as temp_dir:
-        db_path = Path(temp_dir) / "labfoundry.db"
-        os.environ.setdefault("LABFOUNDRY_ENVIRONMENT", "photon-compat")
-        os.environ.setdefault("LABFOUNDRY_DATABASE_URL", f"sqlite:///{db_path}")
-        os.environ.setdefault("LABFOUNDRY_SECRET_KEY", "photon-compat-secret-key-change-me")
-        os.environ.setdefault("LABFOUNDRY_BOOTSTRAP_ADMIN_PASSWORD", "photon-compat-admin")
-        os.environ.setdefault("LABFOUNDRY_DRY_RUN_SYSTEM_ADAPTERS", "true")
+    with tempfile.TemporaryDirectory(prefix="atlaso-photon-") as temp_dir:
+        db_path = Path(temp_dir) / "atlaso.db"
+        os.environ.setdefault("ATLASO_ENVIRONMENT", "photon-compat")
+        os.environ.setdefault("ATLASO_DATABASE_URL", f"sqlite:///{db_path}")
+        os.environ.setdefault("ATLASO_SECRET_KEY", "photon-compat-secret-key-change-me")
+        os.environ.setdefault("ATLASO_BOOTSTRAP_ADMIN_PASSWORD", "photon-compat-admin")
+        os.environ.setdefault("ATLASO_DRY_RUN_SYSTEM_ADAPTERS", "true")
 
         for module_name in DEPENDENCY_IMPORTS:
             importlib.import_module(module_name)
@@ -56,12 +58,12 @@ def main() -> int:
             return 1
         print(f"vcf-sdk={vcf_sdk_version}")
 
-        from labfoundry.app.config import get_settings
+        from atlaso.app.config import get_settings
 
         get_settings.cache_clear()
 
-        from labfoundry.app.database import SessionLocal, engine, init_db
-        from labfoundry.app.seed import seed_initial_data
+        from atlaso.app.database import SessionLocal, engine, init_db
+        from atlaso.app.seed import seed_initial_data
 
         init_db()
         with SessionLocal() as db:
@@ -69,11 +71,11 @@ def main() -> int:
         engine.dispose()
         print(f"sqlite init ok: {db_path}")
 
-    labfoundry_package = PROJECT_ROOT / "labfoundry"
-    if not compileall.compile_dir(str(labfoundry_package), quiet=1):
-        print("compileall failed for labfoundry", file=sys.stderr)
+    atlaso_package = PROJECT_ROOT / "atlaso"
+    if not compileall.compile_dir(str(atlaso_package), quiet=1):
+        print("compileall failed for atlaso", file=sys.stderr)
         return 1
-    print(f"compileall ok: {labfoundry_package}")
+    print(f"compileall ok: {atlaso_package}")
     return 0
 
 

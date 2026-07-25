@@ -5,7 +5,7 @@ The shared lifecycle host-state checks verify that first-boot appliances retain
 after the wheel-only test deployment. The PowerCLI import and command check run
 directly as the unprivileged appliance SSH user rather than through sudo.
 
-LabFoundry can run a VMware Workstation lifecycle lab alongside the Hyper-V
+Atlaso can run a VMware Workstation lifecycle lab alongside the Hyper-V
 lab. The Workstation path uses VMX/VMDK artifacts and `vmrun.exe`, then
 delegates appliance behavior checks to the shared Python lifecycle runner.
 
@@ -82,7 +82,7 @@ powershell.exe -ExecutionPolicy Bypass `
 
 The wrapper selects the newest appliance VMX under
 `image/vmware-workstation/output`, prepares the tiny Alpine client VMDK when
-needed, creates a unique `LabFoundryWorkstationLifecycle-*` lab, runs the
+needed, creates a unique `AtlasoWorkstationLifecycle-*` lab, runs the
 initial lifecycle scenario, and by default runs the restored backup/restore
 pass. Pass `-SkipBackupRestoreTest` only when the older single-pass behavior is
 intended.
@@ -103,7 +103,7 @@ powershell.exe -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/invoke-lifecycle-test.ps1 `
   -PrepareNetworksOnly
 
-# Stop and remove existing LabFoundryWorkstationLifecycle* VMs.
+# Stop and remove existing AtlasoWorkstationLifecycle* VMs.
 powershell.exe -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/invoke-lifecycle-test.ps1 `
   -CleanupVmsOnly
@@ -115,14 +115,14 @@ For a normal Workstation appliance VM, separate from the lifecycle lab, use:
 
 ```powershell
 powershell.exe -ExecutionPolicy Bypass `
-  -File scripts/windows/vmware/create-labfoundry-test-vm.ps1 `
+  -File scripts/windows/vmware/create-atlaso-test-vm.ps1 `
   -Redeploy `
   -ResetDataDisks `
   -WaitForIp
 ```
 
 That is the Workstation counterpart to
-`scripts/windows/hyperv/create-labfoundry-test-vm.ps1`.
+`scripts/windows/hyperv/create-atlaso-test-vm.ps1`.
 It defaults to the management vmnet only; pass `-IncludeLabNetworkAdapters`
 after creating the SiteA, WAN/SiteB, and trunk-like vmnets.
 

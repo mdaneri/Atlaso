@@ -20,36 +20,36 @@ def sha256(path: str) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def test_photon_image_installs_fixed_size_labfoundry_grub_branding():
-    background = Path("image/common/boot/grub/labfoundry.png").read_bytes()
+def test_photon_image_installs_fixed_size_atlaso_grub_branding():
+    background = Path("image/common/boot/grub/atlaso.png").read_bytes()
     photon_logo = Path("image/common/boot/grub/photon-os-logo.png").read_bytes()
     theme = Path("image/common/boot/grub/theme.txt").read_text(encoding="utf-8")
-    installer = Path("scripts/appliance/labfoundry-install-boot-branding").read_text(encoding="utf-8")
-    provision = Path("image/common/scripts/provision-labfoundry.sh").read_text(encoding="utf-8")
+    installer = Path("scripts/appliance/atlaso-install-boot-branding").read_text(encoding="utf-8")
+    provision = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
     deploy = Path("scripts/windows/vmware/deploy-wheel.ps1").read_text(encoding="utf-8")
 
     assert background[:8] == b"\x89PNG\r\n\x1a\n"
     assert struct.unpack(">II", background[16:24]) == (640, 480)
     assert photon_logo[:8] == b"\x89PNG\r\n\x1a\n"
-    assert 'desktop-image: "labfoundry.png"' in theme
+    assert 'desktop-image: "atlaso.png"' in theme
     assert "Powered by Photon OS" not in theme  # Copy is rendered into the fixed background.
-    assert "set theme=/grub2/themes/labfoundry/theme.txt" in installer
+    assert "set theme=/grub2/themes/atlaso/theme.txt" in installer
     assert 'menuentry " "' in installer
-    assert "labfoundry-backup" in installer
-    assert '"$LABFOUNDRY_HOME/bin/labfoundry-install-boot-branding"' in provision
+    assert "atlaso-backup" in installer
+    assert '"$ATLASO_HOME/bin/atlaso-install-boot-branding"' in provision
     assert "SkipBootBrandingSync" in deploy
-    assert "/opt/labfoundry/bin/labfoundry-install-boot-branding" in deploy
+    assert "/opt/atlaso/bin/atlaso-install-boot-branding" in deploy
     assert '"${SshUser}@${IpAddress}:$remoteBootThemePath"' in deploy
     assert '"${SshUser}@${IpAddress}:$remoteBootBackgroundPath"' in deploy
 
 
 def test_photon_provisioning_management_network_matches_eth0_only():
-    script = Path("image/common/scripts/provision-labfoundry.sh").read_text(encoding="utf-8")
-    main = Path("labfoundry/app/main.py").read_text(encoding="utf-8")
-    seed = Path("labfoundry/app/seed.py").read_text(encoding="utf-8")
+    script = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
+    main = Path("atlaso/app/main.py").read_text(encoding="utf-8")
+    seed = Path("atlaso/app/seed.py").read_text(encoding="utf-8")
 
-    assert 'LABFOUNDRY_MGMT_INTERFACE="${LABFOUNDRY_MGMT_INTERFACE:-eth0}"' in script
-    assert 'printf \'Name=%s\\n\\n\' "$LABFOUNDRY_MGMT_INTERFACE"' in script
+    assert 'ATLASO_MGMT_INTERFACE="${ATLASO_MGMT_INTERFACE:-eth0}"' in script
+    assert 'printf \'Name=%s\\n\\n\' "$ATLASO_MGMT_INTERFACE"' in script
     assert "Name=eth* en*" not in script
     assert "rm -f /etc/systemd/network/50-static-en.network /etc/systemd/network/99-dhcp-en.network" in script
     assert "seed_initial_data(db, include_examples=not appliance_mode, appliance_mode=appliance_mode)" in main
@@ -57,14 +57,14 @@ def test_photon_provisioning_management_network_matches_eth0_only():
     assert main.index("refresh_startup_host_inventory(db, environment=settings.environment)") < main.index("ensure_ca_state(db)")
     assert "if include_examples:" in seed
     assert "management_https_enabled=appliance_mode" in seed
-    assert 'install -d -o labfoundry -g labfoundry -m 0700 "$LABFOUNDRY_STATE/vcfDownloadTool/active-tool/secrets"' in script
+    assert 'install -d -o atlaso -g atlaso -m 0700 "$ATLASO_STATE/vcfDownloadTool/active-tool/secrets"' in script
 
 
 def test_photon_provisioning_installs_default_nginx_management_proxy():
-    script = Path("image/common/scripts/provision-labfoundry.sh").read_text(encoding="utf-8")
-    bootstrap = Path("scripts/appliance/labfoundry-bootstrap-https").read_text(encoding="utf-8")
-    systemd_unit = Path("image/hyperv/systemd/labfoundry.service").read_text(encoding="utf-8")
-    sudoers = Path("image/hyperv/sudoers.d/labfoundry-helper").read_text(encoding="utf-8")
+    script = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
+    bootstrap = Path("scripts/appliance/atlaso-bootstrap-https").read_text(encoding="utf-8")
+    systemd_unit = Path("image/hyperv/systemd/atlaso.service").read_text(encoding="utf-8")
+    sudoers = Path("image/hyperv/sudoers.d/atlaso-helper").read_text(encoding="utf-8")
     docs = Path("image/hyperv/README.md").read_text(encoding="utf-8")
     root_docs = Path("README.md").read_text(encoding="utf-8")
 
@@ -75,64 +75,64 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert "systemctl disable --now ntpd.service" in script
     assert "systemctl disable --now systemd-timesyncd.service" in script
     assert "systemctl disable --now chronyd.service" in script
-    assert '"$LABFOUNDRY_STATE/apply/ntpd"' in script
+    assert '"$ATLASO_STATE/apply/ntpd"' in script
     assert "openldap-servers" in script
     assert "nfs-utils" in script and "rpcbind" in script
-    assert "99-labfoundry-disk-identity.rules" in script
+    assert "99-atlaso-disk-identity.rules" in script
     assert 'IMPORT{builtin}="path_id"' in script
-    assert 'SYMLINK+="disk/by-id/labfoundry-path-$env{ID_PATH_TAG}"' in script
+    assert 'SYMLINK+="disk/by-id/atlaso-path-$env{ID_PATH_TAG}"' in script
     assert "powershell" in script
     assert "VCF.PowerCLI" in script
     assert "9.1.0.25380678" in script
     assert "Connect-VIServer" in script
     assert "Set-PowerCLIConfiguration -ParticipateInCeip $false -Scope AllUsers -Confirm:$false" in script
     assert "Get-PowerCLIConfiguration -Scope AllUsers" in script
-    assert "LABFOUNDRY_POWERCLI_MODULE_SOURCE" in script
+    assert "ATLASO_POWERCLI_MODULE_SOURCE" in script
     assert "chmod 0755 /usr/local/share/powershell /usr/local/share/powershell/Modules" in script
     assert "chmod -R a+rX,go-w /usr/local/share/powershell/Modules" in script
     assert "ipxe" in script
     assert "syslinux" in script
-    assert "IPXE_BOOTLOADER_SOURCE_DIR=\"$LABFOUNDRY_HOME/third_party/ipxe/bootloaders\"" in script
-    assert "IPXE_BOOTLOADER_TARGET_DIR=\"$LABFOUNDRY_STATE/pxe/bootloaders\"" in script
+    assert "IPXE_BOOTLOADER_SOURCE_DIR=\"$ATLASO_HOME/third_party/ipxe/bootloaders\"" in script
+    assert "IPXE_BOOTLOADER_TARGET_DIR=\"$ATLASO_STATE/pxe/bootloaders\"" in script
     assert "staging bundled iPXE bootloaders" in script
     assert '"$IPXE_BOOTLOADER_TARGET_DIR/undionly.kpxe"' in script
     assert '"$IPXE_BOOTLOADER_TARGET_DIR/snponly.efi"' in script
-    assert 'BOOTSTRAP_SHELL="${LABFOUNDRY_BOOTSTRAP_ADMIN_SHELL:-/usr/bin/pwsh}"' in script
+    assert 'BOOTSTRAP_SHELL="${ATLASO_BOOTSTRAP_ADMIN_SHELL:-/usr/bin/pwsh}"' in script
     assert '--shell "$BOOTSTRAP_SHELL"' in script
     assert "touch /etc/shells" in script
     assert 'grep -qxF "$BOOTSTRAP_SHELL" /etc/shells' in script
-    assert "labfoundry-bootstrap-admin" in script
+    assert "atlaso-bootstrap-admin" in script
     assert "$BOOTSTRAP_USERNAME ALL=(ALL) ALL" in script
-    assert "visudo -cf /etc/sudoers.d/labfoundry-bootstrap-admin" in script
+    assert "visudo -cf /etc/sudoers.d/atlaso-bootstrap-admin" in script
     assert (
         'sudo -H -u "$BOOTSTRAP_USERNAME" env -u PSModulePath '
-        'LABFOUNDRY_POWERCLI_VERSION="$LABFOUNDRY_POWERCLI_VERSION"'
+        'ATLASO_POWERCLI_VERSION="$ATLASO_POWERCLI_VERSION"'
     ) in script
     assert "is not available to the bootstrap administrator" in script
-    assert 'chmod 0711 "$LABFOUNDRY_STATE"' in script
-    assert 'chown "$BOOTSTRAP_USERNAME:$(id -gn "$BOOTSTRAP_USERNAME")" "$LABFOUNDRY_STATE/users/$BOOTSTRAP_USERNAME"' in script
-    assert 'chmod 0750 "$LABFOUNDRY_STATE/users/$BOOTSTRAP_USERNAME"' in script
+    assert 'chmod 0711 "$ATLASO_STATE"' in script
+    assert 'chown "$BOOTSTRAP_USERNAME:$(id -gn "$BOOTSTRAP_USERNAME")" "$ATLASO_STATE/users/$BOOTSTRAP_USERNAME"' in script
+    assert 'chmod 0750 "$ATLASO_STATE/users/$BOOTSTRAP_USERNAME"' in script
     assert "UMask=0027" in systemd_unit
     assert "--host 127.0.0.1 --port 8000" in systemd_unit
     assert "--host 0.0.0.0" not in systemd_unit
-    assert "configuring first-boot LabFoundry management nginx bootstrap" in script
+    assert "configuring first-boot Atlaso management nginx bootstrap" in script
     assert "install -d -o root -g root -m 0755 /etc/nginx/conf.d" in script
-    assert "/etc/nginx/conf.d/labfoundry.conf" in script
-    assert "/etc/labfoundry/nginx/sites.d/management.conf" in bootstrap
+    assert "/etc/nginx/conf.d/atlaso.conf" in script
+    assert "/etc/atlaso/nginx/sites.d/management.conf" in bootstrap
     assert "rm -f /etc/nginx/conf.d/default.conf /etc/nginx/conf.d/default_server.conf" in script
-    assert "labfoundry-bootstrap-https" in script
-    assert "labfoundry-bootstrap-https.service" in script
-    assert "ExecStart=/opt/labfoundry/.venv/bin/python /opt/labfoundry/bin/labfoundry-bootstrap-https" in script
-    assert "EnvironmentFile=/etc/labfoundry/labfoundry.env" in script
-    assert "After=network-online.target labfoundry-data-disks.service labfoundry-vmware-ovf-customize.service" in script
-    assert "Wants=network-online.target labfoundry-data-disks.service" in script
-    assert "ConditionPathExists=!/var/lib/labfoundry/first-boot-https.applied" in script
-    assert '"$LABFOUNDRY_HOME/.venv/bin/python" "$LABFOUNDRY_HOME/bin/labfoundry-bootstrap-https"' not in script
+    assert "atlaso-bootstrap-https" in script
+    assert "atlaso-bootstrap-https.service" in script
+    assert "ExecStart=/opt/atlaso/.venv/bin/python /opt/atlaso/bin/atlaso-bootstrap-https" in script
+    assert "EnvironmentFile=/etc/atlaso/atlaso.env" in script
+    assert "After=network-online.target atlaso-data-disks.service atlaso-vmware-ovf-customize.service" in script
+    assert "Wants=network-online.target atlaso-data-disks.service" in script
+    assert "ConditionPathExists=!/var/lib/atlaso/first-boot-https.applied" in script
+    assert '"$ATLASO_HOME/.venv/bin/python" "$ATLASO_HOME/bin/atlaso-bootstrap-https"' not in script
     assert "sync_host_physical_interfaces(db)" in bootstrap
     assert bootstrap.index("sync_host_physical_interfaces(db)") < bootstrap.index("ensure_ca_state(db)")
     assert 'str(HELPER_PATH), "ca", action, str(CA_STAGED_CONFIG_PATH), "--real"' in bootstrap
-    assert 'for db_file in state_path.glob("labfoundry.db*")' in bootstrap
-    assert 'shutil.chown(db_file, user="labfoundry", group="labfoundry")' in bootstrap
+    assert 'for db_file in state_path.glob("atlaso.db*")' in bootstrap
+    assert 'shutil.chown(db_file, user="atlaso", group="atlaso")' in bootstrap
     assert 'for path in [ca_apply_path, *ca_apply_path.rglob("*")]' in bootstrap
     assert 'listen 80 default_server;' in bootstrap
     assert "location = /ca/downloads/root-ca.pem {" in bootstrap
@@ -153,28 +153,28 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert "proxy_set_header Upgrade $http_upgrade;" in bootstrap
     assert "nginx -t" in script
     assert "systemctl enable --now nginx" in script
-    assert 'LABFOUNDRY_DRY_RUN_SYSTEM_ADAPTERS="${LABFOUNDRY_DRY_RUN_SYSTEM_ADAPTERS:-true}"' in script
-    assert 'LABFOUNDRY_MGMT_SOURCE_CIDR="${LABFOUNDRY_MGMT_SOURCE_CIDR:-}"' in script
-    assert 'LABFOUNDRY_MGMT_USES_DHCP=false' in script
-    assert 'LABFOUNDRY_APPLIANCE_EXTERNAL_DNS_SERVERS=$(if [ "$LABFOUNDRY_MGMT_USES_DHCP" = "true" ]; then printf \'\'; else printf \'%s\' "$LABFOUNDRY_MGMT_DNS" | tr \' \' \',\'; fi)' in script
-    assert 'if [ "$LABFOUNDRY_MGMT_USES_DHCP" != "true" ] && [ -n "$LABFOUNDRY_MGMT_DNS" ]; then' in script
-    assert 'ip -4 -o addr show dev "$LABFOUNDRY_MGMT_INTERFACE" scope global' in script
+    assert 'ATLASO_DRY_RUN_SYSTEM_ADAPTERS="${ATLASO_DRY_RUN_SYSTEM_ADAPTERS:-true}"' in script
+    assert 'ATLASO_MGMT_SOURCE_CIDR="${ATLASO_MGMT_SOURCE_CIDR:-}"' in script
+    assert 'ATLASO_MGMT_USES_DHCP=false' in script
+    assert 'ATLASO_APPLIANCE_EXTERNAL_DNS_SERVERS=$(if [ "$ATLASO_MGMT_USES_DHCP" = "true" ]; then printf \'\'; else printf \'%s\' "$ATLASO_MGMT_DNS" | tr \' \' \',\'; fi)' in script
+    assert 'if [ "$ATLASO_MGMT_USES_DHCP" != "true" ] && [ -n "$ATLASO_MGMT_DNS" ]; then' in script
+    assert 'ip -4 -o addr show dev "$ATLASO_MGMT_INTERFACE" scope global' in script
     assert 'DETECTED_MGMT_ADDRESS' in script
     assert "ipaddress.ip_interface(sys.argv[1]).network" in script
-    assert "printf '\\nLABFOUNDRY_MANAGEMENT_SOURCE_CIDR=%s\\n' \"$LABFOUNDRY_MGMT_SOURCE_CIDR\" >>/etc/labfoundry/labfoundry.env" in script
-    assert 'log_step "system adapter dry-run mode: $LABFOUNDRY_DRY_RUN_SYSTEM_ADAPTERS"' in script
-    assert "LABFOUNDRY_DRY_RUN_SYSTEM_ADAPTERS=$LABFOUNDRY_DRY_RUN_SYSTEM_ADAPTERS" in script
-    assert 'LABFOUNDRY_MGMT_ACCESS_RULE="    ip saddr $LABFOUNDRY_MGMT_SOURCE_CIDR tcp dport { 22, 80, 443 } accept comment \\"LabFoundry management access\\""' in script
-    assert 'LABFOUNDRY_MGMT_ACCESS_RULE="    iifname \\"$LABFOUNDRY_MGMT_INTERFACE\\" tcp dport { 22, 80, 443 } accept comment \\"LabFoundry management access\\""' in script
-    assert "$LABFOUNDRY_MGMT_ACCESS_RULE" in script
-    assert 'install -o root -g root -m 0440 "$LABFOUNDRY_HOME/$LABFOUNDRY_IMAGE_ASSET_DIR/sudoers.d/labfoundry-helper" /etc/sudoers.d/labfoundry-helper' in script
+    assert "printf '\\nATLASO_MANAGEMENT_SOURCE_CIDR=%s\\n' \"$ATLASO_MGMT_SOURCE_CIDR\" >>/etc/atlaso/atlaso.env" in script
+    assert 'log_step "system adapter dry-run mode: $ATLASO_DRY_RUN_SYSTEM_ADAPTERS"' in script
+    assert "ATLASO_DRY_RUN_SYSTEM_ADAPTERS=$ATLASO_DRY_RUN_SYSTEM_ADAPTERS" in script
+    assert 'ATLASO_MGMT_ACCESS_RULE="    ip saddr $ATLASO_MGMT_SOURCE_CIDR tcp dport { 22, 80, 443 } accept comment \\"Atlaso management access\\""' in script
+    assert 'ATLASO_MGMT_ACCESS_RULE="    iifname \\"$ATLASO_MGMT_INTERFACE\\" tcp dport { 22, 80, 443 } accept comment \\"Atlaso management access\\""' in script
+    assert "$ATLASO_MGMT_ACCESS_RULE" in script
+    assert 'install -o root -g root -m 0440 "$ATLASO_HOME/$ATLASO_IMAGE_ASSET_DIR/sudoers.d/atlaso-helper" /etc/sudoers.d/atlaso-helper' in script
     assert 'sed -i \'s/\\r$//\'' in script
-    assert '"$LABFOUNDRY_HOME/bin/labfoundry-install-boot-branding"' in script
-    assert "/etc/systemd/system/labfoundry-worker.service" in script
-    assert 'useradd --system --gid labfoundry-automation' in script
-    assert 'systemctl enable labfoundry-worker.service' in script
-    assert "labfoundry ALL=(root) NOPASSWD: /opt/labfoundry/bin/labfoundry-helper *" in sudoers
-    assert "labfoundry-root-login.conf" in script
+    assert '"$ATLASO_HOME/bin/atlaso-install-boot-branding"' in script
+    assert "/etc/systemd/system/atlaso-worker.service" in script
+    assert 'useradd --system --gid atlaso-automation' in script
+    assert 'systemctl enable atlaso-worker.service' in script
+    assert "atlaso ALL=(root) NOPASSWD: /opt/atlaso/bin/atlaso-helper *" in sudoers
+    assert "atlaso-root-login.conf" in script
     assert "PermitRootLogin no" in script
     assert "HTTPS/443" in docs
     assert "HTTP/80 redirects to HTTPS" in docs
@@ -186,38 +186,38 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
 
 
 def test_photon_provisioning_prepares_attached_data_disks():
-    provision = Path("image/common/scripts/provision-labfoundry.sh").read_text(encoding="utf-8")
-    mount_script = Path("scripts/appliance/labfoundry-mount-data-disks").read_text(encoding="utf-8")
-    hyperv_unit = Path("image/hyperv/systemd/labfoundry.service").read_text(encoding="utf-8")
-    vmware_unit = Path("image/vmware-workstation/systemd/labfoundry.service").read_text(encoding="utf-8")
+    provision = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
+    mount_script = Path("scripts/appliance/atlaso-mount-data-disks").read_text(encoding="utf-8")
+    hyperv_unit = Path("image/hyperv/systemd/atlaso.service").read_text(encoding="utf-8")
+    vmware_unit = Path("image/vmware-workstation/systemd/atlaso.service").read_text(encoding="utf-8")
     hyperv_docs = Path("image/hyperv/README.md").read_text(encoding="utf-8")
     vmware_docs = Path("image/vmware-workstation/README.md").read_text(encoding="utf-8")
     root_docs = Path("README.md").read_text(encoding="utf-8")
 
     assert 'run_tdnf "Photon appliance package installation"' in provision
     assert "e2fsprogs" in provision
-    assert "labfoundry-mount-data-disks" in provision
-    assert "labfoundry-data-disks.service" in provision
-    assert "systemctl enable labfoundry-data-disks.service" in provision
-    assert "Before=labfoundry-bootstrap-https.service labfoundry.service" in provision
+    assert "atlaso-mount-data-disks" in provision
+    assert "atlaso-data-disks.service" in provision
+    assert "systemctl enable atlaso-data-disks.service" in provision
+    assert "Before=atlaso-bootstrap-https.service atlaso.service" in provision
 
-    assert "LABFOUNDRY_DEPOT" in mount_script
-    assert "LABFOUNDRY_BKUP" in mount_script
-    assert "/mnt/labfoundry-vcf-offline-depot" in mount_script
-    assert "/mnt/labfoundry-vcf-backups" in mount_script
+    assert "ATLASO_DEPOT" in mount_script
+    assert "ATLASO_BKUP" in mount_script
+    assert "/mnt/atlaso-vcf-offline-depot" in mount_script
+    assert "/mnt/atlaso-vcf-backups" in mount_script
     assert 'mkfs.ext4 -F -L "$label" "$disk"' in mount_script
     assert "UUID=%s %s ext4 defaults,nofail,x-systemd.device-timeout=30s 0 2" in mount_script
     assert "findmnt -n -o SOURCE /" in mount_script
     assert "No blank data disk available" in mount_script
 
-    assert "After=network-online.target labfoundry-data-disks.service labfoundry-bootstrap-https.service" in hyperv_unit
-    assert "Wants=network-online.target labfoundry-data-disks.service labfoundry-bootstrap-https.service" in hyperv_unit
-    assert "After=network-online.target labfoundry-data-disks.service labfoundry-bootstrap-https.service" in vmware_unit
-    assert "Wants=network-online.target labfoundry-data-disks.service labfoundry-bootstrap-https.service" in vmware_unit
+    assert "After=network-online.target atlaso-data-disks.service atlaso-bootstrap-https.service" in hyperv_unit
+    assert "Wants=network-online.target atlaso-data-disks.service atlaso-bootstrap-https.service" in hyperv_unit
+    assert "After=network-online.target atlaso-data-disks.service atlaso-bootstrap-https.service" in vmware_unit
+    assert "Wants=network-online.target atlaso-data-disks.service atlaso-bootstrap-https.service" in vmware_unit
 
-    assert "labfoundry-data-disks.service" in root_docs
-    assert "labfoundry-data-disks.service" in hyperv_docs
-    assert "labfoundry-data-disks.service" in vmware_docs
+    assert "atlaso-data-disks.service" in root_docs
+    assert "atlaso-data-disks.service" in hyperv_docs
+    assert "atlaso-data-disks.service" in vmware_docs
     assert "Format and mount" not in hyperv_docs
 
 
@@ -242,24 +242,24 @@ def test_bundled_ipxe_bootloaders_have_provenance_and_expected_hashes():
 
 def test_packer_templates_stage_shared_boot_branding_assets():
     for template_path in (
-        Path("image/hyperv/labfoundry-photon.pkr.hcl"),
-        Path("image/vmware-workstation/labfoundry-photon.pkr.hcl"),
+        Path("image/hyperv/atlaso-photon.pkr.hcl"),
+        Path("image/vmware-workstation/atlaso-photon.pkr.hcl"),
     ):
         template = template_path.read_text(encoding="utf-8")
 
         assert 'source      = "../common/boot"' in template
-        assert 'destination = "/tmp/labfoundry-src/image/common/boot"' in template
+        assert 'destination = "/tmp/atlaso-src/image/common/boot"' in template
 
 
-def test_packer_build_uses_labfoundry_management_network_by_default():
-    template = Path("image/hyperv/labfoundry-photon.pkr.hcl").read_text(encoding="utf-8")
+def test_packer_build_uses_atlaso_management_network_by_default():
+    template = Path("image/hyperv/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
     docs = Path("image/hyperv/README.md").read_text(encoding="utf-8")
     root_docs = Path("README.md").read_text(encoding="utf-8")
     wrapper = Path("scripts/windows/hyperv/build-photon-image.ps1").read_text(encoding="utf-8")
-    build_module = Path("scripts/windows/common/LabFoundry.PhotonImage.psm1").read_text(encoding="utf-8")
+    build_module = Path("scripts/windows/common/Atlaso.PhotonImage.psm1").read_text(encoding="utf-8")
     gitignore = Path(".gitignore").read_text(encoding="utf-8")
 
-    assert 'default = "LabFoundry-Mgmt"' in template
+    assert 'default = "Atlaso-Mgmt"' in template
     assert 'default     = "192.168.49.30/24"' in template
     assert 'default     = "255.255.255.0"' in template
     assert 'default     = "192.168.49.254"' in template
@@ -271,10 +271,10 @@ def test_packer_build_uses_labfoundry_management_network_by_default():
     assert 'description = "Optional pip global.index-url value. Empty keeps default pip behavior."' in template
     assert 'builder_static_dns_text      = join(" ", var.builder_static_dns)' in template
     assert 'dry_run_system_adapters_text = var.dry_run_system_adapters ? "true" : "false"' in template
-    assert '"LABFOUNDRY_DRY_RUN_SYSTEM_ADAPTERS=${local.dry_run_system_adapters_text}"' in template
-    assert '"LABFOUNDRY_MGMT_DNS=${local.builder_static_dns_text}"' in template
-    assert '"LABFOUNDRY_PIP_GLOBAL_INDEX=${var.pip_global_index}"' in template
-    assert '"LABFOUNDRY_PIP_GLOBAL_INDEX_URL=${var.pip_global_index_url}"' in template
+    assert '"ATLASO_DRY_RUN_SYSTEM_ADAPTERS=${local.dry_run_system_adapters_text}"' in template
+    assert '"ATLASO_MGMT_DNS=${local.builder_static_dns_text}"' in template
+    assert '"ATLASO_PIP_GLOBAL_INDEX=${var.pip_global_index}"' in template
+    assert '"ATLASO_PIP_GLOBAL_INDEX_URL=${var.pip_global_index_url}"' in template
     assert "Iso_contains_kickstart must be true" in template
     assert "secondary_iso_images" not in template
     assert "boot_command" not in template
@@ -287,27 +287,28 @@ def test_packer_build_uses_labfoundry_management_network_by_default():
     assert "create-switches.ps1" in docs
     assert "builder_static_ip=192.168.49.30/24" in docs
     assert "discovers the host's active IPv4 DNS" in docs
-    assert "labfoundry-photon-with-kickstart.iso" in docs
+    assert "atlaso-photon-with-kickstart.iso" in docs
     assert "Using remastered Photon ISO" in docs
     assert "without Packer typing boot commands" in docs
     assert "-PipGlobalIndex" in docs
     assert "-PipGlobalIndexUrl" in docs
     assert "Omit both pip options for standard/default pip behavior." in docs
-    assert "[string]$SshPassword = 'VMware01!'" in wrapper
+    assert "[string]$SshPassword = 'PhotonBuild01!'" in wrapper
     assert "[string]$BootstrapAdminPassword = 'VMware01!'" in wrapper
+    assert "[string]$SshPassword = 'VMware01!'" not in wrapper
     assert "[string[]]$BuilderStaticDns = @()" in wrapper
     assert "[string]$PipGlobalIndex = ''" in wrapper
     assert "[string]$PipGlobalIndexUrl = ''" in wrapper
-    assert "Join-Path $PSScriptRoot '..\\common\\LabFoundry.PhotonImage.psm1'" in wrapper
+    assert "Join-Path $PSScriptRoot '..\\common\\Atlaso.PhotonImage.psm1'" in wrapper
     assert "Join-Path $PSScriptRoot '..\\..\\..\\image\\hyperv'" in wrapper
-    assert "function Get-LabFoundryHostIpv4DnsServers" in build_module
+    assert "function Get-AtlasoHostIpv4DnsServers" in build_module
     assert "Get-DnsClientServerAddress -AddressFamily IPv4" in build_module
     assert "Using host IPv4 DNS for Photon builder/appliance" in build_module
     assert "falling back to public DNS" in build_module
     assert "create_photon_kickstart_iso.py" in build_module
     assert "Using remastered Photon ISO" in build_module
     assert "Packer will boot a single DVD with embedded photon-ks.json and a GRUB auto-install entry." in build_module
-    assert "Write-LabFoundryPackerVarFile" in build_module
+    assert "Write-AtlasoPackerVarFile" in build_module
     assert "Using Packer var-file" in build_module
     assert "[ValidateSet('cleanup', 'abort', 'ask', 'run-cleanup-provisioner')]" in wrapper
     assert "[string]$PackerOnError = 'cleanup'" in wrapper
@@ -336,76 +337,76 @@ def test_packer_build_uses_labfoundry_management_network_by_default():
     assert '"/EFI/BOOT/GRUB.CFG;1", "grub.cfg"' in remaster_helper
     assert "iso.add_fp" in remaster_helper
     assert "iso.rm_file" in remaster_helper
-    assert "Could not embed LabFoundry GRUB config" in remaster_helper
+    assert "Could not embed Atlaso GRUB config" in remaster_helper
 
 
 def test_photon_image_optional_pip_global_index_configuration():
     wrapper = Path("scripts/windows/hyperv/build-photon-image.ps1").read_text(encoding="utf-8")
-    build_module = Path("scripts/windows/common/LabFoundry.PhotonImage.psm1").read_text(encoding="utf-8")
-    template = Path("image/hyperv/labfoundry-photon.pkr.hcl").read_text(encoding="utf-8")
-    vmware_template = Path("image/vmware-workstation/labfoundry-photon.pkr.hcl").read_text(encoding="utf-8")
-    script = Path("image/common/scripts/provision-labfoundry.sh").read_text(encoding="utf-8")
+    build_module = Path("scripts/windows/common/Atlaso.PhotonImage.psm1").read_text(encoding="utf-8")
+    template = Path("image/hyperv/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
+    vmware_template = Path("image/vmware-workstation/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
+    script = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
 
     assert "[string[]]$BuilderStaticDns = @()" in wrapper
     assert "[string]$PipGlobalIndex = ''" in wrapper
     assert "[string]$PipGlobalIndexUrl = ''" in wrapper
-    assert "Join-Path $PSScriptRoot '..\\common\\LabFoundry.PhotonImage.psm1'" in wrapper
+    assert "Join-Path $PSScriptRoot '..\\common\\Atlaso.PhotonImage.psm1'" in wrapper
     assert "pip_global_index         = $PipGlobalIndex" in build_module
     assert "pip_global_index_url     = $PipGlobalIndexUrl" in build_module
 
     assert 'variable "pip_global_index" {\n  type        = string\n  default     = ""' in template
     assert 'variable "pip_global_index_url" {\n  type        = string\n  default     = ""' in template
-    assert '"LABFOUNDRY_PIP_GLOBAL_INDEX=${var.pip_global_index}"' in template
-    assert '"LABFOUNDRY_PIP_GLOBAL_INDEX_URL=${var.pip_global_index_url}"' in template
+    assert '"ATLASO_PIP_GLOBAL_INDEX=${var.pip_global_index}"' in template
+    assert '"ATLASO_PIP_GLOBAL_INDEX_URL=${var.pip_global_index_url}"' in template
 
-    assert 'LABFOUNDRY_PIP_GLOBAL_INDEX="${LABFOUNDRY_PIP_GLOBAL_INDEX:-}"' in script
-    assert 'LABFOUNDRY_PIP_GLOBAL_INDEX_URL="${LABFOUNDRY_PIP_GLOBAL_INDEX_URL:-}"' in script
-    assert 'PIP_CACHE_DIR="${PIP_CACHE_DIR:-/var/cache/labfoundry-pip}"' in script
+    assert 'ATLASO_PIP_GLOBAL_INDEX="${ATLASO_PIP_GLOBAL_INDEX:-}"' in script
+    assert 'ATLASO_PIP_GLOBAL_INDEX_URL="${ATLASO_PIP_GLOBAL_INDEX_URL:-}"' in script
+    assert 'PIP_CACHE_DIR="${PIP_CACHE_DIR:-/var/cache/atlaso-pip}"' in script
     assert "write_pip_config() {" in script
-    assert 'printf \'index = %s\\n\' "$LABFOUNDRY_PIP_GLOBAL_INDEX"' in script
-    assert 'printf \'index-url = %s\\n\' "$LABFOUNDRY_PIP_GLOBAL_INDEX_URL"' in script
+    assert 'printf \'index = %s\\n\' "$ATLASO_PIP_GLOBAL_INDEX"' in script
+    assert 'printf \'index-url = %s\\n\' "$ATLASO_PIP_GLOBAL_INDEX_URL"' in script
     assert 'printf \'cache-dir = %s\\n\' "$PIP_CACHE_DIR"' in script
     assert 'write_pip_config /etc/pip.conf' in script
-    assert 'python3 -m venv "$LABFOUNDRY_RELEASE_DIR/.venv"' in script
+    assert 'python3 -m venv "$ATLASO_RELEASE_DIR/.venv"' in script
     assert (
-        'python3 "$LABFOUNDRY_HOME/scripts/version.py" project-get --root "$LABFOUNDRY_HOME"'
+        'python3 "$ATLASO_HOME/scripts/version.py" project-get --root "$ATLASO_HOME"'
         in script
     )
     assert "sed -n 's/^version" not in script
-    assert 'LABFOUNDRY_RELEASE_DIR="$LABFOUNDRY_HOME/releases/bootstrap-$LABFOUNDRY_RELEASE_VERSION"' in script
-    assert '"$LABFOUNDRY_RELEASE_DIR/bundle-metadata.json"' in script
-    assert 'ln -sfn "releases/bootstrap-$LABFOUNDRY_RELEASE_VERSION" "$LABFOUNDRY_HOME/current"' in script
-    assert 'ln -sfn "current/.venv" "$LABFOUNDRY_HOME/.venv"' in script
-    assert 'write_pip_config "$LABFOUNDRY_HOME/.venv/pip.conf"' in script
-    assert '--requirement "$LABFOUNDRY_HOME/requirements-appliance.lock"' in script
-    assert 'pip install --no-deps "$LABFOUNDRY_HOME"' in script
-    assert "/etc/labfoundry/update-trust.d" in script
-    assert 'trust_source_dir="$LABFOUNDRY_HOME/image/common/update-trust"' in script
+    assert 'ATLASO_RELEASE_DIR="$ATLASO_HOME/releases/bootstrap-$ATLASO_RELEASE_VERSION"' in script
+    assert '"$ATLASO_RELEASE_DIR/bundle-metadata.json"' in script
+    assert 'ln -sfn "releases/bootstrap-$ATLASO_RELEASE_VERSION" "$ATLASO_HOME/current"' in script
+    assert 'ln -sfn "current/.venv" "$ATLASO_HOME/.venv"' in script
+    assert 'write_pip_config "$ATLASO_HOME/.venv/pip.conf"' in script
+    assert '--requirement "$ATLASO_HOME/requirements-appliance.lock"' in script
+    assert 'pip install --no-deps "$ATLASO_HOME"' in script
+    assert "/etc/atlaso/update-trust.d" in script
+    assert 'trust_source_dir="$ATLASO_HOME/image/common/update-trust"' in script
     assert 'for trust_key in "$trust_source_dir"/*.pem' in script
     for packer_template in (template, vmware_template):
         assert 'source      = "../../requirements-appliance.lock"' in packer_template
-        assert 'destination = "/tmp/labfoundry-src/requirements-appliance.lock"' in packer_template
+        assert 'destination = "/tmp/atlaso-src/requirements-appliance.lock"' in packer_template
         assert 'source      = "../../scripts/generate_third_party_notices.py"' in packer_template
-        assert 'destination = "/tmp/labfoundry-src/scripts/generate_third_party_notices.py"' in packer_template
+        assert 'destination = "/tmp/atlaso-src/scripts/generate_third_party_notices.py"' in packer_template
         assert 'source      = "../../scripts/third_party_notices.json"' in packer_template
-        assert 'destination = "/tmp/labfoundry-src/scripts/third_party_notices.json"' in packer_template
+        assert 'destination = "/tmp/atlaso-src/scripts/third_party_notices.json"' in packer_template
         assert 'source      = "../../scripts/version.py"' in packer_template
-        assert 'destination = "/tmp/labfoundry-src/scripts/version.py"' in packer_template
+        assert 'destination = "/tmp/atlaso-src/scripts/version.py"' in packer_template
         assert 'source      = "../../scripts/run_tdnf_with_progress.py"' in packer_template
-        assert 'destination = "/tmp/labfoundry-src/scripts/run_tdnf_with_progress.py"' in packer_template
+        assert 'destination = "/tmp/atlaso-src/scripts/run_tdnf_with_progress.py"' in packer_template
         assert 'source      = "../common/update-trust"' in packer_template
-        assert 'destination = "/tmp/labfoundry-src/image/common/update-trust"' in packer_template
-    assert "LabFoundry release trust source directory is missing" in script
-    assert "No LabFoundry release trust keys were staged" in script
+        assert 'destination = "/tmp/atlaso-src/image/common/update-trust"' in packer_template
+    assert "Atlaso release trust source directory is missing" in script
+    assert "No Atlaso release trust keys were staged" in script
     assert 'openssl pkey -pubin -in "$trust_key" -text -noout' in script
     assert "*ED25519*" in script
     assert 'export PIP_DISABLE_PIP_VERSION_CHECK=1' in script
-    assert 'export PIP_INDEX_URL="$LABFOUNDRY_PIP_GLOBAL_INDEX_URL"' in script
+    assert 'export PIP_INDEX_URL="$ATLASO_PIP_GLOBAL_INDEX_URL"' in script
     assert "pip install --upgrade pip setuptools wheel" not in script
     assert "packages.vcfd.broadcom.net/artifactory" not in wrapper
     assert "packages.vcfd.broadcom.net/artifactory" not in template
     assert "packages.vcfd.broadcom.net/artifactory" not in script
-    assert 'TDNF_PROGRESS_RUNNER="$LABFOUNDRY_SRC/scripts/run_tdnf_with_progress.py"' in script
+    assert 'TDNF_PROGRESS_RUNNER="$ATLASO_SRC/scripts/run_tdnf_with_progress.py"' in script
     assert 'run_tdnf "Photon package metadata refresh" makecache' in script
     assert 'run_tdnf "Photon OS update" update' in script
     assert 'run_tdnf "Photon appliance package installation"' in script
@@ -417,6 +418,9 @@ def test_vmware_builder_uses_nat_gateway_dns_by_default():
     wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(encoding="utf-8")
     docs = Path("image/vmware-workstation/README.md").read_text(encoding="utf-8")
 
+    assert "[string]$SshPassword = 'PhotonBuild01!'" in wrapper
+    assert "[string]$BootstrapAdminPassword = 'VMware01!'" in wrapper
+    assert "[string]$SshPassword = 'VMware01!'" not in wrapper
     assert "$builderDnsWasPassed = $PSBoundParameters.ContainsKey('BuilderStaticDns')" in wrapper
     assert "-not $builderDnsWasPassed -and $BuilderStaticDns.Count -eq 0 -and $management.Type -eq 'nat'" in wrapper
     assert "$BuilderStaticDns = @($managementGateway)" in wrapper
@@ -432,7 +436,7 @@ def test_lifecycle_hyperv_script_uses_separate_vm_set_by_default():
     wrapper = Path("scripts/windows/hyperv/invoke-lifecycle-test.ps1").read_text(encoding="utf-8")
     runner = Path("scripts/interop/lifecycle_test.py").read_text(encoding="utf-8")
 
-    assert "[string]$LabName = 'LabFoundryLifecycle'" in script
+    assert "[string]$LabName = 'AtlasoLifecycle'" in script
     assert "[string]$ApplianceUrl = ''" in script
     assert '$ApplianceUrl = "https://${ApplianceIPAddress}"' in script
     assert "'--appliance-url', $ApplianceUrl" in script
@@ -449,7 +453,7 @@ def test_lifecycle_hyperv_script_uses_separate_vm_set_by_default():
     assert "$clientAName = \"$LabName-ClientA\"" in script
     assert "$clientBName = \"$LabName-ClientB\"" in script
     assert "$pxeClientName = \"$LabName-PxeBoot\"" in script
-    assert "New-LifecyclePxeVm -Name $pxeClientName -SwitchName 'LabFoundry-SiteA'" in script
+    assert "New-LifecyclePxeVm -Name $pxeClientName -SwitchName 'Atlaso-SiteA'" in script
     assert "Invoke-PxeBootSmoke -Name $pxeClientName -MacAddress $pxeClientMac" in script
     assert "[string]$EsxIsoPath = ''" in script
     assert "[string]$EsxIsoPath = ''" in wrapper
@@ -468,18 +472,18 @@ def test_lifecycle_hyperv_script_uses_separate_vm_set_by_default():
     assert '"esxi_pxe"' in runner
     assert "configure-esxi-pxe" in runner
     assert "Refusing to use reserved VM name" in script
-    assert "@('LabFoundry', 'LabFoundry-Photon-Builder')" in script
-    assert "image\\hyperv\\clients\\alpine-cloud\\labfoundry-tiny-linux-client.vhdx" in script
+    assert "@('Atlaso', 'Atlaso-Photon-Builder')" in script
+    assert "image\\hyperv\\clients\\alpine-cloud\\atlaso-tiny-linux-client.vhdx" in script
     assert "Running lifecycle appliance VM(s) may already own ${ApplianceIPAddress}" in script
     assert "-CleanupVmsOnly" in script
 
 
-def test_create_labfoundry_test_vm_wrapper_is_safe_and_simple():
-    script = Path("scripts/windows/hyperv/create-labfoundry-test-vm.ps1").read_text(encoding="utf-8")
-    vm_script = Path("scripts/windows/hyperv/create-labfoundry-vm.ps1").read_text(encoding="utf-8")
+def test_create_atlaso_test_vm_wrapper_is_safe_and_simple():
+    script = Path("scripts/windows/hyperv/create-atlaso-test-vm.ps1").read_text(encoding="utf-8")
+    vm_script = Path("scripts/windows/hyperv/create-atlaso-vm.ps1").read_text(encoding="utf-8")
     docs = Path("image/hyperv/README.md").read_text(encoding="utf-8")
 
-    assert "[string]$Name = 'LabFoundry'" in script
+    assert "[string]$Name = 'Atlaso'" in script
     assert "[switch]$Redeploy" in script
     assert "[switch]$ResetDataDisks" in script
     assert "[switch]$SkipLabNetworkAdapters" in script
@@ -488,41 +492,41 @@ def test_create_labfoundry_test_vm_wrapper_is_safe_and_simple():
     assert "[switch]$WaitForIp" in script
     assert "Find-LatestApplianceVhdx" in script
     assert "Remove-ExistingDataDisks" in script
-    assert "LabFoundry-Depot.vhdx" in script
-    assert "LabFoundry-Backups.vhdx" in script
+    assert "Atlaso-Depot.vhdx" in script
+    assert "Atlaso-Backups.vhdx" in script
     assert "Refusing to remove OS disk as a data disk" in script
     assert "create-switches.ps1" in script
-    assert "create-labfoundry-vm.ps1" in script
+    assert "create-atlaso-vm.ps1" in script
     assert "-SkipLabNetworkAdapters:$SkipLabNetworkAdapters" in script
     assert "-SiteVlanId $SiteVlanId" in script
     assert "-TaggedVlanId $TaggedVlanId" in script
-    assert "start-labfoundry-vm.ps1" in script
-    assert "get-labfoundry-vm-ip.ps1" in script
+    assert "start-atlaso-vm.ps1" in script
+    assert "get-atlaso-vm-ip.ps1" in script
     assert "VM already exists: $Name. Pass -Redeploy" in script
     assert "Remove-VM -Name $Name -Force" in script
     assert "Run this script from an elevated PowerShell session." not in script
-    assert "create-labfoundry-test-vm.ps1 -WaitForIp" in docs
+    assert "create-atlaso-test-vm.ps1 -WaitForIp" in docs
     assert "pass `-Redeploy` to remove and recreate only that VM" in docs
-    assert "first adapter management-only on `LabFoundry-Mgmt`" in docs
-    assert "`Services` on the dedicated `LabFoundry-Services` switch" in docs
-    assert "`SiteA` on" in docs and "`LabFoundry-SiteA` as trunk VLAN 12" in docs
-    assert "`Trunk` on `LabFoundry-Trunk` as trunk" in docs and "VLAN 50" in docs
-    assert "WAN-Test` on `LabFoundry-SiteB` as" in docs
-    assert "`/var/lib/labfoundry/users/<admin>` with `/usr/bin/pwsh`" in docs
+    assert "first adapter management-only on `Atlaso-Mgmt`" in docs
+    assert "`Services` on the dedicated `Atlaso-Services` switch" in docs
+    assert "`SiteA` on" in docs and "`Atlaso-SiteA` as trunk VLAN 12" in docs
+    assert "`Trunk` on `Atlaso-Trunk` as trunk" in docs and "VLAN 50" in docs
+    assert "WAN-Test` on `Atlaso-SiteB` as" in docs
+    assert "`/var/lib/atlaso/users/<admin>` with `/usr/bin/pwsh`" in docs
     assert "`powershell` package" in docs
     assert "[switch]$SkipLabNetworkAdapters" in vm_script
     assert "[int]$SiteVlanId = 12" in vm_script
     assert "[int]$TaggedVlanId = 50" in vm_script
-    assert "[string]$ServiceSwitchName = 'LabFoundry-Services'" in vm_script
+    assert "[string]$ServiceSwitchName = 'Atlaso-Services'" in vm_script
     assert "Add-ServiceNetworkAdapter" in vm_script
     assert "Add-VMNetworkAdapter -VMName $VMName -Name 'Services' -SwitchName $SwitchName" in vm_script
     assert "Set-VMNetworkAdapterVlan -VMName $VMName -VMNetworkAdapterName 'Services' -Untagged" in vm_script
     assert "Add-LabNetworkAdapters" in vm_script
-    assert "Add-VMNetworkAdapter -VMName $VMName -Name 'SiteA' -SwitchName 'LabFoundry-SiteA'" in vm_script
+    assert "Add-VMNetworkAdapter -VMName $VMName -Name 'SiteA' -SwitchName 'Atlaso-SiteA'" in vm_script
     assert "Set-VMNetworkAdapterVlan -VMName $VMName -VMNetworkAdapterName 'SiteA' -Trunk -AllowedVlanIdList \"$SiteTag\" -NativeVlanId 0" in vm_script
-    assert "Add-VMNetworkAdapter -VMName $VMName -Name 'Trunk' -SwitchName 'LabFoundry-Trunk'" in vm_script
+    assert "Add-VMNetworkAdapter -VMName $VMName -Name 'Trunk' -SwitchName 'Atlaso-Trunk'" in vm_script
     assert "Set-VMNetworkAdapterVlan -VMName $VMName -VMNetworkAdapterName 'Trunk' -Trunk -AllowedVlanIdList \"$TaggedVlanTag\" -NativeVlanId 0" in vm_script
-    assert "Add-VMNetworkAdapter -VMName $VMName -Name 'WAN-Test' -SwitchName 'LabFoundry-SiteB'" in vm_script
+    assert "Add-VMNetworkAdapter -VMName $VMName -Name 'WAN-Test' -SwitchName 'Atlaso-SiteB'" in vm_script
 
 
 def test_windows_script_names_use_provider_tokens():
@@ -535,50 +539,50 @@ def test_windows_script_names_use_provider_tokens():
     old_vmware_token = "vmware-" + "workstation"
     old_names = {
         f"build-photon-{old_vmware_token}-image.ps1",
-        f"create-labfoundry-{old_vmware_token}-test-vm.ps1",
+        f"create-atlaso-{old_vmware_token}-test-vm.ps1",
         f"invoke-{old_vmware_token}-lifecycle-test.ps1",
         f"prepare-{old_vmware_token}-networks.ps1",
         "prepare-" + "tiny-linux-client.ps1",
-        "get-labfoundry-" + "vm-ip.ps1",
-        "start-labfoundry-" + "vm.ps1",
-        "stop-labfoundry-" + "vm.ps1",
+        "get-atlaso-" + "vm-ip.ps1",
+        "start-atlaso-" + "vm.ps1",
+        "stop-atlaso-" + "vm.ps1",
     }
     assert root_scripts == set()
     assert script_paths.isdisjoint(old_names)
 
-    assert "common/LabFoundry.PhotonImage.psm1" not in script_paths
+    assert "common/Atlaso.PhotonImage.psm1" not in script_paths
     assert "hyperv/build-photon-image.ps1" in script_paths
-    assert "hyperv/create-labfoundry-test-vm.ps1" in script_paths
-    assert "hyperv/create-labfoundry-vm.ps1" in script_paths
+    assert "hyperv/create-atlaso-test-vm.ps1" in script_paths
+    assert "hyperv/create-atlaso-vm.ps1" in script_paths
     assert "hyperv/invoke-lifecycle-test.ps1" in script_paths
     assert "hyperv/prepare-tiny-linux-client.ps1" in script_paths
-    assert "hyperv/get-labfoundry-vm-ip.ps1" in script_paths
-    assert "hyperv/start-labfoundry-vm.ps1" in script_paths
-    assert "hyperv/stop-labfoundry-vm.ps1" in script_paths
+    assert "hyperv/get-atlaso-vm-ip.ps1" in script_paths
+    assert "hyperv/start-atlaso-vm.ps1" in script_paths
+    assert "hyperv/stop-atlaso-vm.ps1" in script_paths
     assert "vmware/build-photon-image.ps1" in script_paths
-    assert "vmware/create-labfoundry-test-vm.ps1" in script_paths
-    assert "vmware/create-labfoundry-vm.ps1" in script_paths
+    assert "vmware/create-atlaso-test-vm.ps1" in script_paths
+    assert "vmware/create-atlaso-vm.ps1" in script_paths
     assert "vmware/invoke-lifecycle-test.ps1" in script_paths
     assert "vmware/prepare-networks.ps1" in script_paths
     assert "vmware/prepare-tiny-linux-client.ps1" in script_paths
-    assert "vmware/get-labfoundry-vm-ip.ps1" in script_paths
-    assert "vmware/start-labfoundry-vm.ps1" in script_paths
-    assert "vmware/stop-labfoundry-vm.ps1" in script_paths
-    assert "vmware/remove-labfoundry-vm.ps1" in script_paths
+    assert "vmware/get-atlaso-vm-ip.ps1" in script_paths
+    assert "vmware/start-atlaso-vm.ps1" in script_paths
+    assert "vmware/stop-atlaso-vm.ps1" in script_paths
+    assert "vmware/remove-atlaso-vm.ps1" in script_paths
     assert "vmware/remove-lifecycle-vms.ps1" in script_paths
-    assert "vmware/reset-labfoundry-vm.ps1" in script_paths
+    assert "vmware/reset-atlaso-vm.ps1" in script_paths
     assert "vmware/set-test-nics.ps1" in script_paths
 
 
-def test_create_labfoundry_vmware_test_vm_wrapper_uses_common_helpers():
-    script = Path("scripts/windows/vmware/create-labfoundry-test-vm.ps1").read_text(encoding="utf-8")
-    vm_script = Path("scripts/windows/vmware/create-labfoundry-vm.ps1").read_text(encoding="utf-8")
+def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
+    script = Path("scripts/windows/vmware/create-atlaso-test-vm.ps1").read_text(encoding="utf-8")
+    vm_script = Path("scripts/windows/vmware/create-atlaso-vm.ps1").read_text(encoding="utf-8")
     nics_script = Path("scripts/windows/vmware/set-test-nics.ps1").read_text(encoding="utf-8")
     build_script = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(encoding="utf-8")
-    packer_template = Path("image/vmware-workstation/labfoundry-photon.pkr.hcl").read_text(encoding="utf-8")
+    packer_template = Path("image/vmware-workstation/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
     docs = Path("image/vmware-workstation/README.md").read_text(encoding="utf-8")
 
-    assert "[string]$Name = 'LabFoundry-VMware'" in script
+    assert "[string]$Name = 'Atlaso-VMware'" in script
     assert "[switch]$Redeploy" in script
     assert "[switch]$SkipLabNetworkAdapters" in script
     assert "[switch]$IncludeLabNetworkAdapters" in script
@@ -587,8 +591,8 @@ def test_create_labfoundry_vmware_test_vm_wrapper_uses_common_helpers():
     assert "[switch]$TrustRootCa" in script
     assert "[int]$TimeoutSeconds = 300" in script
     assert "Install-ApplianceRootCa" in script
-    assert "Waiting up to $TimeoutSeconds seconds for the LabFoundry root CA" in script
-    assert "LabFoundry root CA is not ready; retrying in $PollSeconds seconds." in script
+    assert "Waiting up to $TimeoutSeconds seconds for the Atlaso root CA" in script
+    assert "Atlaso root CA is not ready; retrying in $PollSeconds seconds." in script
     assert "-TimeoutSec $requestTimeoutSeconds" in script
     assert "Install-ApplianceRootCa -IpAddress $ip -Name $Name -TimeoutSeconds $TimeoutSeconds" in script
     assert "Write-ConnectionSummary" in script
@@ -617,16 +621,16 @@ def test_create_labfoundry_vmware_test_vm_wrapper_uses_common_helpers():
     assert "[string]$ManagementNetwork = 'VMnet8'" in vm_script
     assert "[string]$ManagementNetwork = 'VMnet8'" in nics_script
     assert "prepare-networks.ps1" in script
-    assert "create-labfoundry-vm.ps1" in script
-    assert "start-labfoundry-vm.ps1" in script
-    assert "get-labfoundry-vm-ip.ps1" in script
-    assert "remove-labfoundry-vm.ps1" in script
+    assert "create-atlaso-vm.ps1" in script
+    assert "start-atlaso-vm.ps1" in script
+    assert "get-atlaso-vm-ip.ps1" in script
+    assert "remove-atlaso-vm.ps1" in script
     assert "Find-LatestApplianceVmx" in script
     assert "image\\vmware-workstation\\output" in script
     assert "image\\vmware-workstation\\test-vms\\$Name" in script
     assert "$effectiveSkipLabNetworkAdapters = -not $IncludeLabNetworkAdapters" in script
-    assert "LabFoundry-Depot.vmdk" in script
-    assert "LabFoundry-Backups.vmdk" in script
+    assert "Atlaso-Depot.vmdk" in script
+    assert "Atlaso-Backups.vmdk" in script
     assert '"disk.EnableUUID"          = "TRUE"' in packer_template
     assert "Refusing to reset VMware data disk outside the VM output directory" in script
     assert "vmrun.exe was not found" in vm_script
@@ -642,7 +646,7 @@ def test_create_labfoundry_vmware_test_vm_wrapper_uses_common_helpers():
     assert '$Vmnet = "VMnet$($Matches[1])"' in nics_script
     assert "$prefix.virtualDev" in nics_script
     assert "vmxnet3" in nics_script
-    assert "Join-Path $PSScriptRoot '..\\common\\LabFoundry.PhotonImage.psm1'" in build_script
+    assert "Join-Path $PSScriptRoot '..\\common\\Atlaso.PhotonImage.psm1'" in build_script
     assert "Join-Path $PSScriptRoot '..\\..\\..\\image\\vmware-workstation'" in build_script
     assert "[string]$ServiceVmnetName = 'VMnet1'" in build_script
     assert "service_vmnet_name = $ServiceVmnetName" in build_script
@@ -675,7 +679,7 @@ def test_vmware_deploy_wheel_supports_password_backed_noninteractive_deploy():
     script = Path("scripts/windows/vmware/deploy-wheel.ps1").read_text(encoding="utf-8")
     readme = Path("README.md").read_text(encoding="utf-8")
 
-    assert "[string]$SshPassword = $env:LABFOUNDRY_DEPLOY_SSH_PASSWORD" in script
+    assert "[string]$SshPassword = $env:ATLASO_DEPLOY_SSH_PASSWORD" in script
     assert "function Initialize-PasswordDeployPythonPath" in script
     assert "Preparing temporary Paramiko runtime from local deployment wheels" in script
     assert "'--no-index'" in script
@@ -688,23 +692,23 @@ def test_vmware_deploy_wheel_supports_password_backed_noninteractive_deploy():
     assert "--local-worker-service" in script
     assert '--local-trust-key", action="append"' in script
     assert '--remote-trust-key", action="append"' in script
-    assert "At least one matched local and remote LabFoundry release trust key is required." in script
+    assert "At least one matched local and remote Atlaso release trust key is required." in script
     assert "image\\common\\update-trust" in script
-    assert "No LabFoundry release trust keys found under" in script
-    assert "install -d -o root -g root -m 0755 /etc/labfoundry/update-trust.d" in script
-    assert 'install -o root -g root -m 0644 "$trust_key_path" "/etc/labfoundry/update-trust.d/$trust_key_name"' in script
+    assert "No Atlaso release trust keys found under" in script
+    assert "install -d -o root -g root -m 0755 /etc/atlaso/update-trust.d" in script
+    assert 'install -o root -g root -m 0644 "$trust_key_path" "/etc/atlaso/update-trust.d/$trust_key_name"' in script
     assert "openssl pkey -pubin" in script
-    assert "LabFoundry release trust key is not Ed25519" in script
+    assert "Atlaso release trust key is not Ed25519" in script
     assert "--local-runtime-dependency" in script
     assert "'authlib-*.whl'" in script
     assert "'joserfc-*.whl'" in script
     assert "Matched local and remote runtime dependency wheels are required." in script
     assert '"$python" -m pip install --force-reinstall --no-deps "$runtime_dependency_path"' in script
     assert '"$python" -m pip install --force-reinstall --no-deps "$wheel"' in script
-    assert "systemctl enable labfoundry-worker.service" in script
-    assert "systemctl restart labfoundry-worker.service" in script
-    assert "systemctl is-active labfoundry-worker.service" in script
-    assert "LABFOUNDRY_DEPLOY_SSH_PASSWORD" in script
+    assert "systemctl enable atlaso-worker.service" in script
+    assert "systemctl restart atlaso-worker.service" in script
+    assert "systemctl is-active atlaso-worker.service" in script
+    assert "ATLASO_DEPLOY_SSH_PASSWORD" in script
     assert "client.set_missing_host_key_policy(paramiko.AutoAddPolicy())" in script
     assert "allow_agent=False" in script
     assert "look_for_keys=False" in script
@@ -727,7 +731,7 @@ def test_lifecycle_hyperv_script_does_not_cleanup_without_explicit_flag():
     assert "if ($CleanupCreatedLab)" in script
     assert "Lifecycle VMs were left in place" in script
     assert "Remove-VM -Name $name -Force" in script
-    assert "Remove-VM -Name 'LabFoundry'" not in script
+    assert "Remove-VM -Name 'Atlaso'" not in script
 
 
 def test_lifecycle_single_command_wrapper_prepares_runs_and_cleans_up_by_default():
@@ -755,24 +759,24 @@ def test_lifecycle_single_command_wrapper_prepares_runs_and_cleans_up_by_default
     assert "[switch]$CleanupVmsOnly" in script
     assert "remove-lifecycle-networks.ps1" in script
     assert "remove-lifecycle-vms.ps1" in script
-    assert "LabFoundryLifecycle-$(Get-Date -Format 'yyyyMMddHHmmss')" in script
+    assert "AtlasoLifecycle-$(Get-Date -Format 'yyyyMMddHHmmss')" in script
     assert "$singlePurposeActions" not in script
 
 
-def test_lifecycle_cleanup_scripts_are_scoped_to_labfoundry_assets():
+def test_lifecycle_cleanup_scripts_are_scoped_to_atlaso_assets():
     switch_script = Path("scripts/windows/hyperv/create-switches.ps1").read_text(encoding="utf-8")
     network_script = Path("scripts/windows/hyperv/remove-lifecycle-networks.ps1").read_text(encoding="utf-8")
     vm_script = Path("scripts/windows/hyperv/remove-lifecycle-vms.ps1").read_text(encoding="utf-8")
 
-    assert "LabFoundry-Services" in switch_script
-    assert "LabFoundry-Mgmt-NAT" in network_script
-    assert "LabFoundry-Mgmt" in network_script
-    assert "LabFoundry-Services" in network_script
-    assert "LabFoundry-SiteA" in network_script
+    assert "Atlaso-Services" in switch_script
+    assert "Atlaso-Mgmt-NAT" in network_script
+    assert "Atlaso-Mgmt" in network_script
+    assert "Atlaso-Services" in network_script
+    assert "Atlaso-SiteA" in network_script
     assert "Get-VMNetworkAdapter -All" in network_script
     assert "Refusing to remove switch" in network_script
-    assert "LabFoundryLifecycle*" in vm_script
-    assert "LabFoundry-Photon-Builder" in vm_script
+    assert "AtlasoLifecycle*" in vm_script
+    assert "Atlaso-Photon-Builder" in vm_script
     assert "Refusing VM cleanup" in vm_script
     assert "Remove-VM -Name $vm.Name -Force" in vm_script
 
@@ -792,7 +796,7 @@ def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
     assert "ClientVmdkPath" not in cleanup_block
     assert "CleanupCreatedLab" not in cleanup_block
     assert "Refusing VM cleanup for prefix '$LabName'" in cleanup_script
-    assert "LabFoundryWorkstationLifecycle" in cleanup_script
+    assert "AtlasoWorkstationLifecycle" in cleanup_script
     assert "test-results\\vmware-workstation-lifecycle" in cleanup_script
     assert "vmrun.exe was not found" in cleanup_script
     assert "Get-VmxDisplayName" in cleanup_script
@@ -850,13 +854,13 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "'--appliance-ssh-hostkey', $applianceHostKey" in runner
     assert "'--client-a-hostkey', $clientAHostKey" in runner
     assert "function Sync-ApplianceHelperScript" in runner
-    assert "scripts\\appliance\\labfoundry-helper" in runner
+    assert "scripts\\appliance\\atlaso-helper" in runner
     assert "copyFileFromHostToGuest $ApplianceVmx $localHelper $guestTemp" in runner
-    assert "install -o root -g root -m 0755 $quotedTemp /opt/labfoundry/bin/labfoundry-helper" in runner
+    assert "install -o root -g root -m 0755 $quotedTemp /opt/atlaso/bin/atlaso-helper" in runner
     assert "function Sync-ApplianceApplicationWheel" in runner
     assert "python -m pip wheel $repoRoot --no-deps -w $wheelRoot" in runner
     assert "pip install --force-reinstall --no-deps $quotedWheel" in runner
-    assert "systemctl restart labfoundry.service" in runner
+    assert "systemctl restart atlaso.service" in runner
     assert "$applianceWheelPath = Sync-ApplianceApplicationWheel -ApplianceVmx $applianceVmx" in runner
     assert "function Register-WorkstationVm" in runner
     assert "$resolvedVmrun @Arguments" in runner
@@ -925,7 +929,7 @@ def test_nocloud_seed_helper_writes_client_cloud_init_contract():
     assert "openssl" in script
     assert "sshpass" in script
     assert "chrony-nts" in script
-    assert "labfoundry-refresh-test-dhcp" in script
+    assert "atlaso-refresh-test-dhcp" in script
     assert "joliet_path=f\"/{name}\"" in script
 
 
@@ -936,7 +940,7 @@ def test_prepare_tiny_linux_client_downloads_verifies_and_converts_alpine():
     assert "generic_alpine-3.24.1-x86_64-uefi-cloudinit-r0.qcow2" in script
     assert "Get-FileHash -Algorithm SHA512" in script
     assert "qemu-img convert -p -f qcow2 -O vhdx -o subformat=dynamic" in script
-    assert "labfoundry-tiny-linux-client.vhdx" in script
+    assert "atlaso-tiny-linux-client.vhdx" in script
 
 
 def test_lifecycle_runner_plan_includes_ca_and_global_apply_units():
@@ -1006,7 +1010,7 @@ def test_lifecycle_runner_covers_ca_vcf_backups_wan_noise_and_console_summary():
 
     assert "direct_dns_a_query_command" in script
     assert "base64 -d | python3 -" in script
-    assert '"dnsmasq": "test -f /etc/labfoundry/dnsmasq.d/labfoundry.conf && getent hosts interop-appliance.labfoundry.internal"' not in script
+    assert '"dnsmasq": "test -f /etc/atlaso/dnsmasq.d/atlaso.conf && getent hosts interop-appliance.atlaso.internal"' not in script
     assert "--vcf-backup-password" in script
     assert "--client-ca-request-interface" in script
     assert "configure_management_https" in script
@@ -1019,19 +1023,19 @@ def test_lifecycle_runner_covers_ca_vcf_backups_wan_noise_and_console_summary():
     assert '"/kms/clients"' in script
     assert '"name": "vcf-management"' in script
     assert "Hyper-V lifecycle KMIP client" in script
-    assert "labfoundry-kms.service" in script
+    assert "atlaso-kms.service" in script
     assert "kms_files" in script
     assert "kms_service" in script
     assert "kms_tls" in script
     assert '"local_console"' in script
-    assert "systemctl is-active labfoundry-console.service" in script
+    assert "systemctl is-active atlaso-console.service" in script
     assert "systemctl is-enabled getty@tty1.service" in script
     assert "systemctl show getty@tty2.service" in script
     assert '\\"maintenance_isolation\\": false' in script
     assert "apply-kms-unit" in script
     assert "Appliance apply task failed" in script
-    assert "/etc/labfoundry/kms/clients/certs/vcf-management.crt" in script
-    assert "/etc/labfoundry/kms/clients/vcf-management.crt" not in script
+    assert "/etc/atlaso/kms/clients/certs/vcf-management.crt" in script
+    assert "/etc/atlaso/kms/clients/vcf-management.crt" not in script
     assert "missing $path" in script
     assert "stderr:" in script
     assert "stdout:" in script
@@ -1073,7 +1077,7 @@ def test_lifecycle_runner_summarizes_apply_validation_html():
         <!doctype html>
         <html>
           <body>
-            <aside>LabFoundry navigation noise</aside>
+            <aside>Atlaso navigation noise</aside>
             <div class="alert error">Resolve validation errors before submitting appliance changes.</div>
             <article>
               <strong>Certificate Authority</strong>

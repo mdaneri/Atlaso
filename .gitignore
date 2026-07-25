@@ -5,7 +5,7 @@ __pycache__/
 .ruff_cache/
 .vscode/
 .venv/
-labfoundry.egg-info/
+atlaso.egg-info/
 *.pyc
 *.pyo
 *.db

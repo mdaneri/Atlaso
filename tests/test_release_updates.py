@@ -13,7 +13,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from labfoundry.app.services.release_updates import (
+from atlaso.app.services.release_updates import (
     ReleaseManifestError,
     validate_release_manifest,
     verify_signed_json,
@@ -31,7 +31,7 @@ def canonical(payload: dict) -> bytes:
 def release_payload() -> dict:
     return {
         "schema_version": 2,
-        "kind": "labfoundry-release",
+        "kind": "atlaso-release",
         "updater_protocol": 2,
         "database_schema_version": 1,
         "version": "0.9.0",
@@ -40,11 +40,11 @@ def release_payload() -> dict:
         "signing_key_id": KEY_ID,
         "supported_python_abis": ["cp314"],
         "bundle": {
-            "url": "https://github.com/mdaneri/LabFoundry/releases/download/v0.9.0/bundle.tar.gz",
+            "url": "https://github.com/mdaneri/Atlaso/releases/download/v0.9.0/bundle.tar.gz",
             "size": 123,
             "sha256": "b" * 64,
         },
-        "content_hashes": {"packages/labfoundry.whl": "c" * 64},
+        "content_hashes": {"packages/atlaso.whl": "c" * 64},
     }
 
 
@@ -94,7 +94,7 @@ def test_channel_pointer_must_match_named_key(trust):
     private_key, trust_dir = trust
     channel = {
         "schema_version": 2,
-        "kind": "labfoundry-channel",
+        "kind": "atlaso-channel",
         "channel": "preview",
         "version": "0.9.0",
         "git_commit": "a" * 40,
@@ -150,11 +150,10 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "-f head_sha=\"$RELEASE_SHA\"" in publication
     assert "-f status=success" in publication
     assert "has no successful main push CI run" in publication
-    assert "Publish or recover the v0.9.0 bridge release" in publication
-    assert 'json.load(open(sys.argv[1]))["version"]' in publication
-    assert 'json.load(open(sys.argv[1]))[\\"version\\"]' not in publication
+    assert "legacy bridge" not in publication
     assert 'cat > "$SITE_ROOT/index.html"' in publication
-    assert "Signed release repository" in publication
+    assert "Everything your virtualization lab needs." in publication
+    assert "Infrastructure • Storage • Identity • Networking • Lifecycle" in publication
     assert "The HTML page is informational." in publication
     assert "<script" not in publication
     assert publication.count("ref: ${{ needs.prepare.outputs.release_sha }}") == 2
@@ -170,7 +169,7 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert '--commit "$RELEASE_SHA"' in publication
     assert "--expected-version \"$VERSION\"" in publication
     assert '--site-root "$SITE_ROOT/updates"' in publication
-    assert 'test "$VERSION" = "0.9.0"' in publication
+    assert 'test "$VERSION" = "0.9.18"' in publication
     assert "gh release download" in promotion
     assert "build_release_bundle.py" not in promotion
     assert "--expected-version \"$RELEASE_VERSION\"" in promotion
@@ -304,7 +303,7 @@ def test_helper_offline_install_uses_only_locked_wheelhouse(monkeypatch, tmp_pat
     (release / "wheelhouse/cp314").mkdir(parents=True)
     (release / "wheelhouse/cp314/dependency.whl").write_bytes(b"wheel")
     (release / "packages").mkdir()
-    (release / "packages/labfoundry-0.9.0-py3-none-any.whl").write_bytes(b"wheel")
+    (release / "packages/atlaso-0.9.0-py3-none-any.whl").write_bytes(b"wheel")
     (release / "wheelhouse/cp314/requirements-wheelhouse.lock").write_text(
         "dependency==1.0 --hash=sha256:" + "a" * 64 + "\n",
         encoding="utf-8",
@@ -349,7 +348,7 @@ def test_photon_candidate_abi_uses_python_nevra_and_transaction_is_test_only(mon
     command, abi = helper._candidate_photon_python_abi()
     assert command["success"] is True
     assert abi == "cp314"
-    helper_text = (ROOT / "scripts/appliance/labfoundry-helper").read_text(encoding="utf-8")
+    helper_text = (ROOT / "scripts/appliance/atlaso-helper").read_text(encoding="utf-8")
     assert '[tdnf, "-y", "update", "--testonly"]' in helper_text
     assert "--assumeno" not in helper_text
 
@@ -373,9 +372,9 @@ def test_sqlite_backup_restores_database_identity(monkeypatch, tmp_path):
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()
-    database = tmp_path / "labfoundry.db"
+    database = tmp_path / "atlaso.db"
     backup = tmp_path / "backup.db"
-    monkeypatch.setattr(helper, "LABFOUNDRY_DATABASE_PATH", database)
+    monkeypatch.setattr(helper, "ATLASO_DATABASE_PATH", database)
     connection = sqlite3.connect(database)
     try:
         connection.execute("create table identity(value text)")
@@ -398,105 +397,10 @@ def test_sqlite_backup_restores_database_identity(monkeypatch, tmp_path):
         connection.close()
 
 
-def test_persisted_update_state_migrates_to_signed_release_stream(client):
-    from datetime import datetime, timezone
-
-    from sqlalchemy import select
-
-    from labfoundry.app.database import SessionLocal, _migrate_appliance_update_release_state
-    from labfoundry.app.models import AuditEvent, Job, ManagedPackage, Schedule, UpdateSource
-
-    client.get("/login")
-    with SessionLocal() as db:
-        python_source = UpdateSource(
-            kind="python",
-            name="Retired private index",
-            url="https://python.example.test/simple",
-            credential_encrypted="encrypted-secret",
-        )
-        legacy_release_source = UpdateSource(
-            kind="labfoundry",
-            name="Legacy release mirror",
-            url="https://mirror.example.test/releases/manifest.json",
-            enabled=True,
-            priority=20,
-            settings_json="{}",
-        )
-        db.add(legacy_release_source)
-        db.flush()
-        retired_release_package = ManagedPackage(
-            ecosystem="labfoundry",
-            name="labfoundry",
-            source_id=legacy_release_source.id,
-            policy="latest_stable",
-            enabled=True,
-        )
-        mixed = Schedule(
-            name="legacy-mixed-release-test",
-            task_type="appliance_update_install",
-            task_config_json=json.dumps(
-                {"selected_streams": ["python_libraries", "labfoundry_wheel", "photon_os"]}
-            ),
-            enabled=True,
-            next_run_at=datetime.now(timezone.utc),
-            created_by="admin",
-        )
-        python_only = Schedule(
-            name="legacy-python-only-release-test",
-            task_type="appliance_update_check",
-            task_config_json=json.dumps({"selected_streams": ["python_libraries"]}),
-            enabled=True,
-            next_run_at=datetime.now(timezone.utc),
-            created_by="admin",
-        )
-        pending = Job(
-            id="job_release_migration",
-            type="appliance-update",
-            status="pending",
-            created_by="admin",
-            task_config_json=json.dumps({"selected_streams": ["labfoundry_wheel"]}),
-        )
-        db.add_all([python_source, retired_release_package, mixed, python_only, pending])
-        db.commit()
-
-    _migrate_appliance_update_release_state()
-
-    with SessionLocal() as db:
-        assert db.execute(select(UpdateSource).where(UpdateSource.kind == "python")).scalars().all() == []
-        migrated_source = db.execute(
-            select(UpdateSource).where(UpdateSource.name == "Legacy release mirror")
-        ).scalar_one()
-        assert migrated_source.url == "https://mirror.example.test/releases"
-        assert json.loads(migrated_source.settings_json)["channel"] == "stable"
-        assert db.execute(
-            select(ManagedPackage).where(ManagedPackage.ecosystem == "labfoundry")
-        ).scalars().all() == []
-        mixed = db.execute(select(Schedule).where(Schedule.name == "legacy-mixed-release-test")).scalar_one()
-        assert json.loads(mixed.task_config_json)["selected_streams"] == [
-            "labfoundry_release",
-            "photon_os",
-        ]
-        python_only = db.execute(
-            select(Schedule).where(Schedule.name == "legacy-python-only-release-test")
-        ).scalar_one()
-        assert python_only.enabled is False
-        assert "Python Libraries" in json.loads(python_only.task_config_json)["_migration_notice"]
-        assert json.loads(db.get(Job, "job_release_migration").task_config_json)["selected_streams"] == [
-            "labfoundry_release"
-        ]
-        audit = db.execute(
-            select(AuditEvent)
-            .where(AuditEvent.action == "migrate_signed_release_updates")
-            .order_by(AuditEvent.id.desc())
-        ).scalars().first()
-        assert audit is not None
-        assert "removed_python_sources=1" in audit.detail
-
-
 def test_worker_restart_uses_matching_root_release_finalizer(client, monkeypatch, tmp_path):
-    from labfoundry.app import worker
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job
+    from atlaso.app import worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
 
     finalizer = tmp_path / "finalizer-status.json"
     finalizer.write_text(
@@ -506,7 +410,7 @@ def test_worker_restart_uses_matching_root_release_finalizer(client, monkeypatch
                 "status": "succeeded",
                 "release": "0.9.0",
                 "git_commit": "a" * 40,
-                "verified_key_id": "labfoundry-release-2026-01",
+                "verified_key_id": "atlaso-release-2026-01",
                 "bundle_sha256": "b" * 64,
                 "rolled_back": False,
             }
@@ -521,7 +425,7 @@ def test_worker_restart_uses_matching_root_release_finalizer(client, monkeypatch
                 type="appliance-update",
                 status="running",
                 created_by="admin",
-                result='{"selected_streams":["labfoundry_release"]}',
+                result='{"selected_streams":["atlaso_release"]}',
             )
         )
         db.commit()
@@ -531,14 +435,14 @@ def test_worker_restart_uses_matching_root_release_finalizer(client, monkeypatch
         assert recovered.error is None
         result = json.loads(recovered.result)
         assert result["worker_recovery"] == "root_finalizer"
-        assert result["release_transaction"]["verified_key_id"] == "labfoundry-release-2026-01"
+        assert result["release_transaction"]["verified_key_id"] == "atlaso-release-2026-01"
 
 
 def test_worker_restart_fails_update_parent_after_children_commit(client, monkeypatch, tmp_path):
-    from labfoundry.app import worker
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job
-    from labfoundry.app.services.appliance_update import ensure_appliance_update_job_steps
+    from atlaso.app import worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+    from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
 
     monkeypatch.setattr(
         worker,
@@ -584,10 +488,10 @@ def test_worker_restart_fails_update_parent_after_children_commit(client, monkey
 def test_worker_restart_keeps_release_finalizer_scoped_to_its_child(client, monkeypatch, tmp_path):
     from sqlalchemy import select
 
-    from labfoundry.app import worker
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, JobStep
-    from labfoundry.app.services.appliance_update import ensure_appliance_update_job_steps
+    from atlaso.app import worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStep
+    from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
 
     finalizer = tmp_path / "finalizer-status.json"
     finalizer.write_text(
@@ -597,7 +501,7 @@ def test_worker_restart_keeps_release_finalizer_scoped_to_its_child(client, monk
                 "status": "succeeded",
                 "release": "0.9.0",
                 "git_commit": "a" * 40,
-                "verified_key_id": "labfoundry-release-2026-01",
+                "verified_key_id": "atlaso-release-2026-01",
                 "bundle_sha256": "b" * 64,
                 "rolled_back": False,
             }
@@ -612,16 +516,16 @@ def test_worker_restart_keeps_release_finalizer_scoped_to_its_child(client, monk
             status="running",
             created_by="admin",
             task_config_json=json.dumps(
-                {"selected_streams": ["labfoundry_release", "photon_os"], "mode": "run"}
+                {"selected_streams": ["atlaso_release", "photon_os"], "mode": "run"}
             ),
-            result='{"selected_streams":["labfoundry_release","photon_os"]}',
+            result='{"selected_streams":["atlaso_release","photon_os"]}',
         )
         db.add(job)
         db.flush()
         steps = ensure_appliance_update_job_steps(
             db,
             job=job,
-            selected_streams=["labfoundry_release", "photon_os"],
+            selected_streams=["atlaso_release", "photon_os"],
         )
         release_step = steps[0]
         release_step.status = "running"
@@ -634,7 +538,7 @@ def test_worker_restart_keeps_release_finalizer_scoped_to_its_child(client, monk
         ).scalars().all()
         assert recovered.status == "failed"
         assert [(step.component_key, step.status) for step in steps] == [
-            ("labfoundry_release", "succeeded"),
+            ("atlaso_release", "succeeded"),
             ("photon_os", "skipped"),
         ]
         assert "worker restarted" in (steps[-1].error or "")
@@ -646,7 +550,7 @@ def test_failed_candidate_restores_previous_release_and_database(monkeypatch, tm
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()
-    home = tmp_path / "opt/labfoundry"
+    home = tmp_path / "opt/atlaso"
     releases = home / "releases"
     previous = releases / "0.8.9"
     previous.mkdir(parents=True)
@@ -655,7 +559,7 @@ def test_failed_candidate_restores_previous_release_and_database(monkeypatch, tm
     current.symlink_to(previous, target_is_directory=True)
     venv = home / ".venv"
     venv.symlink_to(Path("current/.venv"), target_is_directory=True)
-    database = tmp_path / "labfoundry.db"
+    database = tmp_path / "atlaso.db"
 
     def set_identity(value: str) -> None:
         connection = sqlite3.connect(database)
@@ -704,13 +608,13 @@ def test_failed_candidate_restores_previous_release_and_database(monkeypatch, tm
         "channel": "development",
         "release_manifest_url": "https://example.test/release-manifest.json",
     }
-    monkeypatch.setattr(helper, "LABFOUNDRY_HOME", home)
-    monkeypatch.setattr(helper, "LABFOUNDRY_RELEASES_DIR", releases)
-    monkeypatch.setattr(helper, "LABFOUNDRY_CURRENT_LINK", current)
-    monkeypatch.setattr(helper, "LABFOUNDRY_VENV_LINK", venv)
-    monkeypatch.setattr(helper, "LABFOUNDRY_DATABASE_PATH", database)
-    monkeypatch.setattr(helper, "LABFOUNDRY_UPDATE_BACKUP_DIR", tmp_path / "backups")
-    monkeypatch.setattr(helper, "LABFOUNDRY_UPDATE_FINALIZER_PATH", tmp_path / "finalizer.json")
+    monkeypatch.setattr(helper, "ATLASO_HOME", home)
+    monkeypatch.setattr(helper, "ATLASO_RELEASES_DIR", releases)
+    monkeypatch.setattr(helper, "ATLASO_CURRENT_LINK", current)
+    monkeypatch.setattr(helper, "ATLASO_VENV_LINK", venv)
+    monkeypatch.setattr(helper, "ATLASO_DATABASE_PATH", database)
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_BACKUP_DIR", tmp_path / "backups")
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_FINALIZER_PATH", tmp_path / "finalizer.json")
 
     def replace_symlink(target: Path, link: Path) -> None:
         if failure_stage == "symlink_switch" and target.name == "0.9.0":
@@ -740,7 +644,7 @@ def test_failed_candidate_restores_previous_release_and_database(monkeypatch, tm
         if (
             failure_stage == "database_migration"
             and action == "start"
-            and "labfoundry.service" in units
+            and "atlaso.service" in units
             and not migration_injected
         ):
             set_identity("after")
@@ -779,11 +683,11 @@ def test_failed_candidate_restores_previous_release_and_database(monkeypatch, tm
             "stderr": "" if success else "candidate failed",
         }
 
-    monkeypatch.setattr(helper, "_wait_for_labfoundry_health", health)
+    monkeypatch.setattr(helper, "_wait_for_atlaso_health", health)
     monkeypatch.setattr(helper, "_write_update_info", lambda _payload: None)
 
     with pytest.raises(ValueError, match="rolled back"):
-        helper._apply_labfoundry_release({}, {})
+        helper._apply_atlaso_release({}, {})
 
     assert current.resolve() == previous.resolve()
     assert get_identity() == "before"
@@ -800,19 +704,19 @@ def test_pre_switch_release_failures_leave_previous_release_and_database_untouch
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()
-    home = tmp_path / "opt/labfoundry"
+    home = tmp_path / "opt/atlaso"
     previous = home / "releases/bootstrap-0.9.0"
     previous.mkdir(parents=True)
     (previous / ".venv").mkdir()
     current = home / "current"
     current.symlink_to(previous, target_is_directory=True)
-    database = tmp_path / "labfoundry.db"
+    database = tmp_path / "atlaso.db"
     database.write_bytes(b"database-before")
-    monkeypatch.setattr(helper, "LABFOUNDRY_HOME", home)
-    monkeypatch.setattr(helper, "LABFOUNDRY_RELEASES_DIR", home / "releases")
-    monkeypatch.setattr(helper, "LABFOUNDRY_CURRENT_LINK", current)
-    monkeypatch.setattr(helper, "LABFOUNDRY_VENV_LINK", home / ".venv")
-    monkeypatch.setattr(helper, "LABFOUNDRY_DATABASE_PATH", database)
+    monkeypatch.setattr(helper, "ATLASO_HOME", home)
+    monkeypatch.setattr(helper, "ATLASO_RELEASES_DIR", home / "releases")
+    monkeypatch.setattr(helper, "ATLASO_CURRENT_LINK", current)
+    monkeypatch.setattr(helper, "ATLASO_VENV_LINK", home / ".venv")
+    monkeypatch.setattr(helper, "ATLASO_DATABASE_PATH", database)
 
     metadata = canonical(
         {
@@ -885,7 +789,7 @@ def test_pre_switch_release_failures_leave_previous_release_and_database_untouch
         )
 
     with pytest.raises((OSError, ValueError)):
-        helper._apply_labfoundry_release({}, {})
+        helper._apply_atlaso_release({}, {})
     assert current.resolve() == previous.resolve()
     assert database.read_bytes() == b"database-before"
     assert not (home / "releases/0.9.0").exists()
@@ -895,7 +799,7 @@ def test_failed_revalidation_does_not_delete_an_existing_release(monkeypatch, tm
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()
-    home = tmp_path / "opt/labfoundry"
+    home = tmp_path / "opt/atlaso"
     releases = home / "releases"
     previous = releases / "bootstrap-0.9.0"
     existing = releases / "0.9.0"
@@ -912,9 +816,9 @@ def test_failed_revalidation_does_not_delete_an_existing_release(monkeypatch, tm
         "size": len(bundle),
         "sha256": hashlib.sha256(bundle).hexdigest(),
     }
-    monkeypatch.setattr(helper, "LABFOUNDRY_HOME", home)
-    monkeypatch.setattr(helper, "LABFOUNDRY_RELEASES_DIR", releases)
-    monkeypatch.setattr(helper, "LABFOUNDRY_CURRENT_LINK", current)
+    monkeypatch.setattr(helper, "ATLASO_HOME", home)
+    monkeypatch.setattr(helper, "ATLASO_RELEASES_DIR", releases)
+    monkeypatch.setattr(helper, "ATLASO_CURRENT_LINK", current)
     monkeypatch.setattr(
         helper,
         "_download_signed_release_from_sources",
@@ -933,7 +837,7 @@ def test_failed_revalidation_does_not_delete_an_existing_release(monkeypatch, tm
     )
 
     with pytest.raises(ValueError, match="injected extraction failure"):
-        helper._apply_labfoundry_release({}, {})
+        helper._apply_atlaso_release({}, {})
 
     assert marker.read_text(encoding="utf-8") == "preserve"
     assert current.resolve() == previous.resolve()
