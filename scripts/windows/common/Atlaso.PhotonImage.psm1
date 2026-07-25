@@ -81,7 +81,8 @@ function New-AtlasoPhotonKickstart {
         '#!/bin/sh',
         "useradd -m -G sudo -s /bin/bash $BuildUsername || true",
         "printf '%s:%s\n' '$BuildUsername' '$BuildPassword' | chpasswd",
-        'systemctl enable sshd',
+        'systemctl disable sshd.socket',
+        'systemctl enable sshd.service',
         "echo '$BuildUsername ALL=(ALL) NOPASSWD:ALL' >/etc/sudoers.d/90-atlaso-build",
         'chmod 0440 /etc/sudoers.d/90-atlaso-build'
     ) + $PostInstallCommands

@@ -79,6 +79,7 @@
 - The appliance installs Atlaso under `/opt/atlaso`, stores environment in `/etc/atlaso/atlaso.env`, stores durable state in `/var/lib/atlaso`, writes local logs under `/var/log/atlaso`, and preserves fixed service mounts under `/mnt/atlaso-vcf-*`.
 - Appliance provisioning must set `ATLASO_SECRETS_KEY` in `/etc/atlaso/atlaso.env`. Atlaso uses it to encrypt CA root and leaf private keys in the database; preserving it is required for settings-backup portability.
 - Keep the image-build OS/root password separate from the Atlaso web bootstrap password. Packer exposes `ssh_password` for build-time SSH/root use and `bootstrap_admin_password` for the initial `admin` web login; never substitute one for the other.
+- Photon kickstart must disable `sshd.socket` and enable the normal `sshd.service` for deterministic Packer SSH. Do not enable both conflicting units: socket activation can accept port 22 without completing the Packer handshake on a fresh image.
 - Product-owned helper binaries should live under `/opt/atlaso/bin`; do not put Atlaso-owned helpers in `/usr/local/sbin` for Photon appliance images.
 - The appliance systemd unit is `atlaso.service` and should run uvicorn from the provisioned virtual environment as the `atlaso` service user.
 - Photon appliance firewall ownership is nftables-first. Provisioning installs nftables and loads `atlaso-firewall.service`; do not add a Atlaso iptables apply path.
