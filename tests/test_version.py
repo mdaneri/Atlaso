@@ -15,19 +15,28 @@ sys.modules[SPEC.name] = versioning
 SPEC.loader.exec_module(versioning)
 
 
-def write_version_sources(root: Path, project: str, runtime: str | None = None, powershell: str | None = None) -> None:
+def write_version_sources(
+    root: Path,
+    project: str,
+    runtime: str | None = None,
+    powershell: str | None = None,
+    product: str = "LabFoundry",
+    distribution_name: str | None = None,
+) -> None:
     runtime = project if runtime is None else runtime
     powershell = project if powershell is None else powershell
-    (root / "labfoundry").mkdir(parents=True)
-    (root / "clients/powershell/LabFoundry").mkdir(parents=True)
+    package = product.lower()
+    distribution_name = package if distribution_name is None else distribution_name
+    (root / package).mkdir(parents=True)
+    (root / f"clients/powershell/{product}").mkdir(parents=True)
     (root / "pyproject.toml").write_text(
-        f'[project]\nname = "labfoundry"\nversion = "{project}"\n', encoding="utf-8"
+        f'[project]\nname = "{distribution_name}"\nversion = "{project}"\n', encoding="utf-8"
     )
-    (root / "labfoundry/__init__.py").write_text(
-        f'try:\n    from labfoundry._build import BUILD_VERSION\nexcept ImportError:\n    BUILD_VERSION = "{runtime}"\n',
+    (root / package / "__init__.py").write_text(
+        f'try:\n    from {package}._build import BUILD_VERSION\nexcept ImportError:\n    BUILD_VERSION = "{runtime}"\n',
         encoding="utf-8",
     )
-    (root / "clients/powershell/LabFoundry/LabFoundry.psd1").write_text(
+    (root / f"clients/powershell/{product}/{product}.psd1").write_text(
         f"@{{\n    ModuleVersion = '{powershell}'\n}}\n", encoding="utf-8"
     )
 
@@ -94,6 +103,61 @@ def test_bump_is_idempotent_when_target_is_expected_patch(tmp_path):
     bumped, changed = versioning.bump(target, base)
 
     assert (str(bumped), changed) == ("2.4.7", False)
+
+
+def test_check_discovers_version_sources_when_product_paths_change(tmp_path):
+    base = tmp_path / "base"
+    target = tmp_path / "target"
+    write_version_sources(base, "0.9.17")
+    write_version_sources(target, "0.9.18", product="Renamed")
+
+    assert versioning.check(target, base) == versioning.Version(0, 9, 18)
+
+
+def test_bump_writes_discovered_version_sources_when_product_paths_change(tmp_path):
+    base = tmp_path / "base"
+    target = tmp_path / "target"
+    write_version_sources(base, "0.9.17")
+    write_version_sources(
+        target,
+        "0.9.17",
+        product="Renamed",
+        distribution_name="labfoundry",
+    )
+
+    bumped, changed = versioning.bump(target, base)
+
+    assert (str(bumped), changed) == ("0.9.18", True)
+    assert versioning.consistent_version(target) == bumped
+
+
+def test_check_allows_project_rename_to_retain_base_version(tmp_path):
+    base = tmp_path / "base"
+    target = tmp_path / "target"
+    write_version_sources(base, "0.9.18")
+    write_version_sources(target, "0.9.18", product="Renamed")
+
+    assert versioning.check(target, base) == versioning.Version(0, 9, 18)
+    bumped, changed = versioning.bump(target, base)
+    assert (str(bumped), changed) == ("0.9.18", False)
+
+
+@pytest.mark.parametrize("equivalent_name", ["lab-foundry", "Lab_Foundry", "LAB.FOUNDRY"])
+def test_check_does_not_treat_normalized_distribution_spelling_as_rename(
+    tmp_path, equivalent_name
+):
+    base = tmp_path / "base"
+    target = tmp_path / "target"
+    write_version_sources(base, "0.9.18", distribution_name="lab-foundry")
+    write_version_sources(
+        target,
+        "0.9.18",
+        product="Renamed",
+        distribution_name=equivalent_name,
+    )
+
+    with pytest.raises(versioning.VersionError, match="PR version must be 0.9.19"):
+        versioning.check(target, base)
 
 
 def test_check_allows_approved_pre_ga_release_line_transition(tmp_path):

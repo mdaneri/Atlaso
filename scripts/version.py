@@ -16,6 +16,7 @@ SEMVER_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 PYTHON_FALLBACK_RE = re.compile(r'(?m)^(\s*BUILD_VERSION\s*=\s*")[^"]+("\s*)$')
 POWERSHELL_MODULE_RE = re.compile(r"(?m)^(\s*ModuleVersion\s*=\s*')[^']+('\s*)$")
 PROJECT_VERSION_RE = re.compile(r'(?m)^(version\s*=\s*")[^"]+("\s*)$')
+NORMALIZED_DISTRIBUTION_SEPARATOR_RE = re.compile(r"[-_.]+")
 
 
 class VersionError(ValueError):
@@ -52,8 +53,26 @@ VERSION_PATHS = {
 }
 
 
+def _version_path(root: Path, source: str) -> Path:
+    configured = root / VERSION_PATHS[source]
+    if configured.is_file() or source == "Python project":
+        return configured
+    pattern = "*/__init__.py" if source == "Python runtime fallback" else "clients/powershell/*/*.psd1"
+    marker = "BUILD_VERSION" if source == "Python runtime fallback" else "ModuleVersion"
+    candidates = [
+        path
+        for path in root.glob(pattern)
+        if path.is_file() and marker in path.read_text(encoding="utf-8", errors="ignore")
+    ]
+    if len(candidates) != 1:
+        raise VersionError(
+            f"Expected exactly one {source} version source under {root}; found {len(candidates)}"
+        )
+    return candidates[0]
+
+
 def _read_text(root: Path, source: str) -> str:
-    path = root / VERSION_PATHS[source]
+    path = _version_path(root, source)
     try:
         return path.read_text(encoding="utf-8")
     except OSError as exc:
@@ -78,21 +97,40 @@ def read_project_version(root: Path) -> Version:
     return Version.parse(project_value, source=f"{path} [project].version")
 
 
+def read_project_name(root: Path) -> str:
+    root = root.resolve()
+    path = root / VERSION_PATHS["Python project"]
+    try:
+        document = tomllib.loads(_read_text(root, "Python project"))
+    except tomllib.TOMLDecodeError as exc:
+        raise VersionError(f"{path} contains invalid TOML: {exc}") from exc
+    project = document.get("project")
+    value = project.get("name") if isinstance(project, dict) else None
+    if not isinstance(value, str) or not value.strip():
+        raise VersionError(f"{path} must define [project].name")
+    return value.strip()
+
+
+def normalize_distribution_name(value: str) -> str:
+    """Return the canonical comparison form defined for Python distributions."""
+    return NORMALIZED_DISTRIBUTION_SEPARATOR_RE.sub("-", value).casefold()
+
+
 def read_versions(root: Path) -> dict[str, Version]:
     root = root.resolve()
     project_version = read_project_version(root)
 
     python_text = _read_text(root, "Python runtime fallback")
+    python_path = _version_path(root, "Python runtime fallback")
     python_match = PYTHON_FALLBACK_RE.search(python_text)
     if python_match is None:
-        raise VersionError(
-            f"{root / VERSION_PATHS['Python runtime fallback']} must define the BUILD_VERSION fallback"
-        )
+        raise VersionError(f"{python_path} must define the BUILD_VERSION fallback")
 
     powershell_text = _read_text(root, "PowerShell module")
+    powershell_path = _version_path(root, "PowerShell module")
     powershell_match = POWERSHELL_MODULE_RE.search(powershell_text)
     if powershell_match is None:
-        raise VersionError(f"{root / VERSION_PATHS['PowerShell module']} must define ModuleVersion")
+        raise VersionError(f"{powershell_path} must define ModuleVersion")
 
     return {
         "Python project": project_version,
@@ -118,9 +156,13 @@ def expected_version(base_root: Path) -> Version:
     return consistent_version(base_root).next_patch()
 
 
-def allowed_pr_versions(base_root: Path) -> set[Version]:
+def allowed_pr_versions(base_root: Path, target_root: Path | None = None) -> set[Version]:
     base = consistent_version(base_root)
     allowed = {base.next_patch()}
+    if target_root is not None and normalize_distribution_name(
+        read_project_name(target_root)
+    ) != normalize_distribution_name(read_project_name(base_root)):
+        allowed.add(base)
     if base.major == 0 and base < PRE_GA_RELEASE_LINE:
         allowed.add(PRE_GA_RELEASE_LINE)
     return allowed
@@ -129,7 +171,7 @@ def allowed_pr_versions(base_root: Path) -> set[Version]:
 def check(root: Path, base_root: Path | None = None) -> Version:
     current = consistent_version(root)
     if base_root is not None:
-        allowed = allowed_pr_versions(base_root)
+        allowed = allowed_pr_versions(base_root, root)
         if current not in allowed:
             expected = " or ".join(str(value) for value in sorted(allowed))
             raise VersionError(f"PR version must be {expected}; found {current}")
@@ -150,7 +192,7 @@ def bump(root: Path, base_root: Path | None = None) -> tuple[Version, bool]:
     current = consistent_version(root)
     base = consistent_version(base_root)
     expected = base.next_patch()
-    allowed = allowed_pr_versions(base_root)
+    allowed = allowed_pr_versions(base_root, root)
     if current in allowed:
         return current, False
     if current != base:
@@ -158,15 +200,15 @@ def bump(root: Path, base_root: Path | None = None) -> tuple[Version, bool]:
             f"Cannot automatically replace {current}; target must match base {base} or expected patch {expected}"
         )
 
-    _replace_version(root / VERSION_PATHS["Python project"], PROJECT_VERSION_RE, expected, "Python project")
+    _replace_version(_version_path(root, "Python project"), PROJECT_VERSION_RE, expected, "Python project")
     _replace_version(
-        root / VERSION_PATHS["Python runtime fallback"],
+        _version_path(root, "Python runtime fallback"),
         PYTHON_FALLBACK_RE,
         expected,
         "Python runtime fallback",
     )
     _replace_version(
-        root / VERSION_PATHS["PowerShell module"], POWERSHELL_MODULE_RE, expected, "PowerShell module"
+        _version_path(root, "PowerShell module"), POWERSHELL_MODULE_RE, expected, "PowerShell module"
     )
     check(root)
     return expected, True
