@@ -1,7 +1,7 @@
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [string]$LabName = 'LabFoundryWorkstationLifecycle',
+    [string]$LabName = 'AtlasoWorkstationLifecycle',
     [Parameter(Mandatory = $true)]
     [string]$ApplianceVmxPath,
     [Parameter(Mandatory = $true)]
@@ -98,7 +98,7 @@ function Resolve-VdiskManagerPath {
 function Assert-SafeLifecycleName {
     param([string]$Name)
 
-    $reserved = @('LabFoundry', 'LabFoundry-Photon-Builder', 'LabFoundry-Photon-Builder-VMware')
+    $reserved = @('Atlaso', 'Atlaso-Photon-Builder', 'Atlaso-Photon-Builder-VMware')
     if ($reserved -contains $Name) {
         throw "Refusing to use reserved VM name '$Name'. Lifecycle tests must use a separate VM set."
     }
@@ -217,7 +217,7 @@ function New-LanSegmentId {
 
     $sha = [System.Security.Cryptography.SHA256]::Create()
     try {
-        $bytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes("LabFoundryWorkstationLifecycle:$Name"))
+        $bytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes("AtlasoWorkstationLifecycle:$Name"))
     } finally {
         $sha.Dispose()
     }
@@ -686,7 +686,7 @@ function Get-GuestIPv4ViaGuestOps {
         return ''
     }
     $safeName = ($Name -replace '[^A-Za-z0-9_.-]', '-')
-    $guestOutput = "/tmp/labfoundry-ipv4-$safeName.txt"
+    $guestOutput = "/tmp/atlaso-ipv4-$safeName.txt"
     $hostOutput = Join-Path $resultRoot "guest-ipv4-$safeName.txt"
     $script = "ip -4 -br addr > $guestOutput 2>/dev/null || /sbin/ip -4 -br addr > $guestOutput 2>/dev/null || ifconfig > $guestOutput 2>/dev/null"
     $runResult = Invoke-VmrunBounded -Arguments @('-T', 'ws', '-gu', $GuestUser, '-gp', $GuestPassword, 'runScriptInGuest', $Path, '/bin/sh', $script) -TimeoutSeconds 15
@@ -746,19 +746,19 @@ function Invoke-ApplianceGuestScript {
 function Sync-ApplianceHelperScript {
     param([string]$ApplianceVmx)
 
-    $localHelper = Join-Path $repoRoot 'scripts\appliance\labfoundry-helper'
+    $localHelper = Join-Path $repoRoot 'scripts\appliance\atlaso-helper'
     if (-not (Test-Path -LiteralPath $localHelper)) {
-        throw "LabFoundry helper script not found: $localHelper"
+        throw "Atlaso helper script not found: $localHelper"
     }
-    $guestTemp = "/tmp/labfoundry-helper"
-    if ($PSCmdlet.ShouldProcess($ApplianceVmx, "Sync LabFoundry helper into appliance")) {
+    $guestTemp = "/tmp/atlaso-helper"
+    if ($PSCmdlet.ShouldProcess($ApplianceVmx, "Sync Atlaso helper into appliance")) {
         & $resolvedVmrun -T ws -gu $ApplianceSshUser -gp $SshPassword copyFileFromHostToGuest $ApplianceVmx $localHelper $guestTemp | Out-Host
         if ($LASTEXITCODE -ne 0) {
-            throw "Failed to copy LabFoundry helper into the appliance with VMware guest operations."
+            throw "Failed to copy Atlaso helper into the appliance with VMware guest operations."
         }
         $quotedPassword = ConvertTo-GuestShellSingleQuote -Value $SshPassword
         $quotedTemp = ConvertTo-GuestShellSingleQuote -Value $guestTemp
-        $script = "printf '%s\n' $quotedPassword | sudo -S install -o root -g root -m 0755 $quotedTemp /opt/labfoundry/bin/labfoundry-helper"
+        $script = "printf '%s\n' $quotedPassword | sudo -S install -o root -g root -m 0755 $quotedTemp /opt/atlaso/bin/atlaso-helper"
         Invoke-ApplianceGuestScript -ApplianceVmx $ApplianceVmx -Script $script
     }
 }
@@ -771,12 +771,12 @@ function Sync-ApplianceApplicationWheel {
         Remove-Item -LiteralPath $wheelRoot -Recurse -Force
     }
     New-Item -ItemType Directory -Force -Path $wheelRoot | Out-Null
-    Write-Host "Building LabFoundry wheel from current branch."
+    Write-Host "Building Atlaso wheel from current branch."
     & python -m pip wheel $repoRoot --no-deps -w $wheelRoot | Out-Host
     if ($LASTEXITCODE -ne 0) {
-        throw "Failed to build LabFoundry wheel from $repoRoot."
+        throw "Failed to build Atlaso wheel from $repoRoot."
     }
-    $wheel = Get-ChildItem -LiteralPath $wheelRoot -Filter 'labfoundry-*.whl' -File |
+    $wheel = Get-ChildItem -LiteralPath $wheelRoot -Filter 'atlaso-*.whl' -File |
         Sort-Object LastWriteTime -Descending |
         Select-Object -First 1
     if (-not $wheel) {
@@ -784,14 +784,14 @@ function Sync-ApplianceApplicationWheel {
     }
 
     $guestWheel = "/tmp/$($wheel.Name)"
-    if ($PSCmdlet.ShouldProcess($ApplianceVmx, "Install current LabFoundry wheel into appliance")) {
+    if ($PSCmdlet.ShouldProcess($ApplianceVmx, "Install current Atlaso wheel into appliance")) {
         & $resolvedVmrun -T ws -gu $ApplianceSshUser -gp $SshPassword copyFileFromHostToGuest $ApplianceVmx $wheel.FullName $guestWheel | Out-Host
         if ($LASTEXITCODE -ne 0) {
-            throw "Failed to copy LabFoundry wheel into the appliance with VMware guest operations."
+            throw "Failed to copy Atlaso wheel into the appliance with VMware guest operations."
         }
         $quotedPassword = ConvertTo-GuestShellSingleQuote -Value $SshPassword
         $quotedWheel = ConvertTo-GuestShellSingleQuote -Value $guestWheel
-        $script = "printf '%s\n' $quotedPassword | sudo -S /opt/labfoundry/.venv/bin/python -m pip install --force-reinstall --no-deps $quotedWheel && printf '%s\n' $quotedPassword | sudo -S find /opt/labfoundry/.venv -type d -exec chmod 0755 {} + && printf '%s\n' $quotedPassword | sudo -S find /opt/labfoundry/.venv -type f -exec chmod 0644 {} + && printf '%s\n' $quotedPassword | sudo -S find /opt/labfoundry/.venv/bin -type f -exec chmod 0755 {} + && printf '%s\n' $quotedPassword | sudo -S systemctl restart labfoundry.service"
+        $script = "printf '%s\n' $quotedPassword | sudo -S /opt/atlaso/.venv/bin/python -m pip install --force-reinstall --no-deps $quotedWheel && printf '%s\n' $quotedPassword | sudo -S find /opt/atlaso/.venv -type d -exec chmod 0755 {} + && printf '%s\n' $quotedPassword | sudo -S find /opt/atlaso/.venv -type f -exec chmod 0644 {} + && printf '%s\n' $quotedPassword | sudo -S find /opt/atlaso/.venv/bin -type f -exec chmod 0755 {} + && printf '%s\n' $quotedPassword | sudo -S systemctl restart atlaso.service"
         Invoke-ApplianceGuestScript -ApplianceVmx $ApplianceVmx -Script $script
     }
 
@@ -806,15 +806,15 @@ function Sync-ApplianceApplicationWheel {
         }
         Start-Sleep -Seconds 5
     } while ((Get-Date) -lt $deadline)
-    throw "Timed out waiting for LabFoundry web service after installing $($wheel.Name)."
+    throw "Timed out waiting for Atlaso web service after installing $($wheel.Name)."
 }
 
 function Find-ApplianceEsxiIsoPath {
     param([string]$ApplianceVmx)
 
-    $guestOutput = '/tmp/labfoundry-esxi-iso.txt'
+    $guestOutput = '/tmp/atlaso-esxi-iso.txt'
     $hostOutput = Join-Path $resultRoot 'appliance-esxi-iso.txt'
-    $script = "find /mnt/labfoundry-vcf-offline-depot/PROD/COMP/ESX_HOST -maxdepth 1 -type f -iname '*.iso' | head -n 1 > $guestOutput"
+    $script = "find /mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST -maxdepth 1 -type f -iname '*.iso' | head -n 1 > $guestOutput"
     & $resolvedVmrun -T ws -gu $ApplianceSshUser -gp $SshPassword runScriptInGuest $ApplianceVmx /bin/sh $script 2>$null | Out-Null
     if ($LASTEXITCODE -ne 0) {
         return ''
@@ -837,7 +837,7 @@ function Resolve-ApplianceEsxiIsoPath {
         if ($discovered) {
             return $discovered
         }
-        throw "-FullEsxiPxeInstall requires -PxeInstallerIsoPath or an existing ESXi ISO under /mnt/labfoundry-vcf-offline-depot/PROD/COMP/ESX_HOST on the appliance."
+        throw "-FullEsxiPxeInstall requires -PxeInstallerIsoPath or an existing ESXi ISO under /mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST on the appliance."
     }
     if ($PxeInstallerIsoPath.StartsWith('/')) {
         return $PxeInstallerIsoPath
@@ -845,7 +845,7 @@ function Resolve-ApplianceEsxiIsoPath {
     $localIso = Resolve-Path -LiteralPath $PxeInstallerIsoPath
     $leaf = Split-Path -Leaf $localIso.Path
     $guestTemp = "/tmp/$leaf"
-    $guestTarget = "/mnt/labfoundry-vcf-offline-depot/PROD/COMP/ESX_HOST/$leaf"
+    $guestTarget = "/mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST/$leaf"
     if ($PSCmdlet.ShouldProcess($guestTarget, "Stage ESXi installer ISO into appliance depot")) {
         & $resolvedVmrun -T ws -gu $ApplianceSshUser -gp $SshPassword copyFileFromHostToGuest $ApplianceVmx $localIso.Path $guestTemp | Out-Host
         if ($LASTEXITCODE -ne 0) {
@@ -854,7 +854,7 @@ function Resolve-ApplianceEsxiIsoPath {
         $quotedPassword = ConvertTo-GuestShellSingleQuote -Value $SshPassword
         $quotedTemp = ConvertTo-GuestShellSingleQuote -Value $guestTemp
         $quotedTarget = ConvertTo-GuestShellSingleQuote -Value $guestTarget
-        $script = "printf '%s\n' $quotedPassword | sudo -S mkdir -p /mnt/labfoundry-vcf-offline-depot/PROD/COMP/ESX_HOST && printf '%s\n' $quotedPassword | sudo -S mv $quotedTemp $quotedTarget && printf '%s\n' $quotedPassword | sudo -S chmod 0644 $quotedTarget"
+        $script = "printf '%s\n' $quotedPassword | sudo -S mkdir -p /mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST && printf '%s\n' $quotedPassword | sudo -S mv $quotedTemp $quotedTarget && printf '%s\n' $quotedPassword | sudo -S chmod 0644 $quotedTarget"
         Invoke-ApplianceGuestScript -ApplianceVmx $ApplianceVmx -Script $script
     }
     return $guestTarget

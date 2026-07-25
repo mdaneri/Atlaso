@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block page_title %}Tasks{% endblock %}
+
+{% block content %}
+{% set task_grid_class = "panel tasks-panel" %}
+{% set task_grid_title = "Tasks" %}
+{% set task_grid_description = "Current and historical Atlaso background work. Double-click a row for details, or use the row context menu for details, logs, and cancellation." %}
+{% set task_grid_rows = task_rows %}
+{% set task_grid_component_options = task_component_filter_options %}
+{% set task_grid_selected_task_id = selected_task_id %}
+{% include "partials/task_grid.html" %}
+{% include "partials/task_modals.html" %}
+{% endblock %}

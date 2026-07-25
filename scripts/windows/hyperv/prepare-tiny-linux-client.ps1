@@ -4,7 +4,7 @@ param(
     [string]$ImageName = 'generic_alpine-3.24.1-x86_64-uefi-cloudinit-r0.qcow2',
     [string]$BaseUrl = 'https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/cloud',
     [string]$OutputDirectory = '',
-    [string]$OutputVhdxName = 'labfoundry-tiny-linux-client.vhdx',
+    [string]$OutputVhdxName = 'atlaso-tiny-linux-client.vhdx',
     [switch]$Force
 )
 

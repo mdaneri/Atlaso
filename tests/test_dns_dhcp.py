@@ -1,8 +1,9 @@
 from ipaddress import ip_address
+import re
 
-from labfoundry.app.models import NtpSettings, DhcpOption, DhcpReservation, DhcpScope, DhcpSettings, DnsRecord, DnsSettings, PhysicalInterface, VlanInterface
-from labfoundry.app.services.ntp import NTP_DEFAULT_UPSTREAM_SERVERS, dump_ntp_upstream_sources, ntp_upstream_sources, parse_ntp_source, render_ntp_config, validate_ntp_state
-from labfoundry.app.services.dnsmasq import (
+from atlaso.app.models import NtpSettings, DhcpOption, DhcpReservation, DhcpScope, DhcpSettings, DnsRecord, DnsSettings, PhysicalInterface, VlanInterface
+from atlaso.app.services.ntp import NTP_DEFAULT_UPSTREAM_SERVERS, dump_ntp_upstream_sources, ntp_upstream_sources, parse_ntp_source, render_ntp_config, validate_ntp_state
+from atlaso.app.services.dnsmasq import (
     DHCP_DENY_RESERVATION_DESCRIPTION_PREFIX,
     DNSMASQ_LEASE_FILE_PATH,
     DNSMASQ_DNSSEC_TRUST_ANCHORS_PATH,
@@ -31,7 +32,7 @@ from labfoundry.app.services.dnsmasq import (
 
 def create_token(client, scopes):
     response = client.post(
-        "/api/v1/auth/login?username=admin&password=labfoundry-admin",
+        "/api/v1/auth/login?username=admin&password=atlaso-admin",
         json={"name": "dns dhcp test token", "scopes": scopes},
     )
     assert response.status_code == 200, response.text
@@ -43,7 +44,7 @@ def test_dnsmasq_renderer_binds_dhcp_to_sitea_interface_only():
         enabled=True,
         listen_interface="eth1\neth2",
         listen_address="192.168.50.1\n192.168.60.1",
-        domain="labfoundry.internal\ncorp.lab",
+        domain="atlaso.internal\ncorp.lab",
         upstream_servers="1.1.1.1\n9.9.9.9",
     )
     dhcp_settings = DhcpSettings(
@@ -56,9 +57,9 @@ def test_dnsmasq_renderer_binds_dhcp_to_sitea_interface_only():
     config = render_dnsmasq_config(
         dns_settings=dns_settings,
         dns_records=[
-            DnsRecord(hostname="app.labfoundry.internal", record_type="A", address="192.168.50.10"),
-            DnsRecord(hostname="ipv6.labfoundry.internal", record_type="AAAA", address="2001:db8::10"),
-            DnsRecord(hostname="www.labfoundry.internal", record_type="CNAME", address="app.labfoundry.internal"),
+            DnsRecord(hostname="app.atlaso.internal", record_type="A", address="192.168.50.10"),
+            DnsRecord(hostname="ipv6.atlaso.internal", record_type="AAAA", address="2001:db8::10"),
+            DnsRecord(hostname="www.atlaso.internal", record_type="CNAME", address="app.atlaso.internal"),
         ],
         dhcp_settings=dhcp_settings,
         dhcp_scopes=[
@@ -74,7 +75,7 @@ def test_dnsmasq_renderer_binds_dhcp_to_sitea_interface_only():
         dhcp_reservations=[
             DhcpReservation(hostname="client1", mac_address="02:15:5d:00:20:20", ip_address="192.168.50.120"),
             DhcpReservation(
-                hostname="deny-client.labfoundry.internal",
+                hostname="deny-client.atlaso.internal",
                 mac_address="02:15:5d:00:20:99",
                 ip_address="192.168.50.199",
                 enabled=False,
@@ -87,19 +88,21 @@ def test_dnsmasq_renderer_binds_dhcp_to_sitea_interface_only():
 
     assert "interface=eth1" in config
     assert "interface=eth2" in config
+    assert "interface=lo" in config
     assert "interface=eth0" not in config
+    assert "listen-address=127.0.0.1" in config
     assert "listen-address=192.168.50.1" in config
     assert "listen-address=192.168.60.1" in config
-    assert "domain=labfoundry.internal" in config
+    assert "domain=atlaso.internal" in config
     assert "domain=corp.lab" in config
-    assert "local=/labfoundry.internal/" in config
+    assert "local=/atlaso.internal/" in config
     assert "local=/corp.lab/" in config
     assert "dhcp-range=set:sitea,192.168.50.100,192.168.50.200,12h" in config
     assert "dhcp-option=tag:sitea,option:router,192.168.50.1" in config
     assert "dhcp-option=option:ntp-server,192.168.50.1" in config
-    assert "host-record=app.labfoundry.internal,192.168.50.10" in config
-    assert "host-record=ipv6.labfoundry.internal,2001:db8::10" in config
-    assert "cname=www.labfoundry.internal,app.labfoundry.internal" in config
+    assert "host-record=app.atlaso.internal,192.168.50.10" in config
+    assert "host-record=ipv6.atlaso.internal,2001:db8::10" in config
+    assert "cname=www.atlaso.internal,app.atlaso.internal" in config
     assert "server=/sddc.internal/192.168.10.10" in config
     assert "server=/corp.example/192.168.20.10#5353" in config
     assert "ptr-record=" not in config
@@ -113,10 +116,10 @@ def test_dnsmasq_renderer_emits_shared_authoritative_zones_and_generated_glue():
         enabled=True,
         listen_interface="eth1\neth2",
         listen_address="192.168.50.1\n2001:db8::53",
-        domain="labfoundry.internal\nsitea.internal",
+        domain="atlaso.internal\nsitea.internal",
         authoritative=True,
-        authoritative_server="ns1.labfoundry.internal",
-        authoritative_contact="hostmaster.labfoundry.internal",
+        authoritative_server="ns1.atlaso.internal",
+        authoritative_contact="hostmaster.atlaso.internal",
         authoritative_ttl=3600,
         authoritative_serial=2026072201,
         authoritative_refresh=1200,
@@ -131,14 +134,14 @@ def test_dnsmasq_renderer_emits_shared_authoritative_zones_and_generated_glue():
         dhcp_reservations=[],
     )
 
-    assert "auth-zone=labfoundry.internal" in config
+    assert "auth-zone=atlaso.internal" in config
     assert "auth-zone=sitea.internal" in config
-    assert "local=/labfoundry.internal/" not in config
-    assert "auth-server=ns1.labfoundry.internal,eth1,eth2" in config
-    assert "auth-soa=2026072201,hostmaster.labfoundry.internal,1200,180,1209600" in config
+    assert "local=/atlaso.internal/" not in config
+    assert "auth-server=ns1.atlaso.internal,eth1,eth2" in config
+    assert "auth-soa=2026072201,hostmaster.atlaso.internal,1200,180,1209600" in config
     assert "auth-ttl=3600" in config
-    assert "host-record=ns1.labfoundry.internal,192.168.50.1" in config
-    assert "host-record=ns1.labfoundry.internal,2001:db8::53" in config
+    assert "host-record=ns1.atlaso.internal,192.168.50.1" in config
+    assert "host-record=ns1.atlaso.internal,2001:db8::53" in config
     assert "host-record=app.sitea.internal,192.168.50.20" in config
 
 
@@ -147,7 +150,7 @@ def test_authoritative_validation_rejects_bad_identity_timers_and_conflicting_gl
         enabled=True,
         listen_interface="eth1",
         listen_address="192.168.50.1",
-        domain="labfoundry.internal",
+        domain="atlaso.internal",
         authoritative=True,
         authoritative_server="ns1.outside.example",
         authoritative_contact="bad contact",
@@ -165,19 +168,19 @@ def test_authoritative_validation_rejects_bad_identity_timers_and_conflicting_gl
     assert any("expire must be greater" in error for error in errors)
     assert any("serial must be between" in error for error in errors)
 
-    settings.authoritative_server = "ns1.labfoundry.internal"
-    assert validate_authoritative_dns_record(settings, "ns1.labfoundry.internal", "A", "192.168.50.99")
-    assert validate_authoritative_dns_record(settings, "ns1.labfoundry.internal", "CNAME", "other.labfoundry.internal")
-    assert validate_authoritative_dns_record(settings, "ns1.labfoundry.internal", "A", "192.168.50.1") == []
+    settings.authoritative_server = "ns1.atlaso.internal"
+    assert validate_authoritative_dns_record(settings, "ns1.atlaso.internal", "A", "192.168.50.99")
+    assert validate_authoritative_dns_record(settings, "ns1.atlaso.internal", "CNAME", "other.atlaso.internal")
+    assert validate_authoritative_dns_record(settings, "ns1.atlaso.internal", "A", "192.168.50.1") == []
 
 
 def test_authoritative_zone_file_round_trip_ignores_matching_structural_records():
     settings = DnsSettings(
         listen_address="192.168.50.1\n2001:db8::53",
-        domain="labfoundry.internal",
+        domain="atlaso.internal",
         authoritative=True,
-        authoritative_server="ns1.labfoundry.internal",
-        authoritative_contact="hostmaster.labfoundry.internal",
+        authoritative_server="ns1.atlaso.internal",
+        authoritative_contact="hostmaster.atlaso.internal",
         authoritative_ttl=3600,
         authoritative_serial=2026072201,
         authoritative_refresh=1200,
@@ -185,25 +188,25 @@ def test_authoritative_zone_file_round_trip_ignores_matching_structural_records(
         authoritative_expire=1209600,
     )
     zone_text = render_zone_file(
-        "labfoundry.internal",
-        [{"hostname": "app.labfoundry.internal", "host_label": "app", "record_type": "A", "address": "192.168.50.20", "enabled": True}],
+        "atlaso.internal",
+        [{"hostname": "app.atlaso.internal", "host_label": "app", "record_type": "A", "address": "192.168.50.20", "enabled": True}],
         settings,
     )
-    records, errors = parse_zone_records(zone_text, "labfoundry.internal", settings)
+    records, errors = parse_zone_records(zone_text, "atlaso.internal", settings)
 
     assert errors == []
     assert len(records) == 1
-    assert records[0]["hostname"] == "app.labfoundry.internal"
+    assert records[0]["hostname"] == "app.atlaso.internal"
     assert "IN SOA" in zone_text
     assert "IN NS" in zone_text
     assert "ns1" in zone_text
 
-    conflicting = zone_text.replace("hostmaster.labfoundry.internal.", "admin.labfoundry.internal.")
-    _, errors = parse_zone_records(conflicting, "labfoundry.internal", settings)
+    conflicting = zone_text.replace("hostmaster.atlaso.internal.", "admin.atlaso.internal.")
+    _, errors = parse_zone_records(conflicting, "atlaso.internal", settings)
     assert any("SOA metadata must match" in error for error in errors)
 
     second_zone = render_zone_file("sitea.internal", [], settings)
-    assert "ns1.labfoundry.internal. IN A" in second_zone
+    assert re.search(r"ns1\.atlaso\.internal\.\s+IN A\s+192\.168\.50\.1", second_zone)
     assert "@                        IN A" not in second_zone
     second_records, second_errors = parse_zone_records(second_zone, "sitea.internal", settings)
     assert second_errors == []
@@ -216,7 +219,7 @@ def test_dnsmasq_renderer_uses_dhcp_upstreams_when_desired_upstreams_empty():
             enabled=True,
             listen_interface="eth1",
             listen_address="192.168.87.200",
-            domain="labfoundry.internal",
+            domain="atlaso.internal",
             upstream_servers="",
         ),
         dns_records=[],
@@ -236,7 +239,7 @@ def test_dnsmasq_renderer_filters_loopback_configured_upstreams():
         enabled=True,
         listen_interface="eth1",
         listen_address="192.168.87.200",
-        domain="labfoundry.internal",
+        domain="atlaso.internal",
         upstream_servers="127.0.0.1\n::1\n192.168.167.2",
     )
     config = render_dnsmasq_config(
@@ -254,13 +257,13 @@ def test_dnsmasq_renderer_filters_loopback_configured_upstreams():
 def test_ntp_renderer_supports_nts_sources_server_and_hardening():
     settings = NtpSettings(
         enabled=True,
-        hostname="ntp.labfoundry.internal",
+        hostname="ntp.atlaso.internal",
         listen_interface="eth2",
         listen_address="192.168.50.1",
         port=123,
         allow_clients="any",
         nts_ke_port=4460,
-        config_path="/var/lib/labfoundry/apply/ntpd/labfoundry-ntp.conf",
+        config_path="/var/lib/atlaso/apply/ntpd/atlaso-ntp.conf",
         upstream_sources_json=dump_ntp_upstream_sources(
             [
                 {"source": "time.cloudflare.com", "enabled": True, "use_nts": True, "description": "secure"},
@@ -269,8 +272,8 @@ def test_ntp_renderer_supports_nts_sources_server_and_hardening():
             ]
         ),
         nts_server_enabled=True,
-        nts_server_cert_path="/etc/labfoundry/certs/ntp.pem",
-        nts_server_key_path="/etc/labfoundry/certs/ntp.key",
+        nts_server_cert_path="/etc/atlaso/certs/ntp.pem",
+        nts_server_key_path="/etc/atlaso/certs/ntp.key",
         minsources=2,
     )
 
@@ -285,15 +288,15 @@ def test_ntp_renderer_supports_nts_sources_server_and_hardening():
     assert "server time.google.com iburst" in config
     assert "disabled.example.com" not in config
     assert "nts enable" in config
-    assert "nts cert /etc/labfoundry/certs/ntp.pem" in config
-    assert "nts key /etc/labfoundry/certs/ntp.key" in config
+    assert "nts cert /etc/atlaso/certs/ntp.pem" in config
+    assert "nts key /etc/atlaso/certs/ntp.key" in config
     assert "nts cookie /var/lib/ntp/nts-keys" in config
     assert "tos minsane 2" in config
 
 
 def test_ntp_default_server_fallback_uses_nts_sources():
     settings = NtpSettings(
-        hostname="ntp.labfoundry.internal",
+        hostname="ntp.atlaso.internal",
         upstream_servers=NTP_DEFAULT_UPSTREAM_SERVERS,
         upstream_sources_json="",
     )
@@ -342,36 +345,36 @@ def test_ntp_custom_server_fallback_remains_plain_ntp():
 def test_ntp_rejects_nts_source_ip_and_renders_disabled_state_without_servers():
     invalid = NtpSettings(
         enabled=True,
-        hostname="ntp.labfoundry.internal",
+        hostname="ntp.atlaso.internal",
         listen_interface="eth2",
         listen_address="192.168.50.1",
         port=123,
         allow_clients="any",
         nts_server_enabled=False,
         nts_ke_port=4460,
-        config_path="/var/lib/labfoundry/apply/ntpd/labfoundry-ntp.conf",
+        config_path="/var/lib/atlaso/apply/ntpd/atlaso-ntp.conf",
         upstream_sources_json=dump_ntp_upstream_sources(
             [{"source": "192.0.2.10", "enabled": True, "use_nts": True, "description": "invalid NTS identity"}]
         ),
     )
     assert "certificate-valid DNS hostname" in "\n".join(validate_ntp_state(invalid, {"eth2"}))
 
-    disabled = NtpSettings(enabled=False, hostname="ntp.labfoundry.internal", listen_interface="", listen_address="", upstream_servers="", upstream_sources_json="", allow_clients="any")
+    disabled = NtpSettings(enabled=False, hostname="ntp.atlaso.internal", listen_interface="", listen_address="", upstream_servers="", upstream_sources_json="", allow_clients="any")
     config = render_ntp_config(disabled)
-    assert "# LabFoundry NTP enabled: false" in config
+    assert "# Atlaso NTP enabled: false" in config
     assert "server " not in config
 
 
 def test_ntp_sources_accept_addresses_fqdns_and_optional_ports():
     settings = NtpSettings(
         enabled=True,
-        hostname="ntp.labfoundry.internal",
+        hostname="ntp.atlaso.internal",
         listen_interface="eth2",
         listen_address="192.168.50.1",
         port=123,
         allow_clients="any",
         nts_ke_port=4460,
-        config_path="/var/lib/labfoundry/apply/ntpd/labfoundry-ntp.conf",
+        config_path="/var/lib/atlaso/apply/ntpd/atlaso-ntp.conf",
         upstream_sources_json=dump_ntp_upstream_sources(
             [
                 {"source": "time.example.com:7443", "enabled": True, "use_nts": True, "description": "custom NTS-KE"},
@@ -394,13 +397,13 @@ def test_ntp_sources_accept_addresses_fqdns_and_optional_ports():
 def test_ntp_sources_reject_invalid_identity_port_and_nts_ip():
     settings = NtpSettings(
         enabled=True,
-        hostname="ntp.labfoundry.internal",
+        hostname="ntp.atlaso.internal",
         listen_interface="eth2",
         listen_address="192.168.50.1",
         port=123,
         allow_clients="any",
         nts_ke_port=4460,
-        config_path="/var/lib/labfoundry/apply/ntpd/labfoundry-ntp.conf",
+        config_path="/var/lib/atlaso/apply/ntpd/atlaso-ntp.conf",
         upstream_sources_json=dump_ntp_upstream_sources(
             [
                 {"source": "not-a-fqdn", "enabled": True, "use_nts": False, "description": ""},
@@ -421,7 +424,7 @@ def test_dnsmasq_renderer_supports_dnssec_rebind_logging_and_extended_records():
         enabled=True,
         listen_interface="eth1",
         listen_address="192.168.50.1",
-        domain="labfoundry.internal",
+        domain="atlaso.internal",
         upstream_servers="1.1.1.1",
         dnssec_enabled=True,
         rebind_protection_enabled=True,
@@ -429,11 +432,11 @@ def test_dnsmasq_renderer_supports_dnssec_rebind_logging_and_extended_records():
         query_logging_mode="queries-extra",
     )
     records = [
-        DnsRecord(hostname="txt.labfoundry.internal", record_type="TXT", address="hello world"),
-        DnsRecord(hostname="_ldap._tcp.labfoundry.internal", record_type="SRV", address="ldap.labfoundry.internal 389 10 20", record_data_json=dump_dns_record_data("SRV", "ldap.labfoundry.internal 389 10 20")),
-        DnsRecord(hostname="labfoundry.internal", record_type="MX", address="mail.labfoundry.internal 10", record_data_json=dump_dns_record_data("MX", "mail.labfoundry.internal 10")),
-        DnsRecord(hostname="labfoundry.internal", record_type="CAA", address='0 issue "lab-ca"', record_data_json=dump_dns_record_data("CAA", '0 issue "lab-ca"')),
-        DnsRecord(hostname="10.50.168.192.in-addr.arpa", record_type="PTR", address="host.labfoundry.internal"),
+        DnsRecord(hostname="txt.atlaso.internal", record_type="TXT", address="hello world"),
+        DnsRecord(hostname="_ldap._tcp.atlaso.internal", record_type="SRV", address="ldap.atlaso.internal 389 10 20", record_data_json=dump_dns_record_data("SRV", "ldap.atlaso.internal 389 10 20")),
+        DnsRecord(hostname="atlaso.internal", record_type="MX", address="mail.atlaso.internal 10", record_data_json=dump_dns_record_data("MX", "mail.atlaso.internal 10")),
+        DnsRecord(hostname="atlaso.internal", record_type="CAA", address='0 issue "lab-ca"', record_data_json=dump_dns_record_data("CAA", '0 issue "lab-ca"')),
+        DnsRecord(hostname="10.50.168.192.in-addr.arpa", record_type="PTR", address="host.atlaso.internal"),
     ]
 
     config = render_dnsmasq_config(
@@ -449,11 +452,11 @@ def test_dnsmasq_renderer_supports_dnssec_rebind_logging_and_extended_records():
     assert "stop-dns-rebind" in config
     assert "rebind-domain-ok=/corp.example/" in config
     assert "rebind-domain-ok=/sddc.internal/" in config
-    assert 'txt-record=txt.labfoundry.internal,"hello world"' in config
-    assert "srv-host=_ldap._tcp.labfoundry.internal,ldap.labfoundry.internal,389,10,20" in config
-    assert "mx-host=labfoundry.internal,mail.labfoundry.internal,10" in config
-    assert 'caa-record=labfoundry.internal,0,issue,"lab-ca"' in config
-    assert "ptr-record=10.50.168.192.in-addr.arpa,host.labfoundry.internal" in config
+    assert 'txt-record=txt.atlaso.internal,"hello world"' in config
+    assert "srv-host=_ldap._tcp.atlaso.internal,ldap.atlaso.internal,389,10,20" in config
+    assert "mx-host=atlaso.internal,mail.atlaso.internal,10" in config
+    assert 'caa-record=atlaso.internal,0,issue,"lab-ca"' in config
+    assert "ptr-record=10.50.168.192.in-addr.arpa,host.atlaso.internal" in config
     assert "server=::1" not in config
 
 
@@ -462,49 +465,49 @@ def test_zone_file_round_trips_mx_srv_standard_rdata_order():
         {
             "host_label": "@",
             "record_type": "MX",
-            "address": "mail.labfoundry.internal 10",
-            "record_data": {"target": "mail.labfoundry.internal", "preference": "10"},
+            "address": "mail.atlaso.internal 10",
+            "record_data": {"target": "mail.atlaso.internal", "preference": "10"},
             "enabled": True,
         },
         {
             "host_label": "_ldap._tcp",
             "record_type": "SRV",
-            "address": "ldap.labfoundry.internal 389 10 20",
-            "record_data": {"target": "ldap.labfoundry.internal", "port": "389", "priority": "10", "weight": "20"},
+            "address": "ldap.atlaso.internal 389 10 20",
+            "record_data": {"target": "ldap.atlaso.internal", "port": "389", "priority": "10", "weight": "20"},
             "enabled": True,
         },
     ]
 
-    zone = render_zone_file("labfoundry.internal", records)
+    zone = render_zone_file("atlaso.internal", records)
 
-    assert "@                        IN MX    10 mail.labfoundry.internal" in zone
-    assert "_ldap._tcp               IN SRV   10 20 389 ldap.labfoundry.internal" in zone
+    assert "@                        IN MX    10 mail.atlaso.internal" in zone
+    assert "_ldap._tcp               IN SRV   10 20 389 ldap.atlaso.internal" in zone
 
     parsed_records, errors = parse_zone_records(
         "\n".join(
             [
-                "$ORIGIN labfoundry.internal.",
-                "@ IN MX 10 mail.labfoundry.internal.",
-                "_ldap._tcp IN SRV 10 20 389 ldap.labfoundry.internal.",
+                "$ORIGIN atlaso.internal.",
+                "@ IN MX 10 mail.atlaso.internal.",
+                "_ldap._tcp IN SRV 10 20 389 ldap.atlaso.internal.",
             ]
         ),
-        "labfoundry.internal",
+        "atlaso.internal",
     )
 
     assert errors == []
     assert {
-        "hostname": "labfoundry.internal",
+        "hostname": "atlaso.internal",
         "record_type": "MX",
-        "address": "mail.labfoundry.internal. 10",
-        "record_data_json": dump_dns_record_data("MX", "mail.labfoundry.internal. 10"),
+        "address": "mail.atlaso.internal. 10",
+        "record_data_json": dump_dns_record_data("MX", "mail.atlaso.internal. 10"),
         "description": "Imported from zone editor",
         "enabled": True,
     } in parsed_records
     assert {
-        "hostname": "_ldap._tcp.labfoundry.internal",
+        "hostname": "_ldap._tcp.atlaso.internal",
         "record_type": "SRV",
-        "address": "ldap.labfoundry.internal. 389 10 20",
-        "record_data_json": dump_dns_record_data("SRV", "ldap.labfoundry.internal. 389 10 20"),
+        "address": "ldap.atlaso.internal. 389 10 20",
+        "record_data_json": dump_dns_record_data("SRV", "ldap.atlaso.internal. 389 10 20"),
         "description": "Imported from zone editor",
         "enabled": True,
     } in parsed_records
@@ -516,7 +519,7 @@ def test_dnsmasq_renderer_keeps_configured_upstreams_over_dhcp_fallback():
             enabled=True,
             listen_interface="eth1",
             listen_address="192.168.87.200",
-            domain="labfoundry.internal",
+            domain="atlaso.internal",
             upstream_servers="1.1.1.1",
         ),
         dns_records=[],
@@ -538,7 +541,7 @@ def test_dnsmasq_renderer_supports_ipv6_dhcp_zones():
         prefix_length=64,
         range_expression="fd00:50::100-fd00:50::1ff, fd00:50::30",
         lease_time="12h",
-        domain_name="labfoundry.internal",
+        domain_name="atlaso.internal",
         dns_server="fd00:50::1",
         ntp_server="fd00:50::1",
         enabled=True,
@@ -547,7 +550,7 @@ def test_dnsmasq_renderer_supports_ipv6_dhcp_zones():
 
     errors = validate_dhcp_settings(DhcpSettings(enabled=True), reservations, [scope])
     config = render_dnsmasq_config(
-        dns_settings=DnsSettings(domain="labfoundry.internal"),
+        dns_settings=DnsSettings(domain="atlaso.internal"),
         dns_records=[],
         dhcp_settings=DhcpSettings(enabled=True),
         dhcp_scopes=[scope],
@@ -560,7 +563,7 @@ def test_dnsmasq_renderer_supports_ipv6_dhcp_zones():
     assert "dhcp-range=set:ipv6lab,fd00:50::100,fd00:50::1ff,64,12h" in config
     assert "dhcp-range=set:ipv6lab,fd00:50::30,fd00:50::30,64,12h" in config
     assert "dhcp-option=tag:ipv6lab,option6:dns-server,[fd00:50::1]" in config
-    assert "dhcp-option=tag:ipv6lab,option6:domain-search,labfoundry.internal" in config
+    assert "dhcp-option=tag:ipv6lab,option6:domain-search,atlaso.internal" in config
     assert "dhcp-option=tag:ipv6lab,option6:ntp-server,[fd00:50::1]" in config
     assert "dhcp-option=tag:ipv6lab,option:router" not in config
     assert "dhcp-host=02:15:5d:00:20:21,v6client,[fd00:50::120]" in config
@@ -648,7 +651,7 @@ def test_dns_conditional_forwarders_accept_multiple_servers_per_domain():
     assert join_conditional_forwarders(forwarders) == "sddc.internal=192.168.10.10,192.168.10.11"
 
     config = render_dnsmasq_config(
-        dns_settings=DnsSettings(domain="labfoundry.internal"),
+        dns_settings=DnsSettings(domain="atlaso.internal"),
         dns_records=[],
         dhcp_settings=DhcpSettings(enabled=False),
         dhcp_reservations=[],
@@ -661,7 +664,7 @@ def test_dns_conditional_forwarders_accept_multiple_servers_per_domain():
 
 
 def test_dnsmasq_renderer_only_marks_dhcp_authoritative_when_dhcp_enabled():
-    dns_settings = DnsSettings(domain="labfoundry.internal", authoritative=True)
+    dns_settings = DnsSettings(domain="atlaso.internal", authoritative=True)
     dhcp_settings = DhcpSettings(enabled=False, authoritative=True)
 
     config = render_dnsmasq_config(
@@ -684,12 +687,12 @@ def test_dnsmasq_renderer_adds_esxi_pxe_boot_options():
         prefix_length=24,
         range_expression="192.168.50.100-200",
         lease_time="12h",
-        domain_name="labfoundry.internal",
+        domain_name="atlaso.internal",
         dns_server="192.168.50.1",
         ntp_server="192.168.50.1",
     )
     config = render_dnsmasq_config(
-        dns_settings=DnsSettings(domain="labfoundry.internal", listen_interface="eth1"),
+        dns_settings=DnsSettings(domain="atlaso.internal", listen_interface="eth1"),
         dns_records=[],
         dhcp_settings=DhcpSettings(
             enabled=True,
@@ -703,9 +706,9 @@ def test_dnsmasq_renderer_adds_esxi_pxe_boot_options():
         esxi_pxe_boot={
             "enabled": True,
             "dhcp_scope_id": pxe_scope.id,
-            "hostname": "esxi-pxe.labfoundry.internal",
+            "hostname": "esxi-pxe.atlaso.internal",
             "listen_address": "192.168.50.1",
-            "tftp_root": "/var/lib/labfoundry/pxe/tftp",
+            "tftp_root": "/var/lib/atlaso/pxe/tftp",
             "bios_bootfile": "undionly.kpxe",
             "uefi_bootfile": "snponly.efi",
             "bios_second_stage_bootfile": "pxelinux.0",
@@ -724,7 +727,7 @@ def test_dnsmasq_renderer_adds_esxi_pxe_boot_options():
     )
 
     assert "enable-tftp" in config
-    assert "tftp-root=/var/lib/labfoundry/pxe/tftp" in config
+    assert "tftp-root=/var/lib/atlaso/pxe/tftp" in config
     assert "dhcp-userclass=set:ipxe,iPXE" in config
     assert "dhcp-match=set:ipxe,175" in config
     assert "dhcp-match=set:efi-x86_64,option:client-arch,7" in config
@@ -733,24 +736,24 @@ def test_dnsmasq_renderer_adds_esxi_pxe_boot_options():
     assert "dhcp-match=set:uefi-http-x64,option:client-arch,16" in config
     assert "dhcp-boot=tag:pxe,tag:uefi-http,tag:uefi-http-x64,tag:!esxi-005056aabbcc,http://192.168.50.1:8080/pxe/esxi/mboot.efi" in config
     assert "dhcp-boot=tag:pxe,tag:esxi-005056aabbcc,tag:uefi-http,tag:uefi-http-x64,http://192.168.50.1:8080/pxe/esxi/01-00-50-56-aa-bb-cc/mboot.efi" in config
-    assert "dhcp-option=tag:pxe,66,esxi-pxe.labfoundry.internal" in config
-    assert "dhcp-boot=tag:pxe,tag:ipxe,tag:efi-x86_64,tag:!esxi-005056aabbcc,mboot.efi,esxi-pxe.labfoundry.internal,192.168.50.1" in config
-    assert "dhcp-boot=tag:pxe,tag:ipxe,tag:!efi-x86_64,pxelinux.0,esxi-pxe.labfoundry.internal,192.168.50.1" in config
-    assert "dhcp-boot=tag:pxe,tag:!ipxe,tag:efi-x86_64,snponly.efi,esxi-pxe.labfoundry.internal,192.168.50.1" in config
-    assert "dhcp-boot=tag:pxe,tag:!ipxe,tag:!efi-x86_64,undionly.kpxe,esxi-pxe.labfoundry.internal,192.168.50.1" in config
+    assert "dhcp-option=tag:pxe,66,esxi-pxe.atlaso.internal" in config
+    assert "dhcp-boot=tag:pxe,tag:ipxe,tag:efi-x86_64,tag:!esxi-005056aabbcc,mboot.efi,esxi-pxe.atlaso.internal,192.168.50.1" in config
+    assert "dhcp-boot=tag:pxe,tag:ipxe,tag:!efi-x86_64,pxelinux.0,esxi-pxe.atlaso.internal,192.168.50.1" in config
+    assert "dhcp-boot=tag:pxe,tag:!ipxe,tag:efi-x86_64,snponly.efi,esxi-pxe.atlaso.internal,192.168.50.1" in config
+    assert "dhcp-boot=tag:pxe,tag:!ipxe,tag:!efi-x86_64,undionly.kpxe,esxi-pxe.atlaso.internal,192.168.50.1" in config
     assert "dhcp-mac=set:esxi-005056aabbcc,00:50:56:aa:bb:cc" in config
-    assert "dhcp-boot=tag:pxe,tag:esxi-005056aabbcc,tag:!ipxe,tag:efi-x86_64,01-00-50-56-aa-bb-cc/mboot.efi,esxi-pxe.labfoundry.internal,192.168.50.1" not in config
-    assert "dhcp-boot=tag:pxe,tag:esxi-005056aabbcc,tag:ipxe,tag:efi-x86_64,01-00-50-56-aa-bb-cc/mboot.efi,esxi-pxe.labfoundry.internal,192.168.50.1" in config
+    assert "dhcp-boot=tag:pxe,tag:esxi-005056aabbcc,tag:!ipxe,tag:efi-x86_64,01-00-50-56-aa-bb-cc/mboot.efi,esxi-pxe.atlaso.internal,192.168.50.1" not in config
+    assert "dhcp-boot=tag:pxe,tag:esxi-005056aabbcc,tag:ipxe,tag:efi-x86_64,01-00-50-56-aa-bb-cc/mboot.efi,esxi-pxe.atlaso.internal,192.168.50.1" in config
 
 
 def test_dnsmasq_lease_parser_tracks_active_and_expired_leases():
     leases = parse_dnsmasq_leases(
-        "1893456000 02:15:5d:00:20:30 192.168.50.130 api-client.labfoundry.internal 01:02:15:5d:00:20:30\n"
-        "1 02:15:5d:00:20:31 192.168.50.131 old.labfoundry.internal *"
+        "1893456000 02:15:5d:00:20:30 192.168.50.130 api-client.atlaso.internal 01:02:15:5d:00:20:30\n"
+        "1 02:15:5d:00:20:31 192.168.50.131 old.atlaso.internal *"
     )
 
     assert leases[0]["status"] == "active"
-    assert leases[0]["hostname"] == "api-client.labfoundry.internal"
+    assert leases[0]["hostname"] == "api-client.atlaso.internal"
     assert leases[1]["status"] == "expired"
     assert leases[1]["client_id"] == ""
 
@@ -772,7 +775,7 @@ def test_disabled_dhcp_allows_blank_reset_defaults():
 
 
 def test_dnsmasq_renderer_supports_multiple_dhcp_ip_zones():
-    dns_settings = DnsSettings(listen_interface="eth1", domain="labfoundry.internal")
+    dns_settings = DnsSettings(listen_interface="eth1", domain="atlaso.internal")
     dhcp_settings = DhcpSettings(enabled=True, authoritative=True)
     config = render_dnsmasq_config(
         dns_settings=dns_settings,
@@ -788,7 +791,7 @@ def test_dnsmasq_renderer_supports_multiple_dhcp_ip_zones():
                 prefix_length=24,
                 range_expression="192.168.50.100-200, 192.168.50.222",
                 lease_time="12h",
-                domain_name="labfoundry.internal",
+                domain_name="atlaso.internal",
                 dns_server="192.168.50.1",
             ),
             DhcpScope(
@@ -819,23 +822,23 @@ def test_dnsmasq_renderer_supports_multiple_dhcp_ip_zones():
 def test_dns_reverse_records_include_ipv4_and_ipv6_only():
     records = dns_reverse_records(
         [
-            DnsRecord(hostname="app.labfoundry.internal", record_type="A", address="192.168.50.10"),
-            DnsRecord(hostname="ipv6.labfoundry.internal", record_type="AAAA", address="2001:db8::10"),
-            DnsRecord(hostname="alias.labfoundry.internal", record_type="CNAME", address="app.labfoundry.internal"),
+            DnsRecord(hostname="app.atlaso.internal", record_type="A", address="192.168.50.10"),
+            DnsRecord(hostname="ipv6.atlaso.internal", record_type="AAAA", address="2001:db8::10"),
+            DnsRecord(hostname="alias.atlaso.internal", record_type="CNAME", address="app.atlaso.internal"),
         ]
     )
 
     ptr_names = {record["ptr_name"] for record in records}
     assert "10.50.168.192.in-addr.arpa" in ptr_names
     assert "0.1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa" in ptr_names
-    assert all(record["target"] != "alias.labfoundry.internal" for record in records)
+    assert all(record["target"] != "alias.atlaso.internal" for record in records)
 
 
 def test_dns_dhcp_validation_reports_bad_addresses():
     dns_settings = DnsSettings(
         listen_interface="eth1",
         listen_address="bad-ip",
-        domain="labfoundry.internal",
+        domain="atlaso.internal",
         upstream_servers="not-an-ip",
     )
     dhcp_settings = DhcpSettings(
@@ -865,7 +868,7 @@ def test_dns_dhcp_validation_reports_bad_addresses():
 
 
 def test_dns_listen_target_validation_rejects_trunks_and_unknown_targets():
-    settings = DnsSettings(enabled=True, listen_interface="eth1\neth2\nmissing", domain="labfoundry.internal")
+    settings = DnsSettings(enabled=True, listen_interface="eth1\neth2\nmissing", domain="atlaso.internal")
 
     errors = validate_dns_listen_targets(settings, {"eth1"})
 
@@ -928,12 +931,12 @@ def test_dhcp_bind_target_validation_rejects_trunks_missing_ip_and_unknown_targe
 
 
 def test_dns_domain_warnings_flag_local_domains_for_vcf():
-    assert dns_domain_warnings(["labfoundry.internal"]) == []
+    assert dns_domain_warnings(["atlaso.internal"]) == []
 
-    warnings = dns_domain_warnings(["labfoundry.local", "vcf.internal"])
+    warnings = dns_domain_warnings(["atlaso.local", "vcf.internal"])
 
     assert len(warnings) == 1
-    assert "labfoundry.local" in warnings[0]
+    assert "atlaso.local" in warnings[0]
     assert "VCF" in warnings[0]
     assert "RFC 6762" in warnings[0]
     assert "RFC 6761" in warnings[0]
@@ -942,13 +945,13 @@ def test_dns_domain_warnings_flag_local_domains_for_vcf():
 
 
 def test_dns_record_validation_distinguishes_ipv4_and_ipv6():
-    assert validate_dns_record("app.labfoundry.internal", "A", "192.168.50.10") == []
-    assert validate_dns_record("ipv6.labfoundry.internal", "AAAA", "2001:db8::10") == []
-    assert validate_dns_record("www.labfoundry.internal", "CNAME", "app.labfoundry.internal") == []
+    assert validate_dns_record("app.atlaso.internal", "A", "192.168.50.10") == []
+    assert validate_dns_record("ipv6.atlaso.internal", "AAAA", "2001:db8::10") == []
+    assert validate_dns_record("www.atlaso.internal", "CNAME", "app.atlaso.internal") == []
 
-    a_errors = validate_dns_record("bad-a.labfoundry.internal", "A", "2001:db8::20")
-    aaaa_errors = validate_dns_record("bad-aaaa.labfoundry.internal", "AAAA", "192.168.50.20")
-    cname_errors = validate_dns_record("bad-cname.labfoundry.internal", "CNAME", "192.168.50.30")
+    a_errors = validate_dns_record("bad-a.atlaso.internal", "A", "2001:db8::20")
+    aaaa_errors = validate_dns_record("bad-aaaa.atlaso.internal", "AAAA", "192.168.50.20")
+    cname_errors = validate_dns_record("bad-cname.atlaso.internal", "CNAME", "192.168.50.30")
 
     assert any("must use an IPv4 address" in error for error in a_errors)
     assert any("must use an IPv6 address" in error for error in aaaa_errors)
@@ -959,16 +962,16 @@ def test_hosts_file_parser_supports_aliases_comments_and_ipv6():
     records, errors = parse_hosts_records(
         """
         # comment
-        192.168.50.10 app.labfoundry.internal app
-        2001:db8::10 ipv6.labfoundry.internal
-        bad-ip broken.labfoundry.internal
+        192.168.50.10 app.atlaso.internal app
+        2001:db8::10 ipv6.atlaso.internal
+        bad-ip broken.atlaso.internal
         """
     )
 
     assert any("Line 5 address" in error for error in errors)
-    assert {"hostname": "app.labfoundry.internal", "record_type": "A", "address": "192.168.50.10", "description": "Imported from hosts editor", "enabled": True} in records
+    assert {"hostname": "app.atlaso.internal", "record_type": "A", "address": "192.168.50.10", "description": "Imported from hosts editor", "enabled": True} in records
     assert {"hostname": "app", "record_type": "A", "address": "192.168.50.10", "description": "Imported from hosts editor", "enabled": True} in records
-    assert {"hostname": "ipv6.labfoundry.internal", "record_type": "AAAA", "address": "2001:db8::10", "description": "Imported from hosts editor", "enabled": True} in records
+    assert {"hostname": "ipv6.atlaso.internal", "record_type": "AAAA", "address": "2001:db8::10", "description": "Imported from hosts editor", "enabled": True} in records
 
 
 def test_dns_api_requires_scope_and_returns_config_preview(client):
@@ -979,24 +982,24 @@ def test_dns_api_requires_scope_and_returns_config_preview(client):
     dns_token = create_token(client, ["read:dns", "write:dns"])
     status = client.get("/api/v1/dns/status", headers={"Authorization": f"Bearer {dns_token}"})
     assert status.status_code == 200
-    assert status.json()["domain"] == "labfoundry.internal"
+    assert status.json()["domain"] == "atlaso.internal"
 
     created = client.post(
         "/api/v1/dns/records",
         headers={"Authorization": f"Bearer {dns_token}"},
-        json={"hostname": "api.labfoundry.internal", "record_type": "A", "address": "192.168.50.30"},
+        json={"hostname": "api.atlaso.internal", "record_type": "A", "address": "192.168.50.30"},
     )
     assert created.status_code == 201, created.text
     same_owner_different_value = client.post(
         "/api/v1/dns/records",
         headers={"Authorization": f"Bearer {dns_token}"},
-        json={"hostname": "API.labfoundry.internal", "record_type": "a", "address": "192.168.50.31"},
+        json={"hostname": "API.atlaso.internal", "record_type": "a", "address": "192.168.50.31"},
     )
     assert same_owner_different_value.status_code == 201, same_owner_different_value.text
     duplicate = client.post(
         "/api/v1/dns/records",
         headers={"Authorization": f"Bearer {dns_token}"},
-        json={"hostname": "API.labfoundry.internal", "record_type": "a", "address": "192.168.50.30"},
+        json={"hostname": "API.atlaso.internal", "record_type": "a", "address": "192.168.50.30"},
     )
     assert duplicate.status_code == 409
     assert "already exists" in duplicate.json()["detail"]
@@ -1004,7 +1007,7 @@ def test_dns_api_requires_scope_and_returns_config_preview(client):
     wrong_family = client.post(
         "/api/v1/dns/records",
         headers={"Authorization": f"Bearer {dns_token}"},
-        json={"hostname": "wrong-family.labfoundry.internal", "record_type": "A", "address": "2001:db8::30"},
+        json={"hostname": "wrong-family.atlaso.internal", "record_type": "A", "address": "2001:db8::30"},
     )
     assert wrong_family.status_code == 422
     assert "IPv4" in wrong_family.json()["detail"]
@@ -1012,7 +1015,7 @@ def test_dns_api_requires_scope_and_returns_config_preview(client):
     cname = client.post(
         "/api/v1/dns/records",
         headers={"Authorization": f"Bearer {dns_token}"},
-        json={"hostname": "alias.labfoundry.internal", "record_type": "CNAME", "address": "api.labfoundry.internal"},
+        json={"hostname": "alias.atlaso.internal", "record_type": "CNAME", "address": "api.atlaso.internal"},
     )
     assert cname.status_code == 201, cname.text
     assert cname.json()["record_type"] == "CNAME"
@@ -1031,8 +1034,8 @@ def test_dns_api_requires_scope_and_returns_config_preview(client):
     assert validation.status_code == 200
     assert validation.json()["valid"] is True
     assert validation.json()["warnings"] == []
-    assert "api.labfoundry.internal" in validation.json()["config_preview"]
-    assert "cname=alias.labfoundry.internal,api.labfoundry.internal" in validation.json()["config_preview"]
+    assert "api.atlaso.internal" in validation.json()["config_preview"]
+    assert "cname=alias.atlaso.internal,api.atlaso.internal" in validation.json()["config_preview"]
     assert "server=/sddc.internal/192.168.10.10" in validation.json()["config_preview"]
 
     settings = client.patch(
@@ -1052,7 +1055,7 @@ def test_dns_api_requires_scope_and_returns_config_preview(client):
         f"/api/v1/dns/records/{created.json()['id']}",
         headers={"Authorization": f"Bearer {dns_token}"},
         json={
-            "hostname": "api-renamed.labfoundry.internal",
+            "hostname": "api-renamed.atlaso.internal",
             "record_type": "A",
             "address": "192.168.50.32",
             "description": "updated through API",
@@ -1060,7 +1063,7 @@ def test_dns_api_requires_scope_and_returns_config_preview(client):
         },
     )
     assert updated.status_code == 200, updated.text
-    assert updated.json()["hostname"] == "api-renamed.labfoundry.internal"
+    assert updated.json()["hostname"] == "api-renamed.atlaso.internal"
     assert updated.json()["address"] == "192.168.50.32"
     assert updated.json()["enabled"] is False
 
@@ -1073,8 +1076,8 @@ def test_dns_api_exposes_read_only_authoritative_settings_and_advances_serial(cl
     initial_body = initial.json()
     initial_serial = initial_body["authoritative_serial"]
 
-    assert initial_body["authoritative_server"] == "ns1.labfoundry.internal"
-    assert initial_body["authoritative_contact"] == "hostmaster.labfoundry.internal"
+    assert initial_body["authoritative_server"] == "ns1.atlaso.internal"
+    assert initial_body["authoritative_contact"] == "hostmaster.atlaso.internal"
     assert initial_body["authoritative_ttl"] == 3600
     assert initial_body["authoritative_refresh"] == 1200
     assert initial_body["authoritative_retry"] == 180
@@ -1083,7 +1086,7 @@ def test_dns_api_exposes_read_only_authoritative_settings_and_advances_serial(cl
     created = client.post(
         "/api/v1/dns/records",
         headers=headers,
-        json={"hostname": "serial.labfoundry.internal", "record_type": "A", "address": "192.168.50.88"},
+        json={"hostname": "serial.atlaso.internal", "record_type": "A", "address": "192.168.50.88"},
     )
     assert created.status_code == 201, created.text
     after_create = client.get("/api/v1/dns/settings", headers=headers).json()["authoritative_serial"]
@@ -1092,7 +1095,7 @@ def test_dns_api_exposes_read_only_authoritative_settings_and_advances_serial(cl
     updated = client.patch(
         f"/api/v1/dns/records/{created.json()['id']}",
         headers=headers,
-        json={"hostname": "serial.labfoundry.internal", "record_type": "A", "address": "192.168.50.89"},
+        json={"hostname": "serial.atlaso.internal", "record_type": "A", "address": "192.168.50.89"},
     )
     assert updated.status_code == 200, updated.text
     after_update = client.get("/api/v1/dns/settings", headers=headers).json()["authoritative_serial"]
@@ -1108,12 +1111,12 @@ def test_dns_api_update_rejects_duplicate_record(client):
     first = client.post(
         "/api/v1/dns/records",
         headers={"Authorization": f"Bearer {dns_token}"},
-        json={"hostname": "first.labfoundry.internal", "record_type": "A", "address": "192.168.50.50"},
+        json={"hostname": "first.atlaso.internal", "record_type": "A", "address": "192.168.50.50"},
     )
     second = client.post(
         "/api/v1/dns/records",
         headers={"Authorization": f"Bearer {dns_token}"},
-        json={"hostname": "second.labfoundry.internal", "record_type": "A", "address": "192.168.50.51"},
+        json={"hostname": "second.atlaso.internal", "record_type": "A", "address": "192.168.50.51"},
     )
     assert first.status_code == 201
     assert second.status_code == 201
@@ -1121,7 +1124,7 @@ def test_dns_api_update_rejects_duplicate_record(client):
     duplicate = client.patch(
         f"/api/v1/dns/records/{second.json()['id']}",
         headers={"Authorization": f"Bearer {dns_token}"},
-        json={"hostname": "FIRST.labfoundry.internal", "record_type": "a", "address": "192.168.50.50"},
+        json={"hostname": "FIRST.atlaso.internal", "record_type": "a", "address": "192.168.50.50"},
     )
     assert duplicate.status_code == 409
     assert "already exists" in duplicate.json()["detail"]
@@ -1129,7 +1132,7 @@ def test_dns_api_update_rejects_duplicate_record(client):
     allowed = client.patch(
         f"/api/v1/dns/records/{second.json()['id']}",
         headers={"Authorization": f"Bearer {dns_token}"},
-        json={"hostname": "FIRST.labfoundry.internal", "record_type": "a", "address": "192.168.50.52"},
+        json={"hostname": "FIRST.atlaso.internal", "record_type": "a", "address": "192.168.50.52"},
     )
     assert allowed.status_code == 200, allowed.text
 
@@ -1141,7 +1144,7 @@ def test_dns_hosts_import_replaces_existing_records(client):
         headers={"Authorization": f"Bearer {dns_token}"},
         json={
             "replace_existing": True,
-            "hosts_text": "192.168.50.70 imported.labfoundry.internal imported-alias\n",
+            "hosts_text": "192.168.50.70 imported.atlaso.internal imported-alias\n",
         },
     )
 
@@ -1149,11 +1152,11 @@ def test_dns_hosts_import_replaces_existing_records(client):
     body = response.json()
     assert body["imported_count"] == 2
     hostnames = {record["hostname"] for record in body["records"]}
-    assert hostnames == {"imported-alias", "imported.labfoundry.internal"}
+    assert hostnames == {"imported-alias", "imported.atlaso.internal"}
 
     validation = client.post("/api/v1/dns/validate", headers={"Authorization": f"Bearer {dns_token}"})
-    assert "imported.labfoundry.internal" in validation.json()["config_preview"]
-    assert "labfoundry.labfoundry.internal" not in validation.json()["config_preview"]
+    assert "imported.atlaso.internal" in validation.json()["config_preview"]
+    assert "core.atlaso.internal" not in validation.json()["config_preview"]
 
 
 def test_dhcp_api_scope_and_reservations(client):
@@ -1172,9 +1175,9 @@ def test_dhcp_api_scope_and_reservations(client):
         },
     )
     assert reservation.status_code == 201, reservation.text
-    assert reservation.json()["hostname"] == "api-client.labfoundry.internal"
+    assert reservation.json()["hostname"] == "api-client.atlaso.internal"
     dns_records = client.get("/api/v1/dns/records", headers={"Authorization": f"Bearer {dhcp_token}"})
-    assert any(record["hostname"] == "api-client.labfoundry.internal" for record in dns_records.json())
+    assert any(record["hostname"] == "api-client.atlaso.internal" for record in dns_records.json())
 
     scopes = client.get("/api/v1/dhcp/scopes", headers={"Authorization": f"Bearer {dhcp_token}"})
     assert scopes.status_code == 200
@@ -1191,7 +1194,7 @@ def test_dhcp_api_scope_and_reservations(client):
             "prefix_length": 64,
             "range_expression": "fd00:50::100-fd00:50::200",
             "lease_time": "12h",
-            "domain_name": "labfoundry.internal",
+            "domain_name": "atlaso.internal",
             "dns_server": "fd00:50::1",
             "ntp_server": "fd00:50::1",
             "enabled": True,
@@ -1233,22 +1236,22 @@ def test_dhcp_api_scope_and_reservations(client):
     assert any(option["option_code"] == "ntp-server" for option in options.json())
     leases = client.get("/api/v1/dhcp/leases", headers={"Authorization": f"Bearer {dhcp_token}"})
     assert leases.status_code == 200
-    assert leases.json()[0]["hostname"] == "api-client.labfoundry.internal"
+    assert leases.json()[0]["hostname"] == "api-client.atlaso.internal"
     scopes = client.get("/api/v1/dhcp/scopes", headers={"Authorization": f"Bearer {dhcp_token}"})
     assert {scope["name"] for scope in scopes.json()} == {"SiteA", "SiteB"}
 
 
 def test_dhcp_api_leases_reflect_helper_output(client, monkeypatch):
-    from labfoundry.app.adapters.system import AdapterResult
+    from atlaso.app.adapters.system import AdapterResult
 
     def fake_read_dhcp_leases(self):
         return AdapterResult(
-            command=["sudo", "-n", "/opt/labfoundry/bin/labfoundry-helper", "dnsmasq", "leases", "--real"],
+            command=["sudo", "-n", "/opt/atlaso/bin/atlaso-helper", "dnsmasq", "leases", "--real"],
             dry_run=False,
-            stdout="1893456000 02:15:5d:00:20:40 192.168.50.140 live-client.labfoundry.internal *\n",
+            stdout="1893456000 02:15:5d:00:20:40 192.168.50.140 live-client.atlaso.internal *\n",
         )
 
-    monkeypatch.setattr("labfoundry.app.api.v1.SystemAdapter.read_dhcp_leases", fake_read_dhcp_leases)
+    monkeypatch.setattr("atlaso.app.api.v1.SystemAdapter.read_dhcp_leases", fake_read_dhcp_leases)
     dhcp_token = create_token(client, ["read:dhcp"])
 
     leases = client.get("/api/v1/dhcp/leases", headers={"Authorization": f"Bearer {dhcp_token}"})
@@ -1259,7 +1262,7 @@ def test_dhcp_api_leases_reflect_helper_output(client, monkeypatch):
             "expires_at": "2030-01-01T00:00:00Z",
             "mac_address": "02:15:5d:00:20:40",
             "ip_address": "192.168.50.140",
-            "hostname": "live-client.labfoundry.internal",
+            "hostname": "live-client.atlaso.internal",
             "client_id": "",
             "status": "active",
         }

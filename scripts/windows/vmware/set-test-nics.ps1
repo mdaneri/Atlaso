@@ -61,7 +61,7 @@ function Set-VmxNetworkAdapter {
 
 $resolvedVmxPath = (Resolve-Path -LiteralPath $VmxPath).Path
 
-if ($PSCmdlet.ShouldProcess($resolvedVmxPath, 'Configure LabFoundry VMware Workstation lab NICs')) {
+if ($PSCmdlet.ShouldProcess($resolvedVmxPath, 'Configure Atlaso VMware Workstation lab NICs')) {
     Set-VmxNetworkAdapter -Path $resolvedVmxPath -Index 0 -Vmnet $ManagementNetwork
     if (-not $SkipLabNetworkAdapters) {
         Set-VmxNetworkAdapter -Path $resolvedVmxPath -Index 1 -Vmnet $SiteANetwork

@@ -9,7 +9,7 @@ def login(client):
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
         "/login",
-        data={"username": "admin", "password": "labfoundry-admin", "csrf": csrf},
+        data={"username": "admin", "password": "atlaso-admin", "csrf": csrf},
         follow_redirects=False,
     )
     assert response.status_code == 303
@@ -59,7 +59,7 @@ def test_dashboard_data_requires_session_and_preserves_public_api_contract(clien
     assert set(payload["overall"]) == {"state", "label", "hostname", "fqdn", "dry_run", "primary_action"}
 
     token_response = client.post(
-        "/api/v1/auth/login?username=admin&password=labfoundry-admin",
+        "/api/v1/auth/login?username=admin&password=atlaso-admin",
         json={"name": "dashboard contract", "scopes": ["read:dashboard"]},
     )
     token = token_response.json()["raw_token"]
@@ -76,9 +76,9 @@ def test_dashboard_data_requires_session_and_preserves_public_api_contract(clien
 
 
 def test_dashboard_setup_exit_healthy_and_needs_attention_states(client, monkeypatch):
-    from labfoundry.app import ui
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, JobStatus, utcnow
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, utcnow
 
     monkeypatch.setattr(ui, "dashboard_appliance_apply_units", lambda _db: controlled_units())
     with SessionLocal() as db:
@@ -124,9 +124,9 @@ def test_dashboard_setup_exit_healthy_and_needs_attention_states(client, monkeyp
 
 
 def test_dashboard_attention_priority_pending_separation_and_false_positive_filters(client, monkeypatch):
-    from labfoundry.app import ui
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, JobStatus, PhysicalInterface, ServiceState, utcnow
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, PhysicalInterface, ServiceState, utcnow
 
     monkeypatch.setattr(
         ui,
@@ -197,9 +197,9 @@ def test_dashboard_attention_priority_pending_separation_and_false_positive_filt
 
 
 def test_dashboard_failed_task_window_and_activity_merge_are_safe(client, monkeypatch):
-    from labfoundry.app import ui
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import AuditEvent, Job, JobStatus, utcnow
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, Job, JobStatus, utcnow
 
     monkeypatch.setattr(ui, "dashboard_appliance_apply_units", lambda _db: controlled_units())
     now = utcnow()
@@ -265,7 +265,7 @@ def test_dashboard_failed_task_window_and_activity_merge_are_safe(client, monkey
 
 
 def test_dashboard_apply_summary_disables_reconciliation(monkeypatch):
-    from labfoundry.app import ui
+    from atlaso.app import ui
 
     calls = []
 
@@ -279,8 +279,8 @@ def test_dashboard_apply_summary_disables_reconciliation(monkeypatch):
 
 
 def test_dashboard_snapshot_does_not_call_desired_state_reconcilers(client, monkeypatch):
-    from labfoundry.app import ui
-    from labfoundry.app.database import SessionLocal
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
 
     def unexpected_reconciliation(*_args, **_kwargs):
         raise AssertionError("dashboard refresh entered a desired-state reconciliation path")
@@ -312,12 +312,12 @@ def test_dashboard_html_removes_old_inventory_and_javascript_refresh_is_resilien
     assert "Changes &amp; Tasks" in page.text
     assert "Recent activity" in page.text
     assert "Management 127.0.0.1" not in page.text
-    assert "/mnt/labfoundry-vcf-offline-depot" not in page.text
-    assert "/mnt/labfoundry-vcf-backups" not in page.text
+    assert "/mnt/atlaso-vcf-offline-depot" not in page.text
+    assert "/mnt/atlaso-vcf-backups" not in page.text
     assert "<h2>Routes &amp; WAN Simulation</h2>" not in page.text
     assert 'data-refresh-url="/dashboard/data"' in page.text
 
-    javascript = Path("labfoundry/app/static/app.js").read_text(encoding="utf-8")
+    javascript = Path("atlaso/app/static/app.js").read_text(encoding="utf-8")
     assert "function initializeDashboard()" in javascript
     assert 'document.addEventListener("visibilitychange"' in javascript
     assert 'document.visibilityState === "hidden"' in javascript
@@ -326,7 +326,7 @@ def test_dashboard_html_removes_old_inventory_and_javascript_refresh_is_resilien
     assert "root.innerHTML = dashboardSnapshotMarkup(snapshot);" in javascript
     assert "focusTarget.focus({ preventScroll: true })" in javascript
 
-    css = Path("labfoundry/app/static/app.css").read_text(encoding="utf-8")
+    css = Path("atlaso/app/static/app.css").read_text(encoding="utf-8")
     assert ".dashboard-status-band.needs-attention" in css
     assert ".dashboard-status-band.setup-incomplete" in css
     assert ".dashboard-readiness-row:focus-visible" in css

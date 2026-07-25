@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keep LabFoundry's repository version sources synchronized."""
+"""Keep Atlaso's repository version sources synchronized."""
 
 from __future__ import annotations
 
@@ -48,8 +48,8 @@ PRE_GA_RELEASE_LINE = Version(0, 9, 0)
 
 VERSION_PATHS = {
     "Python project": Path("pyproject.toml"),
-    "Python runtime fallback": Path("labfoundry/__init__.py"),
-    "PowerShell module": Path("clients/powershell/LabFoundry/LabFoundry.psd1"),
+    "Python runtime fallback": Path("atlaso/__init__.py"),
+    "PowerShell module": Path("clients/powershell/Atlaso/Atlaso.psd1"),
 }
 
 

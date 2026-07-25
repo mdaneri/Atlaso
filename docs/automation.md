@@ -1,7 +1,7 @@
 # Automation
 
-LabFoundry's core scheduler runs in the separate persistent
-`labfoundry-worker.service`. The web process creates task and schedule records;
+Atlaso's core scheduler runs in the separate persistent
+`atlaso-worker.service`. The web process creates task and schedule records;
 the worker claims pending work and writes the normal task, audit, result, and
 error history. It supports:
 
@@ -65,27 +65,27 @@ the same literal parameter syntax used by schedules. Schedule and manual-run
 parameters are entered as one logical command line. Bash and Python
 use backslash line continuation and POSIX-style literal argument parsing;
 PowerShell uses the backtick continuation marker and PowerShell-style quoting.
-LabFoundry passes the resulting argument vector directly to the selected script
+Atlaso passes the resulting argument vector directly to the selected script
 without a second shell-expansion pass. Parameters are bounded, stored with the
 schedule and task history, and must not contain secrets.
 
-LabFoundry prevents disabling a revision used by an enabled schedule and
+Atlaso prevents disabling a revision used by an enabled schedule and
 prevents deleting a script while any schedule references one of its revisions.
 The operator must disable, edit, or delete those schedules first. Script
 deletion removes its stored revisions but preserves existing task history.
 
 Interpreters are allowlisted to Bash, system Python, and PowerShell. The helper
-runs scripts as the dedicated `labfoundry-automation` account in a transient
+runs scripts as the dedicated `atlaso-automation` account in a transient
 systemd unit with:
 
 - no sudo or root identity;
 - `NoNewPrivileges=yes`;
 - a private temporary directory and protected home directories;
 - a read-only system filesystem except for
-  `/var/lib/labfoundry/automation/runs`;
+  `/var/lib/atlaso/automation/runs`;
 - the revision's configured timeout, capped at 24 hours.
 
-Scripts do not receive LabFoundry credentials. Output is bounded in task
+Scripts do not receive Atlaso credentials. Output is bounded in task
 history. Script definitions and schedules are included in settings archives,
 but restored revisions and schedules are always disabled and source credentials
 are never exported.
@@ -93,8 +93,8 @@ are never exported.
 ## Service operations
 
 ```bash
-systemctl status labfoundry-worker --no-pager
-journalctl -u labfoundry-worker -n 120 --no-pager
+systemctl status atlaso-worker --no-pager
+journalctl -u atlaso-worker -n 120 --no-pager
 ```
 
 If the worker restarts during a task, that task is marked failed and is not
@@ -102,7 +102,7 @@ silently replayed. A queued task that was never claimed remains pending.
 
 ## Task history and output
 
-Scheduled work always creates normal LabFoundry Jobs, so it appears in both the
+Scheduled work always creates normal Atlaso Jobs, so it appears in both the
 Automation **Executions** tab and `/tasks`. The Tasks grid uses backend-owned
 filtering and pagination. Status and state are fixed lists; Task / Component is
 an autocomplete list built from recorded job types and component labels while

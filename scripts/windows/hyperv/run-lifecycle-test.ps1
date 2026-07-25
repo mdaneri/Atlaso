@@ -1,7 +1,7 @@
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [string]$LabName = 'LabFoundryLifecycle',
+    [string]$LabName = 'AtlasoLifecycle',
     [Parameter(Mandatory = $true)]
     [string]$ApplianceVhdxPath,
     [string]$ClientVhdxPath = '',
@@ -43,7 +43,7 @@ if (-not $ApplianceUrl) {
     $ApplianceUrl = "https://${ApplianceIPAddress}"
 }
 if (-not $ClientVhdxPath) {
-    $ClientVhdxPath = Join-Path $repoRoot 'image\hyperv\clients\alpine-cloud\labfoundry-tiny-linux-client.vhdx'
+    $ClientVhdxPath = Join-Path $repoRoot 'image\hyperv\clients\alpine-cloud\atlaso-tiny-linux-client.vhdx'
 }
 $resultStamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $resultRoot = Join-Path $repoRoot "test-results\hyperv-lifecycle\$resultStamp"
@@ -54,7 +54,7 @@ $createdVms = New-Object System.Collections.Generic.List[string]
 function Assert-SafeLifecycleName {
     param([string]$Name)
 
-    $reserved = @('LabFoundry', 'LabFoundry-Photon-Builder')
+    $reserved = @('Atlaso', 'Atlaso-Photon-Builder')
     if ($reserved -contains $Name) {
         throw "Refusing to use reserved VM name '$Name'. Lifecycle tests must use a separate VM set."
     }
@@ -237,14 +237,14 @@ function Ensure-NetworkAdapter {
 function Set-LifecycleNetworkTopology {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param()
-    Ensure-NetworkAdapter -VMName $applianceName -Name 'SiteA' -SwitchName 'LabFoundry-SiteA'
-    Ensure-NetworkAdapter -VMName $applianceName -Name 'Trunk' -SwitchName 'LabFoundry-Trunk'
-    Ensure-NetworkAdapter -VMName $applianceName -Name 'WAN-Test' -SwitchName 'LabFoundry-SiteB'
-    Ensure-NetworkAdapter -VMName $clientAName -Name 'SiteA-Test' -SwitchName 'LabFoundry-SiteA'
-    Ensure-NetworkAdapter -VMName $clientAName -Name 'VLAN-Test' -SwitchName 'LabFoundry-Trunk'
-    Ensure-NetworkAdapter -VMName $clientAName -Name 'Appliance-Mgmt-Test' -SwitchName 'LabFoundry-Mgmt'
-    Ensure-NetworkAdapter -VMName $clientBName -Name 'WAN-Test' -SwitchName 'LabFoundry-SiteB'
-    Ensure-NetworkAdapter -VMName $pxeClientName -Name 'PXE-SiteA' -SwitchName 'LabFoundry-SiteA'
+    Ensure-NetworkAdapter -VMName $applianceName -Name 'SiteA' -SwitchName 'Atlaso-SiteA'
+    Ensure-NetworkAdapter -VMName $applianceName -Name 'Trunk' -SwitchName 'Atlaso-Trunk'
+    Ensure-NetworkAdapter -VMName $applianceName -Name 'WAN-Test' -SwitchName 'Atlaso-SiteB'
+    Ensure-NetworkAdapter -VMName $clientAName -Name 'SiteA-Test' -SwitchName 'Atlaso-SiteA'
+    Ensure-NetworkAdapter -VMName $clientAName -Name 'VLAN-Test' -SwitchName 'Atlaso-Trunk'
+    Ensure-NetworkAdapter -VMName $clientAName -Name 'Appliance-Mgmt-Test' -SwitchName 'Atlaso-Mgmt'
+    Ensure-NetworkAdapter -VMName $clientBName -Name 'WAN-Test' -SwitchName 'Atlaso-SiteB'
+    Ensure-NetworkAdapter -VMName $pxeClientName -Name 'PXE-SiteA' -SwitchName 'Atlaso-SiteA'
 
     if ($PSCmdlet.ShouldProcess("$applianceName/Trunk", "Enable trunk VLAN $VlanId")) {
         Set-VMNetworkAdapterVlan -VMName $applianceName -VMNetworkAdapterName 'Trunk' -Trunk -AllowedVlanIdList "$VlanId" -NativeVlanId 0
@@ -390,7 +390,7 @@ function Copy-EsxIsoToAppliance {
         throw "Staging -EsxIsoPath requires plink and pscp in PATH."
     }
     $fileName = [System.IO.Path]::GetFileName($Path)
-    $remoteRoot = '/mnt/labfoundry-vcf-offline-depot/PROD/COMP/ESX_HOST'
+    $remoteRoot = '/mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST'
     $remoteTmp = "/tmp/$fileName"
     $remotePath = "$remoteRoot/$fileName"
     $quotedRoot = ConvertTo-ShellSingleQuoted -Value $remoteRoot
@@ -414,7 +414,7 @@ function Copy-EsxIsoToAppliance {
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to chmod ESX ISO under $remoteRoot on the appliance."
     }
-    & plink -batch -ssh -pw $SshPassword "$ApplianceSshUser@$ApplianceIPAddress" "printf '%s\n' $quotedPassword | sudo -S chown labfoundry:labfoundry $quotedPath"
+    & plink -batch -ssh -pw $SshPassword "$ApplianceSshUser@$ApplianceIPAddress" "printf '%s\n' $quotedPassword | sudo -S chown atlaso:atlaso $quotedPath"
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to chown ESX ISO under $remoteRoot on the appliance."
     }
@@ -442,7 +442,7 @@ function Invoke-PxeBootSmoke {
     if ((Get-Command plink -ErrorAction SilentlyContinue) -and $SshPassword) {
         $quotedPassword = ConvertTo-ShellSingleQuoted -Value $SshPassword
         $quotedMac = ConvertTo-ShellSingleQuoted -Value $MacAddress
-        $leaseCommand = "printf '%s\n' $quotedPassword | sudo -S grep -i $quotedMac /var/lib/labfoundry/dnsmasq/dhcp.leases 2>/dev/null || true"
+        $leaseCommand = "printf '%s\n' $quotedPassword | sudo -S grep -i $quotedMac /var/lib/atlaso/dnsmasq/dhcp.leases 2>/dev/null || true"
         $plinkArgs = @('-batch', '-ssh')
         if ($script:applianceHostKey) {
             $plinkArgs += @('-hostkey', $script:applianceHostKey)
@@ -615,7 +615,7 @@ function Reset-LifecycleApplianceVm {
     }
 
     New-LifecycleDifferencingDisk -ParentPath $ApplianceVhdxPath -ChildPath $safeApplianceDisk -Label 'restored appliance'
-    New-LifecycleVm -Name $applianceName -VhdxPath $safeApplianceDisk -SwitchName 'LabFoundry-Mgmt' -MemoryStartupBytes $ApplianceMemoryStartupBytes -ProcessorCount $ApplianceProcessorCount
+    New-LifecycleVm -Name $applianceName -VhdxPath $safeApplianceDisk -SwitchName 'Atlaso-Mgmt' -MemoryStartupBytes $ApplianceMemoryStartupBytes -ProcessorCount $ApplianceProcessorCount
     Set-LifecycleNetworkTopology
     if ((Get-VM -Name $applianceName).State -ne 'Running') {
         if ($PSCmdlet.ShouldProcess($applianceName, 'Start redeployed lifecycle appliance VM')) {
@@ -677,19 +677,19 @@ if ($PlanOnly) {
         signed_release_repository = $SignedReleaseRepositoryUrl
         backup_restore_test      = -not [bool]$SkipBackupRestoreTest
         cleanup_created_lab      = [bool]$CleanupCreatedLab
-        reserved_vms_not_touched = @('LabFoundry', 'LabFoundry-Photon-Builder')
+        reserved_vms_not_touched = @('Atlaso', 'Atlaso-Photon-Builder')
     } | ConvertTo-Json -Depth 5
     return
 }
 
-$existingPrimary = Get-VM -Name 'LabFoundry' -ErrorAction SilentlyContinue
+$existingPrimary = Get-VM -Name 'Atlaso' -ErrorAction SilentlyContinue
 if ($existingPrimary -and $existingPrimary.State -eq 'Running' -and $ApplianceIPAddress -eq '192.168.49.1') {
-    throw "Existing VM 'LabFoundry' is running and may already own $ApplianceIPAddress. Stop it or choose a different lifecycle management topology. This script will not modify that VM."
+    throw "Existing VM 'Atlaso' is running and may already own $ApplianceIPAddress. Stop it or choose a different lifecycle management topology. This script will not modify that VM."
 }
 
 $runningLifecycleAppliances = Get-VM -ErrorAction SilentlyContinue |
 Where-Object {
-    $_.Name -like 'LabFoundryLifecycle*-Appliance' -and
+    $_.Name -like 'AtlasoLifecycle*-Appliance' -and
     $_.Name -ne $applianceName -and
     $_.State -eq 'Running'
 }
@@ -726,10 +726,10 @@ New-CloudInitSeedIso -Path $clientASeedIso -HostName ($clientAName.ToLowerInvari
 New-CloudInitSeedIso -Path $clientBSeedIso -HostName ($clientBName.ToLowerInvariant()) -PublicKey $clientPublicKey
 
 try {
-    New-LifecycleVm -Name $applianceName -VhdxPath $applianceDisk -SwitchName 'LabFoundry-Mgmt' -MemoryStartupBytes $ApplianceMemoryStartupBytes -ProcessorCount $ApplianceProcessorCount
+    New-LifecycleVm -Name $applianceName -VhdxPath $applianceDisk -SwitchName 'Atlaso-Mgmt' -MemoryStartupBytes $ApplianceMemoryStartupBytes -ProcessorCount $ApplianceProcessorCount
     New-LifecycleVm -Name $clientAName -VhdxPath $clientADisk -SwitchName $ClientManagementSwitch -MemoryStartupBytes $ClientMemoryStartupBytes -ProcessorCount $ClientProcessorCount
     New-LifecycleVm -Name $clientBName -VhdxPath $clientBDisk -SwitchName $ClientManagementSwitch -MemoryStartupBytes $ClientMemoryStartupBytes -ProcessorCount $ClientProcessorCount
-    New-LifecyclePxeVm -Name $pxeClientName -SwitchName 'LabFoundry-SiteA'
+    New-LifecyclePxeVm -Name $pxeClientName -SwitchName 'Atlaso-SiteA'
 
     Ensure-DvdDrive -VMName $clientAName -Path $clientASeedIso
     Ensure-DvdDrive -VMName $clientBName -Path $clientBSeedIso

@@ -1,5 +1,5 @@
 {
-  "hostname": "labfoundry",
+  "hostname": "atlaso",
   "password": {
     "crypted": false,
     "text": ${jsonencode(root_password)}
@@ -57,8 +57,8 @@
     "useradd -m -G sudo -s /bin/bash ${build_username} || true",
     "printf '%s:%s\\n' '${build_username}' '${build_password}' | chpasswd",
     "systemctl enable sshd",
-    "echo '${build_username} ALL=(ALL) NOPASSWD:ALL' >/etc/sudoers.d/90-labfoundry-build",
-    "chmod 0440 /etc/sudoers.d/90-labfoundry-build",
+    "echo '${build_username} ALL=(ALL) NOPASSWD:ALL' >/etc/sudoers.d/90-atlaso-build",
+    "chmod 0440 /etc/sudoers.d/90-atlaso-build",
     "systemctl enable hv_kvp_daemon || true",
     "systemctl enable hv_fcopy_daemon || true",
     "systemctl enable hv_vss_daemon || true"

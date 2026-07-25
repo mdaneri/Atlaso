@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block page_title %}Services{% endblock %}
+{% block content %}
+<section class="split-workspace services-workspace">
+  <div class="panel wide-panel">
+    <div class="panel-head">
+      <div>
+        <h2>Services</h2>
+        <p class="muted">Control allowlisted appliance services. Actions are recorded through the Atlaso adapter boundary.</p>
+      </div>
+      <span class="status-pill {{ services_boundary_pill }}">{{ services_boundary_label }}</span>
+    </div>
+
+    <div id="services-error" class="alert error hidden"></div>
+
+    <div
+      id="services-table"
+      class="tabulator-shell services-table"
+      data-services='{{ service_rows | tojson }}'
+      data-csrf="{{ csrf_token }}"
+      data-fallback-id="services-fallback"
+    ></div>
+
+    <table id="services-fallback" class="data-table compact dns-fallback-table">
+      <thead>
+        <tr>
+          <th>Service</th>
+          <th>Runtime</th>
+          <th>Startup</th>
+          <th>Boundary</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for service in services %}
+          <tr>
+            <td>
+              <strong>{{ service.display_name }}</strong>
+              <span class="muted">{{ service.service }}</span>
+            </td>
+            <td>{{ "running" if service.running else ("disabled" if service.enabled is sameas false else "stopped") }}</td>
+            <td>{{ "enabled" if service.enabled else "disabled" }}</td>
+            <td>{{ service.detail or "native host service" }}</td>
+            <td class="fallback-actions">
+              <form action="/services/{{ service.service }}/start" method="post">
+                <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                <button class="button tiny" type="submit">Start</button>
+              </form>
+              <form action="/services/{{ service.service }}/stop" method="post">
+                <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                <button class="button tiny" type="submit">Stop</button>
+              </form>
+              <form action="/services/{{ service.service }}/restart" method="post">
+                <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                <button class="button tiny primary" type="submit">Restart</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <aside class="side-stack">
+    <div class="panel detail-panel">
+      <div class="panel-head">
+        <h2>Service Boundary</h2>
+        <span class="status-pill {{ services_boundary_pill }}">{{ services_boundary_label }}</span>
+      </div>
+      {% if system_adapter_dry_run %}
+        <p class="muted">Start, restart, enable, disable, and log actions are captured as dry-run command intent.</p>
+      {% else %}
+        <p class="muted">Start, restart, enable, disable, and log actions are captured through the Atlaso adapter boundary.</p>
+      {% endif %}
+      {% if service_action_result %}
+        <div class="alert success">
+          <strong>{{ service_action_result.service }} {{ service_action_result.action }} recorded{% if system_adapter_dry_run %} as dry-run{% endif %}.</strong>
+          <code>{{ service_action_result.command }}</code>
+        </div>
+      {% else %}
+        <div class="terminal-note">
+          <strong>Command shape</strong>
+          <code>systemctl restart dns</code>
+        </div>
+      {% endif %}
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Logs</h2>
+        <span class="status-pill muted">adapter</span>
+      </div>
+      {% if service_logs %}
+        <p class="muted">{{ service_logs.service }} log preview</p>
+        <div class="terminal-note">
+          <strong>{% if system_adapter_dry_run %}dry-run {% endif %}journal boundary</strong>
+          <code>{{ service_logs.lines | join('\n') }}</code>
+        </div>
+      {% else %}
+        <p class="muted">Open Logs on a service row to capture a log preview.</p>
+      {% endif %}
+    </div>
+  </aside>
+</section>
+{% endblock %}

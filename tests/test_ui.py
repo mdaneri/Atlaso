@@ -4,7 +4,7 @@ def login(client):
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
         "/login",
-        data={"username": "admin", "password": "labfoundry-admin", "csrf": csrf},
+        data={"username": "admin", "password": "atlaso-admin", "csrf": csrf},
         follow_redirects=False,
     )
     assert response.status_code == 303
@@ -21,7 +21,7 @@ def assert_apply_redirect(response):
 
 def create_api_token(client, scopes):
     response = client.post(
-        "/api/v1/auth/login?username=admin&password=labfoundry-admin",
+        "/api/v1/auth/login?username=admin&password=atlaso-admin",
         json={"name": "test token", "scopes": scopes},
     )
     assert response.status_code == 200, response.text
@@ -37,7 +37,7 @@ def test_login_and_dashboard_render(client):
     assert root.headers["location"] == "/dashboard"
     response = client.get("/dashboard")
     assert response.status_code == 200
-    assert "LabFoundry" in response.text
+    assert "Atlaso" in response.text
     assert "Routes &amp; WAN Simulation" in response.text
     assert "VCF Offline Depot" in response.text
     assert "HTTPS Repository" not in response.text
@@ -89,7 +89,7 @@ def test_login_and_dashboard_render(client):
     server_time_response = client.get("/server-time")
     assert server_time_response.status_code == 200
     assert server_time_response.json()["label"].startswith("Server ")
-    app_js = Path("labfoundry/app/static/app.js").read_text()
+    app_js = Path("atlaso/app/static/app.js").read_text()
     assert "function initializeServerTime()" in app_js
     assert 'window.setInterval(sync, 60000)' in app_js
     assert "data-account-menu" in response.text
@@ -98,27 +98,30 @@ def test_login_and_dashboard_render(client):
     assert "Sign out (admin)" in response.text
     assert 'action="/appliance/power/reboot"' in response.text
     assert 'action="/appliance/power/shutdown"' in response.text
-    assert 'data-confirm-title="Reboot LabFoundry appliance?"' in response.text
-    assert 'data-confirm-title="Shut down LabFoundry appliance?"' in response.text
+    assert 'data-confirm-title="Reboot Atlaso appliance?"' in response.text
+    assert 'data-confirm-title="Shut down Atlaso appliance?"' in response.text
     assert 'id="about-modal"' in response.text
-    assert 'class="about-brand-mark" src="/static/brand/labfoundry-mark.svg"' in response.text
+    assert 'class="about-brand-mark" src="/static/brand/atlaso-icon.svg"' in response.text
     assert '<span class="role-chip">admin</span>' not in response.text
     assert 'href="/logs"' in response.text
     assert 'href="/audit-log"' in response.text
     assert "cdn.tailwindcss.com" not in response.text
     assert "unpkg.com/htmx" not in response.text
     assert 'body class="bg-slate-100 text-slate-900"' not in response.text
-    assert "/static/brand/labfoundry-mark.svg" in response.text
+    assert "/static/brand/atlaso-icon.svg" in response.text
     assert 'class="management-info-footnote"' in response.text
-    from labfoundry import __version__
+    from atlaso import __version__
 
-    assert f"LabFoundry {__version__}" in response.text
+    assert f"Atlaso {__version__}" in response.text
     assert 'href="/api/docs"' in response.text
     assert "Python " in response.text
-    assert '<link rel="icon" href="/favicon.ico" type="image/svg+xml">' in response.text
+    assert '<link rel="icon" href="/favicon.ico" type="image/x-icon">' in response.text
     assert '<link rel="manifest" href="/manifest.webmanifest">' in response.text
     assert '<meta name="theme-color"' not in response.text
-    assert "/static/pwa.js?v=pwa-20260627-1" in response.text
+    assert "/static/pwa.js?v=atlaso-brand-20260725-1" in response.text
+    assert "Everything your virtualization lab needs." in response.text
+    assert "Infrastructure • Storage • Identity • Networking • Lifecycle" in response.text
+    assert "simplifying deployment, maintenance, and validation" in response.text
     assert "LF</span>" not in response.text
     assert "/static/vendor/prism/prism-core.min.js" in response.text
     assert "/static/vendor/prism/prism-diff.min.js" in response.text
@@ -151,7 +154,7 @@ def test_web_terminal_requires_login_and_renders_admin_only_unavailable_state(cl
 def test_disabled_web_terminal_page_accepts_only_management_listener(client, monkeypatch):
     from types import SimpleNamespace
 
-    from labfoundry.app import web_terminal
+    from atlaso.app import web_terminal
 
     allowed_addresses = []
 
@@ -180,10 +183,10 @@ def test_public_web_terminal_uses_public_shell_and_explicit_user_access(client, 
 
     from sqlalchemy import select
 
-    from labfoundry.app import ui, web_terminal
-    from labfoundry.app.adapters.system import AdapterResult
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import ApplianceSettings, PhysicalInterface, User
+    from atlaso.app import ui, web_terminal
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, PhysicalInterface, User
 
     with SessionLocal() as db:
         settings = db.execute(select(ApplianceSettings)).scalar_one()
@@ -214,7 +217,7 @@ def test_public_web_terminal_uses_public_shell_and_explicit_user_access(client, 
 
         def authenticate_local_user(self, username: str, password: str) -> AdapterResult:
             return AdapterResult(
-                command=["labfoundry-helper", "local-users", "authenticate", username],
+                command=["atlaso-helper", "local-users", "authenticate", username],
                 dry_run=False,
                 returncode=0 if username == "test" and password == "Test-user1!" else 1,
             )
@@ -276,9 +279,9 @@ def test_web_terminal_uses_one_use_ticket_and_bridges_websocket_input(client, mo
 
     from sqlalchemy import select
 
-    from labfoundry.app import web_terminal
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import ApplianceSettings, User
+    from atlaso.app import web_terminal
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, User
 
     class FakeChannel:
         def __init__(self):
@@ -392,11 +395,11 @@ def test_web_terminal_uses_one_use_ticket_and_bridges_websocket_input(client, mo
     assert channel.sent == [b"whoami\r"]
     assert open_count == 1
     assert web_terminal._consume_ticket(ticket, 1, "admin", csrf) is None
-    assert client.get("/static/brand/labfoundry-mark.svg").status_code == 200
-    assert client.get("/static/brand/labfoundry-appliance-graphic.svg").status_code == 200
+    assert client.get("/static/brand/atlaso-icon.svg").status_code == 200
+    assert client.get("/static/brand/atlaso-logo-horizontal-light.svg").status_code == 200
     favicon = client.get("/favicon.ico")
     assert favicon.status_code == 200
-    assert favicon.headers["content-type"].startswith("image/svg+xml")
+    assert favicon.headers["content-type"].startswith("image/x-icon")
     terminal_js = client.get("/static/terminal.js")
     assert 'JSON.stringify({ type: "input", data })' in terminal_js.text
     assert 'data === "\\u0004" ? "exit\\r" : data' not in terminal_js.text
@@ -407,10 +410,10 @@ def test_appliance_power_action_creates_task_before_scheduling(client, monkeypat
 
     from sqlalchemy import select
 
-    from labfoundry.app.adapters.system import AdapterResult
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import AuditEvent, Job, JobStatus
-    from labfoundry.app.ui import SystemAdapter
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, Job, JobStatus
+    from atlaso.app.ui import SystemAdapter
 
     observed: list[tuple[str, str]] = []
 
@@ -457,7 +460,7 @@ def test_appliance_power_action_creates_task_before_scheduling(client, monkeypat
 def test_account_menu_uses_defined_opaque_surface_tokens():
     from pathlib import Path
 
-    app_css = Path("labfoundry/app/static/app.css").read_text(encoding="utf-8")
+    app_css = Path("atlaso/app/static/app.css").read_text(encoding="utf-8")
     menu_css = app_css.split(".account-menu {", 1)[1].split(".inline-help-row", 1)[0]
 
     assert "var(--panel)" not in menu_css
@@ -471,16 +474,16 @@ def test_appliance_shutdown_task_reports_helper_failure(client, monkeypatch):
 
     from sqlalchemy import select
 
-    from labfoundry.app.adapters.system import AdapterResult
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, JobStatus
-    from labfoundry.app.ui import SystemAdapter
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
+    from atlaso.app.ui import SystemAdapter
 
     monkeypatch.setattr(
         SystemAdapter,
         "schedule_appliance_power",
         lambda _self, action: AdapterResult(
-            command=["labfoundry-helper", "appliance-power", action],
+            command=["atlaso-helper", "appliance-power", action],
             dry_run=False,
             stderr="systemd-run unavailable",
             returncode=127,
@@ -503,8 +506,8 @@ def test_tasks_page_lists_redacts_logs_and_cancels(client):
     import json
     from pathlib import Path
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, JobStatus, JobStep, utcnow
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep, utcnow
 
     login(client)
     with SessionLocal() as db:
@@ -518,7 +521,7 @@ def test_tasks_page_lists_redacts_logs_and_cancels(client):
             result=json.dumps(
                 {
                     "state": "uploading-disk1.vmdk",
-                    "target": "sddcm.labfoundry.internal",
+                    "target": "sddcm.atlaso.internal",
                     "api_password": "VMware01!",
                     "tls_fingerprint": "AA:BB",
                 }
@@ -561,7 +564,7 @@ def test_tasks_page_lists_redacts_logs_and_cancels(client):
                         "state": "succeeded",
                         "stdout": (
                             '{"action":"run","args":["script.ps1"],"dry_run":false,'
-                            '"group":"automation","helper":"labfoundry-helper","timestamp":"2026-07-21T18:50:14Z"}\n'
+                            '"group":"automation","helper":"atlaso-helper","timestamp":"2026-07-21T18:50:14Z"}\n'
                             "PowerShell output"
                         ),
                         "stderr": "",
@@ -590,18 +593,18 @@ def test_tasks_page_lists_redacts_logs_and_cancels(client):
     assert "data-task-detail-console-content" in page.text
     assert "data-task-detail-console-error-content" in page.text
     assert 'class="terminal-note task-log-preview"' in page.text
-    assert 'class="language-labfoundry-log" data-task-log-content' in page.text
+    assert 'class="language-atlaso-log" data-task-log-content' in page.text
     assert "task-grid-shell" in page.text
     assert "data-task-component-options" in page.text
     assert 'data-selected-task-id="job_taskgrid001"' in page.text
     plain_page = client.get("/tasks")
     assert plain_page.status_code == 200
     assert 'data-selected-task-id=""' in plain_page.text
-    app_js = Path("labfoundry/app/static/app.js").read_text()
+    app_js = Path("atlaso/app/static/app.js").read_text()
     tasks_table_js = app_js.split("function initializeTasksPage", 1)[1].split("function updateVcfDepotSummary", 1)[0]
     assert 'paginationMode: "remote"' in tasks_table_js
     assert "paginationSizeSelector" not in tasks_table_js
-    assert 'labFoundryTasksTable.on("rowDblClick", (_event, row) => openTaskDetail(row.getData()))' in app_js
+    assert 'atlasoTasksTable.on("rowDblClick", (_event, row) => openTaskDetail(row.getData()))' in app_js
     assert "rowContextMenu" in tasks_table_js
     assert 'label: "Details"' in tasks_table_js
     assert 'label: "Log"' in tasks_table_js
@@ -620,14 +623,14 @@ def test_tasks_page_lists_redacts_logs_and_cancels(client):
     assert 'height: page.dataset.taskGridHeight || "100%"' in tasks_table_js
     assert 'query.set("filters", JSON.stringify(params.filters || params.filter || []));' in app_js
     assert 'headerFilterPlaceholder: "Choose or type custom"' in tasks_table_js
-    assert "values: labFoundryTaskComponentOptions" in tasks_table_js
+    assert "values: atlasoTaskComponentOptions" in tasks_table_js
     assert "autocomplete: true" in tasks_table_js
     assert "freetext: true" in tasks_table_js
     assert 'title: "State"' in tasks_table_js
     assert 'pending: "Pending", running: "Running", succeeded: "Succeeded", failed: "Failed", cancelled: "Cancelled"' in tasks_table_js
     assert 'title: "Actions"' not in tasks_table_js
     assert "data-task-row-menu-toggle" not in app_js
-    app_css = Path("labfoundry/app/static/app.css").read_text()
+    app_css = Path("atlaso/app/static/app.css").read_text()
     assert ".tasks-panel {\n  display: grid;\n  gap: 14px;\n  grid-template-rows: auto minmax(0, 1fr);\n  min-width: 0;\n  max-width: 100%;" in app_css
     assert ".task-grid-shell {\n  width: 100%;\n  max-width: 100%;" in app_css
     assert ".task-detail-facts {\n  grid-template-columns: repeat(2, minmax(0, 1fr));" in app_css
@@ -714,9 +717,9 @@ def test_tasks_page_lists_redacts_logs_and_cancels(client):
 def test_service_admin_task_cancellation_is_limited_to_vcf_helpers(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, JobStatus, Role, User
-    from labfoundry.app.security import roles_to_json
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, Role, User
+    from atlaso.app.security import roles_to_json
 
     with SessionLocal() as db:
         admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
@@ -762,13 +765,15 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert manifest.headers["content-type"].startswith("application/manifest+json")
     assert manifest.headers["cache-control"] == "no-cache"
     manifest_json = manifest.json()
-    assert manifest_json["name"] == "LabFoundry"
-    assert manifest_json["short_name"] == "LabFoundry"
+    assert manifest_json["name"] == "Atlaso"
+    assert manifest_json["short_name"] == "Atlaso"
     assert manifest_json["start_url"] == "/dashboard"
     assert manifest_json["scope"] == "/"
     assert manifest_json["display"] == "standalone"
-    assert manifest_json["theme_color"] == "#1f4f7a"
-    assert manifest_json["icons"][0]["src"] == "/static/brand/labfoundry-mark.svg"
+    assert manifest_json["background_color"] == "#071A3A"
+    assert manifest_json["theme_color"] == "#1769E0"
+    assert manifest_json["icons"][0]["src"] == "/static/brand/atlaso-app-icon-dark-192.png"
+    assert manifest_json["icons"][1]["src"] == "/static/brand/atlaso-app-icon-dark-512.png"
     assert manifest_json["icons"][0]["purpose"] == "any maskable"
 
     service_worker = client.get("/service-worker.js")
@@ -776,8 +781,8 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["content-type"].startswith("application/javascript")
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
-    assert "LABFOUNDRY_CACHE" in service_worker.text
-    assert "labfoundry-pwa-v164" in service_worker.text
+    assert "ATLASO_CACHE" in service_worker.text
+    assert "atlaso-pwa-v165" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -788,9 +793,9 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert 'url.pathname.startsWith("/api/")' in service_worker.text
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
-    assert "/static/vendor/codemirror/labfoundry-codemirror.min.js" in service_worker.text
-    assert "/static/app.css?v=appliance-update-ui-20260724-4" in service_worker.text
-    assert "/static/app.js?v=appliance-update-ui-20260724-4" in service_worker.text
+    assert "/static/vendor/codemirror/atlaso-codemirror.min.js" in service_worker.text
+    assert "/static/app.css?v=atlaso-brand-20260725-1" in service_worker.text
+    assert "/static/app.js?v=atlaso-brand-20260725-1" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -799,13 +804,13 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=appliance-update-ui-20260724-4" in offline.text
+    assert "/static/app.css?v=atlaso-brand-20260725-1" in offline.text
 
 
 def test_reported_template_accessibility_contracts():
     from pathlib import Path
 
-    templates = Path("labfoundry/app/templates")
+    templates = Path("atlaso/app/templates")
     appliance_update = (templates / "appliance_update.html").read_text(encoding="utf-8")
     logs = (templates / "logs.html").read_text(encoding="utf-8")
     ldap = (templates / "ldap.html").read_text(encoding="utf-8")
@@ -865,8 +870,8 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=appliance-update-ui-20260724-4" in page.text
-    assert "/static/app.js?v=appliance-update-ui-20260724-4" in page.text
+    assert "/static/app.css?v=atlaso-brand-20260725-1" in page.text
+    assert "/static/app.js?v=atlaso-brand-20260725-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -950,7 +955,7 @@ def test_login_page_includes_pwa_metadata(client):
     assert response.status_code == 200
     assert '<link rel="manifest" href="/manifest.webmanifest">' in response.text
     assert '<meta name="theme-color"' not in response.text
-    assert "/static/pwa.js?v=pwa-20260627-1" in response.text
+    assert "/static/pwa.js?v=atlaso-brand-20260725-1" in response.text
 
 
 def test_unauthenticated_ui_request_redirects_to_login(client):
@@ -961,9 +966,9 @@ def test_unauthenticated_ui_request_redirects_to_login(client):
 
 
 def test_ui_session_is_rejected_after_appliance_instance_changes(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Setting
-    from labfoundry.app.security import SESSION_APPLIANCE_INSTANCE_SETTING_KEY
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Setting
+    from atlaso.app.security import SESSION_APPLIANCE_INSTANCE_SETTING_KEY
 
     login(client)
     assert client.get("/dashboard").status_code == 200
@@ -998,8 +1003,8 @@ def test_sidebar_appliance_apply_uses_bottom_pending_cta(client):
 
 
 def test_dns_settings_derives_listen_addresses_from_selected_interface(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import PhysicalInterface
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
 
     login(client)
     with SessionLocal() as db:
@@ -1036,7 +1041,7 @@ def test_dns_settings_derives_listen_addresses_from_selected_interface(client):
             "expand_hosts": "on",
             "authoritative": "on",
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 200, response.text
@@ -1045,8 +1050,8 @@ def test_dns_settings_derives_listen_addresses_from_selected_interface(client):
 
 
 def test_dns_listen_interface_menu_has_empty_state_when_no_interfaces_available(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import PhysicalInterface, VlanInterface
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface, VlanInterface
 
     login(client)
     with SessionLocal() as db:
@@ -1070,8 +1075,8 @@ def test_dns_listen_interface_menu_has_empty_state_when_no_interfaces_available(
 
 
 def test_forget_missing_physical_interface_deletes_only_stale_rows(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import PhysicalInterface, VlanInterface
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface, VlanInterface
 
     login(client)
     with SessionLocal() as db:
@@ -1115,9 +1120,9 @@ def test_forget_missing_physical_interface_deletes_only_stale_rows(client):
 def test_forget_missing_first_service_interface_moves_dns_alias_to_next_target(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DnsRecord, PhysicalInterface
-    from labfoundry.app.ui import ensure_dns_for_vcf_registry, get_vcf_private_registry_settings_row
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord, PhysicalInterface
+    from atlaso.app.ui import ensure_dns_for_vcf_registry, get_vcf_private_registry_settings_row
 
     login(client)
     with SessionLocal() as db:
@@ -1145,7 +1150,7 @@ def test_forget_missing_first_service_interface_moves_dns_alias_to_next_target(c
         )
         settings = get_vcf_private_registry_settings_row(db)
         settings.enabled = True
-        settings.hostname = "registry.labfoundry.internal"
+        settings.hostname = "registry.atlaso.internal"
         settings.listen_interface = "eth7\neth8"
         settings.listen_address = "10.7.0.1\n10.8.0.1"
         ensure_dns_for_vcf_registry(db, settings, "admin")
@@ -1165,12 +1170,12 @@ def test_forget_missing_first_service_interface_moves_dns_alias_to_next_target(c
         assert settings.listen_interface == "eth8"
         assert settings.listen_address == "10.8.0.1"
         canonical = db.execute(
-            select(DnsRecord).where(DnsRecord.hostname == "registry.labfoundry.internal", DnsRecord.record_type == "CNAME")
+            select(DnsRecord).where(DnsRecord.hostname == "registry.atlaso.internal", DnsRecord.record_type == "CNAME")
         ).scalar_one()
-        assert canonical.address == "registry-10-8-0-1.labfoundry.internal"
-        assert db.execute(select(DnsRecord).where(DnsRecord.hostname == "registry-10-7-0-1.labfoundry.internal")).scalar_one_or_none() is None
+        assert canonical.address == "registry-10-8-0-1.atlaso.internal"
+        assert db.execute(select(DnsRecord).where(DnsRecord.hostname == "registry-10-7-0-1.atlaso.internal")).scalar_one_or_none() is None
         target = db.execute(
-            select(DnsRecord).where(DnsRecord.hostname == "registry-10-8-0-1.labfoundry.internal", DnsRecord.record_type == "A")
+            select(DnsRecord).where(DnsRecord.hostname == "registry-10-8-0-1.atlaso.internal", DnsRecord.record_type == "A")
         ).scalar_one()
         assert target.address == "10.8.0.1"
 
@@ -1178,9 +1183,9 @@ def test_forget_missing_first_service_interface_moves_dns_alias_to_next_target(c
 def test_service_dns_target_naming_converts_owned_records_between_ip_and_interface(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import ApplianceSettings, DnsRecord, PhysicalInterface
-    from labfoundry.app.ui import ensure_dns_for_vcf_registry, get_vcf_private_registry_settings_row
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, DnsRecord, PhysicalInterface
+    from atlaso.app.ui import ensure_dns_for_vcf_registry, get_vcf_private_registry_settings_row
 
     login(client)
     with SessionLocal() as db:
@@ -1199,25 +1204,25 @@ def test_service_dns_target_naming_converts_owned_records_between_ip_and_interfa
         db.flush()
         settings = get_vcf_private_registry_settings_row(db)
         settings.enabled = True
-        settings.hostname = "registry.labfoundry.internal"
+        settings.hostname = "registry.atlaso.internal"
         settings.listen_interface = "eth9"
         settings.listen_address = "192.168.90.1\n2001:db8::1"
         ensure_dns_for_vcf_registry(db, settings, "admin")
         db.commit()
 
         canonical = db.execute(
-            select(DnsRecord).where(DnsRecord.hostname == "registry.labfoundry.internal", DnsRecord.record_type == "CNAME")
+            select(DnsRecord).where(DnsRecord.hostname == "registry.atlaso.internal", DnsRecord.record_type == "CNAME")
         ).scalar_one()
-        assert canonical.address == "registry-192-168-90-1.labfoundry.internal"
+        assert canonical.address == "registry-192-168-90-1.atlaso.internal"
         ipv4_target = db.execute(
-            select(DnsRecord).where(DnsRecord.hostname == "registry-192-168-90-1.labfoundry.internal", DnsRecord.record_type == "A")
+            select(DnsRecord).where(DnsRecord.hostname == "registry-192-168-90-1.atlaso.internal", DnsRecord.record_type == "A")
         ).scalar_one()
         assert ipv4_target.address == "192.168.90.1"
         ipv6_target = db.execute(
-            select(DnsRecord).where(DnsRecord.hostname == "registry-2001-db8-0-0-0-0-0-1.labfoundry.internal", DnsRecord.record_type == "AAAA")
+            select(DnsRecord).where(DnsRecord.hostname == "registry-2001-db8-0-0-0-0-0-1.atlaso.internal", DnsRecord.record_type == "AAAA")
         ).scalar_one()
         assert ipv6_target.address == "2001:db8::1"
-        assert db.execute(select(DnsRecord).where(DnsRecord.hostname == "registry-eth9.labfoundry.internal")).scalar_one_or_none() is None
+        assert db.execute(select(DnsRecord).where(DnsRecord.hostname == "registry-eth9.atlaso.internal")).scalar_one_or_none() is None
 
         appliance_settings = db.execute(select(ApplianceSettings)).scalar_one()
         appliance_settings.service_dns_target_naming = "interface"
@@ -1225,13 +1230,13 @@ def test_service_dns_target_naming_converts_owned_records_between_ip_and_interfa
         db.commit()
 
         canonical = db.execute(
-            select(DnsRecord).where(DnsRecord.hostname == "registry.labfoundry.internal", DnsRecord.record_type == "CNAME")
+            select(DnsRecord).where(DnsRecord.hostname == "registry.atlaso.internal", DnsRecord.record_type == "CNAME")
         ).scalar_one()
-        assert canonical.address == "registry-eth9.labfoundry.internal"
-        assert db.execute(select(DnsRecord).where(DnsRecord.hostname == "registry-192-168-90-1.labfoundry.internal")).scalar_one_or_none() is None
-        assert db.execute(select(DnsRecord).where(DnsRecord.hostname == "registry-2001-db8-0-0-0-0-0-1.labfoundry.internal")).scalar_one_or_none() is None
+        assert canonical.address == "registry-eth9.atlaso.internal"
+        assert db.execute(select(DnsRecord).where(DnsRecord.hostname == "registry-192-168-90-1.atlaso.internal")).scalar_one_or_none() is None
+        assert db.execute(select(DnsRecord).where(DnsRecord.hostname == "registry-2001-db8-0-0-0-0-0-1.atlaso.internal")).scalar_one_or_none() is None
         interface_targets = db.execute(
-            select(DnsRecord).where(DnsRecord.hostname == "registry-eth9.labfoundry.internal").order_by(DnsRecord.record_type)
+            select(DnsRecord).where(DnsRecord.hostname == "registry-eth9.atlaso.internal").order_by(DnsRecord.record_type)
         ).scalars().all()
         assert [(record.record_type, record.address) for record in interface_targets] == [("A", "192.168.90.1"), ("AAAA", "2001:db8::1")]
 
@@ -1240,19 +1245,19 @@ def test_service_dns_target_naming_converts_owned_records_between_ip_and_interfa
         db.commit()
 
         canonical = db.execute(
-            select(DnsRecord).where(DnsRecord.hostname == "registry.labfoundry.internal", DnsRecord.record_type == "CNAME")
+            select(DnsRecord).where(DnsRecord.hostname == "registry.atlaso.internal", DnsRecord.record_type == "CNAME")
         ).scalar_one()
-        assert canonical.address == "registry-192-168-90-1.labfoundry.internal"
-        assert db.execute(select(DnsRecord).where(DnsRecord.hostname == "registry-eth9.labfoundry.internal")).scalar_one_or_none() is None
+        assert canonical.address == "registry-192-168-90-1.atlaso.internal"
+        assert db.execute(select(DnsRecord).where(DnsRecord.hostname == "registry-eth9.atlaso.internal")).scalar_one_or_none() is None
         assert db.execute(
-            select(DnsRecord).where(DnsRecord.hostname == "registry-2001-db8-0-0-0-0-0-1.labfoundry.internal", DnsRecord.record_type == "AAAA")
+            select(DnsRecord).where(DnsRecord.hostname == "registry-2001-db8-0-0-0-0-0-1.atlaso.internal", DnsRecord.record_type == "AAAA")
         ).scalar_one().address == "2001:db8::1"
 
 
 def test_stage_appliance_apply_config_repairs_staging_permission(monkeypatch, tmp_path):
     from types import SimpleNamespace
 
-    from labfoundry.app import ui
+    from atlaso.app import ui
 
     attempts = {"count": 0}
     repairs: list[str] = []
@@ -1272,7 +1277,7 @@ def test_stage_appliance_apply_config_repairs_staging_permission(monkeypatch, tm
     monkeypatch.setattr(ui, "_write_staged_config_file", fake_write)
     monkeypatch.setattr(ui, "SystemAdapter", FakeAdapter)
 
-    config_path = tmp_path / "apply" / "wan" / "labfoundry-wan.conf"
+    config_path = tmp_path / "apply" / "wan" / "atlaso-wan.conf"
     result = ui.stage_appliance_apply_config(str(config_path), "config")
 
     assert result == str(config_path)
@@ -1282,8 +1287,8 @@ def test_stage_appliance_apply_config_repairs_staging_permission(monkeypatch, tm
 
 
 def test_appliance_apply_status_api_tracks_autosaved_desired_state(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.ui import appliance_apply_units, update_appliance_apply_baselines
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.ui import appliance_apply_units, update_appliance_apply_baselines
 
     login(client)
     with SessionLocal() as db:
@@ -1321,7 +1326,7 @@ def test_appliance_apply_status_api_tracks_autosaved_desired_state(client):
             "authoritative": "on",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 200
@@ -1337,7 +1342,7 @@ def test_appliance_apply_status_api_tracks_autosaved_desired_state(client):
 
     import inspect
 
-    from labfoundry.app import ui
+    from atlaso.app import ui
 
     render_source = inspect.getsource(ui.render)
     assert "appliance_apply_units" not in render_source
@@ -1383,10 +1388,10 @@ def test_appliance_apply_status_api_tracks_autosaved_desired_state(client):
 def test_settings_page_renders_autosave_validation_and_preview(client, monkeypatch):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DnsSettings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsSettings
 
-    monkeypatch.setattr("labfoundry.app.ui.socket.gethostname", lambda: "runtime.labfoundry.internal")
+    monkeypatch.setattr("atlaso.app.ui.socket.gethostname", lambda: "runtime.atlaso.internal")
 
     login(client)
     with SessionLocal() as db:
@@ -1404,8 +1409,8 @@ def test_settings_page_renders_autosave_validation_and_preview(client, monkeypat
     assert 'input type="hidden" name="external_dns_servers"' in response.text
     assert "Appliance Settings has pending appliance changes" in response.text
     assert "Validation" in response.text
-    assert "runtime.labfoundry.internal" in response.text
-    assert "labfoundry.labfoundry.internal" in response.text
+    assert "runtime.atlaso.internal" in response.text
+    assert "core.atlaso.internal" in response.text
     assert "Management UI HTTPS" in response.text
     assert "Root SSH login" in response.text
     assert "VMware Product Preferences" in response.text
@@ -1427,7 +1432,7 @@ def test_settings_page_renders_autosave_validation_and_preview(client, monkeypat
     assert 'input class="switch-input" type="checkbox" name="syslog_enabled"' in response.text
     assert "Syslog host" in response.text
     assert "data-appliance-settings-root-ssh" in response.text
-    assert "/var/lib/labfoundry/apply/appliance-settings/labfoundry-settings.json" in response.text
+    assert "/var/lib/atlaso/apply/appliance-settings/atlaso-settings.json" in response.text
     assert "resolver_mode" in response.text
     assert "root_ssh_enabled" in response.text
     assert "vmware_ceip_enabled" in response.text
@@ -1446,8 +1451,8 @@ def test_settings_page_renders_autosave_validation_and_preview(client, monkeypat
 def test_vmware_ceip_autosave_updates_global_policy_and_pending_preview(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import ApplianceSettings, AuditEvent
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, AuditEvent
 
     login(client)
     page = client.get("/settings")
@@ -1456,14 +1461,14 @@ def test_vmware_ceip_autosave_updates_global_policy_and_pending_preview(client):
     response = client.post(
         "/settings/vmware-ceip",
         data={"vmware_ceip_enabled": "on", "csrf": csrf},
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "saved"
     assert payload["vmware_ceip_enabled"] is True
-    assert payload["fqdn"] == "labfoundry.labfoundry.internal"
+    assert payload["fqdn"] == "core.atlaso.internal"
     assert payload["management_interface"]["name"] == "eth0"
     assert payload["resolver_mode"] in {"dhcp", "external", "local_dns"}
     assert '"vmware_ceip_enabled": true' in payload["config_preview"]
@@ -1486,8 +1491,8 @@ def test_vmware_ceip_autosave_updates_global_policy_and_pending_preview(client):
 def test_settings_autosave_enables_passwordless_terminal_on_management_interface(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import ApplianceSettings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings
 
     login(client)
     page = client.get("/settings")
@@ -1498,7 +1503,7 @@ def test_settings_autosave_enables_passwordless_terminal_on_management_interface
     response = client.post(
         "/settings",
         data={
-            "fqdn": "labfoundry.labfoundry.internal",
+            "fqdn": "core.atlaso.internal",
             "management_https_enabled": "on",
             "web_terminal_enabled": "on",
             "web_terminal_interfaces_present": "1",
@@ -1507,7 +1512,7 @@ def test_settings_autosave_enables_passwordless_terminal_on_management_interface
             "external_dns_servers": "1.1.1.1\n9.9.9.9",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 200
@@ -1567,9 +1572,9 @@ def test_validation_rails_use_modal_config_previews(client):
 def test_logging_settings_autosave_updates_preferences(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import AuditEvent, Setting
-    from labfoundry.app.operational_logging import (
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, Setting
+    from atlaso.app.operational_logging import (
         LOGGING_LEVEL_KEY,
         LOGGING_SYSLOG_ENABLED_KEY,
         LOGGING_SYSLOG_FACILITY_KEY,
@@ -1595,7 +1600,7 @@ def test_logging_settings_autosave_updates_preferences(client):
             "syslog_level": "WARNING",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 200
@@ -1639,7 +1644,7 @@ def test_logging_settings_requires_syslog_host_when_enabled(client):
             "syslog_level": "INFO",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 422
@@ -1649,8 +1654,8 @@ def test_logging_settings_requires_syslog_host_when_enabled(client):
 def test_settings_page_shows_external_dns_editor_when_local_dns_is_disabled(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DnsSettings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsSettings
 
     login(client)
     with SessionLocal() as db:
@@ -1669,8 +1674,8 @@ def test_settings_page_shows_external_dns_editor_when_local_dns_is_disabled(clie
 def test_settings_page_hides_ntp_editor_when_ntp_is_enabled(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import NtpSettings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import NtpSettings
 
     login(client)
     with SessionLocal() as db:
@@ -1691,8 +1696,8 @@ def test_settings_page_hides_ntp_editor_when_ntp_is_enabled(client):
 def test_settings_autosave_updates_appliance_identity_dns_without_ntp(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import ApplianceSettings, NtpSettings, DnsRecord, DnsSettings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, NtpSettings, DnsRecord, DnsSettings
 
     login(client)
     with SessionLocal() as db:
@@ -1707,19 +1712,19 @@ def test_settings_autosave_updates_appliance_identity_dns_without_ntp(client):
     response = client.post(
         "/settings",
         data={
-            "fqdn": "console.labfoundry.internal",
+            "fqdn": "console.atlaso.internal",
             "root_ssh_enabled": "on",
             "service_dns_target_naming": "interface",
             "external_dns_servers": "8.8.8.8\n1.1.1.1",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "saved"
-    assert payload["fqdn"] == "console.labfoundry.internal"
+    assert payload["fqdn"] == "console.atlaso.internal"
     assert payload["root_ssh_enabled"] is True
     assert payload["service_dns_target_naming"] == "interface"
     assert payload["external_dns_servers"] == ["8.8.8.8", "1.1.1.1"]
@@ -1735,11 +1740,11 @@ def test_settings_autosave_updates_appliance_identity_dns_without_ntp(client):
 
     with SessionLocal() as db:
         settings = db.execute(select(ApplianceSettings)).scalar_one()
-        assert settings.fqdn == "console.labfoundry.internal"
+        assert settings.fqdn == "console.atlaso.internal"
         assert settings.root_ssh_enabled is True
         assert settings.service_dns_target_naming == "interface"
         record = db.execute(
-            select(DnsRecord).where(DnsRecord.hostname == "console.labfoundry.internal", DnsRecord.record_type == "A")
+            select(DnsRecord).where(DnsRecord.hostname == "console.atlaso.internal", DnsRecord.record_type == "A")
         ).scalar_one()
         assert record.address == "192.168.49.1"
     assert "app-owned appliance FQDN" in (record.description or "")
@@ -1748,9 +1753,9 @@ def test_settings_autosave_updates_appliance_identity_dns_without_ntp(client):
 def test_settings_autosave_does_not_update_ntp_servers_when_ntp_is_disabled(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import ApplianceSettings, NtpSettings, DnsSettings
-    from labfoundry.app.ui import appliance_apply_status
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, NtpSettings, DnsSettings
+    from atlaso.app.ui import appliance_apply_status
 
     login(client)
     with SessionLocal() as db:
@@ -1768,12 +1773,12 @@ def test_settings_autosave_does_not_update_ntp_servers_when_ntp_is_disabled(clie
     response = client.post(
         "/settings",
         data={
-            "fqdn": "labfoundry.labfoundry.internal",
+            "fqdn": "core.atlaso.internal",
             "external_dns_servers": "1.1.1.1\n9.9.9.9",
             "ntp_servers": "time.cloudflare.com\n192.0.2.10",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 200
@@ -1801,18 +1806,18 @@ def test_ntp_page_autosave_updates_desired_state_and_preview(client, monkeypatch
 
     from sqlalchemy import select
 
-    from labfoundry.app.adapters.system import AdapterResult
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import CaCertificate, CaSettings, NtpSettings
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate, CaSettings, NtpSettings
 
     supported = AdapterResult(
-        command=["labfoundry-helper", "ntpd", "capabilities"],
+        command=["atlaso-helper", "ntpd", "capabilities"],
         dry_run=False,
         stdout=(
             json.dumps(
                 {
                     "timestamp": "2026-07-13T18:00:00+00:00",
-                    "helper": "labfoundry-helper",
+                    "helper": "atlaso-helper",
                     "group": "ntpd",
                     "action": "capabilities",
                     "args": [],
@@ -1826,7 +1831,7 @@ def test_ntp_page_autosave_updates_desired_state_and_preview(client, monkeypatch
         ),
     )
     monkeypatch.setattr(
-        "labfoundry.app.ui.SystemAdapter.read_ntpd_capabilities",
+        "atlaso.app.ui.SystemAdapter.read_ntpd_capabilities",
         lambda _self: supported,
     )
     login(client)
@@ -1849,14 +1854,14 @@ def test_ntp_page_autosave_updates_desired_state_and_preview(client, monkeypatch
     assert '"source": "time.google.com"' in page.text
     assert '"source": "time.nist.gov"' in page.text
     assert '"source": "time.facebook.com"' in page.text
-    assert "NTS-KE disabled" in page.text or "NTS-KE ntp.labfoundry.internal:4460" in page.text
+    assert "NTS-KE disabled" in page.text or "NTS-KE ntp.atlaso.internal:4460" in page.text
     assert page.text.index('id="ntp-upstreams-table"') < page.text.index('<aside class="side-stack">')
     assert "NTS-KE port" in page.text
     assert 'type="number" value="4460" min="4460" max="4460" readonly aria-label="NTS-KE port"' in page.text
     assert "4460/tcp" not in page.text
     assert "NTP port" in page.text
     assert "NTS key" not in page.text
-    assert "/var/lib/labfoundry/apply/ntpd/labfoundry-ntp.conf" in page.text
+    assert "/var/lib/atlaso/apply/ntpd/atlaso-ntp.conf" in page.text
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     upstream_sources = json.dumps(
         [
@@ -1869,7 +1874,7 @@ def test_ntp_page_autosave_updates_desired_state_and_preview(client, monkeypatch
         "/ntp/settings",
         data={
             "enabled": "on",
-            "hostname": "ntp.labfoundry.internal",
+            "hostname": "ntp.atlaso.internal",
             "listen_interfaces_present": "1",
             "listen_addresses_present": "1",
             "listen_interfaces": ["eth2"],
@@ -1882,7 +1887,7 @@ def test_ntp_page_autosave_updates_desired_state_and_preview(client, monkeypatch
             "nts_server_key_path": "/tmp/operator-input.key",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 200
@@ -1896,8 +1901,8 @@ def test_ntp_page_autosave_updates_desired_state_and_preview(client, monkeypatch
     assert payload["upstream_sources"][2]["enabled"] is False
     assert payload["allow_clients"] == "192.168.50.0/24"
     assert payload["nts_server_enabled"] is True
-    assert payload["nts_server_cert_path"] == "/etc/labfoundry/ntp/certs/ntp.labfoundry.internal-chain.pem"
-    assert payload["nts_server_key_path"] == "/etc/labfoundry/ntp/certs/ntp.labfoundry.internal.key"
+    assert payload["nts_server_cert_path"] == "/etc/atlaso/ntp/certs/ntp.atlaso.internal-chain.pem"
+    assert payload["nts_server_key_path"] == "/etc/atlaso/ntp/certs/ntp.atlaso.internal.key"
     assert payload["nts_ke_port"] == 4460
     assert payload["valid"] is True
     assert "nts cookie /var/lib/ntp/nts-keys" in payload["config_preview"]
@@ -1905,9 +1910,9 @@ def test_ntp_page_autosave_updates_desired_state_and_preview(client, monkeypatch
     assert "interface ignore wildcard" in payload["config_preview"]
     assert "interface listen 192.168.50.1" in payload["config_preview"]
     assert "restrict 192.168.50.0 mask 255.255.255.0 kod limited nomodify noquery" in payload["config_preview"]
-    assert "nts cert /etc/labfoundry/ntp/certs/ntp.labfoundry.internal-chain.pem" in payload["config_preview"]
+    assert "nts cert /etc/atlaso/ntp/certs/ntp.atlaso.internal-chain.pem" in payload["config_preview"]
     assert "/tmp/operator-input" not in payload["config_preview"]
-    assert "NTS-KE ntp.labfoundry.internal:4460" in client.get("/ntp").text
+    assert "NTS-KE ntp.atlaso.internal:4460" in client.get("/ntp").text
     js = client.get("/static/app.js")
     assert js.status_code == 200
     assert "initializeNtpSettings" in js.text
@@ -1919,8 +1924,8 @@ def test_ntp_page_autosave_updates_desired_state_and_preview(client, monkeypatch
     assert "ntpNtsTickFormatter" in js.text
     assert "parseNtpUpstreamSource" in js.text
     assert "widthGrow: 5" in js.text
-    assert "function labFoundryBooleanFormatter" in js.text
-    assert "formatter: labFoundryBooleanFormatter" in js.text
+    assert "function atlasoBooleanFormatter" in js.text
+    assert "formatter: atlasoBooleanFormatter" in js.text
     assert "const tone = enabled ? \"good\" : \"bad\"" in js.text
     assert "boolean-glyph ${tone}" in js.text
     assert "initializeNTPsecSourceHealthModal" in js.text
@@ -1950,7 +1955,7 @@ def test_ntp_page_autosave_updates_desired_state_and_preview(client, monkeypatch
         assert settings.enabled is True
         assert settings.listen_interface == "eth2"
         assert settings.listen_address == "192.168.50.1"
-        assert settings.nts_server_cert_path == "/etc/labfoundry/ntp/certs/ntp.labfoundry.internal-chain.pem"
+        assert settings.nts_server_cert_path == "/etc/atlaso/ntp/certs/ntp.atlaso.internal-chain.pem"
         assert managed_certificate.status == "issued"
         assert managed_certificate.chain_path == settings.nts_server_cert_path
 
@@ -1960,18 +1965,18 @@ def test_ntp_disables_and_rejects_nts_when_runtime_does_not_support_it(client, m
 
     from sqlalchemy import select
 
-    from labfoundry.app.adapters.system import AdapterResult
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import AuditEvent, NtpSettings
-    from labfoundry.app.services.ntp import ntp_upstream_sources, dump_ntp_upstream_sources
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, NtpSettings
+    from atlaso.app.services.ntp import ntp_upstream_sources, dump_ntp_upstream_sources
 
     unsupported = AdapterResult(
-        command=["labfoundry-helper", "ntpd", "capabilities"],
+        command=["atlaso-helper", "ntpd", "capabilities"],
         dry_run=False,
         stdout=json.dumps({"nts": False, "version": "ntpd version 4.3 (-NTS)"}),
     )
     monkeypatch.setattr(
-        "labfoundry.app.ui.SystemAdapter.read_ntpd_capabilities",
+        "atlaso.app.ui.SystemAdapter.read_ntpd_capabilities",
         lambda _self: unsupported,
     )
     login(client)
@@ -2008,7 +2013,7 @@ def test_ntp_disables_and_rejects_nts_when_runtime_does_not_support_it(client, m
         "/ntp/settings",
         data={
             "enabled": "on",
-            "hostname": "ntp.labfoundry.internal",
+            "hostname": "ntp.atlaso.internal",
             "listen_interfaces_present": "1",
             "listen_addresses_present": "1",
             "listen_interfaces": ["eth2"],
@@ -2026,7 +2031,7 @@ def test_ntp_disables_and_rejects_nts_when_runtime_does_not_support_it(client, m
             "nts_server_enabled": "on",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 200
@@ -2055,14 +2060,14 @@ def test_ntp_validation_rejects_enabled_service_without_bind_or_upstreams(client
         "/ntp/settings",
         data={
             "enabled": "on",
-            "hostname": "ntp.labfoundry.internal",
+            "hostname": "ntp.atlaso.internal",
             "listen_interfaces_present": "1",
             "upstream_servers": "",
             "allow_clients": "any",
             "port": "123",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 200
@@ -2079,7 +2084,7 @@ def test_ntp_validation_allows_disabled_service_without_upstreams(client):
     response = client.post(
         "/ntp/settings",
         data={
-            "hostname": "ntp.labfoundry.internal",
+            "hostname": "ntp.atlaso.internal",
             "listen_interfaces_present": "1",
             "listen_addresses_present": "1",
             "listen_interfaces": [],
@@ -2088,7 +2093,7 @@ def test_ntp_validation_allows_disabled_service_without_upstreams(client):
             "port": "123",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 200
@@ -2103,21 +2108,21 @@ def test_ntp_validation_allows_disabled_service_without_upstreams(client):
 def test_dns_defaults_follow_appliance_fqdn_and_management_ip(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DnsRecord, DnsSettings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord, DnsSettings
 
     login(client)
     page = client.get("/dns")
     assert page.status_code == 200
-    assert 'data-domain="labfoundry.internal"' in page.text
-    assert "labfoundry" in page.text
+    assert 'data-domain="atlaso.internal"' in page.text
+    assert "atlaso" in page.text
     assert "192.168.49.1" in page.text
 
     with SessionLocal() as db:
         settings = db.execute(select(DnsSettings)).scalar_one()
-        assert settings.domain == "labfoundry.internal"
+        assert settings.domain == "atlaso.internal"
         record = db.execute(
-            select(DnsRecord).where(DnsRecord.hostname == "labfoundry.labfoundry.internal", DnsRecord.record_type == "A")
+            select(DnsRecord).where(DnsRecord.hostname == "core.atlaso.internal", DnsRecord.record_type == "A")
         ).scalar_one()
         assert record.address == "192.168.49.1"
         assert "app-owned appliance FQDN" in (record.description or "")
@@ -2126,8 +2131,8 @@ def test_dns_defaults_follow_appliance_fqdn_and_management_ip(client):
 def test_settings_fqdn_rename_removes_only_old_app_owned_record(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DnsRecord, DnsSettings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord, DnsSettings
 
     login(client)
     with SessionLocal() as db:
@@ -2135,7 +2140,7 @@ def test_settings_fqdn_rename_removes_only_old_app_owned_record(client):
         dns_settings.enabled = True
         db.add(
             DnsRecord(
-                hostname="manual.labfoundry.internal",
+                hostname="manual.atlaso.internal",
                 record_type="A",
                 address="192.168.49.20",
                 description="User-owned record",
@@ -2148,29 +2153,29 @@ def test_settings_fqdn_rename_removes_only_old_app_owned_record(client):
     first = client.post(
         "/settings",
         data={
-            "fqdn": "old-appliance.labfoundry.internal",
+            "fqdn": "old-appliance.atlaso.internal",
             "external_dns_servers": "1.1.1.1\n9.9.9.9",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     assert first.status_code == 200
     second = client.post(
         "/settings",
         data={
-            "fqdn": "new-appliance.labfoundry.internal",
+            "fqdn": "new-appliance.atlaso.internal",
             "external_dns_servers": "1.1.1.1\n9.9.9.9",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     assert second.status_code == 200
     assert "removed-old" in (second.json()["dns_record_action"] or "")
 
     with SessionLocal() as db:
-        old = db.execute(select(DnsRecord).where(DnsRecord.hostname == "old-appliance.labfoundry.internal")).scalars().all()
-        new = db.execute(select(DnsRecord).where(DnsRecord.hostname == "new-appliance.labfoundry.internal")).scalars().all()
-        manual = db.execute(select(DnsRecord).where(DnsRecord.hostname == "manual.labfoundry.internal")).scalar_one()
+        old = db.execute(select(DnsRecord).where(DnsRecord.hostname == "old-appliance.atlaso.internal")).scalars().all()
+        new = db.execute(select(DnsRecord).where(DnsRecord.hostname == "new-appliance.atlaso.internal")).scalars().all()
+        manual = db.execute(select(DnsRecord).where(DnsRecord.hostname == "manual.atlaso.internal")).scalar_one()
         assert old == []
         assert len(new) == 1
         assert manual.address == "192.168.49.20"
@@ -2179,8 +2184,8 @@ def test_settings_fqdn_rename_removes_only_old_app_owned_record(client):
 def test_settings_local_dns_disabled_requires_external_dns_without_dns_registration(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DnsRecord, DnsSettings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord, DnsSettings
 
     login(client)
     with SessionLocal() as db:
@@ -2193,11 +2198,11 @@ def test_settings_local_dns_disabled_requires_external_dns_without_dns_registrat
     response = client.post(
         "/settings",
         data={
-            "fqdn": "external-only.labfoundry.internal",
+            "fqdn": "external-only.atlaso.internal",
             "external_dns_servers": "",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 200
@@ -2207,12 +2212,12 @@ def test_settings_local_dns_disabled_requires_external_dns_without_dns_registrat
     assert payload["dns_record_action"] is None
     assert '"resolver_mode": "external"' in payload["config_preview"]
     with SessionLocal() as db:
-        record = db.execute(select(DnsRecord).where(DnsRecord.hostname == "external-only.labfoundry.internal")).scalar_one_or_none()
+        record = db.execute(select(DnsRecord).where(DnsRecord.hostname == "external-only.atlaso.internal")).scalar_one_or_none()
         assert record is None
 
 
 def test_parse_resolvectl_dns_servers_handles_systemd_output():
-    from labfoundry.app.services.appliance_settings import parse_resolvectl_dns_servers
+    from atlaso.app.services.appliance_settings import parse_resolvectl_dns_servers
 
     output = """
 Global:
@@ -2225,11 +2230,11 @@ Link 2 (eth0): 127.0.0.1 ::1 192.168.167.2 2001:4860:4860::8888 fe80::1%eth0 192
 def test_settings_management_dhcp_allows_empty_external_dns(client, monkeypatch):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import ApplianceSettings, DnsSettings, PhysicalInterface
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, DnsSettings, PhysicalInterface
 
     login(client)
-    monkeypatch.setattr("labfoundry.app.services.appliance_settings.observed_management_dhcp_dns_servers", lambda interface_name: ["127.0.0.1", "::1", "192.168.167.2"])
+    monkeypatch.setattr("atlaso.app.services.appliance_settings.observed_management_dhcp_dns_servers", lambda interface_name: ["127.0.0.1", "::1", "192.168.167.2"])
     with SessionLocal() as db:
         dns_settings = db.execute(select(DnsSettings)).scalar_one()
         dns_settings.enabled = False
@@ -2255,11 +2260,11 @@ def test_settings_management_dhcp_allows_empty_external_dns(client, monkeypatch)
     response = client.post(
         "/settings",
         data={
-            "fqdn": "dhcp-managed.labfoundry.internal",
+            "fqdn": "dhcp-managed.atlaso.internal",
             "external_dns_servers": "",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 200
@@ -2275,11 +2280,11 @@ def test_settings_management_dhcp_allows_empty_external_dns(client, monkeypatch)
 def test_dns_page_uses_management_dhcp_dns_when_upstreams_are_empty(client, monkeypatch):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DnsSettings, PhysicalInterface
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsSettings, PhysicalInterface
 
     login(client)
-    monkeypatch.setattr("labfoundry.app.services.appliance_settings.observed_management_dhcp_dns_servers", lambda interface_name: ["127.0.0.1", "::1", "192.168.167.2"])
+    monkeypatch.setattr("atlaso.app.services.appliance_settings.observed_management_dhcp_dns_servers", lambda interface_name: ["127.0.0.1", "::1", "192.168.167.2"])
     with SessionLocal() as db:
         dns_settings = db.execute(select(DnsSettings)).scalar_one()
         dns_settings.upstream_servers = ""
@@ -2313,7 +2318,7 @@ def test_dns_page_uses_management_dhcp_dns_when_upstreams_are_empty(client, monk
             "cache_size": "1000",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 200
@@ -2326,8 +2331,8 @@ def test_dns_page_uses_management_dhcp_dns_when_upstreams_are_empty(client, monk
 def test_settings_management_https_requires_ca_managed_certificate(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import ApplianceSettings, CaCertificate, CaSettings, DnsSettings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, CaCertificate, CaSettings, DnsSettings
 
     login(client)
     with SessionLocal() as db:
@@ -2342,32 +2347,32 @@ def test_settings_management_https_requires_ca_managed_certificate(client):
     invalid = client.post(
         "/settings",
         data={
-            "fqdn": "secure.labfoundry.internal",
+            "fqdn": "secure.atlaso.internal",
             "management_https_enabled": "on",
             "external_dns_servers": "1.1.1.1",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     assert invalid.status_code == 200
     assert invalid.json()["valid"] is False
-    assert "Management UI HTTPS requires the local LabFoundry CA to be enabled." in invalid.json()["validation_errors"]
+    assert "Management UI HTTPS requires the local Atlaso CA to be enabled." in invalid.json()["validation_errors"]
 
     with SessionLocal() as db:
         ca_settings = db.execute(select(CaSettings)).scalar_one()
         ca_settings.enabled = True
         db.add(
             CaCertificate(
-                common_name="secure.labfoundry.internal",
-                subject_alt_names="secure.labfoundry.internal",
+                common_name="secure.atlaso.internal",
+                subject_alt_names="secure.atlaso.internal",
                 ip_addresses="192.168.49.1",
                 status="issued",
                 certificate_pem="-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----\n",
                 private_key_encrypted="fernet:v1:test",
                 managed_owner="appliance:https",
-                cert_path="/etc/labfoundry/https/certs/secure.labfoundry.internal.crt",
-                key_path="/etc/labfoundry/https/certs/secure.labfoundry.internal.key",
-                chain_path="/etc/labfoundry/https/certs/secure.labfoundry.internal-chain.pem",
+                cert_path="/etc/atlaso/https/certs/secure.atlaso.internal.crt",
+                key_path="/etc/atlaso/https/certs/secure.atlaso.internal.key",
+                chain_path="/etc/atlaso/https/certs/secure.atlaso.internal-chain.pem",
             )
         )
         db.commit()
@@ -2375,12 +2380,12 @@ def test_settings_management_https_requires_ca_managed_certificate(client):
     valid = client.post(
         "/settings",
         data={
-            "fqdn": "secure.labfoundry.internal",
+            "fqdn": "secure.atlaso.internal",
             "management_https_enabled": "on",
             "external_dns_servers": "1.1.1.1",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     assert valid.status_code == 200
     payload = valid.json()
@@ -2388,33 +2393,33 @@ def test_settings_management_https_requires_ca_managed_certificate(client):
     assert payload["management_https_enabled"] is True
     assert payload["management_https_cert_available"] is True
     assert '"management_https_enabled": true' in payload["config_preview"]
-    assert "/etc/labfoundry/https/certs/secure.labfoundry.internal.crt" in payload["config_preview"]
+    assert "/etc/atlaso/https/certs/secure.atlaso.internal.crt" in payload["config_preview"]
 
     with SessionLocal() as db:
         settings = db.execute(select(ApplianceSettings)).scalar_one()
         assert settings.management_https_enabled is True
         certificate = db.execute(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https")).scalar_one()
-        assert certificate.common_name == "secure.labfoundry.internal"
+        assert certificate.common_name == "secure.atlaso.internal"
 
     rotated = client.post(
         "/settings",
         data={
-            "fqdn": "rotated.labfoundry.internal",
+            "fqdn": "rotated.atlaso.internal",
             "management_https_enabled": "on",
             "external_dns_servers": "1.1.1.1",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     assert rotated.status_code == 200
     rotated_payload = rotated.json()
     assert rotated_payload["valid"] is True
     assert rotated_payload["management_https_cert_available"] is True
-    assert "/etc/labfoundry/https/certs/rotated.labfoundry.internal.crt" in rotated_payload["config_preview"]
+    assert "/etc/atlaso/https/certs/rotated.atlaso.internal.crt" in rotated_payload["config_preview"]
 
     with SessionLocal() as db:
         certificate = db.execute(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https")).scalar_one()
-        assert certificate.common_name == "rotated.labfoundry.internal"
+        assert certificate.common_name == "rotated.atlaso.internal"
         assert certificate.status == "issued"
 
 
@@ -2423,8 +2428,8 @@ def test_appliance_settings_apply_task_records_dry_run_helper_commands(client, c
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
 
     login(client)
     page = client.get("/settings")
@@ -2432,28 +2437,28 @@ def test_appliance_settings_apply_task_records_dry_run_helper_commands(client, c
     saved = client.post(
         "/settings",
         data={
-            "fqdn": "apply.labfoundry.internal",
+            "fqdn": "apply.atlaso.internal",
             "external_dns_servers": "1.1.1.1\n9.9.9.9",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     assert saved.status_code == 200
 
-    with caplog.at_level(logging.INFO, logger="labfoundry.appliance_apply"):
+    with caplog.at_level(logging.INFO, logger="atlaso.appliance_apply"):
         apply_response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "appliance_settings"})
     assert_apply_redirect(apply_response)
     assert "completed status=succeeded selected_units=appliance_settings" in caplog.text
     assert "unit=appliance_settings status=succeeded" in caplog.text
-    assert "labfoundry-helper appliance-settings validate" in caplog.text
+    assert "atlaso-helper appliance-settings validate" in caplog.text
     assert "Appliance Settings" in apply_response.text
     assert "data-apply-progress-modal" not in apply_response.text
     with SessionLocal() as db:
         job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()
         assert "appliance_settings" in (job.result or "")
-        assert "labfoundry-helper appliance-settings validate" in (job.result or "")
-        assert "labfoundry-helper appliance-settings apply" in (job.result or "")
-        assert "apply.labfoundry.internal" in (job.result or "")
+        assert "atlaso-helper appliance-settings validate" in (job.result or "")
+        assert "atlaso-helper appliance-settings apply" in (job.result or "")
+        assert "apply.atlaso.internal" in (job.result or "")
 
 
 def test_appliance_apply_failure_renders_command_details(client, monkeypatch):
@@ -2461,10 +2466,10 @@ def test_appliance_apply_failure_renders_command_details(client, monkeypatch):
 
     from sqlalchemy import select
 
-    from labfoundry.app.adapters.system import AdapterResult
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job
-    import labfoundry.app.ui as ui_module
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+    import atlaso.app.ui as ui_module
 
     base_system_adapter = ui_module.SystemAdapter
     monkeypatch.setattr(ui_module, "stage_appliance_apply_config", lambda path, _config: path)
@@ -2474,21 +2479,21 @@ def test_appliance_apply_failure_renders_command_details(client, monkeypatch):
             super().__init__(dry_run=False)
 
         def read_dhcp_leases(self) -> AdapterResult:
-            return AdapterResult(command=["labfoundry-helper", "dnsmasq", "leases"], dry_run=True, stdout="")
+            return AdapterResult(command=["atlaso-helper", "dnsmasq", "leases"], dry_run=True, stdout="")
 
         def validate_appliance_settings_config(self, config_path: str) -> AdapterResult:
             return AdapterResult(
-                command=["labfoundry-helper", "appliance-settings", "validate", config_path],
+                command=["atlaso-helper", "appliance-settings", "validate", config_path],
                 dry_run=False,
                 stdout="validation ok",
             )
 
         def apply_appliance_settings_config(self, config_path: str) -> AdapterResult:
             return AdapterResult(
-                command=["labfoundry-helper", "appliance-settings", "apply", config_path],
+                command=["atlaso-helper", "appliance-settings", "apply", config_path],
                 dry_run=False,
                 stdout="password=super-secret\nattempted write",
-                stderr="OSError: [Errno 30] Read-only file system: '/etc/labfoundry/nginx/sites.d/management.conf'",
+                stderr="OSError: [Errno 30] Read-only file system: '/etc/atlaso/nginx/sites.d/management.conf'",
                 returncode=30,
             )
 
@@ -2506,7 +2511,7 @@ def test_appliance_apply_failure_renders_command_details(client, monkeypatch):
         payload = json.loads(job.result or "{}")
         assert job.status == "failed"
         command = payload["units"][0]["commands"][-1]
-        assert "labfoundry-helper appliance-settings apply" in command["command_line"]
+        assert "atlaso-helper appliance-settings apply" in command["command_line"]
         assert command["returncode"] == 30
         assert "Read-only file system" in command["stderr"]
         assert "password= [redacted]" in command["stdout"]
@@ -2518,10 +2523,10 @@ def test_appliance_apply_stops_unit_after_validation_failure(client, monkeypatch
 
     from sqlalchemy import select
 
-    from labfoundry.app.adapters.system import AdapterResult
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job
-    import labfoundry.app.ui as ui_module
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+    import atlaso.app.ui as ui_module
 
     base_system_adapter = ui_module.SystemAdapter
     monkeypatch.setattr(ui_module, "stage_appliance_apply_config", lambda path, _config: path)
@@ -2531,11 +2536,11 @@ def test_appliance_apply_stops_unit_after_validation_failure(client, monkeypatch
             super().__init__(dry_run=False)
 
         def read_dhcp_leases(self) -> AdapterResult:
-            return AdapterResult(command=["labfoundry-helper", "dnsmasq", "leases"], dry_run=True, stdout="")
+            return AdapterResult(command=["atlaso-helper", "dnsmasq", "leases"], dry_run=True, stdout="")
 
         def validate_appliance_settings_config(self, config_path: str) -> AdapterResult:
             return AdapterResult(
-                command=["labfoundry-helper", "appliance-settings", "validate", config_path],
+                command=["atlaso-helper", "appliance-settings", "validate", config_path],
                 dry_run=False,
                 stderr="hostname validation failed",
                 returncode=2,
@@ -2552,24 +2557,24 @@ def test_appliance_apply_stops_unit_after_validation_failure(client, monkeypatch
     saved = client.post(
         "/settings",
         data={
-            "fqdn": "validate-fail.labfoundry.internal",
+            "fqdn": "validate-fail.atlaso.internal",
             "external_dns_servers": "1.1.1.1",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     assert saved.status_code == 200
 
     response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "appliance_settings"})
 
     assert_apply_redirect(response)
-    assert "labfoundry-helper appliance-settings apply" not in response.text
+    assert "atlaso-helper appliance-settings apply" not in response.text
     with SessionLocal() as db:
         job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()
         payload = json.loads(job.result or "{}")
         commands = payload["units"][0]["commands"]
         assert [command["command"][2] for command in commands] == ["validate"]
-        assert "labfoundry-helper appliance-settings apply" not in (job.result or "")
+        assert "atlaso-helper appliance-settings apply" not in (job.result or "")
 
 
 def test_backup_restore_page_exports_settings_archive(client):
@@ -2577,8 +2582,8 @@ def test_backup_restore_page_exports_settings_archive(client):
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import AuditEvent
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent
 
     login(client)
     page = client.get("/backup-restore")
@@ -2599,9 +2604,9 @@ def test_backup_restore_page_exports_settings_archive(client):
 
     assert exported.status_code == 200
     assert exported.headers["content-type"].startswith("application/json")
-    assert "labfoundry-settings-" in exported.headers["content-disposition"]
+    assert "atlaso-settings-" in exported.headers["content-disposition"]
     payload = json.loads(exported.content)
-    assert payload["kind"] == "labfoundry-settings-archive"
+    assert payload["kind"] == "atlaso-settings-archive"
     assert payload["schema_version"] == 1
     assert "appliance_settings" in payload["data"]
     assert "dns_records" in payload["data"]
@@ -2618,9 +2623,9 @@ def test_backup_restore_page_exports_settings_archive(client):
 def test_settings_archive_round_trips_management_ipv6_gateway(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import PhysicalInterface
-    from labfoundry.app.services.settings_archive import export_settings_archive, restore_settings_archive
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+    from atlaso.app.services.settings_archive import export_settings_archive, restore_settings_archive
 
     with SessionLocal() as db:
         management = db.scalar(select(PhysicalInterface).where(PhysicalInterface.role == "management"))
@@ -2645,14 +2650,14 @@ def test_settings_archive_round_trips_management_ipv6_gateway(client):
 def test_settings_archive_round_trips_authoritative_dns_policy(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DnsSettings
-    from labfoundry.app.services.settings_archive import export_settings_archive, restore_settings_archive
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsSettings
+    from atlaso.app.services.settings_archive import export_settings_archive, restore_settings_archive
 
     with SessionLocal() as db:
         settings = db.scalar(select(DnsSettings))
-        settings.authoritative_server = "ns-primary.labfoundry.internal"
-        settings.authoritative_contact = "dns-admin.labfoundry.internal"
+        settings.authoritative_server = "ns-primary.atlaso.internal"
+        settings.authoritative_contact = "dns-admin.atlaso.internal"
         settings.authoritative_ttl = 7200
         settings.authoritative_serial = 2026072201
         settings.authoritative_refresh = 2400
@@ -2662,15 +2667,15 @@ def test_settings_archive_round_trips_authoritative_dns_policy(client):
 
         archive = export_settings_archive(db, actor="test")
         archived = archive["data"]["dns_settings"][0]
-        assert archived["authoritative_server"] == "ns-primary.labfoundry.internal"
+        assert archived["authoritative_server"] == "ns-primary.atlaso.internal"
         archived_serial = archived["authoritative_serial"]
         assert archived_serial > 2026072201
 
         restore_settings_archive(db, archive)
         db.commit()
         restored = db.scalar(select(DnsSettings))
-        assert restored.authoritative_server == "ns-primary.labfoundry.internal"
-        assert restored.authoritative_contact == "dns-admin.labfoundry.internal"
+        assert restored.authoritative_server == "ns-primary.atlaso.internal"
+        assert restored.authoritative_contact == "dns-admin.atlaso.internal"
         assert restored.authoritative_ttl == 7200
         assert restored.authoritative_serial >= archived_serial
         assert restored.authoritative_refresh == 2400
@@ -2679,10 +2684,10 @@ def test_settings_archive_round_trips_authoritative_dns_policy(client):
 
 
 def test_settings_restore_and_factory_reset_clear_staged_ldap_recovery(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import LdapRecoveryArchive
-    from labfoundry.app.services.ldap import LDAP_PENDING_RECOVERY_PAYLOADS
-    from labfoundry.app.services.settings_archive import export_settings_archive, factory_reset_desired_state, restore_settings_archive
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import LdapRecoveryArchive
+    from atlaso.app.services.ldap import LDAP_PENDING_RECOVERY_PAYLOADS
+    from atlaso.app.services.settings_archive import export_settings_archive, factory_reset_desired_state, restore_settings_archive
 
     with SessionLocal() as db:
         archive = export_settings_archive(db, actor="test")
@@ -2726,8 +2731,8 @@ def test_settings_restore_and_factory_reset_clear_staged_ldap_recovery(client):
 def test_esxi_kickstart_api_hides_raw_content_from_read_only_tokens(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import EsxiKickstart
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import EsxiKickstart
 
     write_token = create_api_token(client, ["read:esxi-pxe", "write:esxi-pxe"])
     created = client.post(
@@ -2768,14 +2773,14 @@ def test_esxi_pxe_ui_create_apply_and_job_redaction(client):
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import AuditEvent, EsxiKickstart, Job
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, EsxiKickstart, Job
 
     login(client)
     page = client.get("/esxi-pxe")
     assert page.status_code == 200
     assert "ESXi Kickstarts" in page.text
-    assert 'data-codemirror-language="labfoundry-kickstart"' in page.text
+    assert 'data-codemirror-language="atlaso-kickstart"' in page.text
     host_tab = page.text.index('data-tab-target="esxi-pxe-hosts-panel"')
     kickstart_tab = page.text.index('data-tab-target="esxi-pxe-editor-panel"')
     iso_tab = page.text.index('data-tab-target="esxi-pxe-isos-panel"')
@@ -2831,7 +2836,7 @@ def test_esxi_pxe_ui_create_apply_and_job_redaction(client):
         payload = json.loads(job.result or "{}")
         assert payload["selected_units"] == ["esxi_pxe"]
         assert "SuperSecret!" not in (job.result or "")
-        assert "labfoundry-helper esxi-pxe apply" in (job.result or "")
+        assert "atlaso-helper esxi-pxe apply" in (job.result or "")
         event = db.execute(select(AuditEvent).where(AuditEvent.action == "create_esxi_kickstart")).scalar_one()
         assert "SuperSecret!" not in (event.detail or "")
 
@@ -2842,10 +2847,10 @@ def test_esxi_pxe_iso_upload_and_host_selection(client, monkeypatch, tmp_path):
 
     from sqlalchemy import select
 
-    import labfoundry.app.services.esxi_pxe as esxi_pxe
-    import labfoundry.app.ui as ui_module
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import EsxiPxeHost, Job
+    import atlaso.app.services.esxi_pxe as esxi_pxe
+    import atlaso.app.ui as ui_module
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import EsxiPxeHost, Job
 
     iso_root = tmp_path / "vcf-depot" / "PROD" / "COMP" / "ESX_HOST"
     monkeypatch.setattr(esxi_pxe, "ESXI_INSTALLER_ISO_ROOT", iso_root)
@@ -2875,7 +2880,7 @@ def test_esxi_pxe_iso_upload_and_host_selection(client, monkeypatch, tmp_path):
         "/esxi-pxe/isos/upload",
         data={"csrf": csrf},
         files={"iso_file": ("Nested-ESXi.iso", b"ajax iso bytes", "application/octet-stream")},
-        headers={"X-LabFoundry-Upload": "1"},
+        headers={"X-Atlaso-Upload": "1"},
     )
     assert ajax_upload.status_code == 200
     assert ajax_upload.json()["status"] == "uploaded"
@@ -2887,7 +2892,7 @@ def test_esxi_pxe_iso_upload_and_host_selection(client, monkeypatch, tmp_path):
         "/esxi-pxe/isos/upload",
         data={"csrf": csrf},
         files={"iso_file": ("Too-Large.iso", b"too large", "application/octet-stream")},
-        headers={"X-LabFoundry-Upload": "1"},
+        headers={"X-Atlaso-Upload": "1"},
     )
     assert too_large.status_code == 413
     assert too_large.json()["status"] == "error"
@@ -2982,9 +2987,9 @@ def test_esxi_pxe_default_host_settings_update_existing_rows(client, monkeypatch
 
     from sqlalchemy import select
 
-    import labfoundry.app.services.esxi_pxe as esxi_pxe
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import EsxiKickstart, Setting
+    import atlaso.app.services.esxi_pxe as esxi_pxe
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import EsxiKickstart, Setting
 
     iso_root = tmp_path / "vcf-depot" / "PROD" / "COMP" / "ESX_HOST"
     iso_root.mkdir(parents=True)
@@ -3043,10 +3048,10 @@ def test_esxi_pxe_default_host_settings_update_existing_rows(client, monkeypatch
 
 
 def test_esxi_pxe_default_host_edit_marks_appliance_apply_pending(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import EsxiKickstart
-    from labfoundry.app.services import esxi_pxe
-    from labfoundry.app.ui import appliance_apply_status, appliance_apply_units, update_appliance_apply_baselines
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import EsxiKickstart
+    from atlaso.app.services import esxi_pxe
+    from atlaso.app.ui import appliance_apply_status, appliance_apply_units, update_appliance_apply_baselines
 
     login(client)
     page = client.get("/esxi-pxe")
@@ -3084,7 +3089,7 @@ def test_esxi_pxe_default_host_edit_marks_appliance_apply_pending(client):
 
 
 def test_esxi_kickstart_validation_rejects_duplicate_install_directives(client):
-    from labfoundry.app.services.esxi_pxe import kickstart_validation
+    from atlaso.app.services.esxi_pxe import kickstart_validation
 
     content = "\n".join(
         [
@@ -3109,9 +3114,9 @@ def test_esxi_kickstart_host_variables_render_from_mac_endpoint(client):
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DhcpScope, EsxiKickstart, EsxiPxeHost
-    from labfoundry.app.services.esxi_pxe import (
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpScope, EsxiKickstart, EsxiPxeHost
+    from atlaso.app.services.esxi_pxe import (
         assign_kickstart_content,
         canonical_http_path,
         content_hash,
@@ -3145,11 +3150,11 @@ def test_esxi_kickstart_host_variables_render_from_mac_endpoint(client):
         save_esxi_pxe_boot_settings(
             db,
             enabled=True,
-            hostname="esxi-pxe.labfoundry.internal",
+            hostname="esxi-pxe.atlaso.internal",
             dhcp_scope_ids=[scope.id],
             listen_interface="eth2",
             listen_address="192.168.50.1",
-            tftp_root="/var/lib/labfoundry/pxe/tftp",
+            tftp_root="/var/lib/atlaso/pxe/tftp",
             http_port="8080",
             bios_bootfile="undionly.kpxe",
             uefi_bootfile="snponly.efi",
@@ -3172,7 +3177,7 @@ def test_esxi_kickstart_host_variables_render_from_mac_endpoint(client):
             ip_address="192.168.50.151",
             kickstart_id=static_kickstart.id,
             kickstart=static_kickstart,
-            installer_iso_path="/mnt/labfoundry-vcf-offline-depot/PROD/COMP/ESX_HOST/esxi.iso",
+            installer_iso_path="/mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST/esxi.iso",
             enabled=True,
         )
         db.add(static_host)
@@ -3218,9 +3223,9 @@ def test_esxi_pxe_host_variables_api_and_manifest(client):
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import EsxiKickstart, EsxiPxeHost
-    from labfoundry.app.services.esxi_pxe import content_hash, render_esxi_pxe_manifest
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import EsxiKickstart, EsxiPxeHost
+    from atlaso.app.services.esxi_pxe import content_hash, render_esxi_pxe_manifest
 
     token = create_api_token(client, ["read:esxi-pxe", "write:esxi-pxe"])
     created = client.post(
@@ -3260,10 +3265,10 @@ def test_esxi_pxe_boot_settings_update_dnsmasq_and_apply_manifest(client):
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DhcpScope, DhcpSettings, DnsRecord
-    from labfoundry.app.services.esxi_pxe import esxi_pxe_boot_settings
-    from labfoundry.app.ui import dnsmasq_context, esxi_pxe_context
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpScope, DhcpSettings, DnsRecord
+    from atlaso.app.services.esxi_pxe import esxi_pxe_boot_settings
+    from atlaso.app.ui import dnsmasq_context, esxi_pxe_context
 
     login(client)
     page = client.get("/esxi-pxe")
@@ -3310,11 +3315,11 @@ def test_esxi_pxe_boot_settings_update_dnsmasq_and_apply_manifest(client):
         data={
             "csrf": csrf,
             "enabled": "on",
-            "hostname": "esxi-pxe.labfoundry.internal",
+            "hostname": "esxi-pxe.atlaso.internal",
             "dhcp_scope_id": pxe_scope_id,
             "listen_addresses_present": "1",
             "listen_interfaces_present": "1",
-            "tftp_root": "/var/lib/labfoundry/pxe/tftp",
+            "tftp_root": "/var/lib/atlaso/pxe/tftp",
             "http_port": "8080",
             "bios_bootfile": "undionly.kpxe",
             "uefi_bootfile": "snponly.efi",
@@ -3328,7 +3333,7 @@ def test_esxi_pxe_boot_settings_update_dnsmasq_and_apply_manifest(client):
     with SessionLocal() as db:
         boot = esxi_pxe_boot_settings(db)
         assert boot["enabled"] is True
-        assert boot["hostname"] == "esxi-pxe.labfoundry.internal"
+        assert boot["hostname"] == "esxi-pxe.atlaso.internal"
         assert boot["dhcp_scope_id"] == int(pxe_scope_id)
         assert boot["dhcp_scope_name"] == "SiteA"
         assert boot["listen_interface"] == "eth2"
@@ -3337,11 +3342,11 @@ def test_esxi_pxe_boot_settings_update_dnsmasq_and_apply_manifest(client):
         assert boot["effective_native_uefi_http_url"] == "http://192.168.50.1:8080/pxe/esxi/mboot.efi"
         assert boot["native_uefi_http_enabled"] is True
         record = db.execute(
-            select(DnsRecord).where(DnsRecord.hostname == "esxi-pxe.labfoundry.internal", DnsRecord.record_type == "CNAME")
+            select(DnsRecord).where(DnsRecord.hostname == "esxi-pxe.atlaso.internal", DnsRecord.record_type == "CNAME")
         ).scalar_one()
-        assert record.address == "esxi-pxe-192-168-50-1.labfoundry.internal"
+        assert record.address == "esxi-pxe-192-168-50-1.atlaso.internal"
         interface_record = db.execute(
-            select(DnsRecord).where(DnsRecord.hostname == "esxi-pxe-192-168-50-1.labfoundry.internal", DnsRecord.record_type == "A")
+            select(DnsRecord).where(DnsRecord.hostname == "esxi-pxe-192-168-50-1.atlaso.internal", DnsRecord.record_type == "A")
         ).scalar_one()
         assert interface_record.address == "192.168.50.1"
         dhcp = db.execute(select(DhcpSettings)).scalar_one()
@@ -3350,16 +3355,16 @@ def test_esxi_pxe_boot_settings_update_dnsmasq_and_apply_manifest(client):
         db.commit()
         dns_preview = dnsmasq_context(db)["config_preview"]
         assert "enable-tftp" in dns_preview
-        assert "dhcp-option=tag:sitea,66,esxi-pxe.labfoundry.internal" in dns_preview
-        assert "dhcp-boot=tag:sitea,tag:ipxe,tag:efi-x86_64,mboot.efi,esxi-pxe.labfoundry.internal,192.168.50.1" in dns_preview
-        assert "dhcp-boot=tag:sitea,tag:ipxe,tag:!efi-x86_64,pxelinux.0,esxi-pxe.labfoundry.internal,192.168.50.1" in dns_preview
-        assert "dhcp-boot=tag:sitea,tag:!ipxe,tag:efi-x86_64,snponly.efi,esxi-pxe.labfoundry.internal,192.168.50.1" in dns_preview
-        assert "dhcp-boot=tag:sitea,tag:!ipxe,tag:!efi-x86_64,undionly.kpxe,esxi-pxe.labfoundry.internal,192.168.50.1" in dns_preview
+        assert "dhcp-option=tag:sitea,66,esxi-pxe.atlaso.internal" in dns_preview
+        assert "dhcp-boot=tag:sitea,tag:ipxe,tag:efi-x86_64,mboot.efi,esxi-pxe.atlaso.internal,192.168.50.1" in dns_preview
+        assert "dhcp-boot=tag:sitea,tag:ipxe,tag:!efi-x86_64,pxelinux.0,esxi-pxe.atlaso.internal,192.168.50.1" in dns_preview
+        assert "dhcp-boot=tag:sitea,tag:!ipxe,tag:efi-x86_64,snponly.efi,esxi-pxe.atlaso.internal,192.168.50.1" in dns_preview
+        assert "dhcp-boot=tag:sitea,tag:!ipxe,tag:!efi-x86_64,undionly.kpxe,esxi-pxe.atlaso.internal,192.168.50.1" in dns_preview
         assert "dhcp-boot=tag:sitea,tag:uefi-http,tag:uefi-http-x64,http://192.168.50.1:8080/pxe/esxi/mboot.efi" in dns_preview
         manifest = json.loads(esxi_pxe_context(db)["esxi_pxe_manifest"])
         assert manifest["schema_version"] == 2
         assert manifest["boot"]["enabled"] is True
-        assert manifest["boot"]["hostname"] == "esxi-pxe.labfoundry.internal"
+        assert manifest["boot"]["hostname"] == "esxi-pxe.atlaso.internal"
         assert manifest["boot"]["dhcp_scope_id"] == int(pxe_scope_id)
         assert manifest["boot"]["http_port"] == 8080
         assert manifest["boot"]["bios_second_stage_bootfile"] == "pxelinux.0"
@@ -3371,19 +3376,19 @@ def test_esxi_pxe_boot_settings_update_dnsmasq_and_apply_manifest(client):
     assert "SiteA" in dhcp_page.text
     assert "dhcp-userclass=set:ipxe,iPXE" in dhcp_page.text
     assert "dhcp-match=set:ipxe,175" in dhcp_page.text
-    assert "dhcp-boot=tag:sitea,tag:!ipxe,tag:!efi-x86_64,undionly.kpxe,esxi-pxe.labfoundry.internal,192.168.50.1" in dhcp_page.text
-    assert "dhcp-boot=tag:sitea,tag:ipxe,tag:efi-x86_64,mboot.efi,esxi-pxe.labfoundry.internal,192.168.50.1" in dhcp_page.text
-    assert "dhcp-boot=tag:sitea,tag:!ipxe,tag:efi-x86_64,snponly.efi,esxi-pxe.labfoundry.internal,192.168.50.1" in dhcp_page.text
+    assert "dhcp-boot=tag:sitea,tag:!ipxe,tag:!efi-x86_64,undionly.kpxe,esxi-pxe.atlaso.internal,192.168.50.1" in dhcp_page.text
+    assert "dhcp-boot=tag:sitea,tag:ipxe,tag:efi-x86_64,mboot.efi,esxi-pxe.atlaso.internal,192.168.50.1" in dhcp_page.text
+    assert "dhcp-boot=tag:sitea,tag:!ipxe,tag:efi-x86_64,snponly.efi,esxi-pxe.atlaso.internal,192.168.50.1" in dhcp_page.text
     assert "dhcp-boot=tag:sitea,tag:uefi-http,tag:uefi-http-x64,http://192.168.50.1:8080/pxe/esxi/mboot.efi" in dhcp_page.text
 def test_esxi_pxe_multi_zone_host_reservations_and_grid_menu(client):
     import json
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DhcpReservation, DhcpScope, DhcpSettings, DnsRecord
-    from labfoundry.app.services.esxi_pxe import esxi_pxe_boot_settings
-    from labfoundry.app.ui import dnsmasq_context, esxi_pxe_context
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpReservation, DhcpScope, DhcpSettings, DnsRecord
+    from atlaso.app.services.esxi_pxe import esxi_pxe_boot_settings
+    from atlaso.app.ui import dnsmasq_context, esxi_pxe_context
 
     login(client)
     page = client.get("/esxi-pxe")
@@ -3399,7 +3404,7 @@ def test_esxi_pxe_multi_zone_host_reservations_and_grid_menu(client):
             prefix_length=24,
             range_expression="10.1.1.100-200",
             lease_time="12h",
-            domain_name="labfoundry.internal",
+            domain_name="atlaso.internal",
             dns_server="10.1.1.1",
             ntp_server="10.1.1.1",
             enabled=True,
@@ -3414,11 +3419,11 @@ def test_esxi_pxe_multi_zone_host_reservations_and_grid_menu(client):
         data={
             "csrf": csrf,
             "enabled": "on",
-            "hostname": "esxi-pxe.labfoundry.internal",
+            "hostname": "esxi-pxe.atlaso.internal",
             "dhcp_scope_ids": [str(sitea_id), str(siteb_id)],
             "listen_addresses_present": "1",
             "listen_interfaces_present": "1",
-            "tftp_root": "/var/lib/labfoundry/pxe/tftp",
+            "tftp_root": "/var/lib/atlaso/pxe/tftp",
             "http_port": "8080",
             "bios_bootfile": "undionly.kpxe",
             "uefi_bootfile": "snponly.efi",
@@ -3445,8 +3450,8 @@ def test_esxi_pxe_multi_zone_host_reservations_and_grid_menu(client):
         db.add(dhcp)
         db.commit()
         dns_preview = dnsmasq_context(db)["config_preview"]
-        assert "dhcp-option=tag:sitea,66,esxi-pxe.labfoundry.internal" in dns_preview
-        assert "dhcp-option=tag:siteb,66,esxi-pxe.labfoundry.internal" in dns_preview
+        assert "dhcp-option=tag:sitea,66,esxi-pxe.atlaso.internal" in dns_preview
+        assert "dhcp-option=tag:siteb,66,esxi-pxe.atlaso.internal" in dns_preview
         assert "dhcp-boot=tag:sitea,tag:uefi-http,tag:uefi-http-x64,http://192.168.50.1:8080/pxe/esxi/mboot.efi" in dns_preview
         assert "dhcp-boot=tag:siteb,tag:uefi-http,tag:uefi-http-x64,http://10.1.1.1:8080/pxe/esxi/mboot.efi" in dns_preview
 
@@ -3465,10 +3470,10 @@ def test_esxi_pxe_multi_zone_host_reservations_and_grid_menu(client):
 
     with SessionLocal() as db:
         reservation = db.execute(select(DhcpReservation).where(DhcpReservation.mac_address == "00:50:56:aa:bb:cd")).scalar_one()
-        assert reservation.hostname == "esx02.labfoundry.internal"
+        assert reservation.hostname == "esx02.atlaso.internal"
         assert reservation.ip_address == "10.1.1.150"
         assert reservation.description == "Managed by ESXi PXE host 1."
-        record = db.execute(select(DnsRecord).where(DnsRecord.hostname == "esx02.labfoundry.internal")).scalar_one()
+        record = db.execute(select(DnsRecord).where(DnsRecord.hostname == "esx02.atlaso.internal")).scalar_one()
         assert record.record_type == "A"
         assert record.address == "10.1.1.150"
         assert record.description == "Managed by ESXi PXE host 1."
@@ -3501,7 +3506,7 @@ def test_esxi_pxe_multi_zone_host_reservations_and_grid_menu(client):
     assert remove_reservation.status_code == 303
     with SessionLocal() as db:
         assert db.execute(select(DhcpReservation).where(DhcpReservation.mac_address == "00:50:56:aa:bb:cd")).scalar_one_or_none() is None
-        assert db.execute(select(DnsRecord).where(DnsRecord.hostname == "esx02.labfoundry.internal")).scalar_one_or_none() is None
+        assert db.execute(select(DnsRecord).where(DnsRecord.hostname == "esx02.atlaso.internal")).scalar_one_or_none() is None
 
     refreshed = client.get("/esxi-pxe")
     assert 'data-tag-name="dhcp_scope_ids"' in refreshed.text
@@ -3518,9 +3523,9 @@ def test_esxi_pxe_multi_zone_host_reservations_and_grid_menu(client):
 def test_esxi_pxe_boot_settings_migrate_legacy_first_stage_defaults(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Setting
-    from labfoundry.app.services.esxi_pxe import esxi_pxe_boot_settings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Setting
+    from atlaso.app.services.esxi_pxe import esxi_pxe_boot_settings
 
     login(client)
     with SessionLocal() as db:
@@ -3541,8 +3546,8 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client):
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import EsxiKickstart, EsxiPxeHost
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import EsxiKickstart, EsxiPxeHost
 
     login(client)
     with SessionLocal() as db:
@@ -3555,7 +3560,7 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client):
         )
         db.add(kickstart)
         db.flush()
-        from labfoundry.app.services.esxi_pxe import assign_kickstart_content, canonical_http_path
+        from atlaso.app.services.esxi_pxe import assign_kickstart_content, canonical_http_path
 
         assign_kickstart_content(kickstart, kickstart.content, max_bytes=262_144)
         kickstart.http_path = canonical_http_path(kickstart.id, kickstart.content_hash)
@@ -3565,7 +3570,7 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client):
                 mac_address="00:50:56:aa:bb:cc",
                 ip_address="192.168.50.150",
                 kickstart_id=kickstart.id,
-                installer_iso_path="/mnt/labfoundry-vcf-offline-depot/PROD/COMP/ESX_HOST/archive.iso",
+                installer_iso_path="/mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST/archive.iso",
                 variables_json='{"rack":"r42"}',
                 enabled=True,
             )
@@ -3591,7 +3596,7 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client):
     restored = client.post(
         "/backup-restore/restore",
         data={"csrf": csrf},
-        files={"archive_file": ("labfoundry-settings.json", exported.content, "application/json")},
+        files={"archive_file": ("atlaso-settings.json", exported.content, "application/json")},
     )
 
     assert restored.status_code == 200
@@ -3607,9 +3612,9 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client):
 def test_esxi_pxe_drift_detection_uses_generated_filesystem_copy(client, monkeypatch, tmp_path):
     from sqlalchemy import select
 
-    import labfoundry.app.services.esxi_pxe as esxi_pxe
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import EsxiKickstart
+    import atlaso.app.services.esxi_pxe as esxi_pxe
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import EsxiKickstart
 
     monkeypatch.setattr(esxi_pxe, "ESXI_KICKSTART_HTTP_ROOT", tmp_path)
     login(client)
@@ -3635,13 +3640,13 @@ def test_backup_restore_restore_replaces_settings_and_stops_services(client):
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import ApplianceSettings, AuditEvent, ServiceState
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, AuditEvent, ServiceState
 
     login(client)
     with SessionLocal() as db:
         settings = db.execute(select(ApplianceSettings)).scalar_one()
-        settings.fqdn = "restore-target.labfoundry.internal"
+        settings.fqdn = "restore-target.atlaso.internal"
         service = db.execute(select(ServiceState).where(ServiceState.service == "dns")).scalar_one()
         service.running = True
         service.enabled = True
@@ -3655,13 +3660,13 @@ def test_backup_restore_restore_replaces_settings_and_stops_services(client):
 
     with SessionLocal() as db:
         settings = db.execute(select(ApplianceSettings)).scalar_one()
-        settings.fqdn = "temporary-change.labfoundry.internal"
+        settings.fqdn = "temporary-change.atlaso.internal"
         db.commit()
 
     restored = client.post(
         "/backup-restore/restore",
         data={"csrf": csrf},
-        files={"archive_file": ("labfoundry-settings.json", archive_bytes, "application/json")},
+        files={"archive_file": ("atlaso-settings.json", archive_bytes, "application/json")},
     )
 
     assert restored.status_code == 200
@@ -3669,7 +3674,7 @@ def test_backup_restore_restore_replaces_settings_and_stops_services(client):
     assert "Services are stopped and unconfigured" in restored.text
     with SessionLocal() as db:
         settings = db.execute(select(ApplianceSettings)).scalar_one()
-        assert settings.fqdn == "restore-target.labfoundry.internal"
+        assert settings.fqdn == "restore-target.atlaso.internal"
         services = db.execute(select(ServiceState)).scalars().all()
         assert services
         assert all(not service.running and not service.enabled and service.health == "unconfigured" for service in services)
@@ -3682,8 +3687,8 @@ def test_backup_restore_restore_replaces_settings_and_stops_services(client):
 def test_backup_restore_recreates_default_vcf_backup_user_from_settings_archive(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import User, VcfBackupSettings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import User, VcfBackupSettings
 
     login(client)
     with SessionLocal() as db:
@@ -3713,7 +3718,7 @@ def test_backup_restore_recreates_default_vcf_backup_user_from_settings_archive(
     restored = client.post(
         "/backup-restore/restore",
         data={"csrf": csrf},
-        files={"archive_file": ("labfoundry-settings.json", archive_bytes, "application/json")},
+        files={"archive_file": ("atlaso-settings.json", archive_bytes, "application/json")},
     )
 
     assert restored.status_code == 200
@@ -3728,8 +3733,8 @@ def test_backup_restore_recreates_default_vcf_backup_user_from_settings_archive(
 def test_backup_restore_factory_reset_resets_desired_state_and_stops_services(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import (
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import (
         ApplianceSettings,
         AuditEvent,
         CaCertificate,
@@ -3756,13 +3761,13 @@ def test_backup_restore_factory_reset_resets_desired_state_and_stops_services(cl
         VlanInterface,
         WanPolicy,
     )
-    from labfoundry.app.seed import SEED_EXAMPLES_SETTING_KEY, seed_initial_data
+    from atlaso.app.seed import SEED_EXAMPLES_SETTING_KEY, seed_initial_data
 
     login(client)
     with SessionLocal() as db:
         settings = db.execute(select(ApplianceSettings)).scalar_one()
-        settings.fqdn = "custom.labfoundry.internal"
-        db.add(DnsRecord(hostname="remove-me.labfoundry.internal", record_type="A", address="192.168.50.250"))
+        settings.fqdn = "custom.atlaso.internal"
+        db.add(DnsRecord(hostname="remove-me.atlaso.internal", record_type="A", address="192.168.50.250"))
         service = db.execute(select(ServiceState).where(ServiceState.service == "vcf-backups")).scalar_one()
         service.running = True
         service.enabled = True
@@ -3779,7 +3784,7 @@ def test_backup_restore_factory_reset_resets_desired_state_and_stops_services(cl
     assert "Non-management NICs are desired admin down" in reset.text
     with SessionLocal() as db:
         settings = db.execute(select(ApplianceSettings)).scalar_one()
-        assert settings.fqdn == "labfoundry.labfoundry.internal"
+        assert settings.fqdn == "core.atlaso.internal"
         interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
         assert [interface.name for interface in interfaces] == ["eth0"]
         assert interfaces[0].role == "management"
@@ -3788,8 +3793,8 @@ def test_backup_restore_factory_reset_resets_desired_state_and_stops_services(cl
         dns_settings = db.execute(select(DnsSettings)).scalar_one()
         assert dns_settings.listen_interface == ""
         assert dns_settings.listen_address in ("", None)
-        assert dns_settings.authoritative_server == "ns1.labfoundry.internal"
-        assert dns_settings.authoritative_contact == "hostmaster.labfoundry.internal"
+        assert dns_settings.authoritative_server == "ns1.atlaso.internal"
+        assert dns_settings.authoritative_contact == "hostmaster.atlaso.internal"
         assert dns_settings.authoritative_ttl == 3600
         assert dns_settings.authoritative_refresh == 1200
         assert dns_settings.authoritative_retry == 180
@@ -3810,7 +3815,7 @@ def test_backup_restore_factory_reset_resets_desired_state_and_stops_services(cl
         vcf_registry_settings = db.execute(select(VcfPrivateRegistrySettings)).scalar_one()
         assert vcf_registry_settings.listen_interface == ""
         assert vcf_registry_settings.listen_address == ""
-        removed = db.execute(select(DnsRecord).where(DnsRecord.hostname == "remove-me.labfoundry.internal")).scalar_one_or_none()
+        removed = db.execute(select(DnsRecord).where(DnsRecord.hostname == "remove-me.atlaso.internal")).scalar_one_or_none()
         assert removed is None
         assert db.execute(select(VlanInterface)).scalars().all() == []
         assert db.execute(select(WanPolicy)).scalars().all() == []
@@ -3819,7 +3824,7 @@ def test_backup_restore_factory_reset_resets_desired_state_and_stops_services(cl
         assert db.execute(select(RoutingRule)).scalars().all() == []
         dns_records = db.execute(select(DnsRecord)).scalars().all()
         assert len(dns_records) == 1
-        assert dns_records[0].hostname == "labfoundry.labfoundry.internal"
+        assert dns_records[0].hostname == "core.atlaso.internal"
         assert dns_records[0].record_type == "A"
         assert dns_records[0].address == "192.168.49.1"
         assert "app-owned appliance FQDN" in (dns_records[0].description or "")
@@ -3844,7 +3849,7 @@ def test_backup_restore_factory_reset_resets_desired_state_and_stops_services(cl
         assert db.execute(select(VlanInterface)).scalars().all() == []
         dns_records = db.execute(select(DnsRecord)).scalars().all()
         assert len(dns_records) == 1
-        assert dns_records[0].hostname == "labfoundry.labfoundry.internal"
+        assert dns_records[0].hostname == "core.atlaso.internal"
         depot_profiles = db.execute(
             select(VcfDepotDownloadProfile).order_by(VcfDepotDownloadProfile.name)
         ).scalars().all()
@@ -3889,7 +3894,7 @@ def test_routes_wan_policy_form_renders(client):
     assert "SiteA outbound WAN" in response.text
     assert "eth1.20" in response.text
     assert "tc qdisc replace" in response.text
-    assert "table ip labfoundry_nat" in response.text
+    assert "table ip atlaso_nat" in response.text
     assert "Review appliance changes" in response.text
 
 
@@ -3920,8 +3925,8 @@ def test_routes_wan_rejects_route_wan_mode(client):
 def test_routes_wan_allows_ipv6_only_route_targets_but_not_nat_targets(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import NatRule, PhysicalInterface, Route
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import NatRule, PhysicalInterface, Route
 
     with SessionLocal() as db:
         db.add(
@@ -3999,8 +4004,8 @@ def test_routes_wan_allows_ipv6_only_route_targets_but_not_nat_targets(client):
 def test_routes_wan_autosave_endpoints_and_apply_task(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, NatRule, RoutingRule, WanPolicy
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, NatRule, RoutingRule, WanPolicy
 
     login(client)
     page = client.get("/routes-wan")
@@ -4105,11 +4110,11 @@ def test_routes_wan_autosave_endpoints_and_apply_task(client):
     with SessionLocal() as db:
         job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()
         assert job.status == "succeeded"
-        assert "labfoundry-helper" in (job.result or "")
+        assert "atlaso-helper" in (job.result or "")
         assert "wan" in (job.result or "")
         assert "NAT rules" in (job.result or "")
         assert "explicit routing rules" in (job.result or "")
-        assert "nft -f /etc/labfoundry/nftables.d/labfoundry-nat.nft" in (job.result or "")
+        assert "nft -f /etc/atlaso/nftables.d/atlaso-nat.nft" in (job.result or "")
         assert "ip rule add from 192.168.50.0/24 table 200" in (job.result or "")
         assert "tc qdisc replace dev eth1.20" in (job.result or "")
 
@@ -4131,7 +4136,7 @@ def test_local_users_page_separates_ldap_authentication(client):
     login(client)
     authentication = client.get("/authentication")
     assert authentication.status_code == 200
-    assert "LabFoundry LDAP sign-in" in authentication.text
+    assert "Atlaso LDAP sign-in" in authentication.text
     assert "Managed VCF LDAP service" in authentication.text
     assert "managed separately" in authentication.text
 
@@ -4185,8 +4190,8 @@ def test_local_users_page_separates_ldap_authentication(client):
     assert stale_role_created.status_code == 303
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import User
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import User
 
     with SessionLocal() as db:
         operator = db.execute(select(User).where(User.username == "operator")).scalar_one()
@@ -4298,17 +4303,17 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     assert 'class="button tiny secondary" type="submit">Rotate bind credential</button>' in organization_header
     assert 'class="button tiny danger" type="submit">Delete organization</button>' in organization_header
     assert 'class="tab-buttons tool-tabs ldap-directory-resource-tabs"' in created.text
-    assert "uid=vcf-bind,ou=service-accounts,dc=org-a,dc=ldap,dc=labfoundry,dc=internal" in created.text
+    assert "uid=vcf-bind,ou=service-accounts,dc=org-a,dc=ldap,dc=atlaso,dc=internal" in created.text
     assert "serviceAccount → employeeType" not in created.text
 
     organization_id = created.text.split('/ldap/organizations/', 1)[1].split("/", 1)[0]
     assert f'data-ldap-organization-id="{organization_id}"' in created.text
-    assert 'data-tab-storage-key="labfoundry:ldap:resource-tab"' in created.text
+    assert 'data-tab-storage-key="atlaso:ldap:resource-tab"' in created.text
     app_js = client.get("/static/app.js").text
     assert "window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0)" in app_js
     assert 'target.closest("[data-download-value]")' in app_js
     assert 'document.addEventListener("DOMContentLoaded", () => initializeDownloadValueButtons())' in app_js
-    assert 'const LDAP_ORGANIZATION_SELECTION_KEY = "labfoundry:ldap:organization"' in app_js
+    assert 'const LDAP_ORGANIZATION_SELECTION_KEY = "atlaso:ldap:organization"' in app_js
     assert "function initializeLdapPageState()" in app_js
     ldap_page_state_js = app_js.split("function initializeLdapPageState()", 1)[1].split("function attachLdapGridState(", 1)[0]
     assert 'await fetch(link.href' in ldap_page_state_js
@@ -4330,8 +4335,8 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
 
     enabled = client.post(
         "/ldap/settings",
-        data={"enabled": "on", "hostname": "ldap.labfoundry.internal", "listen_interfaces_present": "1", "ldaps_enabled": "on", "port": "636", "ldap_port": "389", "csrf": csrf},
-        headers={"X-LabFoundry-Autosave": "1"},
+        data={"enabled": "on", "hostname": "ldap.atlaso.internal", "listen_interfaces_present": "1", "ldaps_enabled": "on", "port": "636", "ldap_port": "389", "csrf": csrf},
+        headers={"X-Atlaso-Autosave": "1"},
         follow_redirects=False,
     )
     assert enabled.status_code == 200
@@ -4384,8 +4389,8 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     assert "pending apply" in page.text
 
     from sqlalchemy import select
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import LdapUser
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import LdapUser
 
     with SessionLocal() as db:
         operator_id = db.execute(select(LdapUser.id).where(LdapUser.uid == "operator")).scalar_one()
@@ -4435,9 +4440,9 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
 def test_managed_ldap_generates_complete_synthetic_directory_once(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import AuditEvent, LdapGroup, LdapOrganization, LdapSettings, LdapUser
-    from labfoundry.app.services.ldap import clear_pending_ldap_password, has_pending_ldap_password
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, LdapGroup, LdapOrganization, LdapSettings, LdapUser
+    from atlaso.app.services.ldap import clear_pending_ldap_password, has_pending_ldap_password
 
     login(client)
     page = client.get("/ldap")
@@ -4548,8 +4553,8 @@ def test_local_user_reset_modal_endpoint_and_remove(client):
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import User
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import User
 
     login(client)
     users = client.get("/users")
@@ -4610,8 +4615,8 @@ def test_local_user_reset_modal_endpoint_and_remove(client):
 def test_local_users_password_policy_staging_and_apply_redaction(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, User
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, User
 
     login(client)
     users = client.get("/users")
@@ -4694,10 +4699,10 @@ def test_apply_status_reads_preserve_multiple_staged_service_user_passwords(clie
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import User
-    from labfoundry.app.services.local_users import clear_pending_os_password, has_pending_os_password
-    from labfoundry.app.ui import appliance_apply_units
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import User
+    from atlaso.app.services.local_users import clear_pending_os_password, has_pending_os_password
+    from atlaso.app.ui import appliance_apply_units
 
     login(client)
     users_page = client.get("/users")
@@ -4745,10 +4750,10 @@ def test_apply_status_reads_preserve_multiple_staged_service_user_passwords(clie
 def test_real_local_users_apply_clears_pending_passwords_and_baselines_post_apply(client, monkeypatch, tmp_path):
     from sqlalchemy import select
 
-    import labfoundry.app.ui as ui_module
-    from labfoundry.app.adapters.system import AdapterResult
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Setting, User
+    import atlaso.app.ui as ui_module
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Setting, User
 
     base_system_adapter = ui_module.SystemAdapter
 
@@ -4757,15 +4762,15 @@ def test_real_local_users_apply_clears_pending_passwords_and_baselines_post_appl
             super().__init__(dry_run=False)
 
         def read_dhcp_leases(self) -> AdapterResult:
-            return AdapterResult(command=["labfoundry-helper", "dnsmasq", "leases"], dry_run=True, stdout="")
+            return AdapterResult(command=["atlaso-helper", "dnsmasq", "leases"], dry_run=True, stdout="")
 
         def validate_local_users_config(self, config_path: str) -> AdapterResult:
-            return AdapterResult(command=["labfoundry-helper", "local-users", "validate", config_path], dry_run=False, stdout="validation ok")
+            return AdapterResult(command=["atlaso-helper", "local-users", "validate", config_path], dry_run=False, stdout="validation ok")
 
         def apply_local_users_config(self, config_path: str) -> AdapterResult:
-            return AdapterResult(command=["labfoundry-helper", "local-users", "apply", config_path], dry_run=False, stdout="apply complete")
+            return AdapterResult(command=["atlaso-helper", "local-users", "apply", config_path], dry_run=False, stdout="apply complete")
 
-    staged_path = tmp_path / "apply" / "local-users" / "labfoundry-users.json"
+    staged_path = tmp_path / "apply" / "local-users" / "atlaso-users.json"
     monkeypatch.setattr(ui_module, "LOCAL_USERS_STAGED_CONFIG_PATH", str(staged_path))
     monkeypatch.setattr(ui_module, "SystemAdapter", SuccessfulLocalUsersAdapter)
 
@@ -4844,8 +4849,8 @@ def test_logs_page_shows_unavailable_state_when_every_source_is_unavailable(clie
     unavailable_sources = [
         {
             "id": "app",
-            "label": "LabFoundry App",
-            "path": "/var/log/labfoundry/labfoundry.log",
+            "label": "Atlaso App",
+            "path": "/var/log/atlaso/atlaso.log",
             "available": False,
             "lines": [],
             "size_bytes": 0,
@@ -4856,7 +4861,7 @@ def test_logs_page_shows_unavailable_state_when_every_source_is_unavailable(clie
         {
             "id": "kms",
             "label": "KMS",
-            "path": "/var/log/labfoundry/kms.log",
+            "path": "/var/log/atlaso/kms.log",
             "available": False,
             "lines": [],
             "size_bytes": 0,
@@ -4866,7 +4871,7 @@ def test_logs_page_shows_unavailable_state_when_every_source_is_unavailable(clie
         },
     ]
     monkeypatch.setattr(
-        "labfoundry.app.ui.log_sources_context",
+        "atlaso.app.ui.log_sources_context",
         lambda *, max_lines=100: unavailable_sources,
     )
 
@@ -4887,9 +4892,9 @@ def test_logs_page_shows_unavailable_state_when_every_source_is_unavailable(clie
 
 
 def test_logs_page_renders_refreshable_fixed_source_tabs_and_redacts_logs(client, tmp_path, monkeypatch):
-    from labfoundry.app.adapters.system import AdapterResult
+    from atlaso.app.adapters.system import AdapterResult
 
-    app_log = tmp_path / "labfoundry.log"
+    app_log = tmp_path / "atlaso.log"
     kms_log = tmp_path / "kms.log"
     jwt_segment = (
         "eyJ2ZXIiOiIyIiwidHlwIjoiSldUIiwiYWxnIjoiUlMyNTYifQ."
@@ -4900,57 +4905,57 @@ def test_logs_page_renders_refreshable_fixed_source_tabs_and_redacts_logs(client
         "\n".join([*(f"app line {index}" for index in range(120)), "token=secret-download-token", f"GET https://dl.broadcom.com/{jwt_segment}/PROD/file.json"]),
         encoding="utf-8",
     )
-    monkeypatch.setattr("labfoundry.app.ui.LABFOUNDRY_APP_LOG_PATH", app_log)
-    monkeypatch.setattr("labfoundry.app.ui.KMS_SERVER_LOG_PATH", kms_log)
+    monkeypatch.setattr("atlaso.app.ui.ATLASO_APP_LOG_PATH", app_log)
+    monkeypatch.setattr("atlaso.app.ui.KMS_SERVER_LOG_PATH", kms_log)
     monkeypatch.setattr(
-        "labfoundry.app.ui.SystemAdapter.read_dnsmasq_logs",
+        "atlaso.app.ui.SystemAdapter.read_dnsmasq_logs",
         lambda _self: AdapterResult(
-            command=["labfoundry-helper", "dnsmasq", "logs"],
+            command=["atlaso-helper", "dnsmasq", "logs"],
             dry_run=False,
             stdout=(
                 "dnsmasq[10]: query[A] example.test from 192.0.2.10\n"
                 "dnsmasq-dhcp[10]: DHCPACK(eth1) 192.0.2.20 client\n"
-                "dnsmasq-tftp[10]: sent /var/lib/labfoundry/pxe/tftp/snponly.efi to 192.0.2.20\n"
+                "dnsmasq-tftp[10]: sent /var/lib/atlaso/pxe/tftp/snponly.efi to 192.0.2.20\n"
                 "password=do-not-render\n"
             ),
         ),
     )
     monkeypatch.setattr(
-        "labfoundry.app.ui.SystemAdapter.read_ntpd_logs",
+        "atlaso.app.ui.SystemAdapter.read_ntpd_logs",
         lambda _self: AdapterResult(
-            command=["labfoundry-helper", "ntpd", "logs"],
+            command=["atlaso-helper", "ntpd", "logs"],
             dry_run=False,
             stdout="ntpd ready\nprivate_key=do-not-render\n",
         ),
     )
     monkeypatch.setattr(
-        "labfoundry.app.ui.SystemAdapter.read_ldap_logs",
+        "atlaso.app.ui.SystemAdapter.read_ldap_logs",
         lambda _self: AdapterResult(
-            command=["labfoundry-helper", "ldap", "logs"],
+            command=["atlaso-helper", "ldap", "logs"],
             dry_run=False,
             stdout='slapd[30]: conn=1000 op=0 BIND dn="uid=operator,ou=users,dc=org1" method=128\nbind_password=do-not-render\n',
         ),
     )
     monkeypatch.setattr(
-        "labfoundry.app.ui.SystemAdapter.read_nginx_logs",
+        "atlaso.app.ui.SystemAdapter.read_nginx_logs",
         lambda _self: AdapterResult(
-            command=["labfoundry-helper", "nginx", "logs"],
+            command=["atlaso-helper", "nginx", "logs"],
             dry_run=False,
             stdout="nginx[20]: management request completed\nrequest_token=do-not-render\n",
         ),
     )
     monkeypatch.setattr(
-        "labfoundry.app.ui.SystemAdapter.read_nginx_access_logs",
+        "atlaso.app.ui.SystemAdapter.read_nginx_access_logs",
         lambda _self: AdapterResult(
-            command=["labfoundry-helper", "nginx", "access-logs"],
+            command=["atlaso-helper", "nginx", "access-logs"],
             dry_run=False,
             stdout='192.0.2.10 - - [13/Jul/2026:20:15:31 -0700] "GET /dashboard HTTP/1.1" 200 1234\naccess_token=do-not-render\n',
         ),
     )
     monkeypatch.setattr(
-        "labfoundry.app.ui.SystemAdapter.read_nginx_error_logs",
+        "atlaso.app.ui.SystemAdapter.read_nginx_error_logs",
         lambda _self: AdapterResult(
-            command=["labfoundry-helper", "nginx", "error-logs"],
+            command=["atlaso-helper", "nginx", "error-logs"],
             dry_run=False,
             stdout="2026/07/13 20:15:31 [error] 12#12: upstream timed out\npassword=do-not-render\n",
         ),
@@ -4961,9 +4966,9 @@ def test_logs_page_renders_refreshable_fixed_source_tabs_and_redacts_logs(client
 
     assert response.status_code == 200
     assert "Logs" in response.text
-    assert 'data-tab-storage-key="labfoundry:logs:active-tab"' in response.text
+    assert 'data-tab-storage-key="atlaso:logs:active-tab"' in response.text
     assert 'data-log-source-tab="vcfdt"' not in response.text
-    assert "LabFoundry App" in response.text
+    assert "Atlaso App" in response.text
     assert "DNS" in response.text
     assert "DHCP" in response.text
     assert "TFTP" in response.text
@@ -4999,7 +5004,7 @@ def test_logs_page_renders_refreshable_fixed_source_tabs_and_redacts_logs(client
     assert '<option value="200" >200</option>' in response.text
     assert '<option value="500" >500</option>' in response.text
     assert "Refresh 5s" in response.text
-    assert 'class="language-labfoundry-log" data-log-lines-output' in response.text
+    assert 'class="language-atlaso-log" data-log-lines-output' in response.text
     assert response.text.count('data-terminal-note-open="false"') == 11
     toolbar = response.text.split('<div class="logs-toolbar">', 1)[1].split("</div>", 1)[0]
     assert toolbar.index("data-log-refresh-status") < toolbar.index("data-log-lines")
@@ -5011,7 +5016,7 @@ def test_logs_page_renders_refreshable_fixed_source_tabs_and_redacts_logs(client
     assert "ntpd ready" in response.text
     assert "query[A] example.test" in response.text
     assert "DHCPACK(eth1)" in response.text
-    assert "sent /var/lib/labfoundry/pxe/tftp/snponly.efi" in response.text
+    assert "sent /var/lib/atlaso/pxe/tftp/snponly.efi" in response.text
     assert "slapd[30]: conn=1000 op=0 BIND" in response.text
     assert "uid=operator,ou=users,dc=org1" in response.text
     assert "bind_password= [redacted]" in response.text
@@ -5045,7 +5050,7 @@ def test_logs_page_renders_refreshable_fixed_source_tabs_and_redacts_logs(client
     assert "query[A] example.test" in "\n".join(payload["sources"][1]["lines"])
     assert "DHCPACK(eth1)" not in "\n".join(payload["sources"][1]["lines"])
     assert "DHCPACK(eth1)" in "\n".join(payload["sources"][2]["lines"])
-    assert "sent /var/lib/labfoundry/pxe/tftp/snponly.efi" in "\n".join(payload["sources"][3]["lines"])
+    assert "sent /var/lib/atlaso/pxe/tftp/snponly.efi" in "\n".join(payload["sources"][3]["lines"])
     assert 'BIND dn="uid=operator,ou=users,dc=org1"' in "\n".join(payload["sources"][4]["lines"])
     assert len(payload["sources"][0]["lines"]) == 122
     assert "secret-download-token" not in "\n".join(payload["sources"][0]["lines"])
@@ -5057,11 +5062,11 @@ def test_logs_page_renders_refreshable_fixed_source_tabs_and_redacts_logs(client
     js = client.get("/static/app.js")
     assert "function initializeLogsPage" in js.text
     assert 'window.setInterval(refresh, 5000)' in js.text
-    assert 'labfoundry:logs:line-count' in js.text
+    assert 'atlaso:logs:line-count' in js.text
     assert "refreshQueued = true" in js.text
     assert "tabButton.disabled = !source.available" in js.text
     assert "activeButton.disabled" in js.text
-    assert 'window.Prism.languages["labfoundry-log"]' in js.text
+    assert 'window.Prism.languages["atlaso-log"]' in js.text
     assert '"level-error"' in js.text
     assert "highlightConfigPreviewElement(output);" in js.text
     css = client.get("/static/app.css")
@@ -5082,15 +5087,15 @@ def test_configure_logging_writes_main_app_log(tmp_path, monkeypatch):
     import logging
     from logging.handlers import RotatingFileHandler
 
-    from labfoundry.app.config import get_settings
-    from labfoundry.app.main import configure_logging
+    from atlaso.app.config import get_settings
+    from atlaso.app.main import configure_logging
 
-    log_path = tmp_path / "labfoundry.log"
-    monkeypatch.setenv("LABFOUNDRY_APP_LOG_PATH", str(log_path))
+    log_path = tmp_path / "atlaso.log"
+    monkeypatch.setenv("ATLASO_APP_LOG_PATH", str(log_path))
     get_settings.cache_clear()
 
     configure_logging()
-    logging.getLogger("labfoundry.appliance_apply").error("apply failure visible in main log")
+    logging.getLogger("atlaso.appliance_apply").error("apply failure visible in main log")
     for handler in logging.getLogger().handlers:
         handler.flush()
 
@@ -5107,13 +5112,13 @@ def test_record_audit_writes_redacted_operational_log(client, tmp_path, monkeypa
     import logging
     from logging.handlers import RotatingFileHandler
 
-    from labfoundry.app.audit import record_audit
-    from labfoundry.app.config import get_settings
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.main import configure_logging
+    from atlaso.app.audit import record_audit
+    from atlaso.app.config import get_settings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.main import configure_logging
 
-    log_path = tmp_path / "labfoundry.log"
-    monkeypatch.setenv("LABFOUNDRY_APP_LOG_PATH", str(log_path))
+    log_path = tmp_path / "atlaso.log"
+    monkeypatch.setenv("ATLASO_APP_LOG_PATH", str(log_path))
     get_settings.cache_clear()
 
     with SessionLocal() as db:
@@ -5147,32 +5152,32 @@ def test_record_audit_writes_redacted_operational_log(client, tmp_path, monkeypa
 def test_logs_page_handles_default_pure_posix_log_path(client, monkeypatch):
     from pathlib import PurePosixPath
 
-    from labfoundry.app.adapters.system import AdapterResult
+    from atlaso.app.adapters.system import AdapterResult
 
-    monkeypatch.setattr("labfoundry.app.ui.LABFOUNDRY_APP_LOG_PATH", PurePosixPath("/var/log/labfoundry/labfoundry.log"))
-    monkeypatch.setattr("labfoundry.app.ui.KMS_SERVER_LOG_PATH", PurePosixPath("/var/log/labfoundry/kms/server.log"))
+    monkeypatch.setattr("atlaso.app.ui.ATLASO_APP_LOG_PATH", PurePosixPath("/var/log/atlaso/atlaso.log"))
+    monkeypatch.setattr("atlaso.app.ui.KMS_SERVER_LOG_PATH", PurePosixPath("/var/log/atlaso/kms/server.log"))
     monkeypatch.setattr(
-        "labfoundry.app.ui.SystemAdapter.read_dnsmasq_logs",
+        "atlaso.app.ui.SystemAdapter.read_dnsmasq_logs",
         lambda _self: AdapterResult(
-            command=["labfoundry-helper", "dnsmasq", "logs"], dry_run=True, stdout="No host dnsmasq journal is read in development mode."
+            command=["atlaso-helper", "dnsmasq", "logs"], dry_run=True, stdout="No host dnsmasq journal is read in development mode."
         ),
     )
     monkeypatch.setattr(
-        "labfoundry.app.ui.SystemAdapter.read_ntpd_logs",
+        "atlaso.app.ui.SystemAdapter.read_ntpd_logs",
         lambda _self: AdapterResult(
-            command=["labfoundry-helper", "ntpd", "logs"], dry_run=True, stdout="No host NTPsec journal is read in development mode."
+            command=["atlaso-helper", "ntpd", "logs"], dry_run=True, stdout="No host NTPsec journal is read in development mode."
         ),
     )
     monkeypatch.setattr(
-        "labfoundry.app.ui.SystemAdapter.read_ldap_logs",
+        "atlaso.app.ui.SystemAdapter.read_ldap_logs",
         lambda _self: AdapterResult(
-            command=["labfoundry-helper", "ldap", "logs"], dry_run=True, stdout="No host LDAP journal is read in development mode."
+            command=["atlaso-helper", "ldap", "logs"], dry_run=True, stdout="No host LDAP journal is read in development mode."
         ),
     )
     monkeypatch.setattr(
-        "labfoundry.app.ui.SystemAdapter.read_nginx_logs",
+        "atlaso.app.ui.SystemAdapter.read_nginx_logs",
         lambda _self: AdapterResult(
-            command=["labfoundry-helper", "nginx", "logs"], dry_run=True, stdout="No host Nginx journal is read in development mode."
+            command=["atlaso-helper", "nginx", "logs"], dry_run=True, stdout="No host Nginx journal is read in development mode."
         ),
     )
 
@@ -5181,7 +5186,7 @@ def test_logs_page_handles_default_pure_posix_log_path(client, monkeypatch):
 
     assert response.status_code == 200
     assert "VCFDT" not in response.text
-    assert "LabFoundry App" in response.text
+    assert "Atlaso App" in response.text
     assert "DNS" in response.text
     assert "DHCP" in response.text
     assert "TFTP" in response.text
@@ -5202,7 +5207,7 @@ def test_dns_and_dhcp_pages_render(client):
     assert "DNS Zones" in dns.text
     assert "dns-records-fallback" in dns.text
     assert "dnsmasq" in dns.text
-    assert "labfoundry.labfoundry.internal" in dns.text
+    assert "core.atlaso.internal" in dns.text
     assert "<strong>Avoid .local for VCF.</strong>" not in dns.text
     assert "+ Domain" in dns.text
     assert "New Domain" in dns.text
@@ -5215,11 +5220,11 @@ def test_dns_and_dhcp_pages_render(client):
     assert "dns-import-form" in dns.text
     assert "dns-import-controls" in dns.text
     assert "data-codemirror-editor" in dns.text
-    assert 'data-codemirror-language="labfoundry-hosts"' in dns.text
-    assert 'data-codemirror-language="labfoundry-zone"' in dns.text
-    assert "Import zone file into labfoundry.internal" in dns.text
+    assert 'data-codemirror-language="atlaso-hosts"' in dns.text
+    assert 'data-codemirror-language="atlaso-zone"' in dns.text
+    assert "Import zone file into atlaso.internal" in dns.text
     assert "relative hostnames are saved inside this domain" in dns.text
-    assert 'data-domain="labfoundry.internal"' in dns.text
+    assert 'data-domain="atlaso.internal"' in dns.text
     assert "A (IPv4)" in dns.text
     assert "AAAA (IPv6)" in dns.text
     assert "CNAME (alias)" in dns.text
@@ -5241,11 +5246,11 @@ def test_dns_and_dhcp_pages_render(client):
     assert 'action="/dns/zones"' in dns.text
     assert 'action="/dns/zones/delete"' in dns.text
     assert "data-confirm-modal" in dns.text
-    assert "Delete labfoundry.internal?" in dns.text
+    assert "Delete atlaso.internal?" in dns.text
     assert "It will not touch the appliance until global appliance apply runs." in dns.text
     assert 'action="/dns/zones/import"' in dns.text
     assert 'href="/dashboard#appliance-apply-review"' in dns.text
-    assert "labfoundry.internal or sitea.internal" in dns.text
+    assert "atlaso.internal or sitea.internal" in dns.text
     assert "Changes save automatically." in dns.text
     assert "Review appliance changes" in dns.text
     assert "Save desired state" not in dns.text
@@ -5278,24 +5283,24 @@ def test_dns_and_dhcp_pages_render(client):
     assert 'cell.getField() === "host_label"' in app_js.text
     assert "DNS_ACTIVE_ZONE_STORAGE_KEY" in app_js.text
     assert "initializeCodeMirrorEditors" in app_js.text
-    assert "const labFoundryDnsRecordTables = new WeakMap()" in app_js.text
+    assert "const atlasoDnsRecordTables = new WeakMap()" in app_js.text
     assert "function redrawDnsRecordTables" in app_js.text
-    assert "labFoundryDnsRecordTables.set(tableElement, table)" in app_js.text
+    assert "atlasoDnsRecordTables.set(tableElement, table)" in app_js.text
     assert "redrawDnsRecordTables(panel)" in app_js.text
     assert "installCodeMirrorPlainTextFallback" in app_js.text
-    assert 'textarea.dataset.codemirrorLanguage !== "labfoundry-kickstart"' in app_js.text
+    assert 'textarea.dataset.codemirrorLanguage !== "atlaso-kickstart"' in app_js.text
     assert 'addEventListener("keydown"' in app_js.text
     assert "event.stopPropagation()" in app_js.text
     assert "data-tag-empty" in app_js.text
     assert "No options available." in app_js.text
-    assert "LabFoundryCodeMirror.setValue" in app_js.text
+    assert "AtlasoCodeMirror.setValue" in app_js.text
     assert "rememberDnsActiveZone(data.domain)" in app_js.text
     assert "dnsZoneTabButtonForDomain(storedDomain)" in app_js.text
     assert "initializeTagEditors" in app_js.text
     assert "initializeEsxiIsoUploadForms" in app_js.text
     assert "XMLHttpRequest" in app_js.text
-    assert "X-LabFoundry-Upload" in app_js.text
-    assert 'rememberActiveTab("labfoundry:esxi-pxe:active-tab", "esxi-pxe-isos-panel")' in app_js.text
+    assert "X-Atlaso-Upload" in app_js.text
+    assert 'rememberActiveTab("atlaso:esxi-pxe:active-tab", "esxi-pxe-isos-panel")' in app_js.text
     assert 'window.location.hash = "esxi-pxe-isos-panel"' in app_js.text
     assert "initializeEsxiPxeHostsTable" in app_js.text
     assert 'document.getElementById(hashTargetId)?.closest(".tab-panel")' in app_js.text
@@ -5309,7 +5314,7 @@ def test_dns_and_dhcp_pages_render(client):
     assert "[data-config-preview-open]" in app_js.text
     assert "openPreviewModal(button.dataset.previewTitle" in app_js.text
     assert "initializeAutosaveForms" in app_js.text
-    assert "LABFOUNDRY_MUTATING_METHODS" in app_js.text
+    assert "ATLASO_MUTATING_METHODS" in app_js.text
     assert "scheduleApplianceApplySidebarRefresh" in app_js.text
     assert 'fetch("/appliance-apply/status"' in app_js.text
     assert "function updateServerTime" in app_js.text
@@ -5331,7 +5336,7 @@ def test_dns_and_dhcp_pages_render(client):
     assert 'elements.submit.classList.toggle("hidden", units.length === 0)' in app_js.text
     assert '{ title: "Status", field: "status", width: 150' in app_js.text
     assert 'applianceApplyModalTable.on("rowClick"' in app_js.text
-    assert 'labFoundryTasksTable.on("rowClick"' in app_js.text
+    assert 'atlasoTasksTable.on("rowClick"' in app_js.text
     assert "data-appliance-apply-modal" in app_js.text
     assert "data-appliance-apply-connection-warning" in dns.text
     assert 'class="button primary hidden" type="submit" data-appliance-apply-submit' in dns.text
@@ -5382,7 +5387,7 @@ def test_dns_and_dhcp_pages_render(client):
     assert ".dns-records-table {\n  width: 100%;\n  max-width: 100%;" in app_css.text
     assert ".dns-records-table .tabulator-tableholder {\n  overflow-x: auto;" in app_css.text
     assert "data-tag-single" in app_js.text
-    assert "X-LabFoundry-Autosave" in app_js.text
+    assert "X-Atlaso-Autosave" in app_js.text
     assert "tag-editor:change" in app_js.text
     assert "data-tag-menu-toggle" in app_js.text
     assert 'data-action="save"' not in app_js.text
@@ -5436,13 +5441,13 @@ def test_dns_and_dhcp_pages_render(client):
     assert "Actual Leases" in dhcp.text
     assert 'id="dhcp-generated-pxe"' in dhcp.text
     assert 'id="dhcp-actual-leases"' in dhcp.text
-    assert "api-client.labfoundry.internal" in dhcp.text
-    assert "labfoundry-helper dnsmasq leases" in dhcp.text
+    assert "api-client.atlaso.internal" in dhcp.text
+    assert "atlaso-helper dnsmasq leases" in dhcp.text
     assert "dhcp-scopes-table" in dhcp.text
     assert "data-scope-defaults" in dhcp.text
     assert "data-domain-options" in dhcp.text
-    assert 'data-domain-options=\'["labfoundry.internal"]\'' in dhcp.text
-    assert "labfoundry.internal" in dhcp.text
+    assert 'data-domain-options=\'["atlaso.internal"]\'' in dhcp.text
+    assert "atlaso.internal" in dhcp.text
     assert "dhcp-scopes-fallback" in dhcp.text
     assert "DHCP Options" in dhcp.text
     assert "dhcp-options-table" in dhcp.text
@@ -5521,8 +5526,8 @@ def test_dhcp_zone_defaults_follow_vlan_dns_and_interface_ntp_bindings(client):
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import NtpSettings, DnsSettings, PhysicalInterface
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import NtpSettings, DnsSettings, PhysicalInterface
 
     with SessionLocal() as db:
         eth2_interface = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == "eth2")).scalar_one()
@@ -5560,7 +5565,7 @@ def test_dhcp_zone_defaults_follow_vlan_dns_and_interface_ntp_bindings(client):
     assert eth1_vlan["ipv4_dns_default"] == "192.168.20.1"
     assert eth1_vlan["ntp_default"] == ""
     assert "sitea" in defaults["existing_names"]
-    assert defaults["default_domain"] == "labfoundry.internal"
+    assert defaults["default_domain"] == "atlaso.internal"
     app_js = client.get("/static/app.js")
     assert app_js.status_code == 200
     assert "dhcpDefaultFamilyForInterface" in app_js.text
@@ -5586,15 +5591,15 @@ def test_dns_new_record_row_suggests_next_available_ipv4(client):
 
 
 def test_dns_ipv4_suggestion_falls_back_to_existing_a_record_network():
-    from labfoundry.app.models import DhcpReservation, DhcpScope, DnsRecord
-    from labfoundry.app.ui import dhcp_scope_name_for_ip, dns_record_suggested_ipv4
+    from atlaso.app.models import DhcpReservation, DhcpScope, DnsRecord
+    from atlaso.app.ui import dhcp_scope_name_for_ip, dns_record_suggested_ipv4
 
     records = [
-        DnsRecord(hostname="labfoundry.labfoundry.internal", record_type="A", address="192.168.49.1", enabled=True),
-        DnsRecord(hostname="used.labfoundry.internal", record_type="A", address="192.168.49.2", enabled=True),
+        DnsRecord(hostname="core.atlaso.internal", record_type="A", address="192.168.49.1", enabled=True),
+        DnsRecord(hostname="used.atlaso.internal", record_type="A", address="192.168.49.2", enabled=True),
     ]
 
-    assert dns_record_suggested_ipv4(records, "labfoundry.internal", [], []) == "192.168.49.3"
+    assert dns_record_suggested_ipv4(records, "atlaso.internal", [], []) == "192.168.49.3"
 
     scopes = [
         DhcpScope(
@@ -5602,19 +5607,19 @@ def test_dns_ipv4_suggestion_falls_back_to_existing_a_record_network():
             site_address="192.168.50.1",
             prefix_length=24,
             range_expression="192.168.50.100-200",
-            domain_name="labfoundry.internal",
+            domain_name="atlaso.internal",
             enabled=True,
         )
     ]
     reservations = [
         DhcpReservation(
-            hostname="reserved.labfoundry.internal",
+            hostname="reserved.atlaso.internal",
             mac_address="02:15:5d:00:20:10",
             ip_address="192.168.50.2",
         )
     ]
 
-    assert dns_record_suggested_ipv4(records, "labfoundry.internal", scopes, reservations) == "192.168.50.3"
+    assert dns_record_suggested_ipv4(records, "atlaso.internal", scopes, reservations) == "192.168.50.3"
     assert dhcp_scope_name_for_ip("192.168.50.140", scopes) == "SiteA"
     assert dhcp_scope_name_for_ip("192.168.1.140", scopes) == ""
 
@@ -5622,8 +5627,8 @@ def test_dns_ipv4_suggestion_falls_back_to_existing_a_record_network():
 def test_dns_settings_badge_reflects_desired_state_not_runtime_state(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DnsSettings, ServiceState
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsSettings, ServiceState
 
     login(client)
     with SessionLocal() as db:
@@ -5649,30 +5654,30 @@ def test_dhcp_leases_page_reflects_live_adapter_output(client, monkeypatch):
 
     from sqlalchemy import select
 
-    from labfoundry.app.adapters.system import AdapterResult
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DhcpReservation, DnsRecord, EsxiPxeHost
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpReservation, DnsRecord, EsxiPxeHost
 
     def fake_read_dhcp_leases(self):
         return AdapterResult(
-            command=["sudo", "-n", "/opt/labfoundry/bin/labfoundry-helper", "dnsmasq", "leases", "--real"],
+            command=["sudo", "-n", "/opt/atlaso/bin/atlaso-helper", "dnsmasq", "leases", "--real"],
             dry_run=False,
             stdout=(
-                "1893456000 02:15:5d:00:20:40 192.168.50.140 live-client.labfoundry.internal *\n"
-                "1893456000 02:15:5d:00:20:41 192.168.1.110 stale-client.labfoundry.internal *\n"
+                "1893456000 02:15:5d:00:20:40 192.168.50.140 live-client.atlaso.internal *\n"
+                "1893456000 02:15:5d:00:20:41 192.168.1.110 stale-client.atlaso.internal *\n"
             ),
         )
 
-    monkeypatch.setattr("labfoundry.app.ui.SystemAdapter.read_dhcp_leases", fake_read_dhcp_leases)
+    monkeypatch.setattr("atlaso.app.ui.SystemAdapter.read_dhcp_leases", fake_read_dhcp_leases)
 
     login(client)
     page = client.get("/dhcp")
 
     assert page.status_code == 200
     assert '<span class="status-pill good">live</span>' in page.text
-    assert "sudo -n /opt/labfoundry/bin/labfoundry-helper dnsmasq leases --real" in page.text
-    assert "live-client.labfoundry.internal" in page.text
-    assert "stale-client.labfoundry.internal" not in page.text
+    assert "sudo -n /opt/atlaso/bin/atlaso-helper dnsmasq leases --real" in page.text
+    assert "live-client.atlaso.internal" in page.text
+    assert "stale-client.atlaso.internal" not in page.text
     assert "192.168.1.110" not in page.text
     assert "dhcp-leases-table" in page.text
     assert "dhcp-leases-fallback" in page.text
@@ -5682,7 +5687,7 @@ def test_dhcp_leases_page_reflects_live_adapter_output(client, monkeypatch):
     assert lease_rows == [
         {
             "status": "active",
-            "hostname": "live-client.labfoundry.internal",
+            "hostname": "live-client.atlaso.internal",
             "ip_address": "192.168.50.140",
             "zone_name": "SiteA",
             "mac_address": "02:15:5d:00:20:40",
@@ -5712,7 +5717,7 @@ def test_dhcp_leases_page_reflects_live_adapter_output(client, monkeypatch):
     response = client.post(
         "/dhcp/reservations",
         data={
-            "hostname": "live-client.labfoundry.internal",
+            "hostname": "live-client.atlaso.internal",
             "mac_address": "02:15:5d:00:20:40",
             "ip_address": "192.168.50.140",
             "description": "Created from live DHCP lease 192.168.50.140.",
@@ -5725,26 +5730,26 @@ def test_dhcp_leases_page_reflects_live_adapter_output(client, monkeypatch):
     assert response.status_code == 303
     with SessionLocal() as db:
         reservation = db.execute(select(DhcpReservation).where(DhcpReservation.mac_address == "02:15:5d:00:20:40")).scalar_one()
-        assert reservation.hostname == "live-client.labfoundry.internal"
+        assert reservation.hostname == "live-client.atlaso.internal"
         assert reservation.ip_address == "192.168.50.140"
         assert reservation.enabled is True
-        record = db.execute(select(DnsRecord).where(DnsRecord.hostname == "live-client.labfoundry.internal", DnsRecord.record_type == "A")).scalar_one()
+        record = db.execute(select(DnsRecord).where(DnsRecord.hostname == "live-client.atlaso.internal", DnsRecord.record_type == "A")).scalar_one()
         assert record.address == "192.168.50.140"
 
     with SessionLocal() as db:
-        from labfoundry.app.models import DhcpScope
-        from labfoundry.app.services.esxi_pxe import save_esxi_pxe_boot_settings
+        from atlaso.app.models import DhcpScope
+        from atlaso.app.services.esxi_pxe import save_esxi_pxe_boot_settings
 
         scope = db.execute(select(DhcpScope).where(DhcpScope.name == "SiteA")).scalar_one()
         save_esxi_pxe_boot_settings(
             db,
             enabled=True,
-            hostname="esxi-pxe.labfoundry.internal",
+            hostname="esxi-pxe.atlaso.internal",
             listen_interface="eth2",
             listen_address="192.168.50.1",
             dhcp_scope_id=str(scope.id),
             dhcp_scope_ids=[str(scope.id)],
-            tftp_root="/var/lib/labfoundry/pxe/tftp",
+            tftp_root="/var/lib/atlaso/pxe/tftp",
             http_port=8080,
             bios_bootfile="undionly.kpxe",
             uefi_bootfile="snponly.efi",
@@ -5756,7 +5761,7 @@ def test_dhcp_leases_page_reflects_live_adapter_output(client, monkeypatch):
     pxe_response = client.post(
         "/dhcp/leases/pxe-host",
         data={
-            "hostname": "pxe-client.labfoundry.internal",
+            "hostname": "pxe-client.atlaso.internal",
             "mac_address": "02:15:5d:00:20:42",
             "ip_address": "192.168.50.142",
             "csrf": csrf,
@@ -5767,14 +5772,14 @@ def test_dhcp_leases_page_reflects_live_adapter_output(client, monkeypatch):
     assert pxe_response.headers["location"] == "/esxi-pxe#esxi-pxe-hosts"
     with SessionLocal() as db:
         host = db.execute(select(EsxiPxeHost).where(EsxiPxeHost.mac_address == "02:15:5d:00:20:42")).scalar_one()
-        assert host.hostname == "pxe-client.labfoundry.internal"
+        assert host.hostname == "pxe-client.atlaso.internal"
         assert host.ip_address == "192.168.50.142"
         assert host.enabled is True
 
     deny_response = client.post(
         "/dhcp/leases/deny",
         data={
-            "hostname": "deny-client.labfoundry.internal",
+            "hostname": "deny-client.atlaso.internal",
             "mac_address": "02:15:5d:00:20:43",
             "ip_address": "192.168.50.143",
             "csrf": csrf,
@@ -5795,8 +5800,8 @@ def test_firewall_preview_derives_dns_dhcp_rule_from_dhcp_scope_vlan(client):
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DhcpScope, DhcpSettings, FirewallRule, VlanInterface
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpScope, DhcpSettings, FirewallRule, VlanInterface
 
     with SessionLocal() as db:
         dhcp_settings = db.execute(select(DhcpSettings)).scalar_one()
@@ -5874,7 +5879,7 @@ def test_firewall_preview_derives_dns_dhcp_rule_from_dhcp_scope_vlan(client):
             "group_name": "Managed clients",
             "group_entries": "10.77.0.0/16",
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     assert group_response.status_code == 200
     assert group_response.json()["status"] == "saved"
@@ -5938,8 +5943,8 @@ def test_firewall_preview_derives_dns_dhcp_rule_from_dhcp_scope_vlan(client):
 
 
 def test_dns_listen_options_include_access_and_vlans_not_trunks(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import PhysicalInterface, VlanInterface
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface, VlanInterface
 
     with SessionLocal() as db:
         db.add(
@@ -6019,14 +6024,14 @@ def test_certificate_authority_page_renders(client):
     assert 'cssClass: "mono-text",\n          width: 480,' in certificate_table_js
     assert "value.slice(0, 12)" not in certificate_table_js
     assert "+ Add profile here" in client.get("/static/app.js").text
-    assert "LabFoundry Internal Root CA" in ca.text
+    assert "Atlaso Internal Root CA" in ca.text
     assert "VCF service TLS" in ca.text
-    assert "labfoundry.labfoundry.internal" in ca.text
+    assert "core.atlaso.internal" in ca.text
     assert 'data-autosave-status-id="ca-settings-autosave-status"' in ca.text
     assert "Listen interfaces" in ca.text
     assert "Listen addresses" in ca.text
     assert "Portal hostname" in ca.text
-    assert "ca.labfoundry.internal" in ca.text
+    assert "ca.atlaso.internal" in ca.text
     assert "Open request portal" in ca.text
     assert 'href="/requests"' in ca.text
     assert 'name="listen_interfaces_present"' in ca.text
@@ -6043,10 +6048,10 @@ def test_certificate_authority_page_renders(client):
     assert "Changes save automatically." in ca.text
     assert 'href="/dashboard#appliance-apply-review"' in ca.text
     assert "Review appliance changes" in ca.text
-    assert "labfoundry-ca.json" in ca.text
+    assert "atlaso-ca.json" in ca.text
     assert 'class="validation-preview-source language-json"' in ca.text
     assert "data-confirm-modal" in ca.text
-    assert '<strong>/etc/labfoundry/ca</strong>' in ca.text
+    assert '<strong>/etc/atlaso/ca</strong>' in ca.text
     assert "fixed-value-field" in ca.text
     assert 'name="storage_path"' not in ca.text
     assert '<input name="storage_path"' not in ca.text
@@ -6065,8 +6070,8 @@ def test_certificate_request_creation_is_atomic_and_issues_submitted_sans(client
     from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import CaCertificate, CaProfile, CaSettings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate, CaProfile, CaSettings
 
     login(client)
     page = client.get("/certificate-authority")
@@ -6082,9 +6087,9 @@ def test_certificate_request_creation_is_atomic_and_issues_submitted_sans(client
         "/certificate-authority/certificates",
         data={
             "csrf": csrf,
-            "common_name": "atomic.labfoundry.internal",
+            "common_name": "atomic.atlaso.internal",
             "profile_id": str(profile_id),
-            "subject_alt_names": "atomic.labfoundry.internal\nalias.labfoundry.internal",
+            "subject_alt_names": "atomic.atlaso.internal\nalias.atlaso.internal",
             "ip_addresses": "192.168.50.25",
             "description": "Atomic certificate request",
             "enabled": "on",
@@ -6096,23 +6101,23 @@ def test_certificate_request_creation_is_atomic_and_issues_submitted_sans(client
 
     assert submitted.status_code == 303
     with SessionLocal() as db:
-        staged = db.execute(select(CaCertificate).where(CaCertificate.common_name == "atomic.labfoundry.internal")).scalar_one()
+        staged = db.execute(select(CaCertificate).where(CaCertificate.common_name == "atomic.atlaso.internal")).scalar_one()
         assert staged.status == "planned"
         assert staged.serial_number is None
         assert staged.profile_id == profile_id
-        assert staged.subject_alt_names == "atomic.labfoundry.internal\nalias.labfoundry.internal"
+        assert staged.subject_alt_names == "atomic.atlaso.internal\nalias.atlaso.internal"
         assert staged.ip_addresses == "192.168.50.25"
         assert staged.certificate_pem == ""
 
     issued_page = client.get("/certificate-authority")
     assert issued_page.status_code == 200
     with SessionLocal() as db:
-        issued = db.execute(select(CaCertificate).where(CaCertificate.common_name == "atomic.labfoundry.internal")).scalar_one()
+        issued = db.execute(select(CaCertificate).where(CaCertificate.common_name == "atomic.atlaso.internal")).scalar_one()
         assert issued.status == "issued"
         parsed = x509.load_pem_x509_certificate(issued.certificate_pem.encode("utf-8"))
-        assert parsed.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value == "atomic.labfoundry.internal"
+        assert parsed.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value == "atomic.atlaso.internal"
         sans = parsed.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
-        assert sans.get_values_for_type(x509.DNSName) == ["atomic.labfoundry.internal", "alias.labfoundry.internal"]
+        assert sans.get_values_for_type(x509.DNSName) == ["atomic.atlaso.internal", "alias.atlaso.internal"]
         assert [str(value) for value in sans.get_values_for_type(x509.IPAddress)] == ["192.168.50.25"]
         eku = parsed.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
         assert ExtendedKeyUsageOID.SERVER_AUTH in eku
@@ -6121,8 +6126,8 @@ def test_certificate_request_creation_is_atomic_and_issues_submitted_sans(client
 def test_certificate_request_creation_validates_profile_and_sans(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import CaCertificate, CaProfile
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate, CaProfile
 
     login(client)
     page = client.get("/certificate-authority")
@@ -6133,14 +6138,14 @@ def test_certificate_request_creation_validates_profile_and_sans(client):
 
     missing_profile = client.post(
         "/certificate-authority/certificates",
-        data={"csrf": csrf, "common_name": "missing-profile.labfoundry.internal", "profile_id": "", "enabled": "on"},
+        data={"csrf": csrf, "common_name": "missing-profile.atlaso.internal", "profile_id": "", "enabled": "on"},
     )
     assert missing_profile.status_code == 422
     assert missing_profile.json()["detail"] == "Select an enabled CA profile."
 
     missing_san = client.post(
         "/certificate-authority/certificates",
-        data={"csrf": csrf, "common_name": "missing-san.labfoundry.internal", "profile_id": str(profile_id), "enabled": "on"},
+        data={"csrf": csrf, "common_name": "missing-san.atlaso.internal", "profile_id": str(profile_id), "enabled": "on"},
     )
     assert missing_san.status_code == 422
     assert "requires at least one DNS name or IP SAN" in missing_san.json()["detail"]
@@ -6149,9 +6154,9 @@ def test_certificate_request_creation_validates_profile_and_sans(client):
         "/certificate-authority/certificates",
         data={
             "csrf": csrf,
-            "common_name": "invalid-ip.labfoundry.internal",
+            "common_name": "invalid-ip.atlaso.internal",
             "profile_id": str(profile_id),
-            "subject_alt_names": "invalid-ip.labfoundry.internal",
+            "subject_alt_names": "invalid-ip.atlaso.internal",
             "ip_addresses": "999.1.1.1",
             "enabled": "on",
         },
@@ -6167,9 +6172,9 @@ def test_certificate_request_creation_validates_profile_and_sans(client):
         "/certificate-authority/certificates",
         data={
             "csrf": csrf,
-            "common_name": "disabled-profile.labfoundry.internal",
+            "common_name": "disabled-profile.atlaso.internal",
             "profile_id": str(profile_id),
-            "subject_alt_names": "disabled-profile.labfoundry.internal",
+            "subject_alt_names": "disabled-profile.atlaso.internal",
             "enabled": "on",
         },
     )
@@ -6178,17 +6183,17 @@ def test_certificate_request_creation_validates_profile_and_sans(client):
 
     with SessionLocal() as db:
         names = set(db.execute(select(CaCertificate.common_name)).scalars().all())
-    assert "missing-profile.labfoundry.internal" not in names
-    assert "missing-san.labfoundry.internal" not in names
-    assert "invalid-ip.labfoundry.internal" not in names
-    assert "disabled-profile.labfoundry.internal" not in names
+    assert "missing-profile.atlaso.internal" not in names
+    assert "missing-san.atlaso.internal" not in names
+    assert "invalid-ip.atlaso.internal" not in names
+    assert "disabled-profile.atlaso.internal" not in names
 
 
 def test_certificate_request_editing_enforces_immutable_and_managed_boundaries(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import CaCertificate, CaProfile
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate, CaProfile
 
     login(client)
     page = client.get("/certificate-authority")
@@ -6196,17 +6201,17 @@ def test_certificate_request_editing_enforces_immutable_and_managed_boundaries(c
     with SessionLocal() as db:
         profile = db.execute(select(CaProfile).where(CaProfile.name == "VCF service TLS")).scalar_one()
         planned = CaCertificate(
-            common_name="planned.labfoundry.internal",
+            common_name="planned.atlaso.internal",
             profile_id=profile.id,
-            subject_alt_names="planned.labfoundry.internal",
+            subject_alt_names="planned.atlaso.internal",
             status="planned",
             serial_number="preserved",
             enabled=True,
         )
         issued = CaCertificate(
-            common_name="issued-immutable.labfoundry.internal",
+            common_name="issued-immutable.atlaso.internal",
             profile_id=profile.id,
-            subject_alt_names="issued-immutable.labfoundry.internal",
+            subject_alt_names="issued-immutable.atlaso.internal",
             status="issued",
             serial_number="10",
             certificate_pem="-----BEGIN CERTIFICATE-----\nimmutable\n-----END CERTIFICATE-----\n",
@@ -6214,9 +6219,9 @@ def test_certificate_request_editing_enforces_immutable_and_managed_boundaries(c
             enabled=True,
         )
         managed = CaCertificate(
-            common_name="managed-immutable.labfoundry.internal",
+            common_name="managed-immutable.atlaso.internal",
             profile_id=profile.id,
-            subject_alt_names="managed-immutable.labfoundry.internal",
+            subject_alt_names="managed-immutable.atlaso.internal",
             status="planned",
             managed_owner="test:https",
             enabled=True,
@@ -6232,9 +6237,9 @@ def test_certificate_request_editing_enforces_immutable_and_managed_boundaries(c
         f"/certificate-authority/certificates/{planned_id}/edit",
         data={
             "csrf": csrf,
-            "common_name": "planned-updated.labfoundry.internal",
+            "common_name": "planned-updated.atlaso.internal",
             "profile_id": str(profile_id),
-            "subject_alt_names": "planned-updated.labfoundry.internal",
+            "subject_alt_names": "planned-updated.atlaso.internal",
             "ip_addresses": "192.168.50.30",
             "description": "Updated before issue",
             "enabled": "on",
@@ -6249,9 +6254,9 @@ def test_certificate_request_editing_enforces_immutable_and_managed_boundaries(c
         f"/certificate-authority/certificates/{issued_id}/edit",
         data={
             "csrf": csrf,
-            "common_name": "changed.labfoundry.internal",
+            "common_name": "changed.atlaso.internal",
             "profile_id": str(profile_id),
-            "subject_alt_names": "changed.labfoundry.internal",
+            "subject_alt_names": "changed.atlaso.internal",
             "enabled": "on",
         },
     )
@@ -6269,12 +6274,12 @@ def test_certificate_request_editing_enforces_immutable_and_managed_boundaries(c
         planned = db.get(CaCertificate, planned_id)
         issued = db.get(CaCertificate, issued_id)
         managed = db.get(CaCertificate, managed_id)
-        assert planned.common_name == "planned-updated.labfoundry.internal"
+        assert planned.common_name == "planned-updated.atlaso.internal"
         assert planned.status == "planned"
         assert planned.serial_number == "preserved"
         assert planned.ip_addresses == "192.168.50.30"
-        assert issued.common_name == "issued-immutable.labfoundry.internal"
-        assert issued.subject_alt_names == "issued-immutable.labfoundry.internal"
+        assert issued.common_name == "issued-immutable.atlaso.internal"
+        assert issued.subject_alt_names == "issued-immutable.atlaso.internal"
         assert issued.fingerprint == "original-fingerprint"
         assert managed is not None
 
@@ -6283,21 +6288,21 @@ def test_certificate_authority_downloads_public_pems(client):
     login(client)
     root = client.get("/certificate-authority/downloads/root-ca.pem")
     assert root.status_code == 200
-    assert root.headers["content-disposition"] == 'attachment; filename="labfoundry-root-ca.pem"'
+    assert root.headers["content-disposition"] == 'attachment; filename="atlaso-root-ca.pem"'
     assert "BEGIN CERTIFICATE" in root.text
     assert "BEGIN PRIVATE KEY" not in root.text
 
     bundle = client.get("/certificate-authority/downloads/ca-bundle.pem")
     assert bundle.status_code == 200
-    assert bundle.headers["content-disposition"] == 'attachment; filename="labfoundry-ca-bundle.pem"'
+    assert bundle.headers["content-disposition"] == 'attachment; filename="atlaso-ca-bundle.pem"'
     assert "BEGIN CERTIFICATE" in bundle.text
 
 
 def test_public_ca_root_page_is_unauthenticated(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import ApplianceSettings, CaSettings, PhysicalInterface
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, CaSettings, PhysicalInterface
 
     with SessionLocal() as db:
         appliance_settings = db.execute(select(ApplianceSettings)).scalar_one()
@@ -6320,15 +6325,15 @@ def test_public_ca_root_page_is_unauthenticated(client):
 
     page = client.get("/ca")
     assert page.status_code == 200
-    assert "LabFoundry Certificate Authority" in page.text
+    assert "Atlaso Certificate Authority" in page.text
     assert "Photon appliance" in page.text
     assert 'class="brand" href="/"' in page.text
-    assert "LabFoundry Internal Root CA" in page.text
+    assert "Atlaso Internal Root CA" in page.text
     assert "abc123" in page.text
     assert "ca-fingerprint-block" in page.text
     assert 'data-copy-value="abc123"' in page.text
     assert "Copy fingerprint" in page.text
-    assert "ca.labfoundry.internal" in page.text
+    assert "ca.atlaso.internal" in page.text
     assert "/ca/downloads/root-ca.pem" in page.text
     assert 'href="/requests"' in page.text
     assert page.text.count('href="/requests"') == 1
@@ -6337,7 +6342,7 @@ def test_public_ca_root_page_is_unauthenticated(client):
     assert 'href="/ca/login"' in page.text
     assert "Trust Material" not in page.text
     assert "Appliance Information" not in page.text
-    assert "https://github.com/mdaneri/LabFoundry" in page.text
+    assert "https://github.com/mdaneri/Atlaso" in page.text
     assert 'href="https://192.168.167.10/"' in page.text
     assert ">Management<" in page.text
     assert 'href="https://192.168.167.10/api/docs"' in page.text
@@ -6350,18 +6355,18 @@ def test_public_ca_root_page_is_unauthenticated(client):
     login_page = client.get("/ca/login")
     assert login_page.status_code == 200
     assert "Sign in to user portal" in login_page.text
-    assert "Use your LabFoundry user account to continue." in login_page.text
+    assert "Use your Atlaso user account to continue." in login_page.text
     assert 'action="/ca/login"' in login_page.text
     assert 'name="next" value="/ca"' in login_page.text
     assert 'data-history-back' in login_page.text
     assert ">Cancel<" in login_page.text
     assert 'class="public-portal-shell"' in login_page.text
-    assert "https://github.com/mdaneri/LabFoundry" in login_page.text
+    assert "https://github.com/mdaneri/Atlaso" in login_page.text
     assert 'href="https://192.168.167.10/api/docs"' in login_page.text
     csrf = login_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     login_response = client.post(
         "/ca/login",
-        data={"username": "admin", "password": "labfoundry-admin", "csrf": csrf, "next": "/ca"},
+        data={"username": "admin", "password": "atlaso-admin", "csrf": csrf, "next": "/ca"},
         follow_redirects=False,
     )
     assert login_response.status_code == 303
@@ -6376,9 +6381,9 @@ def test_public_ca_root_page_is_unauthenticated(client):
     assert logout_response.status_code == 303
     assert logout_response.headers["location"] == "/ca"
 
-    ca_host_home = client.get("/", headers={"host": "ca.labfoundry.internal"})
+    ca_host_home = client.get("/", headers={"host": "ca.atlaso.internal"})
     assert ca_host_home.status_code == 200
-    assert "LabFoundry Public Services" in ca_host_home.text
+    assert "Atlaso Public Services" in ca_host_home.text
     assert "Certificate Authority" in ca_host_home.text
     assert 'class="public-portal-shell"' in ca_host_home.text
     assert 'class="app-shell"' not in ca_host_home.text
@@ -6387,13 +6392,13 @@ def test_public_ca_root_page_is_unauthenticated(client):
 
     ca_ip_home = client.get("/", headers={"host": "192.168.87.32"})
     assert ca_ip_home.status_code == 200
-    assert "LabFoundry Public Services" in ca_ip_home.text
+    assert "Atlaso Public Services" in ca_ip_home.text
     assert "Certificate Authority" in ca_ip_home.text
     assert "/ca/downloads/root-ca.pem" not in ca_ip_home.text
     assert "Appliance Information" not in ca_ip_home.text
     assert 'href="/ca/login"' in ca_ip_home.text
     assert ">Login<" in ca_ip_home.text
-    assert "https://github.com/mdaneri/LabFoundry" in ca_ip_home.text
+    assert "https://github.com/mdaneri/Atlaso" in ca_ip_home.text
     assert 'href="https://192.168.167.10/"' in ca_ip_home.text
     assert ">Management<" in ca_ip_home.text
     assert 'href="https://192.168.167.10/api/docs"' in ca_ip_home.text
@@ -6401,8 +6406,8 @@ def test_public_ca_root_page_is_unauthenticated(client):
     assert 'href="https://www.python.org/"' in ca_ip_home.text
     assert 'href="/requests"' not in ca_ip_home.text
     assert "Request certificate" not in ca_ip_home.text
-    assert ca_ip_home.text.index("https://github.com/mdaneri/LabFoundry") > ca_ip_home.text.index('href="/ca/login"')
-    assert ca_ip_home.text.index("https://github.com/mdaneri/LabFoundry") > ca_ip_home.text.index("Public Services")
+    assert ca_ip_home.text.index("https://github.com/mdaneri/Atlaso") > ca_ip_home.text.index('href="/ca/login"')
+    assert ca_ip_home.text.index("https://github.com/mdaneri/Atlaso") > ca_ip_home.text.index("Public Services")
     assert 'class="public-portal-shell"' in ca_ip_home.text
     assert 'class="app-shell"' not in ca_ip_home.text
     assert 'class="sidebar"' not in ca_ip_home.text
@@ -6410,7 +6415,7 @@ def test_public_ca_root_page_is_unauthenticated(client):
 
     ca_ipv6_home = client.get("/", headers={"host": "[fd00:87::32]"})
     assert ca_ipv6_home.status_code == 200
-    assert "LabFoundry Public Services" in ca_ipv6_home.text
+    assert "Atlaso Public Services" in ca_ipv6_home.text
     assert "Certificate Authority" in ca_ipv6_home.text
     assert "/certificate-authority" not in ca_ipv6_home.text
 
@@ -6427,9 +6432,9 @@ def test_public_ca_root_page_is_unauthenticated(client):
 def test_public_services_reject_terminal_listener_without_valid_management_https_certificate(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import ApplianceSettings, CaCertificate, PhysicalInterface
-    from labfoundry.app.ui import public_services_context
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, CaCertificate, PhysicalInterface
+    from atlaso.app.ui import public_services_context
 
     with SessionLocal() as db:
         appliance_settings = db.execute(select(ApplianceSettings)).scalar_one()
@@ -6463,8 +6468,8 @@ def test_public_services_reject_terminal_listener_without_valid_management_https
 def test_public_service_home_is_scoped_to_called_ip(client, tmp_path, monkeypatch):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import (
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import (
         ApplianceSettings,
         CaCertificate,
         CaSettings,
@@ -6509,14 +6514,14 @@ def test_public_service_home_is_scoped_to_called_ip(client, tmp_path, monkeypatc
         ca_settings.listen_address = "192.168.87.32"
         db.add(
             CaCertificate(
-                common_name="labfoundry.labfoundry.internal",
+                common_name="core.atlaso.internal",
                 status="issued",
                 certificate_pem="-----BEGIN CERTIFICATE-----\nterminal-leaf\n-----END CERTIFICATE-----\n",
                 private_key_encrypted="fernet:v1:test",
                 managed_owner="appliance:https",
-                cert_path="/etc/labfoundry/https/certs/labfoundry.labfoundry.internal.crt",
-                key_path="/etc/labfoundry/https/certs/labfoundry.labfoundry.internal.key",
-                chain_path="/etc/labfoundry/https/certs/labfoundry.labfoundry.internal-chain.pem",
+                cert_path="/etc/atlaso/https/certs/core.atlaso.internal.crt",
+                key_path="/etc/atlaso/https/certs/core.atlaso.internal.key",
+                chain_path="/etc/atlaso/https/certs/core.atlaso.internal-chain.pem",
             )
         )
 
@@ -6531,14 +6536,14 @@ def test_public_service_home_is_scoped_to_called_ip(client, tmp_path, monkeypatc
 
         registry_settings = db.execute(select(VcfPrivateRegistrySettings)).scalar_one()
         registry_settings.enabled = True
-        registry_settings.hostname = "registry.labfoundry.internal"
+        registry_settings.hostname = "registry.atlaso.internal"
         registry_settings.listen_interface = "eth3"
         registry_settings.listen_address = "192.168.88.32"
         registry_settings.port = 9443
 
         for key, value in {
             "esxi_pxe.boot.enabled": "true",
-            "esxi_pxe.boot.hostname": "esxi-pxe.labfoundry.internal",
+            "esxi_pxe.boot.hostname": "esxi-pxe.atlaso.internal",
             "esxi_pxe.boot.listen_interface": "eth2",
             "esxi_pxe.boot.listen_address": "192.168.87.32",
             "esxi_pxe.boot.http_port": "8081",
@@ -6553,30 +6558,30 @@ def test_public_service_home_is_scoped_to_called_ip(client, tmp_path, monkeypatc
 
     page = client.get("/", headers={"host": "192.168.87.32"})
     assert page.status_code == 200
-    assert "LabFoundry Public Services" in page.text
+    assert "Atlaso Public Services" in page.text
     assert "Certificate Authority" in page.text
     assert "VCF Offline Depot" in page.text
     assert "ESXi PXE" in page.text
     assert "Web Terminal" in page.text
     assert "Administrative appliance shell" in page.text
-    assert "ca.labfoundry.internal" in page.text
-    assert "depot.labfoundry.internal" in page.text
-    assert "esxi-pxe.labfoundry.internal" in page.text
+    assert "ca.atlaso.internal" in page.text
+    assert "depot.atlaso.internal" in page.text
+    assert "esxi-pxe.atlaso.internal" in page.text
     assert 'data-public-address-mode-toggle' in page.text
     assert 'data-public-address-mode-option="name" aria-pressed="true"' in page.text
     assert 'data-public-address-mode-option="ip" aria-pressed="false"' in page.text
-    assert 'href="https://ca.labfoundry.internal/ca"' in page.text
+    assert 'href="https://ca.atlaso.internal/ca"' in page.text
     assert 'data-ip-href="https://192.168.87.32/ca"' in page.text
-    assert 'href="https://depot.labfoundry.internal:8443/PROD/"' in page.text
+    assert 'href="https://depot.atlaso.internal:8443/PROD/"' in page.text
     assert 'data-ip-href="https://192.168.87.32:8443/PROD/"' in page.text
-    assert 'href="http://esxi-pxe.labfoundry.internal:8081/pxe/esxi/"' in page.text
+    assert 'href="http://esxi-pxe.atlaso.internal:8081/pxe/esxi/"' in page.text
     assert 'data-ip-href="http://192.168.87.32:8081/pxe/esxi/"' in page.text
     assert 'href="https://192.168.87.32/terminal"' in page.text
     assert 'data-ip-href="https://192.168.87.32/terminal"' in page.text
     assert "Appliance Information" not in page.text
     assert 'href="/ca/login"' in page.text
     assert ">Login<" in page.text
-    assert "https://github.com/mdaneri/LabFoundry" in page.text
+    assert "https://github.com/mdaneri/Atlaso" in page.text
     assert ">Management<" in page.text
     assert 'href="https://192.168.167.10/api/docs"' in page.text
     assert ">Swagger<" in page.text
@@ -6591,7 +6596,7 @@ def test_public_service_home_is_scoped_to_called_ip(client, tmp_path, monkeypatc
 
     ca_direct = client.get("/ca", headers={"host": "192.168.87.32"})
     assert ca_direct.status_code == 200
-    assert "LabFoundry Certificate Authority" in ca_direct.text
+    assert "Atlaso Certificate Authority" in ca_direct.text
     assert 'class="public-portal-shell"' in ca_direct.text
 
     requests_direct = client.get("/requests", headers={"host": "192.168.87.32"})
@@ -6619,12 +6624,12 @@ def test_public_service_home_is_scoped_to_called_ip(client, tmp_path, monkeypatc
     depot_login = client.get(depot_redirect.headers["location"], headers={"host": "192.168.87.32"})
     assert depot_login.status_code == 200
     assert "Sign in to user portal" in depot_login.text
-    assert "Use your LabFoundry user account to continue." in depot_login.text
+    assert "Use your Atlaso user account to continue." in depot_login.text
     assert ">Cancel<" in depot_login.text
     assert 'action="/PROD/login"' in depot_login.text
     assert 'name="next" value="/PROD/"' in depot_login.text
 
-    from labfoundry.app.adapters.system import AdapterResult
+    from atlaso.app.adapters.system import AdapterResult
 
     authentication_calls: list[str] = []
 
@@ -6634,12 +6639,12 @@ def test_public_service_home_is_scoped_to_called_ip(client, tmp_path, monkeypatc
         def authenticate_local_user(self, username: str, password: str) -> AdapterResult:
             authentication_calls.append(username)
             return AdapterResult(
-                command=["labfoundry-helper", "local-users", "authenticate", username],
+                command=["atlaso-helper", "local-users", "authenticate", username],
                 dry_run=False,
                 returncode=0 if username == "vcf-depot" and password == "Depot-user1!" else 1,
             )
 
-    monkeypatch.setattr("labfoundry.app.ui.SystemAdapter", DepotAuthenticationAdapter)
+    monkeypatch.setattr("atlaso.app.ui.SystemAdapter", DepotAuthenticationAdapter)
     depot_csrf = depot_login.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     depot_signed_in = client.post(
         "/PROD/login",
@@ -6670,7 +6675,7 @@ def test_public_service_home_is_scoped_to_called_ip(client, tmp_path, monkeypatc
     admin_signed_in = client.post(
         "/PROD/login",
         headers={"host": "192.168.87.32"},
-        data={"username": "admin", "password": "labfoundry-admin", "csrf": admin_csrf, "next": "/PROD/"},
+        data={"username": "admin", "password": "atlaso-admin", "csrf": admin_csrf, "next": "/PROD/"},
         follow_redirects=False,
     )
     assert admin_signed_in.status_code == 303
@@ -6713,14 +6718,14 @@ def test_public_service_home_is_scoped_to_called_ip(client, tmp_path, monkeypatc
     client.cookies.clear()
     basic_depot_browser = client.get(
         "/PROD/",
-        headers={"host": "192.168.87.32", "X-LabFoundry-Depot-Basic-User": "vcf-depot"},
+        headers={"host": "192.168.87.32", "X-Atlaso-Depot-Basic-User": "vcf-depot"},
         follow_redirects=False,
     )
     assert basic_depot_browser.status_code == 200
     assert "VCF Offline Depot" in basic_depot_browser.text
     basic_depot_head = client.head(
         "/PROD/",
-        headers={"host": "192.168.87.32", "X-LabFoundry-Depot-Basic-User": "vcf-depot"},
+        headers={"host": "192.168.87.32", "X-Atlaso-Depot-Basic-User": "vcf-depot"},
         follow_redirects=False,
     )
     assert basic_depot_head.status_code == 200
@@ -6757,7 +6762,7 @@ def test_public_service_home_is_scoped_to_called_ip(client, tmp_path, monkeypatc
     registry_page = client.get("/", headers={"host": "192.168.88.32"})
     assert registry_page.status_code == 200
     assert "VCF Private Registry" in registry_page.text
-    assert 'href="https://registry.labfoundry.internal:9443"' in registry_page.text
+    assert 'href="https://registry.atlaso.internal:9443"' in registry_page.text
     assert "Certificate Authority" not in registry_page.text
     assert "VCF Offline Depot" not in registry_page.text
     assert "Web Terminal" not in registry_page.text
@@ -6766,8 +6771,8 @@ def test_public_service_home_is_scoped_to_called_ip(client, tmp_path, monkeypatc
 def test_public_service_home_empty_state_for_non_management_ip(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import PhysicalInterface
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
 
     with SessionLocal() as db:
         eth2 = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == "eth2")).scalar_one()
@@ -6787,9 +6792,9 @@ def test_public_service_home_empty_state_for_non_management_ip(client):
 def test_certificate_operator_uses_request_page_without_console_access(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import CaCertificate, Role, User, utcnow
-    from labfoundry.app.security import roles_to_json
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate, Role, User, utcnow
+    from atlaso.app.security import roles_to_json
 
     with SessionLocal() as db:
         admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
@@ -6797,7 +6802,7 @@ def test_certificate_operator_uses_request_page_without_console_access(client):
         admin.roles_json = roles_to_json([Role.CERTIFICATE_OPERATOR.value])
         db.add(
             CaCertificate(
-                common_name="issued.labfoundry.internal",
+                common_name="issued.atlaso.internal",
                 status="issued",
                 serial_number="10",
                 certificate_pem="-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----\n",
@@ -6811,7 +6816,7 @@ def test_certificate_operator_uses_request_page_without_console_access(client):
     assert login_page.status_code == 200
     assert "Certificate Request Portal" in login_page.text
     assert "Sign in to user portal" in login_page.text
-    assert "Use your LabFoundry user account to continue." in login_page.text
+    assert "Use your Atlaso user account to continue." in login_page.text
     assert "Sign in to the appliance" not in login_page.text
     assert 'action="/requests/login"' in login_page.text
     assert 'action="/login"' not in login_page.text
@@ -6820,7 +6825,7 @@ def test_certificate_operator_uses_request_page_without_console_access(client):
     csrf = login_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     login_response = client.post(
         "/requests/login",
-        data={"username": "admin", "password": "labfoundry-admin", "csrf": csrf, "next": "/requests"},
+        data={"username": "admin", "password": "atlaso-admin", "csrf": csrf, "next": "/requests"},
         follow_redirects=False,
     )
     assert login_response.status_code == 303
@@ -6834,12 +6839,12 @@ def test_certificate_operator_uses_request_page_without_console_access(client):
     assert "Certificate Requests" in page.text
     assert "Submit Request" in page.text
     assert "CA Settings" not in page.text
-    assert "labfoundry-ca.json" not in page.text
+    assert "atlaso-ca.json" not in page.text
     assert "/certificate-authority" not in page.text
     with SessionLocal() as db:
-        issued = db.execute(select(CaCertificate).where(CaCertificate.common_name == "issued.labfoundry.internal")).scalar_one()
+        issued = db.execute(select(CaCertificate).where(CaCertificate.common_name == "issued.atlaso.internal")).scalar_one()
         certificate_id = issued.id
-    portal_page = client.get("/requests", headers={"host": "ca.labfoundry.internal"})
+    portal_page = client.get("/requests", headers={"host": "ca.atlaso.internal"})
     assert portal_page.status_code == 200
     assert "Certificate Request Portal" in portal_page.text
     assert 'class="brand" href="/"' in portal_page.text
@@ -6858,8 +6863,8 @@ def test_certificate_operator_uses_request_page_without_console_access(client):
         "/requests",
         data={
             "csrf": csrf,
-            "common_name": "operator-request.labfoundry.internal",
-            "subject_alt_names": "operator-request.labfoundry.internal",
+            "common_name": "operator-request.atlaso.internal",
+            "subject_alt_names": "operator-request.atlaso.internal",
             "description": "operator request",
         },
         follow_redirects=False,
@@ -6868,7 +6873,7 @@ def test_certificate_operator_uses_request_page_without_console_access(client):
     assert submitted.headers["location"] == "/requests"
 
     with SessionLocal() as db:
-        request_row = db.execute(select(CaCertificate).where(CaCertificate.common_name == "operator-request.labfoundry.internal")).scalar_one()
+        request_row = db.execute(select(CaCertificate).where(CaCertificate.common_name == "operator-request.atlaso.internal")).scalar_one()
         assert request_row.status == "planned"
 
     revoked = client.post(
@@ -6888,9 +6893,9 @@ def test_certificate_operator_uses_request_page_without_console_access(client):
 def test_certificate_operator_cannot_render_vcf_helper_dns_inventory(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Role, User
-    from labfoundry.app.security import roles_to_json
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Role, User
+    from atlaso.app.security import roles_to_json
 
     with SessionLocal() as db:
         admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
@@ -6907,24 +6912,24 @@ def test_certificate_operator_cannot_render_vcf_helper_dns_inventory(client):
 def test_ca_apply_payload_leaves_csr_private_key_empty():
     import json
 
-    from labfoundry.app.models import CaCertificate, CaSettings
-    from labfoundry.app.services.ca import render_ca_apply_payload
+    from atlaso.app.models import CaCertificate, CaSettings
+    from atlaso.app.services.ca import render_ca_apply_payload
 
     settings = CaSettings(
         enabled=True,
-        root_common_name="LabFoundry Test Root CA",
+        root_common_name="Atlaso Test Root CA",
         root_certificate_pem="-----BEGIN CERTIFICATE-----\nroot\n-----END CERTIFICATE-----\n",
-        storage_path="/etc/labfoundry/ca",
+        storage_path="/etc/atlaso/ca",
     )
     certificate = CaCertificate(
-        common_name="client-a.labfoundry.internal",
+        common_name="client-a.atlaso.internal",
         status="issued",
         certificate_pem="-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----\n",
         chain_pem="-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----\n",
         csr_text="-----BEGIN CERTIFICATE REQUEST-----\ncsr\n-----END CERTIFICATE REQUEST-----\n",
-        cert_path="/etc/labfoundry/ca/client-a.crt",
+        cert_path="/etc/atlaso/ca/client-a.crt",
         key_path="",
-        chain_path="/etc/labfoundry/ca/client-a-chain.pem",
+        chain_path="/etc/atlaso/ca/client-a-chain.pem",
         enabled=True,
     )
 
@@ -6937,8 +6942,8 @@ def test_ca_apply_payload_leaves_csr_private_key_empty():
 def test_certificate_authority_issues_encrypted_managed_certs_and_exports(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import CaCertificate, CaSettings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate, CaSettings
 
     with SessionLocal() as db:
         settings = db.execute(select(CaSettings)).scalar_one()
@@ -6979,8 +6984,8 @@ def test_certificate_authority_issues_encrypted_managed_certs_and_exports(client
 def test_kms_page_renders(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import ServiceState
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ServiceState
 
     login(client)
     with SessionLocal() as db:
@@ -6999,7 +7004,7 @@ def test_kms_page_renders(client):
     assert "kms-clients-table" in kms.text
     assert "vcf-management" in kms.text
     assert "vcf-sddc-manager-aes" in kms.text
-    assert "kms.labfoundry.internal" in kms.text
+    assert "kms.atlaso.internal" in kms.text
     assert "Listen interfaces" in kms.text
     assert "Listen addresses" in kms.text
     assert "service-bind-editor" in kms.text
@@ -7020,7 +7025,7 @@ def test_kms_page_renders(client):
     assert 'href="/dashboard#appliance-apply-review"' in kms.text
     assert "Review appliance changes" in kms.text
     assert "pykmip.conf" in kms.text
-    assert "/var/lib/labfoundry/kms/pykmip.db" in kms.text
+    assert "/var/lib/atlaso/kms/pykmip.db" in kms.text
     assert "<span>Database path</span>" not in kms.text
     assert "<span>Config path</span>" not in kms.text
     assert "<span>Client CA path</span>" in kms.text
@@ -7049,8 +7054,8 @@ def test_kms_page_renders(client):
 def test_kms_settings_autosave_returns_json(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DnsRecord
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord
 
     login(client)
     page = client.get("/kms")
@@ -7063,8 +7068,8 @@ def test_kms_settings_autosave_returns_json(client):
             "listen_interface": "eth2",
             "listen_address": "10.0.0.99",
             "port": "5696",
-            "hostname": "kms.labfoundry.internal",
-            "server_certificate": "rogue-kms.labfoundry.internal",
+            "hostname": "kms.atlaso.internal",
+            "server_certificate": "rogue-kms.atlaso.internal",
             "ca_certificate_path": "/tmp/rogue-client-ca.crt",
             "database_path": "/tmp/rogue-kms.db",
             "config_path": "/tmp/rogue-kms.conf",
@@ -7072,7 +7077,7 @@ def test_kms_settings_autosave_returns_json(client):
             "allow_register": "on",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 200
@@ -7080,22 +7085,22 @@ def test_kms_settings_autosave_returns_json(client):
     assert payload["status"] == "saved"
     assert payload["listen_address"] == "192.168.50.1"
     assert payload["listen_addresses"] == ["192.168.50.1"]
-    assert payload["server_certificate"] == "kms.labfoundry.internal"
+    assert payload["server_certificate"] == "kms.atlaso.internal"
     assert "KMS requires Certificate Authority to be enabled before activation." in payload["validation_errors"]
     refreshed = client.get("/kms")
     assert "enabled" in refreshed.text
     assert "/tmp/rogue-kms.db" not in refreshed.text
     assert "/tmp/rogue-kms.conf" not in refreshed.text
     assert "/tmp/rogue-client-ca.crt" not in refreshed.text
-    assert "/etc/labfoundry/ca/root.crt" in refreshed.text
-    assert "/var/lib/labfoundry/kms/pykmip.db" in refreshed.text
-    assert "/etc/labfoundry/kms/pykmip.conf" in refreshed.text
+    assert "/etc/atlaso/ca/root.crt" in refreshed.text
+    assert "/var/lib/atlaso/kms/pykmip.db" in refreshed.text
+    assert "/etc/atlaso/kms/pykmip.conf" in refreshed.text
     assert "10.0.0.99" not in refreshed.text
 
     with SessionLocal() as db:
-        record = db.execute(select(DnsRecord).where(DnsRecord.hostname == "kms.labfoundry.internal", DnsRecord.record_type == "CNAME")).scalar_one()
-        assert record.address == "kms-192-168-50-1.labfoundry.internal"
-        interface_record = db.execute(select(DnsRecord).where(DnsRecord.hostname == "kms-192-168-50-1.labfoundry.internal", DnsRecord.record_type == "A")).scalar_one()
+        record = db.execute(select(DnsRecord).where(DnsRecord.hostname == "kms.atlaso.internal", DnsRecord.record_type == "CNAME")).scalar_one()
+        assert record.address == "kms-192-168-50-1.atlaso.internal"
+        interface_record = db.execute(select(DnsRecord).where(DnsRecord.hostname == "kms-192-168-50-1.atlaso.internal", DnsRecord.record_type == "A")).scalar_one()
         assert interface_record.address == "192.168.50.1"
         assert "KMS/KMIP endpoint" in (interface_record.description or "")
 
@@ -7114,28 +7119,28 @@ def test_kms_settings_accept_multiple_listen_targets(client):
             "listen_interfaces": ["eth2", "eth0"],
             "listen_addresses": ["192.168.50.1", "192.168.49.1"],
             "port": "5696",
-            "hostname": "kms.labfoundry.internal",
-            "server_certificate": "kms.labfoundry.internal",
+            "hostname": "kms.atlaso.internal",
+            "server_certificate": "kms.atlaso.internal",
             "require_client_cert": "on",
             "allow_register": "on",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["listen_interfaces"] == ["eth2"]
     assert payload["listen_addresses"] == ["192.168.50.1"]
-    assert "# LabFoundry KMS listen interfaces: eth2" in payload["config_preview"]
-    assert "# LabFoundry KMS listen addresses: 192.168.50.1" in payload["config_preview"]
+    assert "# Atlaso KMS listen interfaces: eth2" in payload["config_preview"]
+    assert "# Atlaso KMS listen addresses: 192.168.50.1" in payload["config_preview"]
 
 
 def test_kms_enable_autocreates_ca_managed_certificate_rows(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import CaCertificate, CaSettings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate, CaSettings
 
     login(client)
     with SessionLocal() as db:
@@ -7152,13 +7157,13 @@ def test_kms_enable_autocreates_ca_managed_certificate_rows(client):
             "backend": "pykmip",
             "listen_interface": "eth2",
             "port": "5696",
-            "hostname": "kms.labfoundry.internal",
-            "server_certificate": "kms.labfoundry.internal",
+            "hostname": "kms.atlaso.internal",
+            "server_certificate": "kms.atlaso.internal",
             "require_client_cert": "on",
             "allow_register": "on",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 200
@@ -7169,15 +7174,15 @@ def test_kms_enable_autocreates_ca_managed_certificate_rows(client):
         client_cert = db.execute(select(CaCertificate).where(CaCertificate.managed_owner == "kms:client:vcf-management")).scalar_one()
         assert server_cert.status == "issued"
         assert server_cert.ip_addresses == "192.168.50.1"
-        assert server_cert.cert_path == "/etc/labfoundry/kms/certs/kms.labfoundry.internal.crt"
+        assert server_cert.cert_path == "/etc/atlaso/kms/certs/kms.atlaso.internal.crt"
         assert client_cert.status == "issued"
 
 
 def test_kms_apply_task_captures_current_desired_state(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DnsRecord, Job
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord, Job
 
     login(client)
     page = client.get("/kms")
@@ -7189,8 +7194,8 @@ def test_kms_apply_task_captures_current_desired_state(client):
     with SessionLocal() as db:
         job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()
         assert job.status == "succeeded"
-        assert "labfoundry-helper" in (job.result or "")
-        assert "/var/lib/labfoundry/apply/kms/pykmip.conf" in (job.result or "")
+        assert "atlaso-helper" in (job.result or "")
+        assert "/var/lib/atlaso/apply/kms/pykmip.conf" in (job.result or "")
         assert "pykmip" in (job.result or "")
         assert "vcf-sddc-manager-aes" in (job.result or "")
 
@@ -7200,10 +7205,10 @@ def test_vcf_backups_page_uses_local_user_for_sftp(client):
     page = client.get("/vcf-backups")
     assert page.status_code == 200
     assert "VCF Backup SFTP" in page.text
-    assert "Authentication uses one local LabFoundry user from Users" in page.text
+    assert "Authentication uses one local Atlaso user from Users" in page.text
     assert "SFTP user" in page.text
     assert "vcf-backup" in page.text
-    assert "/mnt/labfoundry-vcf-backups" in page.text
+    assert "/mnt/atlaso-vcf-backups" in page.text
     assert "/backups" in page.text
     assert 'action="/vcf-backups/settings"' in page.text
     assert 'data-autosave-status-id="vcf-backup-settings-status"' in page.text
@@ -7229,10 +7234,10 @@ def test_vcf_backups_page_uses_local_user_for_sftp(client):
 
 
 def test_vcf_backups_settings_badge_reflects_desired_state(client, monkeypatch):
-    from labfoundry.app.config import get_settings
+    from atlaso.app.config import get_settings
 
     login(client)
-    monkeypatch.setenv("LABFOUNDRY_DRY_RUN_SYSTEM_ADAPTERS", "false")
+    monkeypatch.setenv("ATLASO_DRY_RUN_SYSTEM_ADAPTERS", "false")
     get_settings.cache_clear()
 
     page = client.get("/vcf-backups")
@@ -7253,9 +7258,9 @@ def test_vcf_private_registry_page_models_harbor_and_bundle_relocation(client):
     assert "<h2>Harbor Settings</h2>" in page.text
     assert 'data-tab-target="vcf-registry-settings-panel"' not in page.text
     assert "<span>Config path</span>" not in page.text
-    assert "registry.labfoundry.internal" in page.text
+    assert "registry.atlaso.internal" in page.text
     assert "vcf-supervisor-services" in page.text
-    assert "/mnt/labfoundry-vcf-registry" in page.text
+    assert "/mnt/atlaso-vcf-registry" in page.text
     assert "Upload CA bundle" in page.text
     assert "Choose CA bundle" in page.text
     assert "file-upload-icon" in page.text
@@ -7265,7 +7270,7 @@ def test_vcf_private_registry_page_models_harbor_and_bundle_relocation(client):
     assert "Supervisor Service bundles" in page.text
     assert "Review appliance changes" in page.text
     assert "Review appliance changes" in page.text
-    assert "harbor_admin_password: &lt;provisioned-by-labfoundry-helper&gt;" in page.text
+    assert "harbor_admin_password: &lt;provisioned-by-atlaso-helper&gt;" in page.text
     assert "eth1 - access / trunk" not in page.text
     assert "eth2 - access / access / 192.168.50.1" in page.text
     assert "Listen addresses" in page.text
@@ -7284,8 +7289,8 @@ def test_vcf_private_registry_page_models_harbor_and_bundle_relocation(client):
 def test_vcf_private_registry_settings_autosave_bundle_status_api_and_apply_task(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DnsRecord, Job
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord, Job
 
     login(client)
     page = client.get("/vcf-private-registry")
@@ -7295,44 +7300,44 @@ def test_vcf_private_registry_settings_autosave_bundle_status_api_and_apply_task
         "/vcf-private-registry/settings",
         data={
             "enabled": "on",
-            "hostname": "registry.labfoundry.internal",
+            "hostname": "registry.atlaso.internal",
             "listen_interface": "eth2",
             "port": "443",
             "harbor_project": "vcf-supervisor-services",
-            "config_path": "/etc/labfoundry/harbor/harbor.yml",
-            "ca_bundle_path": "/etc/labfoundry/ca/ca-bundle.pem",
-            "server_certificate": "registry.labfoundry.internal",
+            "config_path": "/etc/atlaso/harbor/harbor.yml",
+            "ca_bundle_path": "/etc/atlaso/ca/ca-bundle.pem",
+            "server_certificate": "registry.atlaso.internal",
             "robot_account": "robot$vcf-supervisor-services",
             "relocation_dry_run": "on",
             "csrf": csrf,
         },
         files={"ca_bundle_file": ("registry-ca.pem", "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n", "application/x-pem-file")},
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     assert settings_response.status_code == 200
     assert settings_response.json()["status"] == "saved"
     assert settings_response.json()["listen_address"] == "192.168.50.1"
     assert settings_response.json()["listen_addresses"] == ["192.168.50.1"]
-    assert settings_response.json()["endpoint"] == "registry.labfoundry.internal"
+    assert settings_response.json()["endpoint"] == "registry.atlaso.internal"
     assert settings_response.json()["dns_record_action"] == "created"
     assert settings_response.json()["ca_bundle_source"] == "uploaded"
     assert settings_response.json()["ca_bundle_uploaded_name"] == "registry-ca.pem"
     assert settings_response.json()["ca_bundle_available"] is True
     assert settings_response.json()["validation_warnings"] == []
-    assert "hostname: registry.labfoundry.internal" in settings_response.json()["harbor_config_preview"]
-    assert "<provisioned-by-labfoundry-helper>" in settings_response.json()["harbor_config_preview"]
+    assert "hostname: registry.atlaso.internal" in settings_response.json()["harbor_config_preview"]
+    assert "<provisioned-by-atlaso-helper>" in settings_response.json()["harbor_config_preview"]
     with SessionLocal() as db:
         dns_record = db.execute(
             select(DnsRecord).where(
-                DnsRecord.hostname == "registry.labfoundry.internal",
+                DnsRecord.hostname == "registry.atlaso.internal",
                 DnsRecord.record_type == "CNAME",
             )
         ).scalar_one()
-        assert dns_record.address == "registry-192-168-50-1.labfoundry.internal"
+        assert dns_record.address == "registry-192-168-50-1.atlaso.internal"
         assert dns_record.enabled is True
         interface_record = db.execute(
             select(DnsRecord).where(
-                DnsRecord.hostname == "registry-192-168-50-1.labfoundry.internal",
+                DnsRecord.hostname == "registry-192-168-50-1.atlaso.internal",
                 DnsRecord.record_type == "A",
             )
         ).scalar_one()
@@ -7342,40 +7347,40 @@ def test_vcf_private_registry_settings_autosave_bundle_status_api_and_apply_task
         "/vcf-private-registry/settings",
         data={
             "enabled": "on",
-            "hostname": "registry.labfoundry.internal",
+            "hostname": "registry.atlaso.internal",
             "listen_interfaces_present": "1",
             "listen_addresses_present": "1",
             "listen_interfaces": ["eth2", "eth0"],
             "listen_addresses": ["192.168.50.1", "192.168.49.1"],
             "port": "443",
             "harbor_project": "vcf-supervisor-services",
-            "server_certificate": "registry.labfoundry.internal",
+            "server_certificate": "registry.atlaso.internal",
             "robot_account": "robot$vcf-supervisor-services",
             "relocation_dry_run": "on",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     assert multi_response.status_code == 200
     assert multi_response.json()["listen_interfaces"] == ["eth2"]
     assert multi_response.json()["listen_addresses"] == ["192.168.50.1"]
-    assert "labfoundry_listen_interfaces: ['eth2']" in multi_response.json()["harbor_config_preview"]
+    assert "atlaso_listen_interfaces: ['eth2']" in multi_response.json()["harbor_config_preview"]
 
     moved_response = client.post(
         "/vcf-private-registry/settings",
         data={
             "enabled": "on",
-            "hostname": "registry.labfoundry.internal",
+            "hostname": "registry.atlaso.internal",
             "listen_interface": "eth0",
             "port": "443",
             "harbor_project": "vcf-supervisor-services",
-            "ca_bundle_path": "/etc/labfoundry/ca/ca-bundle.pem",
-            "server_certificate": "registry.labfoundry.internal",
+            "ca_bundle_path": "/etc/atlaso/ca/ca-bundle.pem",
+            "server_certificate": "registry.atlaso.internal",
             "robot_account": "robot$vcf-supervisor-services",
             "relocation_dry_run": "on",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     assert moved_response.status_code == 200
     assert moved_response.json()["listen_interface"] == ""
@@ -7387,14 +7392,14 @@ def test_vcf_private_registry_settings_autosave_bundle_status_api_and_apply_task
     with SessionLocal() as db:
         dns_record = db.execute(
             select(DnsRecord).where(
-                DnsRecord.hostname == "registry.labfoundry.internal",
+                DnsRecord.hostname == "registry.atlaso.internal",
                 DnsRecord.record_type == "CNAME",
             )
         ).scalar_one_or_none()
         assert dns_record is None
         interface_record = db.execute(
             select(DnsRecord).where(
-                DnsRecord.hostname == "registry-192-168-50-1.labfoundry.internal",
+                DnsRecord.hostname == "registry-192-168-50-1.atlaso.internal",
                 DnsRecord.record_type == "A",
             )
         ).scalar_one_or_none()
@@ -7404,17 +7409,17 @@ def test_vcf_private_registry_settings_autosave_bundle_status_api_and_apply_task
         "/vcf-private-registry/settings",
         data={
             "enabled": "on",
-            "hostname": "registry.labfoundry.internal",
+            "hostname": "registry.atlaso.internal",
             "listen_interface": "eth2",
             "port": "443",
             "harbor_project": "vcf-supervisor-services",
-            "ca_bundle_path": "/etc/labfoundry/ca/ca-bundle.pem",
-            "server_certificate": "registry.labfoundry.internal",
+            "ca_bundle_path": "/etc/atlaso/ca/ca-bundle.pem",
+            "server_certificate": "registry.atlaso.internal",
             "robot_account": "robot$vcf-supervisor-services",
             "relocation_dry_run": "on",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     assert restore_response.status_code == 200
     assert restore_response.json()["listen_address"] == "192.168.50.1"
@@ -7436,13 +7441,13 @@ def test_vcf_private_registry_settings_autosave_bundle_status_api_and_apply_task
     refreshed = client.get("/vcf-private-registry")
     assert "sample-supervisor-service" in refreshed.text
     assert "imgpkg copy -b projects.registry.vmware.com/sample/supervisor-service:1.0.0" in refreshed.text
-    assert "registry.labfoundry.internal/vcf-supervisor-services/supervisor-service" in refreshed.text
+    assert "registry.atlaso.internal/vcf-supervisor-services/supervisor-service" in refreshed.text
 
     raw_token = create_api_token(client, ["read:vcf-registry"])
     status = client.get("/api/v1/vcf-private-registry/status", headers={"Authorization": f"Bearer {raw_token}"})
     assert status.status_code == 200
-    assert status.json()["hostname"] == "registry.labfoundry.internal"
-    assert status.json()["endpoint"] == "registry.labfoundry.internal"
+    assert status.json()["hostname"] == "registry.atlaso.internal"
+    assert status.json()["endpoint"] == "registry.atlaso.internal"
     assert status.json()["bundle_count"] == 1
 
     apply_response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "vcf_private_registry"})
@@ -7450,10 +7455,10 @@ def test_vcf_private_registry_settings_autosave_bundle_status_api_and_apply_task
     with SessionLocal() as db:
         job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()
         assert job.status == "succeeded"
-        assert "labfoundry-helper" in (job.result or "")
+        assert "atlaso-helper" in (job.result or "")
         assert "vcf-private-registry" in (job.result or "")
         assert "imgpkg copy" in (job.result or "")
-        assert "provisioned-by-labfoundry-helper" not in (job.result or "")
+        assert "provisioned-by-atlaso-helper" not in (job.result or "")
         assert "password123" not in (job.result or "").lower()
 
 
@@ -7477,15 +7482,15 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DnsRecord, Job, Setting, VcfDepotDownloadProfile
-    from labfoundry.app.services.vcf_offline_depot import (
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord, Job, Setting, VcfDepotDownloadProfile
+    from atlaso.app.services.vcf_offline_depot import (
         VCF_DEPOT_APPLICATION_PROPERTIES_CONTENT_KEY,
         VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY,
         VCF_DEPOT_TOKEN_VALUE_KEY,
     )
 
-    monkeypatch.setattr("labfoundry.app.ui.find_local_vcf_download_tool_archive", lambda: None)
+    monkeypatch.setattr("atlaso.app.ui.find_local_vcf_download_tool_archive", lambda: None)
 
     login(client)
     legacy = client.get("/https-repository", follow_redirects=False)
@@ -7582,11 +7587,11 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "not generated" not in page.text
     assert "<span>Tool file</span>" not in page.text
     assert 'data-vcf-depot-tool-name' not in page.text
-    assert 'data-tab-storage-key="labfoundry:vcf-offline-depot:active-tab"' not in page.text
-    assert "/mnt/labfoundry-vcf-offline-depot" in page.text
+    assert 'data-tab-storage-key="atlaso:vcf-offline-depot:active-tab"' not in page.text
+    assert "/mnt/atlaso-vcf-offline-depot" in page.text
     assert "Depot store volume" in page.text
     assert page.text.count("fixed-value-field") >= 1
-    assert "depot.labfoundry.internal" in page.text
+    assert "depot.atlaso.internal" in page.text
     assert "eth0 - management / access" not in page.text
     assert "eth1 - access / trunk" not in page.text
     assert "eth2 - access / access / 192.168.50.1" in page.text
@@ -7628,7 +7633,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "window.setInterval(refreshVcfDepotTasksTable, 2000)" in app_js.text
     assert "vcfDepotTasksRefreshPending" in app_js.text
     assert "openVcfDepotTaskLog" in app_js.text
-    assert 'window.Prism.languages["labfoundry-log"]' in app_js.text
+    assert 'window.Prism.languages["atlaso-log"]' in app_js.text
     assert "window.Prism.highlightElement(content)" in app_js.text
     new_profile_js = app_js.text.split("function newVcfDepotProfileRow", 1)[1].split("function ", 1)[0]
     assert "enabled: false" in new_profile_js
@@ -7723,7 +7728,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert ".vcfdt-tool-manager" in app_css.text
     assert ".compact-file-upload" in app_css.text
     assert 'software-depot-id-value' in page.text
-    assert 'data-codemirror-editor data-codemirror-language="labfoundry-hosts" data-vcf-depot-properties-textarea' in page.text
+    assert 'data-codemirror-editor data-codemirror-language="atlaso-hosts" data-vcf-depot-properties-textarea' in page.text
 
     archive_path = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
     make_vcfdt_archive(archive_path)
@@ -7742,7 +7747,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
         "/vcf-offline-depot/settings",
         data={
             "enabled": "on",
-            "hostname": "depot.labfoundry.internal",
+            "hostname": "depot.atlaso.internal",
             "listen_interface": "eth2",
             "port": "443",
             "http_user_id": depot_user_id,
@@ -7752,15 +7757,15 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
             "tool_archive_file": ("vcf-download-tool-9.1.0.test.tar.gz", archive_path.read_bytes(), "application/gzip"),
             "download_token_file": ("download-token.txt", "super-secret-token", "text/plain"),
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "saved"
     assert payload["listen_address"] == "192.168.50.1"
     assert payload["listen_addresses"] == ["192.168.50.1"]
-    assert payload["endpoint"] == "depot.labfoundry.internal"
-    assert payload["server_certificate"] == "depot.labfoundry.internal"
+    assert payload["endpoint"] == "depot.atlaso.internal"
+    assert payload["server_certificate"] == "depot.atlaso.internal"
     assert payload["http_username"] == "vcf-depot"
     assert payload["allow_unauthenticated_access"] is False
     assert payload["vmware_ceip_enabled"] is False
@@ -7771,22 +7776,22 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert payload["software_depot_id_error"] == ""
     assert payload["download_token_present"] is True
     assert payload["application_properties_present"] is True
-    assert payload["application_properties_source"] == "LabFoundry default"
+    assert payload["application_properties_source"] == "Atlaso default"
     assert payload["valid"] is True
     assert payload["dns_record_action"] == "created"
     assert "listen 192.168.50.1:443 ssl;" in payload["https_config_preview"]
     assert 'auth_basic "VCF Offline Depot";' in payload["https_config_preview"]
-    assert "auth_basic_user_file /etc/labfoundry/nginx/htpasswd/vcf-offline-depot.htpasswd;" in payload["https_config_preview"]
+    assert "auth_basic_user_file /etc/atlaso/nginx/htpasswd/vcf-offline-depot.htpasswd;" in payload["https_config_preview"]
     assert "satisfy any;" in payload["https_config_preview"]
-    assert "auth_request /_labfoundry_depot_auth;" in payload["https_config_preview"]
-    assert "error_page 401 = /_labfoundry_depot_login;" in payload["https_config_preview"]
+    assert "auth_request /_atlaso_depot_auth;" in payload["https_config_preview"]
+    assert "error_page 401 = /_atlaso_depot_login;" in payload["https_config_preview"]
     assert "proxy_pass http://127.0.0.1:8000/PROD/auth-failure;" in payload["https_config_preview"]
     assert "location = /PROD/" in payload["https_config_preview"]
     assert "location ~ ^/PROD/(?!login$|logout$|auth-check$)(.+[^/])$" in payload["https_config_preview"]
-    assert "alias /mnt/labfoundry-vcf-offline-depot/PROD/$1;" in payload["https_config_preview"]
+    assert "alias /mnt/atlaso-vcf-offline-depot/PROD/$1;" in payload["https_config_preview"]
     assert "autoindex off;" in payload["https_config_preview"]
-    assert "root /mnt/labfoundry-vcf-offline-depot;" not in payload["https_config_preview"]
-    assert "--depot-store=/mnt/labfoundry-vcf-offline-depot" in payload["command_preview"]
+    assert "root /mnt/atlaso-vcf-offline-depot;" not in payload["https_config_preview"]
+    assert "--depot-store=/mnt/atlaso-vcf-offline-depot" in payload["command_preview"]
     assert "super-secret-token" not in response.text
     assert "archive.example.test" not in response.text
 
@@ -7794,7 +7799,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
         "/vcf-offline-depot/settings",
         data={
             "enabled": "on",
-            "hostname": "depot.labfoundry.internal",
+            "hostname": "depot.atlaso.internal",
             "listen_interfaces_present": "1",
             "listen_addresses_present": "1",
             "listen_interfaces": ["eth0", "eth2"],
@@ -7803,7 +7808,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
             "allow_unauthenticated_access": "on",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     assert multi_response.status_code == 200
     multi_payload = multi_response.json()
@@ -7820,19 +7825,19 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
         software_id = db.execute(select(Setting).where(Setting.key == VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY)).scalar_one_or_none()
         dns_record = db.execute(
             select(DnsRecord).where(
-                DnsRecord.hostname == "depot.labfoundry.internal",
+                DnsRecord.hostname == "depot.atlaso.internal",
                 DnsRecord.record_type == "CNAME",
             )
         ).scalar_one()
         interface_record = db.execute(
             select(DnsRecord).where(
-                DnsRecord.hostname == "depot-192-168-50-1.labfoundry.internal",
+                DnsRecord.hostname == "depot-192-168-50-1.atlaso.internal",
                 DnsRecord.record_type == "A",
             )
         ).scalar_one()
         assert token_secret.value == "super-secret-token"
         assert software_id is None
-        assert dns_record.address == "depot-192-168-50-1.labfoundry.internal"
+        assert dns_record.address == "depot-192-168-50-1.atlaso.internal"
         assert dns_record.enabled is True
         assert interface_record.address == "192.168.50.1"
 
@@ -7840,18 +7845,18 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
         "/vcf-offline-depot/settings",
         data={
             "enabled": "on",
-            "hostname": "offline-depot.labfoundry.internal",
+            "hostname": "offline-depot.atlaso.internal",
             "listen_interface": "eth2",
             "port": "443",
             "http_user_id": depot_user_id,
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     assert moved_response.status_code == 200
     moved_payload = moved_response.json()
-    assert moved_payload["hostname"] == "offline-depot.labfoundry.internal"
-    assert moved_payload["server_certificate"] == "offline-depot.labfoundry.internal"
+    assert moved_payload["hostname"] == "offline-depot.atlaso.internal"
+    assert moved_payload["server_certificate"] == "offline-depot.atlaso.internal"
     assert moved_payload["vmware_ceip_enabled"] is False
     assert moved_payload["listen_address"] == "192.168.50.1"
     assert moved_payload["valid"] is True
@@ -7860,31 +7865,31 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     with SessionLocal() as db:
         old_dns_record = db.execute(
             select(DnsRecord).where(
-                DnsRecord.hostname == "depot.labfoundry.internal",
+                DnsRecord.hostname == "depot.atlaso.internal",
                 DnsRecord.record_type == "CNAME",
             )
         ).scalar_one_or_none()
         new_dns_record = db.execute(
             select(DnsRecord).where(
-                DnsRecord.hostname == "offline-depot.labfoundry.internal",
+                DnsRecord.hostname == "offline-depot.atlaso.internal",
                 DnsRecord.record_type == "CNAME",
             )
         ).scalar_one()
         old_interface_record = db.execute(
             select(DnsRecord).where(
-                DnsRecord.hostname == "depot-192-168-50-1.labfoundry.internal",
+                DnsRecord.hostname == "depot-192-168-50-1.atlaso.internal",
                 DnsRecord.record_type == "A",
             )
         ).scalar_one_or_none()
         new_interface_record = db.execute(
             select(DnsRecord).where(
-                DnsRecord.hostname == "offline-depot-192-168-50-1.labfoundry.internal",
+                DnsRecord.hostname == "offline-depot-192-168-50-1.atlaso.internal",
                 DnsRecord.record_type == "A",
             )
         ).scalar_one()
         assert old_dns_record is None
         assert old_interface_record is None
-        assert new_dns_record.address == "offline-depot-192-168-50-1.labfoundry.internal"
+        assert new_dns_record.address == "offline-depot-192-168-50-1.atlaso.internal"
         assert new_interface_record.address == "192.168.50.1"
 
     properties_response = client.post(
@@ -7893,7 +7898,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
             "application_properties": "spring.profiles.active=depot\nlcm.depot.adapter.host=stage.example.test\nactivation.code=secret-activation-property\n",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     assert properties_response.status_code == 200
     properties_payload = properties_response.json()
@@ -7908,7 +7913,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     raw_token = create_api_token(client, ["read:repository"])
     status = client.get("/api/v1/vcf-offline-depot/status", headers={"Authorization": f"Bearer {raw_token}"})
     assert status.status_code == 200
-    assert status.json()["hostname"] == "offline-depot.labfoundry.internal"
+    assert status.json()["hostname"] == "offline-depot.atlaso.internal"
     assert status.json()["tool_archive_name"] == "vcf-download-tool-9.1.0.test.tar.gz"
     assert status.json()["software_depot_id"] == ""
     assert status.json()["software_depot_id_error"] == ""
@@ -7929,7 +7934,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     with SessionLocal() as db:
         job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()
         assert job.status == "succeeded"
-        assert "labfoundry-helper" in (job.result or "")
+        assert "atlaso-helper" in (job.result or "")
         assert "vcf-offline-depot" in (job.result or "")
         assert "stage-tool" in (job.result or "")
         assert "generate-software-depot-id" in (job.result or "")
@@ -7943,10 +7948,10 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
 def test_vcf_offline_depot_upload_rejects_malformed_archive_before_saving(client, monkeypatch):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import VcfOfflineDepotSettings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import VcfOfflineDepotSettings
 
-    monkeypatch.setattr("labfoundry.app.ui.find_local_vcf_download_tool_archive", lambda: None)
+    monkeypatch.setattr("atlaso.app.ui.find_local_vcf_download_tool_archive", lambda: None)
 
     login(client)
     page = client.get("/vcf-offline-depot")
@@ -7955,7 +7960,7 @@ def test_vcf_offline_depot_upload_rejects_malformed_archive_before_saving(client
     response = client.post(
         "/vcf-offline-depot/settings",
         data={
-            "hostname": "depot.labfoundry.internal",
+            "hostname": "depot.atlaso.internal",
             "listen_interface": "eth2",
             "port": "443",
             "csrf": csrf,
@@ -7963,7 +7968,7 @@ def test_vcf_offline_depot_upload_rejects_malformed_archive_before_saving(client
         files={
             "tool_archive_file": ("vcf-download-tool-9.1.0.test.tar.gz", b"\x1f\x8b\x08\x00truncated", "application/gzip"),
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 400
@@ -7975,10 +7980,10 @@ def test_vcf_offline_depot_upload_rejects_malformed_archive_before_saving(client
 
 
 def test_vcf_offline_depot_tool_upload_marks_apply_pending_without_profiles(client, tmp_path, monkeypatch):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.ui import appliance_apply_status, appliance_apply_units, update_appliance_apply_baselines
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.ui import appliance_apply_status, appliance_apply_units, update_appliance_apply_baselines
 
-    monkeypatch.setattr("labfoundry.app.ui.find_local_vcf_download_tool_archive", lambda: None)
+    monkeypatch.setattr("atlaso.app.ui.find_local_vcf_download_tool_archive", lambda: None)
 
     login(client)
     with SessionLocal() as db:
@@ -7995,7 +8000,7 @@ def test_vcf_offline_depot_tool_upload_marks_apply_pending_without_profiles(clie
     response = client.post(
         "/vcf-offline-depot/settings",
         data={
-            "hostname": "depot.labfoundry.internal",
+            "hostname": "depot.atlaso.internal",
             "listen_interface": "eth2",
             "port": "443",
             "csrf": csrf,
@@ -8003,7 +8008,7 @@ def test_vcf_offline_depot_tool_upload_marks_apply_pending_without_profiles(clie
         files={
             "tool_archive_file": ("vcf-download-tool-9.1.0.test.tar.gz", archive_path.read_bytes(), "application/gzip"),
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 200
@@ -8020,12 +8025,12 @@ def test_vcf_offline_depot_tool_upload_marks_apply_pending_without_profiles(clie
 
 
 def test_vcf_offline_depot_generation_timestamp_does_not_reopen_apply_unit(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.services.vcf_offline_depot import (
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.vcf_offline_depot import (
         VCF_DEPOT_SOFTWARE_DEPOT_ID_GENERATED_AT_KEY,
         VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY,
     )
-    from labfoundry.app.ui import appliance_apply_units, set_setting_value, update_appliance_apply_baselines
+    from atlaso.app.ui import appliance_apply_units, set_setting_value, update_appliance_apply_baselines
 
     with SessionLocal() as db:
         set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY, "generated-depot-id")
@@ -8047,10 +8052,10 @@ def test_vcf_offline_depot_generation_timestamp_does_not_reopen_apply_unit(clien
 def test_vcf_offline_depot_apply_stages_tool_without_download_profiles(client, tmp_path, monkeypatch):
     from sqlalchemy import delete, select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, VcfDepotDownloadProfile
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, VcfDepotDownloadProfile
 
-    monkeypatch.setattr("labfoundry.app.ui.find_local_vcf_download_tool_archive", lambda: None)
+    monkeypatch.setattr("atlaso.app.ui.find_local_vcf_download_tool_archive", lambda: None)
 
     archive_path = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
     make_vcfdt_archive(archive_path)
@@ -8064,7 +8069,7 @@ def test_vcf_offline_depot_apply_stages_tool_without_download_profiles(client, t
         "/vcf-offline-depot/settings",
         data={
             "enabled": "on",
-            "hostname": "depot.labfoundry.internal",
+            "hostname": "depot.atlaso.internal",
             "listen_interface": "eth2",
             "port": "443",
             "allow_unauthenticated_access": "on",
@@ -8073,7 +8078,7 @@ def test_vcf_offline_depot_apply_stages_tool_without_download_profiles(client, t
         files={
             "tool_archive_file": ("vcf-download-tool-9.1.0.test.tar.gz", archive_path.read_bytes(), "application/gzip"),
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     assert response.status_code == 200
     assert response.json()["valid"] is True
@@ -8094,8 +8099,8 @@ def test_vcf_offline_depot_apply_stages_tool_without_download_profiles(client, t
 def test_vcf_offline_depot_apply_can_disable_https_without_vcfdt_tool_steps(client, tmp_path):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, VcfDepotDownloadProfile, VcfOfflineDepotSettings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, VcfDepotDownloadProfile, VcfOfflineDepotSettings
 
     archive_path = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
     make_vcfdt_archive(archive_path)
@@ -8135,9 +8140,9 @@ def test_vcf_offline_depot_tool_reset_can_preserve_or_clear_configuration(client
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, Setting, VcfOfflineDepotSettings
-    from labfoundry.app.services.vcf_offline_depot import (
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, Setting, VcfOfflineDepotSettings
+    from atlaso.app.services.vcf_offline_depot import (
         VCF_DEPOT_APPLICATION_PROPERTIES_CONTENT_KEY,
         VCF_DEPOT_APPLICATION_PROPERTIES_SOURCE_KEY,
         VCF_DEPOT_APPLICATION_PROPERTIES_UPDATED_AT_KEY,
@@ -8151,7 +8156,7 @@ def test_vcf_offline_depot_tool_reset_can_preserve_or_clear_configuration(client
         VCF_DEPOT_TOKEN_VALUE_KEY,
     )
 
-    monkeypatch.setattr("labfoundry.app.ui.find_local_vcf_download_tool_archive", lambda: None)
+    monkeypatch.setattr("atlaso.app.ui.find_local_vcf_download_tool_archive", lambda: None)
 
     archive_path = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
     make_vcfdt_archive(archive_path)
@@ -8161,16 +8166,16 @@ def test_vcf_offline_depot_tool_reset_can_preserve_or_clear_configuration(client
 
     upload = client.post(
         "/vcf-offline-depot/settings",
-        data={"hostname": "depot.labfoundry.internal", "listen_interface": "eth2", "port": "443", "csrf": csrf},
+        data={"hostname": "depot.atlaso.internal", "listen_interface": "eth2", "port": "443", "csrf": csrf},
         files={"tool_archive_file": ("vcf-download-tool-9.1.0.test.tar.gz", archive_path.read_bytes(), "application/gzip")},
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     assert upload.status_code == 200
     assert upload.json()["tool_archive_name"] == "vcf-download-tool-9.1.0.test.tar.gz"
     credential = client.post(
         "/vcf-offline-depot/credentials",
         data={"credential_type": "download_token", "credential_text": "reset-me", "csrf": csrf},
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     assert credential.status_code == 200
 
@@ -8182,7 +8187,7 @@ def test_vcf_offline_depot_tool_reset_can_preserve_or_clear_configuration(client
     properties = client.post(
         "/vcf-offline-depot/application-properties",
         data={"csrf": csrf, "application_properties": "spring.profiles.active=depot\ncustom.setting=true\n"},
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     assert properties.status_code == 200
     with SessionLocal() as db:
@@ -8225,9 +8230,9 @@ def test_vcf_offline_depot_tool_reset_can_preserve_or_clear_configuration(client
 
     upload_again = client.post(
         "/vcf-offline-depot/settings",
-        data={"hostname": "depot.labfoundry.internal", "listen_interface": "eth2", "port": "443", "csrf": csrf},
+        data={"hostname": "depot.atlaso.internal", "listen_interface": "eth2", "port": "443", "csrf": csrf},
         files={"tool_archive_file": ("vcf-download-tool-9.1.0.test.tar.gz", archive_path.read_bytes(), "application/gzip")},
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     assert upload_again.status_code == 200
 
@@ -8249,11 +8254,11 @@ def test_vcf_offline_depot_tool_reset_can_preserve_or_clear_configuration(client
 def test_vcf_offline_depot_without_tool_clears_stale_credential_state(client, monkeypatch):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Setting
-    from labfoundry.app.services.vcf_offline_depot import VCF_DEPOT_TOKEN_NAME_KEY, VCF_DEPOT_TOKEN_VALUE_KEY
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Setting
+    from atlaso.app.services.vcf_offline_depot import VCF_DEPOT_TOKEN_NAME_KEY, VCF_DEPOT_TOKEN_VALUE_KEY
 
-    monkeypatch.setattr("labfoundry.app.ui.find_local_vcf_download_tool_archive", lambda: None)
+    monkeypatch.setattr("atlaso.app.ui.find_local_vcf_download_tool_archive", lambda: None)
     with SessionLocal() as db:
         db.add_all(
             [
@@ -8277,10 +8282,10 @@ def test_vcf_offline_depot_without_tool_clears_stale_credential_state(client, mo
 def test_vcf_offline_depot_profiles_cannot_enable_without_installed_tool(client, monkeypatch):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import VcfDepotDownloadProfile
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import VcfDepotDownloadProfile
 
-    monkeypatch.setattr("labfoundry.app.ui.find_local_vcf_download_tool_archive", lambda: None)
+    monkeypatch.setattr("atlaso.app.ui.find_local_vcf_download_tool_archive", lambda: None)
     login(client)
     page = client.get("/vcf-offline-depot")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -8298,7 +8303,7 @@ def test_vcf_offline_depot_profiles_cannot_enable_without_installed_tool(client,
 
 
 def test_vcf_offline_depot_active_log_moves_to_named_task_log(tmp_path, monkeypatch):
-    from labfoundry.app import ui
+    from atlaso.app import ui
 
     active_log = tmp_path / "active-tool" / "log" / "vdt.log"
     task_logs = tmp_path / "task-logs"
@@ -8317,8 +8322,8 @@ def test_vcf_offline_depot_active_log_moves_to_named_task_log(tmp_path, monkeypa
 def test_vcf_offline_depot_appliance_requires_staged_and_active_tool(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
-    from labfoundry.app import ui
-    from labfoundry.app.models import VcfOfflineDepotSettings
+    from atlaso.app import ui
+    from atlaso.app.models import VcfOfflineDepotSettings
 
     runtime_dir = tmp_path / "active-tool"
     runtime_binary = runtime_dir / "bin" / "vcf-download-tool"
@@ -8338,23 +8343,23 @@ def test_vcf_offline_depot_accepts_pasted_download_token_and_activation_code(cli
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Setting
-    from labfoundry.app.services.vcf_offline_depot import (
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Setting
+    from atlaso.app.services.vcf_offline_depot import (
         VCF_DEPOT_ACTIVATION_NAME_KEY,
         VCF_DEPOT_ACTIVATION_VALUE_KEY,
         VCF_DEPOT_TOKEN_NAME_KEY,
         VCF_DEPOT_TOKEN_VALUE_KEY,
     )
-    from labfoundry.app.ui import vcf_depot_secret_snapshot, vcf_offline_depot_context
+    from atlaso.app.ui import vcf_depot_secret_snapshot, vcf_offline_depot_context
 
     runtime_log = tmp_path / "active-tool" / "log" / "vdt.log"
     runtime_token = tmp_path / "active-tool" / "secrets" / "download-token.txt"
     runtime_activation = tmp_path / "active-tool" / "secrets" / "activation-code.txt"
     tool_archive = tmp_path / "vcf-download-tool-9.0.0.tar.gz"
     tool_archive.write_bytes(b"test archive")
-    monkeypatch.setattr("labfoundry.app.ui.VCF_DEPOT_VDT_LOG_PATH", PurePosixPath(runtime_log.as_posix()))
-    monkeypatch.setattr("labfoundry.app.ui.find_local_vcf_download_tool_archive", lambda: tool_archive)
+    monkeypatch.setattr("atlaso.app.ui.VCF_DEPOT_VDT_LOG_PATH", PurePosixPath(runtime_log.as_posix()))
+    monkeypatch.setattr("atlaso.app.ui.find_local_vcf_download_tool_archive", lambda: tool_archive)
 
     login(client)
     page = client.get("/vcf-offline-depot")
@@ -8363,7 +8368,7 @@ def test_vcf_offline_depot_accepts_pasted_download_token_and_activation_code(cli
     response = client.post(
         "/vcf-offline-depot/credentials",
         data={"credential_type": "download_token", "credential_text": "pasted-secret-token", "csrf": csrf},
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 200
@@ -8386,7 +8391,7 @@ def test_vcf_offline_depot_accepts_pasted_download_token_and_activation_code(cli
         "/vcf-offline-depot/credentials",
         data={"credential_type": "download_token", "credential_text": "", "csrf": csrf},
         files={"credential_file": ("download-token.txt", "uploaded-secret-token", "text/plain")},
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     assert upload_response.status_code == 200
     upload_payload = upload_response.json()
@@ -8410,7 +8415,7 @@ def test_vcf_offline_depot_accepts_pasted_download_token_and_activation_code(cli
     activation_response = client.post(
         "/vcf-offline-depot/credentials",
         data={"credential_type": "activation_code", "credential_text": "pasted-secret-activation-code", "csrf": csrf},
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     assert activation_response.status_code == 200
     activation_payload = activation_response.json()
@@ -8430,7 +8435,7 @@ def test_vcf_offline_depot_accepts_pasted_download_token_and_activation_code(cli
         "/vcf-offline-depot/credentials",
         data={"credential_type": "activation_code", "credential_text": "", "csrf": csrf},
         files={"credential_file": ("activation-code.txt", "uploaded-secret-activation-code", "text/plain")},
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     assert activation_upload_response.status_code == 200
     activation_upload_payload = activation_upload_response.json()
@@ -8461,9 +8466,9 @@ def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path):
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, Setting, VcfDepotDownloadProfile, VcfOfflineDepotSettings
-    from labfoundry.app.services.vcf_offline_depot import (
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, Setting, VcfDepotDownloadProfile, VcfOfflineDepotSettings
+    from atlaso.app.services.vcf_offline_depot import (
         VCF_DEPOT_TOKEN_NAME_KEY,
         VCF_DEPOT_TOKEN_VALUE_KEY,
     )
@@ -8514,7 +8519,7 @@ def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path):
     response = client.post(
         f"/vcf-offline-depot/profiles/{profile_id}/download",
         data={"csrf": csrf},
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 200
@@ -8523,17 +8528,17 @@ def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path):
     assert payload["profile_name"] == "vcf-install"
     assert payload["profile_status"] == "ready"
     assert payload["dry_run"] is False
-    assert payload["log_path"] == f"/var/lib/labfoundry/vcfDownloadTool/task-logs/{payload['job_id']}-vcf-install.log"
+    assert payload["log_path"] == f"/var/lib/atlaso/vcfDownloadTool/task-logs/{payload['job_id']}-vcf-install.log"
     assert len(payload["commands"]) == 1
-    assert payload["commands"][0]["command"][0] == "/var/lib/labfoundry/vcfDownloadTool/active-tool/bin/vcf-download-tool"
+    assert payload["commands"][0]["command"][0] == "/var/lib/atlaso/vcfDownloadTool/active-tool/bin/vcf-download-tool"
     assert payload["commands"][0]["command"][1:3] == ["binaries", "download"]
-    assert "--depot-download-token-file=/var/lib/labfoundry/vcfDownloadTool/active-tool/secrets/download-token.txt" in payload["commands"][0]["command"]
+    assert "--depot-download-token-file=/var/lib/atlaso/vcfDownloadTool/active-tool/secrets/download-token.txt" in payload["commands"][0]["command"]
     assert "manual-secret-token" not in response.text
 
     concurrent_response = client.post(
         f"/vcf-offline-depot/profiles/{profile_id}/download",
         data={"csrf": csrf},
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     assert concurrent_response.status_code == 409
     assert payload["job_id"] in concurrent_response.json()["detail"]
@@ -8553,9 +8558,9 @@ def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path):
         assert job.status == "pending"
         assert '"profile_name": "vcf-install"' in (job.result or "")
         assert '"dry_run": false' in (job.result or "")
-        assert f'"log_path": "/var/lib/labfoundry/vcfDownloadTool/task-logs/{job.id}-vcf-install.log"' in (job.result or "")
-        assert "/var/lib/labfoundry/vcfDownloadTool/active-tool/bin/vcf-download-tool" in (job.result or "")
-        assert "--depot-download-token-file=/var/lib/labfoundry/vcfDownloadTool/active-tool/secrets/download-token.txt" in (job.result or "")
+        assert f'"log_path": "/var/lib/atlaso/vcfDownloadTool/task-logs/{job.id}-vcf-install.log"' in (job.result or "")
+        assert "/var/lib/atlaso/vcfDownloadTool/active-tool/bin/vcf-download-tool" in (job.result or "")
+        assert "--depot-download-token-file=/var/lib/atlaso/vcfDownloadTool/active-tool/secrets/download-token.txt" in (job.result or "")
         assert "manual-secret-token" not in (job.result or "")
         assert profile and profile.status == "ready"
 
@@ -8565,7 +8570,7 @@ def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path):
     assert "No task log is available." in task_log_page.text
     task_log_payload = client.get(
         f"/vcf-offline-depot/tasks/{payload['job_id']}/log",
-        headers={"X-LabFoundry-Task-Log": "1"},
+        headers={"X-Atlaso-Task-Log": "1"},
     )
     assert task_log_payload.status_code == 200
     assert task_log_payload.json()["job_id"] == payload["job_id"]
@@ -8585,9 +8590,9 @@ def test_vcf_offline_depot_startup_recovers_interrupted_download(client):
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, JobStatus, VcfDepotDownloadProfile
-    from labfoundry.app.ui import recover_interrupted_vcf_depot_download_jobs
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, VcfDepotDownloadProfile
+    from atlaso.app.ui import recover_interrupted_vcf_depot_download_jobs
 
     with SessionLocal() as db:
         profile = VcfDepotDownloadProfile(name="interrupted", profile_type="binaries", enabled=True, status="ready")
@@ -8621,8 +8626,8 @@ def test_vcf_offline_depot_root_runtime_wrapper_counts_as_installed(monkeypatch,
     from types import SimpleNamespace
     from pathlib import Path
 
-    from labfoundry.app import ui
-    from labfoundry.app.models import VcfOfflineDepotSettings
+    from atlaso.app import ui
+    from atlaso.app.models import VcfOfflineDepotSettings
 
     runtime_home = tmp_path / "active-tool"
     runtime_home.mkdir()
@@ -8630,7 +8635,7 @@ def test_vcf_offline_depot_root_runtime_wrapper_counts_as_installed(monkeypatch,
     monkeypatch.setattr(ui, "VCF_DEPOT_RUNTIME_TOOL_DIR", runtime_home)
     monkeypatch.setattr(ui, "filesystem_path", lambda path: Path(path))
     monkeypatch.setattr(ui, "get_settings", lambda: SimpleNamespace(environment="appliance"))
-    settings = VcfOfflineDepotSettings(tool_archive_path="/var/lib/labfoundry/uploads/vcfdt.tar.gz")
+    settings = VcfOfflineDepotSettings(tool_archive_path="/var/lib/atlaso/uploads/vcfdt.tar.gz")
 
     assert ui.vcf_depot_tool_installed(settings) is True
 
@@ -8641,8 +8646,8 @@ def test_vcf_offline_depot_profile_credentials_block_start_not_apply(client, tmp
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, VcfDepotDownloadProfile, VcfOfflineDepotSettings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, VcfDepotDownloadProfile, VcfOfflineDepotSettings
 
     archive_path = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
     make_vcfdt_archive(archive_path)
@@ -8682,7 +8687,7 @@ def test_vcf_offline_depot_profile_credentials_block_start_not_apply(client, tmp
     response = client.post(
         f"/vcf-offline-depot/profiles/{profile_id}/download",
         data={"csrf": csrf},
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 400
@@ -8696,9 +8701,9 @@ def test_vcf_offline_depot_manual_profile_download_accepts_activation_code_witho
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, Setting, VcfDepotDownloadProfile, VcfOfflineDepotSettings
-    from labfoundry.app.services.vcf_offline_depot import (
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, Setting, VcfDepotDownloadProfile, VcfOfflineDepotSettings
+    from atlaso.app.services.vcf_offline_depot import (
         VCF_DEPOT_ACTIVATION_NAME_KEY,
         VCF_DEPOT_ACTIVATION_VALUE_KEY,
     )
@@ -8732,7 +8737,7 @@ def test_vcf_offline_depot_manual_profile_download_accepts_activation_code_witho
     response = client.post(
         f"/vcf-offline-depot/profiles/{profile_id}/download",
         data={"csrf": csrf},
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 200
@@ -8740,16 +8745,16 @@ def test_vcf_offline_depot_manual_profile_download_accepts_activation_code_witho
     assert payload["status"] == "started"
     assert payload["profile_name"] == "vcf-install"
     assert payload["commands"][0]["command"][1:3] == ["binaries", "download"]
-    assert "--depot-download-activation-code-file=/var/lib/labfoundry/vcfDownloadTool/active-tool/secrets/activation-code.txt" in payload["commands"][0]["command"]
-    assert "--depot-download-token-file=/var/lib/labfoundry/vcfDownloadTool/active-tool/secrets/download-token.txt" not in payload["commands"][0]["command"]
+    assert "--depot-download-activation-code-file=/var/lib/atlaso/vcfDownloadTool/active-tool/secrets/activation-code.txt" in payload["commands"][0]["command"]
+    assert "--depot-download-token-file=/var/lib/atlaso/vcfDownloadTool/active-tool/secrets/download-token.txt" not in payload["commands"][0]["command"]
     assert "manual-secret-activation-code" not in response.text
 
     with SessionLocal() as db:
         job = db.execute(select(Job).where(Job.type == "vcf-depot-download")).scalar_one()
         assert json.loads(job.task_config_json or "{}") == {"profile_id": profile_id}
         assert "configuration get --software-depot-id" not in (job.result or "")
-        assert "--depot-download-activation-code-file=/var/lib/labfoundry/vcfDownloadTool/active-tool/secrets/activation-code.txt" in (job.result or "")
-        assert "--depot-download-token-file=/var/lib/labfoundry/vcfDownloadTool/active-tool/secrets/download-token.txt" not in (job.result or "")
+        assert "--depot-download-activation-code-file=/var/lib/atlaso/vcfDownloadTool/active-tool/secrets/activation-code.txt" in (job.result or "")
+        assert "--depot-download-token-file=/var/lib/atlaso/vcfDownloadTool/active-tool/secrets/download-token.txt" not in (job.result or "")
         assert "manual-secret-activation-code" not in (job.result or "")
 
 
@@ -8760,10 +8765,10 @@ def test_vcf_offline_depot_prepare_runtime_stages_saved_application_properties(c
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Setting, VcfOfflineDepotSettings
-    from labfoundry.app.services.vcf_offline_depot import VCF_DEPOT_APPLICATION_PROPERTIES_CONTENT_KEY, VCF_DEPOT_APPLICATION_PROPERTIES_NAME
-    from labfoundry.app.ui import prepare_vcf_depot_runtime
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Setting, VcfOfflineDepotSettings
+    from atlaso.app.services.vcf_offline_depot import VCF_DEPOT_APPLICATION_PROPERTIES_CONTENT_KEY, VCF_DEPOT_APPLICATION_PROPERTIES_NAME
+    from atlaso.app.ui import prepare_vcf_depot_runtime
 
     archive_path = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
     archive_properties = b"spring.profiles.active=depot\nlcm.depot.adapter.host=archive.example.test\n"
@@ -8778,8 +8783,8 @@ def test_vcf_offline_depot_prepare_runtime_stages_saved_application_properties(c
         archive.addfile(properties_info, io.BytesIO(archive_properties))
 
     runtime_dir = tmp_path / "active-tool"
-    monkeypatch.setattr("labfoundry.app.ui.VCF_DEPOT_EXTRACT_DIR", runtime_dir)
-    monkeypatch.setattr("labfoundry.app.ui.VCF_DEPOT_VDT_LOG_PATH", PurePosixPath((runtime_dir / "log" / "vdt.log").as_posix()))
+    monkeypatch.setattr("atlaso.app.ui.VCF_DEPOT_EXTRACT_DIR", runtime_dir)
+    monkeypatch.setattr("atlaso.app.ui.VCF_DEPOT_VDT_LOG_PATH", PurePosixPath((runtime_dir / "log" / "vdt.log").as_posix()))
 
     saved_properties = "spring.profiles.active=depot\nlcm.depot.adapter.host=operator.example.test\ncustom.setting=true\n"
     with SessionLocal() as db:
@@ -8801,14 +8806,14 @@ def test_vcf_offline_depot_prepare_runtime_stages_saved_application_properties(c
 def test_vcf_offline_depot_generates_software_depot_id(client, tmp_path, monkeypatch):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Setting, VcfOfflineDepotSettings
-    from labfoundry.app.services.vcf_offline_depot import (
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Setting, VcfOfflineDepotSettings
+    from atlaso.app.services.vcf_offline_depot import (
         VCF_DEPOT_SOFTWARE_DEPOT_ID_GENERATED_AT_KEY,
         VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY,
         VCF_DEPOT_TOOL_VERSION_SOURCE_KEY,
     )
-    from labfoundry.app.ui import persist_vcf_depot_metadata_from_apply
+    from atlaso.app.ui import persist_vcf_depot_metadata_from_apply
 
     archive_path = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
     archive_path.write_bytes(b"placeholder")
@@ -8825,7 +8830,7 @@ def test_vcf_offline_depot_generates_software_depot_id(client, tmp_path, monkeyp
     response = client.post(
         "/vcf-offline-depot/software-depot-id/generate",
         data={"csrf": csrf},
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 409
@@ -8843,7 +8848,7 @@ def test_vcf_offline_depot_generates_software_depot_id(client, tmp_path, monkeyp
                     "commands": [
                         {
                             "command": [
-                                "labfoundry-helper",
+                                "atlaso-helper",
                                 "vcf-offline-depot",
                                 "stage-tool",
                                 str(archive_path),
@@ -8857,7 +8862,7 @@ def test_vcf_offline_depot_generates_software_depot_id(client, tmp_path, monkeyp
                         },
                         {
                             "command": [
-                                "labfoundry-helper",
+                                "atlaso-helper",
                                 "vcf-offline-depot",
                                 "generate-software-depot-id",
                             ],
@@ -8888,8 +8893,8 @@ def test_vcf_offline_depot_generates_software_depot_id(client, tmp_path, monkeyp
 def test_vcf_offline_depot_migrates_legacy_store_path(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import VcfOfflineDepotSettings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import VcfOfflineDepotSettings
 
     with SessionLocal() as db:
         settings = db.execute(select(VcfOfflineDepotSettings)).scalar_one()
@@ -8900,23 +8905,23 @@ def test_vcf_offline_depot_migrates_legacy_store_path(client):
     page = client.get("/vcf-offline-depot")
 
     assert page.status_code == 200
-    assert "/mnt/labfoundry-vcf-offline-depot" in page.text
+    assert "/mnt/atlaso-vcf-offline-depot" in page.text
     assert "/srv/repository" not in page.text
     with SessionLocal() as db:
         settings = db.execute(select(VcfOfflineDepotSettings)).scalar_one()
-        assert settings.depot_store_path == "/mnt/labfoundry-vcf-offline-depot"
+        assert settings.depot_store_path == "/mnt/atlaso-vcf-offline-depot"
 
 
 def test_vcf_private_registry_uses_local_ca_bundle_when_ca_is_enabled(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import CaSettings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaSettings
 
     with SessionLocal() as db:
         ca_settings = db.execute(select(CaSettings)).scalar_one()
         ca_settings.enabled = True
-        ca_settings.storage_path = "/etc/labfoundry/ca"
+        ca_settings.storage_path = "/etc/atlaso/ca"
         db.commit()
 
     login(client)
@@ -8930,29 +8935,29 @@ def test_vcf_private_registry_uses_local_ca_bundle_when_ca_is_enabled(client):
         "/vcf-private-registry/settings",
         data={
             "enabled": "on",
-            "hostname": "registry.labfoundry.internal",
+            "hostname": "registry.atlaso.internal",
             "listen_interface": "eth2",
             "port": "443",
             "harbor_project": "vcf-supervisor-services",
-            "server_certificate": "registry.labfoundry.internal",
+            "server_certificate": "registry.atlaso.internal",
             "robot_account": "robot$vcf-supervisor-services",
             "relocation_dry_run": "on",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 200
     assert response.json()["ca_bundle_source"] == "local-ca"
     assert response.json()["ca_bundle_source_label"] == "Local CA"
-    assert response.json()["ca_bundle_path"] == "/etc/labfoundry/ca/ca-bundle.pem"
+    assert response.json()["ca_bundle_path"] == "/etc/atlaso/ca/ca-bundle.pem"
     assert response.json()["ca_bundle_available"] is True
     assert response.json()["validation_errors"] == []
 
 
 def test_vcf_backups_listen_interfaces_include_vlans_not_trunks(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import VlanInterface
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import VlanInterface
 
     with SessionLocal() as db:
         db.add(
@@ -8998,10 +9003,10 @@ def test_vcf_backups_settings_autosave_and_status_api(client):
             "allow_password_auth": "on",
             "allow_public_key_auth": "on",
             "max_sessions": "4",
-            "config_path": "/etc/labfoundry/ssh/sshd_config.d/labfoundry-vcf-backups.conf",
+            "config_path": "/etc/atlaso/ssh/sshd_config.d/atlaso-vcf-backups.conf",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 200
@@ -9009,7 +9014,7 @@ def test_vcf_backups_settings_autosave_and_status_api(client):
     assert response.json()["listen_interface"] == "eth2"
     assert response.json()["listen_address"] == "192.168.50.1"
     assert response.json()["sftp_username"] == "vcf-backup"
-    assert response.json()["storage_path"] == "/mnt/labfoundry-vcf-backups"
+    assert response.json()["storage_path"] == "/mnt/atlaso-vcf-backups"
     assert response.json()["remote_directory"] == "/backups"
     assert response.json()["valid"] is True
     assert "# Service listener targets: 192.168.50.1:22" in response.json()["config_preview"]
@@ -9025,7 +9030,7 @@ def test_vcf_backups_settings_autosave_and_status_api(client):
     assert status.json()["listen_interface"] == "eth2"
     assert status.json()["listen_address"] == "192.168.50.1"
     assert status.json()["sftp_username"] == "vcf-backup"
-    assert status.json()["storage_path"] == "/mnt/labfoundry-vcf-backups"
+    assert status.json()["storage_path"] == "/mnt/atlaso-vcf-backups"
     assert status.json()["remote_directory"] == "/backups"
 
 
@@ -9052,7 +9057,7 @@ def test_vcf_backups_settings_accept_multiple_listen_targets(client):
             "max_sessions": "4",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 200
@@ -9068,8 +9073,8 @@ def test_vcf_backups_disabled_disables_default_backup_user(client):
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import User
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import User
 
     login(client)
     page = client.get("/vcf-backups")
@@ -9093,7 +9098,7 @@ def test_vcf_backups_disabled_disables_default_backup_user(client):
             "max_sessions": "4",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert disabled_service.status_code == 200
@@ -9112,8 +9117,8 @@ def test_vcf_backups_apply_task_captures_sftp_config(client):
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
 
     login(client)
     page = client.get("/vcf-backups")
@@ -9147,13 +9152,13 @@ def test_vcf_backups_apply_task_captures_sftp_config(client):
     with SessionLocal() as db:
         job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()
         assert job.status == "succeeded"
-        assert "labfoundry-helper" in (job.result or "")
+        assert "atlaso-helper" in (job.result or "")
         assert "vcf-backups" in (job.result or "")
         assert "internal-sftp" in (job.result or "")
 
 
 def test_appliance_apply_unit_keeps_raw_config_for_helper_staging():
-    from labfoundry.app.ui import make_appliance_apply_unit
+    from atlaso.app.ui import make_appliance_apply_unit
 
     unit = make_appliance_apply_unit(
         unit_id="vcf_backups",
@@ -9162,7 +9167,7 @@ def test_appliance_apply_unit_keeps_raw_config_for_helper_staging():
         context={},
         summary=["service enabled"],
         validation_errors=[],
-        config_path="/etc/ssh/sshd_config.d/labfoundry-vcf-backups.conf",
+        config_path="/etc/ssh/sshd_config.d/atlaso-vcf-backups.conf",
         config_preview="Match User vcf-backup\n  PasswordAuthentication yes\n  ForceCommand internal-sftp -d /backups\n",
         baseline=None,
     )
@@ -9173,7 +9178,7 @@ def test_appliance_apply_unit_keeps_raw_config_for_helper_staging():
 
 
 def test_appliance_apply_unit_separates_secret_staging_from_snapshot_change_marker():
-    from labfoundry.app.ui import _redact_task_value, make_appliance_apply_unit
+    from atlaso.app.ui import _redact_task_value, make_appliance_apply_unit
 
     current = make_appliance_apply_unit(
         unit_id="ldap",
@@ -9182,7 +9187,7 @@ def test_appliance_apply_unit_separates_secret_staging_from_snapshot_change_mark
         context={},
         summary=["1 user"],
         validation_errors=[],
-        config_path="/var/lib/labfoundry/apply/ldap/labfoundry-ldap.json",
+        config_path="/var/lib/atlaso/apply/ldap/atlaso-ldap.json",
         config_preview='{"payload_b64":"[pending]","password":"[pending]"}',
         raw_config_preview='{"payload_b64":"c2xhcGNhdC1wYXNzd29yZC1oYXNoZXM=","password":"VeryStrong1!Directory"}',
         snapshot_marker={"pending_password_user_ids": [7], "recovery_sha256": "archive-sha"},
@@ -9196,7 +9201,7 @@ def test_appliance_apply_unit_separates_secret_staging_from_snapshot_change_mark
         context={},
         summary=["1 user"],
         validation_errors=[],
-        config_path="/var/lib/labfoundry/apply/ldap/labfoundry-ldap.json",
+        config_path="/var/lib/atlaso/apply/ldap/atlaso-ldap.json",
         config_preview='{"payload_b64":"[pending]","password":"[pending]"}',
         raw_config_preview='{"payload_b64":"bmV3LXNsYXBjYXQtYXJjaGl2ZQ==","password":"AnotherStrong1!Directory"}',
         snapshot_marker={"pending_password_user_ids": [7], "recovery_sha256": "new-archive-sha"},
@@ -9215,10 +9220,10 @@ def test_appliance_apply_unit_separates_secret_staging_from_snapshot_change_mark
 def test_disabled_ldap_apply_keeps_staged_user_password_pending(monkeypatch):
     from types import SimpleNamespace
 
-    from labfoundry.app.adapters.system import AdapterResult
-    from labfoundry.app.models import LdapSettings, LdapUser
-    from labfoundry.app.services.ldap import clear_pending_ldap_password, has_pending_ldap_password, stage_ldap_user_password
-    from labfoundry.app.ui import execute_appliance_apply_unit
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.models import LdapSettings, LdapUser
+    from atlaso.app.services.ldap import clear_pending_ldap_password, has_pending_ldap_password, stage_ldap_user_password
+    from atlaso.app.ui import execute_appliance_apply_unit
 
     settings = LdapSettings(enabled=False)
     user = LdapUser(id=98765, uid="pending-user", surname="User", display_name="Pending User", enabled=True)
@@ -9235,7 +9240,7 @@ def test_disabled_ldap_apply_keeps_staged_user_password_pending(monkeypatch):
         def apply_ldap_config(path):
             return AdapterResult(["ldap", "apply", path], False)
 
-    monkeypatch.setattr("labfoundry.app.ui.stage_appliance_apply_config", lambda _path, _preview: "disabled-ldap.json")
+    monkeypatch.setattr("atlaso.app.ui.stage_appliance_apply_config", lambda _path, _preview: "disabled-ldap.json")
     unit = {
         "id": "ldap",
         "label": "Managed LDAP",
@@ -9244,7 +9249,7 @@ def test_disabled_ldap_apply_keeps_staged_user_password_pending(monkeypatch):
         "summary": ["service disabled"],
         "validation_errors": [],
         "validation_warnings": [],
-        "config_path": "/var/lib/labfoundry/apply/ldap/labfoundry-ldap.json",
+        "config_path": "/var/lib/atlaso/apply/ldap/atlaso-ldap.json",
         "config_preview": "{}",
         "config_diff": "",
     }
@@ -9278,7 +9283,7 @@ def test_physical_and_vlan_pages_render(client):
     assert "192.168.50.1/24" in physical.text
     assert "Link Type" in physical.text
     assert "Review appliance changes" in physical.text
-    assert "/var/lib/labfoundry/apply/network/labfoundry-network.conf" in physical.text
+    assert "/var/lib/atlaso/apply/network/atlaso-network.conf" in physical.text
 
     vlans = client.get("/vlan-interfaces")
     assert vlans.status_code == 200
@@ -9323,7 +9328,7 @@ def test_physical_and_vlan_pages_render(client):
     assert ".invalid-cidr-input" in app_css
     assert ".vlan-interfaces-table .tabulator-row.new-record-row .new-record-primary-cell" in app_css
     assert "Review appliance changes" in vlans.text
-    assert "/var/lib/labfoundry/apply/network/labfoundry-network.conf" in vlans.text
+    assert "/var/lib/atlaso/apply/network/atlaso-network.conf" in vlans.text
 
 
 def test_management_interface_dual_stack_gateways_are_saved_and_drive_main_and_table_100(client):
@@ -9332,8 +9337,8 @@ def test_management_interface_dual_stack_gateways_are_saved_and_drive_main_and_t
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import PhysicalInterface
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
 
     login(client)
     page = client.get("/physical-interfaces")
@@ -9398,9 +9403,9 @@ def test_management_interface_dual_stack_gateways_are_saved_and_drive_main_and_t
 def test_physical_interface_refresh_imports_host_inventory_without_apply_job(client, monkeypatch):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, PhysicalInterface, Route, VlanInterface
-    from labfoundry.app.services.networking import HostPhysicalInterface
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, PhysicalInterface, Route, VlanInterface
+    from atlaso.app.services.networking import HostPhysicalInterface
 
     login(client)
 
@@ -9418,7 +9423,7 @@ def test_physical_interface_refresh_imports_host_inventory_without_apply_job(cli
             )
         ]
 
-    monkeypatch.setattr("labfoundry.app.services.networking.discover_host_physical_interfaces", fake_discover)
+    monkeypatch.setattr("atlaso.app.services.networking.discover_host_physical_interfaces", fake_discover)
     page = client.get("/physical-interfaces")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post("/physical-interfaces/refresh", data={"csrf": csrf}, follow_redirects=False)
@@ -9449,8 +9454,8 @@ def test_physical_interface_edit_updates_desired_state(client):
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import (
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import (
         CaSettings,
         NtpSettings,
         DhcpScope,
@@ -9461,7 +9466,7 @@ def test_physical_interface_edit_updates_desired_state(client):
         VcfOfflineDepotSettings,
         VcfPrivateRegistrySettings,
     )
-    from labfoundry.app.services.esxi_pxe import (
+    from atlaso.app.services.esxi_pxe import (
         ESXI_PXE_DEFAULT_HOSTNAME,
         ESXI_PXE_DNS_RECORD_DESCRIPTION,
         ESXI_PXE_HTTP_PORT,
@@ -9566,17 +9571,17 @@ def test_physical_interface_edit_updates_desired_state(client):
         assert scope.range_expression == "192.168.70.100-192.168.70.200"
         assert scope.dns_server == "192.168.70.1"
         assert scope.ntp_server == "192.168.70.1"
-        kms_record = db.execute(select(DnsRecord).where(DnsRecord.hostname == "kms.labfoundry.internal", DnsRecord.record_type == "CNAME")).scalar_one()
-        assert kms_record.address == "kms-192-168-70-1.labfoundry.internal"
-        kms_interface_record = db.execute(select(DnsRecord).where(DnsRecord.hostname == "kms-192-168-70-1.labfoundry.internal", DnsRecord.record_type == "A")).scalar_one()
+        kms_record = db.execute(select(DnsRecord).where(DnsRecord.hostname == "kms.atlaso.internal", DnsRecord.record_type == "CNAME")).scalar_one()
+        assert kms_record.address == "kms-192-168-70-1.atlaso.internal"
+        kms_interface_record = db.execute(select(DnsRecord).where(DnsRecord.hostname == "kms-192-168-70-1.atlaso.internal", DnsRecord.record_type == "A")).scalar_one()
         assert kms_interface_record.address == "192.168.70.1"
         boot = esxi_pxe_boot_settings(db)
         assert boot["listen_interface"] == "eth2"
         assert boot["listen_address"] == "192.168.70.1"
         assert boot["effective_native_uefi_http_url"] == "http://192.168.70.1:8080/pxe/esxi/mboot.efi"
         pxe_record = db.execute(select(DnsRecord).where(DnsRecord.hostname == ESXI_PXE_DEFAULT_HOSTNAME, DnsRecord.record_type == "CNAME")).scalar_one()
-        assert pxe_record.address == "esxi-pxe-192-168-70-1.labfoundry.internal"
-        pxe_interface_record = db.execute(select(DnsRecord).where(DnsRecord.hostname == "esxi-pxe-192-168-70-1.labfoundry.internal", DnsRecord.record_type == "A")).scalar_one()
+        assert pxe_record.address == "esxi-pxe-192-168-70-1.atlaso.internal"
+        pxe_interface_record = db.execute(select(DnsRecord).where(DnsRecord.hostname == "esxi-pxe-192-168-70-1.atlaso.internal", DnsRecord.record_type == "A")).scalar_one()
         assert pxe_interface_record.address == "192.168.70.1"
 
 
@@ -9586,9 +9591,9 @@ def test_physical_interface_edit_repairs_stale_scope_after_host_inventory_refres
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import NtpSettings, DhcpScope, DnsRecord, DnsSettings, Setting
-    from labfoundry.app.services.esxi_pxe import ESXI_PXE_DEFAULT_HOSTNAME, ESXI_PXE_DNS_RECORD_DESCRIPTION, ESXI_PXE_HTTP_PORT, ESXI_PXE_LISTEN_ADDRESS_KEY, ESXI_TFTP_ROOT, save_esxi_pxe_boot_settings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import NtpSettings, DhcpScope, DnsRecord, DnsSettings, Setting
+    from atlaso.app.services.esxi_pxe import ESXI_PXE_DEFAULT_HOSTNAME, ESXI_PXE_DNS_RECORD_DESCRIPTION, ESXI_PXE_HTTP_PORT, ESXI_PXE_LISTEN_ADDRESS_KEY, ESXI_TFTP_ROOT, save_esxi_pxe_boot_settings
 
     login(client)
     with SessionLocal() as db:
@@ -9658,8 +9663,8 @@ def test_physical_interface_edit_repairs_stale_scope_after_host_inventory_refres
         assert scope.dns_server == "192.168.50.1"
         assert scope.ntp_server == "192.168.50.1"
         pxe_record = db.execute(select(DnsRecord).where(DnsRecord.hostname == ESXI_PXE_DEFAULT_HOSTNAME, DnsRecord.record_type == "CNAME")).scalar_one()
-        assert pxe_record.address == "esxi-pxe-192-168-50-1.labfoundry.internal"
-        pxe_interface_record = db.execute(select(DnsRecord).where(DnsRecord.hostname == "esxi-pxe-192-168-50-1.labfoundry.internal", DnsRecord.record_type == "A")).scalar_one()
+        assert pxe_record.address == "esxi-pxe-192-168-50-1.atlaso.internal"
+        pxe_interface_record = db.execute(select(DnsRecord).where(DnsRecord.hostname == "esxi-pxe-192-168-50-1.atlaso.internal", DnsRecord.record_type == "A")).scalar_one()
         assert pxe_interface_record.address == "192.168.50.1"
         pxe_listen = db.execute(select(Setting).where(Setting.key == ESXI_PXE_LISTEN_ADDRESS_KEY)).scalar_one()
         assert pxe_listen.value == "192.168.50.1"
@@ -9692,8 +9697,8 @@ def test_physical_interface_trunk_mode_clears_non_applicable_role(client):
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import PhysicalInterface
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
 
     login(client)
     page = client.get("/physical-interfaces")
@@ -9721,8 +9726,8 @@ def test_physical_interface_link_type_locked_when_vlans_exist(client):
     import html
     import json
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import PhysicalInterface, VlanInterface
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface, VlanInterface
 
     login(client)
     with SessionLocal() as db:
@@ -9776,7 +9781,7 @@ def test_physical_interface_grid_menu_actions_are_available(client):
     assert "requestConfirmation" in js.text
     assert "The management interface must stay enabled." in js.text
     assert 'data.role === "management" && data.admin_up' in js.text
-    assert "labfoundry_public_address_mode" in js.text
+    assert "atlaso_public_address_mode" in js.text
     assert "initializePublicAddressModeToggle" in js.text
 
 
@@ -9786,11 +9791,11 @@ def test_management_dhcp_interface_can_be_saved_as_static_from_observed_addresse
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import ApplianceSettings, DnsSettings, PhysicalInterface
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, DnsSettings, PhysicalInterface
 
     login(client)
-    monkeypatch.setattr("labfoundry.app.services.appliance_settings.observed_management_dhcp_dns_servers", lambda interface_name: ["127.0.0.1", "::1", "192.168.167.2", "192.168.167.3"])
+    monkeypatch.setattr("atlaso.app.services.appliance_settings.observed_management_dhcp_dns_servers", lambda interface_name: ["127.0.0.1", "::1", "192.168.167.2", "192.168.167.3"])
     with SessionLocal() as db:
         appliance_settings = db.execute(select(ApplianceSettings)).scalar_one()
         appliance_settings.external_dns_servers = ""
@@ -9846,8 +9851,8 @@ def test_management_physical_interface_cannot_be_disabled(client):
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import PhysicalInterface
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
 
     login(client)
     with SessionLocal() as db:
@@ -9890,8 +9895,8 @@ def test_management_physical_interface_cannot_be_disabled(client):
 def test_vlan_interface_create_edit_delete_and_apply(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
 
     login(client)
     page = client.get("/vlan-interfaces")
@@ -9920,7 +9925,7 @@ def test_vlan_interface_create_edit_delete_and_apply(client):
 
     with SessionLocal() as db:
         job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()
-        assert "labfoundry-helper" in (job.result or "")
+        assert "atlaso-helper" in (job.result or "")
         assert "eth1.50" in (job.result or "")
 
     page = client.get("/vlan-interfaces")
@@ -9940,8 +9945,8 @@ def test_vlan_page_prefers_real_trunk_parent_when_inventory_has_eth2(client):
     import html
     import json
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import PhysicalInterface
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
 
     login(client)
     with SessionLocal() as db:
@@ -10000,8 +10005,8 @@ def test_vlan_page_disables_missing_parent_vlan(client):
     import html
     import json
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import PhysicalInterface, VlanInterface
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface, VlanInterface
 
     login(client)
     with SessionLocal() as db:
@@ -10125,8 +10130,8 @@ def test_vlan_interface_requires_vlan_id_and_ip_cidr(client):
 def test_firewall_page_create_rule_and_apply_task(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
 
     login(client)
     page = client.get("/firewall")
@@ -10194,7 +10199,7 @@ def test_firewall_page_create_rule_and_apply_task(client):
     assert_apply_redirect(apply_response)
     with SessionLocal() as db:
         job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()
-        assert "labfoundry-helper firewall apply" in (job.result or "")
+        assert "atlaso-helper firewall apply" in (job.result or "")
         assert "allow-vcenter" in (job.result or "")
 
 
@@ -10203,10 +10208,10 @@ def test_firewall_settings_autosave_updates_desired_state_preview(client):
     page = client.get("/firewall")
     assert page.status_code == 200
     assert "data-firewall-enabled-status" in page.text
-    assert "appliance-update-ui-20260724-4" in page.text
-    codemirror = client.get("/static/vendor/codemirror/labfoundry-codemirror.min.js")
+    assert "atlaso-brand-20260725-1" in page.text
+    codemirror = client.get("/static/vendor/codemirror/atlaso-codemirror.min.js")
     assert codemirror.status_code == 200
-    assert "LabFoundryCodeMirror" in codemirror.text
+    assert "AtlasoCodeMirror" in codemirror.text
     assert "initializeSwitchFields" in client.get("/static/app.js").text
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
@@ -10221,14 +10226,14 @@ def test_firewall_settings_autosave_updates_desired_state_preview(client):
             "allow_loopback": "on",
             "allow_icmp": "on",
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     assert disabled.status_code == 200
     disabled_payload = disabled.json()
     assert disabled_payload["enabled"] is False
     assert disabled_payload["valid"] is True
-    assert "LabFoundry firewall desired state is disabled" in disabled_payload["config_preview"]
-    assert "table inet labfoundry" not in disabled_payload["config_preview"]
+    assert "Atlaso firewall desired state is disabled" in disabled_payload["config_preview"]
+    assert "table inet atlaso" not in disabled_payload["config_preview"]
 
     enabled = client.post(
         "/firewall/settings",
@@ -10242,13 +10247,13 @@ def test_firewall_settings_autosave_updates_desired_state_preview(client):
             "allow_loopback": "on",
             "allow_icmp": "on",
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     assert enabled.status_code == 200
     enabled_payload = enabled.json()
     assert enabled_payload["enabled"] is True
     assert enabled_payload["settings"]["enabled"] is True
-    assert "table inet labfoundry" in enabled_payload["config_preview"]
+    assert "table inet atlaso" in enabled_payload["config_preview"]
     assert 'comment "mgmt-console"' in enabled_payload["config_preview"]
     assert 'tcp ip saddr' not in enabled_payload["config_preview"]
     assert 'tcp dport { 22, 80, 443 } accept comment "mgmt-console"' in enabled_payload["config_preview"]
@@ -10257,8 +10262,8 @@ def test_firewall_settings_autosave_updates_desired_state_preview(client):
 def test_global_appliance_apply_tracks_baselines_diffs_and_skips(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, JobStep, Setting
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStep, Setting
 
     login(client)
     page = client.get("/dashboard")
@@ -10348,7 +10353,7 @@ def test_global_appliance_apply_tracks_baselines_diffs_and_skips(client):
 def test_appliance_apply_connection_warnings_detect_management_address_and_certificate_changes():
     import json
 
-    from labfoundry.app.ui import (
+    from atlaso.app.ui import (
         MANAGEMENT_CERTIFICATE_CONNECTION_WARNING,
         appliance_apply_connection_warnings,
     )
@@ -10386,8 +10391,8 @@ def test_appliance_apply_connection_warnings_detect_management_address_and_certi
     previous_settings = json.dumps(
         {
             "management_https_enabled": True,
-            "management_https_cert_path": "/etc/labfoundry/https/certs/appliance-old.crt",
-            "management_https_key_path": "/etc/labfoundry/https/certs/appliance-old.key",
+            "management_https_cert_path": "/etc/atlaso/https/certs/appliance-old.crt",
+            "management_https_key_path": "/etc/atlaso/https/certs/appliance-old.key",
         }
     )
     current_settings = previous_settings.replace("appliance-old", "appliance-new")
@@ -10402,12 +10407,12 @@ def test_appliance_apply_connection_warnings_detect_management_address_and_certi
             "certificates": [
                 {
                     "managed_owner": "appliance:https",
-                    "common_name": "labfoundry.example",
+                    "common_name": "atlaso.example",
                     "fingerprint": "old-fingerprint",
                     "certificate_pem": "old-certificate",
-                    "cert_path": "/etc/labfoundry/https/certs/appliance.crt",
-                    "key_path": "/etc/labfoundry/https/certs/appliance.key",
-                    "chain_path": "/etc/labfoundry/https/certs/appliance-chain.pem",
+                    "cert_path": "/etc/atlaso/https/certs/appliance.crt",
+                    "key_path": "/etc/atlaso/https/certs/appliance.key",
+                    "chain_path": "/etc/atlaso/https/certs/appliance-chain.pem",
                 }
             ]
         }
@@ -10423,9 +10428,9 @@ def test_appliance_apply_connection_warnings_detect_management_address_and_certi
 def test_appliance_apply_review_returns_management_address_connection_warning(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import PhysicalInterface
-    from labfoundry.app.ui import appliance_apply_units, update_appliance_apply_baselines
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+    from atlaso.app.ui import appliance_apply_units, update_appliance_apply_baselines
 
     login(client)
     with SessionLocal() as db:
@@ -10472,8 +10477,8 @@ def test_appliance_apply_json_submission_returns_master_with_live_child_status(c
 def test_appliance_apply_rejects_submission_while_another_task_is_active(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, JobStatus
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
 
     login(client)
     page = client.get("/dashboard")
@@ -10506,9 +10511,9 @@ def test_recover_interrupted_appliance_apply_jobs_marks_active_tasks_failed(clie
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, JobStatus, JobStep
-    from labfoundry.app.ui import recover_interrupted_appliance_apply_jobs
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
+    from atlaso.app.ui import recover_interrupted_appliance_apply_jobs
 
     with SessionLocal() as db:
         db.add_all(
@@ -10584,9 +10589,9 @@ def test_appliance_apply_master_steps_fail_fast_and_keep_successful_baselines(cl
 
     from sqlalchemy import select
 
-    import labfoundry.app.ui as ui
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, JobStatus, JobStep, Setting
+    import atlaso.app.ui as ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep, Setting
 
     units = [
         {
@@ -10683,9 +10688,9 @@ def test_successful_appliance_apply_baseline_uses_post_apply_snapshot(client, mo
 
     from sqlalchemy import select
 
-    import labfoundry.app.ui as ui
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, JobStatus, JobStep, Setting
+    import atlaso.app.ui as ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep, Setting
 
     before = {
         "id": "vcf_offline_depot",
@@ -10785,9 +10790,9 @@ def test_appliance_apply_parent_cancel_finishes_current_step_and_skips_remaining
 
     from sqlalchemy import select
 
-    import labfoundry.app.ui as ui
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, JobStatus, JobStep
+    import atlaso.app.ui as ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
 
     units = [
         {
@@ -10872,15 +10877,15 @@ def test_appliance_startup_initializes_factory_apply_baseline(monkeypatch, tmp_p
     from sqlalchemy import select
     from starlette.testclient import TestClient
 
-    import labfoundry.app.database as database
-    from labfoundry.app.config import get_settings
-    from labfoundry.app.models import AuditEvent, Setting, User
+    import atlaso.app.database as database
+    from atlaso.app.config import get_settings
+    from atlaso.app.models import AuditEvent, Setting, User
 
-    db_path = tmp_path / "labfoundry-appliance-baseline.db"
-    monkeypatch.setenv("LABFOUNDRY_DATABASE_URL", f"sqlite:///{db_path}")
-    monkeypatch.setenv("LABFOUNDRY_SECRET_KEY", "test-secret-key-with-enough-length")
-    monkeypatch.setenv("LABFOUNDRY_BOOTSTRAP_ADMIN_PASSWORD", "labfoundry-admin")
-    monkeypatch.setenv("LABFOUNDRY_ENVIRONMENT", "appliance")
+    db_path = tmp_path / "atlaso-appliance-baseline.db"
+    monkeypatch.setenv("ATLASO_DATABASE_URL", f"sqlite:///{db_path}")
+    monkeypatch.setenv("ATLASO_SECRET_KEY", "test-secret-key-with-enough-length")
+    monkeypatch.setenv("ATLASO_BOOTSTRAP_ADMIN_PASSWORD", "atlaso-admin")
+    monkeypatch.setenv("ATLASO_ENVIRONMENT", "appliance")
     get_settings.cache_clear()
     database.engine.dispose()
     database.engine = database.create_engine(
@@ -10889,7 +10894,7 @@ def test_appliance_startup_initializes_factory_apply_baseline(monkeypatch, tmp_p
     )
     database.SessionLocal.configure(bind=database.engine)
 
-    from labfoundry.app.main import create_app
+    from atlaso.app.main import create_app
 
     with TestClient(create_app()) as test_client:
         login(test_client)
@@ -10916,18 +10921,18 @@ def test_appliance_startup_initializes_factory_apply_baseline(monkeypatch, tmp_p
 def test_factory_apply_baseline_skips_after_operator_activity(monkeypatch, tmp_path):
     from sqlalchemy import select
 
-    import labfoundry.app.database as database
-    from labfoundry.app.audit import record_audit
-    from labfoundry.app.config import get_settings
-    from labfoundry.app.models import Setting
-    from labfoundry.app.seed import seed_initial_data
-    from labfoundry.app.ui import initialize_factory_appliance_apply_baseline
+    import atlaso.app.database as database
+    from atlaso.app.audit import record_audit
+    from atlaso.app.config import get_settings
+    from atlaso.app.models import Setting
+    from atlaso.app.seed import seed_initial_data
+    from atlaso.app.ui import initialize_factory_appliance_apply_baseline
 
-    db_path = tmp_path / "labfoundry-appliance-edited.db"
-    monkeypatch.setenv("LABFOUNDRY_DATABASE_URL", f"sqlite:///{db_path}")
-    monkeypatch.setenv("LABFOUNDRY_SECRET_KEY", "test-secret-key-with-enough-length")
-    monkeypatch.setenv("LABFOUNDRY_BOOTSTRAP_ADMIN_PASSWORD", "labfoundry-admin")
-    monkeypatch.setenv("LABFOUNDRY_ENVIRONMENT", "appliance")
+    db_path = tmp_path / "atlaso-appliance-edited.db"
+    monkeypatch.setenv("ATLASO_DATABASE_URL", f"sqlite:///{db_path}")
+    monkeypatch.setenv("ATLASO_SECRET_KEY", "test-secret-key-with-enough-length")
+    monkeypatch.setenv("ATLASO_BOOTSTRAP_ADMIN_PASSWORD", "atlaso-admin")
+    monkeypatch.setenv("ATLASO_ENVIRONMENT", "appliance")
     get_settings.cache_clear()
     database.engine.dispose()
     database.engine = database.create_engine(
@@ -10947,8 +10952,8 @@ def test_factory_apply_baseline_skips_after_operator_activity(monkeypatch, tmp_p
 
 
 def test_appliance_apply_runs_firewall_before_wan(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.ui import appliance_apply_units
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.ui import appliance_apply_units
 
     login(client)
     with SessionLocal() as db:
@@ -10958,7 +10963,7 @@ def test_appliance_apply_runs_firewall_before_wan(client):
 
 
 def test_network_apply_config_includes_removed_vlan_targets_from_baseline():
-    from labfoundry.app.ui import network_config_with_removed_vlans, network_vlan_entries_from_config, removed_network_vlan_entries
+    from atlaso.app.ui import network_config_with_removed_vlans, network_vlan_entries_from_config, removed_network_vlan_entries
 
     baseline = {
         "config_preview": "\n".join(
@@ -11003,9 +11008,9 @@ def test_network_apply_removal_targets_include_successful_apply_history(client):
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, JobStatus, utcnow
-    from labfoundry.app.ui import removed_network_vlan_entries, successful_network_apply_vlan_entries
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, utcnow
+    from atlaso.app.ui import removed_network_vlan_entries, successful_network_apply_vlan_entries
 
     applied_preview = "\n".join(
         [
@@ -11065,9 +11070,9 @@ def test_network_apply_removal_targets_include_successful_apply_history(client):
 def test_network_apply_history_retires_successfully_removed_vlans(client):
     import json
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, JobStatus, utcnow
-    from labfoundry.app.ui import removed_network_vlan_entries, successful_network_apply_vlan_entries
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, utcnow
+    from atlaso.app.ui import removed_network_vlan_entries, successful_network_apply_vlan_entries
 
     applied_preview = "\n".join(
         [
@@ -11216,9 +11221,9 @@ def test_services_and_esxi_page_show_enabled_esxi_pxe_boot_state(client):
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DhcpScope
-    from labfoundry.app.services.esxi_pxe import (
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpScope
+    from atlaso.app.services.esxi_pxe import (
         ESXI_PXE_BIOS_BOOTFILE,
         ESXI_PXE_UEFI_BOOTFILE,
         ESXI_TFTP_ROOT,
@@ -11231,7 +11236,7 @@ def test_services_and_esxi_page_show_enabled_esxi_pxe_boot_state(client):
         save_esxi_pxe_boot_settings(
             db,
             enabled=True,
-            hostname="esxi-pxe.labfoundry.internal",
+            hostname="esxi-pxe.atlaso.internal",
             dhcp_scope_ids=[scope.id],
             listen_interface=scope.interface_name,
             listen_address=scope.site_address,
@@ -11269,10 +11274,10 @@ def test_services_and_service_pages_derive_composite_runtime_status(client, monk
 
     from sqlalchemy import select
 
-    from labfoundry.app.adapters.system import AdapterResult
-    from labfoundry.app.config import get_settings
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import CaSettings, DhcpScope, KmsSettings, VcfBackupSettings, VcfOfflineDepotSettings
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.config import get_settings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaSettings, DhcpScope, KmsSettings, VcfBackupSettings, VcfOfflineDepotSettings
 
     def fake_service_status(self, unit: str):
         return AdapterResult(
@@ -11281,10 +11286,10 @@ def test_services_and_service_pages_derive_composite_runtime_status(client, monk
             stdout=json.dumps({"active": "active", "enabled": "enabled"}),
         )
 
-    monkeypatch.setenv("LABFOUNDRY_DRY_RUN_SYSTEM_ADAPTERS", "false")
+    monkeypatch.setenv("ATLASO_DRY_RUN_SYSTEM_ADAPTERS", "false")
     get_settings.cache_clear()
-    monkeypatch.setattr("labfoundry.app.ui.SystemAdapter.service_status", fake_service_status)
-    monkeypatch.setattr("labfoundry.app.api.v1.SystemAdapter.service_status", fake_service_status)
+    monkeypatch.setattr("atlaso.app.ui.SystemAdapter.service_status", fake_service_status)
+    monkeypatch.setattr("atlaso.app.api.v1.SystemAdapter.service_status", fake_service_status)
 
     with SessionLocal() as db:
         scope = db.execute(select(DhcpScope).where(DhcpScope.enabled.is_(True)).order_by(DhcpScope.id)).scalars().first()
@@ -11342,10 +11347,10 @@ def test_esx_storage_live_status_requires_rpcbind_only_for_nfs3(client, monkeypa
 
     from sqlalchemy import select
 
-    from labfoundry.app.adapters.system import AdapterResult
-    from labfoundry.app.config import get_settings
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import EsxNfsShare, EsxStorageSettings, EsxStorageVolume
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.config import get_settings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import EsxNfsShare, EsxStorageSettings, EsxStorageVolume
 
     def fake_service_status(self, unit: str):
         active = "inactive" if unit == "rpcbind.service" else "active"
@@ -11356,15 +11361,15 @@ def test_esx_storage_live_status_requires_rpcbind_only_for_nfs3(client, monkeypa
             stdout=json.dumps({"active": active, "enabled": enabled}),
         )
 
-    monkeypatch.setenv("LABFOUNDRY_DRY_RUN_SYSTEM_ADAPTERS", "false")
+    monkeypatch.setenv("ATLASO_DRY_RUN_SYSTEM_ADAPTERS", "false")
     get_settings.cache_clear()
-    monkeypatch.setattr("labfoundry.app.ui.SystemAdapter.service_status", fake_service_status)
-    monkeypatch.setattr("labfoundry.app.api.v1.SystemAdapter.service_status", fake_service_status)
+    monkeypatch.setattr("atlaso.app.ui.SystemAdapter.service_status", fake_service_status)
+    monkeypatch.setattr("atlaso.app.api.v1.SystemAdapter.service_status", fake_service_status)
 
     with SessionLocal() as db:
         settings = db.execute(select(EsxStorageSettings)).scalar_one_or_none()
         if settings is None:
-            settings = EsxStorageSettings(enabled=True, hostname="nfs.labfoundry.internal")
+            settings = EsxStorageSettings(enabled=True, hostname="nfs.atlaso.internal")
             db.add(settings)
         else:
             settings.enabled = True
@@ -11373,7 +11378,7 @@ def test_esx_storage_live_status_requires_rpcbind_only_for_nfs3(client, monkeypa
             source_type="mounted_ext4",
             stable_device_id="/dev/disk/by-uuid/rpcbind-health",
             filesystem_uuid="rpcbind-health",
-            mount_path="/mnt/labfoundry-esx-storage/rpcbind-health",
+            mount_path="/mnt/atlaso-esx-storage/rpcbind-health",
             state="mounted",
             applied=True,
         )
@@ -11425,8 +11430,8 @@ def test_services_dns_dhcp_rows_use_desired_enabled_state(client):
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DhcpSettings, DnsSettings, ServiceState
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpSettings, DnsSettings, ServiceState
 
     with SessionLocal() as db:
         dns_settings = db.execute(select(DnsSettings)).scalar_one()
@@ -11462,8 +11467,8 @@ def test_services_dns_dhcp_actions_update_desired_settings(client):
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DhcpSettings, DnsSettings, ServiceState
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpSettings, DnsSettings, ServiceState
 
     with SessionLocal() as db:
         dns_settings = db.execute(select(DnsSettings)).scalar_one()
@@ -11502,10 +11507,10 @@ def test_services_live_dns_dhcp_runtime_uses_dnsmasq_systemd(client, monkeypatch
 
     from sqlalchemy import select
 
-    from labfoundry.app.adapters.system import AdapterResult
-    from labfoundry.app.config import get_settings
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DhcpSettings, DnsSettings, ServiceState
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.config import get_settings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpSettings, DnsSettings, ServiceState
 
     def fake_service_status(self, unit: str):
         active = "active" if unit == "dnsmasq.service" else "inactive"
@@ -11516,10 +11521,10 @@ def test_services_live_dns_dhcp_runtime_uses_dnsmasq_systemd(client, monkeypatch
             stdout=json.dumps({"active": active, "enabled": enabled}),
         )
 
-    monkeypatch.setenv("LABFOUNDRY_DRY_RUN_SYSTEM_ADAPTERS", "false")
+    monkeypatch.setenv("ATLASO_DRY_RUN_SYSTEM_ADAPTERS", "false")
     get_settings.cache_clear()
-    monkeypatch.setattr("labfoundry.app.ui.SystemAdapter.service_status", fake_service_status)
-    monkeypatch.setattr("labfoundry.app.api.v1.SystemAdapter.service_status", fake_service_status)
+    monkeypatch.setattr("atlaso.app.ui.SystemAdapter.service_status", fake_service_status)
+    monkeypatch.setattr("atlaso.app.api.v1.SystemAdapter.service_status", fake_service_status)
 
     with SessionLocal() as db:
         dns_settings = db.execute(select(DnsSettings)).scalar_one()
@@ -11553,8 +11558,8 @@ def test_services_live_ntp_status_uses_systemd(client, monkeypatch):
     import html
     import json
 
-    from labfoundry.app.adapters.system import AdapterResult
-    from labfoundry.app.config import get_settings
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.config import get_settings
 
     def fake_service_status(self, unit: str):
         active = "active" if unit == "ntpd.service" else "inactive"
@@ -11565,10 +11570,10 @@ def test_services_live_ntp_status_uses_systemd(client, monkeypatch):
             stdout=json.dumps({"active": active, "enabled": enabled}),
         )
 
-    monkeypatch.setenv("LABFOUNDRY_DRY_RUN_SYSTEM_ADAPTERS", "false")
+    monkeypatch.setenv("ATLASO_DRY_RUN_SYSTEM_ADAPTERS", "false")
     get_settings.cache_clear()
-    monkeypatch.setattr("labfoundry.app.ui.SystemAdapter.service_status", fake_service_status)
-    monkeypatch.setattr("labfoundry.app.api.v1.SystemAdapter.service_status", fake_service_status)
+    monkeypatch.setattr("atlaso.app.ui.SystemAdapter.service_status", fake_service_status)
+    monkeypatch.setattr("atlaso.app.api.v1.SystemAdapter.service_status", fake_service_status)
 
     login(client)
     page = client.get("/services")
@@ -11588,9 +11593,9 @@ def test_services_live_ntp_status_uses_systemd(client, monkeypatch):
 
 
 def test_services_ui_hides_dry_run_badge_when_adapters_are_live(client, monkeypatch):
-    from labfoundry.app.config import get_settings
+    from atlaso.app.config import get_settings
 
-    monkeypatch.setenv("LABFOUNDRY_DRY_RUN_SYSTEM_ADAPTERS", "false")
+    monkeypatch.setenv("ATLASO_DRY_RUN_SYSTEM_ADAPTERS", "false")
     get_settings.cache_clear()
     login(client)
 
@@ -11606,8 +11611,8 @@ def test_services_ui_hides_dry_run_badge_when_adapters_are_live(client, monkeypa
 def test_ca_settings_autosave_returns_json(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import CaSettings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaSettings
 
     login(client)
     page = client.get("/certificate-authority")
@@ -11620,8 +11625,8 @@ def test_ca_settings_autosave_returns_json(client):
             "listen_addresses_present": "1",
             "listen_interfaces": ["eth1", "eth2"],
             "listen_addresses": ["192.168.50.1", "10.0.0.99"],
-            "root_common_name": "LabFoundry Test Root CA",
-            "organization": "LabFoundry",
+            "root_common_name": "Atlaso Test Root CA",
+            "organization": "Atlaso",
             "organizational_unit": "Lab",
             "country": "US",
             "state": "",
@@ -11635,7 +11640,7 @@ def test_ca_settings_autosave_returns_json(client):
             "storage_path": "/tmp/operator-edited-ca",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 200
@@ -11644,10 +11649,10 @@ def test_ca_settings_autosave_returns_json(client):
     assert payload["listen_interfaces"] == ["eth2"]
     assert payload["listen_addresses"] == ["192.168.50.1"]
     assert "10.0.0.99" not in payload["config_preview"]
-    assert "LabFoundry Test Root CA" in client.get("/certificate-authority").text
+    assert "Atlaso Test Root CA" in client.get("/certificate-authority").text
     with SessionLocal() as db:
         ca_settings = db.execute(select(CaSettings)).scalar_one()
-        assert ca_settings.storage_path == "/etc/labfoundry/ca"
+        assert ca_settings.storage_path == "/etc/atlaso/ca"
         assert ca_settings.listen_interface == "eth2"
         assert ca_settings.listen_address == "192.168.50.1"
 
@@ -11655,8 +11660,8 @@ def test_ca_settings_autosave_returns_json(client):
 def test_ca_apply_task_captures_current_desired_state(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
 
     login(client)
     page = client.get("/certificate-authority")
@@ -11668,8 +11673,8 @@ def test_ca_apply_task_captures_current_desired_state(client):
     with SessionLocal() as db:
         job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()
         assert job.status == "succeeded"
-        assert "labfoundry-helper" in (job.result or "")
-        assert "LabFoundry Internal Root CA" in (job.result or "")
+        assert "atlaso-helper" in (job.result or "")
+        assert "Atlaso Internal Root CA" in (job.result or "")
 
 
 def test_ca_live_apply_stages_decrypted_private_keys_without_leaking_job_output(client, monkeypatch, tmp_path):
@@ -11677,27 +11682,27 @@ def test_ca_live_apply_stages_decrypted_private_keys_without_leaking_job_output(
 
     from sqlalchemy import select
 
-    from labfoundry.app.adapters.system import AdapterResult
-    from labfoundry.app.config import get_settings
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import CaSettings, Job
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.config import get_settings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaSettings, Job
 
-    staged_path = tmp_path / "labfoundry-ca.json"
+    staged_path = tmp_path / "atlaso-ca.json"
     captured: dict[str, str] = {}
 
     def fake_validate_ca_config(self, config_path: str):
         captured["validate_payload"] = Path(config_path).read_text(encoding="utf-8")
-        return AdapterResult(command=["labfoundry-helper", "ca", "validate", config_path], dry_run=False, stdout="validated")
+        return AdapterResult(command=["atlaso-helper", "ca", "validate", config_path], dry_run=False, stdout="validated")
 
     def fake_apply_ca_config(self, config_path: str):
         captured["apply_payload"] = Path(config_path).read_text(encoding="utf-8")
-        return AdapterResult(command=["labfoundry-helper", "ca", "apply", config_path], dry_run=False, stdout="applied")
+        return AdapterResult(command=["atlaso-helper", "ca", "apply", config_path], dry_run=False, stdout="applied")
 
-    monkeypatch.setenv("LABFOUNDRY_DRY_RUN_SYSTEM_ADAPTERS", "false")
+    monkeypatch.setenv("ATLASO_DRY_RUN_SYSTEM_ADAPTERS", "false")
     get_settings.cache_clear()
-    monkeypatch.setattr("labfoundry.app.ui.CA_STAGED_CONFIG_PATH", str(staged_path))
-    monkeypatch.setattr("labfoundry.app.ui.SystemAdapter.validate_ca_config", fake_validate_ca_config)
-    monkeypatch.setattr("labfoundry.app.ui.SystemAdapter.apply_ca_config", fake_apply_ca_config)
+    monkeypatch.setattr("atlaso.app.ui.CA_STAGED_CONFIG_PATH", str(staged_path))
+    monkeypatch.setattr("atlaso.app.ui.SystemAdapter.validate_ca_config", fake_validate_ca_config)
+    monkeypatch.setattr("atlaso.app.ui.SystemAdapter.apply_ca_config", fake_apply_ca_config)
 
     with SessionLocal() as db:
         settings = db.execute(select(CaSettings)).scalar_one()
@@ -11725,8 +11730,8 @@ def test_ca_live_apply_stages_decrypted_private_keys_without_leaking_job_output(
 def test_appliance_apply_status_redacts_undecryptable_ca_private_key(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import CaSettings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaSettings
 
     with SessionLocal() as db:
         settings = db.execute(select(CaSettings)).scalar_one()
@@ -11766,7 +11771,7 @@ def test_dns_settings_accept_multiple_listen_interfaces(client):
     assert "listen-address=192.168.49.1" not in refreshed.text
     assert "listen-address=192.168.50.1" in refreshed.text
     assert "listen-address=192.168.60.1" not in refreshed.text
-    assert "domain=labfoundry.internal" in refreshed.text
+    assert "domain=atlaso.internal" in refreshed.text
 
 
 def test_dns_settings_autosave_returns_json(client):
@@ -11788,7 +11793,7 @@ def test_dns_settings_autosave_returns_json(client):
             "authoritative": "on",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 200
@@ -11822,7 +11827,7 @@ def test_dns_settings_autosave_filters_invalid_listen_interfaces(client):
             "authoritative": "on",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 200
@@ -11835,9 +11840,9 @@ def test_dns_settings_autosave_filters_invalid_listen_interfaces(client):
 def test_dns_validation_requires_dhcp_only_when_esxi_pxe_boot_enabled(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Setting
-    from labfoundry.app.services.esxi_pxe import ESXI_PXE_BOOT_ENABLED_KEY
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Setting
+    from atlaso.app.services.esxi_pxe import ESXI_PXE_BOOT_ENABLED_KEY
 
     login(client)
     with SessionLocal() as db:
@@ -11858,8 +11863,8 @@ def test_dns_validation_requires_dhcp_only_when_esxi_pxe_boot_enabled(client):
 def test_dns_apply_task_captures_current_desired_state(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DhcpSettings, Job
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpSettings, Job
 
     login(client)
     with SessionLocal() as db:
@@ -11875,9 +11880,9 @@ def test_dns_apply_task_captures_current_desired_state(client):
     with SessionLocal() as db:
         job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()
         assert job.status == "succeeded"
-        assert "labfoundry-helper" in (job.result or "")
+        assert "atlaso-helper" in (job.result or "")
         assert "dnsmasq" in (job.result or "")
-        assert "labfoundry.internal" in (job.result or "")
+        assert "atlaso.internal" in (job.result or "")
 
 
 def test_dhcp_settings_autosave_returns_json(client):
@@ -11892,12 +11897,12 @@ def test_dhcp_settings_autosave_returns_json(client):
             "site_address": "192.168.50.1",
             "prefix_length": "24",
             "lease_time": "8h",
-            "domain_name": "labfoundry.internal",
+            "domain_name": "atlaso.internal",
             "dns_server": "192.168.50.1",
             "authoritative": "on",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 200
@@ -11907,8 +11912,8 @@ def test_dhcp_settings_autosave_returns_json(client):
 def test_dhcp_settings_autosave_allows_service_toggle_only(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DhcpSettings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpSettings
 
     login(client)
     page = client.get("/dhcp")
@@ -11920,7 +11925,7 @@ def test_dhcp_settings_autosave_allows_service_toggle_only(client):
             "authoritative": "on",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
 
     assert response.status_code == 200
@@ -11935,8 +11940,8 @@ def test_dhcp_settings_autosave_allows_service_toggle_only(client):
 def test_dhcp_settings_badge_reflects_desired_state_not_seeded_service_state(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DhcpSettings, ServiceState
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpSettings, ServiceState
 
     login(client)
     with SessionLocal() as db:
@@ -11975,7 +11980,7 @@ def test_dhcp_scope_edit_form_updates_ip_zone(client):
             "prefix_length": "24",
             "range_expression": "192.168.50.110-210",
             "lease_time": "8h",
-            "domain_name": "labfoundry.internal",
+            "domain_name": "atlaso.internal",
             "dns_server": "192.168.50.1",
             "ntp_server": "192.168.50.1",
             "description": "edited IP zone",
@@ -11996,8 +12001,8 @@ def test_dhcp_scope_edit_form_updates_ip_zone(client):
 def test_dhcp_vlan_scope_can_be_created_without_dns_server(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DhcpScope
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpScope
 
     login(client)
     page = client.get("/dhcp")
@@ -12012,7 +12017,7 @@ def test_dhcp_vlan_scope_can_be_created_without_dns_server(client):
             "prefix_length": "24",
             "range_expression": "192.168.20.100-192.168.20.200",
             "lease_time": "12h",
-            "domain_name": "labfoundry.internal",
+            "domain_name": "atlaso.internal",
             "dns_server": "",
             "ntp_server": "",
             "description": "VLAN DHCP zone without a bound DNS listener",
@@ -12043,8 +12048,8 @@ def test_dhcp_scope_family_cannot_change_after_create(client):
 
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DhcpScope
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpScope
 
     login(client)
     page = client.get("/dhcp")
@@ -12063,7 +12068,7 @@ def test_dhcp_scope_family_cannot_change_after_create(client):
             "prefix_length": "64",
             "range_expression": "fd00:50::100-fd00:50::200",
             "lease_time": "8h",
-            "domain_name": "labfoundry.internal",
+            "domain_name": "atlaso.internal",
             "dns_server": "fd00:50::1",
             "ntp_server": "fd00:50::1",
             "description": "try family flip",
@@ -12083,9 +12088,9 @@ def test_dhcp_scope_family_cannot_change_after_create(client):
 def test_dhcp_page_tolerates_stale_ipv6_esxi_pxe_scope_selection(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DhcpScope
-    from labfoundry.app.services.esxi_pxe import save_esxi_pxe_boot_settings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpScope
+    from atlaso.app.services.esxi_pxe import save_esxi_pxe_boot_settings
 
     login(client)
     with SessionLocal() as db:
@@ -12093,12 +12098,12 @@ def test_dhcp_page_tolerates_stale_ipv6_esxi_pxe_scope_selection(client):
         save_esxi_pxe_boot_settings(
             db,
             enabled=True,
-            hostname="esxi-pxe.labfoundry.internal",
+            hostname="esxi-pxe.atlaso.internal",
             listen_interface="eth2",
             listen_address="192.168.50.1",
             dhcp_scope_id=str(scope.id),
             dhcp_scope_ids=[str(scope.id)],
-            tftp_root="/var/lib/labfoundry/pxe/tftp",
+            tftp_root="/var/lib/atlaso/pxe/tftp",
             http_port=8080,
             bios_bootfile="undionly.kpxe",
             uefi_bootfile="snponly.efi",
@@ -12121,8 +12126,8 @@ def test_dhcp_page_tolerates_stale_ipv6_esxi_pxe_scope_selection(client):
 def test_dhcp_apply_task_captures_current_desired_state(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DhcpSettings, Job
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpSettings, Job
 
     login(client)
     with SessionLocal() as db:
@@ -12138,7 +12143,7 @@ def test_dhcp_apply_task_captures_current_desired_state(client):
     with SessionLocal() as db:
         job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()
         assert job.status == "succeeded"
-        assert "labfoundry-helper" in (job.result or "")
+        assert "atlaso-helper" in (job.result or "")
         assert "dnsmasq" in (job.result or "")
         assert "1 reservations" in (job.result or "")
 
@@ -12166,12 +12171,12 @@ def test_dhcp_reservation_edit_form_updates_row(client):
 
     payload = page.text.split("data-reservations='", 1)[1].split("'", 1)[0]
     rows = json.loads(html.unescape(payload))
-    reservation_id = next(row["id"] for row in rows if row["hostname"] == "reserved-client.labfoundry.internal")
+    reservation_id = next(row["id"] for row in rows if row["hostname"] == "reserved-client.atlaso.internal")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     updated = client.post(
         f"/dhcp/reservations/{reservation_id}/edit",
         data={
-            "hostname": "reserved-client-2.labfoundry.internal",
+            "hostname": "reserved-client-2.atlaso.internal",
             "mac_address": "02:15:5d:00:22:23",
             "ip_address": "192.168.50.123",
             "description": "edited from grid",
@@ -12183,11 +12188,11 @@ def test_dhcp_reservation_edit_form_updates_row(client):
     assert updated.status_code == 303
 
     refreshed = client.get("/dhcp")
-    assert "reserved-client-2.labfoundry.internal" in refreshed.text
+    assert "reserved-client-2.atlaso.internal" in refreshed.text
     assert "192.168.50.123" in refreshed.text
     assert "edited from grid" in refreshed.text
     dns_page = client.get("/dns")
-    assert "reserved-client-2.labfoundry.internal" in dns_page.text
+    assert "reserved-client-2.atlaso.internal" in dns_page.text
 
 
 def test_dns_zone_create_adds_domain_tab(client):
@@ -12264,7 +12269,7 @@ def test_dns_zone_delete_removes_domain_and_scoped_records(client):
     refreshed = client.get("/dns")
     assert "delete-me.internal" not in refreshed.text
     assert "app.delete-me.internal" not in refreshed.text
-    assert "domain=labfoundry.internal" in refreshed.text
+    assert "domain=atlaso.internal" in refreshed.text
 
 
 def test_dns_zone_delete_keeps_at_least_one_domain(client):
@@ -12273,12 +12278,12 @@ def test_dns_zone_delete_keeps_at_least_one_domain(client):
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
         "/dns/zones/delete",
-        data={"domain": "labfoundry.internal", "csrf": csrf},
+        data={"domain": "atlaso.internal", "csrf": csrf},
     )
 
     assert response.status_code == 422
     assert "At least one DNS domain must remain managed." in response.text
-    assert "labfoundry.internal" in response.text
+    assert "atlaso.internal" in response.text
 
 
 def test_dns_zone_warns_for_local_domain(client):
@@ -12339,7 +12344,7 @@ def test_vcf_helper_page_renders_domain_dropdown(client):
     assert 'aria-controls="vcf-trust-modal"' in visible_workspace
     assert 'data-vcf-ldap-open aria-haspopup="dialog" aria-controls="vcf-ldap-modal"' in visible_workspace
     assert "Root CA subject" not in visible_workspace
-    assert '<option value="labfoundry.internal"' in response.text
+    assert '<option value="atlaso.internal"' in response.text
     assert '<option value="vcf.internal"' in response.text
     assert 'name="target"' in response.text
     assert '<option value="vcf-9.1" selected>VCF 9.1</option>' in response.text
@@ -12355,7 +12360,7 @@ def test_vcf_helper_page_renders_domain_dropdown(client):
     assert 'name="power_on"' in response.text
     assert "Power on after deployment" in response.text
     assert "data-vcf-sddc-tls-confirmation" in response.text
-    app_css = Path("labfoundry/app/static/app.css").read_text()
+    app_css = Path("atlaso/app/static/app.css").read_text()
     assert ".vcf-helper-workspace {\n  grid-template-columns: minmax(0, 1fr);" in app_css
     assert ".vcf-helper-action-bands {\n  display: grid;\n  grid-template-columns: repeat(2, minmax(0, 1fr));" in app_css
     assert 'type="checkbox" data-vcf-sddc-tls-confirm' in response.text
@@ -12389,7 +12394,7 @@ def test_vcf_helper_page_renders_domain_dropdown(client):
     assert "Assigned IPv4" not in response.text
     assert 'name="network_prefix"' not in response.text
     assert "Delete generated records" in response.text
-    app_js = Path("labfoundry/app/static/app.js").read_text()
+    app_js = Path("atlaso/app/static/app.js").read_text()
     assert "[data-vcf-fqdn-target]" in app_js
     assert 'submit.textContent = complete ? "Done" : "Create DNS records"' in app_js
     assert 'modal.close("done")' in app_js
@@ -12417,8 +12422,8 @@ def test_vcf_sddc_dhcp_assignment_uses_static_address_outside_scope(client):
     import html
     import json
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DhcpReservation, DhcpScope, DhcpSettings, DnsRecord
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpReservation, DhcpScope, DhcpSettings, DnsRecord
 
     login(client)
     with SessionLocal() as db:
@@ -12433,14 +12438,14 @@ def test_vcf_sddc_dhcp_assignment_uses_static_address_outside_scope(client):
                 site_address="10.88.0.1",
                 prefix_length=24,
                 range_expression="10.88.0.100-10.88.0.200",
-                domain_name="labfoundry.internal",
+                domain_name="atlaso.internal",
                 dns_server="10.88.0.1",
                 ntp_server="10.88.0.1",
                 enabled=True,
             )
         )
-        db.add(DnsRecord(hostname="used.labfoundry.internal", record_type="A", address="10.88.0.2", enabled=True))
-        db.add(DhcpReservation(hostname="reserved.labfoundry.internal", mac_address="02:15:5d:88:00:03", ip_address="10.88.0.3", enabled=True))
+        db.add(DnsRecord(hostname="used.atlaso.internal", record_type="A", address="10.88.0.2", enabled=True))
+        db.add(DhcpReservation(hostname="reserved.atlaso.internal", mac_address="02:15:5d:88:00:03", ip_address="10.88.0.3", enabled=True))
         db.commit()
 
     response = client.get("/vcf-helper")
@@ -12454,15 +12459,15 @@ def test_vcf_sddc_dhcp_assignment_uses_static_address_outside_scope(client):
     assert scope["netmask"] == "255.255.255.0"
     assert scope["gateway"] == "10.88.0.1"
     assert scope["dns_server"] == "10.88.0.1"
-    assert scope["domain_name"] == "labfoundry.internal"
+    assert scope["domain_name"] == "atlaso.internal"
 
 
 def test_vcf_helper_renders_certificate_trust_modal(client):
     from pathlib import Path
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.services.ca import ensure_root_ca_material
-    from labfoundry.app.ui import get_ca_settings_row
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.ca import ensure_root_ca_material
+    from atlaso.app.ui import get_ca_settings_row
 
     login(client)
     with SessionLocal() as db:
@@ -12491,8 +12496,8 @@ def test_vcf_helper_renders_certificate_trust_modal(client):
     assert "data-vcf-trust-tls-confirmation" in response.text
     assert '<dialog id="vcf-trust-modal"' in response.text
     assert '<dialog id="vcf-trust-modal" class="confirm-modal wide-modal" aria-labelledby="vcf-trust-modal-title" open' not in response.text
-    app_js = Path("labfoundry/app/static/app.js").read_text()
-    assert 'headers: { "X-LabFoundry-VCF-Trust": "1" }' in app_js
+    app_js = Path("atlaso/app/static/app.js").read_text()
+    assert 'headers: { "X-Atlaso-VCF-Trust": "1" }' in app_js
     assert "/vcf-helper/trust-root-ca/inspect-target" in app_js
     assert "window.location.assign(payload.redirect || `/tasks?job_id=" in app_js
     assert "After TLS confirmation" in app_js
@@ -12508,9 +12513,9 @@ def test_vcf_helper_renders_certificate_trust_modal(client):
 def test_vcf_trust_inspects_target_tls_without_persisting_target(client, monkeypatch):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import VcfTrustTarget
-    import labfoundry.app.ui as ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import VcfTrustTarget
+    import atlaso.app.ui as ui
 
     login(client)
     csrf = client.get("/vcf-helper").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -12543,11 +12548,11 @@ def test_vcf_trust_inspects_target_tls_without_persisting_target(client, monkeyp
 def test_vcf_trust_requires_tls_confirmation_then_queues_without_persisting_credentials(client, monkeypatch):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, VcfTrustTarget
-    from labfoundry.app.services.ca import ensure_root_ca_material
-    from labfoundry.app.ui import get_ca_settings_row
-    import labfoundry.app.ui as ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, VcfTrustTarget
+    from atlaso.app.services.ca import ensure_root_ca_material
+    from atlaso.app.ui import get_ca_settings_row
+    import atlaso.app.ui as ui
 
     login(client)
     with SessionLocal() as db:
@@ -12570,7 +12575,7 @@ def test_vcf_trust_requires_tls_confirmation_then_queues_without_persisting_cred
     awaiting = client.post(
         "/vcf-trust/root-ca",
         data=credentials,
-        headers={"X-LabFoundry-VCF-Trust": "1"},
+        headers={"X-Atlaso-VCF-Trust": "1"},
     )
 
     assert awaiting.status_code == 409
@@ -12586,7 +12591,7 @@ def test_vcf_trust_requires_tls_confirmation_then_queues_without_persisting_cred
             **credentials,
             "confirmed_tls_fingerprint": "AA:BB",
         },
-        headers={"X-LabFoundry-VCF-Trust": "1"},
+        headers={"X-Atlaso-VCF-Trust": "1"},
     )
 
     assert confirmed.status_code == 202
@@ -12610,7 +12615,7 @@ def test_vcf_trust_requires_tls_confirmation_then_queues_without_persisting_cred
             "address": "vcf-installer.example.test:8443",
             "confirmed_tls_fingerprint": "AA:BB",
         },
-        headers={"X-LabFoundry-VCF-Trust": "1"},
+        headers={"X-Atlaso-VCF-Trust": "1"},
     )
 
     assert second_port.status_code == 202
@@ -12623,10 +12628,10 @@ def test_vcf_trust_requires_tls_confirmation_then_queues_without_persisting_cred
 
 
 def test_vcf_trust_rejects_mismatched_confirmed_tls_fingerprint(client, monkeypatch):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.services.ca import ensure_root_ca_material
-    from labfoundry.app.ui import get_ca_settings_row
-    import labfoundry.app.ui as ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.ca import ensure_root_ca_material
+    from atlaso.app.ui import get_ca_settings_row
+    import atlaso.app.ui as ui
 
     login(client)
     with SessionLocal() as db:
@@ -12647,7 +12652,7 @@ def test_vcf_trust_rejects_mismatched_confirmed_tls_fingerprint(client, monkeypa
             "confirmed_tls_fingerprint": "CC:DD",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-VCF-Trust": "1"},
+        headers={"X-Atlaso-VCF-Trust": "1"},
     )
 
     assert response.status_code == 409
@@ -12655,12 +12660,12 @@ def test_vcf_trust_rejects_mismatched_confirmed_tls_fingerprint(client, monkeypa
 
 
 def test_vcf_trust_job_preserves_cancelled_state_at_progress_checkpoint(client, monkeypatch):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, JobStatus, VcfTrustTarget
-    from labfoundry.app.services.ca import ensure_root_ca_material
-    from labfoundry.app.services.vcf_trust import VcfTrustCredentials, root_ca_info
-    from labfoundry.app.ui import get_ca_settings_row
-    import labfoundry.app.ui as ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, VcfTrustTarget
+    from atlaso.app.services.ca import ensure_root_ca_material
+    from atlaso.app.services.vcf_trust import VcfTrustCredentials, root_ca_info
+    from atlaso.app.ui import get_ca_settings_row
+    import atlaso.app.ui as ui
 
     login(client)
     with SessionLocal() as db:
@@ -12702,10 +12707,10 @@ def test_vcf_trust_job_preserves_cancelled_state_at_progress_checkpoint(client, 
 
 
 def test_vcf_target_depot_job_preserves_cancelled_state_at_progress_checkpoint(client, monkeypatch):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, JobStatus
-    from labfoundry.app.services.vcf_depot_target import LocalDepotEndpoint
-    import labfoundry.app.ui as ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
+    from atlaso.app.services.vcf_depot_target import LocalDepotEndpoint
+    import atlaso.app.ui as ui
 
     login(client)
     with SessionLocal() as db:
@@ -12716,7 +12721,7 @@ def test_vcf_target_depot_job_preserves_cancelled_state_at_progress_checkpoint(c
     monkeypatch.setattr(
         ui,
         "_local_depot_endpoint",
-        lambda _db: LocalDepotEndpoint(hostname="depot.labfoundry.internal", port=443, url="https://depot.labfoundry.internal", username="depot"),
+        lambda _db: LocalDepotEndpoint(hostname="depot.atlaso.internal", port=443, url="https://depot.atlaso.internal", username="depot"),
     )
 
     def fake_configure(*_args, progress, **_kwargs):
@@ -12750,8 +12755,8 @@ def test_vcf_target_depot_job_preserves_cancelled_state_at_progress_checkpoint(c
 def test_vcf_helper_generates_dns_records_with_component_descriptions(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DnsRecord
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord
 
     login(client)
     page = client.get("/vcf-helper")
@@ -12759,13 +12764,13 @@ def test_vcf_helper_generates_dns_records_with_component_descriptions(client):
     response = client.post(
         "/vcf-helper/generated-fqdns",
         data={
-            "domain": "labfoundry.internal",
+            "domain": "atlaso.internal",
             "prefix": "",
             "suffix": "",
             "start_ipv4": "192.168.210.10/24",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-VCF-Helper": "1"},
+        headers={"X-Atlaso-VCF-Helper": "1"},
     )
 
     assert response.status_code == 200
@@ -12774,15 +12779,15 @@ def test_vcf_helper_generates_dns_records_with_component_descriptions(client):
     assert payload["created"][0] == {
         "host": "vc01",
         "host_label": "vc01",
-        "fqdn": "vc01.labfoundry.internal",
+        "fqdn": "vc01.atlaso.internal",
         "description": "vCenter",
         "address": "192.168.210.10",
         "record_type": "A",
     }
     with SessionLocal() as db:
-        vc_record = db.execute(select(DnsRecord).where(DnsRecord.hostname == "vc01.labfoundry.internal")).scalar_one()
-        automation = db.execute(select(DnsRecord).where(DnsRecord.hostname == "auto-vip.labfoundry.internal")).scalar_one()
-        license_record = db.execute(select(DnsRecord).where(DnsRecord.hostname == "license.labfoundry.internal")).scalar_one()
+        vc_record = db.execute(select(DnsRecord).where(DnsRecord.hostname == "vc01.atlaso.internal")).scalar_one()
+        automation = db.execute(select(DnsRecord).where(DnsRecord.hostname == "auto-vip.atlaso.internal")).scalar_one()
+        license_record = db.execute(select(DnsRecord).where(DnsRecord.hostname == "license.atlaso.internal")).scalar_one()
         assert vc_record.record_type == "A"
         assert vc_record.address == "192.168.210.10"
         assert vc_record.description == "vCenter"
@@ -12793,8 +12798,8 @@ def test_vcf_helper_generates_dns_records_with_component_descriptions(client):
 def test_vcf_helper_vvf_target_generates_subset(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DnsRecord
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord
 
     login(client)
     page = client.get("/vcf-helper")
@@ -12803,13 +12808,13 @@ def test_vcf_helper_vvf_target_generates_subset(client):
         "/vcf-helper/generated-fqdns",
         data={
             "target": "vvf-9.1",
-            "domain": "labfoundry.internal",
+            "domain": "atlaso.internal",
             "prefix": "vvf",
             "suffix": "",
             "start_ipv4": "192.168.211.10/24",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-VCF-Helper": "1"},
+        headers={"X-Atlaso-VCF-Helper": "1"},
     )
 
     assert response.status_code == 200
@@ -12824,31 +12829,31 @@ def test_vcf_helper_vvf_target_generates_subset(client):
         "192.168.211.15",
     ]
     with SessionLocal() as db:
-        nsx = db.execute(select(DnsRecord).where(DnsRecord.hostname == "vvfnsx01.labfoundry.internal")).scalar_one_or_none()
-        vcenter = db.execute(select(DnsRecord).where(DnsRecord.hostname == "vvfvc01.labfoundry.internal")).scalar_one()
-        license_record = db.execute(select(DnsRecord).where(DnsRecord.hostname == "vvflicense.labfoundry.internal")).scalar_one()
+        nsx = db.execute(select(DnsRecord).where(DnsRecord.hostname == "vvfnsx01.atlaso.internal")).scalar_one_or_none()
+        vcenter = db.execute(select(DnsRecord).where(DnsRecord.hostname == "vvfvc01.atlaso.internal")).scalar_one()
+        license_record = db.execute(select(DnsRecord).where(DnsRecord.hostname == "vvflicense.atlaso.internal")).scalar_one()
         assert nsx is None
         assert vcenter.description == "vCenter"
         assert license_record.description == "License Server"
 
 
 def test_vcf_helper_shows_existing_address_record_addresses_in_preview(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DnsRecord
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord
 
     login(client)
     with SessionLocal() as db:
         db.add_all(
             [
                 DnsRecord(
-                    hostname="vc01.labfoundry.internal",
+                    hostname="vc01.atlaso.internal",
                     record_type="A",
                     address="192.168.219.55",
                     description="existing vCenter",
                     enabled=True,
                 ),
                 DnsRecord(
-                    hostname="vc01.labfoundry.internal",
+                    hostname="vc01.atlaso.internal",
                     record_type="AAAA",
                     address="2001:db8:219::55",
                     description="existing vCenter IPv6",
@@ -12862,7 +12867,7 @@ def test_vcf_helper_shows_existing_address_record_addresses_in_preview(client):
 
     assert response.status_code == 200
     assert 'data-existing-address-records=' in response.text
-    assert '"vc01.labfoundry.internal": ["192.168.219.55", "2001:db8:219::55"]' in response.text
+    assert '"vc01.atlaso.internal": ["192.168.219.55", "2001:db8:219::55"]' in response.text
     assert "192.168.219.55" in response.text
     assert "2001:db8:219::55" in response.text
 
@@ -12870,14 +12875,14 @@ def test_vcf_helper_shows_existing_address_record_addresses_in_preview(client):
 def test_vcf_helper_prefix_suffix_and_ip_collision_skips(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DhcpReservation, DnsRecord
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpReservation, DnsRecord
 
     login(client)
     with SessionLocal() as db:
-        db.add(DnsRecord(hostname="pvc01a.labfoundry.internal", record_type="A", address="192.168.220.90", description="manual", enabled=True))
-        db.add(DnsRecord(hostname="occupied.labfoundry.internal", record_type="A", address="192.168.220.10", description="manual", enabled=True))
-        db.add(DhcpReservation(hostname="reserved.labfoundry.internal", mac_address="02:00:00:00:22:11", ip_address="192.168.220.11", enabled=True))
+        db.add(DnsRecord(hostname="pvc01a.atlaso.internal", record_type="A", address="192.168.220.90", description="manual", enabled=True))
+        db.add(DnsRecord(hostname="occupied.atlaso.internal", record_type="A", address="192.168.220.10", description="manual", enabled=True))
+        db.add(DhcpReservation(hostname="reserved.atlaso.internal", mac_address="02:00:00:00:22:11", ip_address="192.168.220.11", enabled=True))
         db.commit()
 
     page = client.get("/vcf-helper")
@@ -12885,24 +12890,24 @@ def test_vcf_helper_prefix_suffix_and_ip_collision_skips(client):
     response = client.post(
         "/vcf-helper/generated-fqdns",
         data={
-            "domain": "labfoundry.internal",
+            "domain": "atlaso.internal",
             "prefix": "p",
             "suffix": "a",
             "start_ipv4": "192.168.220.10/24",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-VCF-Helper": "1"},
+        headers={"X-Atlaso-VCF-Helper": "1"},
     )
 
     assert response.status_code == 200
     payload = response.json()
-    assert [row["fqdn"] for row in payload["skipped"]] == ["pvc01a.labfoundry.internal"]
+    assert [row["fqdn"] for row in payload["skipped"]] == ["pvc01a.atlaso.internal"]
     assert payload["skipped"][0]["address"] == "192.168.220.90"
-    assert payload["created"][0]["fqdn"] == "pnsx01a.labfoundry.internal"
+    assert payload["created"][0]["fqdn"] == "pnsx01a.atlaso.internal"
     assert payload["created"][0]["address"] == "192.168.220.12"
     with SessionLocal() as db:
-        skipped = db.execute(select(DnsRecord).where(DnsRecord.hostname == "pvc01a.labfoundry.internal")).scalar_one()
-        created = db.execute(select(DnsRecord).where(DnsRecord.hostname == "pnsx01a.labfoundry.internal")).scalar_one()
+        skipped = db.execute(select(DnsRecord).where(DnsRecord.hostname == "pvc01a.atlaso.internal")).scalar_one()
+        created = db.execute(select(DnsRecord).where(DnsRecord.hostname == "pnsx01a.atlaso.internal")).scalar_one()
         assert skipped.address == "192.168.220.90"
         assert skipped.description == "manual"
         assert created.address == "192.168.220.12"
@@ -12912,13 +12917,13 @@ def test_vcf_helper_prefix_suffix_and_ip_collision_skips(client):
 def test_vcf_helper_ipv6_generation_creates_aaaa_records_and_skips_collisions(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DnsRecord
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord
 
     login(client)
     with SessionLocal() as db:
-        db.add(DnsRecord(hostname="v6vc01.labfoundry.internal", record_type="AAAA", address="2001:db8:240::99", description="manual IPv6", enabled=True))
-        db.add(DnsRecord(hostname="occupied6.labfoundry.internal", record_type="AAAA", address="2001:db8:240::10", description="manual IPv6", enabled=True))
+        db.add(DnsRecord(hostname="v6vc01.atlaso.internal", record_type="AAAA", address="2001:db8:240::99", description="manual IPv6", enabled=True))
+        db.add(DnsRecord(hostname="occupied6.atlaso.internal", record_type="AAAA", address="2001:db8:240::10", description="manual IPv6", enabled=True))
         db.commit()
 
     page = client.get("/vcf-helper")
@@ -12926,25 +12931,25 @@ def test_vcf_helper_ipv6_generation_creates_aaaa_records_and_skips_collisions(cl
     response = client.post(
         "/vcf-helper/generated-fqdns",
         data={
-            "domain": "labfoundry.internal",
+            "domain": "atlaso.internal",
             "prefix": "v6",
             "suffix": "",
             "start_ipv4": "2001:db8:240::10/64",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-VCF-Helper": "1"},
+        headers={"X-Atlaso-VCF-Helper": "1"},
     )
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["skipped"][0]["fqdn"] == "v6vc01.labfoundry.internal"
+    assert payload["skipped"][0]["fqdn"] == "v6vc01.atlaso.internal"
     assert payload["skipped"][0]["address"] == "2001:db8:240::99"
-    assert payload["created"][0]["fqdn"] == "v6nsx01.labfoundry.internal"
+    assert payload["created"][0]["fqdn"] == "v6nsx01.atlaso.internal"
     assert payload["created"][0]["record_type"] == "AAAA"
     assert payload["created"][0]["address"] == "2001:db8:240::11"
     with SessionLocal() as db:
-        created = db.execute(select(DnsRecord).where(DnsRecord.hostname == "v6nsx01.labfoundry.internal")).scalar_one()
-        skipped = db.execute(select(DnsRecord).where(DnsRecord.hostname == "v6vc01.labfoundry.internal")).scalar_one()
+        created = db.execute(select(DnsRecord).where(DnsRecord.hostname == "v6nsx01.atlaso.internal")).scalar_one()
+        skipped = db.execute(select(DnsRecord).where(DnsRecord.hostname == "v6vc01.atlaso.internal")).scalar_one()
         assert created.record_type == "AAAA"
         assert created.address == "2001:db8:240::11"
         assert created.description == "NSX Manager cluster"
@@ -12955,8 +12960,8 @@ def test_vcf_helper_ipv6_generation_creates_aaaa_records_and_skips_collisions(cl
 def test_vcf_helper_insufficient_addresses_creates_nothing(client):
     from sqlalchemy import func, select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DnsRecord
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord
 
     login(client)
     with SessionLocal() as db:
@@ -12967,13 +12972,13 @@ def test_vcf_helper_insufficient_addresses_creates_nothing(client):
     response = client.post(
         "/vcf-helper/generated-fqdns",
         data={
-            "domain": "labfoundry.internal",
+            "domain": "atlaso.internal",
             "prefix": "edge",
             "suffix": "",
             "start_ipv4": "255.255.255.250/24",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-VCF-Helper": "1"},
+        headers={"X-Atlaso-VCF-Helper": "1"},
     )
 
     assert response.status_code == 422
@@ -12981,14 +12986,14 @@ def test_vcf_helper_insufficient_addresses_creates_nothing(client):
     with SessionLocal() as db:
         after = db.scalar(select(func.count()).select_from(DnsRecord))
         assert after == before
-        assert db.execute(select(DnsRecord).where(DnsRecord.hostname == "edgevc01.labfoundry.internal")).scalar_one_or_none() is None
+        assert db.execute(select(DnsRecord).where(DnsRecord.hostname == "edgevc01.atlaso.internal")).scalar_one_or_none() is None
 
 
 def test_vcf_helper_insufficient_ipv6_addresses_creates_nothing(client):
     from sqlalchemy import func, select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DnsRecord
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord
 
     login(client)
     with SessionLocal() as db:
@@ -12999,13 +13004,13 @@ def test_vcf_helper_insufficient_ipv6_addresses_creates_nothing(client):
     response = client.post(
         "/vcf-helper/generated-fqdns",
         data={
-            "domain": "labfoundry.internal",
+            "domain": "atlaso.internal",
             "prefix": "edge6",
             "suffix": "",
             "start_ipv4": "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff/127",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-VCF-Helper": "1"},
+        headers={"X-Atlaso-VCF-Helper": "1"},
     )
 
     assert response.status_code == 422
@@ -13013,14 +13018,14 @@ def test_vcf_helper_insufficient_ipv6_addresses_creates_nothing(client):
     with SessionLocal() as db:
         after = db.scalar(select(func.count()).select_from(DnsRecord))
         assert after == before
-        assert db.execute(select(DnsRecord).where(DnsRecord.hostname == "edge6vc01.labfoundry.internal")).scalar_one_or_none() is None
+        assert db.execute(select(DnsRecord).where(DnsRecord.hostname == "edge6vc01.atlaso.internal")).scalar_one_or_none() is None
 
 
 def test_vcf_helper_rejects_network_or_broadcast_start_address(client):
     from sqlalchemy import func, select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DnsRecord
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord
 
     login(client)
     with SessionLocal() as db:
@@ -13031,13 +13036,13 @@ def test_vcf_helper_rejects_network_or_broadcast_start_address(client):
     response = client.post(
         "/vcf-helper/generated-fqdns",
         data={
-            "domain": "labfoundry.internal",
+            "domain": "atlaso.internal",
             "prefix": "boundary",
             "suffix": "",
             "start_ipv4": "192.168.230.0/24",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-VCF-Helper": "1"},
+        headers={"X-Atlaso-VCF-Helper": "1"},
     )
 
     assert response.status_code == 422
@@ -13049,14 +13054,14 @@ def test_vcf_helper_rejects_network_or_broadcast_start_address(client):
 def test_vcf_helper_delete_removes_owned_records_and_preserves_skipped_existing(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DnsRecord
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord
 
     login(client)
     with SessionLocal() as db:
         db.add(
             DnsRecord(
-                hostname="delvc01.labfoundry.internal",
+                hostname="delvc01.atlaso.internal",
                 record_type="A",
                 address="192.168.231.90",
                 description="manual record",
@@ -13070,13 +13075,13 @@ def test_vcf_helper_delete_removes_owned_records_and_preserves_skipped_existing(
     created = client.post(
         "/vcf-helper/generated-fqdns",
         data={
-            "domain": "labfoundry.internal",
+            "domain": "atlaso.internal",
             "prefix": "del",
             "suffix": "",
             "start_ipv4": "192.168.231.10/24",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-VCF-Helper": "1"},
+        headers={"X-Atlaso-VCF-Helper": "1"},
     )
     assert created.status_code == 200
     assert len(created.json()["created"]) == 16
@@ -13085,21 +13090,21 @@ def test_vcf_helper_delete_removes_owned_records_and_preserves_skipped_existing(
     deleted = client.post(
         "/vcf-helper/generated-fqdns/delete",
         data={
-            "domain": "labfoundry.internal",
+            "domain": "atlaso.internal",
             "prefix": "del",
             "suffix": "",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-VCF-Helper": "1"},
+        headers={"X-Atlaso-VCF-Helper": "1"},
     )
 
     assert deleted.status_code == 200
     payload = deleted.json()
     assert len(payload["deleted"]) == 16
-    assert [row["fqdn"] for row in payload["preserved"]] == ["delvc01.labfoundry.internal"]
+    assert [row["fqdn"] for row in payload["preserved"]] == ["delvc01.atlaso.internal"]
     with SessionLocal() as db:
-        manual = db.execute(select(DnsRecord).where(DnsRecord.hostname == "delvc01.labfoundry.internal")).scalar_one()
-        removed = db.execute(select(DnsRecord).where(DnsRecord.hostname == "delnsx01.labfoundry.internal")).scalar_one_or_none()
+        manual = db.execute(select(DnsRecord).where(DnsRecord.hostname == "delvc01.atlaso.internal")).scalar_one()
+        removed = db.execute(select(DnsRecord).where(DnsRecord.hostname == "delnsx01.atlaso.internal")).scalar_one_or_none()
         assert manual.address == "192.168.231.90"
         assert manual.description == "manual record"
         assert removed is None
@@ -13108,8 +13113,8 @@ def test_vcf_helper_delete_removes_owned_records_and_preserves_skipped_existing(
 def test_vcf_helper_delete_vvf_target_removes_only_subset(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DnsRecord
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord
 
     login(client)
     page = client.get("/vcf-helper")
@@ -13118,13 +13123,13 @@ def test_vcf_helper_delete_vvf_target_removes_only_subset(client):
         "/vcf-helper/generated-fqdns",
         data={
             "target": "vcf-9.1",
-            "domain": "labfoundry.internal",
+            "domain": "atlaso.internal",
             "prefix": "vdel",
             "suffix": "",
             "start_ipv4": "192.168.233.10/24",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-VCF-Helper": "1"},
+        headers={"X-Atlaso-VCF-Helper": "1"},
     )
     assert created.status_code == 200
     assert len(created.json()["created"]) == 17
@@ -13133,32 +13138,32 @@ def test_vcf_helper_delete_vvf_target_removes_only_subset(client):
         "/vcf-helper/generated-fqdns/delete",
         data={
             "target": "vvf-9.1",
-            "domain": "labfoundry.internal",
+            "domain": "atlaso.internal",
             "prefix": "vdel",
             "suffix": "",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-VCF-Helper": "1"},
+        headers={"X-Atlaso-VCF-Helper": "1"},
     )
 
     assert deleted.status_code == 200
     assert [row["host"] for row in deleted.json()["deleted"]] == ["vc01", "ops01", "vsp01", "fleetlcm", "shared01", "license"]
     with SessionLocal() as db:
-        assert db.execute(select(DnsRecord).where(DnsRecord.hostname == "vdelvc01.labfoundry.internal")).scalar_one_or_none() is None
-        assert db.execute(select(DnsRecord).where(DnsRecord.hostname == "vdelnsx01.labfoundry.internal")).scalar_one() is not None
+        assert db.execute(select(DnsRecord).where(DnsRecord.hostname == "vdelvc01.atlaso.internal")).scalar_one_or_none() is None
+        assert db.execute(select(DnsRecord).where(DnsRecord.hostname == "vdelnsx01.atlaso.internal")).scalar_one() is not None
 
 
 def test_vcf_helper_delete_recognizes_legacy_generated_records(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DnsRecord
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord
 
     login(client)
     with SessionLocal() as db:
         db.add(
             DnsRecord(
-                hostname="legacyvc01.labfoundry.internal",
+                hostname="legacyvc01.atlaso.internal",
                 record_type="A",
                 address="192.168.232.10",
                 record_data_json="",
@@ -13173,32 +13178,32 @@ def test_vcf_helper_delete_recognizes_legacy_generated_records(client):
     response = client.post(
         "/vcf-helper/generated-fqdns/delete",
         data={
-            "domain": "labfoundry.internal",
+            "domain": "atlaso.internal",
             "prefix": "legacy",
             "suffix": "",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-VCF-Helper": "1"},
+        headers={"X-Atlaso-VCF-Helper": "1"},
     )
 
     assert response.status_code == 200
-    assert [row["fqdn"] for row in response.json()["deleted"]] == ["legacyvc01.labfoundry.internal"]
+    assert [row["fqdn"] for row in response.json()["deleted"]] == ["legacyvc01.atlaso.internal"]
     with SessionLocal() as db:
-        assert db.execute(select(DnsRecord).where(DnsRecord.hostname == "legacyvc01.labfoundry.internal")).scalar_one_or_none() is None
+        assert db.execute(select(DnsRecord).where(DnsRecord.hostname == "legacyvc01.atlaso.internal")).scalar_one_or_none() is None
 
 
 def test_vcf_helper_delete_removes_owned_aaaa_records(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DnsRecord
-    from labfoundry.app.services.dnsmasq import dump_dns_record_data
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord
+    from atlaso.app.services.dnsmasq import dump_dns_record_data
 
     login(client)
     with SessionLocal() as db:
         db.add(
             DnsRecord(
-                hostname="ipv6delvc01.labfoundry.internal",
+                hostname="ipv6delvc01.atlaso.internal",
                 record_type="AAAA",
                 address="2001:db8:232::10",
                 record_data_json=dump_dns_record_data("AAAA", "2001:db8:232::10", {"source": "vcf_helper", "component": "vc01"}),
@@ -13213,18 +13218,18 @@ def test_vcf_helper_delete_removes_owned_aaaa_records(client):
     response = client.post(
         "/vcf-helper/generated-fqdns/delete",
         data={
-            "domain": "labfoundry.internal",
+            "domain": "atlaso.internal",
             "prefix": "ipv6del",
             "suffix": "",
             "csrf": csrf,
         },
-        headers={"X-LabFoundry-VCF-Helper": "1"},
+        headers={"X-Atlaso-VCF-Helper": "1"},
     )
 
     assert response.status_code == 200
     assert response.json()["deleted"][0]["record_type"] == "AAAA"
     with SessionLocal() as db:
-        assert db.execute(select(DnsRecord).where(DnsRecord.hostname == "ipv6delvc01.labfoundry.internal")).scalar_one_or_none() is None
+        assert db.execute(select(DnsRecord).where(DnsRecord.hostname == "ipv6delvc01.atlaso.internal")).scalar_one_or_none() is None
 
 
 def test_duplicate_dns_record_form_shows_conflict(client):
@@ -13234,7 +13239,7 @@ def test_duplicate_dns_record_form_shows_conflict(client):
     first = client.post(
         "/dns/records",
         data={
-            "hostname": "duplicate.labfoundry.internal",
+            "hostname": "duplicate.atlaso.internal",
             "record_type": "A",
             "address": "192.168.50.40",
             "enabled": "on",
@@ -13249,7 +13254,7 @@ def test_duplicate_dns_record_form_shows_conflict(client):
     same_owner_different_value = client.post(
         "/dns/records",
         data={
-            "hostname": "duplicate.labfoundry.internal",
+            "hostname": "duplicate.atlaso.internal",
             "record_type": "A",
             "address": "192.168.50.41",
             "enabled": "on",
@@ -13263,7 +13268,7 @@ def test_duplicate_dns_record_form_shows_conflict(client):
     duplicate = client.post(
         "/dns/records",
         data={
-            "hostname": "duplicate.labfoundry.internal",
+            "hostname": "duplicate.atlaso.internal",
             "record_type": "A",
             "address": "192.168.50.40",
             "enabled": "on",
@@ -13282,7 +13287,7 @@ def test_dns_record_form_scopes_relative_host_to_domain(client):
         "/dns/records",
         data={
             "hostname": "scoped",
-            "domain": "labfoundry.internal",
+            "domain": "atlaso.internal",
             "record_type": "A",
             "address": "192.168.50.90",
             "enabled": "on",
@@ -13293,7 +13298,7 @@ def test_dns_record_form_scopes_relative_host_to_domain(client):
     assert response.status_code == 303
 
     refreshed = client.get("/dns")
-    assert "scoped.labfoundry.internal" in refreshed.text
+    assert "scoped.atlaso.internal" in refreshed.text
     assert "scoped" in refreshed.text
 
 
@@ -13305,7 +13310,7 @@ def test_dns_record_form_rejects_wrong_ip_family(client):
         "/dns/records",
         data={
             "hostname": "wrong-family",
-            "domain": "labfoundry.internal",
+            "domain": "atlaso.internal",
             "record_type": "AAAA",
             "address": "192.168.50.91",
             "enabled": "on",
@@ -13327,7 +13332,7 @@ def test_dns_record_edit_form_updates_row(client):
     created = client.post(
         "/dns/records",
         data={
-            "hostname": "editable.labfoundry.internal",
+            "hostname": "editable.atlaso.internal",
             "record_type": "A",
             "address": "192.168.50.60",
             "enabled": "on",
@@ -13340,12 +13345,12 @@ def test_dns_record_edit_form_updates_row(client):
     page = client.get("/dns")
     payload = page.text.split("data-records='", 1)[1].split("'", 1)[0]
     records = json.loads(html.unescape(payload))
-    record_id = next(record["id"] for record in records if record["hostname"] == "editable.labfoundry.internal")
+    record_id = next(record["id"] for record in records if record["hostname"] == "editable.atlaso.internal")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     updated = client.post(
         f"/dns/records/{record_id}/edit",
         data={
-            "hostname": "editable-renamed.labfoundry.internal",
+            "hostname": "editable-renamed.atlaso.internal",
             "record_type": "A",
             "address": "192.168.50.61",
             "description": "edited from UI",
@@ -13356,7 +13361,7 @@ def test_dns_record_edit_form_updates_row(client):
     assert updated.status_code == 303
 
     refreshed = client.get("/dns")
-    assert "editable-renamed.labfoundry.internal" in refreshed.text
+    assert "editable-renamed.atlaso.internal" in refreshed.text
     assert "192.168.50.61" in refreshed.text
     assert "edited from UI" in refreshed.text
 
@@ -13368,7 +13373,7 @@ def test_hosts_file_editor_replaces_dns_records(client):
     imported = client.post(
         "/dns/records/import",
         data={
-            "domain": "labfoundry.internal",
+            "domain": "atlaso.internal",
             "hosts_text": "192.168.50.80 bulk bulk-alias\n",
             "replace_existing": "on",
             "csrf": csrf,
@@ -13379,9 +13384,9 @@ def test_hosts_file_editor_replaces_dns_records(client):
 
     refreshed = client.get("/dns")
     assert "Import Hosts" in refreshed.text
-    assert "bulk.labfoundry.internal" in refreshed.text
-    assert "bulk-alias.labfoundry.internal" in refreshed.text
-    assert "labfoundry.labfoundry.internal" in refreshed.text
+    assert "bulk.atlaso.internal" in refreshed.text
+    assert "bulk-alias.atlaso.internal" in refreshed.text
+    assert "core.atlaso.internal" in refreshed.text
 
 
 def test_zone_file_editor_import_replaces_domain_records(client):
@@ -13391,8 +13396,8 @@ def test_zone_file_editor_import_replaces_domain_records(client):
     imported = client.post(
         "/dns/zones/import",
         data={
-            "domain": "labfoundry.internal",
-            "zone_text": "$ORIGIN labfoundry.internal.\nwww IN CNAME labfoundry.labfoundry.internal.\nipv6 IN AAAA 2001:db8::10\n",
+            "domain": "atlaso.internal",
+            "zone_text": "$ORIGIN atlaso.internal.\nwww IN CNAME core.atlaso.internal.\nipv6 IN AAAA 2001:db8::10\n",
             "replace_existing": "on",
             "csrf": csrf,
         },
@@ -13402,21 +13407,21 @@ def test_zone_file_editor_import_replaces_domain_records(client):
 
     refreshed = client.get("/dns")
     assert "Import Zone File" in refreshed.text
-    assert "www.labfoundry.internal" in refreshed.text
-    assert "cname=www.labfoundry.internal,labfoundry.labfoundry.internal" in refreshed.text
-    assert "ipv6.labfoundry.internal" in refreshed.text
+    assert "www.atlaso.internal" in refreshed.text
+    assert "cname=www.atlaso.internal,core.atlaso.internal" in refreshed.text
+    assert "ipv6.atlaso.internal" in refreshed.text
 
 
 def test_zone_file_import_error_preserves_pasted_zone_text(client):
     login(client)
     page = client.get("/dns")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    zone_text = "$ORIGIN labfoundry.internal.\nbadrecord IN BOGUS unsupported\n"
+    zone_text = "$ORIGIN atlaso.internal.\nbadrecord IN BOGUS unsupported\n"
 
     imported = client.post(
         "/dns/zones/import",
         data={
-            "domain": "labfoundry.internal",
+            "domain": "atlaso.internal",
             "zone_text": zone_text,
             "replace_existing": "on",
             "csrf": csrf,
@@ -13430,14 +13435,14 @@ def test_zone_file_import_error_preserves_pasted_zone_text(client):
 
 
 def test_vcf_sddc_inventory_requires_tls_confirmation_and_redacts_credentials(client, monkeypatch):
-    from labfoundry.app import ui
-    from labfoundry.app.services.vcf_sddc_deployment import OvaDescriptor, OvfProperty
+    from atlaso.app import ui
+    from atlaso.app.services.vcf_sddc_deployment import OvaDescriptor, OvfProperty
 
     login(client)
     page = client.get("/vcf-helper")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     descriptor = OvaDescriptor(
-        path="/mnt/labfoundry-vcf-offline-depot/PROD/COMP/SDDC_MANAGER_VCF/test.ova",
+        path="/mnt/atlaso-vcf-offline-depot/PROD/COMP/SDDC_MANAGER_VCF/test.ova",
         relative_path="test.ova",
         filename="test.ova",
         size_bytes=10,
@@ -13465,16 +13470,16 @@ def test_vcf_sddc_inventory_requires_tls_confirmation_and_redacts_credentials(cl
 
 def test_vcf_sddc_deploy_job_persists_no_passwords(client, monkeypatch):
     import json
-    from labfoundry.app import ui
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job
-    from labfoundry.app.services.vcf_sddc_deployment import OvaDescriptor, OvfProperty
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+    from atlaso.app.services.vcf_sddc_deployment import OvaDescriptor, OvfProperty
 
     login(client)
     page = client.get("/vcf-helper")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     descriptor = OvaDescriptor(
-        path="/mnt/labfoundry-vcf-offline-depot/PROD/COMP/SDDC_MANAGER_VCF/test.ova",
+        path="/mnt/atlaso-vcf-offline-depot/PROD/COMP/SDDC_MANAGER_VCF/test.ova",
         relative_path="test.ova",
         filename="test.ova",
         size_bytes=10,
@@ -13565,7 +13570,7 @@ def test_vcf_sddc_deploy_job_persists_no_passwords(client, monkeypatch):
 
 
 def test_vcf_sddc_endpoint_address_parses_inline_port():
-    from labfoundry.app import ui
+    from atlaso.app import ui
 
     assert ui._split_vcf_endpoint_address_port("vc.example:8443") == ("vc.example", 8443)
     assert ui._split_vcf_endpoint_address_port("https://vc.example/sdk", None) == ("vc.example", 443)
@@ -13573,10 +13578,10 @@ def test_vcf_sddc_endpoint_address_parses_inline_port():
 
 
 def test_vcf_sddc_deploy_waits_on_ip_before_new_dns_name(client, monkeypatch):
-    from labfoundry.app import ui
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, JobStatus
-    from labfoundry.app.services.vcf_sddc_deployment import OvaDescriptor
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
+    from atlaso.app.services.vcf_sddc_deployment import OvaDescriptor
 
     login(client)
     with SessionLocal() as db:
@@ -13584,7 +13589,7 @@ def test_vcf_sddc_deploy_waits_on_ip_before_new_dns_name(client, monkeypatch):
         db.commit()
 
     descriptor = OvaDescriptor(
-        path="/mnt/labfoundry-vcf-offline-depot/PROD/COMP/SDDC_MANAGER_VCF/test.ova",
+        path="/mnt/atlaso-vcf-offline-depot/PROD/COMP/SDDC_MANAGER_VCF/test.ova",
         relative_path="test.ova",
         filename="test.ova",
         size_bytes=10,
@@ -13613,7 +13618,7 @@ def test_vcf_sddc_deploy_waits_on_ip_before_new_dns_name(client, monkeypatch):
         power_on=True,
         property_values={
             "LOCAL_USER_PASSWORD": "local-secret",
-            "vami.hostname": "sddcm.labfoundry.internal",
+            "vami.hostname": "sddcm.atlaso.internal",
             "ip0": "192.168.87.19",
         },
         add_dns=True,
@@ -13627,18 +13632,18 @@ def test_vcf_sddc_deploy_waits_on_ip_before_new_dns_name(client, monkeypatch):
         job = db.get(Job, "job_sddc_ip_first")
         assert job.status == JobStatus.SUCCEEDED.value
         assert '"target": "192.168.87.18"' in (job.result or "")
-        assert "sddcm.labfoundry.internal" in (job.result or "")
+        assert "sddcm.atlaso.internal" in (job.result or "")
 
 
 def test_vcf_sddc_deploy_requires_ipv4_ova_properties(client, monkeypatch):
-    from labfoundry.app import ui
-    from labfoundry.app.services.vcf_sddc_deployment import OvaDescriptor, OvfProperty
+    from atlaso.app import ui
+    from atlaso.app.services.vcf_sddc_deployment import OvaDescriptor, OvfProperty
 
     login(client)
     page = client.get("/vcf-helper")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     descriptor = OvaDescriptor(
-        path="/mnt/labfoundry-vcf-offline-depot/PROD/COMP/SDDC_MANAGER_VCF/test.ova",
+        path="/mnt/atlaso-vcf-offline-depot/PROD/COMP/SDDC_MANAGER_VCF/test.ova",
         relative_path="test.ova",
         filename="test.ova",
         size_bytes=10,
@@ -13692,9 +13697,9 @@ def test_vcf_sddc_deploy_requires_ipv4_ova_properties(client, monkeypatch):
 
 
 def test_recover_interrupted_vcf_helper_jobs_discards_transient_work(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job
-    from labfoundry.app.ui import recover_interrupted_vcf_helper_jobs
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+    from atlaso.app.ui import recover_interrupted_vcf_helper_jobs
 
     with SessionLocal() as db:
         job = Job(id="job_interrupted_vcf", type="vcf-sddc-manager-deploy", status="running", created_by="admin", result='{"state":"uploading-ova"}')

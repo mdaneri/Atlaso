@@ -208,9 +208,9 @@ function Get-ManagementNetworkPlan {
 
 if (-not $LabName) {
     if ($PSCmdlet.ParameterSetName -eq 'CleanupVms') {
-        $LabName = 'LabFoundryWorkstationLifecycle'
+        $LabName = 'AtlasoWorkstationLifecycle'
     } else {
-        $LabName = "LabFoundryWorkstationLifecycle-$(Get-Date -Format 'yyyyMMddHHmmss')"
+        $LabName = "AtlasoWorkstationLifecycle-$(Get-Date -Format 'yyyyMMddHHmmss')"
     }
 }
 
@@ -249,13 +249,13 @@ if ($RoutingWanOnly -and $FullEsxiPxeInstall) {
 }
 if (-not $ApplianceVmxPath) {
     if ($PlanOnly) {
-        $ApplianceVmxPath = Join-Path $repoRoot 'image\vmware-workstation\output\LabFoundry-VMware\LabFoundry-VMware.vmx'
+        $ApplianceVmxPath = Join-Path $repoRoot 'image\vmware-workstation\output\Atlaso-VMware\Atlaso-VMware.vmx'
     } else {
         $ApplianceVmxPath = Find-LatestApplianceVmx
     }
 }
 if (-not $ClientVmdkPath) {
-    $ClientVmdkPath = Join-Path $repoRoot 'image\vmware-workstation\clients\alpine-cloud\labfoundry-tiny-linux-client.vmdk'
+    $ClientVmdkPath = Join-Path $repoRoot 'image\vmware-workstation\clients\alpine-cloud\atlaso-tiny-linux-client.vmdk'
 }
 if (-not $applianceIpWasPassed) {
     $networkPlan = Get-ManagementNetworkPlan -NetworkName $ManagementNetwork -Vmrun $VmrunPath -BridgeAlias $BridgedInterfaceAlias

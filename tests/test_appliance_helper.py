@@ -16,12 +16,12 @@ from types import SimpleNamespace
 import pytest
 
 
-HELPER_PATH = Path(__file__).resolve().parents[1] / "scripts" / "appliance" / "labfoundry-helper"
+HELPER_PATH = Path(__file__).resolve().parents[1] / "scripts" / "appliance" / "atlaso-helper"
 
 
 def load_helper_module():
-    loader = importlib.machinery.SourceFileLoader("labfoundry_helper", str(HELPER_PATH))
-    spec = importlib.util.spec_from_loader("labfoundry_helper", loader)
+    loader = importlib.machinery.SourceFileLoader("atlaso_helper", str(HELPER_PATH))
+    spec = importlib.util.spec_from_loader("atlaso_helper", loader)
     assert spec is not None
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
@@ -44,7 +44,7 @@ def test_appliance_power_helper_schedules_reboot(monkeypatch):
     assert len(commands) == 1
     command = commands[0]
     assert command[:3] == ["/usr/bin/systemd-run", "--quiet", "--on-active=5"]
-    assert command[3].startswith("--unit=labfoundry-reboot-")
+    assert command[3].startswith("--unit=atlaso-reboot-")
     assert command[-2:] == ["/usr/bin/systemctl", "reboot"]
 
 
@@ -77,23 +77,23 @@ def test_appliance_power_helper_fails_closed_without_systemd_run(monkeypatch, ca
 
 
 def ldap_payload(*, enabled: bool = False) -> dict:
-    suffix = "dc=org-a,dc=ldap,dc=labfoundry,dc=internal"
+    suffix = "dc=org-a,dc=ldap,dc=atlaso,dc=internal"
     user_dn = f"uid=operator,ou=users,{suffix}"
     return {
         "schema_version": 1,
         "service": {
             "enabled": enabled,
-            "hostname": "ldap.labfoundry.internal",
+            "hostname": "ldap.atlaso.internal",
             "listen_interface": "eth0",
             "listen_address": "192.168.49.1",
             "ldaps_enabled": True,
             "port": 636,
             "ldap_enabled": False,
             "ldap_port": 389,
-            "certificate_path": "/etc/labfoundry/ldap/tls/server.crt",
-            "key_path": "/etc/labfoundry/ldap/tls/server.key",
-            "chain_path": "/etc/labfoundry/ldap/tls/server-chain.crt",
-            "root_ca_path": "/etc/labfoundry/ca/root.crt",
+            "certificate_path": "/etc/atlaso/ldap/tls/server.crt",
+            "key_path": "/etc/atlaso/ldap/tls/server.key",
+            "chain_path": "/etc/atlaso/ldap/tls/server-chain.crt",
+            "root_ca_path": "/etc/atlaso/ca/root.crt",
             "password_policy": {
                 "min_length": 14,
                 "history": 5,
@@ -155,14 +155,14 @@ def test_ldap_helper_renders_separate_mdb_acl_overlays_and_configurable_listener
     assert helper._ldap_config_errors(payload) == []
     config = helper._render_ldap_slapd_config(payload)
     assert "database mdb" in config
-    assert 'suffix "dc=org-a,dc=ldap,dc=labfoundry,dc=internal"' in config
+    assert 'suffix "dc=org-a,dc=ldap,dc=atlaso,dc=internal"' in config
     assert "overlay ppolicy" in config
     assert "overlay memberof" in config
     assert "overlay refint" in config
     assert "modulepath /usr/lib/openldap" in config
     assert "moduleload ppolicy.so" in config
     assert "ppolicy.schema" not in config
-    assert 'by dn.exact="uid=vcf-bind,ou=service-accounts,dc=org-a,dc=ldap,dc=labfoundry,dc=internal" read' in config
+    assert 'by dn.exact="uid=vcf-bind,ou=service-accounts,dc=org-a,dc=ldap,dc=atlaso,dc=internal" read' in config
     assert helper._ldap_listener_urls(payload["service"]) == "ldapi:/// ldaps://192.168.49.1:636/"
     assert "ldap:///" not in helper._ldap_listener_urls(payload["service"])
 
@@ -260,7 +260,7 @@ def test_ldap_recovery_restores_slapd_ownership(monkeypatch, tmp_path):
     manifest_path.write_text(
         json.dumps(
             {
-                "format": "labfoundry-ldap-slapcat-v1",
+                "format": "atlaso-ldap-slapcat-v1",
                 "databases": [
                     {
                         "suffix": suffix,
@@ -326,7 +326,7 @@ def test_ldap_apply_removes_only_obsolete_managed_data_directories(monkeypatch, 
 def test_ldap_listener_dropin_overrides_photon_hard_coded_plaintext_listener(monkeypatch, tmp_path):
     helper = load_helper_module()
     dropin_dir = tmp_path / "slapd.service.d"
-    dropin_path = dropin_dir / "labfoundry.conf"
+    dropin_path = dropin_dir / "atlaso.conf"
     sysconfig_path = tmp_path / "slapd"
     monkeypatch.setattr(helper, "LDAP_SYSTEMD_DROPIN_DIR", dropin_dir)
     monkeypatch.setattr(helper, "LDAP_SYSTEMD_DROPIN_PATH", dropin_path)
@@ -346,7 +346,7 @@ def test_ldap_listener_dropin_overrides_photon_hard_coded_plaintext_listener(mon
 def test_ldap_listener_dropin_supports_custom_ldaps_and_opt_in_plaintext_ports(monkeypatch, tmp_path):
     helper = load_helper_module()
     dropin_dir = tmp_path / "slapd.service.d"
-    dropin_path = dropin_dir / "labfoundry.conf"
+    dropin_path = dropin_dir / "atlaso.conf"
     sysconfig_path = tmp_path / "slapd"
     monkeypatch.setattr(helper, "LDAP_SYSTEMD_DROPIN_DIR", dropin_dir)
     monkeypatch.setattr(helper, "LDAP_SYSTEMD_DROPIN_PATH", dropin_path)
@@ -390,8 +390,8 @@ def test_ldap_directory_queries_disable_ldif_wrapping(monkeypatch):
     monkeypatch.setattr(helper.shutil, "which", lambda command: f"/usr/bin/{command}")
     monkeypatch.setattr(helper, "_run", fake_run)
 
-    helper._ldap_entry_exists("uid=operator,ou=users,dc=org-a,dc=ldap,dc=labfoundry,dc=internal")
-    helper._ldap_list_dns("ou=groups,dc=org-a,dc=ldap,dc=labfoundry,dc=internal")
+    helper._ldap_entry_exists("uid=operator,ou=users,dc=org-a,dc=ldap,dc=atlaso,dc=internal")
+    helper._ldap_list_dns("ou=groups,dc=org-a,dc=ldap,dc=atlaso,dc=internal")
 
     assert all(["-o", "ldif-wrap=no"] == command[2:4] for command in commands)
 
@@ -404,16 +404,16 @@ def test_ldap_helper_rejects_missing_service_account_mapping_and_group_cycle():
         {
             "id": 1,
             "name": "First",
-            "dn": "cn=First,ou=groups,dc=org-a,dc=ldap,dc=labfoundry,dc=internal",
+            "dn": "cn=First,ou=groups,dc=org-a,dc=ldap,dc=atlaso,dc=internal",
             "enabled": True,
-            "members": [{"type": "group", "id": 2, "dn": "cn=Second,ou=groups,dc=org-a,dc=ldap,dc=labfoundry,dc=internal"}],
+            "members": [{"type": "group", "id": 2, "dn": "cn=Second,ou=groups,dc=org-a,dc=ldap,dc=atlaso,dc=internal"}],
         },
         {
             "id": 2,
             "name": "Second",
-            "dn": "cn=Second,ou=groups,dc=org-a,dc=ldap,dc=labfoundry,dc=internal",
+            "dn": "cn=Second,ou=groups,dc=org-a,dc=ldap,dc=atlaso,dc=internal",
             "enabled": True,
-            "members": [{"type": "group", "id": 1, "dn": "cn=First,ou=groups,dc=org-a,dc=ldap,dc=labfoundry,dc=internal"}],
+            "members": [{"type": "group", "id": 1, "dn": "cn=First,ou=groups,dc=org-a,dc=ldap,dc=atlaso,dc=internal"}],
         },
     ]
 
@@ -423,18 +423,18 @@ def test_ldap_helper_rejects_missing_service_account_mapping_and_group_cycle():
 
 
 def kms_config_text(managed_root: Path, *, enabled: bool = True, database_path: Path | None = None) -> str:
-    database_path = database_path or Path("/var/lib/labfoundry/kms/pykmip.db")
+    database_path = database_path or Path("/var/lib/atlaso/kms/pykmip.db")
     return "\n".join(
         [
-            "# Managed by LabFoundry. Local changes may be overwritten.",
-            f"# LabFoundry KMS enabled: {str(enabled).lower()}",
-            "# LabFoundry KMS endpoint hostname: kms.labfoundry.internal",
+            "# Managed by Atlaso. Local changes may be overwritten.",
+            f"# Atlaso KMS enabled: {str(enabled).lower()}",
+            "# Atlaso KMS endpoint hostname: kms.atlaso.internal",
             "# Backend: PyKMIP lab KMIP server desired state.",
             "[server]",
             "hostname=192.168.50.1",
             "port=5696",
-            f"certificate_path={managed_root / 'kms' / 'certs' / 'kms.labfoundry.internal.crt'}",
-            f"key_path={managed_root / 'kms' / 'certs' / 'kms.labfoundry.internal.key'}",
+            f"certificate_path={managed_root / 'kms' / 'certs' / 'kms.atlaso.internal.crt'}",
+            f"key_path={managed_root / 'kms' / 'certs' / 'kms.atlaso.internal.key'}",
             f"ca_path={managed_root / 'ca' / 'root.crt'}",
             "auth_suite=TLS1.2",
             f"policy_path={managed_root / 'kms' / 'policies'}",
@@ -505,7 +505,7 @@ def network_config_text(
 def public_services_config_text() -> str:
     return "\n".join(
         [
-            "# Managed by LabFoundry. Local changes may be overwritten.",
+            "# Managed by Atlaso. Local changes may be overwritten.",
             "# IP-scoped public service front door for non-management interfaces.",
             "server {",
             "  listen 192.168.87.32:80;",
@@ -514,7 +514,7 @@ def public_services_config_text() -> str:
             "    proxy_pass http://127.0.0.1:8000;",
             "  }",
             "  location /pxe/esxi/ {",
-            "    alias /var/lib/labfoundry/pxe/http/esxi/;",
+            "    alias /var/lib/atlaso/pxe/http/esxi/;",
             "    autoindex off;",
             "  }",
             "  location / {",
@@ -529,12 +529,12 @@ def public_services_config_text() -> str:
 def public_services_ca_https_config_text(cert_path: Path, key_path: Path) -> str:
     return "\n".join(
         [
-            "# Managed by LabFoundry. Local changes may be overwritten.",
+            "# Managed by Atlaso. Local changes may be overwritten.",
             "# IP-scoped public service front door for non-management interfaces.",
             "server {",
             "  # CA portal HTTPS front door.",
             "  listen 192.168.87.32:443 ssl;",
-            "  server_name ca.labfoundry.internal;",
+            "  server_name ca.atlaso.internal;",
             f"  ssl_certificate {cert_path};",
             f"  ssl_certificate_key {key_path};",
             "  location = / {",
@@ -585,7 +585,7 @@ def public_services_ca_https_config_text(cert_path: Path, key_path: Path) -> str
 def public_services_ip_https_depot_config_text(cert_path: Path, key_path: Path) -> str:
     return "\n".join(
         [
-            "# Managed by LabFoundry. Local changes may be overwritten.",
+            "# Managed by Atlaso. Local changes may be overwritten.",
             "# IP-scoped public service front door for non-management interfaces.",
             "server {",
             "  # IP-scoped HTTPS public services front door.",
@@ -613,7 +613,7 @@ def public_services_ip_https_depot_config_text(cert_path: Path, key_path: Path) 
             "    proxy_set_header X-Forwarded-Proto https;",
             "  }",
             "  location ~ ^/PROD/(?!login$|logout$|auth-check$)(.+[^/])$ {",
-            "    alias /mnt/labfoundry-vcf-offline-depot/PROD/$1;",
+            "    alias /mnt/atlaso-vcf-offline-depot/PROD/$1;",
             "  }",
             "}",
             "",
@@ -625,10 +625,10 @@ def test_public_services_helper_validates_staged_nginx_config(monkeypatch, tmp_p
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "public-services"
     apply_dir.mkdir(parents=True)
-    config_path = apply_dir / "labfoundry-public-services.conf"
+    config_path = apply_dir / "atlaso-public-services.conf"
     config_path.write_text(public_services_config_text(), encoding="utf-8")
     monkeypatch.setattr(helper, "PUBLIC_SERVICES_APPLY_DIR", apply_dir)
-    monkeypatch.setattr(helper, "VCF_DEPOT_PROD_PATH", Path("/mnt/labfoundry-vcf-offline-depot/PROD"))
+    monkeypatch.setattr(helper, "VCF_DEPOT_PROD_PATH", Path("/mnt/atlaso-vcf-offline-depot/PROD"))
 
     result = helper._handle_public_services("validate", [str(config_path)])
 
@@ -641,17 +641,17 @@ def test_public_services_helper_allows_ip_scoped_depot_https_paths(monkeypatch, 
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "public-services"
     managed_root = tmp_path / "managed"
-    cert_path = managed_root / "ca-portal" / "certs" / "ca.labfoundry.internal.crt"
-    key_path = managed_root / "ca-portal" / "certs" / "ca.labfoundry.internal.key"
+    cert_path = managed_root / "ca-portal" / "certs" / "ca.atlaso.internal.crt"
+    key_path = managed_root / "ca-portal" / "certs" / "ca.atlaso.internal.key"
     cert_path.parent.mkdir(parents=True)
     cert_path.write_text("-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----\n", encoding="utf-8")
     key_path.write_text("-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----\n", encoding="utf-8")
     apply_dir.mkdir(parents=True)
-    config_path = apply_dir / "labfoundry-public-services.conf"
+    config_path = apply_dir / "atlaso-public-services.conf"
     config_path.write_text(public_services_ip_https_depot_config_text(cert_path, key_path), encoding="utf-8")
     monkeypatch.setattr(helper, "PUBLIC_SERVICES_APPLY_DIR", apply_dir)
     monkeypatch.setattr(helper, "CA_MANAGED_PATH_BASE", managed_root)
-    monkeypatch.setattr(helper, "VCF_DEPOT_PROD_PATH", Path("/mnt/labfoundry-vcf-offline-depot/PROD"))
+    monkeypatch.setattr(helper, "VCF_DEPOT_PROD_PATH", Path("/mnt/atlaso-vcf-offline-depot/PROD"))
 
     result = helper._handle_public_services("validate", [str(config_path)])
 
@@ -664,13 +664,13 @@ def test_public_services_helper_validates_ca_https_sni_config(monkeypatch, tmp_p
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "public-services"
     managed_root = tmp_path / "managed"
-    cert_path = managed_root / "ca-portal" / "certs" / "ca.labfoundry.internal.crt"
-    key_path = managed_root / "ca-portal" / "certs" / "ca.labfoundry.internal.key"
+    cert_path = managed_root / "ca-portal" / "certs" / "ca.atlaso.internal.crt"
+    key_path = managed_root / "ca-portal" / "certs" / "ca.atlaso.internal.key"
     cert_path.parent.mkdir(parents=True)
     cert_path.write_text("-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----\n", encoding="utf-8")
     key_path.write_text("-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----\n", encoding="utf-8")
     apply_dir.mkdir(parents=True)
-    config_path = apply_dir / "labfoundry-public-services.conf"
+    config_path = apply_dir / "atlaso-public-services.conf"
     config_path.write_text(public_services_ca_https_config_text(cert_path, key_path), encoding="utf-8")
     monkeypatch.setattr(helper, "PUBLIC_SERVICES_APPLY_DIR", apply_dir)
     monkeypatch.setattr(helper, "CA_MANAGED_PATH_BASE", managed_root)
@@ -692,7 +692,7 @@ def test_nginx_site_conflict_detects_duplicate_sni_name_on_same_listener(monkeyp
             [
                 "server {",
                 "  listen 192.168.87.32:443 ssl;",
-                "  server_name ca.labfoundry.internal;",
+                "  server_name ca.atlaso.internal;",
                 "}",
             ]
         ),
@@ -702,13 +702,13 @@ def test_nginx_site_conflict_detects_duplicate_sni_name_on_same_listener(monkeyp
         [
             "server {",
             "  listen 192.168.87.32:443 ssl;",
-            "  server_name ca.labfoundry.internal;",
+            "  server_name ca.atlaso.internal;",
             "}",
         ]
     )
     monkeypatch.setattr(helper, "NGINX_SITES_DIR", sites_dir)
 
-    assert "duplicates server_name ca.labfoundry.internal" in helper._nginx_site_conflict(sites_dir / "public-services.conf", candidate)
+    assert "duplicates server_name ca.atlaso.internal" in helper._nginx_site_conflict(sites_dir / "public-services.conf", candidate)
 
 
 def test_nginx_listen_parser_requires_brackets_for_ipv6_literals():
@@ -723,9 +723,9 @@ def test_public_services_helper_rejects_broad_root_and_registry_proxy(monkeypatc
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "public-services"
     apply_dir.mkdir(parents=True)
-    config_path = apply_dir / "labfoundry-public-services.conf"
+    config_path = apply_dir / "atlaso-public-services.conf"
     config_path.write_text(
-        public_services_config_text().replace("  location / {", "  root /mnt/labfoundry-vcf-offline-depot;\n  location /registry {\n    proxy_pass http://127.0.0.1:8080;\n  }\n  location / {"),
+        public_services_config_text().replace("  location / {", "  root /mnt/atlaso-vcf-offline-depot;\n  location /registry {\n    proxy_pass http://127.0.0.1:8080;\n  }\n  location / {"),
         encoding="utf-8",
     )
     monkeypatch.setattr(helper, "PUBLIC_SERVICES_APPLY_DIR", apply_dir)
@@ -742,7 +742,7 @@ def test_public_services_helper_apply_installs_site(monkeypatch, tmp_path, capsy
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "public-services"
     apply_dir.mkdir(parents=True)
-    config_path = apply_dir / "labfoundry-public-services.conf"
+    config_path = apply_dir / "atlaso-public-services.conf"
     config_text = public_services_config_text()
     config_path.write_text(config_text, encoding="utf-8")
     site_path = tmp_path / "sites" / "public-services.conf"
@@ -835,7 +835,7 @@ def esxi_pxe_manifest(http_root: Path, *, enabled: bool = True, stale_id: int = 
     mac_key = "01-00-50-56-aa-bb-cc"
     kickstart_url = f"{kickstart_url}?mac={mac_key}"
     return {
-        "kind": "labfoundry-esxi-pxe",
+        "kind": "atlaso-esxi-pxe",
         "schema_version": 2,
         "http_root": str(http_root),
         "http_base": str(http_base),
@@ -905,25 +905,25 @@ def ca_payload_text(root_dir: Path) -> str:
         {
             "enabled": True,
             "root": {
-                "common_name": "LabFoundry Internal Root CA",
+                "common_name": "Atlaso Internal Root CA",
                 "certificate_pem": root_cert,
                 "private_key_pem": key,
                 "root_cert_path": str(root_dir / "ca" / "root-ca.pem"),
                 "legacy_root_cert_path": str(root_dir / "ca" / "root.crt"),
                 "ca_bundle_path": str(root_dir / "ca" / "ca-bundle.pem"),
-                "crl_path": str(root_dir / "ca" / "labfoundry-ca.crl"),
+                "crl_path": str(root_dir / "ca" / "atlaso-ca.crl"),
                 "crl_pem": crl,
             },
             "certificates": [
                 {
-                    "common_name": "kms.labfoundry.internal",
+                    "common_name": "kms.atlaso.internal",
                     "managed_owner": "kms:server",
                     "certificate_pem": cert,
                     "chain_pem": cert + root_cert,
                     "private_key_pem": key,
-                    "cert_path": str(root_dir / "kms" / "certs" / "kms.labfoundry.internal.crt"),
-                    "key_path": str(root_dir / "kms" / "certs" / "kms.labfoundry.internal.key"),
-                    "chain_path": str(root_dir / "kms" / "certs" / "kms.labfoundry.internal-chain.pem"),
+                    "cert_path": str(root_dir / "kms" / "certs" / "kms.atlaso.internal.crt"),
+                    "key_path": str(root_dir / "kms" / "certs" / "kms.atlaso.internal.key"),
+                    "chain_path": str(root_dir / "kms" / "certs" / "kms.atlaso.internal-chain.pem"),
                 }
             ],
         }
@@ -932,7 +932,7 @@ def ca_payload_text(root_dir: Path) -> str:
 
 def test_network_helper_validates_vlan_parent_must_be_trunk(tmp_path):
     helper = load_helper_module()
-    config_path = tmp_path / "labfoundry-network.conf"
+    config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(network_config_text(eth2_mode="access"), encoding="utf-8")
 
     errors = helper._network_config_errors(config_path)
@@ -942,7 +942,7 @@ def test_network_helper_validates_vlan_parent_must_be_trunk(tmp_path):
 
 def test_network_helper_accepts_valid_vlan_config(tmp_path):
     helper = load_helper_module()
-    config_path = tmp_path / "labfoundry-network.conf"
+    config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(network_config_text(), encoding="utf-8")
 
     assert helper._network_config_errors(config_path) == []
@@ -975,7 +975,7 @@ def test_network_helper_renders_explicit_management_gateway_without_runtime_fall
 
     files, _links, _admin_down = helper._systemd_networkd_files(config_path)
 
-    rendered = files["00-labfoundry-mgmt.network"]
+    rendered = files["00-atlaso-mgmt.network"]
     assert "From=192.168.49.0/24" in rendered
     assert rendered.count("Gateway=192.168.49.254") == 2
     assert "Table=100" in rendered
@@ -983,7 +983,7 @@ def test_network_helper_renders_explicit_management_gateway_without_runtime_fall
 
 def test_network_helper_rejects_static_management_without_ipv4(tmp_path):
     helper = load_helper_module()
-    config_path = tmp_path / "labfoundry-network.conf"
+    config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(network_config_text().replace("  ip_cidr=192.168.49.1/24", "  ip_cidr=", 1), encoding="utf-8")
 
     errors = helper._network_config_errors(config_path)
@@ -993,7 +993,7 @@ def test_network_helper_rejects_static_management_without_ipv4(tmp_path):
 
 def test_network_helper_requires_eth0_management(tmp_path):
     helper = load_helper_module()
-    config_path = tmp_path / "labfoundry-network.conf"
+    config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(network_config_text().replace("interface=eth0", "interface=eth1", 1), encoding="utf-8")
 
     errors = helper._network_config_errors(config_path)
@@ -1003,31 +1003,31 @@ def test_network_helper_requires_eth0_management(tmp_path):
 
 def test_network_helper_renders_dual_stack_networkd_addresses(tmp_path):
     helper = load_helper_module()
-    config_path = tmp_path / "labfoundry-network.conf"
+    config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(network_config_text(dual_stack=True), encoding="utf-8")
 
     assert helper._network_config_errors(config_path) == []
     files, _reconfigure_links, _admin_down_links = helper._systemd_networkd_files(config_path)
 
-    assert "Address=192.168.49.1/24" in files["00-labfoundry-mgmt.network"]
-    assert "Address=2001:db8:49::1/64" in files["00-labfoundry-mgmt.network"]
-    assert "IPv6AcceptRA=no" in files["00-labfoundry-mgmt.network"]
-    assert "LinkLocalAddressing=ipv6" in files["00-labfoundry-mgmt.network"]
-    vlan_network = files["10-labfoundry-eth2.20.network"]
+    assert "Address=192.168.49.1/24" in files["00-atlaso-mgmt.network"]
+    assert "Address=2001:db8:49::1/64" in files["00-atlaso-mgmt.network"]
+    assert "IPv6AcceptRA=no" in files["00-atlaso-mgmt.network"]
+    assert "LinkLocalAddressing=ipv6" in files["00-atlaso-mgmt.network"]
+    vlan_network = files["10-atlaso-eth2.20.network"]
     assert "Address=192.168.20.1/24" in vlan_network
     assert "Address=2001:db8:20::1/64" in vlan_network
 
 
 def test_network_helper_replaces_stale_preserved_management_gateway(monkeypatch, tmp_path):
     helper = load_helper_module()
-    config_path = tmp_path / "labfoundry-network.conf"
+    config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(
         network_config_text()
         .replace("  ip_cidr=192.168.49.1/24", "  ip_cidr=192.168.1.10/24", 1)
         .replace("  gateway=\n", "", 1),
         encoding="utf-8",
     )
-    management_network = tmp_path / "00-labfoundry-mgmt.network"
+    management_network = tmp_path / "00-atlaso-mgmt.network"
     management_network.write_text(
         "\n".join(
             [
@@ -1057,7 +1057,7 @@ def test_network_helper_replaces_stale_preserved_management_gateway(monkeypatch,
 
     files, _reconfigure_links, _admin_down_links = helper._systemd_networkd_files(config_path)
 
-    rendered = files["00-labfoundry-mgmt.network"]
+    rendered = files["00-atlaso-mgmt.network"]
     assert "Gateway=192.168.1.1" in rendered
     assert "Gateway=192.168.167.2" not in rendered
     assert "From=192.168.1.0/24" in rendered
@@ -1066,7 +1066,7 @@ def test_network_helper_replaces_stale_preserved_management_gateway(monkeypatch,
 
 def test_network_helper_omits_management_policy_rule_without_default_gateway(monkeypatch, tmp_path):
     helper = load_helper_module()
-    config_path = tmp_path / "labfoundry-network.conf"
+    config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(
         network_config_text().replace("  ip_cidr=192.168.49.1/24", "  ip_cidr=192.168.1.10/24", 1),
         encoding="utf-8",
@@ -1078,7 +1078,7 @@ def test_network_helper_omits_management_policy_rule_without_default_gateway(mon
 
     files, _reconfigure_links, _admin_down_links = helper._systemd_networkd_files(config_path)
 
-    rendered = files["00-labfoundry-mgmt.network"]
+    rendered = files["00-atlaso-mgmt.network"]
     assert "Address=192.168.1.10/24" in rendered
     assert "[RoutingPolicyRule]" not in rendered
     assert "Table=100" not in rendered
@@ -1087,7 +1087,7 @@ def test_network_helper_omits_management_policy_rule_without_default_gateway(mon
 
 def test_network_helper_renders_management_dhcp_networkd(tmp_path):
     helper = load_helper_module()
-    config_path = tmp_path / "labfoundry-network.conf"
+    config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(
         "\n".join(
             [
@@ -1110,7 +1110,7 @@ def test_network_helper_renders_management_dhcp_networkd(tmp_path):
     assert helper._network_config_errors(config_path) == []
     files, _reconfigure_links, _admin_down_links = helper._systemd_networkd_files(config_path)
 
-    management_network = files["00-labfoundry-mgmt.network"]
+    management_network = files["00-atlaso-mgmt.network"]
     assert "DHCP=ipv4" in management_network
     assert "Address=" not in management_network
     assert "IPv6AcceptRA=no" in management_network
@@ -1119,7 +1119,7 @@ def test_network_helper_renders_management_dhcp_networkd(tmp_path):
 
 def test_network_helper_preserves_automatic_ipv6_for_management(tmp_path):
     helper = load_helper_module()
-    config_path = tmp_path / "labfoundry-network.conf"
+    config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(
         "\n".join(
             [
@@ -1143,7 +1143,7 @@ def test_network_helper_preserves_automatic_ipv6_for_management(tmp_path):
     assert helper._network_config_errors(config_path) == []
     files, _reconfigure_links, _admin_down_links = helper._systemd_networkd_files(config_path)
 
-    management_network = files["00-labfoundry-mgmt.network"]
+    management_network = files["00-atlaso-mgmt.network"]
     assert "DHCP=ipv4" in management_network
     assert "IPv6AcceptRA=yes" in management_network
     assert "LinkLocalAddressing=ipv6" in management_network
@@ -1151,7 +1151,7 @@ def test_network_helper_preserves_automatic_ipv6_for_management(tmp_path):
 
 def test_network_helper_renders_static_management_ipv6_gateway_in_main_and_table_100(tmp_path):
     helper = load_helper_module()
-    config_path = tmp_path / "labfoundry-network.conf"
+    config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(
         "\n".join(
             [
@@ -1176,7 +1176,7 @@ def test_network_helper_renders_static_management_ipv6_gateway_in_main_and_table
 
     assert helper._network_config_errors(config_path) == []
     files, _reconfigure_links, _admin_down_links = helper._systemd_networkd_files(config_path)
-    rendered = files["00-labfoundry-mgmt.network"]
+    rendered = files["00-atlaso-mgmt.network"]
     assert "IPv6AcceptRA=no" in rendered
     assert "LinkLocalAddressing=ipv6" in rendered
     assert "Address=2001:db8:49::10/64" in rendered
@@ -1187,7 +1187,7 @@ def test_network_helper_renders_static_management_ipv6_gateway_in_main_and_table
 
 def test_wan_helper_rejects_config_outside_apply_dir(tmp_path):
     helper = load_helper_module()
-    config_path = tmp_path / "labfoundry-wan.conf"
+    config_path = tmp_path / "atlaso-wan.conf"
     config_path.write_text(wan_config_text(), encoding="utf-8")
 
     try:
@@ -1200,12 +1200,12 @@ def test_wan_helper_rejects_config_outside_apply_dir(tmp_path):
 
 def test_wan_helper_validates_routes_nat_and_netem(tmp_path):
     helper = load_helper_module()
-    config_path = tmp_path / "labfoundry-wan.conf"
+    config_path = tmp_path / "atlaso-wan.conf"
     config_path.write_text(wan_config_text(), encoding="utf-8")
 
     assert helper._wan_config_errors(config_path) == []
     nat_config = helper._render_wan_nat_config(helper._parse_wan_config(config_path)["nat_rules"])
-    assert "table ip labfoundry_nat" in nat_config
+    assert "table ip atlaso_nat" in nat_config
     assert 'ip saddr 192.168.50.0/24 oifname "eth1.20" masquerade' in nat_config
 
 
@@ -1330,7 +1330,7 @@ def test_wan_helper_preserves_management_default_gateway(monkeypatch, tmp_path):
     helper = load_helper_module()
     networkd_dir = tmp_path / "systemd-network"
     networkd_dir.mkdir()
-    management_network = networkd_dir / "00-labfoundry-mgmt.network"
+    management_network = networkd_dir / "00-atlaso-mgmt.network"
     management_network.write_text(
         "\n".join(
             [
@@ -1384,7 +1384,7 @@ def test_wan_helper_preserves_management_default_gateway(monkeypatch, tmp_path):
 
 def test_wan_helper_replaces_stale_preserved_management_gateway_with_runtime_gateway(monkeypatch, tmp_path):
     helper = load_helper_module()
-    management_network = tmp_path / "00-labfoundry-mgmt.network"
+    management_network = tmp_path / "00-atlaso-mgmt.network"
     management_network.write_text(
         "\n".join(
             [
@@ -1570,19 +1570,19 @@ def test_wan_helper_gives_management_ownership_of_duplicate_vlan_network(monkeyp
 def test_staging_prepare_repairs_apply_directory_ownership(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_root = tmp_path / "apply"
-    config_path = apply_root / "wan" / "labfoundry-wan.conf"
+    config_path = apply_root / "wan" / "atlaso-wan.conf"
     chowned: list[tuple[Path, str, str]] = []
     chmodded: list[tuple[Path, int]] = []
 
-    monkeypatch.setattr(helper, "LABFOUNDRY_APPLY_DIR", apply_root)
+    monkeypatch.setattr(helper, "ATLASO_APPLY_DIR", apply_root)
     monkeypatch.setattr(helper.shutil, "chown", lambda path, user, group: chowned.append((Path(path), user, group)))
     monkeypatch.setattr(helper.os, "chmod", lambda path, mode: chmodded.append((Path(path), mode)))
 
-    assert helper.main(["labfoundry-helper", "staging", "prepare", "--real", str(config_path)]) == 0
+    assert helper.main(["atlaso-helper", "staging", "prepare", "--real", str(config_path)]) == 0
 
     assert config_path.parent.is_dir()
-    assert (apply_root, "labfoundry", "labfoundry") in chowned
-    assert (config_path.parent, "labfoundry", "labfoundry") in chowned
+    assert (apply_root, "atlaso", "atlaso") in chowned
+    assert (config_path.parent, "atlaso", "atlaso") in chowned
     assert (apply_root, 0o755) in chmodded
     assert (config_path.parent, 0o750) in chmodded
 
@@ -1649,7 +1649,7 @@ def test_esxi_pxe_helper_validates_and_writes_generated_kickstarts(monkeypatch, 
     manifest["artifacts"].append(default_artifact)
     manifest["boot"] = {
         "enabled": True,
-        "hostname": "esxi-pxe.labfoundry.internal",
+        "hostname": "esxi-pxe.atlaso.internal",
         "listen_interface": "eth1",
         "listen_address": "192.168.50.1",
         "tftp_root": str(tftp_root),
@@ -1662,9 +1662,9 @@ def test_esxi_pxe_helper_validates_and_writes_generated_kickstarts(monkeypatch, 
         "http_base_url": "http://192.168.50.1:8080/pxe/esxi",
         "native_uefi_http_enabled": True,
         "effective_native_uefi_http_url": "http://192.168.50.1:8080/pxe/esxi/mboot.efi",
-        "ipxe_script": "#!ipxe\necho LabFoundry PXE ready\nshell\n",
+        "ipxe_script": "#!ipxe\necho Atlaso PXE ready\nshell\n",
     }
-    config_path = apply_dir / "labfoundry-esxi-pxe.json"
+    config_path = apply_dir / "atlaso-esxi-pxe.json"
     config_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     monkeypatch.setattr(helper, "ESXI_PXE_HTTP_ROOT", http_root)
@@ -1689,7 +1689,7 @@ def test_esxi_pxe_helper_validates_and_writes_generated_kickstarts(monkeypatch, 
     assert (tftp_root / "ldlinux.c32").read_bytes() == b"ldlinux"
     assert (tftp_root / "mboot.efi").read_bytes() == b"mboot efi"
     assert (http_base / "mboot.efi").read_bytes() == b"mboot efi"
-    assert (http_base / "boot.ipxe").read_text(encoding="utf-8") == "#!ipxe\necho LabFoundry PXE ready\nshell\n"
+    assert (http_base / "boot.ipxe").read_text(encoding="utf-8") == "#!ipxe\necho Atlaso PXE ready\nshell\n"
     assert not (tftp_root / "bootx64.efi").exists()
     assert not (tftp_root / "esxi.ipxe").exists()
     assert not (tftp_root / "pxelinux.cfg" / stale_mac).exists()
@@ -1743,7 +1743,7 @@ def test_esxi_pxe_helper_writes_http_ipxe_script_without_profiles(monkeypatch, t
     (ipxe_binary_dir / "pxelinux.0").write_bytes(b"pxelinux")
     (ipxe_binary_dir / "ldlinux.c32").write_bytes(b"ldlinux")
     manifest = {
-        "kind": "labfoundry-esxi-pxe",
+        "kind": "atlaso-esxi-pxe",
         "schema_version": 2,
         "http_root": str(http_root),
         "http_base": str(http_base),
@@ -1752,7 +1752,7 @@ def test_esxi_pxe_helper_writes_http_ipxe_script_without_profiles(monkeypatch, t
         "installer_isos": [],
         "boot": {
             "enabled": True,
-            "hostname": "esxi-pxe.labfoundry.internal",
+            "hostname": "esxi-pxe.atlaso.internal",
             "listen_interface": "eth1",
             "listen_address": "192.168.50.1",
             "tftp_root": str(tftp_root),
@@ -1771,7 +1771,7 @@ def test_esxi_pxe_helper_writes_http_ipxe_script_without_profiles(monkeypatch, t
         "hosts": [],
         "artifacts": [],
     }
-    config_path = apply_dir / "labfoundry-esxi-pxe.json"
+    config_path = apply_dir / "atlaso-esxi-pxe.json"
     config_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     monkeypatch.setattr(helper, "ESXI_PXE_HTTP_ROOT", http_root)
@@ -1830,7 +1830,7 @@ def test_esxi_pxe_helper_does_not_copy_host_artifact_to_default_fallback(monkeyp
     manifest = esxi_pxe_manifest(http_root, iso_root=iso_root)
     manifest["boot"] = {
         "enabled": True,
-        "hostname": "esxi-pxe.labfoundry.internal",
+        "hostname": "esxi-pxe.atlaso.internal",
         "listen_interface": "eth1",
         "listen_address": "192.168.50.1",
         "tftp_root": str(tftp_root),
@@ -1843,9 +1843,9 @@ def test_esxi_pxe_helper_does_not_copy_host_artifact_to_default_fallback(monkeyp
         "http_base_url": "http://192.168.50.1:8080/pxe/esxi",
         "native_uefi_http_enabled": True,
         "effective_native_uefi_http_url": "http://192.168.50.1:8080/pxe/esxi/mboot.efi",
-        "ipxe_script": "#!ipxe\necho LabFoundry PXE ready\nshell\n",
+        "ipxe_script": "#!ipxe\necho Atlaso PXE ready\nshell\n",
     }
-    config_path = apply_dir / "labfoundry-esxi-pxe.json"
+    config_path = apply_dir / "atlaso-esxi-pxe.json"
     config_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     monkeypatch.setattr(helper, "ESXI_PXE_HTTP_ROOT", http_root)
@@ -1950,8 +1950,8 @@ def test_esxi_uefi_bootloader_must_come_from_iso_efi_boot(tmp_path):
 
 def test_ca_helper_rejects_config_outside_apply_dir(tmp_path):
     helper = load_helper_module()
-    config_path = tmp_path / "labfoundry-ca.json"
-    config_path.write_text(ca_payload_text(tmp_path / "etc" / "labfoundry"), encoding="utf-8")
+    config_path = tmp_path / "atlaso-ca.json"
+    config_path.write_text(ca_payload_text(tmp_path / "etc" / "atlaso"), encoding="utf-8")
 
     try:
         helper._validate_ca_config_path(str(config_path))
@@ -1964,9 +1964,9 @@ def test_ca_helper_rejects_config_outside_apply_dir(tmp_path):
 def test_ca_helper_validates_and_writes_managed_files(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ca"
-    managed_root = tmp_path / "etc" / "labfoundry"
+    managed_root = tmp_path / "etc" / "atlaso"
     apply_dir.mkdir(parents=True)
-    config_path = apply_dir / "labfoundry-ca.json"
+    config_path = apply_dir / "atlaso-ca.json"
     config_path.write_text(ca_payload_text(managed_root), encoding="utf-8")
 
     monkeypatch.setattr(helper, "CA_APPLY_DIR", apply_dir)
@@ -1977,8 +1977,8 @@ def test_ca_helper_validates_and_writes_managed_files(monkeypatch, tmp_path):
     assert helper._handle_ca("apply", [str(config_path)]) == 0
 
     root_ca = managed_root / "ca" / "root-ca.pem"
-    crl_path = managed_root / "ca" / "labfoundry-ca.crl"
-    key_path = managed_root / "kms" / "certs" / "kms.labfoundry.internal.key"
+    crl_path = managed_root / "ca" / "atlaso-ca.crl"
+    key_path = managed_root / "kms" / "certs" / "kms.atlaso.internal.key"
     assert root_ca.read_text(encoding="utf-8").startswith("-----BEGIN CERTIFICATE-----")
     assert crl_path.read_text(encoding="utf-8").startswith("-----BEGIN X509 CRL-----")
     assert key_path.read_text(encoding="utf-8").startswith("-----BEGIN PRIVATE KEY-----")
@@ -1989,12 +1989,12 @@ def test_ca_helper_validates_and_writes_managed_files(monkeypatch, tmp_path):
 def test_ca_helper_preserves_slapd_access_when_rewriting_ldap_key(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ca"
-    managed_root = tmp_path / "etc" / "labfoundry"
+    managed_root = tmp_path / "etc" / "atlaso"
     ldap_key_path = managed_root / "ldap" / "tls" / "server.key"
     apply_dir.mkdir(parents=True)
     payload = json.loads(ca_payload_text(managed_root))
     payload["certificates"][0]["key_path"] = str(ldap_key_path)
-    config_path = apply_dir / "labfoundry-ca.json"
+    config_path = apply_dir / "atlaso-ca.json"
     config_path.write_text(json.dumps(payload), encoding="utf-8")
     ownership: list[tuple[Path, str, str]] = []
     modes: list[tuple[Path, int]] = []
@@ -2022,14 +2022,14 @@ def test_ca_helper_preserves_slapd_access_when_rewriting_ldap_key(monkeypatch, t
 def test_ca_helper_removes_stale_crl_when_publication_is_empty(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ca"
-    managed_root = tmp_path / "etc" / "labfoundry"
+    managed_root = tmp_path / "etc" / "atlaso"
     apply_dir.mkdir(parents=True)
     payload = json.loads(ca_payload_text(managed_root))
-    crl_path = managed_root / "ca" / "labfoundry-ca.crl"
+    crl_path = managed_root / "ca" / "atlaso-ca.crl"
     crl_path.parent.mkdir(parents=True)
     crl_path.write_text("-----BEGIN X509 CRL-----\nstale\n-----END X509 CRL-----\n", encoding="utf-8")
     payload["root"]["crl_pem"] = ""
-    config_path = apply_dir / "labfoundry-ca.json"
+    config_path = apply_dir / "atlaso-ca.json"
     config_path.write_text(json.dumps(payload), encoding="utf-8")
 
     monkeypatch.setattr(helper, "CA_APPLY_DIR", apply_dir)
@@ -2044,12 +2044,12 @@ def test_ca_helper_removes_stale_crl_when_publication_is_empty(monkeypatch, tmp_
 def test_ca_helper_allows_csr_certificate_without_private_key(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ca"
-    managed_root = tmp_path / "etc" / "labfoundry"
+    managed_root = tmp_path / "etc" / "atlaso"
     apply_dir.mkdir(parents=True)
     payload = json.loads(ca_payload_text(managed_root))
     payload["certificates"].append(
         {
-            "common_name": "client-a.labfoundry.internal",
+            "common_name": "client-a.atlaso.internal",
             "managed_owner": "",
             "certificate_pem": "-----BEGIN CERTIFICATE-----\nclient\n-----END CERTIFICATE-----\n",
             "chain_pem": "-----BEGIN CERTIFICATE-----\nclient\n-----END CERTIFICATE-----\n",
@@ -2059,7 +2059,7 @@ def test_ca_helper_allows_csr_certificate_without_private_key(monkeypatch, tmp_p
             "chain_path": str(managed_root / "ca" / "client-a-chain.pem"),
         }
     )
-    config_path = apply_dir / "labfoundry-ca.json"
+    config_path = apply_dir / "atlaso-ca.json"
     config_path.write_text(json.dumps(payload), encoding="utf-8")
 
     monkeypatch.setattr(helper, "CA_APPLY_DIR", apply_dir)
@@ -2076,11 +2076,11 @@ def test_ca_helper_allows_csr_certificate_without_private_key(monkeypatch, tmp_p
 def test_ca_helper_rejects_key_path_without_private_key(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ca"
-    managed_root = tmp_path / "etc" / "labfoundry"
+    managed_root = tmp_path / "etc" / "atlaso"
     apply_dir.mkdir(parents=True)
     payload = json.loads(ca_payload_text(managed_root))
     payload["certificates"][0]["private_key_pem"] = ""
-    config_path = apply_dir / "labfoundry-ca.json"
+    config_path = apply_dir / "atlaso-ca.json"
     config_path.write_text(json.dumps(payload), encoding="utf-8")
 
     monkeypatch.setattr(helper, "CA_APPLY_DIR", apply_dir)
@@ -2088,18 +2088,18 @@ def test_ca_helper_rejects_key_path_without_private_key(monkeypatch, tmp_path):
 
     errors = helper._ca_payload_errors(config_path)
 
-    assert "certificate kms.labfoundry.internal key_path requires a private key." in errors
+    assert "certificate kms.atlaso.internal key_path requires a private key." in errors
 
 
 def test_wan_helper_apply_routes_nat_and_netem(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "wan"
     apply_dir.mkdir(parents=True)
-    config_path = apply_dir / "labfoundry-wan.conf"
+    config_path = apply_dir / "atlaso-wan.conf"
     config_path.write_text(wan_config_text(), encoding="utf-8")
     nat_dir = tmp_path / "nftables.d"
-    service_path = tmp_path / "labfoundry-nat.service"
-    sysctl_path = tmp_path / "90-labfoundry-routing-wan.conf"
+    service_path = tmp_path / "atlaso-nat.service"
+    sysctl_path = tmp_path / "90-atlaso-routing-wan.conf"
     commands: list[list[str]] = []
     input_commands: list[tuple[list[str], str]] = []
 
@@ -2113,7 +2113,7 @@ def test_wan_helper_apply_routes_nat_and_netem(monkeypatch, tmp_path):
 
     monkeypatch.setattr(helper, "WAN_APPLY_DIR", apply_dir)
     monkeypatch.setattr(helper, "WAN_NAT_CONFIG_DIR", nat_dir)
-    monkeypatch.setattr(helper, "WAN_NAT_CONFIG_PATH", nat_dir / "labfoundry-nat.nft")
+    monkeypatch.setattr(helper, "WAN_NAT_CONFIG_PATH", nat_dir / "atlaso-nat.nft")
     monkeypatch.setattr(helper, "WAN_NAT_SERVICE_PATH", service_path)
     monkeypatch.setattr(helper, "WAN_SYSCTL_PATH", sysctl_path)
     monkeypatch.setattr(helper.shutil, "which", lambda command: f"/usr/sbin/{command}")
@@ -2125,7 +2125,7 @@ def test_wan_helper_apply_routes_nat_and_netem(monkeypatch, tmp_path):
     assert input_commands[0][0] == ["nft", "-c", "-f", "-"]
     assert 'oifname "eth1.20" masquerade' in input_commands[0][1]
     assert ["sysctl", "-w", "net.ipv4.ip_forward=1"] in commands
-    assert ["nft", "-f", str(nat_dir / "labfoundry-nat.nft")] in commands
+    assert ["nft", "-f", str(nat_dir / "atlaso-nat.nft")] in commands
     assert ["ip", "route", "replace", "192.168.20.0/24", "dev", "eth1.20", "table", "200"] in commands
     assert ["ip", "rule", "add", "from", "192.168.20.0/24", "table", "200", "priority", "2000"] in commands
     assert ["ip", "route", "replace", "10.20.0.0/24", "dev", "eth1.20", "metric", "120", "table", "200"] in commands
@@ -2171,7 +2171,7 @@ def test_automation_helper_gives_powershell_private_writable_xdg_home(monkeypatc
 
 def test_real_mutating_helper_action_escapes_service_mount_namespace(monkeypatch, tmp_path, capsys):
     helper = load_helper_module()
-    config_path = tmp_path / "labfoundry.conf"
+    config_path = tmp_path / "atlaso.conf"
     config_path.write_text("# staged dnsmasq config\n", encoding="utf-8")
     commands: list[list[str]] = []
 
@@ -2182,13 +2182,13 @@ def test_real_mutating_helper_action_escapes_service_mount_namespace(monkeypatch
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "child helper output\n", "")
 
-    monkeypatch.setenv("LABFOUNDRY_HELPER_USE_SYSTEMD_RUN", "1")
+    monkeypatch.setenv("ATLASO_HELPER_USE_SYSTEMD_RUN", "1")
     monkeypatch.delenv(helper.SYSTEMD_RUN_CHILD_ENV, raising=False)
     monkeypatch.setattr(helper.shutil, "which", fake_which)
     monkeypatch.setattr(helper, "_run", fake_run)
     monkeypatch.setattr(helper, "_handle_dnsmasq", lambda action, args: (_ for _ in ()).throw(AssertionError("handler should run in child")))
 
-    assert helper.main(["labfoundry-helper", "dnsmasq", "apply", "--real", str(config_path)]) == 0
+    assert helper.main(["atlaso-helper", "dnsmasq", "apply", "--real", str(config_path)]) == 0
 
     out = capsys.readouterr().out
     assert out == "child helper output\n"
@@ -2207,7 +2207,7 @@ def test_real_mutating_helper_action_escapes_service_mount_namespace(monkeypatch
 
 def test_powercli_helper_actions_receive_writable_root_configuration_environment(monkeypatch, tmp_path):
     helper = load_helper_module()
-    config_path = tmp_path / "labfoundry-settings.json"
+    config_path = tmp_path / "atlaso-settings.json"
     config_path.write_text("{}\n", encoding="utf-8")
     commands: list[list[str]] = []
 
@@ -2241,12 +2241,12 @@ def test_powercli_helper_actions_receive_writable_root_configuration_environment
 
 def test_appliance_update_receives_writable_powershell_environment(monkeypatch, tmp_path):
     helper = load_helper_module()
-    config_path = tmp_path / "labfoundry-update.json"
+    config_path = tmp_path / "atlaso-update.json"
     config_path.write_text("{}\n", encoding="utf-8")
     powershell_home = tmp_path / "powershell"
     commands: list[list[str]] = []
 
-    monkeypatch.setattr(helper, "LABFOUNDRY_POWERSHELL_HOME", powershell_home)
+    monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", powershell_home)
     monkeypatch.setattr(
         helper.shutil,
         "which",
@@ -2279,47 +2279,47 @@ def test_appliance_update_receives_writable_powershell_environment(monkeypatch, 
 
 def test_network_helper_renders_systemd_networkd_files(tmp_path):
     helper = load_helper_module()
-    config_path = tmp_path / "labfoundry-network.conf"
+    config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(network_config_text(), encoding="utf-8")
 
     files, links, admin_down_links = helper._systemd_networkd_files(config_path)
 
-    assert "00-labfoundry-mgmt.network" in files
-    assert "Name=eth0" in files["00-labfoundry-mgmt.network"]
-    assert "Name=eth*" not in files["00-labfoundry-mgmt.network"]
-    assert "Address=192.168.49.1/24" in files["00-labfoundry-mgmt.network"]
-    assert "[RoutingPolicyRule]" not in files["00-labfoundry-mgmt.network"]
-    assert "Table=100" not in files["00-labfoundry-mgmt.network"]
-    assert "10-labfoundry-eth2.network" in files
-    assert "VLAN=eth2.20" in files["10-labfoundry-eth2.network"]
-    assert "10-labfoundry-eth2.20.netdev" in files
-    assert "Id=20" in files["10-labfoundry-eth2.20.netdev"]
-    assert "10-labfoundry-eth2.20.network" in files
-    assert "Address=192.168.20.1/24" in files["10-labfoundry-eth2.20.network"]
+    assert "00-atlaso-mgmt.network" in files
+    assert "Name=eth0" in files["00-atlaso-mgmt.network"]
+    assert "Name=eth*" not in files["00-atlaso-mgmt.network"]
+    assert "Address=192.168.49.1/24" in files["00-atlaso-mgmt.network"]
+    assert "[RoutingPolicyRule]" not in files["00-atlaso-mgmt.network"]
+    assert "Table=100" not in files["00-atlaso-mgmt.network"]
+    assert "10-atlaso-eth2.network" in files
+    assert "VLAN=eth2.20" in files["10-atlaso-eth2.network"]
+    assert "10-atlaso-eth2.20.netdev" in files
+    assert "Id=20" in files["10-atlaso-eth2.20.netdev"]
+    assert "10-atlaso-eth2.20.network" in files
+    assert "Address=192.168.20.1/24" in files["10-atlaso-eth2.20.network"]
     assert links == ["eth2", "eth2.20"]
     assert admin_down_links == []
 
 
 def test_network_helper_keeps_admin_down_physical_links_unmanaged(tmp_path):
     helper = load_helper_module()
-    config_path = tmp_path / "labfoundry-network.conf"
+    config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(network_config_text(eth2_mode="access", eth2_admin_state="down", include_vlan=False), encoding="utf-8")
 
     files, links, admin_down_links = helper._systemd_networkd_files(config_path)
 
-    assert "00-labfoundry-mgmt.network" in files
-    assert "10-labfoundry-eth2.network" not in files
+    assert "00-atlaso-mgmt.network" in files
+    assert "10-atlaso-eth2.network" not in files
     assert links == []
     assert admin_down_links == ["eth2"]
 
 
 def test_network_helper_installs_networkd_files_and_reconfigures_non_management(monkeypatch, tmp_path):
     helper = load_helper_module()
-    config_path = tmp_path / "labfoundry-network.conf"
+    config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(network_config_text(), encoding="utf-8")
     networkd_dir = tmp_path / "systemd-network"
     networkd_dir.mkdir()
-    old_managed = networkd_dir / "10-labfoundry-old.network"
+    old_managed = networkd_dir / "10-atlaso-old.network"
     old_managed.write_text("old", encoding="utf-8")
     old_default = networkd_dir / "99-dhcp-en.network"
     old_default.write_text("old default", encoding="utf-8")
@@ -2335,7 +2335,7 @@ def test_network_helper_installs_networkd_files_and_reconfigures_non_management(
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd_dir)
-    monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", networkd_dir / "00-labfoundry-mgmt.network")
+    monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", networkd_dir / "00-atlaso-mgmt.network")
     monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/bin/networkctl" if command == "networkctl" else None)
     monkeypatch.setattr(helper, "_run", fake_run)
     monkeypatch.setattr(helper, "_link_exists", lambda name: True)
@@ -2345,21 +2345,21 @@ def test_network_helper_installs_networkd_files_and_reconfigures_non_management(
     assert returncode == 0
     assert not old_managed.exists()
     assert not old_default.exists()
-    assert (networkd_dir / "00-labfoundry-mgmt.network").is_file()
-    assert (networkd_dir / "10-labfoundry-eth2.network").is_file()
-    assert (networkd_dir / "10-labfoundry-eth2.20.netdev").is_file()
+    assert (networkd_dir / "00-atlaso-mgmt.network").is_file()
+    assert (networkd_dir / "10-atlaso-eth2.network").is_file()
+    assert (networkd_dir / "10-atlaso-eth2.20.netdev").is_file()
     assert ["networkctl", "reload"] in commands
     assert ["networkctl", "reconfigure", "eth2"] in commands
     assert ["networkctl", "reconfigure", "eth2.20"] in commands
     assert ["networkctl", "reconfigure", "eth0"] not in commands
-    assert any(path.endswith("00-labfoundry-mgmt.network") for path in installed)
+    assert any(path.endswith("00-atlaso-mgmt.network") for path in installed)
     assert links == ["eth2", "eth2.20"]
     assert admin_down_links == []
 
 
 def test_network_helper_sets_admin_down_links_down_after_reload(monkeypatch, tmp_path):
     helper = load_helper_module()
-    config_path = tmp_path / "labfoundry-network.conf"
+    config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(network_config_text(eth2_mode="access", eth2_admin_state="down", include_vlan=False), encoding="utf-8")
     networkd_dir = tmp_path / "systemd-network"
     networkd_dir.mkdir()
@@ -2373,7 +2373,7 @@ def test_network_helper_sets_admin_down_links_down_after_reload(monkeypatch, tmp
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd_dir)
-    monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", networkd_dir / "00-labfoundry-mgmt.network")
+    monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", networkd_dir / "00-atlaso-mgmt.network")
     monkeypatch.setattr(helper.shutil, "which", fake_which)
     monkeypatch.setattr(helper, "_run", fake_run)
     monkeypatch.setattr(helper, "_link_exists", lambda name: True)
@@ -2388,7 +2388,7 @@ def test_network_helper_sets_admin_down_links_down_after_reload(monkeypatch, tmp
 
 def test_network_helper_sets_vlan_ip_after_link_up_and_flush(monkeypatch, tmp_path):
     helper = load_helper_module()
-    config_path = tmp_path / "labfoundry-network.conf"
+    config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(network_config_text(), encoding="utf-8")
     commands: list[list[str]] = []
 
@@ -2414,7 +2414,7 @@ def test_network_helper_sets_vlan_ip_after_link_up_and_flush(monkeypatch, tmp_pa
 
 def test_network_helper_deletes_removed_vlan_links(monkeypatch, tmp_path):
     helper = load_helper_module()
-    config_path = tmp_path / "labfoundry-network.conf"
+    config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(network_config_text(include_vlan=False, include_removed_vlan=True), encoding="utf-8")
     commands: list[list[str]] = []
 
@@ -2436,7 +2436,7 @@ def test_network_helper_deletes_removed_vlan_links(monkeypatch, tmp_path):
 
 def test_network_helper_refuses_to_delete_non_vlan_link(monkeypatch, tmp_path):
     helper = load_helper_module()
-    config_path = tmp_path / "labfoundry-network.conf"
+    config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(network_config_text(include_vlan=False, include_removed_vlan=True), encoding="utf-8")
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -2462,7 +2462,7 @@ def test_kms_helper_validates_disabled_staged_config(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "kms"
     state_dir = tmp_path / "state" / "kms"
-    managed_root = tmp_path / "etc" / "labfoundry"
+    managed_root = tmp_path / "etc" / "atlaso"
     apply_dir.mkdir(parents=True)
     state_dir.mkdir(parents=True)
     config_path = apply_dir / "pykmip.conf"
@@ -2481,12 +2481,12 @@ def test_kms_helper_apply_installs_pykmip_service(monkeypatch, tmp_path):
     apply_dir = tmp_path / "apply" / "kms"
     state_dir = tmp_path / "state" / "kms"
     log_dir = tmp_path / "log" / "kms"
-    managed_root = tmp_path / "etc" / "labfoundry"
+    managed_root = tmp_path / "etc" / "atlaso"
     pykmip_dir = tmp_path / "etc" / "pykmip"
-    service_path = tmp_path / "systemd" / "labfoundry-kms.service"
+    service_path = tmp_path / "systemd" / "atlaso-kms.service"
     config_path = apply_dir / "pykmip.conf"
-    cert_path = managed_root / "kms" / "certs" / "kms.labfoundry.internal.crt"
-    key_path = managed_root / "kms" / "certs" / "kms.labfoundry.internal.key"
+    cert_path = managed_root / "kms" / "certs" / "kms.atlaso.internal.crt"
+    key_path = managed_root / "kms" / "certs" / "kms.atlaso.internal.key"
     ca_path = managed_root / "ca" / "root.crt"
     apply_dir.mkdir(parents=True)
     state_dir.mkdir(parents=True)
@@ -2513,7 +2513,7 @@ def test_kms_helper_apply_installs_pykmip_service(monkeypatch, tmp_path):
     monkeypatch.setattr(helper, "PYKMIP_CONFIG_PATH", pykmip_dir / "server.conf")
     monkeypatch.setattr(helper, "CA_MANAGED_PATH_BASE", managed_root)
     monkeypatch.setattr(helper, "_run", fake_run)
-    monkeypatch.setattr(helper.shutil, "which", lambda command: "/opt/labfoundry/.venv/bin/pykmip-server" if command == "pykmip-server" else None)
+    monkeypatch.setattr(helper.shutil, "which", lambda command: "/opt/atlaso/.venv/bin/pykmip-server" if command == "pykmip-server" else None)
 
     assert helper._handle_kms("apply", [str(config_path)]) == 0
 
@@ -2521,16 +2521,16 @@ def test_kms_helper_apply_installs_pykmip_service(monkeypatch, tmp_path):
     assert (pykmip_dir / "server.conf").is_file()
     assert "pykmip_compat_server.py" in service_path.read_text(encoding="utf-8")
     assert ["systemctl", "daemon-reload"] in commands
-    assert ["systemctl", "enable", "labfoundry-kms.service"] in commands
-    assert ["systemctl", "restart", "labfoundry-kms.service"] in commands
+    assert ["systemctl", "enable", "atlaso-kms.service"] in commands
+    assert ["systemctl", "restart", "atlaso-kms.service"] in commands
 
 
 def test_dnsmasq_helper_validates_staged_config(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "dnsmasq"
     apply_dir.mkdir(parents=True)
-    config_path = apply_dir / "labfoundry.conf"
-    config_path.write_text("domain=labfoundry.internal\n", encoding="utf-8")
+    config_path = apply_dir / "atlaso.conf"
+    config_path.write_text("domain=atlaso.internal\n", encoding="utf-8")
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -2553,8 +2553,8 @@ def test_dnsmasq_helper_prepares_dnssec_trust_anchors(monkeypatch, tmp_path):
     apply_dir.mkdir(parents=True)
     anchor_source.parent.mkdir(parents=True)
     anchor_source.write_text("trust-anchor=.,20326,8,2,abc\n", encoding="utf-8")
-    config_path = apply_dir / "labfoundry.conf"
-    anchor_target = apply_dir / "labfoundry-trust-anchors.conf"
+    config_path = apply_dir / "atlaso.conf"
+    anchor_target = apply_dir / "atlaso-trust-anchors.conf"
     config_path.write_text(f"dnssec\nconf-file={anchor_target}\n", encoding="utf-8")
     commands: list[list[str]] = []
 
@@ -2583,7 +2583,7 @@ def test_dnsmasq_helper_rejects_dnssec_when_package_lacks_support(monkeypatch, t
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "dnsmasq"
     apply_dir.mkdir(parents=True)
-    config_path = apply_dir / "labfoundry.conf"
+    config_path = apply_dir / "atlaso.conf"
     config_path.write_text("dnssec\n", encoding="utf-8")
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -2602,13 +2602,13 @@ def test_dnsmasq_helper_rejects_dnssec_when_package_lacks_support(monkeypatch, t
 def test_dnsmasq_helper_apply_installs_config_dropin_and_enables_service(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "dnsmasq"
-    state_dir = tmp_path / "var" / "lib" / "labfoundry" / "dnsmasq"
-    config_dir = tmp_path / "etc" / "labfoundry" / "dnsmasq.d"
+    state_dir = tmp_path / "var" / "lib" / "atlaso" / "dnsmasq"
+    config_dir = tmp_path / "etc" / "atlaso" / "dnsmasq.d"
     dropin_dir = tmp_path / "etc" / "systemd" / "system" / "dnsmasq.service.d"
     networkd_dir = tmp_path / "etc" / "systemd" / "network"
     apply_dir.mkdir(parents=True)
     networkd_dir.mkdir(parents=True)
-    mgmt_network = networkd_dir / "00-labfoundry-mgmt.network"
+    mgmt_network = networkd_dir / "00-atlaso-mgmt.network"
     mgmt_network.write_text(
         "\n".join(
             [
@@ -2625,8 +2625,8 @@ def test_dnsmasq_helper_apply_installs_config_dropin_and_enables_service(monkeyp
         + "\n",
         encoding="utf-8",
     )
-    config_path = apply_dir / "labfoundry.conf"
-    config_path.write_text("domain=labfoundry.internal\n", encoding="utf-8")
+    config_path = apply_dir / "atlaso.conf"
+    config_path.write_text("domain=atlaso.internal\n", encoding="utf-8")
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -2636,19 +2636,19 @@ def test_dnsmasq_helper_apply_installs_config_dropin_and_enables_service(monkeyp
     monkeypatch.setattr(helper, "DNSMASQ_APPLY_DIR", apply_dir)
     monkeypatch.setattr(helper, "DNSMASQ_STATE_DIR", state_dir)
     monkeypatch.setattr(helper, "DNSMASQ_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(helper, "DNSMASQ_CONFIG_PATH", config_dir / "labfoundry.conf")
+    monkeypatch.setattr(helper, "DNSMASQ_CONFIG_PATH", config_dir / "atlaso.conf")
     monkeypatch.setattr(helper, "DNSMASQ_SERVICE_DROPIN_DIR", dropin_dir)
-    monkeypatch.setattr(helper, "DNSMASQ_SERVICE_DROPIN_PATH", dropin_dir / "labfoundry.conf")
+    monkeypatch.setattr(helper, "DNSMASQ_SERVICE_DROPIN_PATH", dropin_dir / "atlaso.conf")
     monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", mgmt_network)
     monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/sbin/dnsmasq" if command == "dnsmasq" else None)
     monkeypatch.setattr(helper, "_run", fake_run)
 
     assert helper._handle_dnsmasq("apply", [str(config_path)]) == 0
 
-    assert (config_dir / "labfoundry.conf").read_text(encoding="utf-8") == "domain=labfoundry.internal\n"
-    dropin = (dropin_dir / "labfoundry.conf").read_text(encoding="utf-8")
+    assert (config_dir / "atlaso.conf").read_text(encoding="utf-8") == "domain=atlaso.internal\n"
+    dropin = (dropin_dir / "atlaso.conf").read_text(encoding="utf-8")
     assert "ExecStart=" in dropin
-    assert f"--conf-file={config_dir / 'labfoundry.conf'}" in dropin
+    assert f"--conf-file={config_dir / 'atlaso.conf'}" in dropin
     assert ["/usr/sbin/dnsmasq", "--test", f"--conf-file={config_path}"] in commands
     assert ["systemctl", "daemon-reload"] in commands
     assert ["systemctl", "enable", "dnsmasq"] in commands
@@ -2663,12 +2663,12 @@ def test_dnsmasq_helper_apply_installs_config_dropin_and_enables_service(monkeyp
 def test_dnsmasq_helper_apply_creates_allowlisted_tftp_root(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "dnsmasq"
-    state_dir = tmp_path / "var" / "lib" / "labfoundry" / "dnsmasq"
-    config_dir = tmp_path / "etc" / "labfoundry" / "dnsmasq.d"
+    state_dir = tmp_path / "var" / "lib" / "atlaso" / "dnsmasq"
+    config_dir = tmp_path / "etc" / "atlaso" / "dnsmasq.d"
     dropin_dir = tmp_path / "etc" / "systemd" / "system" / "dnsmasq.service.d"
-    tftp_root = tmp_path / "var" / "lib" / "labfoundry" / "pxe" / "tftp"
+    tftp_root = tmp_path / "var" / "lib" / "atlaso" / "pxe" / "tftp"
     apply_dir.mkdir(parents=True)
-    config_path = apply_dir / "labfoundry.conf"
+    config_path = apply_dir / "atlaso.conf"
     config_path.write_text(f"enable-tftp\ntftp-root={tftp_root}\n", encoding="utf-8")
     commands: list[list[str]] = []
     chowned: list[Path] = []
@@ -2680,9 +2680,9 @@ def test_dnsmasq_helper_apply_creates_allowlisted_tftp_root(monkeypatch, tmp_pat
     monkeypatch.setattr(helper, "DNSMASQ_APPLY_DIR", apply_dir)
     monkeypatch.setattr(helper, "DNSMASQ_STATE_DIR", state_dir)
     monkeypatch.setattr(helper, "DNSMASQ_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(helper, "DNSMASQ_CONFIG_PATH", config_dir / "labfoundry.conf")
+    monkeypatch.setattr(helper, "DNSMASQ_CONFIG_PATH", config_dir / "atlaso.conf")
     monkeypatch.setattr(helper, "DNSMASQ_SERVICE_DROPIN_DIR", dropin_dir)
-    monkeypatch.setattr(helper, "DNSMASQ_SERVICE_DROPIN_PATH", dropin_dir / "labfoundry.conf")
+    monkeypatch.setattr(helper, "DNSMASQ_SERVICE_DROPIN_PATH", dropin_dir / "atlaso.conf")
     monkeypatch.setattr(helper, "ESXI_TFTP_ROOT", tftp_root)
     monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/sbin/dnsmasq" if command == "dnsmasq" else None)
     monkeypatch.setattr(helper.shutil, "chown", lambda path, user, group: chowned.append(Path(path)))
@@ -2698,10 +2698,10 @@ def test_dnsmasq_helper_apply_creates_allowlisted_tftp_root(monkeypatch, tmp_pat
 def test_dnsmasq_helper_apply_rejects_unexpected_tftp_root(monkeypatch, tmp_path, capsys):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "dnsmasq"
-    allowed_root = tmp_path / "var" / "lib" / "labfoundry" / "pxe" / "tftp"
-    unexpected_root = tmp_path / "tmp" / "not-labfoundry"
+    allowed_root = tmp_path / "var" / "lib" / "atlaso" / "pxe" / "tftp"
+    unexpected_root = tmp_path / "tmp" / "not-atlaso"
     apply_dir.mkdir(parents=True)
-    config_path = apply_dir / "labfoundry.conf"
+    config_path = apply_dir / "atlaso.conf"
     config_path.write_text(f"enable-tftp\ntftp-root={unexpected_root}\n", encoding="utf-8")
     commands: list[list[str]] = []
 
@@ -2742,7 +2742,7 @@ def test_dnsmasq_helper_reload_restarts_service(monkeypatch):
 
 def test_dnsmasq_helper_reads_allowlisted_lease_file(monkeypatch, tmp_path, capsys):
     helper = load_helper_module()
-    state_dir = tmp_path / "var" / "lib" / "labfoundry" / "dnsmasq"
+    state_dir = tmp_path / "var" / "lib" / "atlaso" / "dnsmasq"
     state_dir.mkdir(parents=True)
     lease_file = state_dir / "dhcp.leases"
     lease_file.write_text("1893456000 02:15:5d:00:20:30 192.168.50.130 api-client *\n", encoding="utf-8")
@@ -2758,7 +2758,7 @@ def test_dnsmasq_helper_reads_allowlisted_lease_file(monkeypatch, tmp_path, caps
 
 def test_dnsmasq_helper_missing_lease_file_is_empty_success(monkeypatch, tmp_path, capsys):
     helper = load_helper_module()
-    state_dir = tmp_path / "var" / "lib" / "labfoundry" / "dnsmasq"
+    state_dir = tmp_path / "var" / "lib" / "atlaso" / "dnsmasq"
     state_dir.mkdir(parents=True)
 
     monkeypatch.setattr(helper, "DNSMASQ_STATE_DIR", state_dir)
@@ -2772,7 +2772,7 @@ def test_dnsmasq_helper_missing_lease_file_is_empty_success(monkeypatch, tmp_pat
 
 def test_dnsmasq_helper_rejects_lease_paths_outside_allowlisted_state(monkeypatch, tmp_path, capsys):
     helper = load_helper_module()
-    state_dir = tmp_path / "var" / "lib" / "labfoundry" / "dnsmasq"
+    state_dir = tmp_path / "var" / "lib" / "atlaso" / "dnsmasq"
     outside_file = tmp_path / "elsewhere" / "dhcp.leases"
     state_dir.mkdir(parents=True)
     outside_file.parent.mkdir(parents=True)
@@ -2791,21 +2791,21 @@ def local_users_json(*, username: str = "sync-user", enabled: bool = True, passw
         "username": username,
         "role": "viewer",
         "enabled": enabled,
-        "home": f"/var/lib/labfoundry/users/{username}",
+        "home": f"/var/lib/atlaso/users/{username}",
         "shell": "/sbin/nologin",
         "password_pending": bool(password),
         "password_pending_since": "2026-06-23T12:00:00+00:00" if password else "",
     }
     if password:
         row["password"] = password
-    return json.dumps({"managed_by": "LabFoundry", "version": 1, "scope": "Photon OS local users", "users": [row]})
+    return json.dumps({"managed_by": "Atlaso", "version": 1, "scope": "Photon OS local users", "users": [row]})
 
 
 def test_local_users_helper_validates_staged_config(monkeypatch, tmp_path, capsys):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "local-users"
     apply_dir.mkdir(parents=True)
-    config_path = apply_dir / "labfoundry-users.json"
+    config_path = apply_dir / "atlaso-users.json"
     config_path.write_text(local_users_json(), encoding="utf-8")
 
     monkeypatch.setattr(helper, "LOCAL_USERS_APPLY_DIR", apply_dir)
@@ -2821,7 +2821,7 @@ def test_local_users_helper_rejects_reserved_username(monkeypatch, tmp_path, cap
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "local-users"
     apply_dir.mkdir(parents=True)
-    config_path = apply_dir / "labfoundry-users.json"
+    config_path = apply_dir / "atlaso-users.json"
     config_path.write_text(local_users_json(username="root"), encoding="utf-8")
 
     monkeypatch.setattr(helper, "LOCAL_USERS_APPLY_DIR", apply_dir)
@@ -2840,7 +2840,7 @@ def test_local_users_helper_creates_deletes_and_sets_password_without_leaking(mo
     pam_path.parent.mkdir(parents=True)
     pam_path.write_text("password  required    pam_unix.so       sha512 shadow use_authtok\n", encoding="utf-8")
     apply_dir.mkdir(parents=True)
-    config_path = apply_dir / "labfoundry-users.json"
+    config_path = apply_dir / "atlaso-users.json"
     payload = json.loads(local_users_json())
     payload["users"][0]["home"] = (home_base / "sync-user").as_posix()
     payload["users"].append(
@@ -2911,13 +2911,13 @@ def test_local_users_helper_authenticates_shadow_password_without_leaking(monkey
     monkeypatch.setattr(helper.ctypes, "CDLL", lambda name: FakeCryptLibrary())
 
     monkeypatch.setattr(helper.sys, "stdin", io.StringIO("Depot-user1!\n"))
-    assert helper.main(["labfoundry-helper", "local-users", "authenticate", "--real", "vcf-depot"]) == 0
+    assert helper.main(["atlaso-helper", "local-users", "authenticate", "--real", "vcf-depot"]) == 0
     valid_output = capsys.readouterr()
     assert "Depot-user1!" not in valid_output.out
     assert "valid-hash" not in valid_output.out
 
     monkeypatch.setattr(helper.sys, "stdin", io.StringIO("wrong-password\n"))
-    assert helper.main(["labfoundry-helper", "local-users", "authenticate", "--real", "vcf-depot"]) == 1
+    assert helper.main(["atlaso-helper", "local-users", "authenticate", "--real", "vcf-depot"]) == 1
     invalid_output = capsys.readouterr()
     assert "wrong-password" not in invalid_output.out
     assert "valid-hash" not in invalid_output.out
@@ -2960,7 +2960,7 @@ def test_ldap_helper_authenticates_with_mode_0600_password_file_and_redacts(monk
 
     assert helper.main(
         [
-            "labfoundry-helper",
+            "atlaso-helper",
             "ldap",
             "authenticate",
             "--real",
@@ -2988,7 +2988,7 @@ def test_local_users_helper_authentication_rejects_locked_missing_and_unsupporte
 
         monkeypatch.setattr(helper, "_shadow_hash_for_user", reject_shadow)
         monkeypatch.setattr(helper.sys, "stdin", io.StringIO("Depot-user1!\n"))
-        assert helper.main(["labfoundry-helper", "local-users", "authenticate", "--real", "vcf-depot"]) == 1
+        assert helper.main(["atlaso-helper", "local-users", "authenticate", "--real", "vcf-depot"]) == 1
 
     class UnsupportedCrypt:
         argtypes = None
@@ -3001,7 +3001,7 @@ def test_local_users_helper_authentication_rejects_locked_missing_and_unsupporte
     monkeypatch.setattr(helper.ctypes.util, "find_library", lambda name: "libcrypt.so.1")
     monkeypatch.setattr(helper.ctypes, "CDLL", lambda name: type("Library", (), {"crypt": UnsupportedCrypt()})())
     monkeypatch.setattr(helper.sys, "stdin", io.StringIO("Depot-user1!\n"))
-    assert helper.main(["labfoundry-helper", "local-users", "authenticate", "--real", "vcf-depot"]) == 1
+    assert helper.main(["atlaso-helper", "local-users", "authenticate", "--real", "vcf-depot"]) == 1
 
 
 def test_local_users_helper_refreshes_existing_depot_htpasswd_and_fails_closed(monkeypatch, tmp_path):
@@ -3035,7 +3035,7 @@ def test_local_users_helper_applies_per_user_shell(monkeypatch, tmp_path):
     pam_path.parent.mkdir(parents=True)
     pam_path.write_text("password  required    pam_pwquality.so  retry=3\npassword  required    pam_unix.so\n", encoding="utf-8")
     apply_dir.mkdir(parents=True)
-    config_path = apply_dir / "labfoundry-users.json"
+    config_path = apply_dir / "atlaso-users.json"
     payload = json.loads(local_users_json(password=None))
     payload["users"][0]["home"] = (home_base / "sync-user").as_posix()
     payload["users"][0]["shell"] = "/bin/bash"
@@ -3066,7 +3066,7 @@ def test_local_users_helper_keeps_admin_role_sudo_capable(monkeypatch, tmp_path)
     pam_path.parent.mkdir(parents=True)
     pam_path.write_text("password  required    pam_pwquality.so  retry=3\npassword  required    pam_unix.so\n", encoding="utf-8")
     apply_dir.mkdir(parents=True)
-    config_path = apply_dir / "labfoundry-users.json"
+    config_path = apply_dir / "atlaso-users.json"
     payload = json.loads(local_users_json(username="admin", password=None))
     payload["users"][0]["role"] = "admin"
     payload["users"][0]["home"] = (home_base / "admin").as_posix()
@@ -3098,7 +3098,7 @@ def test_local_users_helper_removes_wheel_on_admin_downgrade(monkeypatch, tmp_pa
     pam_path.parent.mkdir(parents=True)
     pam_path.write_text("password  required    pam_pwquality.so  retry=3\npassword  required    pam_unix.so\n", encoding="utf-8")
     apply_dir.mkdir(parents=True)
-    config_path = apply_dir / "labfoundry-users.json"
+    config_path = apply_dir / "atlaso-users.json"
     payload = json.loads(local_users_json(username="downgraded-user", password=None))
     payload["users"][0]["role"] = "viewer"
     payload["users"][0]["home"] = (home_base / "downgraded-user").as_posix()
@@ -3126,7 +3126,7 @@ def test_local_users_helper_allows_powershell_shell(monkeypatch, tmp_path, capsy
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "local-users"
     apply_dir.mkdir(parents=True)
-    config_path = apply_dir / "labfoundry-users.json"
+    config_path = apply_dir / "atlaso-users.json"
     payload = json.loads(local_users_json(password=None))
     payload["users"][0]["shell"] = "/usr/bin/pwsh"
     config_path.write_text(json.dumps(payload), encoding="utf-8")
@@ -3147,7 +3147,7 @@ def test_local_users_helper_unlock_request_resets_passwd_and_faillock(monkeypatc
     pam_path.parent.mkdir(parents=True)
     pam_path.write_text("password  required    pam_pwquality.so  retry=3\npassword  required    pam_unix.so\n", encoding="utf-8")
     apply_dir.mkdir(parents=True)
-    config_path = apply_dir / "labfoundry-users.json"
+    config_path = apply_dir / "atlaso-users.json"
     payload = json.loads(local_users_json(password=None))
     payload["users"][0]["home"] = (home_base / "sync-user").as_posix()
     payload["users"][0]["unlock_requested"] = True
@@ -3175,7 +3175,7 @@ def test_local_users_helper_status_reports_faillock_blocked(monkeypatch, tmp_pat
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "local-users"
     apply_dir.mkdir(parents=True)
-    config_path = apply_dir / "labfoundry-users.json"
+    config_path = apply_dir / "atlaso-users.json"
     config_path.write_text(local_users_json(password=None), encoding="utf-8")
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -3202,7 +3202,7 @@ def test_local_users_helper_status_does_not_block_on_zero_faillock_failures(monk
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "local-users"
     apply_dir.mkdir(parents=True)
-    config_path = apply_dir / "labfoundry-users.json"
+    config_path = apply_dir / "atlaso-users.json"
     config_path.write_text(local_users_json(password=None), encoding="utf-8")
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -3228,10 +3228,10 @@ def vcf_backups_config_text(*, enabled: bool = True) -> str:
     if not enabled:
         return "\n".join(
             [
-                "# Managed by LabFoundry. Local changes may be overwritten.",
-                "# LabFoundry VCF Backups enabled: false",
-                "# LabFoundry VCF Backups user: vcf-backup",
-                "# Backup volume mount: /mnt/labfoundry-vcf-backups",
+                "# Managed by Atlaso. Local changes may be overwritten.",
+                "# Atlaso VCF Backups enabled: false",
+                "# Atlaso VCF Backups user: vcf-backup",
+                "# Backup volume mount: /mnt/atlaso-vcf-backups",
                 "# VCF remote directory: /backups",
                 "# VCF Backup SFTP desired state is disabled.",
                 "",
@@ -3239,17 +3239,17 @@ def vcf_backups_config_text(*, enabled: bool = True) -> str:
         )
     return "\n".join(
         [
-            "# Managed by LabFoundry. Local changes may be overwritten.",
-            "# LabFoundry VCF Backups enabled: true",
-            "# LabFoundry VCF Backups user: vcf-backup",
-            "# Backup volume mount: /mnt/labfoundry-vcf-backups",
+            "# Managed by Atlaso. Local changes may be overwritten.",
+            "# Atlaso VCF Backups enabled: true",
+            "# Atlaso VCF Backups user: vcf-backup",
+            "# Backup volume mount: /mnt/atlaso-vcf-backups",
             "# VCF remote directory: /backups",
-            "# The selected listen target is enforced by the LabFoundry firewall apply unit.",
+            "# The selected listen target is enforced by the Atlaso firewall apply unit.",
             "",
             "# Service listener target: 192.168.50.1:22",
             "Match User vcf-backup",
-            "  AuthorizedKeysFile /etc/labfoundry/ssh/authorized_keys/%u",
-            "  ChrootDirectory /mnt/labfoundry-vcf-backups",
+            "  AuthorizedKeysFile /etc/atlaso/ssh/authorized_keys/%u",
+            "  ChrootDirectory /mnt/atlaso-vcf-backups",
             "  ForceCommand internal-sftp -d /backups",
             "  PasswordAuthentication yes",
             "  PubkeyAuthentication yes",
@@ -3268,7 +3268,7 @@ def test_vcf_backups_helper_validates_staged_config(monkeypatch, tmp_path, capsy
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "vcf-backups"
     apply_dir.mkdir(parents=True)
-    config_path = apply_dir / "labfoundry-vcf-backups-sshd.conf"
+    config_path = apply_dir / "atlaso-vcf-backups-sshd.conf"
     config_path.write_text(vcf_backups_config_text(), encoding="utf-8")
 
     monkeypatch.setattr(helper, "VCF_BACKUPS_APPLY_DIR", apply_dir)
@@ -3281,25 +3281,25 @@ def test_vcf_backups_helper_validates_staged_config(monkeypatch, tmp_path, capsy
 
 def test_vcf_backups_helper_rejects_unmanaged_config(tmp_path):
     helper = load_helper_module()
-    config_path = tmp_path / "labfoundry-vcf-backups-sshd.conf"
+    config_path = tmp_path / "atlaso-vcf-backups-sshd.conf"
     config_path.write_text("Match User root\n", encoding="utf-8")
 
     errors = helper._vcf_backups_config_errors(config_path)
 
-    assert "VCF backups config must be rendered by LabFoundry." in errors
+    assert "VCF backups config must be rendered by Atlaso." in errors
 
 
 def test_vcf_backups_helper_apply_installs_sshd_dropin_and_storage(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "vcf-backups"
     config_dir = tmp_path / "etc" / "ssh" / "sshd_config.d"
-    labfoundry_ssh_dir = tmp_path / "etc" / "labfoundry" / "ssh" / "authorized_keys"
-    storage_path = tmp_path / "mnt" / "labfoundry-vcf-backups"
+    atlaso_ssh_dir = tmp_path / "etc" / "atlaso" / "ssh" / "authorized_keys"
+    storage_path = tmp_path / "mnt" / "atlaso-vcf-backups"
     sshd_config = tmp_path / "etc" / "ssh" / "sshd_config"
     apply_dir.mkdir(parents=True)
     sshd_config.parent.mkdir(parents=True)
     sshd_config.write_text("Subsystem sftp internal-sftp\n", encoding="utf-8")
-    config_path = apply_dir / "labfoundry-vcf-backups-sshd.conf"
+    config_path = apply_dir / "atlaso-vcf-backups-sshd.conf"
     config_path.write_text(vcf_backups_config_text(), encoding="utf-8")
     commands: list[list[str]] = []
 
@@ -3309,12 +3309,12 @@ def test_vcf_backups_helper_apply_installs_sshd_dropin_and_storage(monkeypatch, 
 
     monkeypatch.setattr(helper, "VCF_BACKUPS_APPLY_DIR", apply_dir)
     monkeypatch.setattr(helper, "VCF_BACKUPS_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(helper, "VCF_BACKUPS_CONFIG_PATH", config_dir / "labfoundry-vcf-backups.conf")
-    monkeypatch.setattr(helper, "VCF_BACKUPS_AUTHORIZED_KEYS_DIR", labfoundry_ssh_dir)
+    monkeypatch.setattr(helper, "VCF_BACKUPS_CONFIG_PATH", config_dir / "atlaso-vcf-backups.conf")
+    monkeypatch.setattr(helper, "VCF_BACKUPS_AUTHORIZED_KEYS_DIR", atlaso_ssh_dir)
     def fake_path(value):
         if value == "/etc/ssh/sshd_config":
             return sshd_config
-        if value == "/mnt/labfoundry-vcf-backups":
+        if value == "/mnt/atlaso-vcf-backups":
             return storage_path
         return Path(value)
 
@@ -3325,13 +3325,13 @@ def test_vcf_backups_helper_apply_installs_sshd_dropin_and_storage(monkeypatch, 
 
     assert helper._handle_vcf_backups("apply", [str(config_path)]) == 0
 
-    assert (config_dir / "labfoundry-vcf-backups.conf").is_file()
-    assert "Match User vcf-backup" in (config_dir / "labfoundry-vcf-backups.conf").read_text(encoding="utf-8")
+    assert (config_dir / "atlaso-vcf-backups.conf").is_file()
+    assert "Match User vcf-backup" in (config_dir / "atlaso-vcf-backups.conf").read_text(encoding="utf-8")
     assert (storage_path / "backups").is_dir()
-    assert (labfoundry_ssh_dir / "vcf-backup").is_file()
+    assert (atlaso_ssh_dir / "vcf-backup").is_file()
     assert sshd_config.read_text(encoding="utf-8").startswith("Include /etc/ssh/sshd_config.d/*.conf\n")
     assert ["id", "vcf-backup"] in commands
-    assert all(arg != "labfoundry-vcf-backup" for command in commands for arg in command)
+    assert all(arg != "atlaso-vcf-backup" for command in commands for arg in command)
     assert ["sshd", "-t"] in commands
     assert ["systemctl", "restart", "sshd"] in commands
 
@@ -3340,7 +3340,7 @@ def test_vcf_backups_helper_apply_requires_existing_os_user(monkeypatch, tmp_pat
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "vcf-backups"
     apply_dir.mkdir(parents=True)
-    config_path = apply_dir / "labfoundry-vcf-backups-sshd.conf"
+    config_path = apply_dir / "atlaso-vcf-backups-sshd.conf"
     config_path.write_text(vcf_backups_config_text(), encoding="utf-8")
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -3360,23 +3360,23 @@ def test_vcf_backups_helper_apply_requires_existing_os_user(monkeypatch, tmp_pat
 def test_vcf_offline_depot_helper_applies_nginx_site(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "vcf-offline-depot"
-    managed_root = tmp_path / "etc" / "labfoundry"
+    managed_root = tmp_path / "etc" / "atlaso"
     site_dir = managed_root / "nginx" / "sites.d"
     cert_path = managed_root / "vcf-offline-depot" / "certs" / "depot.crt"
     key_path = managed_root / "vcf-offline-depot" / "certs" / "depot.key"
-    nginx_include = tmp_path / "nginx" / "conf.d" / "labfoundry.conf"
+    nginx_include = tmp_path / "nginx" / "conf.d" / "atlaso.conf"
     apply_dir.mkdir(parents=True)
     cert_path.parent.mkdir(parents=True)
     cert_path.write_text("-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----\n", encoding="utf-8")
     key_path.write_text("-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----\n", encoding="utf-8")
-    config_path = apply_dir / "labfoundry-vcf-offline-depot.conf"
+    config_path = apply_dir / "atlaso-vcf-offline-depot.conf"
     config_path.write_text(
         "\n".join(
             [
-                "# Managed by LabFoundry. Local changes may be overwritten.",
+                "# Managed by Atlaso. Local changes may be overwritten.",
                 "server {",
                 "  listen 192.168.50.1:443 ssl;",
-                "  server_name depot.labfoundry.internal;",
+                "  server_name depot.atlaso.internal;",
                 f"  ssl_certificate {cert_path};",
                 f"  ssl_certificate_key {key_path};",
                 "",
@@ -3421,7 +3421,7 @@ def test_vcf_offline_depot_helper_applies_nginx_site(monkeypatch, tmp_path):
                 "  }",
                 "",
                 "  location ~ ^/PROD/(?!login$|logout$|auth-check$)(.+[^/])$ {",
-                "    alias /mnt/labfoundry-vcf-offline-depot/PROD/$1;",
+                "    alias /mnt/atlaso-vcf-offline-depot/PROD/$1;",
                 "    sendfile on;",
                 "    default_type application/octet-stream;",
                 "  }",
@@ -3455,9 +3455,9 @@ def test_vcf_offline_depot_helper_applies_nginx_site(monkeypatch, tmp_path):
     assert helper._handle_vcf_offline_depot("apply-https", [str(config_path)]) == 0
 
     site_text = (site_dir / "vcf-offline-depot.conf").read_text(encoding="utf-8")
-    assert "server_name depot.labfoundry.internal;" in site_text
-    assert "alias /mnt/labfoundry-vcf-offline-depot/PROD/$1;" in site_text
-    assert "root /mnt/labfoundry-vcf-offline-depot;" not in site_text
+    assert "server_name depot.atlaso.internal;" in site_text
+    assert "alias /mnt/atlaso-vcf-offline-depot/PROD/$1;" in site_text
+    assert "root /mnt/atlaso-vcf-offline-depot;" not in site_text
     assert "sendfile on;" in site_text
     assert nginx_include.read_text(encoding="utf-8").strip().endswith(f"include {site_dir}/*.conf;")
     assert ["/usr/sbin/nginx", "-t"] in commands
@@ -3467,28 +3467,28 @@ def test_vcf_offline_depot_helper_applies_nginx_site(monkeypatch, tmp_path):
 def test_vcf_offline_depot_helper_uses_browser_session_or_basic_auth_for_authenticated_site(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "vcf-offline-depot"
-    managed_root = tmp_path / "etc" / "labfoundry"
+    managed_root = tmp_path / "etc" / "atlaso"
     site_dir = managed_root / "nginx" / "sites.d"
     cert_path = managed_root / "vcf-offline-depot" / "certs" / "depot.crt"
     key_path = managed_root / "vcf-offline-depot" / "certs" / "depot.key"
     htpasswd_path = managed_root / "nginx" / "htpasswd" / "vcf-offline-depot.htpasswd"
-    nginx_include = tmp_path / "nginx" / "conf.d" / "labfoundry.conf"
+    nginx_include = tmp_path / "nginx" / "conf.d" / "atlaso.conf"
     apply_dir.mkdir(parents=True)
     cert_path.parent.mkdir(parents=True)
     cert_path.write_text("-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----\n", encoding="utf-8")
     key_path.write_text("-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----\n", encoding="utf-8")
     htpasswd_path.parent.mkdir(parents=True)
     htpasswd_path.write_text("vcf-depot:stale-basic-auth-hash\n", encoding="utf-8")
-    config_path = apply_dir / "labfoundry-vcf-offline-depot.conf"
+    config_path = apply_dir / "atlaso-vcf-offline-depot.conf"
     config_path.write_text(
         "\n".join(
             [
-                "# Managed by LabFoundry. Local changes may be overwritten.",
-                "# LabFoundry VCF Offline Depot unauthenticated access: false",
-                "# LabFoundry VCF Offline Depot user: vcf-depot",
+                "# Managed by Atlaso. Local changes may be overwritten.",
+                "# Atlaso VCF Offline Depot unauthenticated access: false",
+                "# Atlaso VCF Offline Depot user: vcf-depot",
                 "server {",
                 "  listen 192.168.50.1:443 ssl;",
-                "  server_name depot.labfoundry.internal;",
+                "  server_name depot.atlaso.internal;",
                 f"  ssl_certificate {cert_path};",
                 f"  ssl_certificate_key {key_path};",
                 "",
@@ -3524,7 +3524,7 @@ def test_vcf_offline_depot_helper_uses_browser_session_or_basic_auth_for_authent
                 "    proxy_pass http://127.0.0.1:8000;",
                 "  }",
                 "",
-                "  location = /_labfoundry_depot_auth {",
+                "  location = /_atlaso_depot_auth {",
                 "    internal;",
                 "    proxy_pass http://127.0.0.1:8000/PROD/auth-check;",
                 "    proxy_pass_request_body off;",
@@ -3533,7 +3533,7 @@ def test_vcf_offline_depot_helper_uses_browser_session_or_basic_auth_for_authent
                 "    proxy_set_header X-Original-URI $request_uri;",
                 "  }",
                 "",
-                "  location = /_labfoundry_depot_login {",
+                "  location = /_atlaso_depot_login {",
                 "    internal;",
                 "    proxy_pass http://127.0.0.1:8000/PROD/auth-failure;",
                 "    proxy_pass_request_body off;",
@@ -3547,8 +3547,8 @@ def test_vcf_offline_depot_helper_uses_browser_session_or_basic_auth_for_authent
                 "    satisfy any;",
                 '    auth_basic "VCF Offline Depot";',
                 f"    auth_basic_user_file {htpasswd_path};",
-                "    auth_request /_labfoundry_depot_auth;",
-                "    error_page 401 = /_labfoundry_depot_login;",
+                "    auth_request /_atlaso_depot_auth;",
+                "    error_page 401 = /_atlaso_depot_login;",
                 "    proxy_pass http://127.0.0.1:8000;",
                 "  }",
                 "",
@@ -3556,8 +3556,8 @@ def test_vcf_offline_depot_helper_uses_browser_session_or_basic_auth_for_authent
                 "    satisfy any;",
                 '    auth_basic "VCF Offline Depot";',
                 f"    auth_basic_user_file {htpasswd_path};",
-                "    auth_request /_labfoundry_depot_auth;",
-                "    error_page 401 = /_labfoundry_depot_login;",
+                "    auth_request /_atlaso_depot_auth;",
+                "    error_page 401 = /_atlaso_depot_login;",
                 "    proxy_pass http://127.0.0.1:8000;",
                 "  }",
                 "",
@@ -3565,9 +3565,9 @@ def test_vcf_offline_depot_helper_uses_browser_session_or_basic_auth_for_authent
                 "    satisfy any;",
                 '    auth_basic "VCF Offline Depot";',
                 f"    auth_basic_user_file {htpasswd_path};",
-                "    auth_request /_labfoundry_depot_auth;",
-                "    error_page 401 = /_labfoundry_depot_login;",
-                "    alias /mnt/labfoundry-vcf-offline-depot/PROD/$1;",
+                "    auth_request /_atlaso_depot_auth;",
+                "    error_page 401 = /_atlaso_depot_login;",
+                "    alias /mnt/atlaso-vcf-offline-depot/PROD/$1;",
                 "    sendfile on;",
                 "    default_type application/octet-stream;",
                 "  }",
@@ -3605,8 +3605,8 @@ def test_vcf_offline_depot_helper_uses_browser_session_or_basic_auth_for_authent
 
     assert htpasswd_path.read_text(encoding="utf-8") == "vcf-depot:fresh-shadow-hash\n"
     site_text = (site_dir / "vcf-offline-depot.conf").read_text(encoding="utf-8")
-    assert "auth_request /_labfoundry_depot_auth;" in site_text
-    assert "error_page 401 = /_labfoundry_depot_login;" in site_text
+    assert "auth_request /_atlaso_depot_auth;" in site_text
+    assert "error_page 401 = /_atlaso_depot_login;" in site_text
     assert "proxy_pass http://127.0.0.1:8000/PROD/auth-failure;" in site_text
     assert "satisfy any;" in site_text
     assert 'auth_basic "VCF Offline Depot";' in site_text
@@ -3635,21 +3635,21 @@ def test_vcf_offline_depot_helper_prepares_prod_tree_permissions(monkeypatch, tm
 def test_vcf_offline_depot_helper_rejects_broad_nginx_root(monkeypatch, tmp_path, capsys):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "vcf-offline-depot"
-    managed_root = tmp_path / "etc" / "labfoundry"
+    managed_root = tmp_path / "etc" / "atlaso"
     cert_path = managed_root / "vcf-offline-depot" / "certs" / "depot.crt"
     key_path = managed_root / "vcf-offline-depot" / "certs" / "depot.key"
     apply_dir.mkdir(parents=True)
     cert_path.parent.mkdir(parents=True)
     cert_path.write_text("-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----\n", encoding="utf-8")
     key_path.write_text("-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----\n", encoding="utf-8")
-    config_path = apply_dir / "labfoundry-vcf-offline-depot.conf"
+    config_path = apply_dir / "atlaso-vcf-offline-depot.conf"
     config_path.write_text(
         "\n".join(
             [
                 "server {",
                 "  listen 192.168.50.1:443 ssl;",
-                "  server_name depot.labfoundry.internal;",
-                "  root /mnt/labfoundry-vcf-offline-depot;",
+                "  server_name depot.atlaso.internal;",
+                "  root /mnt/atlaso-vcf-offline-depot;",
                 "  sendfile on;",
                 "  default_type application/octet-stream;",
                 f"  ssl_certificate {cert_path};",
@@ -3685,8 +3685,8 @@ def test_vcf_offline_depot_helper_extracts_vcfdt_tool(monkeypatch, tmp_path, cap
         jar_info.size = len(jar_payload)
         archive.addfile(jar_info, io.BytesIO(jar_payload))
 
-    tool_dir = tmp_path / "opt" / "labfoundry" / "vcf-download-tool"
-    runtime_tool_dir = tmp_path / "var" / "lib" / "labfoundry" / "vcfDownloadTool" / "active-tool"
+    tool_dir = tmp_path / "opt" / "atlaso" / "vcf-download-tool"
+    runtime_tool_dir = tmp_path / "var" / "lib" / "atlaso" / "vcfDownloadTool" / "active-tool"
     (runtime_tool_dir / "secrets").mkdir(parents=True)
     (runtime_tool_dir / "secrets" / "download-token.txt").write_text("secret", encoding="utf-8")
     (runtime_tool_dir / "stale.jar").write_text("stale", encoding="utf-8")
@@ -3737,8 +3737,8 @@ def test_vcf_offline_depot_helper_renews_runtime_when_retired_tree_stays_busy(mo
         info.size = len(tool_payload)
         archive.addfile(info, io.BytesIO(tool_payload))
 
-    tool_dir = tmp_path / "opt" / "labfoundry" / "vcf-download-tool"
-    runtime_tool_dir = tmp_path / "var" / "lib" / "labfoundry" / "vcfDownloadTool" / "active-tool"
+    tool_dir = tmp_path / "opt" / "atlaso" / "vcf-download-tool"
+    runtime_tool_dir = tmp_path / "var" / "lib" / "atlaso" / "vcfDownloadTool" / "active-tool"
     busy_dir = runtime_tool_dir / "esximage" / "python" / "lib" / "python3.11"
     busy_dir.mkdir(parents=True)
     (busy_dir / "stale.pyc").write_bytes(b"stale")
@@ -3781,8 +3781,8 @@ def test_vcf_offline_depot_helper_preserves_root_level_runtime_executable(monkey
         info.size = len(payload)
         archive.addfile(info, io.BytesIO(payload))
 
-    tool_dir = tmp_path / "opt" / "labfoundry" / "vcf-download-tool"
-    runtime_tool_dir = tmp_path / "var" / "lib" / "labfoundry" / "vcfDownloadTool" / "active-tool"
+    tool_dir = tmp_path / "opt" / "atlaso" / "vcf-download-tool"
+    runtime_tool_dir = tmp_path / "var" / "lib" / "atlaso" / "vcfDownloadTool" / "active-tool"
     monkeypatch.setattr(helper, "VCF_DEPOT_TOOL_DIR", tool_dir)
     monkeypatch.setattr(helper, "VCF_DEPOT_RUNTIME_TOOL_DIR", runtime_tool_dir)
     monkeypatch.setattr(
@@ -3804,8 +3804,8 @@ def test_vcf_offline_depot_helper_preserves_root_level_runtime_executable(monkey
 
 def test_vcf_offline_depot_helper_resets_staged_and_active_tool_trees(monkeypatch, tmp_path, capsys):
     helper = load_helper_module()
-    tool_dir = tmp_path / "opt" / "labfoundry" / "vcf-download-tool"
-    runtime_tool_dir = tmp_path / "var" / "lib" / "labfoundry" / "vcfDownloadTool" / "active-tool"
+    tool_dir = tmp_path / "opt" / "atlaso" / "vcf-download-tool"
+    runtime_tool_dir = tmp_path / "var" / "lib" / "atlaso" / "vcfDownloadTool" / "active-tool"
     (tool_dir / "extracted").mkdir(parents=True)
     (tool_dir / "extracted" / "stale.jar").write_text("stale", encoding="utf-8")
     (runtime_tool_dir / "bin").mkdir(parents=True)
@@ -3825,9 +3825,9 @@ def test_vcf_offline_depot_helper_resets_staged_and_active_tool_trees(monkeypatc
     assert json.loads(capsys.readouterr().out)["vcf_offline_depot"] == "tool runtime reset complete"
 
 
-def test_vcf_offline_depot_helper_prepares_labfoundry_vcfdt_home(monkeypatch, tmp_path):
+def test_vcf_offline_depot_helper_prepares_atlaso_vcfdt_home(monkeypatch, tmp_path):
     helper = load_helper_module()
-    state_home = tmp_path / "var" / "lib" / "labfoundry"
+    state_home = tmp_path / "var" / "lib" / "atlaso"
     chowned: list[tuple[Path, int, int]] = []
 
     class Account:
@@ -3838,7 +3838,7 @@ def test_vcf_offline_depot_helper_prepares_labfoundry_vcfdt_home(monkeypatch, tm
     monkeypatch.setattr(helper.pwd, "getpwnam", lambda username: Account())
     monkeypatch.setattr(helper, "_chown_path", lambda path, uid, gid: chowned.append((path, uid, gid)))
 
-    env, uid, gid = helper._vcfdt_labfoundry_environment()
+    env, uid, gid = helper._vcfdt_atlaso_environment()
 
     assert uid == 1200
     assert gid == 1200
@@ -3850,7 +3850,7 @@ def test_vcf_offline_depot_helper_prepares_labfoundry_vcfdt_home(monkeypatch, tm
 
 def test_vcf_offline_depot_helper_generates_software_depot_id(monkeypatch, tmp_path, capsys):
     helper = load_helper_module()
-    runtime_tool_dir = tmp_path / "var" / "lib" / "labfoundry" / "vcfDownloadTool" / "active-tool"
+    runtime_tool_dir = tmp_path / "var" / "lib" / "atlaso" / "vcfDownloadTool" / "active-tool"
     wrapper = runtime_tool_dir / "vcf-download-tool"
     wrapper.parent.mkdir(parents=True)
     wrapper.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -3880,10 +3880,10 @@ def test_vcf_offline_depot_generate_software_depot_id_main_allows_no_path(monkey
         calls.append((action, args))
         return 0
 
-    monkeypatch.delenv("LABFOUNDRY_HELPER_USE_SYSTEMD_RUN", raising=False)
+    monkeypatch.delenv("ATLASO_HELPER_USE_SYSTEMD_RUN", raising=False)
     monkeypatch.setattr(helper, "_handle_vcf_offline_depot", fake_handle)
 
-    assert helper.main(["labfoundry-helper", "vcf-offline-depot", "generate-software-depot-id", "--real"]) == 0
+    assert helper.main(["atlaso-helper", "vcf-offline-depot", "generate-software-depot-id", "--real"]) == 0
     assert calls == [("generate-software-depot-id", [])]
 
 
@@ -3893,11 +3893,11 @@ def test_vcf_offline_depot_helper_applies_vcfdt_application_properties(monkeypat
     properties_path = apply_dir / "application-prodv2.properties"
     apply_dir.mkdir(parents=True)
     properties_path.write_text("spring.profiles.active=depot\nlcm.depot.adapter.host=stage.example.test\n", encoding="utf-8")
-    tool_dir = tmp_path / "opt" / "labfoundry" / "vcf-download-tool"
+    tool_dir = tmp_path / "opt" / "atlaso" / "vcf-download-tool"
     tool_bin = tool_dir / "extracted" / "vcfdt" / "bin" / "vcf-download-tool"
     tool_bin.parent.mkdir(parents=True)
     tool_bin.write_text("#!/bin/sh\n", encoding="utf-8")
-    runtime_tool_dir = tmp_path / "var" / "lib" / "labfoundry" / "vcfDownloadTool" / "active-tool"
+    runtime_tool_dir = tmp_path / "var" / "lib" / "atlaso" / "vcfDownloadTool" / "active-tool"
     chowned: list[tuple[Path, int, int]] = []
     chmodded: list[tuple[Path, int]] = []
 
@@ -3940,7 +3940,7 @@ def test_vcf_offline_depot_helper_removes_disabled_nginx_site(monkeypatch, tmp_p
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "vcf-offline-depot"
     site_dir = tmp_path / "sites.d"
-    config_path = apply_dir / "labfoundry-vcf-offline-depot.conf"
+    config_path = apply_dir / "atlaso-vcf-offline-depot.conf"
     site_path = site_dir / "vcf-offline-depot.conf"
     apply_dir.mkdir(parents=True)
     site_dir.mkdir(parents=True)
@@ -3953,7 +3953,7 @@ def test_vcf_offline_depot_helper_removes_disabled_nginx_site(monkeypatch, tmp_p
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(helper, "VCF_DEPOT_APPLY_DIR", apply_dir)
-    monkeypatch.setattr(helper, "NGINX_CONF_INCLUDE_PATH", tmp_path / "nginx" / "conf.d" / "labfoundry.conf")
+    monkeypatch.setattr(helper, "NGINX_CONF_INCLUDE_PATH", tmp_path / "nginx" / "conf.d" / "atlaso.conf")
     monkeypatch.setattr(helper, "NGINX_MAIN_CONFIG_PATH", tmp_path / "nginx" / "nginx.conf")
     monkeypatch.setattr(helper, "NGINX_SITES_DIR", site_dir)
     monkeypatch.setattr(helper, "VCF_DEPOT_SITE_PATH", site_path)
@@ -3967,7 +3967,7 @@ def test_vcf_offline_depot_helper_removes_disabled_nginx_site(monkeypatch, tmp_p
 
 
 def patch_appliance_settings_nginx_paths(monkeypatch, helper, tmp_path):
-    nginx_include = tmp_path / "nginx" / "conf.d" / "labfoundry.conf"
+    nginx_include = tmp_path / "nginx" / "conf.d" / "atlaso.conf"
     nginx_main = tmp_path / "nginx" / "nginx.conf"
     nginx_sites = tmp_path / "nginx" / "sites.d"
     nginx_management_site = nginx_sites / "management.conf"
@@ -3993,7 +3993,7 @@ def patch_appliance_settings_nginx_paths(monkeypatch, helper, tmp_path):
     monkeypatch.setattr(helper, "NGINX_SITES_DIR", nginx_sites)
     monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", nginx_management_site)
     sshd_config_dir = tmp_path / "ssh" / "sshd_config.d"
-    sshd_root_login = sshd_config_dir / "labfoundry-root-login.conf"
+    sshd_root_login = sshd_config_dir / "atlaso-root-login.conf"
     sshd_main = tmp_path / "ssh" / "sshd_config"
     sshd_main.parent.mkdir(parents=True, exist_ok=True)
     sshd_main.write_text("PermitRootLogin no\nPasswordAuthentication no\nSubsystem sftp /usr/libexec/sftp-server\n", encoding="utf-8")
@@ -4027,7 +4027,7 @@ def appliance_settings_json(
     import json
 
     payload = {
-        "fqdn": "labfoundry.labfoundry.internal",
+        "fqdn": "core.atlaso.internal",
         "resolver_mode": resolver_mode,
         "resolver_servers": ["127.0.0.1"] if resolver_servers is None else resolver_servers,
         "local_dns_enabled": local_dns_enabled,
@@ -4073,12 +4073,12 @@ def ntpd_config_text(
             )
     return "\n".join(
         [
-            "# Managed by LabFoundry. Local changes may be overwritten.",
-            f"# LabFoundry NTP enabled: {str(enabled).lower()}",
-            "# LabFoundry NTP hostname: ntp.labfoundry.internal",
-            "# LabFoundry NTP listen interfaces: eth2.50",
-            f"# LabFoundry NTP listen addresses: {listen_address if listen_address else 'none'}",
-            f"# LabFoundry NTP client allow list: {allow_clients}",
+            "# Managed by Atlaso. Local changes may be overwritten.",
+            f"# Atlaso NTP enabled: {str(enabled).lower()}",
+            "# Atlaso NTP hostname: ntp.atlaso.internal",
+            "# Atlaso NTP listen interfaces: eth2.50",
+            f"# Atlaso NTP listen addresses: {listen_address if listen_address else 'none'}",
+            f"# Atlaso NTP client allow list: {allow_clients}",
             "driftfile /var/lib/ntp/ntp.drift",
             "interface ignore wildcard",
             *([f"server {server} iburst"] if server else []),
@@ -4095,7 +4095,7 @@ def test_appliance_settings_helper_validates_staged_json(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "appliance-settings"
     apply_dir.mkdir(parents=True)
-    config_path = apply_dir / "labfoundry-settings.json"
+    config_path = apply_dir / "atlaso-settings.json"
     config_path.write_text(appliance_settings_json(), encoding="utf-8")
 
     monkeypatch.setattr(helper, "APPLIANCE_SETTINGS_APPLY_DIR", apply_dir)
@@ -4164,7 +4164,7 @@ def test_vcfdt_apply_ceip_rejects_unset_choice():
 
 def test_appliance_settings_helper_requires_https_cert_files(tmp_path):
     helper = load_helper_module()
-    config_path = tmp_path / "labfoundry-settings.json"
+    config_path = tmp_path / "atlaso-settings.json"
     config_path.write_text(appliance_settings_json(management_https_enabled=True), encoding="utf-8")
 
     errors = helper._appliance_settings_config_errors(config_path)
@@ -4175,7 +4175,7 @@ def test_appliance_settings_helper_requires_https_cert_files(tmp_path):
 
 def test_appliance_settings_helper_requires_https_and_management_for_web_terminal(tmp_path):
     helper = load_helper_module()
-    config_path = tmp_path / "labfoundry-settings.json"
+    config_path = tmp_path / "atlaso-settings.json"
     config_path.write_text(
         appliance_settings_json(
             web_terminal_enabled=True,
@@ -4196,10 +4196,10 @@ def test_web_terminal_helper_installs_ca_trust_and_disables_without_deleting_ca(
     helper = load_helper_module()
     ssh_dir = tmp_path / "ssh" / "sshd_config.d"
     ssh_main = tmp_path / "ssh" / "sshd_config"
-    config_dir = tmp_path / "etc" / "labfoundry" / "ssh"
-    runtime_dir = tmp_path / "var" / "lib" / "labfoundry" / "web-terminal"
+    config_dir = tmp_path / "etc" / "atlaso" / "ssh"
+    runtime_dir = tmp_path / "var" / "lib" / "atlaso" / "web-terminal"
     request_dir = runtime_dir / "requests"
-    dropin = ssh_dir / "labfoundry-web-terminal.conf"
+    dropin = ssh_dir / "atlaso-web-terminal.conf"
     ca_key = config_dir / "web-terminal-ca"
     ca_public = config_dir / "web-terminal-ca.pub"
     ssh_main.parent.mkdir(parents=True)
@@ -4247,7 +4247,7 @@ def test_web_terminal_helper_signs_short_lived_restricted_certificate_for_non_wh
     helper = load_helper_module()
     request_dir = tmp_path / "requests"
     request_dir.mkdir()
-    dropin = tmp_path / "labfoundry-web-terminal.conf"
+    dropin = tmp_path / "atlaso-web-terminal.conf"
     ca_key = tmp_path / "web-terminal-ca"
     dropin.write_text("TrustedUserCAKeys test\n", encoding="utf-8")
     ca_key.write_text("private", encoding="utf-8")
@@ -4313,7 +4313,7 @@ server {
   location = /terminal { proxy_pass http://127.0.0.1:8000; }
   location = /terminal/tickets { proxy_pass http://127.0.0.1:8000; }
   location = /terminal/ws {
-    proxy_set_header X-LabFoundry-Listener-Address $server_addr;
+    proxy_set_header X-Atlaso-Listener-Address $server_addr;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
   }
@@ -4332,7 +4332,7 @@ server {
 
 def test_appliance_settings_helper_rejects_invalid_json(tmp_path):
     helper = load_helper_module()
-    config_path = tmp_path / "labfoundry-settings.json"
+    config_path = tmp_path / "atlaso-settings.json"
     config_path.write_text('{"fqdn": "bad name"}', encoding="utf-8")
 
     errors = helper._appliance_settings_config_errors(config_path)
@@ -4343,7 +4343,7 @@ def test_appliance_settings_helper_rejects_invalid_json(tmp_path):
 
 def test_appliance_settings_helper_accepts_dhcp_resolver_mode(tmp_path):
     helper = load_helper_module()
-    config_path = tmp_path / "labfoundry-settings.json"
+    config_path = tmp_path / "atlaso-settings.json"
     config_path.write_text(
         appliance_settings_json(resolver_mode="dhcp", resolver_servers=[], local_dns_enabled=False),
         encoding="utf-8",
@@ -4357,18 +4357,16 @@ def test_appliance_settings_helper_accepts_dhcp_resolver_mode(tmp_path):
 def test_appliance_settings_helper_writes_management_nginx_proxy(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "appliance-settings"
-    managed_root = tmp_path / "etc" / "labfoundry"
-    cert_path = managed_root / "https" / "certs" / "labfoundry.labfoundry.internal.crt"
-    key_path = managed_root / "https" / "certs" / "labfoundry.labfoundry.internal.key"
-    dropin_dir = tmp_path / "systemd" / "labfoundry.service.d"
-    redirect_script = tmp_path / "bin" / "labfoundry-http-redirect"
-    redirect_service = tmp_path / "systemd" / "labfoundry-http-redirect.service"
-    nginx_include = tmp_path / "nginx" / "conf.d" / "labfoundry.conf"
+    managed_root = tmp_path / "etc" / "atlaso"
+    cert_path = managed_root / "https" / "certs" / "core.atlaso.internal.crt"
+    key_path = managed_root / "https" / "certs" / "core.atlaso.internal.key"
+    dropin_dir = tmp_path / "systemd" / "atlaso.service.d"
+    nginx_include = tmp_path / "nginx" / "conf.d" / "atlaso.conf"
     nginx_main = tmp_path / "nginx" / "nginx.conf"
     nginx_sites = tmp_path / "nginx" / "sites.d"
     nginx_management_site = nginx_sites / "management.conf"
     sshd_config_dir = tmp_path / "ssh" / "sshd_config.d"
-    sshd_root_login = sshd_config_dir / "labfoundry-root-login.conf"
+    sshd_root_login = sshd_config_dir / "atlaso-root-login.conf"
     sshd_main = tmp_path / "ssh" / "sshd_config"
     apply_dir.mkdir(parents=True)
     cert_path.parent.mkdir(parents=True)
@@ -4391,13 +4389,9 @@ def test_appliance_settings_helper_writes_management_nginx_proxy(monkeypatch, tm
         ),
         encoding="utf-8",
     )
-    redirect_script.parent.mkdir(parents=True)
-    redirect_script.write_text("legacy redirect", encoding="utf-8")
-    redirect_service.parent.mkdir(parents=True)
-    redirect_service.write_text("legacy redirect service", encoding="utf-8")
     cert_path.write_text("-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----\n", encoding="utf-8")
     key_path.write_text("-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----\n", encoding="utf-8")
-    config_path = apply_dir / "labfoundry-settings.json"
+    config_path = apply_dir / "atlaso-settings.json"
     config_path.write_text(
         appliance_settings_json(
             management_https_enabled=True,
@@ -4415,10 +4409,8 @@ def test_appliance_settings_helper_writes_management_nginx_proxy(monkeypatch, tm
 
     monkeypatch.setattr(helper, "APPLIANCE_SETTINGS_APPLY_DIR", apply_dir)
     monkeypatch.setattr(helper, "CA_MANAGED_PATH_BASE", managed_root)
-    monkeypatch.setattr(helper, "LABFOUNDRY_SERVICE_DROPIN_DIR", dropin_dir)
-    monkeypatch.setattr(helper, "LABFOUNDRY_SERVICE_HTTPS_DROPIN_PATH", dropin_dir / "management-https.conf")
-    monkeypatch.setattr(helper, "LABFOUNDRY_HTTP_REDIRECT_SCRIPT_PATH", redirect_script)
-    monkeypatch.setattr(helper, "LABFOUNDRY_HTTP_REDIRECT_SERVICE_PATH", redirect_service)
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_DROPIN_DIR", dropin_dir)
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_HTTPS_DROPIN_PATH", dropin_dir / "management-https.conf")
     monkeypatch.setattr(helper, "NGINX_CONF_INCLUDE_PATH", nginx_include)
     monkeypatch.setattr(helper, "NGINX_MAIN_CONFIG_PATH", nginx_main)
     monkeypatch.setattr(helper, "NGINX_SITES_DIR", nginx_sites)
@@ -4460,32 +4452,29 @@ def test_appliance_settings_helper_writes_management_nginx_proxy(monkeypatch, tm
     assert "proxy_pass http://127.0.0.1:8000;" in management_site
     assert "proxy_set_header X-Forwarded-Proto http;" in management_site
     assert "proxy_set_header X-Forwarded-Proto https;" in management_site
-    assert 'proxy_set_header X-LabFoundry-Depot-Basic-User "";' in management_site
+    assert 'proxy_set_header X-Atlaso-Depot-Basic-User "";' in management_site
     root_login = sshd_root_login.read_text(encoding="utf-8")
     assert "PermitRootLogin yes" in root_login
     assert "PasswordAuthentication yes" in root_login
     sshd_main_text = sshd_main.read_text(encoding="utf-8")
     assert "Include /etc/ssh/sshd_config.d/*.conf" in sshd_main_text
-    assert "# LabFoundry manages this directive through labfoundry-root-login.conf: PermitRootLogin no" in sshd_main_text
-    assert "# LabFoundry manages this directive through labfoundry-root-login.conf: PasswordAuthentication no" in sshd_main_text
-    assert not redirect_script.exists()
-    assert not redirect_service.exists()
+    assert "# Atlaso manages this directive through atlaso-root-login.conf: PermitRootLogin no" in sshd_main_text
+    assert "# Atlaso manages this directive through atlaso-root-login.conf: PasswordAuthentication no" in sshd_main_text
     assert ["systemctl", "daemon-reload"] in commands
-    assert ["systemctl", "disable", "--now", "labfoundry-http-redirect.service"] in commands
     assert ["systemctl", "enable", "--now", "nginx"] in commands
     assert ["/usr/sbin/nginx", "-t"] in commands
     assert ["/usr/sbin/sshd", "-t"] in commands
     assert ["systemctl", "restart", "sshd"] in commands
-    assert any(command[:5] == ["/usr/bin/systemd-run", "--quiet", "--collect", "--on-active=3", "--unit=labfoundry-management-ui-restart"] for command in commands)
+    assert any(command[:5] == ["/usr/bin/systemd-run", "--quiet", "--collect", "--on-active=3", "--unit=atlaso-management-ui-restart"] for command in commands)
 
 
 def test_appliance_settings_helper_writes_http_management_proxy_without_https(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "appliance-settings"
-    dropin_dir = tmp_path / "systemd" / "labfoundry.service.d"
+    dropin_dir = tmp_path / "systemd" / "atlaso.service.d"
     apply_dir.mkdir(parents=True)
     nginx_paths = patch_appliance_settings_nginx_paths(monkeypatch, helper, tmp_path)
-    config_path = apply_dir / "labfoundry-settings.json"
+    config_path = apply_dir / "atlaso-settings.json"
     config_path.write_text(appliance_settings_json(management_https_enabled=False), encoding="utf-8")
     commands: list[list[str]] = []
 
@@ -4494,8 +4483,8 @@ def test_appliance_settings_helper_writes_http_management_proxy_without_https(mo
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(helper, "APPLIANCE_SETTINGS_APPLY_DIR", apply_dir)
-    monkeypatch.setattr(helper, "LABFOUNDRY_SERVICE_DROPIN_DIR", dropin_dir)
-    monkeypatch.setattr(helper, "LABFOUNDRY_SERVICE_HTTPS_DROPIN_PATH", dropin_dir / "management-https.conf")
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_DROPIN_DIR", dropin_dir)
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_HTTPS_DROPIN_PATH", dropin_dir / "management-https.conf")
     monkeypatch.setattr(helper, "_run", fake_run)
     monkeypatch.setattr(
         helper.shutil,
@@ -4519,7 +4508,7 @@ def test_appliance_settings_helper_writes_http_management_proxy_without_https(mo
     assert "ssl_certificate" not in management_site
     assert "proxy_pass http://127.0.0.1:8000;" in management_site
     assert "proxy_set_header X-Forwarded-Proto http;" in management_site
-    assert 'proxy_set_header X-LabFoundry-Depot-Basic-User "";' in management_site
+    assert 'proxy_set_header X-Atlaso-Depot-Basic-User "";' in management_site
     root_login = nginx_paths["sshd_root_login"].read_text(encoding="utf-8")
     assert "PermitRootLogin no" in root_login
     assert "PasswordAuthentication yes" not in root_login
@@ -4528,17 +4517,17 @@ def test_appliance_settings_helper_writes_http_management_proxy_without_https(mo
     assert ["/usr/sbin/nginx", "-t"] in commands
     assert ["/usr/sbin/sshd", "-t"] in commands
     assert ["systemctl", "restart", "sshd"] in commands
-    assert any(command[:5] == ["/usr/bin/systemd-run", "--quiet", "--collect", "--on-active=3", "--unit=labfoundry-management-ui-restart"] for command in commands)
+    assert any(command[:5] == ["/usr/bin/systemd-run", "--quiet", "--collect", "--on-active=3", "--unit=atlaso-management-ui-restart"] for command in commands)
 
 
 def test_appliance_settings_helper_applies_local_resolver_without_timesyncd(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "appliance-settings"
     networkd_dir = tmp_path / "etc" / "systemd" / "network"
-    dropin_dir = tmp_path / "systemd" / "labfoundry.service.d"
+    dropin_dir = tmp_path / "systemd" / "atlaso.service.d"
     apply_dir.mkdir(parents=True)
     networkd_dir.mkdir(parents=True)
-    mgmt_network = networkd_dir / "00-labfoundry-mgmt.network"
+    mgmt_network = networkd_dir / "00-atlaso-mgmt.network"
     mgmt_network.write_text(
         "\n".join(
             [
@@ -4553,7 +4542,7 @@ def test_appliance_settings_helper_applies_local_resolver_without_timesyncd(monk
         + "\n",
         encoding="utf-8",
     )
-    config_path = apply_dir / "labfoundry-settings.json"
+    config_path = apply_dir / "atlaso-settings.json"
     config_path.write_text(appliance_settings_json(), encoding="utf-8")
     patch_appliance_settings_nginx_paths(monkeypatch, helper, tmp_path)
     commands: list[list[str]] = []
@@ -4564,8 +4553,8 @@ def test_appliance_settings_helper_applies_local_resolver_without_timesyncd(monk
 
     monkeypatch.setattr(helper, "APPLIANCE_SETTINGS_APPLY_DIR", apply_dir)
     monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", mgmt_network)
-    monkeypatch.setattr(helper, "LABFOUNDRY_SERVICE_DROPIN_DIR", dropin_dir)
-    monkeypatch.setattr(helper, "LABFOUNDRY_SERVICE_HTTPS_DROPIN_PATH", dropin_dir / "management-https.conf")
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_DROPIN_DIR", dropin_dir)
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_HTTPS_DROPIN_PATH", dropin_dir / "management-https.conf")
     monkeypatch.setattr(helper, "_run", fake_run)
     monkeypatch.setattr(
         helper.shutil,
@@ -4579,7 +4568,7 @@ def test_appliance_settings_helper_applies_local_resolver_without_timesyncd(monk
 
     assert helper._handle_appliance_settings("apply", [str(config_path)]) == 0
 
-    assert ["/usr/bin/hostnamectl", "set-hostname", "labfoundry.labfoundry.internal"] in commands
+    assert ["/usr/bin/hostnamectl", "set-hostname", "core.atlaso.internal"] in commands
     assert ["resolvectl", "dns", "eth0", "127.0.0.1"] in commands
     assert ["resolvectl", "domain", "eth0", "~."] in commands
     assert ["systemctl", "enable", "--now", "systemd-timesyncd"] not in commands
@@ -4594,15 +4583,15 @@ def test_appliance_settings_helper_applies_external_resolver_without_catchall(mo
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "appliance-settings"
     networkd_dir = tmp_path / "etc" / "systemd" / "network"
-    dropin_dir = tmp_path / "systemd" / "labfoundry.service.d"
+    dropin_dir = tmp_path / "systemd" / "atlaso.service.d"
     apply_dir.mkdir(parents=True)
     networkd_dir.mkdir(parents=True)
-    mgmt_network = networkd_dir / "00-labfoundry-mgmt.network"
+    mgmt_network = networkd_dir / "00-atlaso-mgmt.network"
     mgmt_network.write_text(
         "\n".join(["[Match]", "Name=eth0", "", "[Network]", "Address=192.168.49.1/24", "DNS=127.0.0.1", "Domains=~."]) + "\n",
         encoding="utf-8",
     )
-    config_path = apply_dir / "labfoundry-settings.json"
+    config_path = apply_dir / "atlaso-settings.json"
     config_path.write_text(
         appliance_settings_json(resolver_mode="external", resolver_servers=["1.1.1.1", "9.9.9.9"], local_dns_enabled=False),
         encoding="utf-8",
@@ -4616,8 +4605,8 @@ def test_appliance_settings_helper_applies_external_resolver_without_catchall(mo
 
     monkeypatch.setattr(helper, "APPLIANCE_SETTINGS_APPLY_DIR", apply_dir)
     monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", mgmt_network)
-    monkeypatch.setattr(helper, "LABFOUNDRY_SERVICE_DROPIN_DIR", dropin_dir)
-    monkeypatch.setattr(helper, "LABFOUNDRY_SERVICE_HTTPS_DROPIN_PATH", dropin_dir / "management-https.conf")
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_DROPIN_DIR", dropin_dir)
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_HTTPS_DROPIN_PATH", dropin_dir / "management-https.conf")
     monkeypatch.setattr(helper, "_run", fake_run)
     monkeypatch.setattr(
         helper.shutil,
@@ -4631,7 +4620,7 @@ def test_appliance_settings_helper_applies_external_resolver_without_catchall(mo
 
     assert helper._handle_appliance_settings("apply", [str(config_path)]) == 0
 
-    assert ["/usr/bin/hostnamectl", "set-hostname", "labfoundry.labfoundry.internal"] in commands
+    assert ["/usr/bin/hostnamectl", "set-hostname", "core.atlaso.internal"] in commands
     assert ["resolvectl", "dns", "eth0", "1.1.1.1", "9.9.9.9"] in commands
     assert ["resolvectl", "domain", "eth0", ""] in commands
     network_text = mgmt_network.read_text(encoding="utf-8")
@@ -4645,7 +4634,7 @@ def test_ntpd_helper_rejects_invalid_staged_config(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ntpd"
     apply_dir.mkdir(parents=True)
-    config_path = apply_dir / "labfoundry-ntp.conf"
+    config_path = apply_dir / "atlaso-ntp.conf"
     config_path.write_text(ntpd_config_text(server="bad_name", listen_address="not-an-ip", allow_clients="any, 192.168.50.0/24"), encoding="utf-8")
 
     monkeypatch.setattr(helper, "NTP_APPLY_DIR", apply_dir)
@@ -4685,7 +4674,7 @@ def test_ntpd_helper_accepts_source_ports_and_rejects_invalid_or_nts_ip_sources(
 def test_ntpd_helper_apply_installs_config_and_switches_from_timesyncd(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ntpd"
-    config_path = apply_dir / "labfoundry-ntp.conf"
+    config_path = apply_dir / "atlaso-ntp.conf"
     ntp_conf = tmp_path / "etc" / "ntp.conf"
     state_dir = tmp_path / "var" / "lib" / "ntp"
     apply_dir.mkdir(parents=True)
@@ -4723,12 +4712,12 @@ def test_ntpd_helper_apply_installs_config_and_switches_from_timesyncd(monkeypat
 def test_ntpd_helper_apply_grants_ntp_group_read_to_nts_key(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ntpd"
-    managed_root = tmp_path / "etc" / "labfoundry"
-    config_path = apply_dir / "labfoundry-ntp.conf"
+    managed_root = tmp_path / "etc" / "atlaso"
+    config_path = apply_dir / "atlaso-ntp.conf"
     ntp_conf = tmp_path / "etc" / "ntp.conf"
     state_dir = tmp_path / "var" / "lib" / "ntp"
-    cert_path = managed_root / "ntp" / "certs" / "ntp.labfoundry.internal.crt"
-    key_path = managed_root / "ntp" / "certs" / "ntp.labfoundry.internal.key"
+    cert_path = managed_root / "ntp" / "certs" / "ntp.atlaso.internal.crt"
+    key_path = managed_root / "ntp" / "certs" / "ntp.atlaso.internal.key"
     apply_dir.mkdir(parents=True)
     cert_path.parent.mkdir(parents=True)
     cert_path.write_text("-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----\n", encoding="utf-8")
@@ -4771,7 +4760,7 @@ def test_ntpd_helper_apply_grants_ntp_group_read_to_nts_key(monkeypatch, tmp_pat
 def test_ntpd_helper_rejects_missing_nts_certificate_files(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ntpd"
-    config_path = apply_dir / "labfoundry-ntp.conf"
+    config_path = apply_dir / "atlaso-ntp.conf"
     apply_dir.mkdir(parents=True)
     config_path.write_text(
         ntpd_config_text(
@@ -4792,7 +4781,7 @@ def test_ntpd_helper_rejects_missing_nts_certificate_files(monkeypatch, tmp_path
 def test_ntpd_helper_rejects_nts_when_installed_binary_lacks_support(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ntpd"
-    config_path = apply_dir / "labfoundry-ntp.conf"
+    config_path = apply_dir / "atlaso-ntp.conf"
     apply_dir.mkdir(parents=True)
     config_path.write_text(ntpd_config_text(server="time.cloudflare.com").replace(" iburst", " iburst nts"), encoding="utf-8")
     monkeypatch.setattr(helper, "NTP_APPLY_DIR", apply_dir)
@@ -4806,7 +4795,7 @@ def test_ntpd_helper_rejects_nts_when_installed_binary_lacks_support(monkeypatch
 def test_ntpd_helper_rejects_remote_control_or_blocked_time_service(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ntpd"
-    config_path = apply_dir / "labfoundry-ntp.conf"
+    config_path = apply_dir / "atlaso-ntp.conf"
     apply_dir.mkdir(parents=True)
     config_path.write_text(
         ntpd_config_text(allow_clients="any").replace(
@@ -4937,7 +4926,7 @@ def test_ntpd_helper_requires_photon_package_and_ntpsec_binary_identity(monkeypa
 def test_ntpd_helper_disabled_apply_stops_ntpd_without_installing_config(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ntpd"
-    config_path = apply_dir / "labfoundry-ntp.conf"
+    config_path = apply_dir / "atlaso-ntp.conf"
     ntp_conf = tmp_path / "etc" / "ntp.conf"
     apply_dir.mkdir(parents=True)
     config_path.write_text(ntpd_config_text(enabled=False, listen_address="", allow_clients="any"), encoding="utf-8")
@@ -4960,7 +4949,7 @@ def test_ntpd_helper_disabled_apply_stops_ntpd_without_installing_config(monkeyp
 def test_ntpd_helper_disabled_apply_allows_empty_upstream_list(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ntpd"
-    config_path = apply_dir / "labfoundry-ntp.conf"
+    config_path = apply_dir / "atlaso-ntp.conf"
     ntp_conf = tmp_path / "etc" / "ntp.conf"
     apply_dir.mkdir(parents=True)
     config_path.write_text(ntpd_config_text(enabled=False, server="", listen_address="", allow_clients="any"), encoding="utf-8")
@@ -5035,16 +5024,16 @@ def test_appliance_settings_hostname_fallback_writes_etc_hostname(monkeypatch, t
     monkeypatch.setattr(helper, "_run", fake_run)
     monkeypatch.setattr(helper, "Path", lambda value: hostname_path if value == "/etc/hostname" else Path(value))
 
-    assert helper._apply_hostname("fallback.labfoundry.internal") == 0
+    assert helper._apply_hostname("fallback.atlaso.internal") == 0
 
-    assert hostname_path.read_text(encoding="utf-8") == "fallback.labfoundry.internal\n"
-    assert commands == [["/usr/bin/hostname", "fallback.labfoundry.internal"]]
+    assert hostname_path.read_text(encoding="utf-8") == "fallback.atlaso.internal\n"
+    assert commands == [["/usr/bin/hostname", "fallback.atlaso.internal"]]
 
 
 def test_esx_storage_existing_bind_mount_is_recognized_by_inode(monkeypatch):
     helper = load_helper_module()
-    source = Path("/mnt/labfoundry-esx-storage/data/share")
-    target = Path("/srv/labfoundry/esx-storage/share")
+    source = Path("/mnt/atlaso-esx-storage/data/share")
+    target = Path("/srv/atlaso/esx-storage/share")
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -5065,8 +5054,8 @@ def test_esx_storage_existing_bind_mount_is_recognized_by_inode(monkeypatch):
 
 def test_esx_storage_rejects_wrong_mount_at_bind_target(monkeypatch):
     helper = load_helper_module()
-    source = Path("/mnt/labfoundry-esx-storage/data/share")
-    target = Path("/srv/labfoundry/esx-storage/share")
+    source = Path("/mnt/atlaso-esx-storage/data/share")
+    target = Path("/srv/atlaso/esx-storage/share")
 
     monkeypatch.setattr(
         helper,

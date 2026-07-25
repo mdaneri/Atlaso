@@ -41,7 +41,7 @@ jobs:
         id: changes
         shell: bash
         run: |
-          if [[ -n "$(git -C target status --porcelain -- pyproject.toml labfoundry/__init__.py clients/powershell/LabFoundry/LabFoundry.psd1)" ]]; then
+          if [[ -n "$(git -C target status --porcelain -- pyproject.toml atlaso/__init__.py clients/powershell/Atlaso/Atlaso.psd1)" ]]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -55,7 +55,7 @@ jobs:
           version="$(sed -n 's/^version = "\([0-9][0-9.]*\)"$/\1/p' target/pyproject.toml | head -n 1)"
           git -C target config user.name "github-actions[bot]"
           git -C target config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C target add pyproject.toml labfoundry/__init__.py clients/powershell/LabFoundry/LabFoundry.psd1
+          git -C target add pyproject.toml atlaso/__init__.py clients/powershell/Atlaso/Atlaso.psd1
           git -C target commit -m "chore: bump version to ${version}"
           git -C target push origin "HEAD:${HEAD_REF}"
       - name: Run required checks for version commit

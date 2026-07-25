@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+{% macro command_row(label, command) -%}
+  <div class="esx-storage-command-row">
+    <span>{{ label }}</span>
+    <code>{{ command }}</code>
+    <button class="button secondary icon-button" type="button" data-copy-value="{{ command }}" title="Copy {{ label }} command" aria-label="Copy {{ label }} command">
+      <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+    </button>
+  </div>
+{%- endmacro %}
+{% block page_title %}ESX Storage{% endblock %}
+{% block content %}
+<section class="split-workspace">
+  <div class="panel wide-panel">
+    <div class="panel-head">
+      <div>
+        <h2>ESX NFS Datastore Storage</h2>
+        <p class="muted">Publish ESX 9.x datastores over NFS 3 or NFS 4.1. IPv4 and IPv6 are equivalent connection paths.</p>
+      </div>
+      <span class="status-pill {{ 'good' if esx_storage_settings.enabled else 'muted' }}">{{ "enabled" if esx_storage_settings.enabled else "disabled" }}</span>
+    </div>
+
+    <div class="tab-buttons" role="tablist" aria-label="ESX Storage resources" data-tab-storage-key="atlaso:esx-storage:active-tab">
+      <button class="tab-button active" type="button" role="tab" data-tab-target="storage-volumes" aria-selected="true">Storage Volumes</button>
+      <button class="tab-button" type="button" role="tab" data-tab-target="nfs-datastores" aria-selected="false">NFS Datastores</button>
+      <button class="tab-button" type="button" role="tab" data-tab-target="connection-instructions" aria-selected="false">Connection Instructions</button>
+    </div>
+    <div class="tab-panels">
+      <section id="storage-volumes" class="tab-panel active" role="tabpanel">
+        <div
+          id="esx-storage-volumes-table"
+          class="tabulator-shell"
+          data-esx-storage-volumes='{{ esx_storage_volume_rows | tojson }}'
+          data-can-write="{{ 'true' if esx_storage_can_write else 'false' }}"
+          data-fallback-id="esx-storage-volumes-fallback"
+        ></div>
+        <table id="esx-storage-volumes-fallback" class="data-table">
+          <thead><tr><th>Name</th><th>Source</th><th>Stable identity / mount</th><th>Capacity</th><th>Filesystem</th><th>State</th></tr></thead>
+          <tbody>
+            {% for volume in esx_storage_volume_rows %}
+              <tr>
+                <td>{{ volume.name }}</td>
+                <td>{{ "blank disk" if volume.source_type == "blank_disk" else "mounted ext4" }}</td>
+                <td><code>{{ volume.stable_device_id or volume.mount_path }}</code></td>
+                <td>{{ volume.capacity_bytes }}</td>
+                <td>{{ volume.filesystem_uuid or "pending ext4 format" }}</td>
+                <td><span class="status-pill {{ 'good' if volume.applied else 'warn' }}">{{ volume.state }}</span></td>
+              </tr>
+            {% else %}
+              <tr><td colspan="6" class="muted">No storage volumes are configured.</td></tr>
+            {% endfor %}
+            {% if esx_storage_can_write %}<tr class="new-record-row"><td colspan="6"><button class="add-row-button" type="button" data-esx-storage-wizard-open="volume">+ Add storage volume here</button></td></tr>{% endif %}
+          </tbody>
+        </table>
+      </section>
+
+      <section id="nfs-datastores" class="tab-panel" role="tabpanel" hidden>
+        <div
+          id="esx-storage-shares-table"
+          class="tabulator-shell"
+          data-esx-storage-shares='{{ esx_storage_share_rows | tojson }}'
+          data-csrf="{{ csrf_token }}"
+          data-can-write="{{ 'true' if esx_storage_can_write else 'false' }}"
+          data-interfaces='{{ esx_storage_interfaces | tojson }}'
+          data-fallback-id="esx-storage-shares-fallback"
+        ></div>
+        <table id="esx-storage-shares-fallback" class="data-table">
+          <thead><tr><th>Datastore</th><th>Volume / path</th><th>NFS</th><th>Interface</th><th>Families</th><th>VMkernel clients</th><th>Enabled</th><th>Actions</th></tr></thead>
+          <tbody>
+            {% for share in esx_storage_share_rows %}
+              <tr>
+                <td>{{ share.datastore_name }}</td>
+                <td>{{ share.volume_name }} / <code>{{ share.relative_path }}</code></td>
+                <td>{{ share.preferred_nfs_version }}</td>
+                <td>{{ share.interface_name }}</td>
+                <td>{{ share.address_families | join(" + ") }}</td>
+                <td><code>IPv4: {{ share.ipv4_clients | join(", ") or "none" }}<br>IPv6: {{ share.ipv6_clients | join(", ") or "none" }}</code></td>
+                <td><span class="boolean-glyph {{ 'good' if share.enabled else 'bad' }}" aria-label="{{ 'Enabled' if share.enabled else 'Disabled' }}">{{ '✓' if share.enabled else '✕' }}</span></td>
+                <td>
+                  {% if esx_storage_can_write %}
+                    <form id="esx-storage-remove-share-{{ share.id }}" action="/esx-storage/shares/{{ share.id }}/delete" method="post" data-confirm-modal data-confirm-title="Remove {{ share.datastore_name }}?" data-confirm-message="This removes the export from desired state after global appliance apply. Files and the backing volume are preserved." data-confirm-label="Remove datastore">
+                      <input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="button tiny danger" type="submit">Remove</button>
+                    </form>
+                  {% endif %}
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="8" class="muted">No NFS datastores are configured.</td></tr>
+            {% endfor %}
+            {% if esx_storage_can_write %}<tr class="new-record-row"><td colspan="8"><button class="add-row-button" type="button" data-esx-storage-wizard-open="share">+ Add NFS datastore here</button></td></tr>{% endif %}
+          </tbody>
+        </table>
+      </section>
+
+      <section id="connection-instructions" class="tab-panel" role="tabpanel" hidden>
+        {% for share in esx_storage_share_rows if share.enabled %}
+          <details class="info-band esx-storage-command-details">
+            <summary><strong>{{ share.datastore_name }}</strong><span class="muted">NFS {{ share.preferred_nfs_version }} connection instructions</span></summary>
+            <p class="muted">Set <code>$vmHost</code> to the target ESX host for PowerCLI. Use one explicit generated hostname per family; there is no resolver-selected family preference.</p>
+            <div class="settings-list">
+              {% for command in share.connection_commands.ipv4 %}{{ command_row("ESXCLI · IPv4 · NFS " ~ share.preferred_nfs_version, command) }}{% endfor %}
+              {% for command in share.powercli_commands.ipv4 %}{{ command_row("PowerCLI · IPv4 · NFS " ~ share.preferred_nfs_version, command) }}{% endfor %}
+              {% for command in share.connection_commands.ipv6 %}{{ command_row("ESXCLI · IPv6 · NFS " ~ share.preferred_nfs_version, command) }}{% endfor %}
+              {% for command in share.powercli_commands.ipv6 %}{{ command_row("PowerCLI · IPv6 · NFS " ~ share.preferred_nfs_version, command) }}{% endfor %}
+            </div>
+          </details>
+        {% else %}
+          <p class="muted">No enabled NFS datastores have connection instructions.</p>
+        {% endfor %}
+      </section>
+    </div>
+  </div>
+
+  <aside class="side-stack">
+    {% include "partials/appliance_apply_status.html" %}
+
+    <div class="panel detail-panel">
+      <div class="panel-head"><h2>Service Settings</h2><span class="status-pill {{ 'good' if esx_storage_settings.enabled else 'muted' }}">{{ "enabled" if esx_storage_settings.enabled else "disabled" }}</span></div>
+      <form class="form-stack" action="/esx-storage/settings" method="post" data-autosave-form data-autosave-status-id="esx-storage-settings-status">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+        <label class="switch-field"><span class="field-label"><span>Service enabled</span><button class="help-icon" type="button" data-help="Enables ESX Storage desired state. Host services change only through global appliance apply, after DNS, exports, disk safety, and firewall validation succeed.">i</button></span><input class="switch-input" type="checkbox" name="enabled" {{ "checked" if esx_storage_settings.enabled else "" }} {{ "disabled" if not esx_storage_can_write else "" }}><span class="switch-track" aria-hidden="true"></span></label>
+        <label><span class="field-label"><span>Canonical service hostname</span><button class="help-icon" type="button" data-help="Canonical nfs.&lt;domain&gt; alias. Dual-stack ESX instructions use family-specific generated A or AAAA target names so DNS resolver preference cannot choose a family implicitly.">i</button></span><input name="hostname" value="{{ esx_storage_settings.hostname }}" required {{ "readonly" if not esx_storage_can_write else "" }}></label>
+        <p id="esx-storage-settings-status" class="autosave-status" data-state="idle">Changes save automatically.</p>
+      </form>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>Validation</h2><span class="status-pill {{ 'good' if not esx_storage_validation_errors else 'warn' }}">{{ "valid" if not esx_storage_validation_errors else "needs attention" }}</span></div>
+      {% if esx_storage_validation_errors %}<div class="error-list" role="list">{% for error in esx_storage_validation_errors %}<div role="listitem">{{ error }}</div>{% endfor %}</div>{% else %}<p class="muted">The desired NFS, disk, DNS, IPv4, IPv6, export, and firewall state passes Atlaso validation.</p>{% endif %}
+      {% if esx_storage_validation_warnings %}<div class="warning-list" role="list">{% for warning in esx_storage_validation_warnings %}<div role="listitem">{{ warning }}</div>{% endfor %}</div>{% endif %}
+      <div class="settings-list"><div><span>Generated DNS</span><strong>{{ esx_storage_dns_records|length }} records</strong></div><div><span>Managed firewall</span><strong>{{ esx_storage_firewall_rules|length }} family rules</strong></div><div><span>Stale DNS cleanup</span><strong>{{ esx_storage_stale_dns_record_count }}</strong></div></div>
+      {% set preview_label = "ESX Storage manifest" %}{% set preview_path = esx_storage_config_path %}{% set preview_title = "ESX Storage rendered manifest" %}{% set preview_button_label = "manifest" %}{% set preview_text = esx_storage_manifest_preview %}{% include "partials/config_preview_action.html" %}
+    </div>
+  </aside>
+</section>
+
+{% if esx_storage_can_write %}
+<dialog id="esx-storage-volume-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="esx-storage-volume-modal-title">
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="/esx-storage/volumes" method="post" data-esx-storage-volume-form data-esx-storage-wizard="volume">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <aside class="vcf-sddc-wizard-rail" aria-label="Storage volume steps">
+      <p class="kicker">ESX Storage</p><h2 id="esx-storage-volume-modal-title">Add storage volume</h2>
+      <ol class="vcf-sddc-step-list">
+        <li><button class="vcf-sddc-step-button active" type="button" data-esx-storage-wizard-nav><span>1</span><strong>Volume</strong><small>Name and source type</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-esx-storage-wizard-nav disabled><span>2</span><strong>Storage</strong><small>Select the eligible device</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-esx-storage-wizard-nav disabled><span>3</span><strong>Review</strong><small>Confirm desired state</small></button></li>
+      </ol>
+    </aside>
+    <div class="vcf-sddc-wizard-main">
+      <div class="confirm-modal-body vcf-sddc-wizard-body">
+        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-esx-storage-wizard-kicker>Step 1 of 3</p><h3 data-esx-storage-wizard-title>Name the volume</h3><p class="muted" data-esx-storage-wizard-description>Choose a stable Atlaso name and how storage is supplied.</p></div>
+        <div class="alert error hidden" data-esx-storage-wizard-error></div>
+        <section class="vcf-sddc-step-page" data-esx-storage-wizard-step>
+          <div class="form-grid">
+            <label><span class="field-label"><span>Volume name</span><button class="help-icon" type="button" data-help="Stable Atlaso name used to derive the UUID mount path for a newly initialized disk. It does not rename existing data.">i</button></span><input name="name" required maxlength="120" placeholder="esx-data-01"></label>
+            <label><span class="field-label"><span>Source</span><button class="help-icon" type="button" data-help="Choose an approved blank whole disk for ext4 initialization, or an already mounted ext4 filesystem. Atlaso never reformats an existing filesystem.">i</button></span><select name="source_type" data-esx-storage-volume-source><option value="blank_disk">Approved blank whole disk</option><option value="mounted_ext4">Existing mounted ext4 volume</option></select></label>
+          </div>
+        </section>
+        <section class="vcf-sddc-step-page hidden" data-esx-storage-wizard-step>
+          {% set eligible_blank_disks = esx_storage_disk_inventory | selectattr('candidate_type', 'equalto', 'blank_disk') | selectattr('eligible') | list %}
+          {% set eligible_mounted_volumes = esx_storage_disk_inventory | selectattr('candidate_type', 'equalto', 'mounted_ext4') | selectattr('eligible') | list %}
+          <label data-esx-storage-blank-source><span class="field-label"><span>Blank disk</span><button class="help-icon" type="button" data-help="Only whole disks that pass live safety inventory are selectable. The complete model, serial, WWN, size, and /dev/disk/by-id identity are captured for format review and immediate pre-format revalidation.">i</button></span><select name="stable_device_id">{% for disk in eligible_blank_disks %}<option value="{{ disk.stable_device_id }}">{{ disk.model or 'Disk' }} · {{ disk.size_bytes }} bytes · {{ disk.serial or disk.wwn or disk.stable_device_id }}</option>{% else %}<option value="" disabled>No eligible blank disks available</option>{% endfor %}</select></label>
+          <label data-esx-storage-mounted-source hidden><span class="field-label"><span>Mounted ext4 volume</span><button class="help-icon" type="button" data-help="Only eligible mounted ext4 filesystems discovered by live inventory are selectable. Operating-system filesystems, claimed volumes, VCF Backups storage, and VCF Offline Depot / VCFDT storage are excluded.">i</button></span><select name="mount_path">{% for disk in eligible_mounted_volumes %}<option value="{{ disk.mount_path }}">{{ disk.mount_path }} · {{ disk.size_bytes }} bytes · UUID {{ disk.filesystem_uuid }}</option>{% else %}<option value="" disabled>No eligible mounted ext4 volumes available</option>{% endfor %}</select></label>
+          {% if esx_storage_inventory_error %}<p class="autosave-status" data-state="error">{{ esx_storage_inventory_error }}</p>{% endif %}
+        </section>
+        <section class="vcf-sddc-step-page hidden" data-esx-storage-wizard-step>
+          <div class="settings-list"><div><span>Volume</span><strong data-esx-storage-review="volume-name"></strong></div><div><span>Source</span><strong data-esx-storage-review="volume-source"></strong></div><div><span>Selected storage</span><code data-esx-storage-review="volume-target"></code></div></div>
+          <p class="muted">A blank disk is formatted only after the global appliance review displays its complete fingerprint and accepts the required format confirmation. Existing ext4 data is never reformatted.</p>
+        </section>
+      </div>
+      <div class="confirm-modal-actions vcf-sddc-wizard-actions"><button class="button secondary" type="button" data-esx-storage-wizard-cancel>Cancel</button><button class="button secondary hidden" type="button" data-esx-storage-wizard-back>Back</button><button class="button primary" type="button" data-esx-storage-wizard-next>Next</button><button class="button primary hidden" type="submit" data-esx-storage-wizard-submit>Add volume to desired state</button></div>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="esx-storage-share-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="esx-storage-share-modal-title">
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="/esx-storage/shares" method="post" data-esx-storage-share-form data-esx-storage-wizard="share">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <aside class="vcf-sddc-wizard-rail" aria-label="NFS datastore steps">
+      <p class="kicker">ESX Storage</p><h2 id="esx-storage-share-modal-title" data-esx-storage-wizard-modal-title>Add NFS datastore</h2>
+      <ol class="vcf-sddc-step-list">
+        <li><button class="vcf-sddc-step-button active" type="button" data-esx-storage-wizard-nav><span>1</span><strong>Datastore</strong><small>Name, volume, and path</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-esx-storage-wizard-nav disabled><span>2</span><strong>Endpoint</strong><small>Protocol and address families</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-esx-storage-wizard-nav disabled><span>3</span><strong>Clients</strong><small>VMkernel allowlists</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-esx-storage-wizard-nav disabled><span>4</span><strong>State</strong><small>Enable or disable</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-esx-storage-wizard-nav disabled><span>5</span><strong>Review</strong><small>Confirm datastore</small></button></li>
+      </ol>
+    </aside>
+    <div class="vcf-sddc-wizard-main">
+      <div class="confirm-modal-body vcf-sddc-wizard-body">
+        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-esx-storage-wizard-kicker>Step 1 of 5</p><h3 data-esx-storage-wizard-title>Define the datastore</h3><p class="muted" data-esx-storage-wizard-description>Choose its ESX identity and contained directory.</p></div>
+        <div class="alert error hidden" data-esx-storage-wizard-error></div>
+        <section class="vcf-sddc-step-page" data-esx-storage-wizard-step><div class="form-grid">
+          <label><span class="field-label"><span>Datastore name</span><button class="help-icon" type="button" data-help="Name shown in ESX. Every host mounting this datastore must use this same name, NFS version, and the generated hostname for its selected family.">i</button></span><input name="datastore_name" required maxlength="120" placeholder="esx-nfs-01"></label>
+          <label><span class="field-label"><span>Backing volume</span><button class="help-icon" type="button" data-help="Selects the ext4 volume containing this datastore directory. Disabling or removing the share never deletes data from the volume.">i</button></span><select name="volume_id" required><option value="">Select volume</option>{% for volume in esx_storage_volumes %}<option value="{{ volume.id }}">{{ volume.name }}</option>{% endfor %}</select></label>
+          <label class="full"><span class="field-label"><span>Relative directory</span><button class="help-icon" type="button" data-help="Contained directory below the volume mount. Traversal, symlink escape, overlapping exports, and root-plus-child exports are rejected.">i</button></span><input name="relative_path" required placeholder="datastores/esx-nfs-01"></label>
+        </div></section>
+        <section class="vcf-sddc-step-page hidden" data-esx-storage-wizard-step><div class="form-grid">
+          <label><span class="field-label"><span>Preferred NFS version</span><button class="help-icon" type="button" data-help="Controls the documented ESX mount path. NFS 3 uses the full /srv export path; NFS 4.1 uses /&lt;share&gt;. Every host for one datastore must use the same version.">i</button></span><select name="preferred_nfs_version"><option value="4.1">NFS 4.1</option><option value="3">NFS 3</option></select></label>
+          <label><span class="field-label"><span>Storage interface / VLAN</span><button class="help-icon" type="button" data-help="One addressed storage, services, access, or route interface/VLAN owns both IPv4 and IPv6 listeners selected below.">i</button></span><select name="interface_name" required data-esx-storage-interface>{% for interface in esx_storage_interfaces %}<option value="{{ interface.name }}" data-ipv4="{{ interface.ipv4|join(',') }}" data-ipv6="{{ interface.ipv6|join(',') }}">{{ interface.name }} — IPv4 {{ interface.ipv4|join(', ') or 'none' }} / IPv6 {{ interface.ipv6|join(', ') or 'none' }}</option>{% endfor %}</select></label>
+          <fieldset class="full"><legend><span class="field-label"><span>Address families</span><button class="help-icon" type="button" data-help="Enable IPv4, IPv6, or both. Neither family is preferred or used as fallback; Atlaso generates a separate DNS name, firewall allowlist, and ESX command for every enabled family.">i</button></span></legend><label class="inline-check"><input type="checkbox" name="address_families" value="ipv4" checked> IPv4</label><label class="inline-check"><input type="checkbox" name="address_families" value="ipv6" checked> IPv6</label></fieldset>
+        </div></section>
+        <section class="vcf-sddc-step-page hidden" data-esx-storage-wizard-step><div class="form-grid">
+          <label><span class="field-label"><span>IPv4 VMkernel clients</span><button class="help-icon" type="button" data-help="One IPv4 VMkernel IP or CIDR per line restricts firewall and export access. Leave empty to allow any IPv4 client (0.0.0.0/0).">i</button></span><textarea name="ipv4_clients" rows="5" placeholder="Leave empty for any IPv4 client"></textarea></label>
+          <label><span class="field-label"><span>IPv6 VMkernel clients</span><button class="help-icon" type="button" data-help="One IPv6 VMkernel IP or CIDR per line restricts firewall and export access. Leave empty to allow any IPv6 client (::/0).">i</button></span><textarea name="ipv6_clients" rows="5" placeholder="Leave empty for any IPv6 client"></textarea></label>
+        </div></section>
+        <section class="vcf-sddc-step-page hidden" data-esx-storage-wizard-step>
+          <label class="switch-field"><span class="field-label"><span>Datastore enabled</span><button class="help-icon" type="button" data-help="Includes this datastore in desired NFS, DNS, and firewall state. Disabling takes effect only after global appliance apply and never deletes backing data.">i</button></span><input class="switch-input" type="checkbox" name="enabled" checked><span class="switch-track" aria-hidden="true"></span></label>
+          <p class="muted">A disabled datastore remains in desired state for later reuse, but its export, generated DNS targets, and firewall access are removed on the next global appliance apply. Backing data is preserved.</p>
+        </section>
+        <section class="vcf-sddc-step-page hidden" data-esx-storage-wizard-step>
+          <div class="settings-list"><div><span>Datastore</span><strong data-esx-storage-review="share-name"></strong></div><div><span>State</span><strong data-esx-storage-review="share-state"></strong></div><div><span>Volume and path</span><code data-esx-storage-review="share-path"></code></div><div><span>Protocol</span><strong data-esx-storage-review="share-protocol"></strong></div><div><span>Interface and families</span><strong data-esx-storage-review="share-endpoint"></strong></div><div><span>VMkernel clients</span><code data-esx-storage-review="share-clients"></code></div></div>
+          <p class="muted">The datastore, DNS records, exports, and equivalent IPv4 and IPv6 firewall rules become active only through global appliance apply.</p>
+        </section>
+      </div>
+      <div class="confirm-modal-actions vcf-sddc-wizard-actions"><button class="button secondary" type="button" data-esx-storage-wizard-cancel>Cancel</button><button class="button secondary hidden" type="button" data-esx-storage-wizard-back>Back</button><button class="button primary" type="button" data-esx-storage-wizard-next>Next</button><button class="button primary hidden" type="submit" data-esx-storage-wizard-submit>Add NFS datastore</button></div>
+    </div>
+  </form>
+</dialog>
+{% endif %}
+{% endblock %}

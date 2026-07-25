@@ -1,9 +1,9 @@
 {
   "vendored_components": [
-    {"name": "CodeMirror", "version": "bundled", "license": "MIT", "source": "https://codemirror.net/", "notice_path": "labfoundry/app/static/vendor/codemirror/LICENSE"},
-    {"name": "Prism", "version": "bundled", "license": "MIT", "source": "https://prismjs.com/", "notice_path": "labfoundry/app/static/vendor/prism/LICENSE"},
-    {"name": "Tabulator", "version": "bundled", "license": "MIT", "source": "https://tabulator.info/", "notice_path": "labfoundry/app/static/vendor/tabulator/LICENSE"},
-    {"name": "xterm.js", "version": "bundled", "license": "MIT", "source": "https://xtermjs.org/", "notice_path": "labfoundry/app/static/vendor/xterm/LICENSE"},
+    {"name": "CodeMirror", "version": "bundled", "license": "MIT", "source": "https://codemirror.net/", "notice_path": "atlaso/app/static/vendor/codemirror/LICENSE"},
+    {"name": "Prism", "version": "bundled", "license": "MIT", "source": "https://prismjs.com/", "notice_path": "atlaso/app/static/vendor/prism/LICENSE"},
+    {"name": "Tabulator", "version": "bundled", "license": "MIT", "source": "https://tabulator.info/", "notice_path": "atlaso/app/static/vendor/tabulator/LICENSE"},
+    {"name": "xterm.js", "version": "bundled", "license": "MIT", "source": "https://xtermjs.org/", "notice_path": "atlaso/app/static/vendor/xterm/LICENSE"},
     {"name": "iPXE bootloaders", "version": "bbd7821bd42da5456ee068a471ef73d525ea26a1", "license": "GPL-2.0-or-later", "source": "https://github.com/ipxe/ipxe", "notice_path": "third_party/ipxe/COPYING.GPLv2"}
   ]
 }

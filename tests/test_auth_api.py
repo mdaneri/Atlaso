@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 def create_token(client, scopes=None):
     response = client.post(
-        "/api/v1/auth/login?username=admin&password=labfoundry-admin",
+        "/api/v1/auth/login?username=admin&password=atlaso-admin",
         json={"name": "test token", "scopes": scopes or ["read:dashboard", "read:wan", "write:wan", "read:audit"]},
     )
     assert response.status_code == 200, response.text
@@ -49,7 +49,7 @@ def test_settings_api_updates_root_ssh_desired_state(client):
         "/api/v1/settings",
         headers={"Authorization": f"Bearer {token}"},
         json={
-            "appliance_fqdn": "api.labfoundry.internal",
+            "appliance_fqdn": "api.atlaso.internal",
             "management_https_enabled": False,
             "root_ssh_enabled": True,
             "external_dns_servers": ["1.1.1.1", "9.9.9.9"],
@@ -58,7 +58,7 @@ def test_settings_api_updates_root_ssh_desired_state(client):
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["appliance_fqdn"] == "api.labfoundry.internal"
+    assert payload["appliance_fqdn"] == "api.atlaso.internal"
     assert payload["root_ssh_enabled"] is True
     assert '"root_ssh_enabled": true' in payload["config_preview"]
 
@@ -241,7 +241,7 @@ def test_revoked_token_is_rejected(client):
 def test_expired_token_request_is_rejected(client):
     expires = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
     response = client.post(
-        "/api/v1/auth/login?username=admin&password=labfoundry-admin",
+        "/api/v1/auth/login?username=admin&password=atlaso-admin",
         json={"name": "expired", "expires_at": expires, "scopes": ["read:dashboard"]},
     )
     assert response.status_code == 422

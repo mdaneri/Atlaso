@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from labfoundry.app.services.vcf_sddc_deployment import (
+from atlaso.app.services.vcf_sddc_deployment import (
     VcfSddcDeploymentError,
     _ensure_datastore_free_space,
     _lease_imported_entity,

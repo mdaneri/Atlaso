@@ -1,24 +1,24 @@
 # Certificate Authority Roadmap
 
-LabFoundry CA starts as a local lab trust anchor for VCF integration. It is
+Atlaso CA starts as a local lab trust anchor for VCF integration. It is
 designed to make HTTPS, KMS/KMIP, Offline Depot, and Private Registry
 certificates usable without turning routine service pages into certificate
 management tools.
 
 ## v1: Local CA Foundation
 
-- Generate and persist one LabFoundry root CA.
+- Generate and persist one Atlaso root CA.
 - Store root and leaf private keys encrypted in the database with
-  `LABFOUNDRY_SECRETS_KEY`.
-- Auto-ensure certificates for LabFoundry HTTPS, KMS server TLS, KMS client
+  `ATLASO_SECRETS_KEY`.
+- Auto-ensure certificates for Atlaso HTTPS, KMS server TLS, KMS client
   certificates, VCF Offline Depot HTTPS, and VCF Private Registry HTTPS.
 - Keep manual certificate requests and CSR intake for additional VCF
   integration certificates.
-- Stage `/var/lib/labfoundry/apply/ca/labfoundry-ca.json` and let
-  `labfoundry-helper ca validate|apply` write public CA bundles and service
-  certificate/key files under `/etc/labfoundry`.
+- Stage `/var/lib/atlaso/apply/ca/atlaso-ca.json` and let
+  `atlaso-helper ca validate|apply` write public CA bundles and service
+  certificate/key files under `/etc/atlaso`.
 - Include encrypted CA material in settings backups; restore requires the same
-  `LABFOUNDRY_SECRETS_KEY` to keep private material usable.
+  `ATLASO_SECRETS_KEY` to keep private material usable.
 
 ## v1.1: Rotation And Renewal
 

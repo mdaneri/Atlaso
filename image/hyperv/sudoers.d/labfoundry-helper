@@ -1,3 +1,0 @@
-Defaults:labfoundry !requiretty
-Defaults:labfoundry env_keep += "LABFOUNDRY_HELPER_USE_SYSTEMD_RUN"
-labfoundry ALL=(root) NOPASSWD: /opt/labfoundry/bin/labfoundry-helper *

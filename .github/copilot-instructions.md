@@ -1,4 +1,4 @@
-# LabFoundry coding-agent instructions
+# Atlaso coding-agent instructions
 
 Before planning implementation or changing repository or external state, read
 the root `AGENTS.md` completely. Then read `CONTRIBUTING.md`,

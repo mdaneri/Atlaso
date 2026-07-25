@@ -71,12 +71,12 @@ def run(
 ) -> int:
     started = time.monotonic()
     print(
-        f"==> LabFoundry appliance: {label} started "
+        f"==> Atlaso appliance: {label} started "
         f"(status every {_format_duration(heartbeat_seconds)})",
         flush=True,
     )
 
-    with tempfile.NamedTemporaryFile(prefix="labfoundry-tdnf-", suffix=".log", delete=False) as output:
+    with tempfile.NamedTemporaryFile(prefix="atlaso-tdnf-", suffix=".log", delete=False) as output:
         output_path = Path(output.name)
         process = subprocess.Popen(
             command,
@@ -107,7 +107,7 @@ def run(
                 elapsed = _format_duration(time.monotonic() - started)
                 cache_size = _directory_size(cache_dir)
                 print(
-                    f"==> LabFoundry appliance: {label} still running "
+                    f"==> Atlaso appliance: {label} still running "
                     f"({elapsed}; TDNF cache {cache_size})",
                     flush=True,
                 )
@@ -117,10 +117,10 @@ def run(
 
     elapsed = _format_duration(time.monotonic() - started)
     if status == 0:
-        print(f"==> LabFoundry appliance: {label} completed in {elapsed}", flush=True)
+        print(f"==> Atlaso appliance: {label} completed in {elapsed}", flush=True)
     else:
         print(
-            f"==> LabFoundry appliance: {label} failed after {elapsed} "
+            f"==> Atlaso appliance: {label} failed after {elapsed} "
             f"(exit status {status}); last TDNF output:",
             file=sys.stderr,
             flush=True,

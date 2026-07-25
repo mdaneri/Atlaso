@@ -1,15 +1,15 @@
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
-from labfoundry.app.models import ApplianceSettings, PhysicalInterface, VlanInterface
-from labfoundry.app.services.appliance_settings import (
+from atlaso.app.models import ApplianceSettings, PhysicalInterface, VlanInterface
+from atlaso.app.services.appliance_settings import (
     normalized_web_terminal_interfaces,
     validate_appliance_settings,
     web_terminal_addresses,
     web_terminal_interface_options,
     web_terminal_listener_interfaces,
 )
-from labfoundry.app import web_terminal
+from atlaso.app import web_terminal
 
 
 def test_web_terminal_interface_options_require_addressed_non_trunk_interfaces():
@@ -79,11 +79,11 @@ def test_web_terminal_interface_options_require_addressed_non_trunk_interfaces()
         "192.168.50.1",
     ]
     settings = ApplianceSettings(
-        fqdn="labfoundry.labfoundry.internal",
+        fqdn="core.atlaso.internal",
         management_https_enabled=True,
         web_terminal_enabled=True,
         web_terminal_interfaces_json='["eth0", "eth1.60"]',
-        config_path="/var/lib/labfoundry/apply/appliance-settings/labfoundry-settings.json",
+        config_path="/var/lib/atlaso/apply/appliance-settings/atlaso-settings.json",
     )
     errors, _warnings = validate_appliance_settings(
         settings,
@@ -98,11 +98,11 @@ def test_web_terminal_interface_options_require_addressed_non_trunk_interfaces()
 
 def test_web_terminal_validation_forces_management_and_rejects_unavailable_selection():
     settings = ApplianceSettings(
-        fqdn="labfoundry.labfoundry.internal",
+        fqdn="core.atlaso.internal",
         management_https_enabled=True,
         web_terminal_enabled=True,
         web_terminal_interfaces_json='["eth2", "eth9"]',
-        config_path="/var/lib/labfoundry/apply/appliance-settings/labfoundry-settings.json",
+        config_path="/var/lib/atlaso/apply/appliance-settings/atlaso-settings.json",
     )
     management = {"name": "eth0", "ip": "192.168.49.1", "ip_cidr": "192.168.49.1/24"}
     options = [
@@ -148,7 +148,7 @@ def test_terminal_replay_removes_historic_cursor_position_queries():
 
 def test_selected_listener_header_is_accepted_only_from_loopback_proxy(monkeypatch):
     monkeypatch.setattr(web_terminal, "get_settings", lambda: SimpleNamespace(environment="appliance"))
-    headers = {"x-labfoundry-listener-address": "192.168.87.32"}
+    headers = {"x-atlaso-listener-address": "192.168.87.32"}
 
     assert web_terminal._request_uses_selected_listener(headers, "127.0.0.1", ["192.168.87.32"]) is True
     assert web_terminal._request_uses_selected_listener(headers, "10.0.0.10", ["192.168.87.32"]) is False

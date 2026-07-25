@@ -2,7 +2,7 @@
 
 Appliance Update is audited runtime maintenance, separate from desired-state
 enforcement and `/appliance-apply`. The web process queues work, and
-`labfoundry-worker.service` executes it as a durable `appliance-update` task.
+`atlaso-worker.service` executes it as a durable `appliance-update` task.
 Each manual or scheduled check/install is one parent task with an ordered child
 step for every selected stream. The child owns its status, progress, timestamps,
 compatibility evidence, error, and bounded redacted helper output. The parent
@@ -12,27 +12,27 @@ outcome.
 
 ## Update streams
 
-LabFoundry has three update streams:
+Atlaso has three update streams:
 
-- **LabFoundry Release** installs one signed, self-contained application
-  release. It replaces the former independent LabFoundry wheel and Python
+- **Atlaso Release** installs one signed, self-contained application
+  release. It replaces the former independent Atlaso wheel and Python
   Libraries streams.
 - **Photon OS** checks or installs packages only after validating the proposed
-  system Python ABI against the active LabFoundry release.
+  system Python ABI against the active Atlaso release.
 - **PowerShell Modules** checks or installs the explicitly managed modules from
   their selected repositories. After installing or updating `VCF.PowerCLI`,
   the helper reapplies and verifies the centralized VMware CEIP preference at
   PowerCLI `AllUsers` scope. Explicit `User` and `Session` overrides remain
-  outside LabFoundry ownership. Privileged PowerShell work uses the root-owned
-  home `/var/lib/labfoundry/powershell`, so synchronized repository state
+  outside Atlaso ownership. Privileged PowerShell work uses the root-owned
+  home `/var/lib/atlaso/powershell`, so synchronized repository state
   persists without depending on the service's read-only `/root` view.
 
 The appliance never performs a broad runtime `pip --upgrade` and never contacts
-PyPI during a LabFoundry release update. Application dependencies and bootstrap
+PyPI during a Atlaso release update. Application dependencies and bootstrap
 tools are exact, hash-locked wheels inside the release bundle.
 
 Checks execute every selected child even when another check fails, which keeps
-diagnostics independent. Installations preserve the safety order LabFoundry
+diagnostics independent. Installations preserve the safety order Atlaso
 Release, PowerShell Modules, then Photon OS. PowerShell remains independently
 observable after a release failure, while Photon is marked **skipped** with an
 explicit reason if either earlier selected stream failed. The parent succeeds
@@ -42,8 +42,7 @@ only when every selected child succeeds.
 
 GitHub is the default distribution origin:
 
-- GitHub Releases stores immutable versioned manifests, signatures, bundles,
-  and the legacy bridge wheel.
+- GitHub Releases stores immutable versioned manifests, signatures, and bundles.
 - GitHub Pages publishes signed `development`, `preview`, and `stable` channel
   pointers. Its root serves a small informational release-repository page;
   appliances continue to use only the signed JSON documents under `/updates`.
@@ -59,19 +58,19 @@ GitHub is the default distribution origin:
 The default source is:
 
 ```text
-https://mdaneri.github.io/LabFoundry/updates
+https://mdaneri.github.io/Atlaso/updates
 ```
 
 The human-facing Pages URL is
-`https://mdaneri.github.io/LabFoundry/`. The repository name is case-sensitive
+`https://mdaneri.github.io/Atlaso/`. The repository name is case-sensitive
 in the project-site path. The landing page contains no updater state or trust
 material and does not replace signature verification.
 
 For the `stable` channel, the appliance reads:
 
 ```text
-https://mdaneri.github.io/LabFoundry/updates/channels/stable/manifest.json
-https://mdaneri.github.io/LabFoundry/updates/channels/stable/manifest.json.sig
+https://mdaneri.github.io/Atlaso/updates/channels/stable/manifest.json
+https://mdaneri.github.io/Atlaso/updates/channels/stable/manifest.json.sig
 ```
 
 Operators may add HTTPS mirrors and failover sources. A mirror copies the
@@ -83,9 +82,9 @@ manifests, tasks, audits, URLs, or helper output.
 
 Photon and PowerShell source fields autosave as desired runtime-maintenance
 configuration. **Synchronize repositories** explicitly writes only
-LabFoundry-owned tdnf and PowerShell client configuration. Their source cards
+Atlaso-owned tdnf and PowerShell client configuration. Their source cards
 show whether that synchronization has not run, succeeded, or failed. Signed
-LabFoundry sources are read directly, are checked during each update, and do not
+Atlaso sources are read directly, are checked during each update, and do not
 configure pip or report package-client synchronization state.
 
 Each source editor presents repository identity first, then its location or
@@ -122,7 +121,7 @@ instead of rendering unbounded output inline.
 Appliances contain named Ed25519 public keys under:
 
 ```text
-/etc/labfoundry/update-trust.d/<key-id>.pem
+/etc/atlaso/update-trust.d/<key-id>.pem
 ```
 
 Private signing keys exist only in the protected `appliance-release` GitHub
@@ -142,9 +141,9 @@ If an appliance reports that a named channel signing key is not trusted, first
 verify that the matching checked-in public key exists on the appliance:
 
 ```sh
-sudo ls -l /etc/labfoundry/update-trust.d/
+sudo ls -l /etc/atlaso/update-trust.d/
 sudo openssl pkey -pubin \
-  -in /etc/labfoundry/update-trust.d/<key-id>.pem \
+  -in /etc/atlaso/update-trust.d/<key-id>.pem \
   -noout
 ```
 
@@ -160,9 +159,8 @@ signed release manifest contains its version and commit, build time, updater
 protocol, database schema version, supported Python ABIs, bundle URL/size/hash,
 and a hash for every bundled file.
 
-The Pages root `manifest.json` is the fixed legacy v1 bridge for older clients.
-New clients accept only signed v2 channel and release documents. After the
-bridge installs once, the appliance uses signed channels.
+Atlaso accepts only signed v2 channel pointers and immutable release manifests.
+The Pages root is informational and is not part of the update trust contract.
 
 ## Transactional installation
 
@@ -173,15 +171,15 @@ content set, and per-file hashes before it can switch the running release.
 Each candidate is built under:
 
 ```text
-/opt/labfoundry/releases/<version>
+/opt/atlaso/releases/<version>
 ```
 
 The helper creates the candidate virtualenv from the ABI-specific retained
 wheelhouse with `PIP_CONFIG_FILE=/dev/null`, `--no-index`,
 `--require-hashes`, and no network dependency resolution. It then runs
 `pip check`, imports the web/worker/console modules, and validates the installed
-entry points. `/opt/labfoundry/current` points at the active release, while
-`/opt/labfoundry/.venv` remains a compatibility symlink through `current`.
+entry points. `/opt/atlaso/current` points at the active release, while
+`/opt/atlaso/.venv` points through `current` to its virtual environment.
 
 Before switching, the helper enables the nginx maintenance response, pauses the
 web and console services, closes the worker's database session, and creates a
@@ -191,7 +189,7 @@ and probes internal `/openapi.json`.
 
 Any failure restores the previous release link, helper/systemd files, and
 database snapshot before maintenance mode is removed. A root-owned finalizer at
-`/var/lib/labfoundry/apply/appliance-update/finalizer-status.json` records the
+`/var/lib/atlaso/apply/appliance-update/finalizer-status.json` records the
 definitive transaction result so the worker can persist the durable task
 outcome. Without a matching definitive finalizer, worker startup marks an
 interrupted running parent failed even when every child step committed before
@@ -206,30 +204,18 @@ mutation, the helper records an inspection of the proposed tdnf transaction and
 queries all repository candidates with the Photon-supported
 `tdnf repoquery python3` interface, then deterministically selects the highest
 advertised minor ABI. It fails closed if that ABI is not listed in the active
-signed LabFoundry bundle.
+signed Atlaso bundle.
 
 If Photon changes Python to another supported ABI, the helper reconstructs the
 active virtualenv from the retained offline wheelhouse before restarting and
-probing LabFoundry. It does not claim automatic RPM rollback and never reboots
+probing Atlaso. It does not claim automatic RPM rollback and never reboots
 automatically. If OS maintenance leaves the appliance unhealthy, the task
 records the transaction evidence and manual recovery boundary.
 
-## Persisted-state migration
-
-On upgrade, LabFoundry:
-
-- renames `labfoundry_wheel` schedule/job selections to
-  `labfoundry_release`;
-- removes `python_libraries` from mixed schedules;
-- disables Python-only schedules with an explicit migration notice;
-- deletes retired Python source rows and encrypted credentials;
-- converts legacy HTTPS `.../manifest.json` release sources to v2 base URLs,
-  disables invalid non-HTTPS release sources, and removes retired per-package
-  LabFoundry/Python rows; and
-- records one `migrate_signed_release_updates` audit event.
-
-Appliances without a LabFoundry source receive the public GitHub Pages source.
-Existing HTTPS mirrors remain in priority order.
+Atlaso 0.9.18 is a clean-break appliance release. It does not migrate databases,
+schedules, credentials, update sources, or installed environments from the
+retired product. Deploy a fresh Atlaso appliance and configure its signed update
+sources directly.
 
 ## Signed lifecycle fixture
 
@@ -244,7 +230,7 @@ The fixture must use the appliance's named test trust key. Its signed
 `preview` channel must select a healthy release newer than the image baseline;
 its signed `development` channel must select a candidate that reaches database
 startup and then fails the service-health probe. The lifecycle runner proves
-that each release task exposes a LabFoundry Release child step, proves the
+that each release task exposes a Atlaso Release child step, proves the
 preview upgrade, expects the development parent and child to fail with
 `rolled_back=true`, and compares the active release, compatibility virtualenv,
 database schema hash, and user identities before and after rollback. It then
@@ -277,7 +263,7 @@ bytes. It does this for the appliance's CPython 3.14 runtime before running:
 python scripts/build_release_bundle.py \
   --wheelhouses wheelhouses \
   --signing-key /protected/release-key.pem \
-  --signing-key-id labfoundry-release-2026-01 \
+  --signing-key-id atlaso-release-2026-01 \
   --commit <successful-main-sha>
 ```
 
@@ -286,10 +272,10 @@ commit and exact asset bytes or the workflow fails. Annotated release tags use
 an explicit GitHub Actions bot identity and do not depend on runner-global Git
 configuration.
 
-The fixed legacy manifest must publish `v0.9.0` before any later release. The
-publication preflight rejects later versions while that bridge is absent. If
-an otherwise successful `main` release fails after signing but before
-publication, run **Publish appliance release**, provide the exact successful
+Atlaso starts a new signed update lineage at `v0.9.18`; it does not consume or
+publish the retired product's update bridge. If an otherwise successful `main`
+release fails after signing but before publication, run **Publish appliance
+release**, provide the exact successful
 `main` commit in `release_sha`, and verify the recovered tag, release assets,
 signatures, and `development` pointer. The dispatch refuses commits without a
 successful `main` push CI run and preserves the normal tag/release mismatch

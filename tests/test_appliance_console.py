@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 from sqlalchemy.exc import OperationalError as SQLAlchemyOperationalError
 
-import labfoundry.app.appliance_console as appliance_console
-from labfoundry.app.appliance_console import (
+import atlaso.app.appliance_console as appliance_console
+from atlaso.app.appliance_console import (
     CursesConsole,
     ConsoleOperationError,
     ServiceStatus,
@@ -23,12 +23,12 @@ from labfoundry.app.appliance_console import (
 )
 
 
-HELPER_PATH = Path(__file__).resolve().parents[1] / "scripts" / "appliance" / "labfoundry-helper"
+HELPER_PATH = Path(__file__).resolve().parents[1] / "scripts" / "appliance" / "atlaso-helper"
 
 
 def load_helper_module():
-    loader = importlib.machinery.SourceFileLoader("labfoundry_helper_console", str(HELPER_PATH))
-    spec = importlib.util.spec_from_loader("labfoundry_helper_console", loader)
+    loader = importlib.machinery.SourceFileLoader("atlaso_helper_console", str(HELPER_PATH))
+    spec = importlib.util.spec_from_loader("atlaso_helper_console", loader)
     assert spec is not None
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
@@ -88,19 +88,19 @@ def test_console_ipv6_management_validation_supports_independent_modes_and_gatew
 
 
 def test_console_management_urls_bracket_ipv6_and_ignore_link_local_addresses():
-    assert management_urls("appliance.labfoundry.internal", "192.168.49.10/24", "2001:db8:49::10/64") == (
-        "https://appliance.labfoundry.internal/",
+    assert management_urls("appliance.atlaso.internal", "192.168.49.10/24", "2001:db8:49::10/64") == (
+        "https://appliance.atlaso.internal/",
         "https://192.168.49.10/",
         "https://[2001:db8:49::10]/",
     )
     assert management_urls("", "", "fe80::10/64") == ()
     assert management_urls(
-        "appliance.labfoundry.internal",
+        "appliance.atlaso.internal",
         "192.168.49.10/24",
         "2001:db8:49::10/64",
         https_enabled=False,
     ) == (
-        "http://appliance.labfoundry.internal/",
+        "http://appliance.atlaso.internal/",
         "http://192.168.49.10/",
         "http://[2001:db8:49::10]/",
     )
@@ -690,7 +690,7 @@ def test_console_footer_includes_help_and_compact_power_label():
 
 
 def test_console_appliance_services_use_full_catalog_and_optional_units(monkeypatch):
-    from labfoundry.app import ui
+    from atlaso.app import ui
 
     rows = [
         {"service": service_id, "enabled": True, "running": True}
@@ -704,7 +704,7 @@ def test_console_appliance_services_use_full_catalog_and_optional_units(monkeypa
         "_systemd_unit_states",
         lambda units: {
             unit: {
-                "LoadState": "not-found" if unit == "labfoundry-kms.service" else "loaded",
+                "LoadState": "not-found" if unit == "atlaso-kms.service" else "loaded",
                 "UnitFileState": "enabled",
                 "ActiveState": "failed" if unit == "slapd.service" else "active",
             }
@@ -723,7 +723,7 @@ def test_console_appliance_services_use_full_catalog_and_optional_units(monkeypa
 
 
 def test_console_enabled_optional_service_without_unit_is_unavailable(monkeypatch):
-    from labfoundry.app import ui
+    from atlaso.app import ui
 
     rows = [
         {"service": service_id, "enabled": service_id == "kms", "running": False}
@@ -739,13 +739,13 @@ def test_console_enabled_optional_service_without_unit_is_unavailable(monkeypatc
 
 def test_console_service_rows_fit_normal_tty_and_compact_summary_reports_exceptions():
     services = (
-        ServiceStatus("LabFoundry", "labfoundry.service", "loaded", "enabled", "active"),
+        ServiceStatus("Atlaso", "atlaso.service", "loaded", "enabled", "active"),
         ServiceStatus("LDAP", "slapd.service", "loaded", "enabled", "failed"),
-        ServiceStatus("KMS", "labfoundry-kms.service", "not-found", "", "inactive"),
-        ServiceStatus("Firewall", "labfoundry-firewall.service", "loaded", "enabled", "active", False),
+        ServiceStatus("KMS", "atlaso-kms.service", "not-found", "", "inactive"),
+        ServiceStatus("Firewall", "atlaso-firewall.service", "loaded", "enabled", "active", False),
     )
 
-    assert CursesConsole._service_cell(services[0], 38) == "LabFoundry            ▶ on"
+    assert CursesConsole._service_cell(services[0], 38) == "Atlaso                ▶ on"
     assert CursesConsole._service_cell(services[3], 38) == "Firewall              ▶ off"
     summary = CursesConsole._service_summary(services)
     assert summary == "2 running | 1 failed | 0 stopped | 1 unavailable | Firewall disabled"
@@ -801,8 +801,8 @@ def test_console_authentication_is_requested_for_each_menu_entry(monkeypatch):
 def test_console_firewall_toggle_persists_desired_state_and_selects_only_firewall(client, monkeypatch):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import FirewallSettings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import FirewallSettings
 
     selected: list[set[str]] = []
     monkeypatch.setattr(appliance_console, "_submit_console_apply", lambda unit_ids, **kwargs: selected.append(unit_ids) or "job_firewall")
@@ -816,8 +816,8 @@ def test_console_firewall_toggle_persists_desired_state_and_selects_only_firewal
 
 
 def test_console_power_task_is_committed_before_real_helper_invocation(client, monkeypatch):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, JobStatus
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
 
     observed: list[tuple[list[str], str, str]] = []
 
@@ -839,9 +839,9 @@ def test_console_power_task_is_committed_before_real_helper_invocation(client, m
 
 
 def test_forced_real_apply_seam_rejects_non_console_jobs(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, JobStatus
-    from labfoundry.app.ui import run_appliance_apply_job
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
+    from atlaso.app.ui import run_appliance_apply_job
 
     with SessionLocal() as db:
         db.add(Job(id="job_not_console", type="appliance-apply", status=JobStatus.PENDING.value, created_by="admin"))
@@ -854,8 +854,8 @@ def test_forced_real_apply_seam_rejects_non_console_jobs(client):
 def test_console_desired_state_edit_is_rejected_before_commit_when_apply_is_active(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import FirewallSettings, Job, JobStatus
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import FirewallSettings, Job, JobStatus
 
     with SessionLocal() as db:
         firewall = db.scalar(select(FirewallSettings))
@@ -874,25 +874,25 @@ def test_console_desired_state_edit_is_rejected_before_commit_when_apply_is_acti
 
 
 def test_console_systemd_unit_replaces_only_tty1():
-    unit = Path("image/common/systemd/labfoundry-console.service").read_text(encoding="utf-8")
-    provision = Path("image/common/scripts/provision-labfoundry.sh").read_text(encoding="utf-8")
-    manager = Path("image/common/systemd/labfoundry-console-manager.conf").read_text(encoding="utf-8")
+    unit = Path("image/common/systemd/atlaso-console.service").read_text(encoding="utf-8")
+    provision = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
+    manager = Path("image/common/systemd/atlaso-console-manager.conf").read_text(encoding="utf-8")
     assert "TTYPath=/dev/tty1" in unit
     assert "Conflicts=getty@tty1.service" in unit
     assert "getty@tty2" not in unit
     assert "systemctl mask getty@tty1.service" in provision
-    assert "systemctl enable labfoundry-console.service" in provision
+    assert "systemctl enable atlaso-console.service" in provision
     assert "getty@tty2" not in provision
     assert 'run_tdnf "Photon appliance package installation"' in provision
     assert "python3-curses" in provision and "procps-ng" in provision
     assert "ShowStatus=no" in manager
     assert "CtrlAltDelBurstAction=none" in manager
     assert "systemctl mask --force ctrl-alt-del.target" in provision
-    assert "/etc/systemd/system.conf.d/labfoundry-console.conf" in provision
+    assert "/etc/systemd/system.conf.d/atlaso-console.conf" in provision
     deploy = Path("scripts/windows/vmware/deploy-wheel.ps1").read_text(encoding="utf-8")
-    assert "systemctl restart labfoundry-console.service" in deploy
-    assert "systemctl is-active labfoundry-console.service" in deploy
-    assert "/etc/systemd/system.conf.d/labfoundry-console.conf" in deploy
+    assert "systemctl restart atlaso-console.service" in deploy
+    assert "systemctl is-active atlaso-console.service" in deploy
+    assert "/etc/systemd/system.conf.d/atlaso-console.conf" in deploy
     assert "systemctl daemon-reexec" in deploy
     assert "systemctl mask --force ctrl-alt-del.target" in deploy
 
@@ -920,9 +920,9 @@ def test_console_service_isolation_preserves_console_network_and_firewall(monkey
     assert {row["unit"] for row in saved["units"]} == set(helper.CONSOLE_MANAGED_SERVICE_UNITS)
     assert all(command[:3] == ["systemctl", "disable", "--now"] for command in commands)
     flattened = " ".join(" ".join(command) for command in commands)
-    assert "labfoundry-console.service" not in flattened
+    assert "atlaso-console.service" not in flattened
     assert "systemd-networkd.service" not in flattened
-    assert "labfoundry-firewall.service" not in flattened
+    assert "atlaso-firewall.service" not in flattened
     output = capsys.readouterr().out
     assert "management networking" in output
 

@@ -1,6 +1,6 @@
-# Contributing to LabFoundry
+# Contributing to Atlaso
 
-Thank you for improving LabFoundry. Contributions start with an issue and end
+Thank you for improving Atlaso. Contributions start with an issue and end
 with a reviewed pull request.
 
 ## Issue and pull-request relationship

@@ -39,7 +39,7 @@ if (-not $Password) {
         -AsSecureString
     $Password = ConvertFrom-SecureString -SecureString $SecurePassword -AsPlainText
 }
- 
+
 $Arguments = @(
     '--acceptAllEulas'
     '--overwrite'
@@ -80,8 +80,8 @@ Write-Host ''
 Write-Host 'Deployment completed successfully.'
 Write-Host 'Open this VMX in VMware Workstation:'
 Write-Host $DestinationVmx
- 
- 
+
+
 
 $VmxContent = Get-Content -LiteralPath $DestinationVmx
 

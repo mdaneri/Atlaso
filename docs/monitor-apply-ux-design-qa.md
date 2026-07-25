@@ -6,11 +6,11 @@
 - Desktop viewport: 1968 × 1562 CSS pixels at the browser's native device density.
 - Narrow viewport: 900 × 1200 CSS pixels.
 - Historical validation target: VMware appliance `192.168.167.219`, deployed with the repository VMware wheel helper. The images below document the preceding layout and interaction work; they are not screenshots of the current panel set.
-- Current shared cache revision: `monitor-no-disk-usage-20260723-3` / `labfoundry-pwa-v156`.
+- Current shared cache revision: `monitor-no-disk-usage-20260723-3` / `atlaso-pwa-v156`.
 
 ## Comparison
 
-![Before and after Monitor comparison](images/monitor-apply-ux/monitor-comparison.png)
+![Atlaso Monitor](images/monitor-apply-ux/monitor-after.png)
 
 The captured desktop comparison records the earlier hierarchy where Disk Activity owned unique-device I/O and Disk Usage owned capacity. It is retained as historical evidence, not as a representation of the current page. The current Monitor removes the top-level Disks capacity metric, Disk Usage chart, and mount table while retaining Network Throughput and Disk Activity at matching row heights.
 

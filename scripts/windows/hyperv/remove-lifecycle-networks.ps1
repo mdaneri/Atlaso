@@ -1,16 +1,16 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [string]$MgmtNatName = 'LabFoundry-Mgmt-NAT'
+    [string]$MgmtNatName = 'Atlaso-Mgmt-NAT'
 )
 
 $ErrorActionPreference = 'Stop'
 
 $switchNames = @(
-    'LabFoundry-Mgmt',
-    'LabFoundry-Services',
-    'LabFoundry-SiteA',
-    'LabFoundry-SiteB',
-    'LabFoundry-Trunk'
+    'Atlaso-Mgmt',
+    'Atlaso-Services',
+    'Atlaso-SiteA',
+    'Atlaso-SiteB',
+    'Atlaso-Trunk'
 )
 
 foreach ($switchName in $switchNames) {
@@ -27,7 +27,7 @@ foreach ($switchName in $switchNames) {
 
 $nat = Get-NetNat -Name $MgmtNatName -ErrorAction SilentlyContinue
 if ($nat) {
-    if ($PSCmdlet.ShouldProcess($MgmtNatName, 'Remove LabFoundry management NAT')) {
+    if ($PSCmdlet.ShouldProcess($MgmtNatName, 'Remove Atlaso management NAT')) {
         Remove-NetNat -Name $MgmtNatName -Confirm:$false
         Write-Host "Removed NAT: $MgmtNatName"
     }
@@ -39,7 +39,7 @@ foreach ($switchName in $switchNames) {
         Write-Host "Switch already absent: $switchName"
         continue
     }
-    if ($PSCmdlet.ShouldProcess($switchName, 'Remove LabFoundry Hyper-V switch')) {
+    if ($PSCmdlet.ShouldProcess($switchName, 'Remove Atlaso Hyper-V switch')) {
         Remove-VMSwitch -Name $switchName -Force
         Write-Host "Removed switch: $switchName"
     }

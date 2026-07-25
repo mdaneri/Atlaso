@@ -1,0 +1,277 @@
+{% extends "base.html" %}
+{% block page_title %}Routes & WAN Simulation{% endblock %}
+{% block content %}
+<section class="split-workspace">
+  <div class="panel wide-panel">
+    <div class="panel-head">
+      <div>
+        <h2>Routes & WAN Simulation</h2>
+        <p class="muted">Manage static route desired state, NAT, and interface-level WAN impairment policies before applying them to the appliance.</p>
+      </div>
+      <span class="status-pill muted">{{ routes|length }} routes</span>
+    </div>
+
+    {% if form_error %}
+      <div class="alert error">{{ form_error }}</div>
+    {% endif %}
+    <div id="routes-wan-route-error" class="alert error hidden"></div>
+    <div id="routes-wan-routing-error" class="alert error hidden"></div>
+    <div id="routes-wan-nat-error" class="alert error hidden"></div>
+    <div id="routes-wan-policy-error" class="alert error hidden"></div>
+
+    <div class="tab-buttons" role="tablist" aria-label="Route and WAN tools">
+      <button class="tab-button active" type="button" role="tab" data-tab-target="routes-wan-routes-panel" aria-controls="routes-wan-routes-panel" aria-selected="true">Routes</button>
+      <button class="tab-button" type="button" role="tab" data-tab-target="routes-wan-routing-panel" aria-controls="routes-wan-routing-panel" aria-selected="false">Routing</button>
+      <button class="tab-button" type="button" role="tab" data-tab-target="routes-wan-nat-panel" aria-controls="routes-wan-nat-panel" aria-selected="false">NAT</button>
+      <button class="tab-button" type="button" role="tab" data-tab-target="routes-wan-policies-panel" aria-controls="routes-wan-policies-panel" aria-selected="false">WAN Policies</button>
+    </div>
+
+    <div class="tab-panels">
+      <div id="routes-wan-routes-panel" class="tab-panel active" role="tabpanel">
+        <div class="section-head compact-section-head">
+          <div>
+            <h3>Managed Routes</h3>
+            <p class="muted">Edit routes directly in the grid. The bottom row creates a new route once destination and interface are filled.</p>
+          </div>
+          <span class="status-pill muted">{{ routes|length }} routes</span>
+        </div>
+        <div
+          id="routes-wan-routes-table"
+          class="tabulator-shell routes-wan-table"
+          data-routes='{{ route_rows | tojson }}'
+          data-target-options='{{ wan_route_targets | tojson }}'
+          data-policy-options='{{ wan_policy_options | tojson }}'
+          data-csrf="{{ csrf_token }}"
+          data-fallback-id="routes-wan-routes-fallback"
+        ></div>
+        <table id="routes-wan-routes-fallback" class="data-table dns-fallback-table">
+          <thead>
+            <tr><th>Destination</th><th>Gateway</th><th>Interface</th><th>WAN Policy</th><th>Metric</th><th>Status</th><th>Actions</th></tr>
+          </thead>
+          <tbody>
+            {% for route in routes %}
+              <tr>
+                <td>{{ route.destination_cidr }}</td>
+                <td>{{ route.gateway or "direct" }}</td>
+                <td>{{ route.interface_name }}</td>
+                <td>{{ route.wan_policy.name if route.wan_policy else "none" }}</td>
+                <td>{{ route.metric }}</td>
+                <td><span class="status-pill {{ 'good' if route.enabled else 'muted' }}">{{ "enabled" if route.enabled else "disabled" }}</span></td>
+                <td>
+                  <form
+                    action="/routes-wan/routes/{{ route.id }}/delete"
+                    method="post"
+                    data-confirm-modal
+                    data-confirm-title="Delete route {{ route.destination_cidr }}?"
+                    data-confirm-message="This removes the route from Atlaso desired state. It will not touch the appliance until global appliance apply runs."
+                    data-confirm-label="Delete route"
+                  >
+                    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                    <button class="button tiny danger" type="submit">Delete</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div id="routes-wan-routing-panel" class="tab-panel" role="tabpanel" hidden>
+        <div class="section-head compact-section-head">
+          <div>
+            <h3>Routing Permissions</h3>
+            <p class="muted">Route-role networks generate forwarding automatically. Access networks stay blocked until an explicit routing rule allows the path.</p>
+          </div>
+          <div class="routing-state-pills" aria-label="Routing state summary">
+            <span class="status-pill {{ 'good' if routing_summary.generated_count else 'muted' }}">{{ routing_summary.generated_count }} auto route-role</span>
+            <span class="status-pill {{ 'good' if routing_summary.explicit_count else 'muted' }}">{{ routing_summary.explicit_count }} explicit access</span>
+            <span class="status-pill warn">management isolated</span>
+          </div>
+        </div>
+        {% if routing_summary.generated_count == 0 and routing_summary.route_target_count < 2 %}
+          <div class="empty-state compact routing-empty-state">
+            <h2>No automatic route-role paths</h2>
+            <p class="muted">{{ routing_summary.access_target_count }} lab access targets are available for explicit routing. Mark two non-management interfaces or VLANs as Route to generate forwarding between them automatically.</p>
+          </div>
+        {% endif %}
+        <div
+          id="routes-wan-routing-table"
+          class="tabulator-shell routes-wan-table"
+          data-rules='{{ routing_rule_rows | tojson }}'
+          data-generated-rules='{{ generated_routing_rule_rows | tojson }}'
+          data-target-options='{{ wan_route_targets | tojson }}'
+          data-csrf="{{ csrf_token }}"
+          data-fallback-id="routes-wan-routing-fallback"
+        ></div>
+        <table id="routes-wan-routing-fallback" class="data-table dns-fallback-table">
+          <thead>
+            <tr><th>Name</th><th>Source</th><th>Destination</th><th>Priority</th><th>Status</th><th>Description</th><th>Actions</th></tr>
+          </thead>
+          <tbody>
+            {% for rule in generated_routing_rule_rows %}
+              <tr>
+                <td>{{ rule.name }}</td>
+                <td>{{ rule.source_interface }}</td>
+                <td>{{ rule.destination_interface }}</td>
+                <td>{{ rule.priority }}</td>
+                <td><span class="status-pill good">generated</span></td>
+                <td>{{ rule.description }}</td>
+                <td></td>
+              </tr>
+            {% endfor %}
+            {% for rule in routing_rules %}
+              <tr>
+                <td>{{ rule.name }}</td>
+                <td>{{ rule.source_interface }}</td>
+                <td>{{ rule.destination_interface }}</td>
+                <td>{{ rule.priority }}</td>
+                <td><span class="status-pill {{ 'good' if rule.enabled else 'muted' }}">{{ "enabled" if rule.enabled else "disabled" }}</span></td>
+                <td>{{ rule.description or "" }}</td>
+                <td>
+                  <form
+                    action="/routes-wan/routing-rules/{{ rule.id }}/delete"
+                    method="post"
+                    data-confirm-modal
+                    data-confirm-title="Delete routing rule {{ rule.name }}?"
+                    data-confirm-message="This removes the routing permission from Atlaso desired state. It will not touch the appliance until global appliance apply runs."
+                    data-confirm-label="Delete routing rule"
+                  >
+                    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                    <button class="button tiny danger" type="submit">Delete</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div id="routes-wan-nat-panel" class="tab-panel" role="tabpanel" hidden>
+        <div class="section-head compact-section-head">
+          <div>
+            <h3>NAT Rules</h3>
+            <p class="muted">Edit outbound IPv4 masquerade desired state. The bottom row creates a new rule once a name and outbound interface are filled.</p>
+          </div>
+          <span class="status-pill muted">{{ nat_rules|length }} rules</span>
+        </div>
+        <div
+          id="routes-wan-nat-table"
+          class="tabulator-shell routes-wan-table"
+          data-nat-rules='{{ nat_rule_rows | tojson }}'
+          data-nat-target-options='{{ wan_nat_targets | tojson }}'
+          data-source-groups='{{ wan_source_groups | tojson }}'
+          data-csrf="{{ csrf_token }}"
+          data-fallback-id="routes-wan-nat-fallback"
+        ></div>
+        <table id="routes-wan-nat-fallback" class="data-table dns-fallback-table">
+          <thead>
+            <tr><th>Name</th><th>Source</th><th>Outbound</th><th>Masquerade</th><th>Priority</th><th>Status</th><th>Description</th><th>Actions</th></tr>
+          </thead>
+          <tbody>
+            {% for rule in nat_rules %}
+              <tr>
+                <td>{{ rule.name }}</td>
+                <td>{{ rule.source }}</td>
+                <td>{{ rule.outbound_interface }}</td>
+                <td>{{ "yes" if rule.masquerade else "no" }}</td>
+                <td>{{ rule.priority }}</td>
+                <td><span class="status-pill {{ 'good' if rule.enabled else 'muted' }}">{{ "enabled" if rule.enabled else "disabled" }}</span></td>
+                <td>{{ rule.description or "" }}</td>
+                <td>
+                  <form
+                    action="/routes-wan/nat-rules/{{ rule.id }}/delete"
+                    method="post"
+                    data-confirm-modal
+                    data-confirm-title="Delete NAT rule {{ rule.name }}?"
+                    data-confirm-message="This removes the NAT rule from Atlaso desired state. It will not touch the appliance until global appliance apply runs."
+                    data-confirm-label="Delete NAT rule"
+                  >
+                    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                    <button class="button tiny danger" type="submit">Delete</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div id="routes-wan-policies-panel" class="tab-panel" role="tabpanel" hidden>
+        <div class="section-head compact-section-head">
+          <div>
+            <h3>WAN Policies</h3>
+            <p class="muted">Policies translate to tc/netem intent. Changes save to desired state immediately.</p>
+          </div>
+          <span class="status-pill muted">{{ policies|length }} policies</span>
+        </div>
+        <div
+          id="routes-wan-policies-table"
+          class="tabulator-shell routes-wan-table"
+          data-policies='{{ policy_rows | tojson }}'
+          data-csrf="{{ csrf_token }}"
+          data-fallback-id="routes-wan-policies-fallback"
+        ></div>
+        <table id="routes-wan-policies-fallback" class="data-table dns-fallback-table">
+          <thead>
+            <tr><th>Name</th><th>Latency</th><th>Jitter</th><th>Loss</th><th>Bandwidth</th><th>Status</th><th>Description</th><th>Actions</th></tr>
+          </thead>
+          <tbody>
+            {% for policy in policies %}
+              <tr>
+                <td>{{ policy.name }}</td>
+                <td>{{ policy.latency_ms }} ms</td>
+                <td>{{ policy.jitter_ms }} ms</td>
+                <td>{{ policy.packet_loss_percent }}%</td>
+                <td>{{ policy.bandwidth_mbit or "unlimited" }}</td>
+                <td><span class="status-pill {{ 'good' if policy.enabled else 'muted' }}">{{ "enabled" if policy.enabled else "disabled" }}</span></td>
+                <td>{{ policy.description or "" }}</td>
+                <td>
+                  <form
+                    action="/routes-wan/policies/{{ policy.id }}/delete"
+                    method="post"
+                    data-confirm-modal
+                    data-confirm-title="Delete {{ policy.name }}?"
+                    data-confirm-message="This removes the WAN policy from Atlaso desired state and clears it from assigned routes. It will not touch the appliance until global appliance apply runs."
+                    data-confirm-label="Delete policy"
+                  >
+                    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                    <button class="button tiny danger" type="submit">Delete</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <aside class="side-stack">
+    {% include "partials/appliance_apply_status.html" %}
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Validation</h2>
+        <span class="status-pill {{ 'good' if not wan_validation_errors else 'warn' }}">{{ "valid" if not wan_validation_errors else "needs attention" }}</span>
+      </div>
+      {% if wan_validation_errors %}
+        <div class="alert error">
+          {% for error in wan_validation_errors %}
+            <div>{{ error }}</div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="muted">The desired route and WAN simulation state passes Atlaso validation.</p>
+      {% endif %}
+      {% set preview_label = "route config" %}
+      {% set preview_path = wan_config_path %}
+      {% set preview_path_attr = "" %}
+      {% set preview_title = "Routes and WAN rendered config" %}
+      {% set preview_button_label = "config" %}
+      {% set preview_text = wan_config_preview %}
+      {% set preview_data_attr = "" %}
+      {% include "partials/config_preview_action.html" %}
+    </div>
+  </aside>
+</section>
+{% endblock %}

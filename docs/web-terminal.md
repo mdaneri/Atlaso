@@ -1,6 +1,6 @@
 # Web Terminal
 
-LabFoundry provides a permission-controlled browser terminal for the appliance shell. It is disabled globally by default and appears under **Operations > Web terminal** on management after it is enabled in **Settings** and the related appliance changes are applied. Selected additional listeners expose it through the Public Services portal instead of the admin shell.
+Atlaso provides a permission-controlled browser terminal for the appliance shell. It is disabled globally by default and appears under **Operations > Web terminal** on management after it is enabled in **Settings** and the related appliance changes are applied. Selected additional listeners expose it through the Public Services portal instead of the admin shell.
 
 ## Configure access
 
@@ -10,7 +10,7 @@ LabFoundry provides a permission-controlled browser terminal for the appliance s
 4. Review and submit the changed **Appliance Settings**, **Public Services**, and **Firewall** units from the global appliance-apply workflow.
 5. On **Users**, enable **Web SSH** for each local user who may open a terminal. The user must also be enabled, use an interactive shell such as `/bin/bash` or `/usr/bin/pwsh`, and have a Photon password applied through Local Users.
 
-Only enabled, addressed access/route physical interfaces and enabled VLANs are valid additional bindings. Missing, disabled, unused, trunk-only, or addressless interfaces fail validation. LabFoundry has no WAN interface role and web-terminal exposure does not infer internet or WAN connectivity.
+Only enabled, addressed access/route physical interfaces and enabled VLANs are valid additional bindings. Missing, disabled, unused, trunk-only, or addressless interfaces fail validation. Atlaso has no WAN interface role and web-terminal exposure does not infer internet or WAN connectivity.
 
 On a selected non-management address, nginx exposes only the login/logout, terminal, WebSocket, and required static-asset routes. Management dashboard and API routes remain unavailable. The Public Services directory for that address includes a **Web Terminal** tile linked to `https://<selected-address>/terminal`; unselected interfaces do not show the tile. The terminal and its login page use the Public Services header, sign-out action, and footer rather than the admin application shell.
 
@@ -29,7 +29,7 @@ The web login session and the user's explicit Web SSH permission authorize acces
 
 This removes the SSH password prompt only. `sudo` continues to require the Photon OS account password according to the normal OS policy. Root certificates and passwordless sudo are not permitted.
 
-The service enforces bounded idle time, total lifetime, input, output, and retained transcript size. CA private keys never reach the browser or the LabFoundry service account.
+The service enforces bounded idle time, total lifetime, input, output, and retained transcript size. CA private keys never reach the browser or the Atlaso service account.
 
 ## Apply and troubleshooting
 
@@ -41,7 +41,7 @@ Changing terminal interfaces should make these apply units pending:
 
 The Public Services renderer merges terminal routes into an existing HTTPS listener when CA or depot routes already use the same address. It must emit only one `/static/` location per nginx server block.
 
-If apply fails, inspect the Public Services child task and validate `/var/lib/labfoundry/apply/public-services/labfoundry-public-services.conf`. On the appliance, validate nginx with `nginx -t`, confirm `labfoundry.service` is active, and verify the selected address separately:
+If apply fails, inspect the Public Services child task and validate `/var/lib/atlaso/apply/public-services/atlaso-public-services.conf`. On the appliance, validate nginx with `nginx -t`, confirm `atlaso.service` is active, and verify the selected address separately:
 
 - `https://<address>/terminal` should redirect to login or open the terminal;
 - `https://<address>/dashboard` and `/openapi.json` must remain unavailable on an additional listener;

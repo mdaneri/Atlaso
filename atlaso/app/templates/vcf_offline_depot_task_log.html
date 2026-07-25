@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}VCFDT Task Log · Atlaso{% endblock %}
+{% block content %}
+<section class="panel detail-panel">
+  <div class="panel-head">
+    <div>
+      <p class="kicker">VCF Offline Depot</p>
+      <h1>VCFDT task log</h1>
+      <p class="muted"><code>{{ job.id }}</code> · {{ profile_name or "Unknown profile" }} · {{ job.status }}</p>
+    </div>
+    <a class="button secondary" href="/vcf-offline-depot">Back to VCF Offline Depot</a>
+  </div>
+  <div class="config-preview-block">
+    <div class="config-preview-meta"><span>{{ task_log.path }}</span><span>{{ task_log.updated_at or "not written" }}</span></div>
+    <pre>{{ task_log.lines | join("\n") if task_log.available else "No task log is available." }}</pre>
+  </div>
+</section>
+{% endblock %}

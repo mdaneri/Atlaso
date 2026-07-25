@@ -4,8 +4,8 @@ import json
 import subprocess
 from pathlib import Path, PurePosixPath
 
-from labfoundry.app.models import EsxNfsShare, EsxStorageSettings, EsxStorageVolume
-from labfoundry.app.services.esx_storage import (
+from atlaso.app.models import EsxNfsShare, EsxStorageSettings, EsxStorageVolume
+from atlaso.app.services.esx_storage import (
     StorageInterface,
     desired_dns_records,
     firewall_rule_specs,
@@ -18,12 +18,12 @@ from labfoundry.app.services.esx_storage import (
 )
 
 
-HELPER_PATH = Path(__file__).resolve().parents[1] / "scripts" / "appliance" / "labfoundry-helper"
+HELPER_PATH = Path(__file__).resolve().parents[1] / "scripts" / "appliance" / "atlaso-helper"
 
 
 def load_helper_module():
-    loader = importlib.machinery.SourceFileLoader("labfoundry_esx_storage_helper", str(HELPER_PATH))
-    spec = importlib.util.spec_from_loader("labfoundry_esx_storage_helper", loader)
+    loader = importlib.machinery.SourceFileLoader("atlaso_esx_storage_helper", str(HELPER_PATH))
+    spec = importlib.util.spec_from_loader("atlaso_esx_storage_helper", loader)
     assert spec is not None
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
@@ -31,14 +31,14 @@ def load_helper_module():
 
 
 def state(*, families: str = "ipv4\nipv6", ipv4_clients: str = "192.168.87.11/32", ipv6_clients: str = "2001:db8:87::11/128"):
-    settings = EsxStorageSettings(enabled=True, hostname="nfs.labfoundry.internal")
+    settings = EsxStorageSettings(enabled=True, hostname="nfs.atlaso.internal")
     settings.id = 1
     volume = EsxStorageVolume(
         name="esx-data",
         source_type="blank_disk",
         stable_device_id="/dev/disk/by-id/wwn-0x1234",
         capacity_bytes=10 * 1024**3,
-        mount_path="/mnt/labfoundry-esx-storage/esx-data",
+        mount_path="/mnt/atlaso-esx-storage/esx-data",
     )
     volume.id = 1
     share = EsxNfsShare(
@@ -74,18 +74,18 @@ def test_dual_stack_share_renders_equal_family_endpoints_and_commands():
 
     assert manifest["validation"]["errors"] == []
     assert share["listeners"] == {"ipv4": ["192.168.87.254"], "ipv6": ["2001:db8:87::fe"]}
-    assert share["target_hostnames"]["ipv4"] == ["nfs-192-168-87-254.labfoundry.internal"]
-    assert share["target_hostnames"]["ipv6"] == ["nfs-2001-db8-87-0-0-0-0-fe.labfoundry.internal"]
-    assert "--hosts=nfs-192-168-87-254.labfoundry.internal" in share["connection_commands"]["ipv4"][0]
-    assert "--hosts=nfs-2001-db8-87-0-0-0-0-fe.labfoundry.internal" in share["connection_commands"]["ipv6"][0]
+    assert share["target_hostnames"]["ipv4"] == ["nfs-192-168-87-254.atlaso.internal"]
+    assert share["target_hostnames"]["ipv6"] == ["nfs-2001-db8-87-0-0-0-0-fe.atlaso.internal"]
+    assert "--hosts=nfs-192-168-87-254.atlaso.internal" in share["connection_commands"]["ipv4"][0]
+    assert "--hosts=nfs-2001-db8-87-0-0-0-0-fe.atlaso.internal" in share["connection_commands"]["ipv6"][0]
     assert share["powercli_commands"]["ipv4"] == [
         "New-Datastore -Nfs -VMHost $vmHost -Name 'esx-datastore' "
-        "-NfsHost 'nfs-192-168-87-254.labfoundry.internal' -Path '/esx-datastore' "
+        "-NfsHost 'nfs-192-168-87-254.atlaso.internal' -Path '/esx-datastore' "
         "-FileSystemVersion 'NFS41'"
     ]
     assert share["powercli_commands"]["ipv6"] == [
         "New-Datastore -Nfs -VMHost $vmHost -Name 'esx-datastore' "
-        "-NfsHost 'nfs-2001-db8-87-0-0-0-0-fe.labfoundry.internal' -Path '/esx-datastore' "
+        "-NfsHost 'nfs-2001-db8-87-0-0-0-0-fe.atlaso.internal' -Path '/esx-datastore' "
         "-FileSystemVersion 'NFS41'"
     ]
 
@@ -94,12 +94,12 @@ def test_powercli_command_escapes_single_quoted_values():
     command = powercli_connection_command(
         version="3",
         hostname="nfs.example.test",
-        remote_path="/srv/labfoundry/esx-storage/team's-data",
+        remote_path="/srv/atlaso/esx-storage/team's-data",
         datastore_name="team's-data",
     )
 
     assert "-Name 'team''s-data'" in command
-    assert "-Path '/srv/labfoundry/esx-storage/team''s-data'" in command
+    assert "-Path '/srv/atlaso/esx-storage/team''s-data'" in command
     assert "-FileSystemVersion 'NFS'" in command
 
 
@@ -135,11 +135,11 @@ def test_empty_client_lists_explicitly_allow_any_client_per_enabled_family():
 def test_dns_records_include_canonical_alias_and_both_address_families():
     records = desired_dns_records(render())
     assert records[:2] == [{
-        "hostname": "nfs.labfoundry.internal",
+        "hostname": "nfs.atlaso.internal",
         "record_type": "A",
         "address": "192.168.87.254",
     }, {
-        "hostname": "nfs.labfoundry.internal",
+        "hostname": "nfs.atlaso.internal",
         "record_type": "AAAA",
         "address": "2001:db8:87::fe",
     }]
@@ -190,9 +190,9 @@ def test_blank_disk_inventory_rejects_every_destructive_risk_and_claim():
 
 def test_mounted_ext4_inventory_rejects_vcf_backup_and_depot_mounts():
     for mount_path, owner in [
-        ("/mnt/labfoundry-vcf-backups", "VCF Backups"),
-        ("/mnt/labfoundry-vcf-offline-depot", "VCF Offline Depot / VCFDT"),
-        ("/mnt/labfoundry-vcf-offline-depot/PROD", "VCF Offline Depot / VCFDT"),
+        ("/mnt/atlaso-vcf-backups", "VCF Backups"),
+        ("/mnt/atlaso-vcf-offline-depot", "VCF Offline Depot / VCFDT"),
+        ("/mnt/atlaso-vcf-offline-depot/PROD", "VCF Offline Depot / VCFDT"),
     ]:
         candidate = normalize_disk_inventory_entry(
             {
@@ -218,7 +218,7 @@ def test_desired_state_rejects_existing_volume_on_vcf_managed_mount():
     settings, volumes, shares, interfaces = state()
     volumes[0].source_type = "mounted_ext4"
     volumes[0].stable_device_id = ""
-    volumes[0].mount_path = "/mnt/labfoundry-vcf-backups"
+    volumes[0].mount_path = "/mnt/atlaso-vcf-backups"
 
     manifest = render_manifest(settings, volumes, shares, interfaces, dns_enabled=True)
 
@@ -269,7 +269,7 @@ def test_helper_rejects_existing_volume_on_vcf_managed_mount():
         {
             "source_type": "mounted_ext4",
             "stable_device_id": "",
-            "mount_path": "/mnt/labfoundry-vcf-offline-depot",
+            "mount_path": "/mnt/atlaso-vcf-offline-depot",
             "requires_format": False,
         }
     )
@@ -320,8 +320,8 @@ def test_helper_inventory_prefers_uuid_mount_and_keeps_all_mountpoints(monkeypat
             "uuid": "3f832583-beec-4be7-969c-92519ea77273",
             "label": "lf-ad26e4d9384f",
             "mountpoints": [
-                "/srv/labfoundry/esx-storage/vmware-nfs3",
-                "/mnt/labfoundry-esx-storage/vmware-esx-data",
+                "/srv/atlaso/esx-storage/vmware-nfs3",
+                "/mnt/atlaso-esx-storage/vmware-esx-data",
             ],
         }]
     }
@@ -334,16 +334,16 @@ def test_helper_inventory_prefers_uuid_mount_and_keeps_all_mountpoints(monkeypat
     monkeypatch.setattr(
         helper,
         "_esx_storage_by_id_map",
-        lambda: {"/dev/sdd": "/dev/disk/by-id/labfoundry-path-pci-0000_03_00_0-scsi-0_0_3_0"},
+        lambda: {"/dev/sdd": "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_3_0"},
     )
     monkeypatch.setattr(helper, "_esx_storage_os_devices", lambda: set())
 
     disk = helper._esx_storage_inventory()[0]
 
-    assert disk["mount_path"] == "/mnt/labfoundry-esx-storage/vmware-esx-data"
+    assert disk["mount_path"] == "/mnt/atlaso-esx-storage/vmware-esx-data"
     assert disk["mount_paths"] == [
-        "/srv/labfoundry/esx-storage/vmware-nfs3",
-        "/mnt/labfoundry-esx-storage/vmware-esx-data",
+        "/srv/atlaso/esx-storage/vmware-nfs3",
+        "/mnt/atlaso-esx-storage/vmware-esx-data",
     ]
 
 
@@ -355,8 +355,8 @@ def test_helper_initialized_disk_retry_accepts_expected_mount_among_bind_mounts(
         "filesystem_uuid": "3f832583-beec-4be7-969c-92519ea77273",
         "partitions": [],
         "mount_paths": [
-            "/srv/labfoundry/esx-storage/vmware-nfs3",
-            "/mnt/labfoundry-esx-storage/vmware-esx-data",
+            "/srv/atlaso/esx-storage/vmware-nfs3",
+            "/mnt/atlaso-esx-storage/vmware-esx-data",
         ],
         "holders": [],
         "os_related": False,
@@ -365,18 +365,18 @@ def test_helper_initialized_disk_retry_accepts_expected_mount_among_bind_mounts(
     assert helper._esx_storage_disk_is_initialized(
         entry,
         label="lf-ad26e4d9384f",
-        mount_path=PurePosixPath("/mnt/labfoundry-esx-storage/vmware-esx-data"),
+        mount_path=PurePosixPath("/mnt/atlaso-esx-storage/vmware-esx-data"),
     )
     assert not helper._esx_storage_disk_is_initialized(
         entry,
         label="lf-wrong-label",
-        mount_path=PurePosixPath("/mnt/labfoundry-esx-storage/vmware-esx-data"),
+        mount_path=PurePosixPath("/mnt/atlaso-esx-storage/vmware-esx-data"),
     )
 
 
 def api_token(client, scopes: list[str]) -> str:
     response = client.post(
-        "/api/v1/auth/login?username=admin&password=labfoundry-admin",
+        "/api/v1/auth/login?username=admin&password=atlaso-admin",
         json={"name": "esx storage test", "scopes": scopes},
     )
     assert response.status_code == 200, response.text
@@ -388,7 +388,7 @@ def test_esx_storage_page_and_dual_stack_api_contract(client):
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     assert client.post(
         "/login",
-        data={"username": "admin", "password": "labfoundry-admin", "csrf": csrf},
+        data={"username": "admin", "password": "atlaso-admin", "csrf": csrf},
         follow_redirects=False,
     ).status_code == 303
     page = client.get("/esx-storage")
@@ -408,7 +408,7 @@ def test_esx_storage_page_and_dual_stack_api_contract(client):
     assert "+ Add NFS datastore here" in page.text
     assert 'id="esx-storage-share-modal"' in page.text
     assert 'data-esx-storage-wizard="share"' in page.text
-    assert 'data-tab-storage-key="labfoundry:esx-storage:active-tab"' in page.text
+    assert 'data-tab-storage-key="atlaso:esx-storage:active-tab"' in page.text
     assert 'data-tab-target="connection-instructions"' in page.text
     assert 'id="connection-instructions"' in page.text
     assert 'name="enabled" checked' in page.text
@@ -429,8 +429,8 @@ def test_esx_storage_page_and_dual_stack_api_contract(client):
     assert 'editor: "tickCross"' in client.get("/static/app.js").text
     assert "cellEdited: saveEnabledState" in client.get("/static/app.js").text
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import DnsRecord, DnsSettings, PhysicalInterface
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord, DnsSettings, PhysicalInterface
 
     with SessionLocal() as db:
         db.add(
@@ -449,14 +449,14 @@ def test_esx_storage_page_and_dual_stack_api_contract(client):
             dns = DnsSettings()
             db.add(dns)
         dns.enabled = True
-        dns.domain = "labfoundry.internal"
+        dns.domain = "atlaso.internal"
         db.commit()
 
     token = api_token(client, ["read:esx-storage", "write:esx-storage", "read:interfaces"])
     headers = {"Authorization": f"Bearer {token}"}
     interfaces = client.get("/api/v1/interfaces/physical", headers=headers).json()
     interface = next(row for row in interfaces if row["name"] == "storage87")
-    for reserved_path in ["/mnt/labfoundry-vcf-backups", "/mnt/labfoundry-vcf-offline-depot"]:
+    for reserved_path in ["/mnt/atlaso-vcf-backups", "/mnt/atlaso-vcf-offline-depot"]:
         rejected_volume = client.post(
             "/api/v1/esx-storage/volumes",
             headers=headers,
@@ -554,7 +554,7 @@ def test_esx_storage_page_and_dual_stack_api_contract(client):
     status = client.patch(
         "/api/v1/esx-storage/status",
         headers=headers,
-        json={"enabled": True, "hostname": "nfs.labfoundry.internal"},
+        json={"enabled": True, "hostname": "nfs.atlaso.internal"},
     )
     assert status.status_code == 200, status.text
     assert status.json()["valid"] is True
@@ -562,17 +562,17 @@ def test_esx_storage_page_and_dual_stack_api_contract(client):
     with SessionLocal() as db:
         owned = db.query(DnsRecord).filter(DnsRecord.description == "Created from ESX Storage endpoint.").all()
         assert {(row.hostname, row.record_type, row.address) for row in owned} == {
-            ("nfs.labfoundry.internal", "A", "192.168.87.254"),
-            ("nfs.labfoundry.internal", "AAAA", "2001:db8:87::fe"),
-            ("nfs-192-168-87-254.labfoundry.internal", "A", "192.168.87.254"),
-            ("nfs-2001-db8-87-0-0-0-0-fe.labfoundry.internal", "AAAA", "2001:db8:87::fe"),
+            ("nfs.atlaso.internal", "A", "192.168.87.254"),
+            ("nfs.atlaso.internal", "AAAA", "2001:db8:87::fe"),
+            ("nfs-192-168-87-254.atlaso.internal", "A", "192.168.87.254"),
+            ("nfs-2001-db8-87-0-0-0-0-fe.atlaso.internal", "AAAA", "2001:db8:87::fe"),
         }
         storage = db.query(PhysicalInterface).filter(PhysicalInterface.name == "storage87").one()
         storage.ip_cidr = "203.0.113.254/24"
         storage.ipv6_cidr = "2001:db8:88::fe/64"
         db.add(
             DnsRecord(
-                hostname="nfs-203-0-113-254.labfoundry.internal",
+                hostname="nfs-203-0-113-254.atlaso.internal",
                 record_type="A",
                 address="203.0.113.254",
                 description="Operator owned",
@@ -581,7 +581,7 @@ def test_esx_storage_page_and_dual_stack_api_contract(client):
         )
         db.commit()
 
-        from labfoundry.app.ui import ensure_dns_for_esx_storage, esx_storage_context
+        from atlaso.app.ui import ensure_dns_for_esx_storage, esx_storage_context
 
         ensure_dns_for_esx_storage(db, "admin")
         db.commit()

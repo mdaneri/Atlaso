@@ -1,6 +1,6 @@
 # VCF Certificate Trust
 
-VCF Certificate Trust deploys the active LabFoundry root CA to one VCF 9
+VCF Certificate Trust deploys the active Atlaso root CA to one VCF 9
 Installer or SDDC Manager appliance. Open it from the `VCF Certificate Trust`
 button on `/vcf-helper`. It is a remote maintenance task, not DNS desired state
 and not an Appliance Apply unit.
@@ -13,7 +13,7 @@ point before changing trust. The wizard collects only:
 - target HTTPS TLS fingerprint confirmation;
 - snapshot acknowledgment.
 
-LabFoundry never persists the API password. It stores only sanitized target,
+Atlaso never persists the API password. It stores only sanitized target,
 port, role/version, confirmed TLS fingerprint, deployed CA fingerprint, and task
 result metadata.
 
@@ -23,7 +23,7 @@ The task authenticates through `POST /v1/tokens`, detects the appliance using
 through `POST /v1/sddc-manager/trusted-certificates`. An identical certificate
 is a successful no-op.
 
-VCF Installer and SDDC Manager both use the same API-only flow. LabFoundry does
+VCF Installer and SDDC Manager both use the same API-only flow. Atlaso does
 not SSH to the appliance and does not restart SDDC Manager services. API
 verification means the certificate is present in the VCF trusted-certificate
 API after import. VCF releases before 9.x and certificate deletion are outside

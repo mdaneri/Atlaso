@@ -1,9 +1,9 @@
 import pytest
 
-from labfoundry.app.config import Settings
-from labfoundry.app.models import CaCertificate, CaSettings, utcnow
-from labfoundry.app.secrets import decrypt_secret, encrypt_secret
-from labfoundry.app.services.ca import ca_certificate_to_dict, ensure_root_ca_material, render_ca_apply_payload
+from atlaso.app.config import Settings
+from atlaso.app.models import CaCertificate, CaSettings, utcnow
+from atlaso.app.secrets import decrypt_secret, encrypt_secret
+from atlaso.app.services.ca import ca_certificate_to_dict, ensure_root_ca_material, render_ca_apply_payload
 
 
 def test_encrypted_secret_round_trip_and_wrong_key_failure():
@@ -25,17 +25,17 @@ def test_ca_apply_payload_includes_crl_for_revoked_certificates():
     settings = CaSettings(
         enabled=True,
         publish_crl=True,
-        root_common_name="LabFoundry Test Root CA",
-        organization="LabFoundry",
+        root_common_name="Atlaso Test Root CA",
+        organization="Atlaso",
         key_algorithm="RSA",
         key_size=2048,
         digest_algorithm="sha256",
         root_valid_days=3650,
-        storage_path="/etc/labfoundry/ca",
+        storage_path="/etc/atlaso/ca",
     )
     assert ensure_root_ca_material(settings) is True
     certificate = CaCertificate(
-        common_name="revoked.labfoundry.internal",
+        common_name="revoked.atlaso.internal",
         status="revoked",
         serial_number="2a",
         revoked_at=utcnow(),
@@ -46,7 +46,7 @@ def test_ca_apply_payload_includes_crl_for_revoked_certificates():
 
     payload = json.loads(render_ca_apply_payload(settings, [certificate], include_private_keys=True))
 
-    assert payload["root"]["crl_path"].endswith("/labfoundry-ca.crl")
+    assert payload["root"]["crl_path"].endswith("/atlaso-ca.crl")
     assert "BEGIN X509 CRL" in payload["root"]["crl_pem"]
     assert payload["certificates"] == []
 
@@ -54,21 +54,21 @@ def test_ca_apply_payload_includes_crl_for_revoked_certificates():
 def test_existing_root_ca_material_is_not_rotated_by_identity_edits():
     settings = CaSettings(
         enabled=True,
-        root_common_name="Original LabFoundry Root",
-        organization="LabFoundry",
+        root_common_name="Original Atlaso Root",
+        organization="Atlaso",
         key_algorithm="RSA",
         key_size=2048,
         digest_algorithm="sha256",
         root_valid_days=3650,
-        storage_path="/etc/labfoundry/ca",
+        storage_path="/etc/atlaso/ca",
     )
     assert ensure_root_ca_material(settings) is True
     original_certificate = settings.root_certificate_pem
     original_private_key = settings.root_private_key_encrypted
     original_fingerprint = settings.root_fingerprint
 
-    settings.root_common_name = "Renamed LabFoundry Root"
-    settings.organization = "Updated LabFoundry"
+    settings.root_common_name = "Renamed Atlaso Root"
+    settings.organization = "Updated Atlaso"
 
     assert ensure_root_ca_material(settings) is False
     assert settings.root_certificate_pem == original_certificate
@@ -111,14 +111,14 @@ def test_ca_certificate_row_capabilities_follow_lifecycle_and_ownership():
 def test_managed_ca_specs_include_portal_https_certificate(client):
     from sqlalchemy import select
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import NtpSettings
-    from labfoundry.app.ui import get_ca_settings_row, managed_ca_certificate_specs
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import NtpSettings
+    from atlaso.app.ui import get_ca_settings_row, managed_ca_certificate_specs
 
     with SessionLocal() as db:
         settings = get_ca_settings_row(db)
         settings.enabled = True
-        settings.portal_hostname = "ca.labfoundry.internal"
+        settings.portal_hostname = "ca.atlaso.internal"
         settings.listen_interface = "eth2"
         settings.listen_address = "192.168.87.32"
         ntp = db.execute(select(NtpSettings)).scalar_one_or_none()
@@ -126,22 +126,22 @@ def test_managed_ca_specs_include_portal_https_certificate(client):
             ntp = NtpSettings()
             db.add(ntp)
         ntp.nts_server_enabled = True
-        ntp.hostname = "ntp.labfoundry.internal"
+        ntp.hostname = "ntp.atlaso.internal"
         ntp.listen_address = "192.168.87.33"
         db.commit()
 
         specs = {spec.owner: spec for spec in managed_ca_certificate_specs(db)}
 
     ca_portal = specs["ca_portal:https"]
-    assert ca_portal.common_name == "ca.labfoundry.internal"
-    assert ca_portal.dns_names == ["ca.labfoundry.internal"]
+    assert ca_portal.common_name == "ca.atlaso.internal"
+    assert ca_portal.dns_names == ["ca.atlaso.internal"]
     assert ca_portal.ip_addresses == ["192.168.87.32"]
-    assert ca_portal.cert_path == "/etc/labfoundry/ca-portal/certs/ca.labfoundry.internal.crt"
-    assert ca_portal.key_path == "/etc/labfoundry/ca-portal/certs/ca.labfoundry.internal.key"
-    assert ca_portal.chain_path == "/etc/labfoundry/ca-portal/certs/ca.labfoundry.internal-chain.pem"
+    assert ca_portal.cert_path == "/etc/atlaso/ca-portal/certs/ca.atlaso.internal.crt"
+    assert ca_portal.key_path == "/etc/atlaso/ca-portal/certs/ca.atlaso.internal.key"
+    assert ca_portal.chain_path == "/etc/atlaso/ca-portal/certs/ca.atlaso.internal-chain.pem"
     ntp_nts = specs["ntp:nts"]
-    assert ntp_nts.common_name == "ntp.labfoundry.internal"
-    assert ntp_nts.dns_names == ["ntp.labfoundry.internal"]
+    assert ntp_nts.common_name == "ntp.atlaso.internal"
+    assert ntp_nts.dns_names == ["ntp.atlaso.internal"]
     assert ntp_nts.ip_addresses == ["192.168.87.33"]
-    assert ntp_nts.cert_path == "/etc/labfoundry/ntp/certs/ntp.labfoundry.internal.crt"
-    assert ntp_nts.key_path == "/etc/labfoundry/ntp/certs/ntp.labfoundry.internal.key"
+    assert ntp_nts.cert_path == "/etc/atlaso/ntp/certs/ntp.atlaso.internal.crt"
+    assert ntp_nts.key_path == "/etc/atlaso/ntp/certs/ntp.atlaso.internal.key"

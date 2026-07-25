@@ -11,15 +11,15 @@ from sqlalchemy import select, text
 
 def _admin_headers(client) -> dict[str, str]:
     response = client.post(
-        "/api/v1/auth/login?username=admin&password=labfoundry-admin",
+        "/api/v1/auth/login?username=admin&password=atlaso-admin",
         json={"name": "oidc administration", "scopes": ["admin:all"]},
     )
     assert response.status_code == 200, response.text
     return {"Authorization": f"Bearer {response.json()['raw_token']}"}
 
 
-def _set_applied_management_https(db, fqdn: str = "labfoundry.example.test") -> None:
-    from labfoundry.app.models import ApplianceSettings, Setting
+def _set_applied_management_https(db, fqdn: str = "atlaso.example.test") -> None:
+    from atlaso.app.models import ApplianceSettings, Setting
 
     appliance = db.execute(select(ApplianceSettings)).scalar_one()
     appliance.fqdn = fqdn
@@ -30,8 +30,8 @@ def _set_applied_management_https(db, fqdn: str = "labfoundry.example.test") -> 
                 {
                     "fqdn": fqdn,
                     "management_https_enabled": True,
-                    "management_https_cert_path": "/etc/labfoundry/https/appliance.crt",
-                    "management_https_key_path": "/etc/labfoundry/https/appliance.key",
+                    "management_https_cert_path": "/etc/atlaso/https/appliance.crt",
+                    "management_https_key_path": "/etc/atlaso/https/appliance.key",
                 }
             )
         }
@@ -53,13 +53,13 @@ def _configure_protocol_client(
     redirect_uri: str = "https://rp.example.test/callback?case=A%2Fb",
     post_logout_redirect_uri: str = "https://rp.example.test/logout",
 ) -> tuple[str, str]:
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.services import oidc
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services import oidc
 
     with SessionLocal() as db:
         _set_applied_management_https(db)
         provider = oidc.ensure_provider_settings(db)
-        provider.issuer_url = "https://labfoundry.example.test/identity"
+        provider.issuer_url = "https://atlaso.example.test/identity"
         provider.enabled = True
         if oidc.active_signing_key(db) is None:
             oidc.generate_signing_key(db, rotate=False)
@@ -120,7 +120,7 @@ def _finish_local_login(client, transaction: str, csrf: str):
             "transaction": transaction,
             "csrf": csrf,
             "username": "admin",
-            "password": "labfoundry-admin",
+            "password": "atlaso-admin",
         },
         follow_redirects=False,
     )
@@ -156,17 +156,17 @@ def test_oidc_public_documents_require_complete_protocol_readiness(client):
     assert enable.status_code == 409
     assert "Management HTTPS" in enable.text
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.services import oidc
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services import oidc
 
     with SessionLocal() as db:
         _set_applied_management_https(db)
         provider_row = oidc.ensure_provider_settings(db)
-        provider_row.issuer_url = "https://labfoundry.example.test/identity"
+        provider_row.issuer_url = "https://atlaso.example.test/identity"
         oidc.generate_signing_key(db, rotate=False)
         db.commit()
 
-    payload["issuer_url"] = "https://labfoundry.example.test/identity"
+    payload["issuer_url"] = "https://atlaso.example.test/identity"
     enabled = client.put("/api/v1/oidc/provider", headers=headers, json=payload)
     assert enabled.status_code == 200, enabled.text
     assert enabled.json()["enabled"] is True
@@ -204,9 +204,9 @@ def test_oidc_confidential_client_secret_is_argon2_and_shown_only_once(client):
         "https://vcf.example.test/identity/callback?case=A%2Fb"
     ]
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import OidcClient
-    from labfoundry.app.services.oidc import verify_client_secret
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import OidcClient
+    from atlaso.app.services.oidc import verify_client_secret
 
     with SessionLocal() as db:
         row = db.execute(select(OidcClient)).scalar_one()
@@ -229,7 +229,7 @@ def test_oidc_confidential_client_secret_is_argon2_and_shown_only_once(client):
 
 
 def test_oidc_redirect_validation_rejects_wildcards_fragments_and_nonliteral_loopback():
-    from labfoundry.app.services.oidc import OidcConfigurationError, validate_redirect_uri
+    from atlaso.app.services.oidc import OidcConfigurationError, validate_redirect_uri
 
     invalid = [
         ("https://vcf.example.test/*", False),
@@ -251,19 +251,19 @@ def test_oidc_redirect_validation_rejects_wildcards_fragments_and_nonliteral_loo
 
 
 def test_oidc_rsa_key_is_encrypted_and_rotation_keeps_public_overlap(client, monkeypatch):
-    from labfoundry.app import services
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import ApplianceSettings, OidcProviderSettings, OidcSigningKey
-    from labfoundry.app.secrets import decrypt_secret
-    from labfoundry.app.services import oidc
+    from atlaso.app import services
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, OidcProviderSettings, OidcSigningKey
+    from atlaso.app.secrets import decrypt_secret
+    from atlaso.app.services import oidc
 
     with SessionLocal() as db:
         appliance = db.execute(select(ApplianceSettings)).scalar_one()
-        appliance.fqdn = "labfoundry.example.test"
+        appliance.fqdn = "atlaso.example.test"
         appliance.management_https_enabled = True
         _set_applied_management_https(db)
         provider = oidc.ensure_provider_settings(db)
-        provider.issuer_url = "https://labfoundry.example.test/identity"
+        provider.issuer_url = "https://atlaso.example.test/identity"
         provider.clock_skew_seconds = 120
         provider.signing_key_overlap_seconds = 300
         first, _ = oidc.generate_signing_key(db, rotate=False)
@@ -280,7 +280,7 @@ def test_oidc_rsa_key_is_encrypted_and_rotation_keeps_public_overlap(client, mon
     with SessionLocal() as db:
         document = oidc.discovery_document(db)
         jwks = oidc.jwks_document(db)
-        assert document["issuer"] == "https://labfoundry.example.test/identity"
+        assert document["issuer"] == "https://atlaso.example.test/identity"
         assert {key["kid"] for key in jwks["keys"]} == {
             row.kid for row in db.execute(select(OidcSigningKey)).scalars()
         }
@@ -288,9 +288,9 @@ def test_oidc_rsa_key_is_encrypted_and_rotation_keeps_public_overlap(client, mon
 
 
 def test_oidc_subject_is_stable_across_metadata_changes_and_new_after_recreation(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import OidcSubject, User
-    from labfoundry.app.services.identity_credentials import VerifiedIdentity, ensure_oidc_subject
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import OidcSubject, User
+    from atlaso.app.services.identity_credentials import VerifiedIdentity, ensure_oidc_subject
 
     with SessionLocal() as db:
         user = db.execute(select(User).where(User.username == "admin")).scalar_one()
@@ -316,17 +316,17 @@ def test_oidc_subject_is_stable_across_metadata_changes_and_new_after_recreation
 
 
 def test_sqlite_foreign_keys_are_enabled(client):
-    from labfoundry.app.database import SessionLocal
+    from atlaso.app.database import SessionLocal
 
     with SessionLocal() as db:
         assert db.execute(text("PRAGMA foreign_keys")).scalar_one() == 1
 
 
 def test_managed_ldap_credential_service_checks_persisted_scope_before_helper(client, monkeypatch):
-    from labfoundry.app.adapters.system import AdapterResult
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import LdapOrganization, LdapUser
-    from labfoundry.app.services import identity_credentials
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import LdapOrganization, LdapUser
+    from atlaso.app.services import identity_credentials
 
     calls: list[tuple[str, str]] = []
 
@@ -334,7 +334,7 @@ def test_managed_ldap_credential_service_checks_persisted_scope_before_helper(cl
         def authenticate_ldap_user(self, user_dn: str, password: str) -> AdapterResult:
             calls.append((user_dn, password))
             return AdapterResult(
-                command=["labfoundry-helper", "ldap", "authenticate", user_dn],
+                command=["atlaso-helper", "ldap", "authenticate", user_dn],
                 dry_run=False,
                 returncode=0 if password == "Directory-Password!" else 1,
             )
@@ -388,11 +388,11 @@ def test_managed_ldap_credential_service_checks_persisted_scope_before_helper(cl
 
 
 def test_oidc_backup_restore_preserves_subject_client_and_encrypted_key(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import OidcClient, OidcSigningKey, OidcSubject, User
-    from labfoundry.app.services.identity_credentials import VerifiedIdentity, ensure_oidc_subject
-    from labfoundry.app.services.oidc import create_client, generate_signing_key
-    from labfoundry.app.services.settings_archive import (
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import OidcClient, OidcSigningKey, OidcSubject, User
+    from atlaso.app.services.identity_credentials import VerifiedIdentity, ensure_oidc_subject
+    from atlaso.app.services.oidc import create_client, generate_signing_key
+    from atlaso.app.services.settings_archive import (
         export_settings_archive,
         factory_reset_desired_state,
         restore_settings_archive,
@@ -442,7 +442,7 @@ def test_authentication_page_exposes_authorization_code_oidc_ui(client):
     csrf = login.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     signed_in = client.post(
         "/login",
-        data={"username": "admin", "password": "labfoundry-admin", "csrf": csrf},
+        data={"username": "admin", "password": "atlaso-admin", "csrf": csrf},
         follow_redirects=False,
     )
     assert signed_in.status_code == 303
@@ -459,9 +459,9 @@ def test_authentication_page_exposes_authorization_code_oidc_ui(client):
 
 
 def test_authentication_ui_deletes_bound_client_before_ldap_organization(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import LdapOrganization, OidcClient
-    from labfoundry.app.services.oidc import create_client
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import LdapOrganization, OidcClient
+    from atlaso.app.services.oidc import create_client
 
     with SessionLocal() as db:
         organization = LdapOrganization(
@@ -493,7 +493,7 @@ def test_authentication_ui_deletes_bound_client_before_ldap_organization(client)
     csrf = login.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     signed_in = client.post(
         "/login",
-        data={"username": "admin", "password": "labfoundry-admin", "csrf": csrf},
+        data={"username": "admin", "password": "atlaso-admin", "csrf": csrf},
         follow_redirects=False,
     )
     assert signed_in.status_code == 303
@@ -525,8 +525,8 @@ def test_authentication_ui_deletes_bound_client_before_ldap_organization(client)
 def test_authorization_code_local_flow_rotates_session_and_rejects_replay(client):
     from joserfc import jwt
     from joserfc.jwk import RSAKey
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import OidcAuthorizationCode, OidcAuthorizationTransaction, OidcSigningKey
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import OidcAuthorizationCode, OidcAuthorizationTransaction, OidcSigningKey
 
     client_id, secret = _configure_protocol_client()
     verifier = "v" * 64
@@ -671,7 +671,7 @@ def test_token_endpoint_requires_basic_exact_redirect_and_pkce(client):
 
 
 def test_prompt_none_max_age_and_login_hint_is_prefill_only(client):
-    from labfoundry.app.oidc import OIDC_SESSION_COOKIE, _session_serializer
+    from atlaso.app.oidc import OIDC_SESSION_COOKIE, _session_serializer
 
     client_id, _secret = _configure_protocol_client()
     verifier = "m" * 64
@@ -729,8 +729,8 @@ def test_prompt_none_max_age_and_login_hint_is_prefill_only(client):
 
 
 def test_userinfo_revalidates_client_subject_and_local_identity_state(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import OidcClient, User
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import OidcClient, User
 
     client_id, secret = _configure_protocol_client()
     verifier = "r" * 64
@@ -796,7 +796,7 @@ def test_userinfo_rejects_algorithm_and_kid_confusion(client):
 
 
 def test_logout_requires_valid_hint_and_exact_registered_redirect(client):
-    from labfoundry.app.oidc import OIDC_SESSION_COOKIE
+    from atlaso.app.oidc import OIDC_SESSION_COOKIE
 
     operator_login = client.get("/login")
     operator_csrf = operator_login.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -804,7 +804,7 @@ def test_logout_requires_valid_hint_and_exact_registered_redirect(client):
         "/login",
         data={
             "username": "admin",
-            "password": "labfoundry-admin",
+            "password": "atlaso-admin",
             "csrf": operator_csrf,
         },
         follow_redirects=False,
@@ -849,15 +849,15 @@ def test_logout_requires_valid_hint_and_exact_registered_redirect(client):
 
 
 def test_fixed_organization_managed_ldap_flow_never_creates_operator_session(client, monkeypatch):
-    from labfoundry.app.adapters.system import AdapterResult
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import LdapOrganization, LdapUser
-    from labfoundry.app.services import identity_credentials
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import LdapOrganization, LdapUser
+    from atlaso.app.services import identity_credentials
 
     class AuthenticationAdapter:
         def authenticate_ldap_user(self, user_dn: str, password: str) -> AdapterResult:
             return AdapterResult(
-                command=["labfoundry-helper", "ldap", "authenticate", user_dn],
+                command=["atlaso-helper", "ldap", "authenticate", user_dn],
                 dry_run=False,
                 returncode=0 if password == "Directory-Password!" else 1,
             )
@@ -943,8 +943,8 @@ def test_concurrent_code_redemption_has_at_most_one_success(client):
 
 
 def test_oidc_login_throttle_is_bounded_and_never_persists_password(client):
-    from labfoundry.app.oidc import OIDC_LOGIN_BUCKET_LIMIT, _OIDC_LOGIN_BUCKETS
-    from labfoundry.app.database import SessionLocal
+    from atlaso.app.oidc import OIDC_LOGIN_BUCKET_LIMIT, _OIDC_LOGIN_BUCKETS
+    from atlaso.app.database import SessionLocal
 
     client_id, _secret = _configure_protocol_client()
     transaction, csrf, _cookie = _start_login(
@@ -979,7 +979,7 @@ def test_oidc_login_throttle_is_bounded_and_never_persists_password(client):
 
 
 def test_oidc_login_throttle_survives_browser_session_renewal(client):
-    from labfoundry.app.oidc import OIDC_SESSION_COOKIE
+    from atlaso.app.oidc import OIDC_SESSION_COOKIE
 
     client_id, _secret = _configure_protocol_client()
     params = _authorization_parameters(client_id, "q" * 64)
@@ -1014,8 +1014,8 @@ def test_oidc_login_throttle_survives_browser_session_renewal(client):
 
 
 def test_begin_authorization_purges_expired_transactions_and_codes(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import OidcAuthorizationCode, OidcAuthorizationTransaction, utcnow
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import OidcAuthorizationCode, OidcAuthorizationTransaction, utcnow
 
     client_id, _secret = _configure_protocol_client()
     params = _authorization_parameters(client_id, "r" * 64)

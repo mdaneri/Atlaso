@@ -7,17 +7,17 @@ from starlette.testclient import TestClient
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch) -> Generator[TestClient, None, None]:
-    db_path = tmp_path / "labfoundry-test.db"
-    monkeypatch.setenv("LABFOUNDRY_DATABASE_URL", f"sqlite:///{db_path}")
-    monkeypatch.setenv("LABFOUNDRY_SECRET_KEY", "test-secret-key-with-enough-length")
-    monkeypatch.setenv("LABFOUNDRY_BOOTSTRAP_ADMIN_PASSWORD", "labfoundry-admin")
-    monkeypatch.setenv("LABFOUNDRY_MONITOR_ENABLED", "false")
+    db_path = tmp_path / "atlaso-test.db"
+    monkeypatch.setenv("ATLASO_DATABASE_URL", f"sqlite:///{db_path}")
+    monkeypatch.setenv("ATLASO_SECRET_KEY", "test-secret-key-with-enough-length")
+    monkeypatch.setenv("ATLASO_BOOTSTRAP_ADMIN_PASSWORD", "atlaso-admin")
+    monkeypatch.setenv("ATLASO_MONITOR_ENABLED", "false")
 
-    from labfoundry.app.config import get_settings
+    from atlaso.app.config import get_settings
 
     get_settings.cache_clear()
 
-    import labfoundry.app.database as database
+    import atlaso.app.database as database
 
     database.engine.dispose()
     database.engine = database.create_engine(
@@ -26,11 +26,11 @@ def client(tmp_path, monkeypatch) -> Generator[TestClient, None, None]:
     )
     database.SessionLocal.configure(bind=database.engine)
 
-    from labfoundry.app.main import create_app
+    from atlaso.app.main import create_app
 
     app = create_app()
     with TestClient(app) as test_client:
         yield test_client
 
     get_settings.cache_clear()
-    os.environ.pop("LABFOUNDRY_DATABASE_URL", None)
+    os.environ.pop("ATLASO_DATABASE_URL", None)

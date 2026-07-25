@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ app_name }}{% if title %} - {{ title }}{% endif %}</title>
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Atlaso">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="apple-touch-icon" href="/static/brand/atlaso-app-icon-light-180.png">
+    <link rel="icon" href="/favicon.ico" type="image/x-icon">
+    <link rel="icon" href="/static/brand/atlaso-icon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/static/vendor/tabulator/tabulator.min.css">
+    <link rel="stylesheet" href="/static/app.css?v=atlaso-brand-20260725-1">
+    {% block extra_head %}{% endblock %}
+  </head>
+  <body>
+    {% set pending_apply_count = sidebar_pending_apply_count|default(0) %}
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="/">
+          {% include "partials/brand_mark.html" %}
+          <span>
+            <strong>Atlaso</strong>
+            <small>Photon appliance</small>
+          </span>
+        </a>
+        <nav class="nav-stack" aria-label="Primary">
+          {% set nav_groups = [
+            ("Overview", [
+              ("Dashboard", "/dashboard", "read:dashboard"),
+              ("Monitor", "/monitor", "read:monitoring")
+            ]),
+            ("Appliance Setup", [
+              ("Settings", "/settings", "admin:all"),
+              ("Physical Interfaces", "/physical-interfaces", "read:interfaces"),
+              ("VLAN Interfaces", "/vlan-interfaces", "read:vlans"),
+              ("Routes & WAN Simulation", "/routes-wan", "read:routes"),
+              ("Firewall", "/firewall", "read:firewall")
+            ]),
+            ("Core Services", [
+              ("DNS", "/dns", "read:dns"),
+              ("NTP / NTS", "/ntp", "read:services"),
+              ("DHCP", "/dhcp", "read:dhcp")
+            ]),
+            ("Identity & Trust", [
+              ("Authentication", "/authentication", "read:dashboard"),
+              ("Users", "/users", "admin:all"),
+              ("Managed LDAP", "/ldap", "read:ldap"),
+              ("Certificate Authority", "/certificate-authority", "admin:all"),
+              ("KMS / KMIP", "/kms", "read:kms")
+            ]),
+            ("VCF Workflows", [
+              ("ESXi PXE", "/esxi-pxe", "read:esxi-pxe"),
+              ("ESX Storage", "/esx-storage", "read:esx-storage"),
+              ("VCF Helper", "/vcf-helper", "read:dashboard"),
+              ("VCF Offline Depot", "/vcf-offline-depot", "read:repository"),
+              ("VCF Private Registry", "/vcf-private-registry", "read:vcf-registry"),
+              ("VCF Backups", "/vcf-backups", "read:vcf-backups")
+            ]),
+            ("Operations", [
+              ("Web terminal", "/terminal", "admin:all"),
+              ("Services", "/services", "read:services"),
+              ("Tasks", "/tasks", "read:dashboard"),
+              ("Logs", "/logs", "read:logs"),
+              ("Audit Events", "/audit-log", "read:audit"),
+              ("Appliance Update", "/appliance-update", "admin:all"),
+              ("Automation", "/automation", "admin:all"),
+              ("Backup / Restore", "/backup-restore", "admin:all")
+            ])
+          ] %}
+          {% for group_label, links in nav_groups %}
+            {% set group = namespace(rendered=false) %}
+            {% for label, href, scope in links %}
+              {% if identity and identity.can(scope) %}
+                {% if not group.rendered %}
+                  <span class="nav-section-label">{{ group_label }}</span>
+                  {% set group.rendered = true %}
+                {% endif %}
+                <a class="nav-link {% if request.url.path == href %}active{% endif %}" href="{{ href }}">{{ label }}</a>
+              {% endif %}
+            {% endfor %}
+          {% endfor %}
+        </nav>
+        {% if identity %}
+          <div class="sidebar-apply">
+            <a class="sidebar-apply-link pending {% if not pending_apply_count %}hidden{% endif %}" href="/dashboard#appliance-apply-review" data-appliance-apply-sidebar data-appliance-apply-open data-pending-count="{{ pending_apply_count }}">
+              <span class="sidebar-apply-text">
+                <strong data-appliance-apply-sidebar-title>Review appliance changes</strong>
+                <small data-appliance-apply-sidebar-detail>{{ pending_apply_count }} pending {{ 'unit' if pending_apply_count == 1 else 'units' }}</small>
+              </span>
+              <span class="sidebar-apply-badge" data-appliance-apply-sidebar-badge>pending</span>
+            </a>
+          </div>
+        {% endif %}
+      </aside>
+
+      {% set page_apply_status = appliance_apply_status|default(None) %}
+      <main class="main-pane"{% if page_apply_status %} data-page-apply-unit="{{ page_apply_status.id }}"{% endif %}>
+        <header class="topbar">
+          <div>
+            <h1>{% block page_title %}Dashboard{% endblock %}</h1>
+          </div>
+          {% if identity %}
+            <div class="topbar-actions">
+              <details class="account-menu" data-account-menu>
+                <summary class="account-menu-trigger" title="Roles: {{ identity.roles|join(', ') }}" aria-label="Open account menu for {{ identity.username }}">
+                  <span class="account-menu-avatar" aria-hidden="true">{{ identity.username[:1]|upper }}</span>
+                  <span>{{ identity.username }}</span>
+                  <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="m5 7.5 5 5 5-5"/></svg>
+                </summary>
+                <div class="account-menu-panel" role="menu">
+                  <button class="account-menu-item" type="button" role="menuitem" data-about-open>About</button>
+                  <div class="account-menu-separator" role="separator"></div>
+                  <form action="/logout" method="post">
+                    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                    <button class="account-menu-item" type="submit" role="menuitem">Sign out ({{ identity.username }})</button>
+                  </form>
+                  {% if identity.has_role('admin') %}
+                    <div class="account-menu-separator" role="separator"></div>
+                    <form action="/appliance/power/reboot" method="post" data-confirm-modal data-confirm-title="Reboot Atlaso appliance?" data-confirm-message="This creates an appliance reboot task and schedules the reboot after the task is recorded. The management UI and appliance services will be temporarily unavailable." data-confirm-label="Create reboot task">
+                      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                      <button class="account-menu-item" type="submit" role="menuitem">Reboot</button>
+                    </form>
+                    <form action="/appliance/power/shutdown" method="post" data-confirm-modal data-confirm-title="Shut down Atlaso appliance?" data-confirm-message="This creates an appliance shutdown task and powers off the appliance after the task is recorded. Physical or hypervisor access is required to start it again." data-confirm-label="Create shutdown task">
+                      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                      <button class="account-menu-item danger" type="submit" role="menuitem">Shutdown</button>
+                    </form>
+                  {% endif %}
+                </div>
+              </details>
+            </div>
+          {% endif %}
+        </header>
+
+        {% set current_page_apply_changed = page_apply_status and page_apply_status.changed %}
+        {% if identity and current_page_apply_changed %}
+          <div class="page-apply-notice {{ 'needs-attention' if page_apply_status.validation_errors else 'pending' }}">
+            <div class="page-apply-notice-main">
+              <span class="status-pill {{ page_apply_status.pill }}">{{ page_apply_status.state }}</span>
+              <strong>{{ page_apply_status.label }} has pending appliance changes</strong>
+              <span>Review and submit them from the global apply workflow.</span>
+            </div>
+            <a class="button secondary compact-button" href="/dashboard#appliance-apply-review" data-appliance-apply-open>Review appliance changes</a>
+          </div>
+        {% endif %}
+
+        {% block content %}{% endblock %}
+        <footer class="management-info-footnote" aria-label="Appliance information">
+          <span>Atlaso {{ current_version_info.base_version|default(current_version_info.version) }}</span>
+          <span>{{ current_version_info.public_label or "source checkout" }}</span>
+          <a href="{{ public_github_url }}" target="_blank" rel="noopener" title="GitHub project">
+            <svg class="public-info-link-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 1.8a10.2 10.2 0 0 0-3.2 19.9c.5.1.7-.2.7-.5v-1.8c-2.8.6-3.4-1.2-3.4-1.2-.5-1.1-1.1-1.4-1.1-1.4-.9-.6.1-.6.1-.6 1 0 1.6 1.1 1.6 1.1.9 1.5 2.4 1.1 3 .8.1-.7.4-1.1.7-1.4-2.2-.3-4.6-1.1-4.6-5 0-1.1.4-2 1.1-2.8-.1-.3-.5-1.3.1-2.7 0 0 .9-.3 2.9 1.1a10 10 0 0 1 5.2 0c2-1.4 2.9-1.1 2.9-1.1.6 1.4.2 2.4.1 2.7.7.8 1.1 1.7 1.1 2.8 0 3.9-2.4 4.7-4.6 5 .4.3.7 1 .7 2v2.5c0 .3.2.6.7.5A10.2 10.2 0 0 0 12 1.8Z"/></svg>
+            <span>GitHub</span>
+          </a>
+          <a href="/api/docs" title="Swagger UI">
+            <svg class="public-info-link-icon swagger-link-icon" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path d="M16 0c-8.823 0-16 7.177-16 16s7.177 16 16 16c8.823 0 16-7.177 16-16s-7.177-16-16-16zM16 1.527c7.995 0 14.473 6.479 14.473 14.473s-6.479 14.473-14.473 14.473c-7.995 0-14.473-6.479-14.473-14.473s6.479-14.473 14.473-14.473zM11.161 7.823c-0.188-0.005-0.375 0-0.568 0.005-1.307 0.079-2.093 0.693-2.312 1.964-0.151 0.891-0.125 1.796-0.188 2.692-0.020 0.464-0.067 0.928-0.156 1.38-0.177 0.813-0.525 1.068-1.353 1.109-0.111 0.011-0.22 0.032-0.324 0.057v1.948c1.5 0.073 1.704 0.605 1.823 2.172 0.048 0.573-0.015 1.147 0.021 1.719 0.027 0.543 0.099 1.079 0.208 1.6 0.344 1.432 1.745 1.911 3.433 1.624v-1.713c-0.272 0-0.511 0.005-0.74 0-0.579-0.016-0.792-0.161-0.844-0.713-0.079-0.713-0.057-1.437-0.099-2.156-0.089-1.339-0.235-2.651-1.541-3.5 0.672-0.495 1.161-1.084 1.312-1.865 0.109-0.547 0.177-1.099 0.219-1.651s-0.025-1.12 0.021-1.667c0.077-0.885 0.135-1.249 1.197-1.213 0.161 0 0.317-0.021 0.495-0.036v-1.745c-0.213 0-0.411-0.005-0.604-0.011zM21.287 7.839c-0.365-0.011-0.729 0.016-1.089 0.079v1.697c0.329 0 0.584 0 0.833 0.005 0.439 0.005 0.772 0.177 0.813 0.661 0.041 0.443 0.041 0.891 0.083 1.339 0.089 0.896 0.136 1.796 0.292 2.677 0.136 0.724 0.636 1.265 1.255 1.713-1.088 0.729-1.411 1.776-1.463 2.953-0.032 0.801-0.052 1.615-0.093 2.427-0.037 0.74-0.297 0.979-1.043 0.995-0.208 0.011-0.411 0.027-0.64 0.041v1.74c0.432 0 0.833 0.027 1.235 0 1.239-0.073 1.995-0.677 2.239-1.885 0.104-0.661 0.167-1.333 0.183-2.005 0.041-0.615 0.036-1.235 0.099-1.844 0.093-0.953 0.532-1.349 1.484-1.411 0.089-0.011 0.177-0.032 0.267-0.057v-1.953c-0.161-0.021-0.271-0.037-0.391-0.041-0.713-0.032-1.068-0.272-1.251-0.948-0.109-0.433-0.177-0.876-0.197-1.324-0.052-0.823-0.047-1.656-0.099-2.479-0.109-1.588-1.063-2.339-2.516-2.38zM12.099 14.875c-1.432 0-1.536 2.109-0.115 2.245h0.079c0.609 0.036 1.131-0.427 1.167-1.037v-0.061c0.011-0.62-0.484-1.136-1.104-1.147zM15.979 14.875c-0.593-0.020-1.093 0.448-1.115 1.043 0 0.036 0 0.067 0.005 0.104 0 0.672 0.459 1.099 1.147 1.099 0.677 0 1.104-0.443 1.104-1.136-0.005-0.672-0.459-1.115-1.141-1.109zM19.927 14.875c-0.624-0.011-1.145 0.485-1.167 1.115 0 0.625 0.505 1.131 1.136 1.131h0.011c0.567 0.099 1.135-0.448 1.172-1.104 0.031-0.609-0.521-1.141-1.152-1.141z"/></svg>
+            <span>Swagger</span>
+          </a>
+          <a href="https://www.python.org/" target="_blank" rel="noopener" title="Python website">
+            <svg class="public-info-link-icon python-link-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.1 2c-4.1 0-3.9 1.8-3.9 1.8v1.9h4v.6H6.6S4 6 4 10.2c0 4.1 2.3 4 2.3 4h1.4v-2s-.1-2.3 2.3-2.3h3.9s2.2 0 2.2-2.2V3.9S16.4 2 12.1 2Zm-2.2 1.2a.8.8 0 1 1 0 1.6.8.8 0 0 1 0-1.6Z"/><path d="M12 22c4.1 0 3.9-1.8 3.9-1.8v-1.9h-4v-.6h5.6s2.5.3 2.5-3.9-2.3-4-2.3-4h-1.4v2s.1 2.3-2.3 2.3h-3.9s-2.2 0-2.2 2.2v3.8S7.7 22 12 22Zm2.2-1.2a.8.8 0 1 1 0-1.6.8.8 0 0 1 0 1.6Z"/></svg>
+            <span>Python {{ current_version_info.python }}</span>
+          </a>
+          {% if identity %}
+            <span class="server-time-chip footer-server-time" data-server-time data-server-time-iso="{{ server_time.isoformat() }}">{{ server_time.strftime("Server %H:%M:%S UTC") }}</span>
+          {% endif %}
+        </footer>
+      </main>
+    </div>
+    <dialog id="about-modal" class="confirm-modal" aria-labelledby="about-modal-title">
+      <div class="confirm-modal-panel about-modal-panel">
+        <div class="confirm-modal-body">
+          <p class="kicker">About</p>
+          <div class="about-brand">
+            <img class="about-brand-mark" src="/static/brand/atlaso-icon.svg" alt="" aria-hidden="true">
+            <div>
+              <h2 id="about-modal-title">Atlaso</h2>
+              <p class="muted">Everything your virtualization lab needs.</p>
+              <p class="muted">Infrastructure • Storage • Identity • Networking • Lifecycle</p>
+              <p class="muted">Infrastructure • Connectivity • Automation</p>
+              <p class="muted">Supports POC, lab, and test environments by simplifying deployment, maintenance, and validation.</p>
+            </div>
+          </div>
+          <dl class="about-facts">
+            <div><dt>Version</dt><dd>{{ current_version_info.base_version|default(current_version_info.version) }}</dd></div>
+            <div><dt>Build</dt><dd>{{ current_version_info.public_label or "source checkout" }}</dd></div>
+            <div><dt>Python</dt><dd>{{ current_version_info.python }}</dd></div>
+          </dl>
+        </div>
+        <div class="confirm-modal-actions">
+          <a class="button secondary" href="{{ public_github_url }}" target="_blank" rel="noopener">GitHub</a>
+          <button class="button primary" type="button" data-about-close>Close</button>
+        </div>
+      </div>
+    </dialog>
+    <dialog id="confirm-modal" class="confirm-modal" aria-labelledby="confirm-modal-title">
+      <form method="dialog" class="confirm-modal-panel">
+        <div class="confirm-modal-body">
+          <p id="confirm-modal-kicker" class="kicker">Confirm action</p>
+          <h2 id="confirm-modal-title">Confirm action</h2>
+          <p id="confirm-modal-message" class="muted"></p>
+        </div>
+        <div class="confirm-modal-actions">
+          <button class="button ghost" value="cancel" type="submit">Cancel</button>
+          <button id="confirm-modal-confirm" class="button danger" value="confirm" type="submit">Confirm</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="preview-modal" class="preview-modal" aria-labelledby="preview-modal-title">
+      <div class="preview-modal-panel">
+        <div class="preview-modal-head">
+          <div>
+            <p class="kicker">Config preview</p>
+            <h2 id="preview-modal-title">Preview</h2>
+          </div>
+          <div class="preview-modal-actions">
+            <button class="button ghost icon-button" type="button" data-preview-modal-close aria-label="Close preview" title="Close preview">×</button>
+          </div>
+        </div>
+        <div class="preview-modal-body">
+          <button class="button secondary icon-button preview-modal-copy-button" type="button" data-preview-modal-copy aria-label="Copy preview" title="Copy preview">
+            <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M8 8.75a2 2 0 0 1 2-2h7.25a2 2 0 0 1 2 2V16a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2z"/>
+              <path d="M5.75 15.25H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h7.25a2 2 0 0 1 2 2v.75"/>
+            </svg>
+          </button>
+          <pre><code data-preview-modal-code></code></pre>
+        </div>
+      </div>
+    </dialog>
+    <dialog id="ntp-source-health-modal" class="preview-modal" aria-labelledby="ntp-source-health-title">
+      <div class="preview-modal-panel">
+        <div class="preview-modal-head">
+          <div>
+            <p class="kicker">Runtime check</p>
+            <h2 id="ntp-source-health-title">NTP / NTS Source Health</h2>
+          </div>
+          <div class="preview-modal-actions">
+            <span class="status-pill muted" data-ntp-source-health-status>not checked</span>
+            <button class="button secondary compact-button" type="button" data-ntp-source-health-refresh>Refresh</button>
+            <button class="button ghost icon-button" type="button" data-ntp-source-health-close aria-label="Close source health" title="Close">×</button>
+          </div>
+        </div>
+        <pre><code data-ntp-source-health-output>Use the NTP / NTS service menu to check ntpq peers, runtime variables, and NTS state.</code></pre>
+      </div>
+    </dialog>
+    {% if identity %}
+      <dialog id="appliance-apply-modal" class="appliance-apply-modal" aria-labelledby="appliance-apply-modal-title" data-csrf="{{ csrf_token }}">
+        <div class="appliance-apply-modal-panel">
+          <div class="appliance-apply-modal-head">
+            <div>
+              <p class="kicker" data-appliance-apply-modal-kicker>Desired state</p>
+              <h2 id="appliance-apply-modal-title" data-appliance-apply-modal-title>Review appliance changes</h2>
+              <p class="muted" data-appliance-apply-modal-subtitle>Select valid components, inspect their rendered differences, then submit one appliance task.</p>
+            </div>
+            <div class="appliance-apply-modal-head-actions">
+              <span class="status-pill warn" data-appliance-apply-modal-status>loading</span>
+              <button class="button ghost icon-button" type="button" data-appliance-apply-modal-close aria-label="Close appliance changes" title="Close">×</button>
+            </div>
+          </div>
+          <div class="alert error hidden" data-appliance-apply-modal-error role="alert"></div>
+          <div class="alert warning hidden" data-appliance-apply-connection-warning role="alert"></div>
+          <section class="appliance-apply-review" data-appliance-apply-review>
+            <form class="form-stack" data-appliance-apply-review-form>
+              <input type="hidden" name="csrf" value="{{ csrf_token }}">
+              <div class="appliance-apply-review-list" data-appliance-apply-review-list></div>
+              <div class="appliance-apply-modal-actions">
+                <span class="muted" data-appliance-apply-selection-summary></span>
+                <button class="button primary hidden" type="submit" data-appliance-apply-submit>Submit appliance changes</button>
+              </div>
+            </form>
+          </section>
+          <section class="appliance-apply-live hidden" data-appliance-apply-live aria-live="polite">
+            <div id="appliance-apply-live-grid" class="tabulator-shell appliance-apply-live-grid"></div>
+            <div class="appliance-apply-step-detail hidden" data-appliance-apply-step-detail>
+              <div class="appliance-apply-step-detail-head">
+                <div>
+                  <strong data-appliance-apply-step-detail-title>Component detail</strong>
+                  <span class="muted" data-appliance-apply-step-detail-meta></span>
+                </div>
+                <span class="status-pill muted" data-appliance-apply-step-detail-status>pending</span>
+              </div>
+              <div class="alert error hidden" data-appliance-apply-step-detail-error></div>
+              <pre><code class="language-json" data-appliance-apply-step-detail-result>{}</code></pre>
+            </div>
+            <div class="appliance-apply-modal-actions">
+              <span class="muted" data-appliance-apply-live-summary>Waiting for task status…</span>
+              <div>
+                <button class="button danger hidden" type="button" data-appliance-apply-cancel>Cancel master task</button>
+                <button class="button primary hidden" type="button" data-appliance-apply-result-close>Close</button>
+              </div>
+            </div>
+          </section>
+        </div>
+      </dialog>
+    {% endif %}
+    <script src="/static/vendor/tabulator/tabulator.min.js"></script>
+    <script>
+      window.Prism = window.Prism || {};
+      window.Prism.manual = true;
+    </script>
+    <script src="/static/vendor/prism/prism-core.min.js"></script>
+    <script src="/static/vendor/prism/prism-diff.min.js"></script>
+    <script src="/static/vendor/codemirror/atlaso-codemirror.min.js"></script>
+    <script src="/static/app.js?v=atlaso-brand-20260725-1"></script>
+    <script src="/static/pwa.js?v=atlaso-brand-20260725-1"></script>
+    {% block extra_scripts %}{% endblock %}
+  </body>
+</html>

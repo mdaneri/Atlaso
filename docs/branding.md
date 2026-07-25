@@ -1,39 +1,46 @@
-# LabFoundry Brand Assets
+# Atlaso Brand Assets
 
-LabFoundry uses image assets instead of letter initials for the product mark.
+Atlaso is the complete product and technical identity of the appliance.
 
-## Primary Mark
+## Message hierarchy
 
-Use this compact mark for favicons, sidebar branding, small headers, and places where the product name appears nearby.
+- Headline: **Everything your virtualization lab needs.**
+- Capability line: **Infrastructure • Storage • Identity • Networking • Lifecycle**
+- Supporting pillars: **Infrastructure • Connectivity • Automation**
+- Product promise: Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation.
 
-![LabFoundry mark](../labfoundry/app/static/brand/labfoundry-mark.svg)
+## Canonical assets
 
-Repository path:
+The complete source kit lives under [`docs/assets/brand/`](assets/brand/).
+`BRAND_GUIDE.md` defines the mark, colors, clear space, and approved variants.
+Use the supplied masters without stretching, rotating, recoloring individual
+elements, or adding shadows.
 
-```text
-labfoundry/app/static/brand/labfoundry-mark.svg
-```
+The primary palette is:
 
-Runtime URL:
+- Atlaso Navy: `#071A3A`
+- Atlaso Blue: `#1769E0`
+- Atlaso Teal: `#16C7BC`
+- Atlaso Cyan: `#17A8C8`
+- White: `#FFFFFF`
 
-```text
-/static/brand/labfoundry-mark.svg
-```
+## Runtime assets
 
-## Appliance Graphic
+The appliance package includes only the assets required at runtime under
+`atlaso/app/static/brand/`:
 
-Use this wider graphic for documentation headers, README sections, sign-in screens, and other places where a larger visual is helpful.
+- `atlaso-icon.svg` for compact product marks;
+- light and dark horizontal SVG logos;
+- 180, 192, and 512 pixel application icons;
+- `favicon.ico`.
 
-![LabFoundry appliance graphic](../labfoundry/app/static/brand/labfoundry-appliance-graphic.svg)
+The PWA manifest uses the dark 192 and 512 pixel application icons as maskable
+icons. Browser templates also expose the SVG mark and the 180 pixel
+Apple touch icon.
 
-Repository path:
+## Appliance boot
 
-```text
-labfoundry/app/static/brand/labfoundry-appliance-graphic.svg
-```
-
-Runtime URL:
-
-```text
-/static/brand/labfoundry-appliance-graphic.svg
-```
+`image/common/boot/grub/atlaso.png` is a deterministic 640×480 composition
+derived from the Atlaso dark application icon. It carries the headline and
+retains the required **Powered by Photon OS** attribution. GRUB timing, boot
+entries, and kernel arguments remain unchanged.

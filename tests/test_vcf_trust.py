@@ -9,13 +9,13 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
-from labfoundry.app.models import CaSettings
-from labfoundry.app.services import vcf_trust
+from atlaso.app.models import CaSettings
+from atlaso.app.services import vcf_trust
 
 
 def root_ca() -> tuple[CaSettings, vcf_trust.RootCaInfo]:
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "LabFoundry Test Root")])
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Atlaso Test Root")])
     now = datetime.now(timezone.utc)
     certificate = (
         x509.CertificateBuilder()
@@ -36,7 +36,7 @@ def root_ca() -> tuple[CaSettings, vcf_trust.RootCaInfo]:
 def test_root_ca_info_validates_and_fingerprints_public_root():
     _settings, info = root_ca()
 
-    assert info.subject == "CN=LabFoundry Test Root"
+    assert info.subject == "CN=Atlaso Test Root"
     assert len(info.fingerprint.split(":")) == 32
     assert "PRIVATE KEY" not in info.pem
 

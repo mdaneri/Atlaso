@@ -6,7 +6,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from labfoundry.app.adapters.system import AdapterResult
+from atlaso.app.adapters.system import AdapterResult
 
 
 def login(client):
@@ -14,7 +14,7 @@ def login(client):
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
         "/login",
-        data={"username": "admin", "password": "labfoundry-admin", "csrf": csrf},
+        data={"username": "admin", "password": "atlaso-admin", "csrf": csrf},
         follow_redirects=False,
     )
     assert response.status_code == 303
@@ -26,9 +26,9 @@ def csrf_from_page(page_text: str) -> str:
 
 
 def load_helper_module():
-    helper_path = Path(__file__).resolve().parents[1] / "scripts" / "appliance" / "labfoundry-helper"
-    loader = importlib.machinery.SourceFileLoader("labfoundry_helper_update", str(helper_path))
-    spec = importlib.util.spec_from_loader("labfoundry_helper_update", loader)
+    helper_path = Path(__file__).resolve().parents[1] / "scripts" / "appliance" / "atlaso-helper"
+    loader = importlib.machinery.SourceFileLoader("atlaso_helper_update", str(helper_path))
+    spec = importlib.util.spec_from_loader("atlaso_helper_update", loader)
     assert spec is not None
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
@@ -37,11 +37,11 @@ def load_helper_module():
 
 def test_appliance_update_page_and_dry_run_job(client):
     login(client)
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import UpdateSource
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import UpdateSource
 
     with SessionLocal() as db:
-        source = db.execute(select(UpdateSource).where(UpdateSource.kind == "labfoundry")).scalar_one()
+        source = db.execute(select(UpdateSource).where(UpdateSource.kind == "atlaso")).scalar_one()
         source.url = "https://updates.example.test/releases"
         db.add(source)
         db.commit()
@@ -51,7 +51,7 @@ def test_appliance_update_page_and_dry_run_job(client):
     assert "Photon OS" in page.text
     assert "Python Libraries" not in page.text
     assert "PowerShell Modules" in page.text
-    assert "LabFoundry Release" in page.text
+    assert "Atlaso Release" in page.text
     assert "Check for updates" in page.text
     assert "Install updates" in page.text
     assert "Checking is read-only. Installing runs the selected maintenance streams." in page.text
@@ -75,7 +75,7 @@ def test_appliance_update_page_and_dry_run_job(client):
     assert 'data-tab-target="appliance-update-streams" aria-controls="appliance-update-streams" aria-selected="true"' in page.text
     assert 'data-tab-target="appliance-update-sources" aria-controls="appliance-update-sources" aria-selected="false"' in page.text
     assert "streams_tab_active" not in page.text
-    assert "labfoundry-helper appliance-update check" not in page.text
+    assert "atlaso-helper appliance-update check" not in page.text
 
     csrf = csrf_from_page(page.text)
     response = client.post(
@@ -83,14 +83,14 @@ def test_appliance_update_page_and_dry_run_job(client):
         headers={"Accept": "application/json"},
         data={
             "csrf": csrf,
-            "selected_streams": ["photon_os", "labfoundry_release"],
+            "selected_streams": ["photon_os", "atlaso_release"],
         },
     )
     assert response.status_code == 202
     submitted = response.json()
     assert submitted["status"] == "pending"
     assert submitted["mode"] == "run"
-    assert submitted["selected_streams"] == ["photon_os", "labfoundry_release"]
+    assert submitted["selected_streams"] == ["photon_os", "atlaso_release"]
     duplicate = client.post(
         "/appliance-update/check",
         headers={"Accept": "application/json"},
@@ -99,8 +99,8 @@ def test_appliance_update_page_and_dry_run_job(client):
     assert duplicate.status_code == 409
     assert duplicate.json()["job_id"] == submitted["job_id"]
 
-    from labfoundry.app.models import Job, JobStep
-    from labfoundry.app.worker import run_worker_once
+    from atlaso.app.models import Job, JobStep
+    from atlaso.app.worker import run_worker_once
 
     assert run_worker_once()
 
@@ -121,17 +121,17 @@ def test_appliance_update_page_and_dry_run_job(client):
     assert "appliance-update-task-card" not in refreshed_page.text
     assert payload["dry_run"] is True
     assert [(step.component_key, step.status) for step in steps] == [
-        ("labfoundry_release", "succeeded"),
+        ("atlaso_release", "succeeded"),
         ("photon_os", "succeeded"),
     ]
-    assert set(payload["stream_results"]) == {"labfoundry_release", "photon_os"}
+    assert set(payload["stream_results"]) == {"atlaso_release", "photon_os"}
     task_payload = client.get(f"/tasks/{job.id}/status").json()["task"]
     assert all(step["type"] == "appliance-update-step" for step in task_payload["_children"])
     assert all(step["type_label"] == "Update stream" for step in task_payload["_children"])
     command_lines = [" ".join(command["command"]) for command in payload["commands"]]
-    assert "labfoundry-helper appliance-update check /var/lib/labfoundry/apply/appliance-update/labfoundry-update.json" in command_lines
-    assert "labfoundry-helper appliance-update apply /var/lib/labfoundry/apply/appliance-update/labfoundry-update.json" in command_lines
-    assert "labfoundry-helper appliance-update restart-service /var/lib/labfoundry/apply/appliance-update/labfoundry-update.json" in command_lines
+    assert "atlaso-helper appliance-update check /var/lib/atlaso/apply/appliance-update/atlaso-update.json" in command_lines
+    assert "atlaso-helper appliance-update apply /var/lib/atlaso/apply/appliance-update/atlaso-update.json" in command_lines
+    assert "atlaso-helper appliance-update restart-service /var/lib/atlaso/apply/appliance-update/atlaso-update.json" in command_lines
 
 
 def test_appliance_update_settings_validate_urls(client):
@@ -143,12 +143,12 @@ def test_appliance_update_settings_validate_urls(client):
         data={
             "csrf": csrf,
             "photon_source": "configured Photon repositories",
-            "labfoundry_manifest_url": "not-a-url",
+            "atlaso_manifest_url": "not-a-url",
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     assert response.status_code == 422
-    assert "LabFoundry manifest URL must be an http or https URL" in response.text
+    assert "Atlaso manifest URL must be an http or https URL" in response.text
 
 
 def test_appliance_update_settings_reject_embedded_credentials(client):
@@ -160,23 +160,23 @@ def test_appliance_update_settings_reject_embedded_credentials(client):
         data={
             "csrf": csrf,
             "photon_source": "configured Photon repositories",
-            "labfoundry_manifest_url": "https://user:token@example.test/manifest.json",
+            "atlaso_manifest_url": "https://user:token@example.test/manifest.json",
         },
-        headers={"X-LabFoundry-Autosave": "1"},
+        headers={"X-Atlaso-Autosave": "1"},
     )
     assert response.status_code == 422
     assert "must not include embedded credentials" in response.text
 
 
 def test_appliance_update_real_helper_failure_is_logged(client, monkeypatch, caplog):
-    import labfoundry.app.ui as ui
+    import atlaso.app.ui as ui
 
     class FailingUpdateAdapter:
         dry_run = False
 
         def check_appliance_update_config(self, config_path: str) -> AdapterResult:
             return AdapterResult(
-                command=["labfoundry-helper", "appliance-update", "check", config_path],
+                command=["atlaso-helper", "appliance-update", "check", config_path],
                 dry_run=False,
                 stdout="",
                 stderr="manifest refused connection",
@@ -184,17 +184,17 @@ def test_appliance_update_real_helper_failure_is_logged(client, monkeypatch, cap
             )
 
     monkeypatch.setattr(ui, "SystemAdapter", lambda: FailingUpdateAdapter())
-    monkeypatch.setattr(ui, "stage_appliance_apply_config", lambda _path, _preview: "/var/lib/labfoundry/apply/appliance-update/labfoundry-update.json")
+    monkeypatch.setattr(ui, "stage_appliance_apply_config", lambda _path, _preview: "/var/lib/atlaso/apply/appliance-update/atlaso-update.json")
 
     login(client)
     page = client.get("/appliance-update")
     csrf = csrf_from_page(page.text)
-    with caplog.at_level(logging.INFO, logger="labfoundry.appliance_update"):
+    with caplog.at_level(logging.INFO, logger="atlaso.appliance_update"):
         response = client.post(
             "/appliance-update/check",
             data={"csrf": csrf, "selected_streams": ["photon_os"]},
         )
-        from labfoundry.app.worker import run_worker_once
+        from atlaso.app.worker import run_worker_once
 
         assert run_worker_once()
 
@@ -206,7 +206,7 @@ def test_appliance_update_real_helper_failure_is_logged(client, monkeypatch, cap
 
 
 def test_appliance_update_staging_exception_records_failed_job_and_logs(client, monkeypatch, caplog):
-    import labfoundry.app.ui as ui
+    import atlaso.app.ui as ui
 
     class RealUpdateAdapter:
         dry_run = False
@@ -221,12 +221,12 @@ def test_appliance_update_staging_exception_records_failed_job_and_logs(client, 
     login(client)
     page = client.get("/appliance-update")
     csrf = csrf_from_page(page.text)
-    with caplog.at_level(logging.INFO, logger="labfoundry.appliance_update"):
+    with caplog.at_level(logging.INFO, logger="atlaso.appliance_update"):
         response = client.post(
             "/appliance-update/run",
             data={"csrf": csrf, "selected_streams": ["photon_os"]},
         )
-        from labfoundry.app.worker import run_worker_once
+        from atlaso.app.worker import run_worker_once
 
         assert run_worker_once()
 
@@ -236,33 +236,33 @@ def test_appliance_update_staging_exception_records_failed_job_and_logs(client, 
     assert "failed before helper completion" in caplog.text
     assert "staging ownership repair failed" in caplog.text
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
 
     with SessionLocal() as db:
         job = db.execute(select(Job).where(Job.type == "appliance-update")).scalar_one()
         payload = json.loads(job.result or "{}")
     assert job.status == "failed"
-    assert payload["commands"][0]["command_line"] == "stage-appliance-update /var/lib/labfoundry/apply/appliance-update/labfoundry-update.json"
+    assert payload["commands"][0]["command_line"] == "stage-appliance-update /var/lib/atlaso/apply/appliance-update/atlaso-update.json"
     assert "staging ownership repair failed" in payload["commands"][0]["stderr"]
 
 
 def test_appliance_update_check_runs_every_child_after_failure(client, monkeypatch):
-    import labfoundry.app.ui as ui
+    import atlaso.app.ui as ui
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, JobStep, JobStatus
-    from labfoundry.app.services.appliance_update import ensure_appliance_update_job_steps
-    from labfoundry.app.worker import run_worker_once
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStep, JobStatus
+    from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
+    from atlaso.app.worker import run_worker_once
 
     client.get("/login")
-    selected = ["photon_os", "powershell_modules", "labfoundry_release"]
+    selected = ["photon_os", "powershell_modules", "atlaso_release"]
     calls = []
 
     def fake_execute(**kwargs):
         stream = kwargs["selected_stream_ids"][0]
         calls.append(stream)
-        succeeded = stream != "labfoundry_release"
+        succeeded = stream != "atlaso_release"
         return {
             "unit_id": stream,
             "label": stream,
@@ -297,7 +297,7 @@ def test_appliance_update_check_runs_every_child_after_failure(client, monkeypat
         db.commit()
 
     assert run_worker_once() == "job_update_check_children"
-    assert calls == ["labfoundry_release", "powershell_modules", "photon_os"]
+    assert calls == ["atlaso_release", "powershell_modules", "photon_os"]
     with SessionLocal() as db:
         job = db.get(Job, "job_update_check_children")
         steps = db.execute(
@@ -305,28 +305,28 @@ def test_appliance_update_check_runs_every_child_after_failure(client, monkeypat
         ).scalars().all()
         assert job.status == "failed"
         assert [(step.component_key, step.status) for step in steps] == [
-            ("labfoundry_release", "failed"),
+            ("atlaso_release", "failed"),
             ("powershell_modules", "succeeded"),
             ("photon_os", "succeeded"),
         ]
 
 
 def test_appliance_update_install_skips_photon_after_earlier_failure(client, monkeypatch):
-    import labfoundry.app.ui as ui
+    import atlaso.app.ui as ui
 
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, JobStep, JobStatus
-    from labfoundry.app.services.appliance_update import ensure_appliance_update_job_steps
-    from labfoundry.app.worker import run_worker_once
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStep, JobStatus
+    from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
+    from atlaso.app.worker import run_worker_once
 
     client.get("/login")
-    selected = ["photon_os", "powershell_modules", "labfoundry_release"]
+    selected = ["photon_os", "powershell_modules", "atlaso_release"]
     calls = []
 
     def fake_execute(**kwargs):
         stream = kwargs["selected_stream_ids"][0]
         calls.append(stream)
-        succeeded = stream != "labfoundry_release"
+        succeeded = stream != "atlaso_release"
         return {
             "unit_id": stream,
             "label": stream,
@@ -361,7 +361,7 @@ def test_appliance_update_install_skips_photon_after_earlier_failure(client, mon
         db.commit()
 
     assert run_worker_once() == "job_update_install_children"
-    assert calls == ["labfoundry_release", "powershell_modules"]
+    assert calls == ["atlaso_release", "powershell_modules"]
     with SessionLocal() as db:
         job = db.get(Job, "job_update_install_children")
         steps = db.execute(
@@ -369,7 +369,7 @@ def test_appliance_update_install_skips_photon_after_earlier_failure(client, mon
         ).scalars().all()
         assert job.status == "failed"
         assert [(step.component_key, step.status) for step in steps] == [
-            ("labfoundry_release", "failed"),
+            ("atlaso_release", "failed"),
             ("powershell_modules", "succeeded"),
             ("photon_os", "skipped"),
         ]
@@ -377,7 +377,7 @@ def test_appliance_update_install_skips_photon_after_earlier_failure(client, mon
 
 
 def test_appliance_update_service_version_helpers():
-    from labfoundry.app.services.appliance_update import redact_url_userinfo, version_with_git
+    from atlaso.app.services.appliance_update import redact_url_userinfo, version_with_git
 
     assert version_with_git("0.1.0", "abcdef1234567890") == "0.1.0+gabcdef123456"
     assert version_with_git("0.1.0+gold", "abcdef") == "0.1.0+gabcdef"
@@ -385,11 +385,11 @@ def test_appliance_update_service_version_helpers():
 
 
 def test_current_version_info_has_public_branch_wheel_label(monkeypatch):
-    import labfoundry
-    import labfoundry.app.services.appliance_update as appliance_update
+    import atlaso
+    import atlaso.app.services.appliance_update as appliance_update
 
-    monkeypatch.setattr(labfoundry, "__build_git_commit__", "dd9fca8d9d2b83d4bd39538cbc3727dfa8a82062")
-    monkeypatch.setattr(labfoundry, "__build_time_utc__", "2026-07-08T15:45:54Z")
+    monkeypatch.setattr(atlaso, "__build_git_commit__", "dd9fca8d9d2b83d4bd39538cbc3727dfa8a82062")
+    monkeypatch.setattr(atlaso, "__build_time_utc__", "2026-07-08T15:45:54Z")
     monkeypatch.setattr(appliance_update, "__version__", "0.1.0+gdd9fca8d9d2b")
     monkeypatch.setattr(appliance_update, "_git_value", lambda _args: "")
 
@@ -401,11 +401,11 @@ def test_current_version_info_has_public_branch_wheel_label(monkeypatch):
 
 
 def test_current_version_info_has_installed_checksum_fallback(monkeypatch):
-    import labfoundry
-    import labfoundry.app.services.appliance_update as appliance_update
+    import atlaso
+    import atlaso.app.services.appliance_update as appliance_update
 
-    monkeypatch.setattr(labfoundry, "__build_git_commit__", "")
-    monkeypatch.setattr(labfoundry, "__build_time_utc__", "")
+    monkeypatch.setattr(atlaso, "__build_git_commit__", "")
+    monkeypatch.setattr(atlaso, "__build_time_utc__", "")
     monkeypatch.setattr(appliance_update, "_git_value", lambda _args: "")
     monkeypatch.setattr(appliance_update, "_installed_record_sha256", lambda: "abc123def4567890")
 
@@ -415,66 +415,24 @@ def test_current_version_info_has_installed_checksum_fallback(monkeypatch):
     assert info["installed_sha256"] == "abc123def4567890"
 
 
-def test_build_update_wheel_version_helper():
-    script_path = Path("scripts/build_update_wheel.py")
-    spec = importlib.util.spec_from_file_location("build_update_wheel", script_path)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    assert module.version_with_git("0.1.0", "1234567890abcdef") == "0.1.0+g1234567890ab"
-
-
-def test_build_update_wheel_writes_repository_channel_layout(monkeypatch, tmp_path):
-    script_path = Path("scripts/build_update_wheel.py")
-    spec = importlib.util.spec_from_file_location("build_update_repository", script_path)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "0.1.0"\n', encoding="utf-8")
-
-    def fake_copy_source(target):
-        (target / "labfoundry").mkdir(parents=True)
-        (target / "pyproject.toml").write_text('[project]\nversion = "0.1.0"\n', encoding="utf-8")
-
-    def fake_build_wheel(_source, dist):
-        dist.mkdir(parents=True)
-        wheel = dist / "labfoundry-0.1.0+gabcdef123456-py3-none-any.whl"
-        wheel.write_bytes(b"wheel")
-        return wheel
-
-    monkeypatch.setattr(module, "ROOT", tmp_path)
-    monkeypatch.setattr(module, "git_value", lambda _args: "abcdef1234567890abcdef1234567890abcdef12")
-    monkeypatch.setattr(module, "copy_source", fake_copy_source)
-    monkeypatch.setattr(module, "build_wheel", fake_build_wheel)
-    monkeypatch.setattr(module.sys, "argv", ["build_update_wheel.py", "--channel", "preview"])
-    assert module.main() == 0
-    manifest = json.loads((tmp_path / "dist/update/channels/preview/manifest.json").read_text(encoding="utf-8"))
-    index = json.loads((tmp_path / "dist/update/index.json").read_text(encoding="utf-8"))
-    assert manifest["wheel"].startswith("../../packages/labfoundry-")
-    assert manifest["git_commit"] == "abcdef1234567890abcdef1234567890abcdef12"
-    assert index["channels"] == {"preview": "channels/preview/manifest.json"}
-    assert (tmp_path / "dist/update/manifest.json").is_file()
-
-
-def test_labfoundry_repository_url_derives_channel_manifest(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import UpdateSource
-    from labfoundry.app.services.update_sources import effective_update_settings
+def test_atlaso_repository_url_derives_channel_manifest(client):
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import UpdateSource
+    from atlaso.app.services.update_sources import effective_update_settings
 
     client.get("/login")
     with SessionLocal() as db:
-        source = db.execute(select(UpdateSource).where(UpdateSource.kind == "labfoundry")).scalar_one()
-        source.url = "https://updates.example.test/labfoundry/"
+        source = db.execute(select(UpdateSource).where(UpdateSource.kind == "atlaso")).scalar_one()
+        source.url = "https://updates.example.test/atlaso/"
         source.settings_json = '{"channel":"preview"}'
         db.add(source)
         db.commit()
         settings = effective_update_settings(db)
-    assert settings["labfoundry_manifest_url"] == "https://updates.example.test/labfoundry/channels/preview/manifest.json"
+    assert settings["atlaso_manifest_url"] == "https://updates.example.test/atlaso/channels/preview/manifest.json"
 
 
 def test_runtime_photon_source_details(tmp_path):
-    from labfoundry.app.services import appliance_update
+    from atlaso.app.services import appliance_update
 
     (tmp_path / "photon.repo").write_text(
         "[photon]\nname=Photon 5 release\nbaseurl=https://packages.example.test/photon/$releasever/release\nenabled=1\n"
@@ -494,9 +452,9 @@ def test_runtime_photon_source_details(tmp_path):
     assert "photon | Photon 5 release | baseurl=https://packages.example.test" in appliance_update.photon_repository_summary(tmp_path)
 
 def test_source_sync_is_queued_and_records_validation_status(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, UpdateSource
-    from labfoundry.app.worker import run_worker_once
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, UpdateSource
+    from atlaso.app.worker import run_worker_once
 
     login(client)
     page = client.get("/appliance-update")
@@ -511,7 +469,7 @@ def test_source_sync_is_queued_and_records_validation_status(client):
         sources = db.execute(select(UpdateSource).where(UpdateSource.enabled.is_(True))).scalars().all()
         assert json.loads(job.result)["mode"] == "source_sync"
         package_sources = [source for source in sources if source.kind in {"photon", "powershell"}]
-        signed_sources = [source for source in sources if source.kind == "labfoundry"]
+        signed_sources = [source for source in sources if source.kind == "atlaso"]
         assert all(source.validation_status == "valid" for source in package_sources)
         assert all("dry-run" in source.validation_message for source in package_sources)
         assert all(source.validation_status == "not_checked" for source in signed_sources)
@@ -523,9 +481,9 @@ def test_source_sync_is_queued_and_records_validation_status(client):
 
 
 def test_software_source_and_managed_module_lifecycle(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import ManagedPackage, UpdateSource
-    from labfoundry.app.services.update_sources import effective_update_settings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ManagedPackage, UpdateSource
+    from atlaso.app.services.update_sources import effective_update_settings
 
     login(client)
     csrf = csrf_from_page(client.get("/appliance-update").text)
@@ -579,7 +537,7 @@ def test_software_source_and_managed_module_lifecycle(client):
     assert 'data-tab-target="update-source-powershell-new"' in grouped_page.text
     assert "PSGallery" in grouped_page.text
     assert "PrivateGallery" in grouped_page.text
-    app_css = Path("labfoundry/app/static/app.css").read_text(encoding="utf-8")
+    app_css = Path("atlaso/app/static/app.css").read_text(encoding="utf-8")
     assert ".detail-rail .detail-panel {\n  position: static;" in app_css
     assert ".detail-rail {\n  position: sticky;\n  top: 22px;" in app_css
     assert 'class="source-editor-form"' in grouped_page.text
@@ -630,55 +588,55 @@ def test_software_source_and_managed_module_lifecycle(client):
 
 
 def test_effective_update_settings_preserves_all_enabled_repository_sources(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import UpdateSource
-    from labfoundry.app.services.update_sources import effective_update_settings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import UpdateSource
+    from atlaso.app.services.update_sources import effective_update_settings
 
     client.get("/login")
     with SessionLocal() as db:
         db.add_all(
             [
                 UpdateSource(
-                    kind="labfoundry",
+                    kind="atlaso",
                     name="Backup releases",
-                    url="https://updates-backup.example.test/labfoundry",
+                    url="https://updates-backup.example.test/atlaso",
                     priority=80,
                     enabled=True,
                     settings_json=json.dumps({"channel": "preview"}),
                 ),
             ]
         )
-        primary_labfoundry = db.execute(select(UpdateSource).where(UpdateSource.kind == "labfoundry")).scalars().first()
-        primary_labfoundry.url = "https://updates-primary.example.test/labfoundry"
+        primary_atlaso = db.execute(select(UpdateSource).where(UpdateSource.kind == "atlaso")).scalars().first()
+        primary_atlaso.url = "https://updates-primary.example.test/atlaso"
         db.commit()
 
         settings = effective_update_settings(db)
 
     assert "python_index_urls" not in settings
-    assert settings["labfoundry_manifest_urls"] == [
-        "https://updates-primary.example.test/labfoundry/channels/stable/manifest.json",
-        "https://updates-backup.example.test/labfoundry/channels/preview/manifest.json",
+    assert settings["atlaso_manifest_urls"] == [
+        "https://updates-primary.example.test/atlaso/channels/stable/manifest.json",
+        "https://updates-backup.example.test/atlaso/channels/preview/manifest.json",
     ]
     manifest = json.loads(
-        __import__("labfoundry.app.services.appliance_update", fromlist=["render_update_manifest"]).render_update_manifest(
-            selected_streams=["labfoundry_release"], settings=settings, actor="test"
+        __import__("atlaso.app.services.appliance_update", fromlist=["render_update_manifest"]).render_update_manifest(
+            selected_streams=["atlaso_release"], settings=settings, actor="test"
         )
     )
     assert "python_index_urls" not in manifest["sources"]
-    assert manifest["sources"]["labfoundry_manifest_urls"] == settings["labfoundry_manifest_urls"]
+    assert manifest["sources"]["atlaso_manifest_urls"] == settings["atlaso_manifest_urls"]
     assert manifest["policy"]["vmware_ceip_enabled"] is False
 
 
 def test_source_credentials_use_protected_runtime_channel_without_manifest_disclosure(client):
-    from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import UpdateSource
-    from labfoundry.app.secrets import encrypt_secret
-    from labfoundry.app.services.appliance_update import render_update_manifest
-    from labfoundry.app.services.update_sources import effective_update_settings, update_source_credentials
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import UpdateSource
+    from atlaso.app.secrets import encrypt_secret
+    from atlaso.app.services.appliance_update import render_update_manifest
+    from atlaso.app.services.update_sources import effective_update_settings, update_source_credentials
 
     client.get("/login")
     with SessionLocal() as db:
-        source = db.execute(select(UpdateSource).where(UpdateSource.kind == "labfoundry")).scalars().first()
+        source = db.execute(select(UpdateSource).where(UpdateSource.kind == "atlaso")).scalars().first()
         source.url = "https://private.example.test/releases"
         source.credential_encrypted = encrypt_secret(json.dumps({"username": "repo-user", "secret": "repo-token"}))
         db.commit()
@@ -686,7 +644,7 @@ def test_source_credentials_use_protected_runtime_channel_without_manifest_discl
         settings = effective_update_settings(db)
         credentials = update_source_credentials(db)
 
-    preview = render_update_manifest(selected_streams=["labfoundry_release"], settings=settings, actor="test")
+    preview = render_update_manifest(selected_streams=["atlaso_release"], settings=settings, actor="test")
     assert "repo-user" not in preview
     assert "repo-token" not in preview
     assert credentials[str(source_id)] == {"username": "repo-user", "secret": "repo-token"}
@@ -728,7 +686,7 @@ def test_helper_redacts_repository_credentials_from_package_client_output(monkey
     assert "[redacted]" in rendered
 
 
-def test_helper_falls_back_to_next_signed_labfoundry_release_source(monkeypatch):
+def test_helper_falls_back_to_next_signed_atlaso_release_source(monkeypatch):
     helper = load_helper_module()
     attempted = []
     expected_channel = {"channel": "preview", "release_manifest_url": "https://backup.example.test/release.json"}
@@ -744,14 +702,14 @@ def test_helper_falls_back_to_next_signed_labfoundry_release_source(monkeypatch)
     channel, manifest, url, credential = helper._download_signed_release_from_sources(
         {
             "sources": {
-                "labfoundry_manifest_urls": [
+                "atlaso_manifest_urls": [
                     "https://primary.example.test/manifest.json",
                     "https://backup.example.test/manifest.json",
                 ]
             },
             "source_definitions": [
-                {"id": 1, "kind": "labfoundry", "url": "https://primary.example.test/manifest.json", "enabled": True},
-                {"id": 2, "kind": "labfoundry", "url": "https://backup.example.test/manifest.json", "enabled": True},
+                {"id": 1, "kind": "atlaso", "url": "https://primary.example.test/manifest.json", "enabled": True},
+                {"id": 2, "kind": "atlaso", "url": "https://backup.example.test/manifest.json", "enabled": True},
             ],
         },
         {"2": {"username": "backup", "secret": "token"}},
@@ -768,7 +726,7 @@ def test_helper_falls_back_to_next_signed_labfoundry_release_source(monkeypatch)
 
 def test_helper_syncs_only_owned_photon_and_powershell_sources(monkeypatch, tmp_path):
     helper = load_helper_module()
-    photon_path = tmp_path / "labfoundry-managed.repo"
+    photon_path = tmp_path / "atlaso-managed.repo"
     state_path = tmp_path / "update-sources.json"
     monkeypatch.setattr(helper, "MANAGED_PHOTON_REPO_PATH", photon_path)
     monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", state_path)
@@ -798,7 +756,7 @@ def test_helper_uses_each_modules_bound_powershell_repository(monkeypatch, tmp_p
     scripts = []
     environments = []
     powershell_home = tmp_path / "powershell"
-    monkeypatch.setattr(helper, "LABFOUNDRY_POWERSHELL_HOME", powershell_home)
+    monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", powershell_home)
     monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
 
     def fake_command(command, *, success_codes=None, env=None):
@@ -834,7 +792,7 @@ def test_helper_normalizes_system_powershell_module_permissions_after_install(mo
 
     monkeypatch.setattr(helper, "POWERSHELL_SYSTEM_ROOT", powershell_root)
     monkeypatch.setattr(helper, "POWERSHELL_MODULE_ROOT", module_root)
-    monkeypatch.setattr(helper, "LABFOUNDRY_POWERSHELL_HOME", tmp_path / "powershell-home")
+    monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", tmp_path / "powershell-home")
     monkeypatch.setattr(helper, "_command_path", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr(helper, "_command_payload", fake_command)
 
@@ -862,7 +820,7 @@ def test_helper_reasserts_global_ceip_after_powercli_install(monkeypatch, tmp_pa
 
     helper = load_helper_module()
     scripts = []
-    monkeypatch.setattr(helper, "LABFOUNDRY_POWERSHELL_HOME", tmp_path / "powershell-home")
+    monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", tmp_path / "powershell-home")
 
     def fake_command(command, *, success_codes=None, env=None):
         if command[0].endswith("pwsh"):
@@ -909,11 +867,11 @@ def test_helper_reports_powershell_permission_normalization_failure(monkeypatch,
 
     monkeypatch.setattr(helper, "POWERSHELL_SYSTEM_ROOT", powershell_root)
     monkeypatch.setattr(helper, "POWERSHELL_MODULE_ROOT", module_root)
-    monkeypatch.setattr(helper, "LABFOUNDRY_POWERSHELL_HOME", tmp_path / "powershell-home")
+    monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", tmp_path / "powershell-home")
     monkeypatch.setattr(
         helper,
         "APPLIANCE_UPDATE_INFO_PATH",
-        tmp_path / "labfoundry-update-info.json",
+        tmp_path / "atlaso-update-info.json",
     )
     monkeypatch.setattr(helper, "_command_path", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr(helper, "_command_payload", fake_command)
@@ -968,7 +926,7 @@ def test_helper_runs_managed_script_in_unprivileged_systemd_sandbox(monkeypatch,
     monkeypatch.setattr(helper, "_run", fake_run)
     assert helper._handle_automation("run", [str(script_path), "bash", "60", "--", "--scope", "lab environment"]) == 0
     command = captured["command"]
-    assert "--uid=labfoundry-automation" in command
+    assert "--uid=atlaso-automation" in command
     assert "--property=NoNewPrivileges=yes" in command
     assert "--property=ProtectSystem=strict" in command
     writable_path = Path(next(argument.split("=", 2)[2] for argument in command if argument.startswith("--property=ReadWritePaths=")))
@@ -981,7 +939,7 @@ def test_helper_runs_managed_script_in_unprivileged_systemd_sandbox(monkeypatch,
 
 def test_helper_rejects_appliance_update_config_outside_apply_dir(tmp_path):
     helper = load_helper_module()
-    config_path = tmp_path / "labfoundry-update.json"
+    config_path = tmp_path / "atlaso-update.json"
     config_path.write_text("{}", encoding="utf-8")
 
     try:
@@ -996,12 +954,12 @@ def test_helper_rejects_unsigned_v1_release_manifest(monkeypatch, tmp_path, caps
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "appliance-update"
     apply_dir.mkdir(parents=True)
-    config_path = apply_dir / "labfoundry-update.json"
+    config_path = apply_dir / "atlaso-update.json"
     config_path.write_text(
         json.dumps(
             {
-                "selected_streams": ["labfoundry_release"],
-                "sources": {"labfoundry_manifest_url": "https://updates.local/manifest.json"},
+                "selected_streams": ["atlaso_release"],
+                    "sources": {"atlaso_manifest_urls": ["https://updates.local/manifest.json"]},
             }
         ),
         encoding="utf-8",
@@ -1014,7 +972,7 @@ def test_helper_rejects_unsigned_v1_release_manifest(monkeypatch, tmp_path, caps
                 {
                     "version": "0.1.0+gabc",
                     "git_commit": "abcdef1234567890abcdef1234567890abcdef12",
-                    "wheel": "labfoundry-0.1.0.whl",
+                    "wheel": "atlaso-0.1.0.whl",
                     "sha256": "0" * 64,
                 }
             ).encode("utf-8")
@@ -1031,12 +989,12 @@ def test_helper_rejects_credentialed_update_urls(tmp_path, capsys):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "appliance-update"
     apply_dir.mkdir(parents=True)
-    config_path = apply_dir / "labfoundry-update.json"
+    config_path = apply_dir / "atlaso-update.json"
     config_path.write_text(
         json.dumps(
             {
-                "selected_streams": ["labfoundry_release"],
-                "sources": {"labfoundry_manifest_url": "https://user:token@example.test/manifest.json"},
+                "selected_streams": ["atlaso_release"],
+                    "sources": {"atlaso_manifest_urls": ["https://user:token@example.test/manifest.json"]},
             }
         ),
         encoding="utf-8",

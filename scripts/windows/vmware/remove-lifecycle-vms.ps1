@@ -1,13 +1,13 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [string]$LabName = 'LabFoundryWorkstationLifecycle',
+    [string]$LabName = 'AtlasoWorkstationLifecycle',
     [string]$VmrunPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
 
-if (-not $LabName.StartsWith('LabFoundryWorkstationLifecycle')) {
-    throw "Refusing VM cleanup for prefix '$LabName'. Cleanup is limited to LabFoundryWorkstationLifecycle* VM names."
+if (-not $LabName.StartsWith('AtlasoWorkstationLifecycle')) {
+    throw "Refusing VM cleanup for prefix '$LabName'. Cleanup is limited to AtlasoWorkstationLifecycle* VM names."
 }
 
 function Resolve-VmrunPath {

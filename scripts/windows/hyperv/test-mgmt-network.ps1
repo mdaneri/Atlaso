@@ -1,9 +1,9 @@
 [CmdletBinding()]
 param(
-    [string]$Name = 'LabFoundry',
+    [string]$Name = 'Atlaso',
     [string]$MgmtHostIPAddress = '192.168.49.254',
     [string]$MgmtGuestIPAddress = '192.168.49.1',
-    [string]$MgmtNatName = 'LabFoundry-Mgmt-NAT'
+    [string]$MgmtNatName = 'Atlaso-Mgmt-NAT'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -30,8 +30,8 @@ function Test-TcpPort {
     }
 }
 
-$switch = Get-VMSwitch -Name 'LabFoundry-Mgmt' -ErrorAction SilentlyContinue
-$adapterName = 'vEthernet (LabFoundry-Mgmt)'
+$switch = Get-VMSwitch -Name 'Atlaso-Mgmt' -ErrorAction SilentlyContinue
+$adapterName = 'vEthernet (Atlaso-Mgmt)'
 $adapter = Get-NetAdapter -Name $adapterName -ErrorAction SilentlyContinue
 $hostAddress = Get-NetIPAddress -InterfaceAlias $adapterName -AddressFamily IPv4 -ErrorAction SilentlyContinue |
     Where-Object { $_.IPAddress -eq $MgmtHostIPAddress }

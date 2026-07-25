@@ -1,0 +1,101 @@
+from collections.abc import Generator
+from datetime import datetime, timezone
+from pathlib import Path
+
+from sqlalchemy import create_engine, event, inspect, select
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+
+from atlaso.app.config import get_settings
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+def _engine_url() -> str:
+    settings = get_settings()
+    url = settings.database_url
+    if url.startswith("sqlite:///"):
+        db_path = Path(url.removeprefix("sqlite:///"))
+        if str(db_path) != ":memory:":
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+    return url
+
+
+engine = create_engine(
+    _engine_url(),
+    connect_args={"check_same_thread": False} if _engine_url().startswith("sqlite") else {},
+)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+
+
+@event.listens_for(Engine, "connect")
+def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
+    if dbapi_connection.__class__.__module__.split(".", 1)[0] != "sqlite3":
+        return
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
+
+
+DNS_AUTHORITY_SERIAL_FIELDS = {
+    "domain",
+    "authoritative",
+    "authoritative_server",
+    "authoritative_contact",
+    "authoritative_ttl",
+    "authoritative_refresh",
+    "authoritative_retry",
+    "authoritative_expire",
+    "listen_interface",
+    "listen_address",
+}
+
+
+@event.listens_for(Session, "before_flush")
+def _advance_dns_authoritative_serial(session: Session, _flush_context, _instances) -> None:
+    from atlaso.app.models import DnsRecord, DnsSettings
+
+    record_changed = any(isinstance(item, DnsRecord) for item in session.new | session.deleted)
+    if not record_changed:
+        record_changed = any(
+            isinstance(item, DnsRecord) and session.is_modified(item, include_collections=False)
+            for item in session.dirty
+        )
+
+    settings_changed = False
+    for item in session.dirty:
+        if not isinstance(item, DnsSettings):
+            continue
+        state = inspect(item)
+        if any(state.attrs[field].history.has_changes() for field in DNS_AUTHORITY_SERIAL_FIELDS):
+            settings_changed = True
+            break
+
+    if not record_changed and not settings_changed:
+        return
+
+    settings = next((item for item in session.new if isinstance(item, DnsSettings)), None)
+    if settings is None:
+        settings = session.execute(select(DnsSettings)).scalar_one_or_none()
+    if settings is None:
+        return
+
+    current = int(settings.authoritative_serial or 0)
+    now = int(datetime.now(timezone.utc).timestamp())
+    settings.authoritative_serial = max(current + 1, now)
+
+
+def init_db() -> None:
+    from atlaso.app import models  # noqa: F401
+
+    Base.metadata.create_all(bind=engine)
+
+
+def get_db() -> Generator[Session, None, None]:
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()

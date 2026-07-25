@@ -1,8 +1,8 @@
 import io
 import tarfile
 
-from labfoundry.app.models import User, VcfDepotDownloadProfile, VcfOfflineDepotSettings
-from labfoundry.app.services.vcf_offline_depot import (
+from atlaso.app.models import User, VcfDepotDownloadProfile, VcfOfflineDepotSettings
+from atlaso.app.services.vcf_offline_depot import (
     VCF_DEPOT_COMPONENTS,
     VCF_DEPOT_ESX_DISABLED_PLATFORMS,
     generate_vcf_software_depot_id,
@@ -25,15 +25,15 @@ def test_vcf_depot_start_requires_correct_credential_kind_without_blocking_apply
     archive.write_bytes(b"not-a-real-archive")
     settings = VcfOfflineDepotSettings(
         enabled=True,
-        hostname="depot.labfoundry.internal",
+        hostname="depot.atlaso.internal",
         listen_interface="eth2",
         listen_address="192.168.50.1",
         port=443,
-        server_certificate="depot.labfoundry.internal",
-        depot_store_path="/mnt/labfoundry-vcf-offline-depot",
+        server_certificate="depot.atlaso.internal",
+        depot_store_path="/mnt/atlaso-vcf-offline-depot",
         tool_archive_path=str(archive),
         tool_version="9.1.0",
-        config_path="/etc/labfoundry/nginx/sites.d/vcf-offline-depot.conf",
+        config_path="/etc/atlaso/nginx/sites.d/vcf-offline-depot.conf",
         http_user_id=1,
     )
     user = depot_http_user()
@@ -87,7 +87,7 @@ def test_vcf_depot_application_properties_does_not_scan_uploaded_tool_archive(tm
 
     content, source = vcf_depot_application_properties_from_tool(settings)
 
-    assert source == "LabFoundry default"
+    assert source == "Atlaso default"
     assert "archive.example.test" not in content
     assert "lcm.depot.adapter.host=dl.broadcom.com" in content
 
@@ -103,7 +103,7 @@ def test_vcf_depot_application_properties_skips_nested_archive_members(tmp_path)
 
     content, source = vcf_depot_application_properties_from_tool(settings)
 
-    assert source == "LabFoundry default"
+    assert source == "Atlaso default"
     assert "nested-archive.example.test" not in content
     assert "lcm.depot.adapter.host=dl.broadcom.com" in content
 
@@ -116,11 +116,11 @@ def test_vcf_depot_application_properties_falls_back_when_archive_member_is_miss
         info.size = len(payload)
         bundle.addfile(info, io.BytesIO(payload))
     settings = VcfOfflineDepotSettings(tool_archive_path=str(archive))
-    monkeypatch.setattr("labfoundry.app.services.vcf_offline_depot.VCF_DEPOT_EXTRACT_DIR", tmp_path / "missing-extract")
+    monkeypatch.setattr("atlaso.app.services.vcf_offline_depot.VCF_DEPOT_EXTRACT_DIR", tmp_path / "missing-extract")
 
     content, source = vcf_depot_application_properties_from_tool(settings)
 
-    assert source == "LabFoundry default"
+    assert source == "Atlaso default"
     assert "lcm.depot.adapter.host=dl.broadcom.com" in content
 
 
@@ -129,15 +129,15 @@ def test_vcf_depot_validation_uses_documented_component_catalog(tmp_path):
     archive.write_bytes(b"not-a-real-archive")
     settings = VcfOfflineDepotSettings(
         enabled=True,
-        hostname="depot.labfoundry.internal",
+        hostname="depot.atlaso.internal",
         listen_interface="eth2",
         listen_address="192.168.50.1",
         port=443,
-        server_certificate="depot.labfoundry.internal",
-        depot_store_path="/mnt/labfoundry-vcf-offline-depot",
+        server_certificate="depot.atlaso.internal",
+        depot_store_path="/mnt/atlaso-vcf-offline-depot",
         tool_archive_path=str(archive),
         tool_version="9.1.0",
-        config_path="/etc/labfoundry/nginx/sites.d/vcf-offline-depot.conf",
+        config_path="/etc/atlaso/nginx/sites.d/vcf-offline-depot.conf",
         http_user_id=1,
     )
     assert VCF_DEPOT_COMPONENTS["VRA"] == "VCF Automation"
@@ -170,15 +170,15 @@ def test_vcf_depot_validation_uses_esx_disabled_platform_catalog(tmp_path):
     archive.write_bytes(b"not-a-real-archive")
     settings = VcfOfflineDepotSettings(
         enabled=True,
-        hostname="depot.labfoundry.internal",
+        hostname="depot.atlaso.internal",
         listen_interface="eth2",
         listen_address="192.168.50.1",
         port=443,
-        server_certificate="depot.labfoundry.internal",
-        depot_store_path="/mnt/labfoundry-vcf-offline-depot",
+        server_certificate="depot.atlaso.internal",
+        depot_store_path="/mnt/atlaso-vcf-offline-depot",
         tool_archive_path=str(archive),
         tool_version="9.1.0",
-        config_path="/etc/labfoundry/nginx/sites.d/vcf-offline-depot.conf",
+        config_path="/etc/atlaso/nginx/sites.d/vcf-offline-depot.conf",
         http_user_id=1,
     )
     assert VCF_DEPOT_ESX_DISABLED_PLATFORMS == (
@@ -228,13 +228,13 @@ def test_vcf_depot_validation_uses_esx_disabled_platform_catalog(tmp_path):
 def test_vcf_depot_validation_allows_https_only_without_vcfdt_upload():
     settings = VcfOfflineDepotSettings(
         enabled=True,
-        hostname="depot.labfoundry.internal",
+        hostname="depot.atlaso.internal",
         listen_interface="eth2",
         listen_address="192.168.50.1",
         port=443,
-        server_certificate="depot.labfoundry.internal",
-        depot_store_path="/mnt/labfoundry-vcf-offline-depot",
-        config_path="/etc/labfoundry/nginx/sites.d/vcf-offline-depot.conf",
+        server_certificate="depot.atlaso.internal",
+        depot_store_path="/mnt/atlaso-vcf-offline-depot",
+        config_path="/etc/atlaso/nginx/sites.d/vcf-offline-depot.conf",
         http_user_id=1,
     )
 
@@ -247,13 +247,13 @@ def test_vcf_depot_validation_allows_https_only_without_vcfdt_upload():
 def test_vcf_depot_validation_requires_user_unless_unauthenticated_access_is_enabled():
     settings = VcfOfflineDepotSettings(
         enabled=True,
-        hostname="depot.labfoundry.internal",
+        hostname="depot.atlaso.internal",
         listen_interface="eth2",
         listen_address="192.168.50.1",
         port=443,
-        server_certificate="depot.labfoundry.internal",
-        depot_store_path="/mnt/labfoundry-vcf-offline-depot",
-        config_path="/etc/labfoundry/nginx/sites.d/vcf-offline-depot.conf",
+        server_certificate="depot.atlaso.internal",
+        depot_store_path="/mnt/atlaso-vcf-offline-depot",
+        config_path="/etc/atlaso/nginx/sites.d/vcf-offline-depot.conf",
     )
 
     errors, warnings = validate_vcf_depot_state(settings, [], {"eth2"})
@@ -268,25 +268,25 @@ def test_vcf_depot_validation_requires_user_unless_unauthenticated_access_is_ena
     assert warnings == []
 
 
-def test_vcf_depot_nginx_config_renders_labfoundry_auth_request_by_default():
+def test_vcf_depot_nginx_config_renders_atlaso_auth_request_by_default():
     settings = VcfOfflineDepotSettings(
         enabled=True,
-        hostname="depot.labfoundry.internal",
+        hostname="depot.atlaso.internal",
         listen_interface="eth2",
         listen_address="192.168.50.1",
         port=443,
         http_user=depot_http_user(),
-        server_certificate="depot.labfoundry.internal",
-        depot_store_path="/mnt/labfoundry-vcf-offline-depot",
+        server_certificate="depot.atlaso.internal",
+        depot_store_path="/mnt/atlaso-vcf-offline-depot",
     )
 
     config = render_nginx_depot_config(settings)
 
-    assert "# LabFoundry VCF Offline Depot user: vcf-depot" in config
+    assert "# Atlaso VCF Offline Depot user: vcf-depot" in config
     assert "satisfy any;" in config
     assert 'auth_basic "VCF Offline Depot";' in config
-    assert "auth_basic_user_file /etc/labfoundry/nginx/htpasswd/vcf-offline-depot.htpasswd;" in config
-    assert "proxy_set_header X-LabFoundry-Depot-Basic-User $remote_user;" in config
+    assert "auth_basic_user_file /etc/atlaso/nginx/htpasswd/vcf-offline-depot.htpasswd;" in config
+    assert "proxy_set_header X-Atlaso-Depot-Basic-User $remote_user;" in config
     assert "location = /PROD/" in config
     assert "location ^~ /static/" in config
     assert "location = /favicon.ico" in config
@@ -296,30 +296,30 @@ def test_vcf_depot_nginx_config_renders_labfoundry_auth_request_by_default():
     assert "location ^~ /ca/" not in config
     assert "location = /requests" not in config
     assert "location ^~ /requests/" not in config
-    assert "auth_request /_labfoundry_depot_auth;" in config
+    assert "auth_request /_atlaso_depot_auth;" in config
     assert "proxy_pass http://127.0.0.1:8000/PROD/auth-failure;" in config
-    assert "error_page 401 = /_labfoundry_depot_login;" in config
+    assert "error_page 401 = /_atlaso_depot_login;" in config
     assert "proxy_pass http://127.0.0.1:8000;" in config
-    assert "alias /mnt/labfoundry-vcf-offline-depot/PROD/$1;" in config
+    assert "alias /mnt/atlaso-vcf-offline-depot/PROD/$1;" in config
 
     settings.allow_unauthenticated_access = True
     open_config = render_nginx_depot_config(settings)
 
-    assert "# LabFoundry VCF Offline Depot unauthenticated access: true" in open_config
+    assert "# Atlaso VCF Offline Depot unauthenticated access: true" in open_config
     assert "auth_basic" not in open_config
-    assert "auth_request /_labfoundry_depot_auth;" not in open_config
+    assert "auth_request /_atlaso_depot_auth;" not in open_config
 
 
 def test_vcf_depot_validation_rejects_management_role_interfaces():
     settings = VcfOfflineDepotSettings(
         enabled=True,
-        hostname="depot.labfoundry.internal",
+        hostname="depot.atlaso.internal",
         listen_interface="eth0",
         listen_address="192.168.49.1",
         port=443,
-        server_certificate="depot.labfoundry.internal",
-        depot_store_path="/mnt/labfoundry-vcf-offline-depot",
-        config_path="/etc/labfoundry/nginx/sites.d/vcf-offline-depot.conf",
+        server_certificate="depot.atlaso.internal",
+        depot_store_path="/mnt/atlaso-vcf-offline-depot",
+        config_path="/etc/atlaso/nginx/sites.d/vcf-offline-depot.conf",
         http_user_id=1,
     )
 
@@ -350,7 +350,7 @@ def test_vcf_depot_generates_software_depot_id_from_extracted_tool(tmp_path, mon
         assert kwargs["input"] == "Y\n"
         return type("Completed", (), {"returncode": 0, "stdout": "Software Depot ID: 8c9506c6-7bdf-44d5-b2e9-50d829d66b99\n", "stderr": ""})()
 
-    monkeypatch.setattr("labfoundry.app.services.vcf_offline_depot.subprocess.run", fake_run)
+    monkeypatch.setattr("atlaso.app.services.vcf_offline_depot.subprocess.run", fake_run)
     result = generate_vcf_software_depot_id(archive_path, extraction_dir=tmp_path / "active-tool")
 
     assert result.success is True
@@ -370,8 +370,8 @@ def test_vcf_depot_software_depot_id_generation_handles_truncated_archive(tmp_pa
 
 def test_vcf_depot_command_preview_uses_staged_secret_paths():
     settings = VcfOfflineDepotSettings(
-        hostname="depot.labfoundry.internal",
-        depot_store_path="/mnt/labfoundry-vcf-offline-depot",
+        hostname="depot.atlaso.internal",
+        depot_store_path="/mnt/atlaso-vcf-offline-depot",
         tool_archive_path="vcfDownloadTool/vcf-download-tool-9.1.0.test.tar.gz",
         tool_version="9.1.0",
     )
@@ -400,13 +400,13 @@ def test_vcf_depot_command_preview_uses_staged_secret_paths():
     assert "vcf-download-tool configuration get --software-depot-id" not in preview
     assert "vcf-download-tool binaries list" not in preview
     assert "vcf-download-tool binaries download" in preview
-    assert "--depot-store=/mnt/labfoundry-vcf-offline-depot" in preview
-    assert "VCFDT_HOME=/var/lib/labfoundry/vcfDownloadTool/active-tool" in preview
-    assert "--depot-download-token-file=/var/lib/labfoundry/vcfDownloadTool/active-tool/secrets/download-token.txt" in preview
+    assert "--depot-store=/mnt/atlaso-vcf-offline-depot" in preview
+    assert "VCFDT_HOME=/var/lib/atlaso/vcfDownloadTool/active-tool" in preview
+    assert "--depot-download-token-file=/var/lib/atlaso/vcfDownloadTool/active-tool/secrets/download-token.txt" in preview
     assert "--component=VRA" in preview
     assert "--component-version=9.1.0.0100" in preview
     assert "vcf-download-tool esx configuration -D esxio-9.1-INTL -D armEsx-9.1-INTL" in preview
-    assert "--depot-download-activation-code-file=/var/lib/labfoundry/vcfDownloadTool/active-tool/secrets/activation-code.txt" in preview
+    assert "--depot-download-activation-code-file=/var/lib/atlaso/vcfDownloadTool/active-tool/secrets/activation-code.txt" in preview
     assert '> "${VCFDT_HOME}/conf/esxUserConfig.json"' in preview
     assert '"disabledPlatforms": [' in preview
     assert '"esxio-9.1-INTL"' in preview
@@ -415,8 +415,8 @@ def test_vcf_depot_command_preview_uses_staged_secret_paths():
 
 def test_vcf_depot_download_profiles_use_activation_code_when_no_token_is_staged():
     settings = VcfOfflineDepotSettings(
-        hostname="depot.labfoundry.internal",
-        depot_store_path="/mnt/labfoundry-vcf-offline-depot",
+        hostname="depot.atlaso.internal",
+        depot_store_path="/mnt/atlaso-vcf-offline-depot",
         tool_archive_path="vcfDownloadTool/vcf-download-tool-9.1.0.test.tar.gz",
         tool_version="9.1.0",
     )
@@ -432,14 +432,14 @@ def test_vcf_depot_download_profiles_use_activation_code_when_no_token_is_staged
     commands = vcfdt_commands_for_profile(settings, profile, download_token_present=False, activation_code_present=True)
 
     assert commands[0][0:3] == ["vcf-download-tool", "binaries", "download"]
-    assert "--depot-download-activation-code-file=/var/lib/labfoundry/vcfDownloadTool/active-tool/secrets/activation-code.txt" in commands[0]
-    assert "--depot-download-token-file=/var/lib/labfoundry/vcfDownloadTool/active-tool/secrets/download-token.txt" not in commands[0]
+    assert "--depot-download-activation-code-file=/var/lib/atlaso/vcfDownloadTool/active-tool/secrets/activation-code.txt" in commands[0]
+    assert "--depot-download-token-file=/var/lib/atlaso/vcfDownloadTool/active-tool/secrets/download-token.txt" not in commands[0]
 
 
 def test_vcf_depot_command_preview_supports_patch_only_profiles():
     settings = VcfOfflineDepotSettings(
-        hostname="depot.labfoundry.internal",
-        depot_store_path="/mnt/labfoundry-vcf-offline-depot",
+        hostname="depot.atlaso.internal",
+        depot_store_path="/mnt/atlaso-vcf-offline-depot",
         tool_archive_path="vcfDownloadTool/vcf-download-tool-9.1.0.test.tar.gz",
         tool_version="9.1.0",
     )
@@ -468,21 +468,21 @@ def test_vcf_depot_command_preview_supports_patch_only_profiles():
 def test_vcf_depot_nginx_preview_uses_ca_paths_and_static_file_directives():
     settings = VcfOfflineDepotSettings(
         enabled=True,
-        hostname="depot.labfoundry.internal",
+        hostname="depot.atlaso.internal",
         listen_address="192.168.50.1",
         port=443,
-        depot_store_path="/mnt/labfoundry-vcf-offline-depot",
+        depot_store_path="/mnt/atlaso-vcf-offline-depot",
     )
 
     preview = render_nginx_depot_config(
         settings,
-        certificate_path="/etc/labfoundry/vcf-offline-depot/certs/depot.crt",
-        key_path="/etc/labfoundry/vcf-offline-depot/certs/depot.key",
+        certificate_path="/etc/atlaso/vcf-offline-depot/certs/depot.crt",
+        key_path="/etc/atlaso/vcf-offline-depot/certs/depot.key",
     )
 
     assert "listen 192.168.50.1:443 ssl;" in preview
-    assert "# VCF endpoint: https://depot.labfoundry.internal/PROD/" in preview
-    assert "root /mnt/labfoundry-vcf-offline-depot;" not in preview
+    assert "# VCF endpoint: https://depot.atlaso.internal/PROD/" in preview
+    assert "root /mnt/atlaso-vcf-offline-depot;" not in preview
     assert "location = / {" in preview
     assert "proxy_pass http://127.0.0.1:8000;" in preview
     assert "location ^~ /static/" in preview
@@ -497,28 +497,28 @@ def test_vcf_depot_nginx_preview_uses_ca_paths_and_static_file_directives():
     assert "return 301 /PROD/;" in preview
     assert "location = /PROD/login" in preview
     assert "location = /PROD/logout" in preview
-    assert "location = /_labfoundry_depot_auth" in preview
+    assert "location = /_atlaso_depot_auth" in preview
     assert "location = /PROD/" in preview
     assert "location ~ ^/PROD/.*/$" in preview
     assert "location ~ ^/PROD/(?!login$|logout$|auth-check$)(.+[^/])$" in preview
-    assert "alias /mnt/labfoundry-vcf-offline-depot/PROD/$1;" in preview
+    assert "alias /mnt/atlaso-vcf-offline-depot/PROD/$1;" in preview
     assert "location /" in preview
     assert "return 404;" in preview
     assert "sendfile on;" in preview
     assert "autoindex off;" in preview
     assert "default_type application/octet-stream;" in preview
-    assert "ssl_certificate /etc/labfoundry/vcf-offline-depot/certs/depot.crt;" in preview
-    assert "ssl_certificate_key /etc/labfoundry/vcf-offline-depot/certs/depot.key;" in preview
+    assert "ssl_certificate /etc/atlaso/vcf-offline-depot/certs/depot.crt;" in preview
+    assert "ssl_certificate_key /etc/atlaso/vcf-offline-depot/certs/depot.key;" in preview
     assert "BEGIN PRIVATE KEY" not in preview
 
 
 def test_vcf_depot_nginx_preview_brackets_ipv6_listeners():
     settings = VcfOfflineDepotSettings(
         enabled=True,
-        hostname="depot.labfoundry.internal",
+        hostname="depot.atlaso.internal",
         listen_address="192.168.50.1\nfd87::254",
         port=443,
-        depot_store_path="/mnt/labfoundry-vcf-offline-depot",
+        depot_store_path="/mnt/atlaso-vcf-offline-depot",
     )
 
     preview = render_nginx_depot_config(settings)
