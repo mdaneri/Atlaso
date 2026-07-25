@@ -118,6 +118,27 @@ def test_real_ldap_logs_use_privileged_fixed_helper_action(monkeypatch):
     assert result.stdout == "slapd ready\n"
 
 
+def test_managed_ldap_authentication_password_uses_stdin_not_argv(monkeypatch):
+    import labfoundry.app.adapters.system as system_adapter
+
+    captured: dict[str, object] = {}
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["input"] = kwargs.get("input")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(system_adapter.subprocess, "run", fake_run)
+    result = SystemAdapter(dry_run=False).authenticate_ldap_user(
+        "uid=alice,ou=users,dc=example,dc=test",
+        "Correct-Horse-Battery-Staple!",
+    )
+    assert result.returncode == 0
+    assert captured["input"] == "Correct-Horse-Battery-Staple!\n"
+    assert "Correct-Horse-Battery-Staple!" not in " ".join(captured["command"])
+    assert result.command == captured["command"]
+
+
 def test_real_dnsmasq_logs_use_privileged_fixed_helper_action(monkeypatch):
     import labfoundry.app.adapters.system as system_adapter
 

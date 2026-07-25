@@ -211,6 +211,11 @@ build {
   }
 
   provisioner "file" {
+    source      = "../../requirements-appliance.lock"
+    destination = "/tmp/labfoundry-src/requirements-appliance.lock"
+  }
+
+  provisioner "file" {
     source      = "../../README.md"
     destination = "/tmp/labfoundry-src/README.md"
   }
@@ -223,6 +228,16 @@ build {
   provisioner "file" {
     source      = "../../scripts/check_photon_compatibility.py"
     destination = "/tmp/labfoundry-src/scripts/check_photon_compatibility.py"
+  }
+
+  provisioner "file" {
+    source      = "../../scripts/version.py"
+    destination = "/tmp/labfoundry-src/scripts/version.py"
+  }
+
+  provisioner "file" {
+    source      = "../../scripts/run_tdnf_with_progress.py"
+    destination = "/tmp/labfoundry-src/scripts/run_tdnf_with_progress.py"
   }
 
   provisioner "file" {
@@ -243,6 +258,11 @@ build {
   provisioner "file" {
     source      = "../common/boot"
     destination = "/tmp/labfoundry-src/image/common/boot"
+  }
+
+  provisioner "file" {
+    source      = "../common/update-trust"
+    destination = "/tmp/labfoundry-src/image/common/update-trust"
   }
 
   provisioner "file" {

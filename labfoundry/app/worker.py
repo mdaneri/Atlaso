@@ -13,8 +13,13 @@ from sqlalchemy.orm import Session
 from labfoundry.app.adapters.system import SystemAdapter
 from labfoundry.app.config import get_settings
 from labfoundry.app.database import SessionLocal, init_db
-from labfoundry.app.models import AuditEvent, AutomationScriptRevision, Job, JobStatus, utcnow
-from labfoundry.app.services.appliance_update import APPLIANCE_UPDATE_FINALIZER_PATH
+from labfoundry.app.models import AuditEvent, AutomationScriptRevision, Job, JobStatus, JobStep, utcnow
+from labfoundry.app.services.appliance_update import (
+    APPLIANCE_UPDATE_EXECUTION_ORDER,
+    APPLIANCE_UPDATE_FINALIZER_PATH,
+    UPDATE_STREAM_LABELS,
+    ensure_appliance_update_job_steps,
+)
 from labfoundry.app.services.automation import enqueue_due_schedules, json_object
 
 
@@ -72,12 +77,78 @@ def recover_interrupted_worker_jobs(db: Session) -> int:
         )
         finalizer_status = str(definitive.get("status") or "")
         recovered = finalizer_status in {JobStatus.SUCCEEDED.value, JobStatus.FAILED.value}
-        job.status = finalizer_status if recovered else JobStatus.FAILED.value
+        update_steps = list(job.steps) if job.type == "appliance-update" else []
+        if update_steps:
+            release_step = next(
+                (step for step in update_steps if step.component_key == "labfoundry_release"),
+                None,
+            )
+            if recovered and release_step is not None:
+                release_step.status = finalizer_status
+                release_step.started_at = release_step.started_at or job.started_at or now
+                release_step.finished_at = now
+                release_step.progress_percent = 100
+                release_step.error = (
+                    None
+                    if finalizer_status == JobStatus.SUCCEEDED.value
+                    else str(definitive.get("error") or "The LabFoundry release transaction failed.")
+                )
+                try:
+                    release_result = json.loads(release_step.result or "{}")
+                except json.JSONDecodeError:
+                    release_result = {}
+                release_result.update(
+                    {
+                        "status": finalizer_status,
+                        "success": finalizer_status == JobStatus.SUCCEEDED.value,
+                        "release_transaction": definitive,
+                        "worker_recovery": "root_finalizer",
+                    }
+                )
+                release_step.result = json.dumps(release_result, indent=2, sort_keys=True)
+                db.add(release_step)
+            for step in update_steps:
+                if step is release_step and recovered:
+                    continue
+                if step.status == JobStatus.RUNNING.value:
+                    step.status = JobStatus.FAILED.value
+                    step.error = "The LabFoundry worker restarted while this update stream was running."
+                elif step.status == JobStatus.PENDING.value:
+                    step.status = JobStatus.SKIPPED.value
+                    step.error = "The update stream was not started because the LabFoundry worker restarted."
+                else:
+                    continue
+                step.finished_at = now
+                step.progress_percent = 100
+                try:
+                    step_result = json.loads(step.result or "{}")
+                except json.JSONDecodeError:
+                    step_result = {}
+                step_result.update(
+                    {
+                        "status": step.status,
+                        "success": False,
+                        "error": step.error,
+                        "worker_recovery": "interrupted",
+                    }
+                )
+                step.result = json.dumps(step_result, indent=2, sort_keys=True)
+                db.add(step)
+            all_steps_succeeded = bool(update_steps) and all(
+                step.status == JobStatus.SUCCEEDED.value for step in update_steps
+            )
+            job.status = (
+                JobStatus.SUCCEEDED.value
+                if recovered and all_steps_succeeded
+                else JobStatus.FAILED.value
+            )
+        else:
+            job.status = finalizer_status if recovered else JobStatus.FAILED.value
         job.finished_at = now
         job.progress_percent = 100
         job.error = (
             None
-            if recovered and job.status == JobStatus.SUCCEEDED.value
+            if job.status == JobStatus.SUCCEEDED.value
             else str(definitive.get("error") or "The LabFoundry worker restarted while this task was running. The task was not rerun automatically.")
         )
         try:
@@ -116,8 +187,63 @@ def _fail_job(db: Session, job: Job, exc: Exception) -> None:
     db.commit()
 
 
+def _appliance_update_result_error(result: dict[str, Any]) -> str:
+    explicit = str(result.get("error") or "").strip()
+    if explicit:
+        return explicit
+    for command in result.get("commands", []):
+        if not isinstance(command, dict) or int(command.get("returncode") or 0) == 0:
+            continue
+        detail = str(command.get("stderr") or command.get("stdout") or "").strip()
+        if detail:
+            return detail[-2000:]
+    return "This appliance update stream reported a failure."
+
+
+def _set_appliance_update_step_running(job_id: str, stream: str, *, completed: int, total: int) -> None:
+    with SessionLocal() as db:
+        job = db.get(Job, job_id)
+        step = db.get(JobStep, f"{job_id}:{stream}")
+        if job is None or step is None:
+            return
+        now = utcnow()
+        step.status = JobStatus.RUNNING.value
+        step.started_at = step.started_at or now
+        step.progress_percent = max(1, int(step.progress_percent or 0))
+        step.error = None
+        job.progress_percent = max(int(job.progress_percent or 0), int((completed / max(total, 1)) * 90))
+        db.add_all([job, step])
+        db.commit()
+
+
+def _complete_appliance_update_step(
+    job_id: str,
+    stream: str,
+    *,
+    result: dict[str, Any],
+    completed: int,
+    total: int,
+) -> None:
+    with SessionLocal() as db:
+        job = db.get(Job, job_id)
+        step = db.get(JobStep, f"{job_id}:{stream}")
+        if job is None or step is None:
+            return
+        now = utcnow()
+        step.status = str(result.get("status") or JobStatus.FAILED.value)
+        step.started_at = step.started_at or now
+        step.finished_at = now
+        step.progress_percent = 100
+        step.result = json.dumps(result, indent=2, sort_keys=True)
+        step.error = None if result.get("success") else _appliance_update_result_error(result)
+        job.progress_percent = max(int(job.progress_percent or 0), int((completed / max(total, 1)) * 90))
+        db.add_all([job, step])
+        db.commit()
+
+
 def _run_appliance_update(job_id: str) -> None:
     from labfoundry.app.ui import (
+        aggregate_appliance_update_results,
         appliance_update_exception_result,
         appliance_update_settings,
         complete_appliance_update_task,
@@ -135,23 +261,93 @@ def _run_appliance_update(job_id: str) -> None:
         mode = str(config.get("mode") or "check")
         actor = job.created_by
         credentials = update_source_credentials(db)
-    try:
-        update_result = execute_appliance_update_job(
+        if mode != "source_sync":
+            ensure_appliance_update_job_steps(db, job=job, selected_streams=selected)
+            db.commit()
+    if mode == "source_sync":
+        try:
+            update_result = execute_appliance_update_job(
+                selected_stream_ids=selected,
+                settings=settings,
+                actor=actor,
+                mode=mode,
+                job_id=job_id,
+                credentials=credentials,
+            )
+        except Exception as exc:  # noqa: BLE001 - workers must persist a terminal job state.
+            LOGGER.exception("Appliance update source synchronization %s failed before helper completion", job_id)
+            update_result = appliance_update_exception_result(
+                selected_stream_ids=selected,
+                settings=settings,
+                actor=actor,
+                mode=mode,
+                exc=exc,
+            )
+    else:
+        execution_streams = [stream for stream in APPLIANCE_UPDATE_EXECUTION_ORDER if stream in selected]
+        stream_results: list[dict[str, Any]] = []
+        earlier_failed = False
+        for index, stream in enumerate(execution_streams, start=1):
+            if mode == "run" and stream == "photon_os" and earlier_failed:
+                skip_reason = "Photon OS was not started because an earlier selected update stream failed."
+                stream_result = {
+                    "unit_id": stream,
+                    "label": UPDATE_STREAM_LABELS[stream],
+                    "mode": mode,
+                    "selected_streams": [stream],
+                    "selected_labels": [UPDATE_STREAM_LABELS[stream]],
+                    "status": JobStatus.SKIPPED.value,
+                    "success": False,
+                    "skipped": True,
+                    "skip_reason": skip_reason,
+                    "dry_run": False,
+                    "restart_after_commit": False,
+                    "commands": [],
+                    "config_path": "",
+                    "config_preview": "",
+                    "error": skip_reason,
+                }
+            else:
+                _set_appliance_update_step_running(
+                    job_id,
+                    stream,
+                    completed=index - 1,
+                    total=len(execution_streams),
+                )
+                try:
+                    stream_result = execute_appliance_update_job(
+                        selected_stream_ids=[stream],
+                        settings=settings,
+                        actor=actor,
+                        mode=mode,
+                        job_id=job_id,
+                        credentials=credentials,
+                    )
+                except Exception as exc:  # noqa: BLE001 - each child step must reach a terminal state.
+                    LOGGER.exception("Appliance update stream %s for job %s failed before helper completion", stream, job_id)
+                    stream_result = appliance_update_exception_result(
+                        selected_stream_ids=[stream],
+                        settings=settings,
+                        actor=actor,
+                        mode=mode,
+                        exc=exc,
+                    )
+            stream_results.append(stream_result)
+            earlier_failed = earlier_failed or not bool(stream_result.get("success"))
+            _complete_appliance_update_step(
+                job_id,
+                stream,
+                result=stream_result,
+                completed=index,
+                total=len(execution_streams),
+            )
+        update_result = aggregate_appliance_update_results(
             selected_stream_ids=selected,
             settings=settings,
             actor=actor,
             mode=mode,
+            stream_results=stream_results,
             job_id=job_id,
-            credentials=credentials,
-        )
-    except Exception as exc:  # noqa: BLE001 - workers must persist a terminal job state.
-        LOGGER.exception("Appliance update job %s failed before helper completion", job_id)
-        update_result = appliance_update_exception_result(
-            selected_stream_ids=selected,
-            settings=settings,
-            actor=actor,
-            mode=mode,
-            exc=exc,
         )
     with SessionLocal() as db:
         job = db.get(Job, job_id)

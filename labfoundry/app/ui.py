@@ -70,6 +70,7 @@ from labfoundry.app.models import (
     ManagedPackage,
     NatRule,
     NtpSettings,
+    OidcSigningKey,
     PhysicalInterface,
     Role,
     Route,
@@ -116,6 +117,7 @@ from labfoundry.app.services.appliance_settings import (
     web_terminal_listener_interfaces,
 )
 from labfoundry.app.services.appliance_update import (
+    APPLIANCE_UPDATE_EXECUTION_ORDER,
     APPLIANCE_UPDATE_FINALIZER_PATH,
     APPLIANCE_UPDATE_INFO_PATH,
     APPLIANCE_UPDATE_SETTINGS_KEY,
@@ -125,7 +127,7 @@ from labfoundry.app.services.appliance_update import (
     UPDATE_STREAM_LABELS,
     UPDATE_STREAMS,
     current_version_info,
-    parse_latest_update_result,
+    ensure_appliance_update_job_steps,
     photon_repository_details,
     photon_repository_summary,
     read_appliance_file,
@@ -309,6 +311,23 @@ from labfoundry.app.services.settings_archive import (
     export_settings_archive,
     factory_reset_desired_state,
     restore_settings_archive,
+)
+from labfoundry.app.services.oidc import (
+    OIDC_AUTHORIZATION_FLOW_AVAILABLE,
+    OidcConfigurationError,
+    OidcConflictError,
+    create_client as create_oidc_client_record,
+    ensure_provider_settings as ensure_oidc_provider_settings,
+    generate_signing_key as generate_oidc_signing_key,
+    get_client as get_oidc_client,
+    issuer_endpoint_urls as oidc_issuer_endpoint_urls,
+    list_clients as list_oidc_clients,
+    list_subjects as list_oidc_subjects,
+    normalize_issuer_url as normalize_oidc_issuer_url,
+    oidc_client_to_dict,
+    provider_validation_errors as oidc_provider_validation_errors,
+    rotate_client_secret as rotate_oidc_client_secret_value,
+    signing_key_to_dict as oidc_signing_key_to_dict,
 )
 from labfoundry.app.services.local_users import (
     LOCAL_USERS_PASSWORD_POLICY_KEY,
@@ -503,7 +522,6 @@ from labfoundry.app.services.vcf_offline_depot import (
     VCF_DEPOT_STAGED_CONFIG_PATH,
     VCF_DEPOT_STAGED_TOKEN_FILE,
     VCF_DEPOT_STAGED_TOOL_DIR,
-    VCF_DEPOT_TELEMETRY_CHOICES,
     VCF_DEPOT_TOOL_VERSION_SOURCE_COMMAND,
     VCF_DEPOT_TOOL_VERSION_SOURCE_KEY,
     VCF_DEPOT_TOKEN_NAME_KEY,
@@ -2585,6 +2603,7 @@ def vcf_depot_tool_installed(settings: VcfOfflineDepotSettings) -> bool:
 
 def vcf_offline_depot_context(db: Session, *, reconcile: bool = True) -> dict:
     settings = get_vcf_offline_depot_settings_row(db, reconcile_default_user=reconcile, reconcile=reconcile)
+    appliance_settings = get_appliance_settings_row(db)
     if reconcile and normalize_service_bind_settings(db, settings):
         db.commit()
         db.refresh(settings)
@@ -2623,6 +2642,7 @@ def vcf_offline_depot_context(db: Session, *, reconcile: bool = True) -> dict:
     command_preview = render_vcfdt_command_preview(
         settings,
         profiles,
+        vmware_ceip_enabled=bool(appliance_settings.vmware_ceip_enabled),
         download_token_present=bool(secrets["download_token_present"]),
         activation_code_present=bool(secrets["activation_code_present"]),
     )
@@ -2642,7 +2662,11 @@ def vcf_offline_depot_context(db: Session, *, reconcile: bool = True) -> dict:
             row["active_task_blocker"] = blocker
     return {
         "vcf_depot_settings": settings,
-        "vcf_depot_settings_json": vcf_depot_settings_to_dict(settings),
+        "vcf_depot_settings_json": {
+            **vcf_depot_settings_to_dict(settings),
+            "vmware_ceip_enabled": bool(appliance_settings.vmware_ceip_enabled),
+        },
+        "vmware_ceip_enabled": bool(appliance_settings.vmware_ceip_enabled),
         "vcf_depot_users": users,
         "vcf_depot_profiles": profiles,
         "vcf_depot_profile_rows": profile_rows,
@@ -2680,7 +2704,6 @@ def vcf_offline_depot_context(db: Session, *, reconcile: bool = True) -> dict:
             {"value": platform, "label": platform}
             for platform in VCF_DEPOT_ESX_DISABLED_PLATFORMS
         ],
-        "vcf_depot_telemetry_choices": sorted(VCF_DEPOT_TELEMETRY_CHOICES),
         "vcf_depot_archive_pattern": VCF_DEPOT_ARCHIVE_PATTERN,
     }
 
@@ -2838,10 +2861,10 @@ def prepare_vcf_depot_runtime(settings: VcfOfflineDepotSettings, db: Session) ->
     vdt_log_path.touch(exist_ok=True)
     stage_vcf_depot_runtime_secrets(db)
     stage_vcf_depot_runtime_application_properties(db, settings, tool_home)
-    telemetry_choice = settings.telemetry_choice if settings.telemetry_choice in VCF_DEPOT_TELEMETRY_CHOICES else "DISABLE"
-    if telemetry_choice != "NOT_PROVIDED":
-        telemetry_file = tool_home / "conf" / "telemetry" / "telemetry.flag"
-        write_vcf_depot_runtime_file(telemetry_file, f"obtu.telemetry.config={telemetry_choice}\n")
+    appliance_settings = get_appliance_settings_row(db)
+    telemetry_choice = "ENABLE" if appliance_settings.vmware_ceip_enabled else "DISABLE"
+    telemetry_file = tool_home / "conf" / "telemetry" / "telemetry.flag"
+    write_vcf_depot_runtime_file(telemetry_file, f"obtu.telemetry.config={telemetry_choice}\n")
     Path(settings.depot_store_path).mkdir(parents=True, exist_ok=True)
     return tool_path
 
@@ -2892,6 +2915,7 @@ def run_vcf_depot_download_job(job_id: str, profile_id: int) -> None:
         job = db.get(Job, job_id)
         profile = db.get(VcfDepotDownloadProfile, profile_id)
         settings = get_vcf_offline_depot_settings_row(db)
+        appliance_settings = get_appliance_settings_row(db)
         started = utcnow()
         if job:
             job.status = JobStatus.RUNNING.value
@@ -2914,6 +2938,7 @@ def run_vcf_depot_download_job(job_id: str, profile_id: int) -> None:
             generated_script = render_vcfdt_command_preview(
                 settings,
                 [profile],
+                vmware_ceip_enabled=bool(appliance_settings.vmware_ceip_enabled),
                 download_token_present=bool(secrets["download_token_present"]),
                 activation_code_present=bool(secrets["activation_code_present"]),
                 include_disabled_profiles=True,
@@ -5810,13 +5835,14 @@ def _job_step_row(step: JobStep) -> dict[str, Any]:
         error_messages.append(str(error))
     status_value = str(step.status or JobStatus.PENDING.value)
     console_stdout, console_stderr = _task_console_streams(result)
+    is_appliance_update = step.job is not None and step.job.type == "appliance-update"
     return {
         "id": step.id,
         "job_id": step.job_id,
         "component_key": step.component_key,
         "label": step.label,
-        "type": "appliance-apply-step",
-        "type_label": "Apply component",
+        "type": "appliance-update-step" if is_appliance_update else "appliance-apply-step",
+        "type_label": "Update stream" if is_appliance_update else "Apply component",
         "status": status_value,
         "status_pill": _task_status_pill(status_value),
         "state": status_value,
@@ -7259,6 +7285,7 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
                 f"FQDN {appliance_settings['appliance_settings'].fqdn}",
                 f"resolver {'local DNS' if appliance_settings['local_dns_enabled'] else 'external DNS'}",
                 f"root SSH {'enabled' if appliance_settings['appliance_settings'].root_ssh_enabled else 'disabled'}",
+                f"VMware CEIP {'enabled' if appliance_settings['appliance_settings'].vmware_ceip_enabled else 'disabled'}",
             ],
             validation_errors=appliance_settings["appliance_settings_validation_errors"],
             validation_warnings=appliance_settings["appliance_settings_validation_warnings"],
@@ -7912,16 +7939,20 @@ def dashboard_snapshot(db: Session) -> dict[str, Any]:
 
 def appliance_update_settings(db: Session) -> dict[str, Any]:
     legacy = update_settings_from_json(setting_value(db, APPLIANCE_UPDATE_SETTINGS_KEY))
-    return effective_update_settings(db, legacy=legacy)
-
-
-def latest_appliance_update_job(db: Session) -> Job | None:
-    return db.execute(select(Job).where(Job.type == "appliance-update").order_by(desc(Job.created_at))).scalars().first()
+    settings = effective_update_settings(db, legacy=legacy)
+    settings["vmware_ceip_enabled"] = bool(get_appliance_settings_row(db).vmware_ceip_enabled)
+    return settings
 
 
 def appliance_update_context(db: Session) -> dict[str, Any]:
     settings = appliance_update_settings(db)
-    latest_job = latest_appliance_update_job(db)
+    recent_jobs = db.execute(
+        select(Job)
+        .options(selectinload(Job.steps))
+        .where(Job.type == "appliance-update")
+        .order_by(desc(Job.created_at))
+        .limit(8)
+    ).scalars().all()
     sources = source_rows(db)
     packages = managed_package_rows(db)
     source_payloads = [update_source_payload(source) for source in sources]
@@ -7950,8 +7981,9 @@ def appliance_update_context(db: Session) -> dict[str, Any]:
         "current_version_info": current_version_info(),
         "appliance_update_manifest_preview": manifest_preview,
         "appliance_update_staged_config_path": APPLIANCE_UPDATE_STAGED_CONFIG_PATH,
-        "latest_update_job": latest_job,
-        "latest_update_result": parse_latest_update_result(latest_job),
+        "recent_update_tasks": [_task_row(job) for job in recent_jobs],
+        "task_component_filter_options": _task_component_filter_options(db),
+        "appliance_update_info_path": APPLIANCE_UPDATE_INFO_PATH,
         "update_info_file": read_appliance_file(APPLIANCE_UPDATE_INFO_PATH),
         "update_settings_errors": validate_update_settings(settings),
         "system_adapter_dry_run": get_settings().dry_run_system_adapters,
@@ -8159,9 +8191,11 @@ def execute_appliance_update_job(
             parsed_finalizer = {}
         if isinstance(parsed_finalizer, dict) and (not job_id or parsed_finalizer.get("job_id") == job_id):
             release_transaction = parsed_finalizer
+    unit_id = selected_stream_ids[0] if len(selected_stream_ids) == 1 else "appliance_update"
+    label = UPDATE_STREAM_LABELS[unit_id] if unit_id in UPDATE_STREAM_LABELS else "Appliance Update"
     return {
-        "unit_id": "appliance_update",
-        "label": "Appliance Update",
+        "unit_id": unit_id,
+        "label": label,
         "mode": mode,
         "selected_streams": selected_stream_ids,
         "selected_labels": [UPDATE_STREAM_LABELS[stream] for stream in selected_stream_ids],
@@ -8178,15 +8212,82 @@ def execute_appliance_update_job(
     }
 
 
+def aggregate_appliance_update_results(
+    *,
+    selected_stream_ids: list[str],
+    settings: dict[str, str],
+    actor: str,
+    mode: str,
+    stream_results: list[dict[str, Any]],
+    job_id: str = "",
+) -> dict[str, Any]:
+    selected = selected_update_streams(selected_stream_ids)
+    results_by_stream = {
+        str(result.get("unit_id") or ""): result
+        for result in stream_results
+        if str(result.get("unit_id") or "") in UPDATE_STREAM_LABELS
+    }
+    ordered_results = [
+        results_by_stream[stream]
+        for stream in APPLIANCE_UPDATE_EXECUTION_ORDER
+        if stream in selected and stream in results_by_stream
+    ]
+    succeeded = len(ordered_results) == len(selected) and all(
+        bool(result.get("success")) and result.get("status") == JobStatus.SUCCEEDED.value
+        for result in ordered_results
+    )
+    release_transaction = next(
+        (
+            result.get("release_transaction")
+            for result in ordered_results
+            if isinstance(result.get("release_transaction"), dict) and result.get("release_transaction")
+        ),
+        {},
+    )
+    return {
+        "unit_id": "appliance_update",
+        "label": "Appliance Update",
+        "mode": mode,
+        "selected_streams": selected,
+        "selected_labels": [UPDATE_STREAM_LABELS[stream] for stream in selected],
+        "status": JobStatus.SUCCEEDED.value if succeeded else JobStatus.FAILED.value,
+        "success": succeeded,
+        "dry_run": any(bool(result.get("dry_run")) for result in ordered_results),
+        "restart_after_commit": mode == "run"
+        and succeeded
+        and bool({"labfoundry_release", "photon_os"} & set(selected)),
+        "commands": [
+            command
+            for result in ordered_results
+            for command in result.get("commands", [])
+            if isinstance(command, dict)
+        ],
+        "config_path": APPLIANCE_UPDATE_STAGED_CONFIG_PATH,
+        "config_preview": render_update_manifest(
+            selected_streams=selected,
+            settings=settings,
+            actor=actor,
+            job_id=job_id,
+        ),
+        "release_transaction": release_transaction,
+        "stream_results": {stream: results_by_stream[stream] for stream in results_by_stream},
+    }
+
+
 def complete_appliance_update_task(db: Session, *, job: Job, update_result: dict[str, Any]) -> Job:
     now = utcnow()
     if update_result.get("mode") == "source_sync":
-        for source in db.execute(select(UpdateSource).where(UpdateSource.enabled.is_(True))).scalars().all():
+        for source in db.execute(
+            select(UpdateSource).where(
+                UpdateSource.enabled.is_(True),
+                UpdateSource.kind.in_(["photon", "powershell"]),
+            )
+        ).scalars().all():
             source.validation_status = "valid" if update_result["success"] else "invalid"
             source.validation_message = (
                 "Source definition validated in dry-run; host package clients were not changed."
                 if update_result["success"] and update_result.get("dry_run")
-                else "Source synchronized with its appliance package client."
+                else "Repository synchronized with its appliance package client."
                 if update_result["success"]
                 else "Source synchronization failed. Review the task output."
             )
@@ -8251,10 +8352,12 @@ def appliance_update_exception_result(
     exc: Exception,
 ) -> dict[str, Any]:
     manifest_preview = render_update_manifest(selected_streams=selected_stream_ids, settings=settings, actor=actor)
+    unit_id = selected_stream_ids[0] if len(selected_stream_ids) == 1 else "appliance_update"
+    label = UPDATE_STREAM_LABELS[unit_id] if unit_id in UPDATE_STREAM_LABELS else "Appliance Update"
     command = ["stage-appliance-update", APPLIANCE_UPDATE_STAGED_CONFIG_PATH]
     return {
-        "unit_id": "appliance_update",
-        "label": "Appliance Update",
+        "unit_id": unit_id,
+        "label": label,
         "mode": mode,
         "selected_streams": selected_stream_ids,
         "selected_labels": [UPDATE_STREAM_LABELS[stream] for stream in selected_stream_ids],
@@ -8782,6 +8885,7 @@ def execute_appliance_apply_unit(unit: dict[str, Any], *, adapter: SystemAdapter
                 [
                     lambda: adapter.stage_vcf_offline_depot_tool(settings.tool_archive_path),
                     lambda: adapter.apply_vcf_offline_depot_application_properties(properties_path),
+                    lambda: adapter.apply_vcf_offline_depot_ceip(bool(context["vmware_ceip_enabled"])),
                     lambda: adapter.generate_vcf_offline_depot_software_depot_id(),
                 ]
             )
@@ -9739,9 +9843,10 @@ def submit_appliance_update(
     identity: Identity,
     db: Session,
     mode: str,
-) -> HTMLResponse:
+) -> HTMLResponse | JSONResponse:
     verify_csrf(request, csrf)
     require_admin_identity(identity)
+    wants_json = "application/json" in request.headers.get("accept", "")
     selected = selected_update_streams(selected_streams)
     settings = appliance_update_settings(db)
     errors = validate_update_settings(settings)
@@ -9752,6 +9857,8 @@ def submit_appliance_update(
     if "powershell_modules" in selected and not str(settings.get("powershell_repository_url") or "").strip():
         errors.append("Configure an enabled PowerShell repository before selecting PowerShell Modules.")
     if errors:
+        if wants_json:
+            return JSONResponse({"status": "error", "errors": errors, "detail": " ".join(errors)}, status_code=422)
         return render(
             request,
             "appliance_update.html",
@@ -9770,6 +9877,9 @@ def submit_appliance_update(
         )
     ).scalars().first()
     if active is not None:
+        detail = f"Appliance update task {active.id} is already pending or running."
+        if wants_json:
+            return JSONResponse({"status": "active", "job_id": active.id, "detail": detail}, status_code=409)
         return render(
             request,
             "appliance_update.html",
@@ -9777,7 +9887,7 @@ def submit_appliance_update(
                 "identity": identity,
                 **appliance_update_context(db),
                 "selected_update_stream_ids": selected,
-                "update_error": f"Appliance update task {active.id} is already pending or running.",
+                "update_error": detail,
             },
             status_code=409,
         )
@@ -9804,6 +9914,8 @@ def submit_appliance_update(
         result=json.dumps(update_result, indent=2),
     )
     db.add(job)
+    db.flush()
+    ensure_appliance_update_job_steps(db, job=job, selected_streams=selected)
     db.commit()
     record_audit(
         db,
@@ -9813,6 +9925,16 @@ def submit_appliance_update(
         resource_id=job.id,
         detail=f"streams={','.join(selected)}",
     )
+    if wants_json:
+        return JSONResponse(
+            {
+                "status": JobStatus.PENDING.value,
+                "job_id": job.id,
+                "mode": mode,
+                "selected_streams": selected,
+            },
+            status_code=202,
+        )
     return render(
         request,
         "appliance_update.html",
@@ -9834,7 +9956,7 @@ def check_appliance_update(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> HTMLResponse:
+) -> HTMLResponse | JSONResponse:
     return submit_appliance_update(
         request=request,
         selected_streams=selected_streams,
@@ -9852,7 +9974,7 @@ def run_appliance_update(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> HTMLResponse:
+) -> HTMLResponse | JSONResponse:
     return submit_appliance_update(
         request=request,
         selected_streams=selected_streams,
@@ -16071,8 +16193,6 @@ def update_vcf_offline_depot_settings_from_ui(
     http_user_id: str = Form(""),
     allow_unauthenticated_access: str | None = Form(None),
     server_certificate: str | None = Form(None),
-    telemetry_choice: str | None = Form(None),
-    telemetry_enabled: str | None = Form(None),
     tool_archive_file: UploadFile | None = File(None),
     download_token_file: UploadFile | None = File(None),
     activation_code_file: UploadFile | None = File(None),
@@ -16106,10 +16226,6 @@ def update_vcf_offline_depot_settings_from_ui(
     settings.server_certificate = settings.hostname
     settings.depot_store_path = VCF_DEPOT_DEFAULT_STORE_PATH
     settings.config_path = VCF_DEPOT_DEFAULT_CONFIG_PATH
-    if telemetry_choice in VCF_DEPOT_TELEMETRY_CHOICES:
-        settings.telemetry_choice = telemetry_choice
-    else:
-        settings.telemetry_choice = "ENABLE" if telemetry_enabled == "on" else "DISABLE"
     uploaded_archive_name = store_uploaded_vcf_depot_archive(settings, tool_archive_file)
     uploaded_token_name = store_uploaded_vcf_depot_secret(
         db,
@@ -16188,7 +16304,7 @@ def update_vcf_offline_depot_settings_from_ui(
                 "application_properties_present": application_properties["present"],
                 "application_properties_source": application_properties["source"],
                 "application_properties_updated_at": application_properties["updated_at"],
-                "telemetry_choice": saved_settings.telemetry_choice,
+                "vmware_ceip_enabled": context["vmware_ceip_enabled"],
                 "dns_record_action": dns_record_action,
                 "config_path": saved_settings.config_path,
                 "valid": not validation_errors,
@@ -16520,10 +16636,12 @@ def preview_vcf_depot_profile_from_ui(
     if profile is None:
         raise HTTPException(status_code=404, detail="VCFDT download profile not found")
     settings = get_vcf_offline_depot_settings_row(db)
+    appliance_settings = get_appliance_settings_row(db)
     secrets = vcf_depot_secret_context(db)
     script = render_vcfdt_command_preview(
         settings,
         [profile],
+        vmware_ceip_enabled=bool(appliance_settings.vmware_ceip_enabled),
         download_token_present=bool(secrets["download_token_present"]),
         activation_code_present=bool(secrets["activation_code_present"]),
         include_disabled_profiles=True,
@@ -17325,11 +17443,281 @@ def authentication(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    return render(
+        request,
+        "authentication.html",
+        authentication_context(db, identity, raw_token=None),
+    )
+
+
+def authentication_context(
+    db: Session,
+    identity: Identity,
+    *,
+    raw_token: str | None,
+    oidc_client_secret: str | None = None,
+    oidc_client_id: str | None = None,
+    oidc_error: str | None = None,
+) -> dict[str, Any]:
     query = select(ApiToken).order_by(desc(ApiToken.created_at))
     if not identity.has_role(Role.ADMIN.value):
         query = query.where(ApiToken.owner_user_id == identity.user_id)
     tokens = db.execute(query).scalars().all()
-    return render(request, "authentication.html", {"identity": identity, "tokens": tokens, "raw_token": None})
+    context: dict[str, Any] = {
+        "identity": identity,
+        "tokens": tokens,
+        "raw_token": raw_token,
+        "oidc_admin": identity.has_role(Role.ADMIN.value),
+        "oidc_client_secret": oidc_client_secret,
+        "oidc_client_id": oidc_client_id,
+        "oidc_error": oidc_error,
+    }
+    if not context["oidc_admin"]:
+        return context
+    provider = ensure_oidc_provider_settings(db)
+    try:
+        endpoint_urls = oidc_issuer_endpoint_urls(provider.issuer_url)
+    except OidcConfigurationError:
+        endpoint_urls = {
+            "issuer": provider.issuer_url,
+            "discovery_url": "",
+            "authorization_endpoint": "",
+            "token_endpoint": "",
+            "userinfo_endpoint": "",
+            "jwks_uri": "",
+            "end_session_endpoint": "",
+        }
+    context.update(
+        {
+            "oidc_provider": provider,
+            "oidc_flow_available": OIDC_AUTHORIZATION_FLOW_AVAILABLE,
+            "oidc_validation_errors": oidc_provider_validation_errors(db, provider),
+            "oidc_urls": endpoint_urls,
+            "oidc_clients": [oidc_client_to_dict(row) for row in list_oidc_clients(db)],
+            "oidc_keys": [
+                oidc_signing_key_to_dict(row)
+                for row in db.execute(
+                    select(OidcSigningKey).order_by(OidcSigningKey.created_at.desc())
+                ).scalars().all()
+            ],
+            "oidc_subjects": list_oidc_subjects(db),
+            "oidc_organizations": db.execute(
+                select(LdapOrganization)
+                .where(LdapOrganization.enabled.is_(True))
+                .order_by(LdapOrganization.name)
+            ).scalars().all(),
+        }
+    )
+    return context
+
+
+@router.post("/authentication/oidc/provider", response_model=None)
+def update_oidc_provider_from_ui(
+    request: Request,
+    enabled: bool = Form(False),
+    issuer_url: str = Form(...),
+    access_token_lifetime_seconds: int = Form(300),
+    id_token_lifetime_seconds: int = Form(300),
+    authorization_code_lifetime_seconds: int = Form(60),
+    clock_skew_seconds: int = Form(120),
+    signing_key_overlap_seconds: int = Form(3600),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> Response:
+    verify_csrf(request, csrf)
+    require_admin_identity(identity)
+    provider = ensure_oidc_provider_settings(db)
+    try:
+        provider.issuer_url = normalize_oidc_issuer_url(issuer_url)
+    except OidcConfigurationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    provider.access_token_lifetime_seconds = max(60, min(access_token_lifetime_seconds, 3600))
+    provider.id_token_lifetime_seconds = max(60, min(id_token_lifetime_seconds, 3600))
+    provider.authorization_code_lifetime_seconds = max(
+        30, min(authorization_code_lifetime_seconds, 300)
+    )
+    provider.clock_skew_seconds = max(0, min(clock_skew_seconds, 300))
+    provider.signing_key_overlap_seconds = max(300, min(signing_key_overlap_seconds, 604800))
+    provider.enabled = enabled
+    provider.updated_at = utcnow()
+    db.add(provider)
+    db.flush()
+    validation_errors = oidc_provider_validation_errors(db, provider)
+    if enabled and validation_errors:
+        provider.enabled = False
+        validation_errors = [
+            "Provider enablement was rejected until every readiness check passes.",
+            *validation_errors,
+        ]
+    db.commit()
+    record_audit(
+        db,
+        actor=identity.username,
+        action="update_oidc_provider",
+        resource_type="oidc_provider",
+        resource_id=str(provider.id),
+    )
+    payload = {
+        "saved": True,
+        "valid": not validation_errors,
+        "enabled": provider.enabled,
+        "validation_errors": validation_errors,
+    }
+    if request.headers.get("X-LabFoundry-Autosave") == "1":
+        return JSONResponse(payload)
+    return RedirectResponse("/authentication#oidc-provider", status_code=303)
+
+
+@router.post("/authentication/oidc/clients", response_class=HTMLResponse, response_model=None)
+def create_oidc_client_from_ui(
+    request: Request,
+    name: str = Form(...),
+    organization_id: str = Form(""),
+    redirect_uris: str = Form(...),
+    post_logout_redirect_uris: str = Form(""),
+    preset: str = Form("custom"),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    verify_csrf(request, csrf)
+    require_admin_identity(identity)
+    try:
+        if preset == "vcf-9.1" and not redirect_uris.strip():
+            raise OidcConfigurationError(
+                "Paste the exact redirect URI supplied by the VCF 9.1 Identity Broker."
+            )
+        row, raw_secret = create_oidc_client_record(
+            db,
+            name=name,
+            organization_id=int(organization_id) if organization_id.strip() else None,
+            redirect_uris=[value.strip() for value in redirect_uris.splitlines() if value.strip()],
+            post_logout_redirect_uris=[
+                value.strip() for value in post_logout_redirect_uris.splitlines() if value.strip()
+            ],
+            allowed_scopes=["openid", "profile", "email", "groups"],
+            allow_loopback_redirects=False,
+            access_token_lifetime_seconds=300,
+            id_token_lifetime_seconds=300,
+            authorization_code_lifetime_seconds=60,
+            enabled=True,
+        )
+    except (OidcConfigurationError, ValueError) as exc:
+        return render(
+            request,
+            "authentication.html",
+            authentication_context(db, identity, raw_token=None, oidc_error=str(exc)),
+            status_code=422,
+        )
+    record_audit(
+        db,
+        actor=identity.username,
+        action="create_oidc_client",
+        resource_type="oidc_client",
+        resource_id=str(row.id),
+        detail=f"client_id={row.client_id}; preset={preset}",
+    )
+    return render(
+        request,
+        "authentication.html",
+        authentication_context(
+            db,
+            identity,
+            raw_token=None,
+            oidc_client_secret=raw_secret,
+            oidc_client_id=row.client_id,
+        ),
+    )
+
+
+@router.post("/authentication/oidc/clients/{client_record_id}/rotate-secret", response_class=HTMLResponse, response_model=None)
+def rotate_oidc_client_secret_from_ui(
+    request: Request,
+    client_record_id: int,
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    verify_csrf(request, csrf)
+    require_admin_identity(identity)
+    try:
+        row = get_oidc_client(db, client_record_id)
+    except OidcConfigurationError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    raw_secret = rotate_oidc_client_secret_value(db, row)
+    record_audit(
+        db,
+        actor=identity.username,
+        action="rotate_oidc_client_secret",
+        resource_type="oidc_client",
+        resource_id=str(row.id),
+        detail=f"client_id={row.client_id}",
+    )
+    return render(
+        request,
+        "authentication.html",
+        authentication_context(
+            db,
+            identity,
+            raw_token=None,
+            oidc_client_secret=raw_secret,
+            oidc_client_id=row.client_id,
+        ),
+    )
+
+
+@router.post("/authentication/oidc/clients/{client_record_id}/delete", response_model=None)
+def delete_oidc_client_from_ui(
+    request: Request,
+    client_record_id: int,
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    verify_csrf(request, csrf)
+    require_admin_identity(identity)
+    try:
+        row = get_oidc_client(db, client_record_id)
+    except OidcConfigurationError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    public_client_id = row.client_id
+    db.delete(row)
+    db.flush()
+    record_audit(
+        db,
+        actor=identity.username,
+        action="delete_oidc_client",
+        resource_type="oidc_client",
+        resource_id=str(client_record_id),
+        detail=f"client_id={public_client_id}",
+    )
+    return RedirectResponse("/authentication#oidc-clients", status_code=303)
+
+
+@router.post("/authentication/oidc/signing-keys", response_model=None)
+def create_oidc_signing_key_from_ui(
+    request: Request,
+    rotate: str | None = Form(None),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    verify_csrf(request, csrf)
+    require_admin_identity(identity)
+    try:
+        row, previous = generate_oidc_signing_key(db, rotate=rotate == "true")
+    except OidcConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    record_audit(
+        db,
+        actor=identity.username,
+        action="rotate_oidc_signing_key" if previous else "generate_oidc_signing_key",
+        resource_type="oidc_signing_key",
+        resource_id=str(row.id),
+        detail=f"kid={row.kid}; algorithm={row.algorithm}",
+    )
+    return RedirectResponse("/authentication#oidc-keys", status_code=303)
 
 
 @router.post("/authentication/api-tokens", response_model=None)
@@ -17353,14 +17741,10 @@ def create_token_from_ui(
         settings=get_settings(),
         actor=identity.username,
     )
-    query = select(ApiToken).order_by(desc(ApiToken.created_at))
-    if not identity.has_role(Role.ADMIN.value):
-        query = query.where(ApiToken.owner_user_id == identity.user_id)
-    tokens = db.execute(query).scalars().all()
     return render(
         request,
         "authentication.html",
-        {"identity": identity, "tokens": tokens, "raw_token": token_result.raw_token},
+        authentication_context(db, identity, raw_token=token_result.raw_token),
     )
 
 
@@ -18011,22 +18395,29 @@ def tasks_page(
 @router.get("/tasks/status", response_class=JSONResponse, response_model=None)
 def tasks_status(
     job_id: str = Query(""),
+    task_type: str = Query(""),
     filters: str = Query("[]"),
     page: int = Query(1, ge=1),
     size: int = Query(25, ge=1, le=100),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    normalized_task_type = task_type.strip()
+    if len(normalized_task_type) > 100:
+        raise HTTPException(status_code=400, detail="Task type filter is too long.")
+    scope_clauses = [Job.type == normalized_task_type] if normalized_task_type else []
     clauses = _task_filter_clauses(filters)
-    total_count = int(db.scalar(select(func.count(Job.id))) or 0)
-    filtered_count = int(db.scalar(select(func.count(Job.id)).where(*clauses)) or 0)
-    active_count = int(db.scalar(select(func.count(Job.id)).where(Job.status.in_(ACTIVE_JOB_STATUSES))) or 0)
+    total_count = int(db.scalar(select(func.count(Job.id)).where(*scope_clauses)) or 0)
+    filtered_count = int(db.scalar(select(func.count(Job.id)).where(*scope_clauses, *clauses)) or 0)
+    active_count = int(
+        db.scalar(select(func.count(Job.id)).where(*scope_clauses, Job.status.in_(ACTIVE_JOB_STATUSES))) or 0
+    )
     last_page = max(1, (filtered_count + size - 1) // size)
     effective_page = min(page, last_page)
     jobs = db.execute(
         select(Job)
         .options(selectinload(Job.steps))
-        .where(*clauses)
+        .where(*scope_clauses, *clauses)
         .order_by(desc(Job.created_at))
         .offset((effective_page - 1) * size)
         .limit(size)
@@ -19024,6 +19415,61 @@ def update_settings_from_ui(
                 "local_dns_enabled": context["local_dns_enabled"],
                 "management_interface": context["management_interface"],
                 "dns_record_action": dns_record_action,
+                "valid": not context["appliance_settings_validation_errors"],
+                "validation_errors": context["appliance_settings_validation_errors"],
+                "validation_warnings": context["appliance_settings_validation_warnings"],
+                "config_path": saved.config_path,
+                "config_preview": context["appliance_settings_config_preview"],
+            }
+        )
+    return RedirectResponse("/settings", status_code=303)
+
+
+@router.post("/settings/vmware-ceip", response_model=None)
+def update_vmware_ceip_from_ui(
+    request: Request,
+    vmware_ceip_enabled: bool = Form(False),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> RedirectResponse | JSONResponse:
+    verify_csrf(request, csrf)
+    settings = get_appliance_settings_row(db)
+    settings.vmware_ceip_enabled = bool(vmware_ceip_enabled)
+    settings.config_path = APPLIANCE_SETTINGS_STAGED_CONFIG_PATH
+    settings.updated_at = utcnow()
+    db.add(settings)
+    db.commit()
+    record_audit(
+        db,
+        actor=identity.username,
+        action="update_vmware_ceip_policy",
+        resource_type="settings",
+        resource_id=str(settings.id),
+        detail=f"enabled={str(settings.vmware_ceip_enabled).lower()}",
+    )
+    if request.headers.get("X-LabFoundry-Autosave") == "1":
+        context = appliance_settings_context(db)
+        saved = context["appliance_settings"]
+        return JSONResponse(
+            {
+                "status": "saved",
+                "updated_at": saved.updated_at.isoformat(),
+                "fqdn": saved.fqdn,
+                "management_https_enabled": saved.management_https_enabled,
+                "web_terminal_enabled": saved.web_terminal_enabled,
+                "web_terminal_interfaces": context["selected_web_terminal_interfaces"],
+                "web_terminal_addresses": context["web_terminal_addresses"],
+                "management_https_cert_available": context["management_https_cert_available"],
+                "root_ssh_enabled": saved.root_ssh_enabled,
+                "vmware_ceip_enabled": saved.vmware_ceip_enabled,
+                "service_dns_target_naming": normalize_service_dns_target_naming(saved.service_dns_target_naming),
+                "external_dns_servers": context["appliance_settings_json"]["external_dns_servers"],
+                "resolver_mode": context["appliance_settings_resolver_mode"],
+                "observed_dhcp_dns_servers": context["appliance_settings_observed_dhcp_dns_servers"],
+                "local_dns_enabled": context["local_dns_enabled"],
+                "management_interface": context["management_interface"],
+                "dns_record_action": None,
                 "valid": not context["appliance_settings_validation_errors"],
                 "validation_errors": context["appliance_settings_validation_errors"],
                 "validation_warnings": context["appliance_settings_validation_warnings"],

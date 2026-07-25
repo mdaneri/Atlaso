@@ -208,7 +208,10 @@
           </select>
         </label>
         <label class="switch-field"><span class="field-label"><span>Unauthenticated access</span><button class="help-icon" type="button" data-help="Serves /PROD/ without LabFoundry login. Leave off for normal VCF depot access; enable only for an isolated open mirror. Host services are not changed until global appliance apply runs.">i</button></span><input class="switch-input" type="checkbox" name="allow_unauthenticated_access" {{ "checked" if vcf_depot_settings.allow_unauthenticated_access else "" }}><span class="switch-track" aria-hidden="true"></span></label>
-        <label class="switch-field"><span class="field-label"><span>Telemetry</span><button class="help-icon" type="button" data-help="When enabled, LabFoundry stages the VCF Download Tool telemetry flag as ENABLE. When off, it stages DISABLE. Host commands still run only through global appliance apply or manual profile jobs.">i</button></span><input class="switch-input" type="checkbox" name="telemetry_enabled" {{ "checked" if vcf_depot_settings.telemetry_choice == "ENABLE" else "" }}><span class="switch-track" aria-hidden="true"></span></label>
+        <div class="derived-field fixed-value-field">
+          <span class="field-label"><span>VMware CEIP</span><button class="help-icon" type="button" data-help="VCF Download Tool follows the appliance-wide VMware CEIP preference. Change it under Settings; LabFoundry writes the matching telemetry flag before appliance apply actions and every manual or scheduled download.">i</button></span>
+          <strong>{{ "enabled" if vmware_ceip_enabled else "disabled" }} · <a href="/settings#vmware-product-preferences">manage in Settings</a></strong>
+        </div>
         <div class="derived-field fixed-value-field">
           <span class="field-label"><span>Depot store volume</span><button class="help-icon" type="button" data-help="Fixed appliance volume mount used as the VCFDT --depot-store and HTTPS document root. Attach or size this disk separately from the root filesystem.">i</button></span>
           <strong data-vcf-depot-store>{{ vcf_depot_settings.depot_store_path }}</strong>
@@ -224,10 +227,10 @@
               <strong data-vcf-depot-tool-archive-name>{{ vcf_depot_settings_json.tool_archive_name or "no package staged" }}</strong>
               <small class="muted">Expected file: {{ vcf_depot_archive_pattern }}</small>
             </div>
-            <span class="file-upload-control compact-file-upload">
+            <label class="file-upload-control compact-file-upload">
               <input class="file-upload-input" type="file" name="tool_archive_file" accept=".gz,application/gzip,application/x-gzip" data-file-upload-input>
               <span class="file-upload-surface"><span class="file-upload-copy"><strong data-vcf-depot-tool-upload-action>{{ "Update" if vcf_depot_settings.tool_archive_path else "Add" }}</strong><small data-file-upload-name data-vcf-depot-tool-upload-name>{{ vcf_depot_settings_json.tool_archive_name or vcf_depot_archive_pattern }}</small></span></span>
-            </span>
+            </label>
           </div>
           <button class="button danger compact-button {{ '' if vcf_depot_settings.tool_archive_path else 'hidden' }}" type="button" data-vcf-depot-tool-reset-modal-open data-vcf-depot-tool-reset-action>Reset</button>
           <div class="vcfdt-tool-reset-note {{ '' if vcf_depot_settings.tool_archive_path else 'hidden' }}" data-vcf-depot-tool-reset-panel>

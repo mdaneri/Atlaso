@@ -26,6 +26,7 @@ BOOTSTRAP_USERNAME="${LABFOUNDRY_BOOTSTRAP_ADMIN_USERNAME:-admin}"
 BOOTSTRAP_PASSWORD="${LABFOUNDRY_BOOTSTRAP_ADMIN_PASSWORD:-}"
 BOOTSTRAP_SHELL="${LABFOUNDRY_BOOTSTRAP_ADMIN_SHELL:-/usr/bin/pwsh}"
 PIP_CACHE_DIR="${PIP_CACHE_DIR:-/var/cache/labfoundry-pip}"
+TDNF_PROGRESS_RUNNER="$LABFOUNDRY_SRC/scripts/run_tdnf_with_progress.py"
 
 log_step() {
   printf '\n==> LabFoundry appliance: %s\n' "$1"
@@ -52,8 +53,22 @@ write_pip_config() {
   chmod 0644 "$path"
 }
 
+run_tdnf() {
+  label="$1"
+  shift
+  python3 "$TDNF_PROGRESS_RUNNER" \
+    --label "$label" \
+    --cache-dir /var/cache/tdnf \
+    -- \
+    tdnf -y "$@"
+}
+
 if [ -z "$BOOTSTRAP_PASSWORD" ]; then
   echo "LABFOUNDRY_BOOTSTRAP_ADMIN_PASSWORD is required for appliance provisioning" >&2
+  exit 2
+fi
+if [ ! -r "$TDNF_PROGRESS_RUNNER" ]; then
+  echo "TDNF progress runner is missing from staged LabFoundry sources: $TDNF_PROGRESS_RUNNER" >&2
   exit 2
 fi
 
@@ -62,10 +77,10 @@ log_step "guest platform: $LABFOUNDRY_GUEST_PLATFORM"
 
 log_step "refreshing Photon package metadata"
 tdnf -y clean all || true
-tdnf -y makecache
+run_tdnf "Photon package metadata refresh" makecache
 
 log_step "applying Photon OS updates"
-tdnf -y update
+run_tdnf "Photon OS update" update
 
 log_step "installing Photon appliance packages"
 GUEST_INTEGRATION_PACKAGES=""
@@ -81,7 +96,8 @@ case "$LABFOUNDRY_GUEST_PLATFORM" in
     exit 2
     ;;
 esac
-tdnf -y install python3 python3-pip python3-devel python3-virtualenv python3-curses python3-ntp sudo openssh-server curl rsync tar gzip shadow e2fsprogs sqlite procps-ng $GUEST_INTEGRATION_PACKAGES nftables dnsmasq ntpsec nfs-utils rpcbind openldap openldap-servers ipxe syslinux nginx powershell
+run_tdnf "Photon appliance package installation" \
+  install python3 python3-pip python3-devel python3-virtualenv python3-curses python3-ntp sudo openssh-server curl rsync tar gzip shadow e2fsprogs sqlite procps-ng $GUEST_INTEGRATION_PACKAGES nftables dnsmasq ntpsec nfs-utils rpcbind openldap openldap-servers ipxe syslinux nginx powershell
 
 log_step "installing VCF PowerCLI $LABFOUNDRY_POWERCLI_VERSION"
 export LABFOUNDRY_POWERCLI_VERSION
@@ -99,10 +115,10 @@ fi
 chmod 0755 /usr/local/share/powershell /usr/local/share/powershell/Modules
 chmod -R a+rX,go-w /usr/local/share/powershell/Modules
 pwsh -NoLogo -NoProfile -NonInteractive -Command \
-  '$ErrorActionPreference = "Stop"; $module = Get-Module -Name VCF.PowerCLI -ListAvailable | Where-Object Version -eq $env:LABFOUNDRY_POWERCLI_VERSION | Select-Object -First 1; if (-not $module) { throw "VCF.PowerCLI $env:LABFOUNDRY_POWERCLI_VERSION is not installed" }; Import-Module $module.Path -Force; if (-not (Get-Command Connect-VIServer -ErrorAction SilentlyContinue)) { throw "Connect-VIServer is not available" }; Write-Host "VCF.PowerCLI $($module.Version) verified"'
+  '$ErrorActionPreference = "Stop"; $module = Get-Module -Name VCF.PowerCLI -ListAvailable | Where-Object Version -eq $env:LABFOUNDRY_POWERCLI_VERSION | Select-Object -First 1; if (-not $module) { throw "VCF.PowerCLI $env:LABFOUNDRY_POWERCLI_VERSION is not installed" }; Import-Module $module.Path -Force; Set-PowerCLIConfiguration -ParticipateInCeip $false -Scope AllUsers -Confirm:$false | Out-Null; $configured = Get-PowerCLIConfiguration -Scope AllUsers; if ([bool]$configured.ParticipateInCEIP) { throw "VCF.PowerCLI CEIP default was not disabled" }; if (-not (Get-Command Connect-VIServer -ErrorAction SilentlyContinue)) { throw "Connect-VIServer is not available" }; Write-Host "VCF.PowerCLI $($module.Version) verified with appliance-wide CEIP disabled"'
 
 log_step "verifying Photon OS updates after package install"
-tdnf -y update
+run_tdnf "Photon OS update verification" update
 
 log_step "leaving only Photon NTPsec available for desired-state activation"
 systemctl disable --now ntpd.service 2>/dev/null || true
@@ -199,7 +215,7 @@ chmod 0440 /etc/sudoers.d/labfoundry-bootstrap-admin
 visudo -cf /etc/sudoers.d/labfoundry-bootstrap-admin
 sudo -H -u "$BOOTSTRAP_USERNAME" env -u PSModulePath LABFOUNDRY_POWERCLI_VERSION="$LABFOUNDRY_POWERCLI_VERSION" \
   pwsh -NoLogo -NoProfile -NonInteractive -Command \
-  '$ErrorActionPreference = "Stop"; $module = Get-Module -Name VCF.PowerCLI -ListAvailable | Where-Object Version -eq $env:LABFOUNDRY_POWERCLI_VERSION | Select-Object -First 1; if (-not $module) { throw "VCF.PowerCLI $env:LABFOUNDRY_POWERCLI_VERSION is not available to the bootstrap administrator" }; Import-Module $module.Path -Force; if (-not (Get-Command Connect-VIServer -ErrorAction SilentlyContinue)) { throw "Connect-VIServer is not available to the bootstrap administrator" }; Write-Host "VCF.PowerCLI $($module.Version) verified as $([Environment]::UserName)"'
+  '$ErrorActionPreference = "Stop"; $module = Get-Module -Name VCF.PowerCLI -ListAvailable | Where-Object Version -eq $env:LABFOUNDRY_POWERCLI_VERSION | Select-Object -First 1; if (-not $module) { throw "VCF.PowerCLI $env:LABFOUNDRY_POWERCLI_VERSION is not available to the bootstrap administrator" }; Import-Module $module.Path -Force; $configured = Get-PowerCLIConfiguration -Scope AllUsers; if ([bool]$configured.ParticipateInCEIP) { throw "VCF.PowerCLI CEIP default is not disabled for the bootstrap administrator" }; if (-not (Get-Command Connect-VIServer -ErrorAction SilentlyContinue)) { throw "Connect-VIServer is not available to the bootstrap administrator" }; Write-Host "VCF.PowerCLI $($module.Version) verified as $([Environment]::UserName) with appliance-wide CEIP disabled"'
 
 cat >/etc/labfoundry/build-info <<EOF
 build_time_utc=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -244,9 +260,10 @@ fi
 log_step "installing LabFoundry Python environment"
 install -d -o root -g root -m 0755 "$PIP_CACHE_DIR"
 install -d -o root -g root -m 0755 "$LABFOUNDRY_HOME/releases"
-LABFOUNDRY_RELEASE_VERSION="$(sed -n 's/^version = "\([0-9][0-9.]*\)"$/\1/p' "$LABFOUNDRY_HOME/pyproject.toml" | head -n 1)"
-if [ -z "$LABFOUNDRY_RELEASE_VERSION" ]; then
-  echo "Could not determine LabFoundry release version from pyproject.toml" >&2
+if ! LABFOUNDRY_RELEASE_VERSION="$(
+  python3 "$LABFOUNDRY_HOME/scripts/version.py" project-get --root "$LABFOUNDRY_HOME"
+)"; then
+  echo "Could not determine LabFoundry release version from staged repository metadata" >&2
   exit 2
 fi
 LABFOUNDRY_RELEASE_DIR="$LABFOUNDRY_HOME/releases/bootstrap-$LABFOUNDRY_RELEASE_VERSION"
@@ -266,9 +283,25 @@ printf '{\n  "schema_version": 1,\n  "version": "%s",\n  "bootstrap": true,\n  "
 ln -sfn "releases/bootstrap-$LABFOUNDRY_RELEASE_VERSION" "$LABFOUNDRY_HOME/current"
 ln -sfn "current/.venv" "$LABFOUNDRY_HOME/.venv"
 write_pip_config "$LABFOUNDRY_HOME/.venv/pip.conf"
-"$LABFOUNDRY_HOME/.venv/bin/python" -m pip install "$LABFOUNDRY_HOME"
+"$LABFOUNDRY_HOME/.venv/bin/python" -m pip install \
+  --require-hashes \
+  --requirement "$LABFOUNDRY_HOME/requirements-appliance.lock"
+"$LABFOUNDRY_HOME/.venv/bin/python" -m pip install --no-deps "$LABFOUNDRY_HOME"
 "$LABFOUNDRY_HOME/.venv/bin/python" "$LABFOUNDRY_HOME/scripts/check_photon_compatibility.py"
 printf 'vcf_sdk=%s\n' "$("$LABFOUNDRY_HOME/.venv/bin/python" -c 'from importlib.metadata import version; print(version("vcf-sdk"))')" >>/etc/labfoundry/build-info
+
+log_step "writing third-party notices"
+NOTICE_RPM_INVENTORY="$(mktemp)"
+rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{LICENSE}\t%{URL}\n' | LC_ALL=C sort >"$NOTICE_RPM_INVENTORY"
+install -d -o root -g root -m 0755 /usr/share/doc/labfoundry
+"$LABFOUNDRY_HOME/.venv/bin/python" "$LABFOUNDRY_HOME/scripts/generate_third_party_notices.py" \
+  --version "$LABFOUNDRY_RELEASE_VERSION" \
+  --output /usr/share/doc/labfoundry/THIRD_PARTY_NOTICES.md \
+  --lock "$LABFOUNDRY_HOME/requirements-appliance.lock" \
+  --python-environment "$LABFOUNDRY_HOME/.venv" \
+  --rpm-inventory "$NOTICE_RPM_INVENTORY"
+rm -f "$NOTICE_RPM_INVENTORY"
+chmod 0644 /usr/share/doc/labfoundry/THIRD_PARTY_NOTICES.md
 
 SECRET_KEY="$("$LABFOUNDRY_HOME/.venv/bin/python" -c 'import secrets; print(secrets.token_urlsafe(48))')"
 SECRETS_KEY="$("$LABFOUNDRY_HOME/.venv/bin/python" -c 'import secrets; print(secrets.token_urlsafe(48))')"
@@ -298,11 +331,33 @@ install -o root -g root -m 0755 "$LABFOUNDRY_HOME/scripts/appliance/labfoundry-h
 install -o root -g root -m 0755 "$LABFOUNDRY_HOME/scripts/appliance/labfoundry-install-boot-branding" "$LABFOUNDRY_HOME/bin/labfoundry-install-boot-branding"
 install -o root -g root -m 0755 "$LABFOUNDRY_HOME/scripts/appliance/labfoundry-mount-data-disks" "$LABFOUNDRY_HOME/bin/labfoundry-mount-data-disks"
 install -o root -g root -m 0755 "$LABFOUNDRY_HOME/scripts/appliance/labfoundry-bootstrap-https" "$LABFOUNDRY_HOME/bin/labfoundry-bootstrap-https"
+trust_source_dir="$LABFOUNDRY_HOME/image/common/update-trust"
+if [ ! -d "$trust_source_dir" ]; then
+  echo "LabFoundry release trust source directory is missing: $trust_source_dir" >&2
+  exit 1
+fi
 install -d -o root -g root -m 0755 /etc/labfoundry/update-trust.d
-for trust_key in "$LABFOUNDRY_HOME"/image/common/update-trust/*.pem; do
+trust_key_count=0
+for trust_key in "$trust_source_dir"/*.pem; do
   [ -f "$trust_key" ] || continue
+  if ! trust_key_details="$(openssl pkey -pubin -in "$trust_key" -text -noout 2>/dev/null)"; then
+    echo "LabFoundry release trust key is not a valid public key: $trust_key" >&2
+    exit 1
+  fi
+  case "$trust_key_details" in
+    *ED25519*) ;;
+    *)
+      echo "LabFoundry release trust key is not Ed25519: $trust_key" >&2
+      exit 1
+      ;;
+  esac
   install -o root -g root -m 0644 "$trust_key" "/etc/labfoundry/update-trust.d/$(basename "$trust_key")"
+  trust_key_count=$((trust_key_count + 1))
 done
+if [ "$trust_key_count" -eq 0 ]; then
+  echo "No LabFoundry release trust keys were staged under $trust_source_dir" >&2
+  exit 1
+fi
 if [ "$LABFOUNDRY_GUEST_PLATFORM" = "vmware" ]; then
   install -o root -g root -m 0755 "$LABFOUNDRY_HOME/scripts/appliance/labfoundry-vmware-ovf-customize.py" "$LABFOUNDRY_HOME/bin/labfoundry-vmware-ovf-customize.py"
   install -o root -g root -m 0644 "$LABFOUNDRY_HOME/$LABFOUNDRY_IMAGE_ASSET_DIR/systemd/labfoundry-vmware-ovf-customize.service" /etc/systemd/system/labfoundry-vmware-ovf-customize.service

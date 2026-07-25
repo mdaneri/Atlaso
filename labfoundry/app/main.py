@@ -15,10 +15,13 @@ from labfoundry.app.api.v1 import router as api_v1_router
 from labfoundry.app.config import get_settings
 from labfoundry.app.database import SessionLocal, init_db
 from labfoundry.app.operational_logging import configure_operational_logging
+from labfoundry.app.oidc import admin_router as oidc_admin_router
+from labfoundry.app.oidc import public_router as oidc_public_router
 from labfoundry.app.problem import install_problem_handlers
 from labfoundry.app.seed import seed_initial_data
 from labfoundry.app.services.monitoring import start_monitor_sampler
 from labfoundry.app.services.networking import sync_host_physical_interfaces
+from labfoundry.app.services.oidc import validate_enabled_provider_at_startup
 from labfoundry.app.ui import (
     active_appliance_apply_job,
     ensure_ca_state,
@@ -68,6 +71,7 @@ async def lifespan(app: FastAPI):
         if appliance_mode:
             ensure_ca_state(db)
         initialize_factory_appliance_apply_baseline(db)
+        validate_enabled_provider_at_startup(db)
     monitor_sampler = start_monitor_sampler()
     try:
         yield
@@ -139,6 +143,8 @@ def create_app() -> FastAPI:
     install_problem_handlers(app)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     app.include_router(api_v1_router)
+    app.include_router(oidc_admin_router)
+    app.include_router(oidc_public_router)
     app.include_router(web_terminal_router)
     app.include_router(ui_router)
 

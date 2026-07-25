@@ -3,6 +3,9 @@
 The base image includes Python `vcf-sdk==9.1.0.0` and system-wide
 `VCF.PowerCLI==9.1.0.25380678`. Provisioning fails if PowerCLI cannot import or
 `Connect-VIServer` is unavailable to the unprivileged bootstrap administrator.
+Provisioning also disables and verifies PowerCLI CEIP participation at
+`AllUsers` scope; Appliance Settings can change that central preference after
+deployment without product-specific prompts.
 The system module tree remains root-owned and writable only by root, while
 every local `/usr/bin/pwsh` user can read and import its modules. Set
 `LABFOUNDRY_POWERCLI_MODULE_SOURCE` to a pre-staged module directory for offline
@@ -41,6 +44,18 @@ The original Photon source ISO is shared with the Hyper-V image path under
 written under this image directory.
 Workstation builds show the VMware console by default so boot/install progress
 is visible; pass `-Headless` for unattended runs.
+The shared provisioner stages `pyproject.toml` with `scripts/version.py`, parses
+`[project].version` as TOML, and requires the repository's strict `X.Y.Z`
+release format before it creates `/opt/labfoundry/releases/bootstrap-<version>`.
+If that metadata is missing, unreadable, malformed, or invalid, the build log
+reports the specific version-policy error.
+The template also stages `requirements-appliance.lock` with the application
+source so bootstrap dependency installation retains hash verification instead
+of falling back to unpinned packages.
+Long TDNF operations emit compact 30-second heartbeats with elapsed time and
+cache size instead of streaming terminal progress redraws through Packer.
+Successful operations report their duration, while failures retain the TDNF
+exit status and replay a normalized, bounded output tail.
 
 ```powershell
 powershell.exe -ExecutionPolicy Bypass `
@@ -134,17 +149,24 @@ will try to run that file and report a pipeline/document execution error. The
 helper builds `python -m pip wheel . -w dist`, uploads the newest
 `labfoundry-*.whl` with `scp`, installs it into `/opt/labfoundry/.venv`,
 syncs `scripts/appliance/labfoundry-helper` to
-`/opt/labfoundry/bin/labfoundry-helper`, restores virtualenv permissions,
-restarts `labfoundry.service`, and verifies `/openapi.json` from inside the
-guest and from the Windows host. The helper sync is required for appliance
-apply fixes because the privileged helper is installed outside the Python
-virtualenv and is not updated by `pip install`. If the app takes longer to
-become reachable after restart, pass `-ReadinessTimeoutSeconds 120`.
+`/opt/labfoundry/bin/labfoundry-helper`, synchronizes every checked-in public
+release key from `image/common/update-trust` into
+`/etc/labfoundry/update-trust.d`, restores virtualenv permissions, restarts
+`labfoundry.service`, and verifies `/openapi.json` from inside the guest and
+from the Windows host. The helper and trust-key syncs are required because
+those root-owned files live outside the Python virtualenv and are not updated
+by `pip install`. If the app takes longer to become reachable after restart,
+pass `-ReadinessTimeoutSeconds 120`.
 
 `deploy-wheel.ps1` remains a development-only live-patching path. Production
 Appliance Update uses signed GitHub release bundles, retained ABI-specific
 wheelhouses, `/opt/labfoundry/releases/<version>`, and transactional rollback;
 it does not use this direct wheel deployment path.
+Manual and scheduled checks/installations retain one parent task with separate
+LabFoundry Release, PowerShell Modules, and Photon OS child steps so failures
+and skipped Photon work remain independently visible.
+The Packer build explicitly stages `image/common/update-trust` and fails when
+no valid public release key is available.
 
 ## OVF / OVA Export
 

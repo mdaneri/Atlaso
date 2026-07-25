@@ -1,0 +1,53 @@
+<dialog id="task-detail-modal" class="confirm-modal wide-modal task-modal" aria-labelledby="task-detail-title">
+  <div class="confirm-modal-panel form-stack">
+    <div class="confirm-modal-body">
+      <p class="kicker">Task detail</p>
+      <div class="task-modal-title-row">
+        <h2 id="task-detail-title" data-task-detail-title>Task</h2>
+        <span class="status-pill muted" data-task-detail-status>unknown</span>
+      </div>
+      <p class="muted" data-task-detail-summary></p>
+      <div class="settings-list compact-settings-list task-detail-facts" data-task-detail-facts></div>
+      <details class="task-result-details hidden" data-task-detail-errors open>
+        <summary>Redacted error messages</summary>
+        <div class="terminal-note task-result-preview">
+          <code class="language-labfoundry-log" data-task-detail-errors-content></code>
+        </div>
+      </details>
+      <details class="task-result-details hidden" data-task-detail-console open>
+        <summary>Console output</summary>
+        <div class="terminal-note task-result-preview">
+          <code class="language-labfoundry-log" data-task-detail-console-content></code>
+          <code class="task-console-stderr hidden" data-task-detail-console-error-content></code>
+        </div>
+      </details>
+      <details class="task-result-details">
+        <summary>Redacted result payload</summary>
+        <div class="terminal-note task-result-preview" data-terminal-note-open="false">
+          <code class="language-json" data-task-detail-result>{}</code>
+        </div>
+      </details>
+    </div>
+    <div class="confirm-modal-actions">
+      <button class="button danger hidden" type="button" data-task-detail-cancel>Cancel task</button>
+      <button class="button secondary" type="button" data-task-detail-log>View log</button>
+      <button class="button ghost" type="button" data-task-detail-close>Close</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="task-log-modal" class="confirm-modal wide-modal task-modal" aria-labelledby="task-log-title">
+  <div class="confirm-modal-panel form-stack">
+    <div class="confirm-modal-body">
+      <p class="kicker">Task log</p>
+      <h2 id="task-log-title" data-task-log-title>Task log</h2>
+      <p class="muted" data-task-log-meta></p>
+      <div class="terminal-note task-log-preview" data-terminal-note-open="false">
+        <code class="language-labfoundry-log" data-task-log-content>Loading task log…</code>
+      </div>
+    </div>
+    <div class="confirm-modal-actions">
+      <button class="button ghost" type="button" data-task-log-close>Close</button>
+    </div>
+  </div>
+</dialog>

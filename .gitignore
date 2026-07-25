@@ -1,18 +1,45 @@
+# Python runtime and tooling artifacts
 __pycache__/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .vscode/
 .venv/
-.env
-.env.local
-data/
+labfoundry.egg-info/
 *.pyc
 *.pyo
 *.db
 *.sqlite
 *.log
+
+# Local environment configuration. Keep checked-in templates visible.
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Coverage artifacts
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Local secret-bearing build configuration and key containers.
+*.pkrvars.hcl
+*.tfvars
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+
+# JavaScript and test output
 node_modules/
 test-results/
 playwright-report/
+
+# Appliance runtime, Packer, and VM artifacts
+data/
 /vcfDownloadTool
 /image/hyperv/build
 /image/hyperv/packer_cache
@@ -26,6 +53,7 @@ playwright-report/
 /image/vmware-workstation/ovf
 /image/vmware-workstation/test-vms
 /dist
-/image/vmware-workstation/ovf
+
+# VCF tooling downloaded or staged locally
 /VCFDT
 /scripts/VCFDT

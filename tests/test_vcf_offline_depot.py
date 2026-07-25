@@ -33,7 +33,6 @@ def test_vcf_depot_start_requires_correct_credential_kind_without_blocking_apply
         depot_store_path="/mnt/labfoundry-vcf-offline-depot",
         tool_archive_path=str(archive),
         tool_version="9.1.0",
-        telemetry_choice="DISABLE",
         config_path="/etc/labfoundry/nginx/sites.d/vcf-offline-depot.conf",
         http_user_id=1,
     )
@@ -138,7 +137,6 @@ def test_vcf_depot_validation_uses_documented_component_catalog(tmp_path):
         depot_store_path="/mnt/labfoundry-vcf-offline-depot",
         tool_archive_path=str(archive),
         tool_version="9.1.0",
-        telemetry_choice="DISABLE",
         config_path="/etc/labfoundry/nginx/sites.d/vcf-offline-depot.conf",
         http_user_id=1,
     )
@@ -180,7 +178,6 @@ def test_vcf_depot_validation_uses_esx_disabled_platform_catalog(tmp_path):
         depot_store_path="/mnt/labfoundry-vcf-offline-depot",
         tool_archive_path=str(archive),
         tool_version="9.1.0",
-        telemetry_choice="DISABLE",
         config_path="/etc/labfoundry/nginx/sites.d/vcf-offline-depot.conf",
         http_user_id=1,
     )
@@ -237,7 +234,6 @@ def test_vcf_depot_validation_allows_https_only_without_vcfdt_upload():
         port=443,
         server_certificate="depot.labfoundry.internal",
         depot_store_path="/mnt/labfoundry-vcf-offline-depot",
-        telemetry_choice="DISABLE",
         config_path="/etc/labfoundry/nginx/sites.d/vcf-offline-depot.conf",
         http_user_id=1,
     )
@@ -257,7 +253,6 @@ def test_vcf_depot_validation_requires_user_unless_unauthenticated_access_is_ena
         port=443,
         server_certificate="depot.labfoundry.internal",
         depot_store_path="/mnt/labfoundry-vcf-offline-depot",
-        telemetry_choice="DISABLE",
         config_path="/etc/labfoundry/nginx/sites.d/vcf-offline-depot.conf",
     )
 
@@ -324,7 +319,6 @@ def test_vcf_depot_validation_rejects_management_role_interfaces():
         port=443,
         server_certificate="depot.labfoundry.internal",
         depot_store_path="/mnt/labfoundry-vcf-offline-depot",
-        telemetry_choice="DISABLE",
         config_path="/etc/labfoundry/nginx/sites.d/vcf-offline-depot.conf",
         http_user_id=1,
     )
@@ -448,7 +442,6 @@ def test_vcf_depot_command_preview_supports_patch_only_profiles():
         depot_store_path="/mnt/labfoundry-vcf-offline-depot",
         tool_archive_path="vcfDownloadTool/vcf-download-tool-9.1.0.test.tar.gz",
         tool_version="9.1.0",
-        telemetry_choice="NOT_PROVIDED",
     )
     profiles = [
         VcfDepotDownloadProfile(
@@ -463,12 +456,13 @@ def test_vcf_depot_command_preview_supports_patch_only_profiles():
         )
     ]
 
-    preview = render_vcfdt_command_preview(settings, profiles)
+    preview = render_vcfdt_command_preview(settings, profiles, vmware_ceip_enabled=True)
 
     assert "--patches-only" in preview
     assert "--upgrades-only" not in preview
     assert "--component-version=9.1.0.0100" in preview
-    assert "Telemetry choice is not provided" in preview
+    assert "obtu.telemetry.config=ENABLE" in preview
+    assert "Telemetry choice is not provided" not in preview
 
 
 def test_vcf_depot_nginx_preview_uses_ca_paths_and_static_file_directives():

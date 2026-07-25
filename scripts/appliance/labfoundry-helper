@@ -61,12 +61,12 @@ COMMANDS: dict[str, set[str]] = {
     "dnsmasq": {"validate", "apply", "reload", "leases", "logs"},
     "ca": {"validate", "apply"},
     "kms": {"validate", "apply"},
-    "ldap": {"validate", "apply", "status", "export", "logs"},
+    "ldap": {"validate", "apply", "status", "export", "logs", "authenticate"},
     "ntpd": {"validate", "apply", "status", "logs", "capabilities"},
     "nginx": {"logs", "access-logs", "error-logs"},
     "vcf-backups": {"validate", "apply"},
     "vcf-private-registry": {"validate", "apply", "relocate-bundles"},
-    "vcf-offline-depot": {"validate", "stage-tool", "reset-tool", "generate-software-depot-id", "sync", "apply-https", "apply-properties"},
+    "vcf-offline-depot": {"validate", "stage-tool", "reset-tool", "generate-software-depot-id", "sync", "apply-https", "apply-properties", "apply-ceip"},
     "esxi-pxe": {"validate", "apply"},
     "esx-storage": {"inventory", "validate", "apply", "status", "logs"},
     "public-services": {"validate", "apply"},
@@ -85,6 +85,7 @@ SYSTEMD_RUN_REAL_ACTIONS = {
     "sync",
     "apply-https",
     "apply-properties",
+    "apply-ceip",
     "relocate-bundles",
     "export",
     "restart-service",
@@ -115,7 +116,12 @@ NO_PATH_ACTIONS = {
     ("esx-storage", "status"),
     ("esx-storage", "logs"),
 }
-NON_PATH_ARGUMENT_ACTIONS = {("local-users", "authenticate"), ("automation", "run")}
+NON_PATH_ARGUMENT_ACTIONS = {
+    ("local-users", "authenticate"),
+    ("ldap", "authenticate"),
+    ("automation", "run"),
+    ("vcf-offline-depot", "apply-ceip"),
+}
 LABFOUNDRY_SERVICE_USER = "labfoundry"
 LABFOUNDRY_STATE_DIR = Path("/var/lib/labfoundry")
 AUTOMATION_SCRIPT_DIR = LABFOUNDRY_STATE_DIR / "automation" / "scripts"
@@ -127,12 +133,14 @@ LABFOUNDRY_HOME = Path("/opt/labfoundry")
 LABFOUNDRY_RELEASES_DIR = LABFOUNDRY_HOME / "releases"
 LABFOUNDRY_CURRENT_LINK = LABFOUNDRY_HOME / "current"
 LABFOUNDRY_VENV_LINK = LABFOUNDRY_HOME / ".venv"
+LABFOUNDRY_NOTICE_PATH = Path("/usr/share/doc/labfoundry/THIRD_PARTY_NOTICES.md")
 LABFOUNDRY_UPDATE_TRUST_DIR = Path("/etc/labfoundry/update-trust.d")
 LABFOUNDRY_UPDATE_BACKUP_DIR = LABFOUNDRY_STATE_DIR / "update-backups"
 LABFOUNDRY_DATABASE_PATH = LABFOUNDRY_STATE_DIR / "labfoundry.db"
 LABFOUNDRY_UPDATE_FINALIZER_PATH = LABFOUNDRY_STATE_DIR / "apply/appliance-update/finalizer-status.json"
 LABFOUNDRY_UPDATE_MAINTENANCE_PATH = Path("/run/labfoundry-update-maintenance")
-SUPPORTED_RELEASE_PYTHON_ABIS = {"cp312", "cp313", "cp314"}
+LABFOUNDRY_POWERSHELL_HOME = LABFOUNDRY_STATE_DIR / "powershell"
+SUPPORTED_RELEASE_PYTHON_ABIS = {"cp314"}
 CONSOLE_STATE_DIR = LABFOUNDRY_STATE_DIR / "console"
 CONSOLE_SERVICE_STATE_PATH = CONSOLE_STATE_DIR / "services.json"
 CONSOLE_MANAGED_SERVICE_UNITS = (
@@ -412,6 +420,29 @@ def _should_run_real_action_with_systemd(action: str) -> bool:
     )
 
 
+def _appliance_update_powershell_environment() -> dict[str, str]:
+    directories = [
+        LABFOUNDRY_POWERSHELL_HOME,
+        LABFOUNDRY_POWERSHELL_HOME / ".cache",
+        LABFOUNDRY_POWERSHELL_HOME / ".config",
+        LABFOUNDRY_POWERSHELL_HOME / ".local",
+        LABFOUNDRY_POWERSHELL_HOME / ".local" / "share",
+    ]
+    for directory in directories:
+        directory.mkdir(parents=True, exist_ok=True)
+        directory.chmod(0o700)
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(LABFOUNDRY_POWERSHELL_HOME),
+            "XDG_CACHE_HOME": str(LABFOUNDRY_POWERSHELL_HOME / ".cache"),
+            "XDG_CONFIG_HOME": str(LABFOUNDRY_POWERSHELL_HOME / ".config"),
+            "XDG_DATA_HOME": str(LABFOUNDRY_POWERSHELL_HOME / ".local" / "share"),
+        }
+    )
+    return env
+
+
 def _run_real_action_with_systemd(group: str, action: str, args: list[str]) -> int:
     helper_path = str(Path(__file__).resolve())
     command = [
@@ -422,12 +453,28 @@ def _run_real_action_with_systemd(group: str, action: str, args: list[str]) -> i
         "--collect",
         "--service-type=exec",
         f"--setenv={SYSTEMD_RUN_CHILD_ENV}=1",
-        helper_path,
-        group,
-        action,
-        "--real",
-        *args,
     ]
+    if group == "appliance-update":
+        powershell_env = _appliance_update_powershell_environment()
+        command.extend(
+            [
+                f"--property=WorkingDirectory={LABFOUNDRY_POWERSHELL_HOME}",
+                f"--setenv=HOME={powershell_env['HOME']}",
+                f"--setenv=XDG_CACHE_HOME={powershell_env['XDG_CACHE_HOME']}",
+                f"--setenv=XDG_CONFIG_HOME={powershell_env['XDG_CONFIG_HOME']}",
+                f"--setenv=XDG_DATA_HOME={powershell_env['XDG_DATA_HOME']}",
+            ]
+        )
+    elif group == "appliance-settings":
+        command.extend(
+            [
+                "--setenv=HOME=/root",
+                "--setenv=XDG_CACHE_HOME=/root/.cache",
+                "--setenv=XDG_CONFIG_HOME=/root/.config",
+                "--setenv=XDG_DATA_HOME=/root/.local/share",
+            ]
+        )
+    command.extend([helper_path, group, action, "--real", *args])
     result = _run(command)
     print(result.stdout, end="")
     print(result.stderr, end="", file=sys.stderr)
@@ -2433,6 +2480,59 @@ def _apply_ldap_config(payload: dict) -> int:
 
 
 def _handle_ldap(action: str, args: list[str]) -> int:
+    if action == "authenticate":
+        if len(args) != 1:
+            return 1
+        user_dn = args[0]
+        dn_parts = user_dn.split(",")
+        if (
+            len(user_dn) > 1000
+            or any(ord(character) < 0x20 for character in user_dn)
+            or len(dn_parts) < 4
+            or not re.fullmatch(r"uid=[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}", dn_parts[0])
+            or dn_parts[1].lower() != "ou=users"
+            or any("=" not in part or not part.split("=", 1)[0] for part in dn_parts[2:])
+        ):
+            return 1
+        password = sys.stdin.readline(4097).removesuffix("\n").removesuffix("\r")
+        if not password or len(password) > 4096:
+            return 1
+        ldapwhoami = shutil.which("ldapwhoami")
+        if ldapwhoami is None:
+            return 127
+        password_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                prefix="labfoundry-ldap-password-",
+                dir="/run" if Path("/run").is_dir() else None,
+                delete=False,
+            ) as password_file:
+                password_file.write(password)
+                password_file.write("\n")
+                password_path = Path(password_file.name)
+            os.chmod(password_path, 0o600)
+            result = _run(
+                [
+                    ldapwhoami,
+                    "-x",
+                    "-H",
+                    "ldapi:///",
+                    "-D",
+                    user_dn,
+                    "-y",
+                    str(password_path),
+                ],
+                timeout=10,
+            )
+            return 0 if result.returncode == 0 else 1
+        except (OSError, subprocess.TimeoutExpired):
+            return 1
+        finally:
+            password = ""
+            if password_path is not None:
+                password_path.unlink(missing_ok=True)
     if action == "logs":
         if args:
             print("ldap logs does not accept a path", file=sys.stderr)
@@ -3295,6 +3395,8 @@ def _appliance_settings_config_errors(path: Path) -> list[str]:
         errors.append("management_upstream_host must be an IP address.")
     if not isinstance(payload.get("root_ssh_enabled", False), bool):
         errors.append("root_ssh_enabled must be a boolean.")
+    if not isinstance(payload.get("vmware_ceip_enabled", False), bool):
+        errors.append("vmware_ceip_enabled must be a boolean.")
     if not isinstance(payload.get("web_terminal_enabled", False), bool):
         errors.append("web_terminal_enabled must be a boolean.")
     terminal_interfaces = payload.get("web_terminal_interfaces") or []
@@ -4067,6 +4169,69 @@ def _apply_hostname(fqdn: str) -> int:
     return result.returncode
 
 
+def _configure_powercli_ceip(enabled: bool) -> tuple[int, str]:
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        return 0, "skipped: PowerShell is not installed"
+    enabled_literal = "$true" if enabled else "$false"
+    script = (
+        '$ErrorActionPreference = "Stop"; '
+        '$module = Get-Module -Name VCF.PowerCLI -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1; '
+        "if (-not $module) { Write-Output 'VCF.PowerCLI is not installed'; exit 3 }; "
+        'Import-Module $module.Path -Force; '
+        f"Set-PowerCLIConfiguration -ParticipateInCeip {enabled_literal} -Scope AllUsers -Confirm:$false | Out-Null; "
+        '$configured = Get-PowerCLIConfiguration -Scope AllUsers; '
+        f"if ([bool]$configured.ParticipateInCEIP -ne {enabled_literal}) {{ throw 'PowerCLI CEIP verification failed' }}; "
+        '$configured | Select-Object Scope,ParticipateInCEIP | ConvertTo-Json -Compress'
+    )
+    result = _run(
+        [
+            pwsh,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-EncodedCommand",
+            _powershell_encoded_command(script),
+        ]
+    )
+    if result.returncode == 3 and "VCF.PowerCLI is not installed" in result.stdout:
+        return 0, "skipped: VCF.PowerCLI is not installed"
+    print(result.stdout, end="")
+    print(result.stderr, end="", file=sys.stderr)
+    if result.returncode != 0:
+        return result.returncode, "failed"
+    return 0, f"applied: AllUsers ParticipateInCEIP={'true' if enabled else 'false'}"
+
+
+def _apply_vcf_download_tool_ceip(enabled: bool) -> tuple[int, str]:
+    tool_candidates = [
+        VCF_DEPOT_RUNTIME_TOOL_DIR / "vcf-download-tool",
+        VCF_DEPOT_RUNTIME_TOOL_DIR / "bin" / "vcf-download-tool",
+    ]
+    if not any(path.is_file() for path in tool_candidates):
+        return 0, "skipped: VCF Download Tool is not installed"
+    telemetry_path = VCF_DEPOT_RUNTIME_TOOL_DIR / "conf" / "telemetry" / "telemetry.flag"
+    try:
+        telemetry_path.parent.mkdir(parents=True, exist_ok=True)
+        telemetry_path.write_text(
+            f"obtu.telemetry.config={'ENABLE' if enabled else 'DISABLE'}\n",
+            encoding="utf-8",
+        )
+        os.chmod(telemetry_path.parent, 0o750)
+        os.chmod(telemetry_path, 0o600)
+        try:
+            account = pwd.getpwnam(LABFOUNDRY_SERVICE_USER)
+        except KeyError:
+            account = None
+        if account is not None:
+            _chown_path(telemetry_path.parent, account.pw_uid, account.pw_gid)
+            _chown_path(telemetry_path, account.pw_uid, account.pw_gid)
+    except OSError as exc:
+        print(f"VCF Download Tool CEIP configuration failed: {exc}", file=sys.stderr)
+        return 2, "failed"
+    return 0, f"applied: obtu.telemetry.config={'ENABLE' if enabled else 'DISABLE'}"
+
+
 def _handle_appliance_settings(action: str, args: list[str]) -> int:
     if len(args) != 1:
         print(f"appliance-settings {action} requires exactly one staged JSON config path", file=sys.stderr)
@@ -4091,8 +4256,9 @@ def _handle_appliance_settings(action: str, args: list[str]) -> int:
                     "management_https_enabled": bool(payload.get("management_https_enabled")),
                     "web_terminal_enabled": bool(payload.get("web_terminal_enabled")),
                     "root_ssh_enabled": bool(payload.get("root_ssh_enabled")),
+                    "vmware_ceip_enabled": bool(payload.get("vmware_ceip_enabled")),
                     "management_interface": payload["management_interface"],
-                    "scope": "systemd-resolved, LabFoundry management UI, root SSH login, and web terminal trust",
+                    "scope": "systemd-resolved, LabFoundry management UI, root SSH login, web terminal trust, and VMware CEIP",
                 },
                 sort_keys=True,
             )
@@ -4121,6 +4287,13 @@ def _handle_appliance_settings(action: str, args: list[str]) -> int:
     web_terminal = _configure_web_terminal(bool(payload.get("web_terminal_enabled")))
     if web_terminal != 0:
         return web_terminal
+    vmware_ceip_enabled = bool(payload.get("vmware_ceip_enabled"))
+    powercli_ceip, powercli_ceip_status = _configure_powercli_ceip(vmware_ceip_enabled)
+    if powercli_ceip != 0:
+        return powercli_ceip
+    vcfdt_ceip, vcfdt_ceip_status = _apply_vcf_download_tool_ceip(vmware_ceip_enabled)
+    if vcfdt_ceip != 0:
+        return vcfdt_ceip
     management_https = _configure_labfoundry_management_https(payload)
     if management_https != 0:
         return management_https
@@ -4133,6 +4306,11 @@ def _handle_appliance_settings(action: str, args: list[str]) -> int:
                 "root_ssh_enabled": bool(payload.get("root_ssh_enabled")),
                 "web_terminal_enabled": bool(payload.get("web_terminal_enabled")),
                 "web_terminal_interfaces": payload.get("web_terminal_interfaces") or [],
+                "vmware_ceip_enabled": vmware_ceip_enabled,
+                "vmware_ceip_products": {
+                    "vcf_powercli": powercli_ceip_status,
+                    "vcf_download_tool": vcfdt_ceip_status,
+                },
                 "resolver_mode": resolver_mode,
                 "resolver_servers": resolver_servers,
             },
@@ -6748,6 +6926,26 @@ def _generate_vcf_download_tool_software_depot_id() -> int:
     return 0
 
 
+def _apply_vcf_download_tool_ceip_choice(choice: str) -> int:
+    normalized = choice.strip().upper()
+    if normalized not in {"ENABLE", "DISABLE"}:
+        print("vcf-offline-depot apply-ceip requires ENABLE or DISABLE", file=sys.stderr)
+        return 2
+    returncode, status = _apply_vcf_download_tool_ceip(normalized == "ENABLE")
+    if returncode == 0:
+        print(
+            json.dumps(
+                {
+                    "vcf_offline_depot": "CEIP apply complete",
+                    "choice": normalized,
+                    "status": status,
+                },
+                sort_keys=True,
+            )
+        )
+    return returncode
+
+
 def _vcf_download_tool_home(tool_path: Path) -> Path:
     return tool_path.parent.parent if tool_path.parent.name == "bin" else tool_path.parent
 
@@ -6837,6 +7035,12 @@ def _handle_vcf_offline_depot(action: str, args: list[str]) -> int:
             print("vcf-offline-depot generate-software-depot-id does not accept arguments", file=sys.stderr)
             return 2
         return _generate_vcf_download_tool_software_depot_id()
+
+    if action == "apply-ceip":
+        if len(args) != 1:
+            print("vcf-offline-depot apply-ceip requires ENABLE or DISABLE", file=sys.stderr)
+            return 2
+        return _apply_vcf_download_tool_ceip_choice(args[0])
 
     if action == "apply-properties":
         if len(args) != 1:
@@ -6989,6 +7193,11 @@ def _appliance_update_config_errors(payload: dict, *, require_streams: bool = Tr
         )
     ):
         errors.append("powershell_modules must be a list of module objects with names and repositories.")
+    policy = payload.get("policy") or {}
+    if not isinstance(policy, dict):
+        errors.append("policy must be an object.")
+    elif not isinstance(policy.get("vmware_ceip_enabled", False), bool):
+        errors.append("policy.vmware_ceip_enabled must be a boolean.")
     return errors
 
 
@@ -7411,7 +7620,12 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
             f"else {{ Register-PSRepository -Name $name -SourceLocation $url -InstallationPolicy {policy} }}; "
             "Get-PSRepository -Name $name | Select-Object Name,SourceLocation,InstallationPolicy | ConvertTo-Json -Compress"
         )
-        commands.append(_command_payload([pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)]))
+        commands.append(
+            _command_payload(
+                [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)],
+                env=_appliance_update_powershell_environment(),
+            )
+        )
     if pwsh is not None:
         for name in sorted(previous_powershell_names - current_powershell_names):
             script = (
@@ -7421,7 +7635,12 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
                 "if ($existing) { Unregister-PSRepository -Name $name }; "
                 "[pscustomobject]@{Name=$name;Removed=[bool]$existing} | ConvertTo-Json -Compress"
             )
-            commands.append(_command_payload([pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)]))
+            commands.append(
+                _command_payload(
+                    [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)],
+                    env=_appliance_update_powershell_environment(),
+                )
+            )
     UPDATE_SOURCE_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     UPDATE_SOURCE_STATE_PATH.write_text(
         json.dumps({"powershell_repositories": sorted(current_powershell_names)}, indent=2, sort_keys=True) + "\n",
@@ -7465,11 +7684,11 @@ def _check_appliance_update(payload: dict, credentials: dict[str, dict[str, str]
             )
             source = next((item for item in _enabled_sources(payload, "powershell") if str(item.get("name") or "") == repository), {})
             credential = _source_credential(source, credentials)
-            env = os.environ.copy()
+            env = _appliance_update_powershell_environment()
             if credential:
                 env.update({"LF_REPO_USER": str(credential.get("username") or ""), "LF_REPO_SECRET": str(credential["secret"])})
             command_args = [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)]
-            command = _command_payload(command_args, env=env) if credential else _command_payload(command_args)
+            command = _command_payload(command_args, env=env)
             commands.append(command)
             module_checks.append({"name": name, "repository": repository, "target_version": target, "success": command["success"]})
         checks["powershell_modules"] = module_checks
@@ -7499,6 +7718,15 @@ def _apply_powershell_modules(payload: dict, credentials: dict[str, dict[str, st
         policy = str(module.get("policy") or "pinned")
         repository = str(module.get("repository_name") or default_repository).strip()
         version_argument = f" -RequiredVersion {_powershell_literal(target)}" if policy == "pinned" and target else ""
+        ceip_enabled = bool((payload.get("policy") or {}).get("vmware_ceip_enabled", False))
+        ceip_script = ""
+        if name.casefold() == "vcf.powercli":
+            ceip_literal = "$true" if ceip_enabled else "$false"
+            ceip_script = (
+                f"Set-PowerCLIConfiguration -ParticipateInCeip {ceip_literal} -Scope AllUsers -Confirm:$false | Out-Null; "
+                "$configured = Get-PowerCLIConfiguration -Scope AllUsers; "
+                f"if ([bool]$configured.ParticipateInCEIP -ne {ceip_literal}) {{ throw 'PowerCLI CEIP verification failed' }}; "
+            )
         script = (
             '$ErrorActionPreference = "Stop"; '
             "$credentialArgs = if ($env:LF_REPO_SECRET) { $credential = New-Object System.Management.Automation.PSCredential($env:LF_REPO_USER, (ConvertTo-SecureString $env:LF_REPO_SECRET -AsPlainText -Force)); @{Credential=$credential} } else { @{} }; "
@@ -7506,15 +7734,16 @@ def _apply_powershell_modules(payload: dict, credentials: dict[str, dict[str, st
             f"{version_argument} @credentialArgs -Scope AllUsers -Force -AllowClobber -AcceptLicense -Confirm:$false; "
             f"$module = Get-Module -Name {_powershell_literal(name)} -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1; "
             "if (-not $module) { throw 'Installed module could not be found' }; Import-Module $module.Path -Force; "
+            f"{ceip_script}"
             "$module | Select-Object Name,Version,Path | ConvertTo-Json -Compress"
         )
         source = next((item for item in _enabled_sources(payload, "powershell") if str(item.get("name") or "") == repository), {})
         credential = _source_credential(source, credentials)
-        env = os.environ.copy()
+        env = _appliance_update_powershell_environment()
         if credential:
             env.update({"LF_REPO_USER": str(credential.get("username") or ""), "LF_REPO_SECRET": str(credential["secret"])})
         command_args = [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)]
-        commands.append(_command_payload(command_args, env=env) if credential else _command_payload(command_args))
+        commands.append(_command_payload(command_args, env=env))
     if any(command.get("success") for command in commands):
         chmod = _command_path("chmod") or "chmod"
         commands.append(
@@ -7556,7 +7785,7 @@ def _active_release_metadata() -> tuple[Path, dict]:
 
 def _candidate_photon_python_abi() -> tuple[dict, str]:
     tdnf = _command_path("tdnf") or "tdnf"
-    command = _command_payload([tdnf, "repoquery", "--latest-limit", "1", "python3"])
+    command = _command_payload([tdnf, "repoquery", "python3"])
     if not command["success"]:
         return command, ""
     versions = [
@@ -7817,6 +8046,7 @@ def _wait_for_labfoundry_health(timeout_seconds: int = 60) -> dict:
 def _install_release_owned_files(release_root: Path, backup_root: Path) -> list[tuple[Path | None, Path]]:
     owned = [
         (release_root / "bin/labfoundry-helper", Path("/opt/labfoundry/bin/labfoundry-helper"), 0o755),
+        (release_root / "THIRD_PARTY_NOTICES.md", LABFOUNDRY_NOTICE_PATH, 0o644),
         (release_root / "systemd/labfoundry.service", Path("/etc/systemd/system/labfoundry.service"), 0o644),
         (release_root / "systemd/labfoundry-worker.service", Path("/etc/systemd/system/labfoundry-worker.service"), 0o644),
         (release_root / "systemd/labfoundry-console.service", Path("/etc/systemd/system/labfoundry-console.service"), 0o644),

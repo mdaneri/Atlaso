@@ -42,6 +42,21 @@ def test_next_patch_handles_multi_digit_patch():
     assert str(versioning.Version.parse("12.34.99").next_patch()) == "12.34.100"
 
 
+def test_read_project_version_accepts_crlf_without_other_version_sources(tmp_path):
+    (tmp_path / "pyproject.toml").write_bytes(
+        b'[project]\r\nname = "labfoundry"\r\nversion = "1.2.3"\r\n'
+    )
+
+    assert versioning.read_project_version(tmp_path) == versioning.Version(1, 2, 3)
+
+
+def test_read_project_version_reports_invalid_toml(tmp_path):
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "1.2.3"\nbroken = [\n', encoding="utf-8")
+
+    with pytest.raises(versioning.VersionError, match="contains invalid TOML"):
+        versioning.read_project_version(tmp_path)
+
+
 def test_check_rejects_inconsistent_sources(tmp_path):
     write_version_sources(tmp_path, "0.1.0", runtime="0.1.1")
 
@@ -63,6 +78,10 @@ def test_bump_synchronizes_all_sources_from_base(tmp_path):
         "Python runtime fallback": bumped,
         "PowerShell module": bumped,
     }
+    assert all(
+        b"\r\n" not in (target / relative_path).read_bytes()
+        for relative_path in versioning.VERSION_PATHS.values()
+    )
     assert versioning.check(target, base) == bumped
 
 

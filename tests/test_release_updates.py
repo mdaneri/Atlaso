@@ -38,7 +38,7 @@ def release_payload() -> dict:
         "git_commit": "a" * 40,
         "built_at": "2026-07-23T12:00:00Z",
         "signing_key_id": KEY_ID,
-        "supported_python_abis": ["cp312", "cp313", "cp314"],
+        "supported_python_abis": ["cp314"],
         "bundle": {
             "url": "https://github.com/mdaneri/LabFoundry/releases/download/v0.9.0/bundle.tar.gz",
             "size": 123,
@@ -133,12 +133,40 @@ def test_release_manifest_requires_complete_v2_interface(field, value, message):
         validate_release_manifest(payload)
 
 
+def test_release_manifest_rejects_non_appliance_python_abi():
+    payload = release_payload()
+    payload["supported_python_abis"] = ["cp313"]
+    with pytest.raises(ReleaseManifestError, match="supported_python_abis"):
+        validate_release_manifest(payload)
+
+
 def test_release_workflows_use_successful_main_sha_and_promote_without_rebuilding():
     publication = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
     promotion = (ROOT / ".github/workflows/promote-release.yml").read_text(encoding="utf-8")
+    ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     assert "github.event.workflow_run.head_branch == 'main'" in publication
     assert "github.event.workflow_run.event == 'push'" in publication
-    assert publication.count("ref: ${{ github.event.workflow_run.head_sha }}") == 2
+    assert "github.event_name == 'workflow_dispatch'" in publication
+    assert "-f head_sha=\"$RELEASE_SHA\"" in publication
+    assert "-f status=success" in publication
+    assert "has no successful main push CI run" in publication
+    assert "Publish or recover the v0.9.0 bridge release" in publication
+    assert 'json.load(open(sys.argv[1]))["version"]' in publication
+    assert 'json.load(open(sys.argv[1]))[\\"version\\"]' not in publication
+    assert 'cat > "$SITE_ROOT/index.html"' in publication
+    assert "Signed release repository" in publication
+    assert "The HTML page is informational." in publication
+    assert "<script" not in publication
+    assert publication.count("ref: ${{ needs.prepare.outputs.release_sha }}") == 2
+    assert "actions/upload-artifact@v7" in publication
+    assert publication.count("actions/download-artifact@v8") == 1
+    assert "python-version: '3.14'" in publication
+    assert "python-version: '3.14'" in promotion
+    assert ci.count("python-version: '3.14'") == 2
+    assert "cp312" not in publication
+    assert "cp313" not in publication
+    assert "actions/upload-artifact@v4" not in publication
+    assert "actions/download-artifact@v4" not in publication
     assert '--commit "$RELEASE_SHA"' in publication
     assert "--expected-version \"$VERSION\"" in publication
     assert '--site-root "$SITE_ROOT/updates"' in publication
@@ -174,6 +202,50 @@ def test_idempotent_publisher_refuses_existing_tag_for_another_commit(monkeypatc
     )
     with pytest.raises(SystemExit, match="already identifies"):
         module.main()
+
+
+def test_idempotent_publisher_creates_annotated_tag_without_global_git_identity(
+    monkeypatch,
+    tmp_path,
+):
+    spec = importlib.util.spec_from_file_location("publish_release", ROOT / "scripts/publish_release.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    (assets / "release-manifest.json").write_text("{}", encoding="utf-8")
+    requested = "a" * 40
+    commands: list[list[str]] = []
+
+    def fake_run(command, *, check=True):
+        import subprocess
+
+        commands.append(command)
+        if command[:3] == ["git", "ls-remote", "--tags"]:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if command[:3] == ["gh", "release", "view"]:
+            return subprocess.CompletedProcess(command, 1, "", "release not found")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(module, "run", fake_run)
+    monkeypatch.setattr(module, "version", lambda: "0.9.0")
+    monkeypatch.setattr(
+        "sys.argv",
+        ["publish_release.py", "--commit", requested, "--assets", str(assets)],
+    )
+
+    assert module.main() == 0
+    tag_command = next(command for command in commands if "tag" in command)
+    assert tag_command[:6] == [
+        "git",
+        "-c",
+        "user.name=github-actions[bot]",
+        "-c",
+        "user.email=41898282+github-actions[bot]@users.noreply.github.com",
+        "tag",
+    ]
+    assert ["git", "push", "origin", "refs/tags/v0.9.0"] in commands
 
 
 def test_deterministic_release_archive_normalizes_metadata(tmp_path):
@@ -460,6 +532,112 @@ def test_worker_restart_uses_matching_root_release_finalizer(client, monkeypatch
         result = json.loads(recovered.result)
         assert result["worker_recovery"] == "root_finalizer"
         assert result["release_transaction"]["verified_key_id"] == "labfoundry-release-2026-01"
+
+
+def test_worker_restart_fails_update_parent_after_children_commit(client, monkeypatch, tmp_path):
+    from labfoundry.app import worker
+    from labfoundry.app.database import SessionLocal
+    from labfoundry.app.models import Job
+    from labfoundry.app.services.appliance_update import ensure_appliance_update_job_steps
+
+    monkeypatch.setattr(
+        worker,
+        "APPLIANCE_UPDATE_FINALIZER_PATH",
+        str(tmp_path / "missing-finalizer-status.json"),
+    )
+    with SessionLocal() as db:
+        job = Job(
+            id="job_update_children_committed",
+            type="appliance-update",
+            status="running",
+            created_by="admin",
+            task_config_json=json.dumps(
+                {"selected_streams": ["powershell_modules", "photon_os"], "mode": "check"}
+            ),
+            result='{"status":"pending","success":false}',
+        )
+        db.add(job)
+        db.flush()
+        steps = ensure_appliance_update_job_steps(
+            db,
+            job=job,
+            selected_streams=["powershell_modules", "photon_os"],
+        )
+        for step in steps:
+            step.status = "succeeded"
+            step.progress_percent = 100
+            step.result = '{"status":"succeeded","success":true}'
+        db.commit()
+
+        assert worker.recover_interrupted_worker_jobs(db) == 1
+        recovered = db.get(Job, job.id)
+        assert recovered.status == "failed"
+        assert recovered.progress_percent == 100
+        assert "worker restarted" in (recovered.error or "")
+        result = json.loads(recovered.result or "{}")
+        assert result["status"] == "failed"
+        assert result["success"] is False
+        assert result["worker_recovery"] == "interrupted"
+        assert [step.status for step in recovered.steps] == ["succeeded", "succeeded"]
+
+
+def test_worker_restart_keeps_release_finalizer_scoped_to_its_child(client, monkeypatch, tmp_path):
+    from sqlalchemy import select
+
+    from labfoundry.app import worker
+    from labfoundry.app.database import SessionLocal
+    from labfoundry.app.models import Job, JobStep
+    from labfoundry.app.services.appliance_update import ensure_appliance_update_job_steps
+
+    finalizer = tmp_path / "finalizer-status.json"
+    finalizer.write_text(
+        json.dumps(
+            {
+                "job_id": "job_release_partial_finalizer",
+                "status": "succeeded",
+                "release": "0.9.0",
+                "git_commit": "a" * 40,
+                "verified_key_id": "labfoundry-release-2026-01",
+                "bundle_sha256": "b" * 64,
+                "rolled_back": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(worker, "APPLIANCE_UPDATE_FINALIZER_PATH", str(finalizer))
+    with SessionLocal() as db:
+        job = Job(
+            id="job_release_partial_finalizer",
+            type="appliance-update",
+            status="running",
+            created_by="admin",
+            task_config_json=json.dumps(
+                {"selected_streams": ["labfoundry_release", "photon_os"], "mode": "run"}
+            ),
+            result='{"selected_streams":["labfoundry_release","photon_os"]}',
+        )
+        db.add(job)
+        db.flush()
+        steps = ensure_appliance_update_job_steps(
+            db,
+            job=job,
+            selected_streams=["labfoundry_release", "photon_os"],
+        )
+        release_step = steps[0]
+        release_step.status = "running"
+        db.commit()
+
+        assert worker.recover_interrupted_worker_jobs(db) == 1
+        recovered = db.get(Job, job.id)
+        steps = db.execute(
+            select(JobStep).where(JobStep.job_id == job.id).order_by(JobStep.position)
+        ).scalars().all()
+        assert recovered.status == "failed"
+        assert [(step.component_key, step.status) for step in steps] == [
+            ("labfoundry_release", "succeeded"),
+            ("photon_os", "skipped"),
+        ]
+        assert "worker restarted" in (steps[-1].error or "")
 
 
 @pytest.mark.parametrize("failure_stage", ["database_migration", "symlink_switch", "service_health"])

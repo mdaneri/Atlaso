@@ -1,0 +1,1052 @@
+import base64
+from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
+import hashlib
+import json
+import re
+from urllib.parse import parse_qs, urlsplit
+
+from sqlalchemy import select, text
+
+
+def _admin_headers(client) -> dict[str, str]:
+    response = client.post(
+        "/api/v1/auth/login?username=admin&password=labfoundry-admin",
+        json={"name": "oidc administration", "scopes": ["admin:all"]},
+    )
+    assert response.status_code == 200, response.text
+    return {"Authorization": f"Bearer {response.json()['raw_token']}"}
+
+
+def _set_applied_management_https(db, fqdn: str = "labfoundry.example.test") -> None:
+    from labfoundry.app.models import ApplianceSettings, Setting
+
+    appliance = db.execute(select(ApplianceSettings)).scalar_one()
+    appliance.fqdn = fqdn
+    appliance.management_https_enabled = True
+    payload = {
+        "appliance_settings": {
+            "config_preview": json.dumps(
+                {
+                    "fqdn": fqdn,
+                    "management_https_enabled": True,
+                    "management_https_cert_path": "/etc/labfoundry/https/appliance.crt",
+                    "management_https_key_path": "/etc/labfoundry/https/appliance.key",
+                }
+            )
+        }
+    }
+    row = db.execute(
+        select(Setting).where(Setting.key == "appliance_apply.baselines.v1")
+    ).scalar_one_or_none()
+    if row is None:
+        row = Setting(key="appliance_apply.baselines.v1", value=json.dumps(payload))
+        db.add(row)
+    else:
+        row.value = json.dumps(payload)
+    db.flush()
+
+
+def _configure_protocol_client(
+    *,
+    organization_id: int | None = None,
+    redirect_uri: str = "https://rp.example.test/callback?case=A%2Fb",
+    post_logout_redirect_uri: str = "https://rp.example.test/logout",
+) -> tuple[str, str]:
+    from labfoundry.app.database import SessionLocal
+    from labfoundry.app.services import oidc
+
+    with SessionLocal() as db:
+        _set_applied_management_https(db)
+        provider = oidc.ensure_provider_settings(db)
+        provider.issuer_url = "https://labfoundry.example.test/identity"
+        provider.enabled = True
+        if oidc.active_signing_key(db) is None:
+            oidc.generate_signing_key(db, rotate=False)
+        client_row, secret = oidc.create_client(
+            db,
+            name=f"Protocol client {organization_id or 'local'}",
+            organization_id=organization_id,
+            redirect_uris=[redirect_uri],
+            post_logout_redirect_uris=[post_logout_redirect_uri],
+            allowed_scopes=["openid", "profile", "email", "groups"],
+            allow_loopback_redirects=False,
+            access_token_lifetime_seconds=300,
+            id_token_lifetime_seconds=300,
+            authorization_code_lifetime_seconds=60,
+            enabled=True,
+        )
+        client_id = client_row.client_id
+        db.commit()
+    return client_id, secret
+
+
+def _authorization_parameters(client_id: str, verifier: str, **overrides: str) -> dict[str, str]:
+    challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode("ascii")).digest()
+    ).rstrip(b"=").decode("ascii")
+    params = {
+        "response_type": "code",
+        "response_mode": "query",
+        "client_id": client_id,
+        "redirect_uri": "https://rp.example.test/callback?case=A%2Fb",
+        "scope": "openid profile",
+        "state": "state-original",
+        "nonce": "nonce-original",
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+        "prompt": "login",
+        "login_hint": "admin",
+    }
+    params.update(overrides)
+    return params
+
+
+def _start_login(client, params: dict[str, str]) -> tuple[str, str, str]:
+    response = client.get("https://testserver/identity/authorize", params=params)
+    assert response.status_code == 200, response.text
+    transaction = re.search(r'name="transaction" value="([^"]+)"', response.text)
+    csrf = re.search(r'name="csrf" value="([^"]+)"', response.text)
+    assert transaction and csrf
+    cookie = response.headers["set-cookie"]
+    assert "Secure" in cookie and "HttpOnly" in cookie and "SameSite=lax" in cookie
+    return transaction.group(1), csrf.group(1), cookie
+
+
+def _finish_local_login(client, transaction: str, csrf: str):
+    return client.post(
+        "https://testserver/identity/authorize",
+        data={
+            "transaction": transaction,
+            "csrf": csrf,
+            "username": "admin",
+            "password": "labfoundry-admin",
+        },
+        follow_redirects=False,
+    )
+
+
+def _exchange_code(
+    client, *, client_id: str, secret: str, code: str, verifier: str,
+    redirect_uri: str = "https://rp.example.test/callback?case=A%2Fb",
+):
+    credentials = base64.b64encode(f"{client_id}:{secret}".encode("utf-8")).decode("ascii")
+    return client.post(
+        "https://testserver/identity/token",
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": redirect_uri,
+            "code_verifier": verifier,
+        },
+        headers={"Authorization": f"Basic {credentials}"},
+    )
+
+
+def test_oidc_public_documents_require_complete_protocol_readiness(client):
+    assert client.get("/identity/.well-known/openid-configuration").status_code == 404
+    assert client.get("/identity/jwks").status_code == 404
+
+    headers = _admin_headers(client)
+    provider = client.get("/api/v1/oidc/provider", headers=headers)
+    assert provider.status_code == 200
+    payload = provider.json()
+    payload["enabled"] = True
+    enable = client.put("/api/v1/oidc/provider", headers=headers, json=payload)
+    assert enable.status_code == 409
+    assert "Management HTTPS" in enable.text
+
+    from labfoundry.app.database import SessionLocal
+    from labfoundry.app.services import oidc
+
+    with SessionLocal() as db:
+        _set_applied_management_https(db)
+        provider_row = oidc.ensure_provider_settings(db)
+        provider_row.issuer_url = "https://labfoundry.example.test/identity"
+        oidc.generate_signing_key(db, rotate=False)
+        db.commit()
+
+    payload["issuer_url"] = "https://labfoundry.example.test/identity"
+    enabled = client.put("/api/v1/oidc/provider", headers=headers, json=payload)
+    assert enabled.status_code == 200, enabled.text
+    assert enabled.json()["enabled"] is True
+    assert (
+        client.get("https://testserver/identity/.well-known/openid-configuration").status_code
+        == 200
+    )
+    assert client.get("https://testserver/identity/jwks").status_code == 200
+
+
+def test_oidc_confidential_client_secret_is_argon2_and_shown_only_once(client):
+    headers = _admin_headers(client)
+    created = client.post(
+        "/api/v1/oidc/clients",
+        headers=headers,
+        json={
+            "name": "VCF 9.1",
+            "redirect_uris": ["https://vcf.example.test/identity/callback?case=A%2Fb"],
+            "post_logout_redirect_uris": [],
+            "allowed_scopes": ["openid", "profile", "email", "groups"],
+            "allow_loopback_redirects": False,
+            "access_token_lifetime_seconds": 300,
+            "id_token_lifetime_seconds": 300,
+            "authorization_code_lifetime_seconds": 60,
+            "enabled": True,
+        },
+    )
+    assert created.status_code == 201, created.text
+    plaintext = created.json()["client_secret"]
+    assert plaintext
+    listed = client.get("/api/v1/oidc/clients", headers=headers)
+    assert listed.status_code == 200
+    assert plaintext not in listed.text
+    assert listed.json()[0]["redirect_uris"] == [
+        "https://vcf.example.test/identity/callback?case=A%2Fb"
+    ]
+
+    from labfoundry.app.database import SessionLocal
+    from labfoundry.app.models import OidcClient
+    from labfoundry.app.services.oidc import verify_client_secret
+
+    with SessionLocal() as db:
+        row = db.execute(select(OidcClient)).scalar_one()
+        assert row.client_secret_hash.startswith("$argon2")
+        assert verify_client_secret(row.client_secret_hash, plaintext)
+        old_hash = row.client_secret_hash
+
+    rotated = client.post(
+        f"/api/v1/oidc/clients/{listed.json()[0]['id']}/secret/rotate",
+        headers=headers,
+    )
+    assert rotated.status_code == 200
+    replacement = rotated.json()["client_secret"]
+    assert replacement != plaintext
+    with SessionLocal() as db:
+        row = db.execute(select(OidcClient)).scalar_one()
+        assert row.client_secret_hash != old_hash
+        assert not verify_client_secret(row.client_secret_hash, plaintext)
+        assert verify_client_secret(row.client_secret_hash, replacement)
+
+
+def test_oidc_redirect_validation_rejects_wildcards_fragments_and_nonliteral_loopback():
+    from labfoundry.app.services.oidc import OidcConfigurationError, validate_redirect_uri
+
+    invalid = [
+        ("https://vcf.example.test/*", False),
+        ("https://vcf.example.test/callback#fragment", False),
+        ("http://localhost:8080/callback", True),
+        ("http://127.0.0.1/callback", True),
+    ]
+    for uri, allow_loopback in invalid:
+        try:
+            validate_redirect_uri(uri, allow_loopback=allow_loopback)
+        except OidcConfigurationError:
+            pass
+        else:
+            raise AssertionError(f"{uri} should be rejected")
+    assert (
+        validate_redirect_uri("http://127.0.0.1:49152/callback", allow_loopback=True)
+        == "http://127.0.0.1:49152/callback"
+    )
+
+
+def test_oidc_rsa_key_is_encrypted_and_rotation_keeps_public_overlap(client, monkeypatch):
+    from labfoundry.app import services
+    from labfoundry.app.database import SessionLocal
+    from labfoundry.app.models import ApplianceSettings, OidcProviderSettings, OidcSigningKey
+    from labfoundry.app.secrets import decrypt_secret
+    from labfoundry.app.services import oidc
+
+    with SessionLocal() as db:
+        appliance = db.execute(select(ApplianceSettings)).scalar_one()
+        appliance.fqdn = "labfoundry.example.test"
+        appliance.management_https_enabled = True
+        _set_applied_management_https(db)
+        provider = oidc.ensure_provider_settings(db)
+        provider.issuer_url = "https://labfoundry.example.test/identity"
+        provider.clock_skew_seconds = 120
+        provider.signing_key_overlap_seconds = 300
+        first, _ = oidc.generate_signing_key(db, rotate=False)
+        private_pem = decrypt_secret(first.private_key_encrypted)
+        assert private_pem.startswith("-----BEGIN PRIVATE KEY-----")
+        assert private_pem not in first.private_key_encrypted
+        second, previous = oidc.generate_signing_key(db, rotate=True)
+        assert second.kid != first.kid
+        assert previous is first
+        assert previous.publish_until >= previous.retired_at + timedelta(seconds=420)
+        provider.enabled = True
+        db.commit()
+
+    with SessionLocal() as db:
+        document = oidc.discovery_document(db)
+        jwks = oidc.jwks_document(db)
+        assert document["issuer"] == "https://labfoundry.example.test/identity"
+        assert {key["kid"] for key in jwks["keys"]} == {
+            row.kid for row in db.execute(select(OidcSigningKey)).scalars()
+        }
+        assert all("d" not in key for key in jwks["keys"])
+
+
+def test_oidc_subject_is_stable_across_metadata_changes_and_new_after_recreation(client):
+    from labfoundry.app.database import SessionLocal
+    from labfoundry.app.models import OidcSubject, User
+    from labfoundry.app.services.identity_credentials import VerifiedIdentity, ensure_oidc_subject
+
+    with SessionLocal() as db:
+        user = db.execute(select(User).where(User.username == "admin")).scalar_one()
+        identity = VerifiedIdentity("local", user.id, user.username, "Admin", "", None, "Local")
+        first = ensure_oidc_subject(db, identity)
+        first_uuid = first.subject_uuid
+        user.external_display_name = "Renamed Administrator"
+        user.external_email = "renamed@example.test"
+        db.flush()
+        assert ensure_oidc_subject(db, identity).subject_uuid == first_uuid
+        db.delete(user)
+        db.commit()
+        assert db.execute(select(OidcSubject)).scalar_one_or_none() is None
+        db.expunge_all()
+        recreated = User(username="admin", auth_provider="local", enabled=True)
+        db.add(recreated)
+        db.flush()
+        replacement = ensure_oidc_subject(
+            db,
+            VerifiedIdentity("local", recreated.id, recreated.username, "Admin", "", None, "Local"),
+        )
+        assert replacement.subject_uuid != first_uuid
+
+
+def test_sqlite_foreign_keys_are_enabled(client):
+    from labfoundry.app.database import SessionLocal
+
+    with SessionLocal() as db:
+        assert db.execute(text("PRAGMA foreign_keys")).scalar_one() == 1
+
+
+def test_managed_ldap_credential_service_checks_persisted_scope_before_helper(client, monkeypatch):
+    from labfoundry.app.adapters.system import AdapterResult
+    from labfoundry.app.database import SessionLocal
+    from labfoundry.app.models import LdapOrganization, LdapUser
+    from labfoundry.app.services import identity_credentials
+
+    calls: list[tuple[str, str]] = []
+
+    class AuthenticationAdapter:
+        def authenticate_ldap_user(self, user_dn: str, password: str) -> AdapterResult:
+            calls.append((user_dn, password))
+            return AdapterResult(
+                command=["labfoundry-helper", "ldap", "authenticate", user_dn],
+                dry_run=False,
+                returncode=0 if password == "Directory-Password!" else 1,
+            )
+
+    monkeypatch.setattr(identity_credentials, "SystemAdapter", AuthenticationAdapter)
+    with SessionLocal() as db:
+        organization = LdapOrganization(
+            name="Research",
+            slug="research",
+            suffix_dn="dc=research,dc=example,dc=test",
+            enabled=True,
+        )
+        db.add(organization)
+        db.flush()
+        user = LdapUser(
+            organization_id=organization.id,
+            uid="duplicate",
+            display_name="Directory User",
+            enabled=True,
+        )
+        db.add(user)
+        db.commit()
+        verified = identity_credentials.verify_credentials(
+            db,
+            source="managed_ldap",
+            organization_id=organization.id,
+            username="duplicate",
+            password="Directory-Password!",
+        )
+        assert verified is not None
+        assert verified.organization_id == organization.id
+        assert calls == [
+            (
+                "uid=duplicate,ou=users,dc=research,dc=example,dc=test",
+                "Directory-Password!",
+            )
+        ]
+        user.enabled = False
+        db.commit()
+        assert (
+            identity_credentials.verify_credentials(
+                db,
+                source="managed_ldap",
+                organization_id=organization.id,
+                username="duplicate",
+                password="Directory-Password!",
+            )
+            is None
+        )
+        assert len(calls) == 1
+
+
+def test_oidc_backup_restore_preserves_subject_client_and_encrypted_key(client):
+    from labfoundry.app.database import SessionLocal
+    from labfoundry.app.models import OidcClient, OidcSigningKey, OidcSubject, User
+    from labfoundry.app.services.identity_credentials import VerifiedIdentity, ensure_oidc_subject
+    from labfoundry.app.services.oidc import create_client, generate_signing_key
+    from labfoundry.app.services.settings_archive import (
+        export_settings_archive,
+        factory_reset_desired_state,
+        restore_settings_archive,
+    )
+
+    with SessionLocal() as db:
+        admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
+        subject = ensure_oidc_subject(
+            db,
+            VerifiedIdentity("local", admin.id, admin.username, "Admin", "", None, "Local"),
+        )
+        subject_uuid = subject.subject_uuid
+        client_row, _secret = create_client(
+            db,
+            name="Backup client",
+            organization_id=None,
+            redirect_uris=["https://backup.example.test/callback"],
+            post_logout_redirect_uris=[],
+            allowed_scopes=["openid", "profile"],
+            allow_loopback_redirects=False,
+            access_token_lifetime_seconds=300,
+            id_token_lifetime_seconds=300,
+            authorization_code_lifetime_seconds=60,
+            enabled=True,
+        )
+        key, _ = generate_signing_key(db, rotate=False)
+        encrypted_private_key = key.private_key_encrypted
+        db.commit()
+        archive = export_settings_archive(db, actor="admin")
+        serialized = json.dumps(archive)
+        assert encrypted_private_key in serialized
+        assert "BEGIN PRIVATE KEY" not in serialized
+        assert _secret not in serialized
+        factory_reset_desired_state(db)
+        assert db.execute(select(OidcClient)).scalar_one_or_none() is None
+        restore_settings_archive(db, archive)
+        assert db.execute(select(OidcSubject)).scalar_one().subject_uuid == subject_uuid
+        assert db.execute(select(OidcClient)).scalar_one().client_id == client_row.client_id
+        assert (
+            db.execute(select(OidcSigningKey)).scalar_one().private_key_encrypted
+            == encrypted_private_key
+        )
+
+
+def test_authentication_page_exposes_authorization_code_oidc_ui(client):
+    login = client.get("/login")
+    csrf = login.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    signed_in = client.post(
+        "/login",
+        data={"username": "admin", "password": "labfoundry-admin", "csrf": csrf},
+        follow_redirects=False,
+    )
+    assert signed_in.status_code == 303
+    page = client.get("/authentication")
+    assert page.status_code == 200
+    assert "OpenID Connect Provider" in page.text
+    assert "Authorization Code flow is available" in page.text
+    assert "VCF 9.1 Identity Broker" in page.text
+    assert "Paste the exact VCF Identity Broker redirect URI" in page.text
+    assert 'name="enabled"' in page.text
+    assert 'data-autosave-status-id="oidc-provider-autosave-status"' in page.text
+    assert page.text.count('class="help-icon"') >= 10
+    assert "Rotate OIDC signing key?" in page.text or "Generate first signing key" in page.text
+
+
+def test_authentication_ui_deletes_bound_client_before_ldap_organization(client):
+    from labfoundry.app.database import SessionLocal
+    from labfoundry.app.models import LdapOrganization, OidcClient
+    from labfoundry.app.services.oidc import create_client
+
+    with SessionLocal() as db:
+        organization = LdapOrganization(
+            name="Bound organization",
+            slug="bound-organization",
+            suffix_dn="dc=bound-organization,dc=example,dc=test",
+            enabled=True,
+        )
+        db.add(organization)
+        db.flush()
+        client_row, _secret = create_client(
+            db,
+            name="Bound VCF client",
+            organization_id=organization.id,
+            redirect_uris=["https://vcf.example.test/identity/callback"],
+            post_logout_redirect_uris=[],
+            allowed_scopes=["openid", "profile", "email", "groups"],
+            allow_loopback_redirects=False,
+            access_token_lifetime_seconds=300,
+            id_token_lifetime_seconds=300,
+            authorization_code_lifetime_seconds=60,
+            enabled=True,
+        )
+        organization_id = organization.id
+        client_record_id = client_row.id
+        db.commit()
+
+    login = client.get("/login")
+    csrf = login.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    signed_in = client.post(
+        "/login",
+        data={"username": "admin", "password": "labfoundry-admin", "csrf": csrf},
+        follow_redirects=False,
+    )
+    assert signed_in.status_code == 303
+    page = client.get("/authentication")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    assert f'action="/authentication/oidc/clients/{client_record_id}/delete"' in page.text
+    assert "Delete OIDC client Bound VCF client?" in page.text
+    assert 'data-confirm-label="Delete OIDC client"' in page.text
+
+    deleted = client.post(
+        f"/authentication/oidc/clients/{client_record_id}/delete",
+        data={"csrf": csrf},
+        follow_redirects=False,
+    )
+    assert deleted.status_code == 303
+    assert deleted.headers["location"] == "/authentication#oidc-clients"
+    organization_deleted = client.post(
+        f"/ldap/organizations/{organization_id}/delete",
+        data={"csrf": csrf},
+        follow_redirects=False,
+    )
+    assert organization_deleted.status_code == 303
+
+    with SessionLocal() as db:
+        assert db.get(OidcClient, client_record_id) is None
+        assert db.get(LdapOrganization, organization_id) is None
+
+
+def test_authorization_code_local_flow_rotates_session_and_rejects_replay(client):
+    from joserfc import jwt
+    from joserfc.jwk import RSAKey
+    from labfoundry.app.database import SessionLocal
+    from labfoundry.app.models import OidcAuthorizationCode, OidcAuthorizationTransaction, OidcSigningKey
+
+    client_id, secret = _configure_protocol_client()
+    verifier = "v" * 64
+    transaction, csrf, first_cookie = _start_login(
+        client, _authorization_parameters(client_id, verifier)
+    )
+    login = _finish_local_login(client, transaction, csrf)
+    assert login.status_code == 303, login.text
+    assert login.headers["location"].startswith(
+        "https://rp.example.test/callback?case=A%2Fb&"
+    )
+    assert login.headers["set-cookie"] != first_cookie
+    callback = parse_qs(urlsplit(login.headers["location"]).query)
+    assert callback["state"] == ["state-original"]
+    code = callback["code"][0]
+
+    with SessionLocal() as db:
+        persisted = db.execute(select(OidcAuthorizationCode)).scalar_one()
+        assert code not in persisted.code_hash
+        assert persisted.nonce == "nonce-original"
+        assert persisted.state == "state-original"
+        assert persisted.redirect_uri == "https://rp.example.test/callback?case=A%2Fb"
+        assert persisted.browser_session_id
+        assert db.execute(select(OidcAuthorizationTransaction)).scalar_one_or_none() is None
+
+    token_response = _exchange_code(
+        client,
+        client_id=client_id,
+        secret=secret,
+        code=code,
+        verifier=verifier,
+    )
+    assert token_response.status_code == 200, token_response.text
+    tokens = token_response.json()
+    assert tokens["expires_in"] == 300
+    with SessionLocal() as db:
+        key = db.execute(select(OidcSigningKey).where(OidcSigningKey.status == "active")).scalar_one()
+        public = RSAKey.import_key(json.loads(key.public_jwk_json))
+        id_token = jwt.decode(tokens["id_token"], public, algorithms=["RS256"])
+        access_token = jwt.decode(tokens["access_token"], public, algorithms=["RS256"])
+    assert id_token.header == {"alg": "RS256", "kid": key.kid, "typ": "JWT"}
+    assert access_token.header == {"alg": "RS256", "kid": key.kid, "typ": "at+jwt"}
+    assert id_token.claims["aud"] == client_id
+    assert id_token.claims["nonce"] == "nonce-original"
+    assert id_token.claims["exp"] - id_token.claims["iat"] == 300
+    assert access_token.claims["exp"] - access_token.claims["iat"] == 300
+
+    userinfo = client.get(
+        "https://testserver/identity/userinfo",
+        headers={"Authorization": f"Bearer {tokens['access_token']}"},
+    )
+    assert userinfo.status_code == 200
+    assert userinfo.json() == {"sub": id_token.claims["sub"]}
+    replay = _exchange_code(
+        client,
+        client_id=client_id,
+        secret=secret,
+        code=code,
+        verifier=verifier,
+    )
+    assert replay.status_code == 400
+    assert replay.json() == {"error": "invalid_grant"}
+
+
+def test_authorization_rejects_substitution_downgrade_and_inexact_redirect(client):
+    client_id, _secret = _configure_protocol_client()
+    verifier = "p" * 64
+    params = _authorization_parameters(client_id, verifier)
+    for changes, expected in [
+        ({"state": ""}, "invalid_request"),
+        ({"nonce": ""}, "invalid_request"),
+        ({"code_challenge_method": "plain"}, "invalid_request"),
+        ({"response_type": "token"}, "unsupported_response_type"),
+        ({"response_mode": "fragment"}, "unsupported_response_mode"),
+        ({"prompt": "consent"}, "invalid_request"),
+        ({"max_age": "-1"}, "invalid_request"),
+    ]:
+        response = client.get(
+            "https://testserver/identity/authorize",
+            params=params | changes,
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        query = parse_qs(urlsplit(response.headers["location"]).query)
+        assert query["error"] == [expected]
+
+    inexact = client.get(
+        "https://testserver/identity/authorize",
+        params=params | {"redirect_uri": "https://rp.example.test/callback?case=A%2fb"},
+        follow_redirects=False,
+    )
+    assert inexact.status_code == 400
+    assert inexact.json() == {"error": "invalid_request"}
+
+
+def test_token_endpoint_requires_basic_exact_redirect_and_pkce(client):
+    client_id, secret = _configure_protocol_client()
+    verifier = "k" * 64
+    transaction, csrf, _cookie = _start_login(
+        client, _authorization_parameters(client_id, verifier)
+    )
+    login = _finish_local_login(client, transaction, csrf)
+    code = parse_qs(urlsplit(login.headers["location"]).query)["code"][0]
+
+    body_secret = client.post(
+        "https://testserver/identity/token",
+        data={
+            "grant_type": "authorization_code",
+            "client_id": client_id,
+            "client_secret": secret,
+            "code": code,
+            "redirect_uri": "https://rp.example.test/callback?case=A%2Fb",
+            "code_verifier": verifier,
+        },
+    )
+    assert body_secret.status_code == 401
+    wrong_redirect = _exchange_code(
+        client,
+        client_id=client_id,
+        secret=secret,
+        code=code,
+        verifier=verifier,
+        redirect_uri="https://rp.example.test/callback?case=A%2Fb/",
+    )
+    assert wrong_redirect.status_code == 400
+    wrong_pkce = _exchange_code(
+        client,
+        client_id=client_id,
+        secret=secret,
+        code=code,
+        verifier="x" * 64,
+    )
+    assert wrong_pkce.status_code == 400
+    valid = _exchange_code(
+        client,
+        client_id=client_id,
+        secret=secret,
+        code=code,
+        verifier=verifier,
+    )
+    assert valid.status_code == 200
+
+
+def test_prompt_none_max_age_and_login_hint_is_prefill_only(client):
+    from labfoundry.app.oidc import OIDC_SESSION_COOKIE, _session_serializer
+
+    client_id, _secret = _configure_protocol_client()
+    verifier = "m" * 64
+    transaction, csrf, _cookie = _start_login(
+        client,
+        _authorization_parameters(
+            client_id, verifier, login_hint='admin"><script>alert(1)</script>'
+        ),
+    )
+    page = client.get(
+        "https://testserver/identity/authorize",
+        params=_authorization_parameters(client_id, verifier, login_hint="<admin>"),
+    )
+    assert "&lt;admin&gt;" in page.text
+    assert "<admin>" not in page.text
+    login = _finish_local_login(client, transaction, csrf)
+    assert login.status_code == 303
+
+    silent = client.get(
+        "https://testserver/identity/authorize",
+        params=_authorization_parameters(
+            client_id,
+            "n" * 64,
+            prompt="none",
+            max_age="300",
+            state="silent-state",
+            nonce="silent-nonce",
+        ),
+        follow_redirects=False,
+    )
+    assert silent.status_code == 303
+    silent_query = parse_qs(urlsplit(silent.headers["location"]).query)
+    assert silent_query["state"] == ["silent-state"]
+    assert "code" in silent_query
+
+    session = _session_serializer().loads(client.cookies[OIDC_SESSION_COOKIE])
+    session["auth_time"] = 1
+    client.cookies.set(
+        OIDC_SESSION_COOKIE,
+        _session_serializer().dumps(session),
+        domain="testserver.local",
+        path="/identity",
+    )
+    expired = client.get(
+        "https://testserver/identity/authorize",
+        params=_authorization_parameters(
+            client_id, "q" * 64, prompt="none", max_age="10"
+        ),
+        follow_redirects=False,
+    )
+    assert expired.status_code == 303
+    assert parse_qs(urlsplit(expired.headers["location"]).query)["error"] == [
+        "login_required"
+    ]
+
+
+def test_userinfo_revalidates_client_subject_and_local_identity_state(client):
+    from labfoundry.app.database import SessionLocal
+    from labfoundry.app.models import OidcClient, User
+
+    client_id, secret = _configure_protocol_client()
+    verifier = "r" * 64
+    transaction, csrf, _cookie = _start_login(
+        client, _authorization_parameters(client_id, verifier)
+    )
+    login = _finish_local_login(client, transaction, csrf)
+    code = parse_qs(urlsplit(login.headers["location"]).query)["code"][0]
+    tokens = _exchange_code(
+        client, client_id=client_id, secret=secret, code=code, verifier=verifier
+    ).json()
+
+    with SessionLocal() as db:
+        user = db.execute(select(User).where(User.username == "admin")).scalar_one()
+        user.enabled = False
+        db.commit()
+    disabled_user = client.get(
+        "https://testserver/identity/userinfo",
+        headers={"Authorization": f"Bearer {tokens['access_token']}"},
+    )
+    assert disabled_user.status_code == 401
+
+    with SessionLocal() as db:
+        user = db.execute(select(User).where(User.username == "admin")).scalar_one()
+        user.enabled = True
+        oidc_client = db.execute(
+            select(OidcClient).where(OidcClient.client_id == client_id)
+        ).scalar_one()
+        oidc_client.enabled = False
+        db.commit()
+    disabled_client = client.post(
+        "https://testserver/identity/userinfo",
+        headers={"Authorization": f"Bearer {tokens['access_token']}"},
+    )
+    assert disabled_client.status_code == 401
+
+
+def test_userinfo_rejects_algorithm_and_kid_confusion(client):
+    client_id, secret = _configure_protocol_client()
+    verifier = "s" * 64
+    transaction, csrf, _cookie = _start_login(
+        client, _authorization_parameters(client_id, verifier)
+    )
+    login = _finish_local_login(client, transaction, csrf)
+    code = parse_qs(urlsplit(login.headers["location"]).query)["code"][0]
+    token = _exchange_code(
+        client, client_id=client_id, secret=secret, code=code, verifier=verifier
+    ).json()["access_token"]
+    segments = token.split(".")
+    for header in [
+        {"alg": "HS256", "kid": "wrong", "typ": "at+jwt"},
+        {"alg": "RS256", "kid": "wrong", "typ": "at+jwt"},
+        {"alg": "RS256", "typ": "at+jwt"},
+    ]:
+        segments[0] = base64.urlsafe_b64encode(
+            json.dumps(header, separators=(",", ":")).encode()
+        ).rstrip(b"=").decode()
+        response = client.get(
+            "https://testserver/identity/userinfo",
+            headers={"Authorization": f"Bearer {'.'.join(segments)}"},
+        )
+        assert response.status_code == 401
+
+
+def test_logout_requires_valid_hint_and_exact_registered_redirect(client):
+    from labfoundry.app.oidc import OIDC_SESSION_COOKIE
+
+    operator_login = client.get("/login")
+    operator_csrf = operator_login.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    signed_in = client.post(
+        "/login",
+        data={
+            "username": "admin",
+            "password": "labfoundry-admin",
+            "csrf": operator_csrf,
+        },
+        follow_redirects=False,
+    )
+    assert signed_in.status_code == 303
+
+    client_id, secret = _configure_protocol_client()
+    verifier = "t" * 64
+    transaction, csrf, _cookie = _start_login(
+        client, _authorization_parameters(client_id, verifier)
+    )
+    login = _finish_local_login(client, transaction, csrf)
+    code = parse_qs(urlsplit(login.headers["location"]).query)["code"][0]
+    tokens = _exchange_code(
+        client, client_id=client_id, secret=secret, code=code, verifier=verifier
+    ).json()
+    invalid = client.get(
+        "https://testserver/identity/logout",
+        params={
+            "id_token_hint": tokens["id_token"],
+            "post_logout_redirect_uri": "https://rp.example.test/logout/",
+            "state": "logout-state",
+        },
+        follow_redirects=False,
+    )
+    assert invalid.status_code == 400
+    assert OIDC_SESSION_COOKIE not in client.cookies
+    assert client.get("/dashboard").status_code == 200
+
+    valid = client.get(
+        "https://testserver/identity/logout",
+        params={
+            "id_token_hint": tokens["id_token"],
+            "post_logout_redirect_uri": "https://rp.example.test/logout",
+            "state": "logout-state",
+        },
+        follow_redirects=False,
+    )
+    assert valid.status_code == 303
+    assert valid.headers["location"] == "https://rp.example.test/logout?state=logout-state"
+    assert client.get("/dashboard").status_code == 200
+
+
+def test_fixed_organization_managed_ldap_flow_never_creates_operator_session(client, monkeypatch):
+    from labfoundry.app.adapters.system import AdapterResult
+    from labfoundry.app.database import SessionLocal
+    from labfoundry.app.models import LdapOrganization, LdapUser
+    from labfoundry.app.services import identity_credentials
+
+    class AuthenticationAdapter:
+        def authenticate_ldap_user(self, user_dn: str, password: str) -> AdapterResult:
+            return AdapterResult(
+                command=["labfoundry-helper", "ldap", "authenticate", user_dn],
+                dry_run=False,
+                returncode=0 if password == "Directory-Password!" else 1,
+            )
+
+    monkeypatch.setattr(identity_credentials, "SystemAdapter", AuthenticationAdapter)
+    with SessionLocal() as db:
+        organization = LdapOrganization(
+            name="Research",
+            slug="research",
+            suffix_dn="dc=research,dc=example,dc=test",
+            enabled=True,
+        )
+        db.add(organization)
+        db.flush()
+        db.add(
+            LdapUser(
+                organization_id=organization.id,
+                uid="scientist",
+                display_name="Scientist",
+                enabled=True,
+            )
+        )
+        organization_id = organization.id
+        db.commit()
+    client_id, secret = _configure_protocol_client(organization_id=organization_id)
+    verifier = "u" * 64
+    transaction, csrf, _cookie = _start_login(
+        client, _authorization_parameters(client_id, verifier, login_hint="scientist")
+    )
+    login = client.post(
+        "https://testserver/identity/authorize",
+        data={
+            "transaction": transaction,
+            "csrf": csrf,
+            "username": "scientist",
+            "password": "Directory-Password!",
+        },
+        follow_redirects=False,
+    )
+    assert login.status_code == 303
+    code = parse_qs(urlsplit(login.headers["location"]).query)["code"][0]
+    token_response = _exchange_code(
+        client, client_id=client_id, secret=secret, code=code, verifier=verifier
+    )
+    assert token_response.status_code == 200
+    access_token = token_response.json()["access_token"]
+    userinfo = client.get(
+        "https://testserver/identity/userinfo",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    assert userinfo.status_code == 200
+    with SessionLocal() as db:
+        organization = db.get(LdapOrganization, organization_id)
+        organization.enabled = False
+        db.commit()
+    disabled_organization = client.get(
+        "https://testserver/identity/userinfo",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    assert disabled_organization.status_code == 401
+    dashboard = client.get("/dashboard", follow_redirects=False)
+    assert dashboard.status_code == 303
+    assert dashboard.headers["location"].startswith("/login")
+
+
+def test_concurrent_code_redemption_has_at_most_one_success(client):
+    client_id, secret = _configure_protocol_client()
+    verifier = "w" * 64
+    transaction, csrf, _cookie = _start_login(
+        client, _authorization_parameters(client_id, verifier)
+    )
+    login = _finish_local_login(client, transaction, csrf)
+    code = parse_qs(urlsplit(login.headers["location"]).query)["code"][0]
+
+    def redeem() -> int:
+        return _exchange_code(
+            client, client_id=client_id, secret=secret, code=code, verifier=verifier
+        ).status_code
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        statuses = list(executor.map(lambda _index: redeem(), range(2)))
+    assert sorted(statuses) == [200, 400]
+
+
+def test_oidc_login_throttle_is_bounded_and_never_persists_password(client):
+    from labfoundry.app.oidc import OIDC_LOGIN_BUCKET_LIMIT, _OIDC_LOGIN_BUCKETS
+    from labfoundry.app.database import SessionLocal
+
+    client_id, _secret = _configure_protocol_client()
+    transaction, csrf, _cookie = _start_login(
+        client, _authorization_parameters(client_id, "y" * 64)
+    )
+    password = "Never-Persist-This-Password!"
+    statuses = []
+    for _attempt in range(7):
+        response = client.post(
+            "https://testserver/identity/authorize",
+            data={
+                "transaction": transaction,
+                "csrf": csrf,
+                "username": "admin",
+                "password": password,
+            },
+            follow_redirects=False,
+        )
+        statuses.append(response.status_code)
+        assert password not in response.text
+    assert statuses[-1] == 429
+    assert len(_OIDC_LOGIN_BUCKETS) <= OIDC_LOGIN_BUCKET_LIMIT
+    with SessionLocal() as db:
+        for table in (
+            "oidc_authorization_transactions",
+            "oidc_authorization_codes",
+            "audit_events",
+            "jobs",
+        ):
+            values = db.execute(text(f"SELECT * FROM {table}")).all()
+            assert password not in repr(values)
+
+
+def test_oidc_login_throttle_survives_browser_session_renewal(client):
+    from labfoundry.app.oidc import OIDC_SESSION_COOKIE
+
+    client_id, _secret = _configure_protocol_client()
+    params = _authorization_parameters(client_id, "q" * 64)
+    transaction, csrf, _cookie = _start_login(client, params)
+    for _attempt in range(5):
+        response = client.post(
+            "https://testserver/identity/authorize",
+            data={
+                "transaction": transaction,
+                "csrf": csrf,
+                "username": "renewal-test-user",
+                "password": "Invalid-Password!",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 401
+
+    client.cookies.delete(OIDC_SESSION_COOKIE)
+    renewed_transaction, renewed_csrf, renewed_cookie = _start_login(client, params)
+    assert renewed_cookie != _cookie
+    limited = client.post(
+        "https://testserver/identity/authorize",
+        data={
+            "transaction": renewed_transaction,
+            "csrf": renewed_csrf,
+            "username": "renewal-test-user",
+            "password": "Invalid-Password!",
+        },
+        follow_redirects=False,
+    )
+    assert limited.status_code == 429
+
+
+def test_begin_authorization_purges_expired_transactions_and_codes(client):
+    from labfoundry.app.database import SessionLocal
+    from labfoundry.app.models import OidcAuthorizationCode, OidcAuthorizationTransaction, utcnow
+
+    client_id, _secret = _configure_protocol_client()
+    params = _authorization_parameters(client_id, "r" * 64)
+    expired_transaction, _csrf, _cookie = _start_login(client, params)
+    with SessionLocal() as db:
+        row = db.execute(
+            select(OidcAuthorizationTransaction).where(
+                OidcAuthorizationTransaction.transaction_id == expired_transaction
+            )
+        ).scalar_one()
+        row.expires_at = utcnow() - timedelta(seconds=1)
+        db.commit()
+
+    live_transaction, live_csrf, _cookie = _start_login(client, params)
+    with SessionLocal() as db:
+        transaction_ids = set(
+            db.execute(select(OidcAuthorizationTransaction.transaction_id)).scalars()
+        )
+        assert transaction_ids == {live_transaction}
+
+    login = _finish_local_login(client, live_transaction, live_csrf)
+    assert login.status_code == 303
+    with SessionLocal() as db:
+        code = db.execute(select(OidcAuthorizationCode)).scalar_one()
+        code.expires_at = utcnow() - timedelta(seconds=1)
+        db.commit()
+
+    newest_transaction, _csrf, _cookie = _start_login(client, params)
+    with SessionLocal() as db:
+        assert db.execute(select(OidcAuthorizationCode)).scalar_one_or_none() is None
+        assert (
+            db.execute(select(OidcAuthorizationTransaction.transaction_id)).scalar_one()
+            == newest_transaction
+        )

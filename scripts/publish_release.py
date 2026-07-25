@@ -13,6 +13,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+GIT_RELEASE_USER_NAME = "github-actions[bot]"
+GIT_RELEASE_USER_EMAIL = "41898282+github-actions[bot]@users.noreply.github.com"
 
 
 def run(command: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -56,7 +58,21 @@ def main() -> int:
         if tagged_commit != args.commit:
             raise SystemExit(f"{tag} already identifies {tagged_commit}, not {args.commit}")
     else:
-        run(["git", "tag", "-a", tag, args.commit, "-m", f"LabFoundry {tag}"])
+        run(
+            [
+                "git",
+                "-c",
+                f"user.name={GIT_RELEASE_USER_NAME}",
+                "-c",
+                f"user.email={GIT_RELEASE_USER_EMAIL}",
+                "tag",
+                "-a",
+                tag,
+                args.commit,
+                "-m",
+                f"LabFoundry {tag}",
+            ]
+        )
         run(["git", "push", "origin", f"refs/tags/{tag}"])
 
     existing = run(["gh", "release", "view", tag, "--json", "tagName,targetCommitish,assets"], check=False)

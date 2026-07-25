@@ -86,7 +86,10 @@ Omit both pip options for standard/default pip behavior.
 Image provisioning uses Photon's installed pip inside the LabFoundry virtual
 environment and does not upgrade pip as a separate bootstrap step, so transient
 public PyPI release downloads do not block the appliance build before the actual
-LabFoundry package install begins.
+LabFoundry package install begins. The Packer template stages
+`requirements-appliance.lock` with the application source so bootstrap
+dependency installation retains hash verification instead of falling back to
+unpinned packages.
 
 The wrapper keeps `LABFOUNDRY_DRY_RUN_SYSTEM_ADAPTERS=true` by default so a
 first-boot image records host-mutation command intent instead of changing
@@ -244,8 +247,16 @@ under `/etc/labfoundry/update-trust.d` and creates the versioned
 compatibility symlinks. Release updates verify signed channel and release
 manifests, build from a hash-locked offline ABI wheelhouse, atomically switch
 the release, and restore the previous release and SQLite snapshot on failure.
+Manual and scheduled checks/installations retain one parent task with separate
+LabFoundry Release, PowerShell Modules, and Photon OS child steps; failed
+earlier streams leave Photon explicitly skipped instead of ambiguously pending.
+The Packer build explicitly stages `image/common/update-trust` and fails if no
+valid public key is available, so a completed image cannot silently reject the
+published signed channels as untrusted.
 Photon updates fail closed when their candidate Python ABI is not in the active
-release and never perform automatic RPM rollback or reboot.
+release. Candidate discovery uses the Photon-supported
+`tdnf repoquery python3` form. Photon maintenance never performs automatic RPM
+rollback or reboot.
 Pass `-SignedReleaseRepositoryUrl https://<fixture>/updates` to
 `scripts/windows/hyperv/invoke-lifecycle-test.ps1` to add a signed preview
 upgrade and deliberately broken development-channel rollback. The fixture
@@ -328,7 +339,8 @@ Provisioning creates the bootstrap admin OS account under
 bootstrap password used for the initial web login, so the admin account exists
 on Photon before first appliance apply. The image installs Photon's
 `powershell` package for this shell, installs system-wide VCF PowerCLI
-`9.1.0.25380678`, verifies the module and `Connect-VIServer` from the
+`9.1.0.25380678`, disables and verifies PowerCLI CEIP participation at
+`AllUsers` scope, verifies the module and `Connect-VIServer` from the
 unprivileged bootstrap administrator's PowerShell session, installs
 `vcf-sdk==9.1.0.0` in the LabFoundry virtualenv, and grants the bootstrap admin
 normal password-backed sudo through `/etc/sudoers.d/labfoundry-bootstrap-admin`.

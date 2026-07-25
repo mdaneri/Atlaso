@@ -74,6 +74,47 @@ def test_physical_interface_ipv6_enabled_migration_backfills_only_static_ipv6(tm
     assert "ipv6_gateway" in columns
 
 
+def test_appliance_settings_migration_adds_disabled_vmware_ceip_without_copying_vcfdt_choice(tmp_path):
+    from labfoundry.app import database
+
+    db_path = tmp_path / "legacy-ceip.db"
+    connection = sqlite3.connect(db_path)
+    connection.execute("CREATE TABLE appliance_settings (id INTEGER PRIMARY KEY)")
+    connection.execute("INSERT INTO appliance_settings (id) VALUES (1)")
+    connection.execute(
+        "CREATE TABLE vcf_offline_depot_settings "
+        "(id INTEGER PRIMARY KEY, telemetry_choice VARCHAR(20) DEFAULT 'DISABLE')"
+    )
+    connection.execute(
+        "INSERT INTO vcf_offline_depot_settings (id, telemetry_choice) VALUES (1, 'ENABLE')"
+    )
+    connection.commit()
+    connection.close()
+
+    previous_engine = database.engine
+    migrated_engine = database.create_engine(
+        f"sqlite:///{db_path}",
+        connect_args={"check_same_thread": False},
+    )
+    try:
+        database.engine = migrated_engine
+        database._ensure_sqlite_appliance_settings_columns()
+        connection = sqlite3.connect(db_path)
+        vmware_ceip_enabled = connection.execute(
+            "SELECT vmware_ceip_enabled FROM appliance_settings WHERE id = 1"
+        ).fetchone()[0]
+        legacy_choice = connection.execute(
+            "SELECT telemetry_choice FROM vcf_offline_depot_settings WHERE id = 1"
+        ).fetchone()[0]
+        connection.close()
+    finally:
+        migrated_engine.dispose()
+        database.engine = previous_engine
+
+    assert vmware_ceip_enabled == 0
+    assert legacy_choice == "ENABLE"
+
+
 def test_ldap_listener_migration_adds_protocol_controls_and_ports(tmp_path):
     from labfoundry.app import database
 

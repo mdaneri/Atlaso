@@ -42,6 +42,13 @@ from labfoundry.app.models import (
     ManagedPackage,
     NatRule,
     NtpSettings,
+    OidcClient,
+    OidcClientRedirectUri,
+    OidcAuthorizationCode,
+    OidcAuthorizationTransaction,
+    OidcProviderSettings,
+    OidcSigningKey,
+    OidcSubject,
     PhysicalInterface,
     Route,
     RoutingRule,
@@ -83,6 +90,7 @@ SCALAR_TABLES = {
     "routing_rules": RoutingRule,
     "service_states": ServiceState,
     "appliance_settings": ApplianceSettings,
+    "oidc_provider_settings": OidcProviderSettings,
     "ntp_settings": NtpSettings,
     "dns_settings": DnsSettings,
     "dns_records": DnsRecord,
@@ -124,6 +132,13 @@ RESTORE_DELETE_MODELS = [
     KmsKey,
     KmsClient,
     KmsSettings,
+    OidcClientRedirectUri,
+    OidcAuthorizationCode,
+    OidcAuthorizationTransaction,
+    OidcClient,
+    OidcSubject,
+    OidcSigningKey,
+    OidcProviderSettings,
     LdapGroupMembership,
     LdapGroup,
     LdapUser,
@@ -183,7 +198,8 @@ def export_settings_archive(db: Session, *, actor: str) -> dict[str, Any]:
             "Contains LabFoundry desired-state configuration only.",
             "Audit events, jobs, API tokens, password hashes, and uploaded secret bodies are not included; encrypted CA private-key material is included for trust portability.",
             "Managed LDAP metadata is included, but LDAP password hashes and VCF bind secrets require the separate encrypted LDAP recovery archive or credential resets.",
-            "Restoring usable CA private-key material requires the same LABFOUNDRY_SECRETS_KEY.",
+            "OIDC client secret hashes, exact redirect configuration, and encrypted signing keys are included; plaintext client secrets are never included.",
+            "Restoring usable CA and OIDC signing private-key material requires the same LABFOUNDRY_SECRETS_KEY.",
             "Restore updates the control-plane database; host services change only after global appliance apply.",
         ],
         "data": {},
@@ -201,6 +217,13 @@ def export_settings_archive(db: Session, *, actor: str) -> dict[str, Any]:
     data["ldap_users"] = _ldap_users_to_archive(db)
     data["ldap_groups"] = _ldap_groups_to_archive(db)
     data["ldap_group_memberships"] = _ldap_group_memberships_to_archive(db)
+    data["oidc_subjects"] = _oidc_subjects_to_archive(db)
+    data["oidc_clients"] = _oidc_clients_to_archive(db)
+    data["oidc_client_redirect_uris"] = _oidc_client_redirect_uris_to_archive(db)
+    data["oidc_signing_keys"] = [
+        _row_to_dict(row)
+        for row in db.execute(select(OidcSigningKey).order_by(OidcSigningKey.created_at)).scalars().all()
+    ]
     data["vcf_backup_settings"] = _vcf_backup_settings_to_archive(db)
     data["vcf_offline_depot_settings"] = _vcf_offline_depot_settings_to_archive(db)
     data["esxi_pxe_hosts"] = _esxi_pxe_hosts_to_archive(db)
@@ -303,6 +326,51 @@ def _ldap_group_memberships_to_archive(db: Session) -> list[dict[str, Any]]:
                 "member_name": users.get(membership.member_user_id, "") if membership.member_user_id is not None else (groups.get(membership.member_group_id).name if groups.get(membership.member_group_id) else ""),
             }
         )
+    return rows
+
+
+def _oidc_clients_to_archive(db: Session) -> list[dict[str, Any]]:
+    organizations = {row.id: row.slug for row in db.execute(select(LdapOrganization)).scalars().all()}
+    rows: list[dict[str, Any]] = []
+    for client in db.execute(select(OidcClient).order_by(OidcClient.name)).scalars().all():
+        payload = _row_to_dict(client, exclude={"organization_id"})
+        payload["organization_slug"] = organizations.get(client.organization_id, "")
+        rows.append(payload)
+    return rows
+
+
+def _oidc_subjects_to_archive(db: Session) -> list[dict[str, Any]]:
+    local_users = {row.id: row.username for row in db.execute(select(User)).scalars().all()}
+    ldap_users = {
+        row.id: (row.organization.slug, row.uid)
+        for row in db.execute(select(LdapUser)).scalars().all()
+    }
+    rows: list[dict[str, Any]] = []
+    for subject in db.execute(select(OidcSubject).order_by(OidcSubject.id)).scalars().all():
+        payload = {"subject_uuid": subject.subject_uuid, "source": "", "username": "", "organization_slug": ""}
+        if subject.local_user_id is not None:
+            payload.update(source="local", username=local_users.get(subject.local_user_id, ""))
+        elif subject.ldap_user_id is not None:
+            organization_slug, uid = ldap_users.get(subject.ldap_user_id, ("", ""))
+            payload.update(source="managed_ldap", username=uid, organization_slug=organization_slug)
+        if payload["username"]:
+            rows.append(payload)
+    return rows
+
+
+def _oidc_client_redirect_uris_to_archive(db: Session) -> list[dict[str, Any]]:
+    clients = {row.id: row.client_id for row in db.execute(select(OidcClient)).scalars().all()}
+    rows: list[dict[str, Any]] = []
+    for redirect in db.execute(
+        select(OidcClientRedirectUri).order_by(
+            OidcClientRedirectUri.oidc_client_id,
+            OidcClientRedirectUri.kind,
+            OidcClientRedirectUri.id,
+        )
+    ).scalars().all():
+        payload = _row_to_dict(redirect, exclude={"oidc_client_id"})
+        payload["client_id"] = clients.get(redirect.oidc_client_id, "")
+        rows.append(payload)
     return rows
 
 
@@ -412,6 +480,7 @@ def restore_settings_archive(db: Session, archive: dict[str, Any]) -> dict[str, 
     for key in [
         "service_states",
         "appliance_settings",
+        "oidc_provider_settings",
         "ntp_settings",
         "dns_settings",
         "dns_records",
@@ -441,8 +510,15 @@ def restore_settings_archive(db: Session, archive: dict[str, Any]) -> dict[str, 
     counts["ldap_settings"] = _insert_rows(db, LdapSettings, data.get("ldap_settings", []))
     counts["ldap_organizations"] = _restore_ldap_organizations(db, data.get("ldap_organizations", []))
     counts["ldap_users"] = _restore_ldap_users(db, data.get("ldap_users", []))
+    counts["oidc_subjects"] = _restore_oidc_subjects(db, data.get("oidc_subjects", []))
     counts["ldap_groups"] = _restore_ldap_groups(db, data.get("ldap_groups", []))
     counts["ldap_group_memberships"] = _restore_ldap_group_memberships(db, data.get("ldap_group_memberships", []))
+    counts["oidc_clients"] = _restore_oidc_clients(db, data.get("oidc_clients", []))
+    counts["oidc_client_redirect_uris"] = _restore_oidc_client_redirect_uris(
+        db,
+        data.get("oidc_client_redirect_uris", []),
+    )
+    counts["oidc_signing_keys"] = _insert_rows(db, OidcSigningKey, data.get("oidc_signing_keys", []))
     counts["vcf_backup_settings"] = _restore_vcf_backup_settings(db, data.get("vcf_backup_settings", []))
     counts["vcf_offline_depot_settings"] = _restore_vcf_offline_depot_settings(db, data.get("vcf_offline_depot_settings", []))
     for key in [
@@ -487,6 +563,10 @@ def desired_state_counts(db: Session) -> dict[str, int]:
     counts["ldap_users"] = len(db.execute(select(LdapUser)).scalars().all())
     counts["ldap_groups"] = len(db.execute(select(LdapGroup)).scalars().all())
     counts["ldap_group_memberships"] = len(db.execute(select(LdapGroupMembership)).scalars().all())
+    counts["oidc_clients"] = len(db.execute(select(OidcClient)).scalars().all())
+    counts["oidc_client_redirect_uris"] = len(db.execute(select(OidcClientRedirectUri)).scalars().all())
+    counts["oidc_signing_keys"] = len(db.execute(select(OidcSigningKey)).scalars().all())
+    counts["oidc_subjects"] = len(db.execute(select(OidcSubject)).scalars().all())
     counts["vcf_backup_settings"] = len(db.execute(select(VcfBackupSettings)).scalars().all())
     counts["esxi_pxe_hosts"] = len(db.execute(select(EsxiPxeHost)).scalars().all())
     counts["esx_storage_volumes"] = len(db.execute(select(EsxStorageVolume)).scalars().all())
@@ -732,6 +812,63 @@ def _restore_ldap_users(db: Session, rows: list[dict[str, Any]]) -> int:
             db.add(LdapUser(**payload))
     db.flush()
     return len(rows)
+
+
+def _restore_oidc_subjects(db: Session, rows: list[dict[str, Any]]) -> int:
+    local_users = {row.username: row.id for row in db.execute(select(User)).scalars().all()}
+    organizations = {row.slug: row.id for row in db.execute(select(LdapOrganization)).scalars().all()}
+    ldap_users = {
+        (row.organization_id, row.uid): row.id
+        for row in db.execute(select(LdapUser)).scalars().all()
+    }
+    restored = 0
+    for row in rows:
+        source = str(row.get("source") or "")
+        username = str(row.get("username") or "")
+        subject_uuid = str(row.get("subject_uuid") or "")
+        if source == "local":
+            source_id = local_users.get(username)
+            if source_id is not None and subject_uuid:
+                db.add(OidcSubject(subject_uuid=subject_uuid, local_user_id=source_id))
+                restored += 1
+        elif source == "managed_ldap":
+            organization_id = organizations.get(str(row.get("organization_slug") or ""))
+            source_id = ldap_users.get((organization_id, username))
+            if source_id is not None and subject_uuid:
+                db.add(OidcSubject(subject_uuid=subject_uuid, ldap_user_id=source_id))
+                restored += 1
+    db.flush()
+    return restored
+
+
+def _restore_oidc_clients(db: Session, rows: list[dict[str, Any]]) -> int:
+    organizations = {row.slug: row.id for row in db.execute(select(LdapOrganization)).scalars().all()}
+    restored = 0
+    for row in rows:
+        payload = _model_kwargs(OidcClient, row, exclude={"organization_id"})
+        organization_slug = str(row.get("organization_slug") or "")
+        payload["organization_id"] = organizations.get(organization_slug) if organization_slug else None
+        if organization_slug and payload["organization_id"] is None:
+            continue
+        db.add(OidcClient(**payload))
+        restored += 1
+    db.flush()
+    return restored
+
+
+def _restore_oidc_client_redirect_uris(db: Session, rows: list[dict[str, Any]]) -> int:
+    clients = {row.client_id: row.id for row in db.execute(select(OidcClient)).scalars().all()}
+    restored = 0
+    for row in rows:
+        payload = _model_kwargs(OidcClientRedirectUri, row, exclude={"oidc_client_id"})
+        client_record_id = clients.get(str(row.get("client_id") or ""))
+        if client_record_id is None:
+            continue
+        payload["oidc_client_id"] = client_record_id
+        db.add(OidcClientRedirectUri(**payload))
+        restored += 1
+    db.flush()
+    return restored
 
 
 def _restore_ldap_groups(db: Session, rows: list[dict[str, Any]]) -> int:

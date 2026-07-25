@@ -924,3 +924,94 @@ class SettingsUpdate(BaseModel):
     web_terminal_interfaces: list[str] = Field(default_factory=list)
     root_ssh_enabled: bool = False
     external_dns_servers: list[str] = Field(default_factory=lambda: ["1.1.1.1", "9.9.9.9"])
+
+
+class OidcProviderSettingsUpdate(BaseModel):
+    enabled: bool = False
+    issuer_url: str = Field(min_length=1, max_length=500)
+    access_token_lifetime_seconds: int = Field(default=300, ge=60, le=3600)
+    id_token_lifetime_seconds: int = Field(default=300, ge=60, le=3600)
+    authorization_code_lifetime_seconds: int = Field(default=60, ge=30, le=300)
+    clock_skew_seconds: int = Field(default=120, ge=0, le=300)
+    signing_key_overlap_seconds: int = Field(default=3600, ge=300, le=604800)
+
+
+class OidcProviderSettingsResponse(OidcProviderSettingsUpdate):
+    authorization_flow_available: bool
+    valid: bool
+    validation_errors: list[str] = Field(default_factory=list)
+    discovery_url: str
+    authorization_endpoint: str
+    token_endpoint: str
+    userinfo_endpoint: str
+    jwks_uri: str
+    end_session_endpoint: str
+
+
+class OidcClientCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    organization_id: int | None = None
+    redirect_uris: list[str] = Field(min_length=1)
+    post_logout_redirect_uris: list[str] = Field(default_factory=list)
+    allowed_scopes: list[str] = Field(
+        default_factory=lambda: ["openid", "profile", "email", "groups"]
+    )
+    allow_loopback_redirects: bool = False
+    access_token_lifetime_seconds: int = Field(default=300, ge=60, le=3600)
+    id_token_lifetime_seconds: int = Field(default=300, ge=60, le=3600)
+    authorization_code_lifetime_seconds: int = Field(default=60, ge=30, le=300)
+    enabled: bool = True
+
+
+class OidcClientResponse(BaseModel):
+    id: int
+    name: str
+    client_id: str
+    organization_id: int | None
+    organization_slug: str | None
+    redirect_uris: list[str]
+    post_logout_redirect_uris: list[str]
+    allowed_scopes: list[str]
+    token_endpoint_auth_method: str
+    access_token_lifetime_seconds: int
+    id_token_lifetime_seconds: int
+    authorization_code_lifetime_seconds: int
+    allow_loopback_redirects: bool
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class OidcClientCreated(BaseModel):
+    client: OidcClientResponse
+    client_secret: str
+
+
+class OidcClientSecretRotated(BaseModel):
+    client_id: str
+    client_secret: str
+
+
+class OidcClientEnabledUpdate(BaseModel):
+    enabled: bool
+
+
+class OidcSigningKeyResponse(BaseModel):
+    id: int
+    kid: str
+    algorithm: str
+    status: str
+    key_type: str | None
+    created_at: datetime
+    activated_at: datetime
+    retired_at: datetime | None
+    publish_until: datetime | None
+
+
+class OidcSubjectResponse(BaseModel):
+    subject: str
+    source: str
+    username: str
+    organization_id: int | None
+    organization_name: str
+    created_at: datetime

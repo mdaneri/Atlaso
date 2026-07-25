@@ -4,6 +4,17 @@
 
 LabFoundry is a Linux-based, web-managed infrastructure appliance for homelabs, VMware Cloud Foundation labs, POCs, training environments, isolated network labs, and WAN simulation testing.
 
+## Community and licensing
+
+Contributions follow the [contributing guide](CONTRIBUTING.md), [Code of
+Conduct](CODE_OF_CONDUCT.md), and [Security Policy](SECURITY.md). LabFoundry
+authored code is available under the [MIT License](LICENSE). Each released
+appliance includes an automatically generated
+`/usr/share/doc/labfoundry/THIRD_PARTY_NOTICES.md` inventory for every shipped
+Python package, Photon RPM, and bundled component; the same release-specific
+notice file is published with the signed release assets. Third-party software
+retains its own license terms, including the bundled iPXE bootloaders.
+
 The MVP is a safe runnable scaffold. It provides the FastAPI control plane, appliance-style web UI, local authentication, JWT bearer API tokens, audit logging, OpenAPI 3.1, dry-run system adapters, and Windows/Hyper-V script scaffolding. It does not apply real host networking, firewall, service, SFTP, registry, repository, DNS, DHCP, CA, or KMS changes by default.
 
 ## Photon OS Appliance Image
@@ -93,8 +104,8 @@ services, or mutate the appliance.
 
 Photon OS 5.0 GA shipped with Python 3.11, but the current Photon 5.0 updates
 stream has moved beyond that baseline. On June 21, 2026, live repository
-metadata showed `python3` as `3.14.5-2.ph5`. LabFoundry keeps
-`requires-python >=3.12`; verify the appliance stream with:
+metadata showed `python3` as `3.14.5-2.ph5`. LabFoundry targets Python 3.14
+only (`requires-python >=3.14,<3.15`); verify the appliance stream with:
 
 ```bash
 python3 scripts/check_photon_compatibility.py
@@ -139,6 +150,21 @@ rebuilt in one command. Use
 when you want Packer to fail instead of replacing an existing output directory.
 Use `-PackerOnError abort` to keep a failed builder VM for debugging, or
 `-PackerOnError ask` to choose the failure action interactively.
+During provisioning, the shared Photon path reads `[project].version` from the
+staged `pyproject.toml` with Python's TOML parser and validates the repository's
+strict `X.Y.Z` release format before creating the bootstrap release directory.
+Missing, unreadable, malformed, or invalid version metadata fails the build
+with the specific version-policy error instead of an ambiguous shell match
+failure.
+Both Photon Packer targets stage `requirements-appliance.lock` with the
+application source so bootstrap dependency installation can retain
+`--require-hashes`; a missing staged lock fails the image rather than falling
+back to unpinned dependencies.
+Long TDNF operations capture their raw transaction output and emit one compact
+Packer status line every 30 seconds with elapsed time and cache size. Successful
+operations report their duration; failures preserve the TDNF exit status and
+replay a normalized, bounded output tail. This avoids progress redraws appearing
+as hundreds of empty Packer-prefixed lines without hiding actionable failures.
 
 The image builder does not configure a custom pip package index by default. If
 your build network requires an internal PyPI mirror, pass `-PipGlobalIndex` or
@@ -166,19 +192,24 @@ Firewall desired state is nftables-backed. The image installs nftables and
 boots with management access to SSH, HTTPS, and the LabFoundry web UI.
 
 Appliance Update is a separate runtime-maintenance workflow from global
-`/appliance-apply`. Repository-style sources cover Photon/tdnf, Python/pip,
-PowerShell Gallery or an internal PowerShell repository, and LabFoundry release
-channels. Update work is queued to `labfoundry-worker.service`; the same worker
-runs Automation schedules, managed scripts, and VCF Offline Depot downloads.
-Build a versioned wheel repository with:
+`/appliance-apply`. Repository-style sources cover Photon/tdnf, PowerShell
+Gallery or internal PowerShell repositories, and signed LabFoundry release
+channels; the retired Python Libraries and independent wheel streams are not
+available. Update work is queued to `labfoundry-worker.service`; the same
+worker runs Automation schedules, managed scripts, and VCF Offline Depot
+downloads.
 
-```bash
-python scripts/build_update_wheel.py --channel stable
-```
-
-Publish the complete `dist/update` tree and configure its base URL; LabFoundry
-derives `channels/<channel>/manifest.json`. The manifest records the full git
-commit, build time, relative wheel name, and SHA256. See
+Successful `main` CI publishes immutable signed release bundles to GitHub
+Releases and advances the signed `development` pointer on GitHub Pages.
+The Pages root provides a static release-repository landing page, while
+appliances use the signed machine-readable documents under `/updates`.
+`preview` and `stable` promotions reuse an existing verified release. A
+protected manual publication dispatch can recover an exact commit only when it
+already has a successful `main` push CI run. Publication blocks later versions
+until the fixed `v0.9.0` legacy bridge exists, and it refuses any existing tag
+or release whose commit or asset bytes differ. The same dispatch safely retries
+channel advancement after a release has already published because it verifies
+the existing asset bytes first. See
 [`docs/appliance-update.md`](docs/appliance-update.md) and
 [`docs/automation.md`](docs/automation.md).
 
@@ -200,7 +231,7 @@ Primary workflow:
 Install and run:
 
 ```bash
-python3.12 -m venv .venv
+python3.14 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 uvicorn labfoundry.app.main:app --reload --host 127.0.0.1 --port 8000
@@ -319,6 +350,8 @@ VCF Offline Depot uses the proprietary VCF Download Tool to stage disconnected V
 
 ## Public Service Front Door
 
+VMware CEIP consent is centralized under **Settings → VMware Product Preferences**. The single appliance-wide choice defaults to disabled and is used by VCF Download Tool command previews and runtime preparation, VCF PowerCLI at vendor `AllUsers` scope, and future LabFoundry-managed VMware product integrations. LabFoundry does not migrate or infer this value from the retired VCF Download Tool-specific choice. Explicit PowerCLI `User` and `Session` overrides remain outside LabFoundry ownership.
+
 LabFoundry renders a generated `public_services` nginx site for non-management service IPs. Requests to `/` on a management-role address keep the HTTPS management portal/login behavior. Requests to `/` on a non-management service IP render an unauthenticated public service directory scoped to the called host or IP. The generated HTTP nginx site serves only ESXi PXE paths; CA, certificate requests, VCF Offline Depot, and registry links use their app or service-owned HTTPS front doors.
 
 Direct public service paths remain scoped per IP in the app: Certificate Authority `/ca`, `/requests`, `/ca/downloads/root-ca.pem`, and `/ca/downloads/ca-bundle.pem`; ESXi PXE `/pxe/esxi/` with `/pxe/esxi` redirecting to `/pxe/esxi/`; VCF Offline Depot `/PROD/` with `/PROD` redirecting to `/PROD/`; and VCF Private Registry as a canonical registry URL link only. The generated public-services HTTP site proxies only dynamic ESXi Kickstart requests and serves PXE static content through a narrow nginx alias on matching PXE service IPs. It does not expose CA, depot, management, or `/registry` HTTP proxies.
@@ -376,6 +409,8 @@ KMS / KMIP is PyKMIP-backed and intended for lab compatibility testing, not prod
 
 Managed LDAP provides an OpenLDAP 2.6 service for VCF Automation 9.1 while LabFoundry operator sign-in remains local. Each VCF organization receives an isolated suffix and LMDB database, organization-local users and nested groups, and a read-only bind identity whose secret is encrypted with `LABFOUNDRY_SECRETS_KEY`. Organizations use DNS-style tabs, users and groups use editable Tabulator grids with add rows and context menus, and operators can generate counted synthetic users/groups with complete profiles, memberships, and one-time passwords for lab testing. The `/ldap` page owns service settings and directory data; the Managed LDAP tile in `/vcf-helper` owns manual bundles and guided VCF configuration; Backup / Restore owns the separate passphrase-encrypted LDAP recovery workflow. CA-managed LDAPS is enabled by default with a configurable port; optional plaintext LDAP has its own configurable port and is disabled by default. External listeners are limited to addressed non-management access or route interfaces and enabled VLANs, while privileged reconciliation uses local `ldapi:///` with SASL EXTERNAL. VCF configuration includes the mandatory `serviceAccount` to `employeeType` mapping, but LabFoundry does not import groups or assign VCF roles. See [Managed LDAP for VCF Automation 9.1](docs/managed-ldap.md).
 
+The Authentication page contains LabFoundry's constrained OIDC provider. Phase 2 implements Authorization Code with confidential `client_secret_basic`, mandatory PKCE S256, exact redirects, required state and nonce, signed secure browser sessions, five-minute RS256 ID/access JWTs, UserInfo revalidation, and RP-initiated logout. Provider enablement requires the canonical issuer, applied management HTTPS, an active signing key, and protocol readiness. Unbound clients authenticate Local identities; organization-bound clients authenticate only their fixed managed LDAP organization, and managed LDAP OIDC sessions never grant operator UI access. See [Constrained OpenID Connect provider](docs/oidc-provider.md).
+
 On the Photon appliance, real mutating helper actions re-enter through a transient `systemd-run` service when `LABFOUNDRY_HELPER_USE_SYSTEMD_RUN=1` is set. This keeps the web control plane inside its restricted `labfoundry.service` sandbox while allowing the reviewed root helper to write approved `/etc` configuration files from outside the service's read-only mount namespace.
 
 More detail lives in [`docs/appliance-apply.md`](docs/appliance-apply.md).
@@ -417,6 +452,8 @@ The MVP follows these boundaries:
 - The global `/appliance-apply` workflow is the only appliance enforcement path.
 
 ## ESX Storage
+
+Photon image provisioning disables and verifies VCF PowerCLI CEIP participation at `AllUsers` scope. Appliance Settings apply enforces the central VMware CEIP choice for installed VCF PowerCLI and VCF Download Tool runtimes; missing optional products are skipped. Appliance Update reapplies the central choice after managed `VCF.PowerCLI` installs or updates.
 
 ESX Storage lives at `/esx-storage` under VCF Workflows and publishes ESX 9.x datastores over NFS 3 or NFS 4.1. IPv4 and IPv6 are equal v1 connection families: each share selects one addressed interface/VLAN and enables IPv4, IPv6, or both with matching VMkernel client allowlists. LabFoundry generates explicit family-specific A/AAAA target names, copyable ESXCLI and PowerCLI connection commands, the canonical `nfs.<domain>` alias, PTR-capable app-owned host records, and equivalent family-specific nftables rules. Datastore state is editable through the standard grid icon or the add/edit wizard, while a dedicated Connection Instructions tab keeps mount guidance separate from desired-state editing.
 
@@ -733,7 +770,8 @@ path as the `-VmxPath` argument:
 
 Do not pipe the VMX path or put it on a separate line by itself; PowerShell will
 try to execute the `.vmx` file. The helper builds `python -m pip wheel . -w
-dist`, uploads the latest `labfoundry-*.whl`, installs it into
+dist`, uploads the latest `labfoundry-*.whl` and the OIDC `Authlib` runtime
+wheel, installs both into
 `/opt/labfoundry/.venv`, syncs `scripts/appliance/labfoundry-helper` to
 `/opt/labfoundry/bin/labfoundry-helper`, restores virtualenv permissions,
 restarts `labfoundry.service`, and verifies both guest loopback and host-facing

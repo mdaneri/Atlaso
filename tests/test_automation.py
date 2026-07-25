@@ -275,7 +275,7 @@ def test_manual_script_run_collects_parameters_and_exposes_revision_diff(client)
 
 def test_due_schedule_queues_one_job_and_skips_overlap(client):
     from labfoundry.app.database import SessionLocal
-    from labfoundry.app.models import Job, Schedule
+    from labfoundry.app.models import Job, JobStep, Schedule
     from labfoundry.app.services.automation import enqueue_due_schedules
 
     # Initialize and seed the fixture database.
@@ -302,6 +302,8 @@ def test_due_schedule_queues_one_job_and_skips_overlap(client):
         assert len(jobs) == 1
         assert jobs[0].trigger == "scheduled"
         assert json.loads(jobs[0].task_config_json)["mode"] == "check"
+        steps = db.execute(select(JobStep).where(JobStep.job_id == jobs[0].id)).scalars().all()
+        assert [(step.component_key, step.status) for step in steps] == [("photon_os", "pending")]
 
     with SessionLocal() as db:
         schedule = db.get(Schedule, schedule_id)

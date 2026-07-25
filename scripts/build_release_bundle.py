@@ -21,7 +21,14 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SUPPORTED_ABIS = ("cp312", "cp313", "cp314")
+SCRIPTS_DIR = ROOT / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from generate_third_party_notices import generate_notice, locked_packages, vendored_records, wheel_records
+
+
+SUPPORTED_ABIS = ("cp314",)
 LEGACY_BRIDGE_VERSION = "0.9.0"
 SYSTEMD_FILES = (
     ROOT / "image/hyperv/systemd/labfoundry.service",
@@ -166,7 +173,7 @@ def deterministic_tar_gz(source: Path, output: Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build a signed, offline LabFoundry appliance release bundle.")
-    parser.add_argument("--wheelhouses", type=Path, required=True, help="Directory containing cp312/cp313/cp314 wheelhouses.")
+    parser.add_argument("--wheelhouses", type=Path, required=True, help="Directory containing the cp314 wheelhouse.")
     parser.add_argument("--lock", type=Path, default=ROOT / "requirements-appliance.lock")
     parser.add_argument("--output", type=Path, default=ROOT / "dist/release")
     parser.add_argument("--repository", default="mdaneri/LabFoundry")
@@ -209,6 +216,22 @@ def main() -> int:
             for wheel in wheels:
                 shutil.copy2(wheel, destination / wheel.name)
             shutil.copy2(wheelhouse_lock, destination / wheelhouse_lock.name)
+        expected_packages = locked_packages(args.lock)
+        python_packages: dict[str, dict[str, str]] = {}
+        for abi in SUPPORTED_ABIS:
+            records = wheel_records(bundle_root / "wheelhouse" / abi, expected_packages)
+            for name, record in records.items():
+                if name in python_packages and python_packages[name] != record:
+                    raise SystemExit(f"wheelhouses disagree on metadata for {record['name']}")
+                python_packages[name] = record
+        notice_path = bundle_root / "THIRD_PARTY_NOTICES.md"
+        generate_notice(
+            output=notice_path,
+            version=version,
+            python_records=python_packages,
+            vendored=vendored_records(ROOT / "scripts/third_party_notices.json"),
+            rpms=None,
+        )
         (bundle_root / "bin").mkdir()
         shutil.copy2(ROOT / "scripts/appliance/labfoundry-helper", bundle_root / "bin/labfoundry-helper")
         (bundle_root / "systemd").mkdir()
@@ -253,6 +276,7 @@ def main() -> int:
         release_manifest_bytes = canonical_json(release_manifest)
         manifest_path = output / "release-manifest.json"
         manifest_path.write_bytes(release_manifest_bytes)
+        shutil.copy2(notice_path, output / f"labfoundry-third-party-notices-{version}.md")
         write_signature(
             output / "release-manifest.json.sig",
             key_id=args.signing_key_id,
@@ -266,7 +290,7 @@ def main() -> int:
                 "version": version,
                 "git_commit": commit,
                 "built_at": built_at,
-                "requires_python": ">=3.12,<3.15",
+                "requires_python": ">=3.14,<3.15",
                 "wheel": f"{release_base}/{application_wheel.name}",
                 "sha256": sha256(application_wheel),
             }

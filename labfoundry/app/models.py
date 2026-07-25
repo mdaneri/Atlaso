@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from enum import StrEnum
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from labfoundry.app.database import Base
@@ -24,6 +24,7 @@ class JobStatus(StrEnum):
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    SKIPPED = "skipped"
     CANCELLED = "cancelled"
 
 
@@ -300,6 +301,7 @@ class ApplianceSettings(Base):
     web_terminal_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     web_terminal_interfaces_json: Mapped[str] = mapped_column(Text, default="[]")
     root_ssh_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    vmware_ceip_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     service_dns_target_naming: Mapped[str] = mapped_column(String(20), default="ip")
     external_dns_servers: Mapped[str] = mapped_column(Text, default="1.1.1.1\n9.9.9.9")
     config_path: Mapped[str] = mapped_column(String(240), default="/var/lib/labfoundry/apply/appliance-settings/labfoundry-settings.json")
@@ -752,6 +754,161 @@ class LdapGroupMembership(Base):
     )
 
 
+class OidcProviderSettings(Base):
+    __tablename__ = "oidc_provider_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    issuer_url: Mapped[str] = mapped_column(String(500), default="")
+    access_token_lifetime_seconds: Mapped[int] = mapped_column(Integer, default=300)
+    id_token_lifetime_seconds: Mapped[int] = mapped_column(Integer, default=300)
+    authorization_code_lifetime_seconds: Mapped[int] = mapped_column(Integer, default=60)
+    clock_skew_seconds: Mapped[int] = mapped_column(Integer, default=120)
+    signing_key_overlap_seconds: Mapped[int] = mapped_column(Integer, default=3600)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class OidcClient(Base):
+    __tablename__ = "oidc_clients"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(160))
+    client_id: Mapped[str] = mapped_column(String(160), unique=True, index=True)
+    client_secret_hash: Mapped[str] = mapped_column(Text)
+    organization_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ldap_organizations.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    allowed_scopes: Mapped[str] = mapped_column(Text, default="openid profile email groups")
+    token_endpoint_auth_method: Mapped[str] = mapped_column(String(80), default="client_secret_basic")
+    access_token_lifetime_seconds: Mapped[int] = mapped_column(Integer, default=300)
+    id_token_lifetime_seconds: Mapped[int] = mapped_column(Integer, default=300)
+    authorization_code_lifetime_seconds: Mapped[int] = mapped_column(Integer, default=60)
+    allow_loopback_redirects: Mapped[bool] = mapped_column(Boolean, default=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    organization: Mapped[LdapOrganization | None] = relationship()
+    redirect_uris: Mapped[list["OidcClientRedirectUri"]] = relationship(
+        back_populates="client",
+        cascade="all, delete-orphan",
+        order_by="OidcClientRedirectUri.id",
+    )
+
+
+class OidcClientRedirectUri(Base):
+    __tablename__ = "oidc_client_redirect_uris"
+    __table_args__ = (
+        UniqueConstraint("oidc_client_id", "kind", "uri", name="uq_oidc_client_redirect_uri"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    oidc_client_id: Mapped[int] = mapped_column(ForeignKey("oidc_clients.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(40))
+    uri: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    client: Mapped[OidcClient] = relationship(back_populates="redirect_uris")
+
+
+class OidcSubject(Base):
+    __tablename__ = "oidc_subjects"
+    __table_args__ = (
+        CheckConstraint(
+            "(local_user_id IS NOT NULL AND ldap_user_id IS NULL) OR "
+            "(local_user_id IS NULL AND ldap_user_id IS NOT NULL)",
+            name="ck_oidc_subject_exactly_one_source",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    subject_uuid: Mapped[str] = mapped_column(String(36), unique=True, index=True)
+    local_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=True,
+        index=True,
+    )
+    ldap_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ldap_users.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=True,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class OidcSigningKey(Base):
+    __tablename__ = "oidc_signing_keys"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kid: Mapped[str] = mapped_column(String(160), unique=True, index=True)
+    algorithm: Mapped[str] = mapped_column(String(20), default="RS256")
+    private_key_encrypted: Mapped[str] = mapped_column(Text)
+    public_jwk_json: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(40), default="active", index=True)
+    active_slot: Mapped[int | None] = mapped_column(Integer, unique=True, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    activated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    publish_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class OidcAuthorizationTransaction(Base):
+    """A short-lived, server-side binding for one browser authorization request."""
+
+    __tablename__ = "oidc_authorization_transactions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    transaction_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    oidc_client_id: Mapped[int] = mapped_column(ForeignKey("oidc_clients.id", ondelete="CASCADE"), index=True)
+    subject_id: Mapped[int | None] = mapped_column(
+        ForeignKey("oidc_subjects.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    organization_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ldap_organizations.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    source: Mapped[str] = mapped_column(String(32), default="")
+    redirect_uri: Mapped[str] = mapped_column(Text)
+    scopes: Mapped[str] = mapped_column(Text)
+    state: Mapped[str] = mapped_column(Text)
+    nonce: Mapped[str] = mapped_column(Text)
+    code_challenge: Mapped[str] = mapped_column(String(160))
+    browser_session_id: Mapped[str] = mapped_column(String(128), index=True)
+    auth_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    prompt: Mapped[str] = mapped_column(String(16), default="login")
+    max_age: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    login_hint: Mapped[str] = mapped_column(String(240), default="")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class OidcAuthorizationCode(Base):
+    """A one-use code.  Only its SHA-256 digest is persisted."""
+
+    __tablename__ = "oidc_authorization_codes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    oidc_client_id: Mapped[int] = mapped_column(ForeignKey("oidc_clients.id", ondelete="CASCADE"), index=True)
+    subject_id: Mapped[int] = mapped_column(ForeignKey("oidc_subjects.id", ondelete="CASCADE"), index=True)
+    organization_id: Mapped[int | None] = mapped_column(ForeignKey("ldap_organizations.id", ondelete="RESTRICT"), nullable=True)
+    redirect_uri: Mapped[str] = mapped_column(Text)
+    scopes: Mapped[str] = mapped_column(Text)
+    state: Mapped[str] = mapped_column(Text)
+    nonce: Mapped[str] = mapped_column(Text)
+    code_challenge: Mapped[str] = mapped_column(String(160))
+    browser_session_id: Mapped[str] = mapped_column(String(128), index=True)
+    source: Mapped[str] = mapped_column(String(32))
+    auth_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    redeemed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class LdapRecoveryArchive(Base):
     __tablename__ = "ldap_recovery_archives"
 
@@ -897,7 +1054,6 @@ class VcfOfflineDepotSettings(Base):
     depot_store_path: Mapped[str] = mapped_column(String(240), default="/mnt/labfoundry-vcf-offline-depot")
     tool_archive_path: Mapped[str] = mapped_column(String(500), default="")
     tool_version: Mapped[str] = mapped_column(String(80), default="")
-    telemetry_choice: Mapped[str] = mapped_column(String(20), default="DISABLE")
     config_path: Mapped[str] = mapped_column(String(240), default="/etc/labfoundry/nginx/sites.d/vcf-offline-depot.conf")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

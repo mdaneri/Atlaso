@@ -6,37 +6,107 @@ on:
       - CI
     types:
       - completed
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Successful main CI commit to publish or recover
+        required: true
+        type: string
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
-  group: appliance-release-${{ github.event.workflow_run.head_sha }}
+  group: appliance-release-${{ inputs.release_sha || github.event.workflow_run.head_sha }}
   cancel-in-progress: false
 
 jobs:
+  prepare:
+    name: Validate release target
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.event == 'push'
+      )
+    runs-on: ubuntu-latest
+    outputs:
+      release_sha: ${{ steps.target.outputs.release_sha }}
+    steps:
+      - name: Check out the release target
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.release_sha || github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+      - name: Validate successful main CI and bridge ordering
+        id: target
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ inputs.release_sha || github.event.workflow_run.head_sha }}
+        run: |
+          if ! printf '%s' "$RELEASE_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::Release SHA must be a full lowercase hexadecimal commit."
+            exit 1
+          fi
+          git fetch origin main --no-tags
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          if test "${{ github.event_name }}" = "workflow_dispatch"; then
+            SUCCESSFUL_RUNS="$(
+              gh api --method GET \
+                "repos/${{ github.repository }}/actions/workflows/ci.yml/runs" \
+                -f head_sha="$RELEASE_SHA" \
+                -f branch=main \
+                -f event=push \
+                -f status=success \
+                -f per_page=100 \
+                --jq '.total_count'
+            )"
+            if test "$SUCCESSFUL_RUNS" -lt 1; then
+              echo "::error::$RELEASE_SHA has no successful main push CI run."
+              exit 1
+            fi
+          fi
+          VERSION="$(python scripts/version.py get)"
+          if test "$VERSION" != "0.9.0"; then
+            if ! LEGACY_MANIFEST="$(
+              gh api \
+                "repos/${{ github.repository }}/contents/updates/manifest.json?ref=gh-pages" \
+                --jq '.content' 2>/dev/null |
+                base64 --decode
+            )"; then
+              echo "::error::Publish or recover the v0.9.0 bridge release before v${VERSION}."
+              exit 1
+            fi
+            LEGACY_VERSION="$(
+              printf '%s' "$LEGACY_MANIFEST" |
+                python -c 'import json,sys; print(json.load(sys.stdin)["version"])'
+            )"
+            if test "$LEGACY_VERSION" != "0.9.0"; then
+              echo "::error::The legacy bridge manifest must remain pinned to v0.9.0."
+              exit 1
+            fi
+          fi
+          echo "release_sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+
   wheelhouse:
     name: Build ${{ matrix.abi }} wheelhouse
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.event == 'push'
+    needs:
+      - prepare
     runs-on: ubuntu-latest
     strategy:
       fail-fast: true
       matrix:
         include:
-          - python: '3.12'
-            abi: cp312
-          - python: '3.13'
-            abi: cp313
           - python: '3.14'
             abi: cp314
     steps:
       - name: Check out the successful main commit
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ needs.prepare.outputs.release_sha }}
           fetch-depth: 0
       - name: Set up Python ${{ matrix.python }}
         uses: actions/setup-python@v7
@@ -54,8 +124,9 @@ jobs:
         env:
           PIP_CONFIG_FILE: /dev/null
           PIP_DISABLE_PIP_VERSION_CHECK: '1'
+          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
         run: |
-          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct '${{ github.event.workflow_run.head_sha }}')"
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$RELEASE_SHA")"
           python -m pip wheel \
             --require-hashes \
             --no-build-isolation \
@@ -63,7 +134,7 @@ jobs:
             --requirement requirements-appliance.lock
           python scripts/write_wheelhouse_lock.py --wheelhouse wheelhouse/${{ matrix.abi }}
       - name: Upload wheelhouse
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wheelhouse-${{ matrix.abi }}
           path: wheelhouse/${{ matrix.abi }}
@@ -73,6 +144,7 @@ jobs:
   publish:
     name: Sign and publish release
     needs:
+      - prepare
       - wheelhouse
     runs-on: ubuntu-latest
     environment: appliance-release
@@ -82,11 +154,11 @@ jobs:
       - name: Check out the successful main commit
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ needs.prepare.outputs.release_sha }}
           fetch-depth: 0
       - name: Confirm the commit is still on main
         env:
-          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
         run: |
           git fetch origin main --no-tags
           git merge-base --is-ancestor "$RELEASE_SHA" origin/main
@@ -94,24 +166,14 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: '3.12'
+          python-version: '3.14'
           cache: pip
       - name: Install locked release tooling
         env:
           PIP_CONFIG_FILE: /dev/null
         run: python -m pip install --require-hashes --requirement requirements-release-tools.lock
-      - name: Download CPython 3.12 wheelhouse
-        uses: actions/download-artifact@v4
-        with:
-          name: wheelhouse-cp312
-          path: wheelhouses/cp312
-      - name: Download CPython 3.13 wheelhouse
-        uses: actions/download-artifact@v4
-        with:
-          name: wheelhouse-cp313
-          path: wheelhouses/cp313
       - name: Download CPython 3.14 wheelhouse
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: wheelhouse-cp314
           path: wheelhouses/cp314
@@ -124,7 +186,7 @@ jobs:
           printf '%s\n' "$RELEASE_SIGNING_PRIVATE_KEY" > "$RUNNER_TEMP/release-signing-key.pem"
       - name: Build and sign the immutable release
         env:
-          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
           RELEASE_KEY_ID: labfoundry-release-2026-01
         run: |
           BUILT_AT="$(git show -s --format=%cI "$RELEASE_SHA")"
@@ -137,8 +199,13 @@ jobs:
       - name: Publish the idempotent tag and GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
-        run: python scripts/publish_release.py --commit "$RELEASE_SHA" --assets dist/release
+          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+        run: |
+          # The v0.9.0 recovery checks out the original publisher, so provide
+          # runner-local identity in addition to the script's self-contained fix.
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          python scripts/publish_release.py --commit "$RELEASE_SHA" --assets dist/release
       - name: Advance the signed development channel
         env:
           RELEASE_KEY_ID: labfoundry-release-2026-01
@@ -164,8 +231,48 @@ jobs:
           if test "$VERSION" = "0.9.0"; then
             install -m 0644 dist/release/legacy-manifest.json "$SITE_ROOT/updates/manifest.json"
           else
-            test "$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))[\"version\"])' "$SITE_ROOT/updates/manifest.json")" = "0.9.0"
+            test "$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$SITE_ROOT/updates/manifest.json")" = "0.9.0"
           fi
+          cat > "$SITE_ROOT/index.html" <<'EOF'
+          <!doctype html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>LabFoundry Release Repository</title>
+            <style>
+              :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+              body { margin: 0; background: #f4f7fb; color: #162033; }
+              main { width: min(720px, calc(100% - 40px)); margin: 12vh auto; }
+              article { padding: 40px; background: #fff; border: 1px solid #dce3ed; border-radius: 18px; box-shadow: 0 18px 50px rgb(25 44 74 / 8%); }
+              p { line-height: 1.65; color: #526075; }
+              h1 { margin: 8px 0 12px; font-size: clamp(2rem, 6vw, 3.5rem); line-height: 1.05; letter-spacing: -.04em; }
+              .eyebrow { color: #315cbd; font-size: .78rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+              .source { display: block; overflow-wrap: anywhere; margin: 24px 0; padding: 14px 16px; background: #f1f5fb; border-radius: 10px; color: #243959; }
+              nav { display: flex; flex-wrap: wrap; gap: 12px; }
+              a { color: #244fa8; font-weight: 650; text-decoration: none; }
+              a:hover, a:focus-visible { text-decoration: underline; }
+              footer { margin-top: 28px; font-size: .875rem; }
+            </style>
+          </head>
+          <body>
+            <main>
+              <article>
+                <div class="eyebrow">LabFoundry appliance updates</div>
+                <h1>Signed release repository</h1>
+                <p>This site publishes machine-readable channel pointers for transactional LabFoundry appliance updates. Appliances verify every pointer and release manifest with a named Ed25519 trust key before installation.</p>
+                <code class="source">https://mdaneri.github.io/LabFoundry/updates</code>
+                <nav aria-label="Release repository links">
+                  <a href="./updates/channels/development/manifest.json">Development channel</a>
+                  <a href="https://github.com/mdaneri/LabFoundry/releases">GitHub Releases</a>
+                  <a href="https://github.com/mdaneri/LabFoundry">Source repository</a>
+                </nav>
+                <footer><p>The HTML page is informational. Signed JSON documents under <code>/updates</code> remain the appliance protocol.</p></footer>
+              </article>
+            </main>
+          </body>
+          </html>
+          EOF
           touch "$SITE_ROOT/.nojekyll"
           git -C "$SITE_ROOT" add --all
           if git -C "$SITE_ROOT" diff --cached --quiet; then

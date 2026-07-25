@@ -60,15 +60,27 @@ def _read_text(root: Path, source: str) -> str:
         raise VersionError(f"Cannot read {source} version from {path}: {exc}") from exc
 
 
-def read_versions(root: Path) -> dict[str, Version]:
+def read_project_version(root: Path) -> Version:
     root = root.resolve()
+    path = root / VERSION_PATHS["Python project"]
     project_text = _read_text(root, "Python project")
     try:
-        project_value = tomllib.loads(project_text)["project"]["version"]
-    except (KeyError, TypeError, tomllib.TOMLDecodeError) as exc:
-        raise VersionError(f"{root / VERSION_PATHS['Python project']} must define [project].version") from exc
+        document = tomllib.loads(project_text)
+    except tomllib.TOMLDecodeError as exc:
+        raise VersionError(f"{path} contains invalid TOML: {exc}") from exc
+
+    project = document.get("project")
+    if not isinstance(project, dict) or "version" not in project:
+        raise VersionError(f"{path} must define [project].version")
+    project_value = project["version"]
     if not isinstance(project_value, str):
-        raise VersionError(f"{root / VERSION_PATHS['Python project']} [project].version must be a string")
+        raise VersionError(f"{path} [project].version must be a string")
+    return Version.parse(project_value, source=f"{path} [project].version")
+
+
+def read_versions(root: Path) -> dict[str, Version]:
+    root = root.resolve()
+    project_version = read_project_version(root)
 
     python_text = _read_text(root, "Python runtime fallback")
     python_match = PYTHON_FALLBACK_RE.search(python_text)
@@ -83,7 +95,7 @@ def read_versions(root: Path) -> dict[str, Version]:
         raise VersionError(f"{root / VERSION_PATHS['PowerShell module']} must define ModuleVersion")
 
     return {
-        "Python project": Version.parse(project_value, source="Python project version"),
+        "Python project": project_version,
         "Python runtime fallback": Version.parse(
             python_match.group(0).split('"', 2)[1], source="Python runtime fallback version"
         ),
@@ -129,7 +141,7 @@ def _replace_version(path: Path, pattern: re.Pattern[str], version: Version, sou
     updated, count = pattern.subn(rf"\g<1>{version}\g<2>", text, count=1)
     if count != 1:
         raise VersionError(f"Could not update {source} version in {path}")
-    path.write_text(updated, encoding="utf-8")
+    path.write_text(updated, encoding="utf-8", newline="\n")
 
 
 def bump(root: Path, base_root: Path | None = None) -> tuple[Version, bool]:
@@ -162,7 +174,7 @@ def bump(root: Path, base_root: Path | None = None) -> tuple[Version, bool]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("bump", "check", "get"))
+    parser.add_argument("command", choices=("bump", "check", "get", "project-get"))
     parser.add_argument("--root", type=Path, default=ROOT, help="Repository checkout to inspect or update.")
     parser.add_argument(
         "--base-root",
@@ -172,7 +184,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        if args.command == "get":
+        if args.command == "project-get":
+            print(read_project_version(args.root))
+        elif args.command == "get":
             version = consistent_version(args.root)
             print(version)
         elif args.command == "check":

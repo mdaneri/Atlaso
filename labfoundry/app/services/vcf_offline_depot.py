@@ -49,7 +49,6 @@ VCF_DEPOT_STATUS_VALUES = {"planned", "ready", "synced", "blocked"}
 VCF_DEPOT_PROFILE_TYPES = {"binaries", "metadata", "esx"}
 VCF_DEPOT_SKUS = {"VCF", "VVF"}
 VCF_DEPOT_BINARY_TYPES = {"INSTALL", "UPGRADE"}
-VCF_DEPOT_TELEMETRY_CHOICES = {"ENABLE", "DISABLE", "NOT_PROVIDED"}
 VCF_DEPOT_ESX_DISABLED_PLATFORMS = (
     "esxio-9.1-INTL",
     "armEsx-9.1-INTL",
@@ -321,7 +320,6 @@ def vcf_depot_settings_to_dict(settings: VcfOfflineDepotSettings) -> dict[str, o
         "tool_archive_path": settings.tool_archive_path,
         "tool_archive_name": Path(settings.tool_archive_path).name if settings.tool_archive_path else "",
         "tool_version": settings.tool_version,
-        "telemetry_choice": settings.telemetry_choice,
         "config_path": settings.config_path,
         "updated_at": settings.updated_at.isoformat() if settings.updated_at else "",
     }
@@ -720,6 +718,7 @@ def render_vcfdt_command_preview(
     settings: VcfOfflineDepotSettings,
     profiles: list[VcfDepotDownloadProfile],
     *,
+    vmware_ceip_enabled: bool = False,
     download_token_present: bool = True,
     activation_code_present: bool = False,
     include_disabled_profiles: bool = False,
@@ -747,16 +746,13 @@ def render_vcfdt_command_preview(
         "",
         'mkdir -p "${DEPOT_STORE}"',
     ]
-    telemetry_choice = settings.telemetry_choice if settings.telemetry_choice in VCF_DEPOT_TELEMETRY_CHOICES else "DISABLE"
-    if telemetry_choice == "NOT_PROVIDED":
-        lines.append("# Telemetry choice is not provided; VCFDT may prompt on first run.")
-    else:
-        lines.extend(
-            [
-                'mkdir -p "${VCFDT_HOME}/conf/telemetry"',
-                f"printf '%s\\n' {shlex.quote('obtu.telemetry.config=' + telemetry_choice)} > \"${{VCFDT_HOME}}/conf/telemetry/telemetry.flag\"",
-            ]
-        )
+    telemetry_choice = "ENABLE" if vmware_ceip_enabled else "DISABLE"
+    lines.extend(
+        [
+            'mkdir -p "${VCFDT_HOME}/conf/telemetry"',
+            f"printf '%s\\n' {shlex.quote('obtu.telemetry.config=' + telemetry_choice)} > \"${{VCFDT_HOME}}/conf/telemetry/telemetry.flag\"",
+        ]
+    )
     if any((profile.profile_type or "binaries") == "esx" for profile in enabled_profiles):
         lines.extend(
             [
@@ -863,8 +859,6 @@ def validate_vcf_depot_state(
             errors.append(f"{path_label} must be an absolute Linux path.")
     if not settings.server_certificate.strip():
         errors.append("Server certificate name is required.")
-    if settings.telemetry_choice not in VCF_DEPOT_TELEMETRY_CHOICES:
-        errors.append("Telemetry choice must be ENABLE, DISABLE, or NOT_PROVIDED.")
     enabled_profiles = [profile for profile in profiles if profile.enabled]
     if enabled_profiles and not settings.tool_archive_path.strip():
         errors.append("Upload the VCF Download Tool before generating or syncing enabled VCFDT download profiles.")

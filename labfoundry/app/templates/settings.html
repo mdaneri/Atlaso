@@ -94,6 +94,22 @@
       <p id="appliance-settings-autosave-status" class="autosave-status" data-state="idle">Changes save automatically.</p>
     </form>
 
+    <div class="panel-head compact" id="vmware-product-preferences">
+      <div>
+        <h2>VMware Product Preferences</h2>
+      </div>
+      <span data-vmware-ceip-pill class="status-pill {{ 'good' if appliance_settings.vmware_ceip_enabled else 'muted' }}">{{ "CEIP on" if appliance_settings.vmware_ceip_enabled else "CEIP off" }}</span>
+    </div>
+    <form class="form-stack" action="/settings/vmware-ceip" method="post" data-autosave-form data-appliance-settings data-autosave-status-id="vmware-ceip-autosave-status">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <label class="switch-field">
+        <span class="field-label"><span>VMware CEIP participation</span><button class="help-icon" type="button" data-help="Controls Customer Experience Improvement Program participation for supported VMware products across this appliance. LabFoundry currently configures VCF PowerCLI and VCF Download Tool; host-wide changes wait for global appliance apply and each VCFDT task reasserts the saved choice before launch.">i</button></span>
+        <input class="switch-input" type="checkbox" name="vmware_ceip_enabled" {{ "checked" if appliance_settings.vmware_ceip_enabled else "" }}>
+        <span class="switch-track" aria-hidden="true"></span>
+      </label>
+      <p id="vmware-ceip-autosave-status" class="autosave-status" data-state="idle">Changes save automatically.</p>
+    </form>
+
     <div class="settings-list compact-settings-list">
       <div><span>Application</span><strong>{{ app_settings.app_name }}</strong></div>
       <div><span>Runtime hostname</span><strong>{{ runtime_hostname }}</strong></div>
@@ -185,6 +201,7 @@
         <div><span>Management UI/API</span><strong>{{ "HTTPS" if appliance_settings.management_https_enabled else "HTTP" }}{% if appliance_settings.management_https_enabled and management_https_cert_path %} / {{ management_https_cert_path }}{% endif %}</strong></div>
         <div><span>Root SSH</span><strong data-appliance-settings-root-ssh>{{ "enabled" if appliance_settings.root_ssh_enabled else "disabled" }}</strong></div>
         <div><span>Web terminal</span><strong data-appliance-settings-web-terminal>{{ "enabled" if appliance_settings.web_terminal_enabled else "disabled" }}{% if web_terminal_addresses %} / {{ web_terminal_addresses|join(', ') }}{% endif %}</strong></div>
+        <div><span>VMware CEIP</span><strong data-vmware-ceip-status>{{ "enabled" if appliance_settings.vmware_ceip_enabled else "disabled" }}</strong></div>
         <div><span>Service DNS targets</span><strong>{{ "IP address" if appliance_settings.service_dns_target_naming == "ip" else "Interface name" }}</strong></div>
         <div><span>Config path</span><strong data-appliance-settings-config-path>{{ appliance_settings.config_path }}</strong></div>
       </div>

@@ -5,6 +5,7 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 from sqlalchemy import create_engine, event, inspect, select, text
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from labfoundry.app.config import get_settings
@@ -29,6 +30,15 @@ engine = create_engine(
     connect_args={"check_same_thread": False} if _engine_url().startswith("sqlite") else {},
 )
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+
+
+@event.listens_for(Engine, "connect")
+def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
+    if dbapi_connection.__class__.__module__.split(".", 1)[0] != "sqlite3":
+        return
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
 
 
 DNS_AUTHORITY_SERIAL_FIELDS = {
@@ -393,6 +403,7 @@ def _ensure_sqlite_appliance_settings_columns() -> None:
         "web_terminal_enabled": "BOOLEAN DEFAULT 0",
         "web_terminal_interfaces_json": "TEXT DEFAULT '[]'",
         "root_ssh_enabled": "BOOLEAN DEFAULT 0",
+        "vmware_ceip_enabled": "BOOLEAN DEFAULT 0",
         "service_dns_target_naming": "VARCHAR(20) DEFAULT 'ip'",
     }
     with engine.begin() as connection:
