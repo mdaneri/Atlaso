@@ -39,6 +39,8 @@ discussion state and do not replace a type label on active work.
 4. Run focused tests, `git diff --check`, and the repository validation checks.
 5. Update the branch version with `python scripts/version.py bump --base-root
    /path/to/main-checkout` when required by the pull-request version policy.
+   Version sources are discovered independently in the base and target
+   checkouts so an intentional package or module rename can still be validated.
 6. Open a pull request using the template, include `Closes #<issue>`, and
    provide validation evidence.
 
