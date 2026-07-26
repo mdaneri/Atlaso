@@ -343,7 +343,7 @@ def test_backfill_apply_updates_legacy_body_and_skips_matching_notes(
         edits.append((tag, body))
 
     updated = dict(first_release)
-    updated["body"] = first_body
+    updated["body"] = first_body.replace("\n", "\r\n")
     responses = iter([first_release, updated])
     monkeypatch.setattr(backfill_release_notes, "edit_release_body", fake_edit)
     monkeypatch.setattr(
