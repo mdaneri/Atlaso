@@ -1,21 +1,17 @@
 # Atlaso coding-agent instructions
 
-Before planning implementation or changing repository or external state, read
-the root `AGENTS.md` completely. Then read `CONTRIBUTING.md`,
-`CODE_OF_CONDUCT.md`, and `SECURITY.md`.
+Before planning implementation or changing repository or external state, read the root `AGENTS.md` completely. Then read
+`CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, and `SECURITY.md`.
 
-Complete the **Mandatory Agent Startup Gate** defined in `AGENTS.md`: confirm
-the policy files were read in the first progress update, classify the work, and
-identify the linked GitHub issue. Repeat the gate after changing repositories,
+Complete the **Mandatory Agent Startup Gate** defined in `AGENTS.md`: confirm the policy files were read in the first
+progress update, classify the work, and identify the linked GitHub issue. Repeat the gate after changing repositories,
 worktrees, or working directories.
 
-For changes affecting templates, authored CSS, browser JavaScript, controls,
-layouts, data grids, dialogs, wizards, or visible copy, also complete the
-**Mandatory UI Design Guide Gate** in `AGENTS.md` and read
-`docs/ui-design-guide.md` before planning implementation. Classify the
-interaction and name the existing Atlaso reference being reused. Approval-only
-`custom/other` work must cite explicit maintainer approval and the closest
-related Atlaso reference.
+For changes affecting templates, authored CSS, browser JavaScript, controls, layouts, data grids, dialogs, wizards, or
+visible copy, also complete the **Mandatory UI Design Guide Gate** in `AGENTS.md` and read
+`docs/contribute/ui-design-guide.md`
+before planning implementation. Classify the interaction and name the existing Atlaso reference being reused.
+Approval-only `custom/other` work must cite explicit maintainer approval and the closest related Atlaso reference.
 
 `AGENTS.md` and `CONTRIBUTING.md` are authoritative. In particular:
 
@@ -25,6 +21,5 @@ related Atlaso reference.
 - follow the security and conduct policies; and
 - never commit directly to `main`.
 
-Subagents and delegated agents must complete the same gate. A delegating agent
-must include the requirement in its prompt and verify compliance before using
-delegated work.
+Subagents and delegated agents must complete the same gate. A delegating agent must include the requirement in its
+prompt and verify compliance before using delegated work.

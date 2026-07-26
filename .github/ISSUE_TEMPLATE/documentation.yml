@@ -1,0 +1,41 @@
+name: Documentation
+description: Report missing, inaccurate, unclear, or outdated Atlaso documentation.
+title: '[Docs] '
+labels:
+  - documentation
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for improving Atlaso documentation. Do not include credentials, private addresses, or sensitive logs.
+  - type: input
+    id: location
+    attributes:
+      label: Documentation location
+      description: Link the page or identify the file and heading.
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Explain what is missing, inaccurate, unclear, or outdated.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected documentation
+      description: Describe the outcome a reader should be able to achieve.
+    validations:
+      required: true
+  - type: dropdown
+    id: audience
+    attributes:
+      label: Primary audience
+      options:
+        - Operator
+        - Contributor
+        - Maintainer
+    validations:
+      required: true

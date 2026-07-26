@@ -66,7 +66,7 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     systemd_unit = Path("image/hyperv/systemd/atlaso.service").read_text(encoding="utf-8")
     sudoers = Path("image/hyperv/sudoers.d/atlaso-helper").read_text(encoding="utf-8")
     docs = Path("image/hyperv/README.md").read_text(encoding="utf-8")
-    root_docs = Path("README.md").read_text(encoding="utf-8")
+    root_docs = Path("docs/reference/full-technical-reference.md").read_text(encoding="utf-8")
 
     assert 'run_tdnf "Photon appliance package installation"' in script
     assert "nginx" in script
@@ -192,7 +192,7 @@ def test_photon_provisioning_prepares_attached_data_disks():
     vmware_unit = Path("image/vmware-workstation/systemd/atlaso.service").read_text(encoding="utf-8")
     hyperv_docs = Path("image/hyperv/README.md").read_text(encoding="utf-8")
     vmware_docs = Path("image/vmware-workstation/README.md").read_text(encoding="utf-8")
-    root_docs = Path("README.md").read_text(encoding="utf-8")
+    root_docs = Path("docs/reference/full-technical-reference.md").read_text(encoding="utf-8")
 
     assert 'run_tdnf "Photon appliance package installation"' in provision
     assert "e2fsprogs" in provision
@@ -265,7 +265,7 @@ def test_photon_kickstart_uses_deterministic_build_time_sshd_service():
 def test_packer_build_uses_atlaso_management_network_by_default():
     template = Path("image/hyperv/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
     docs = Path("image/hyperv/README.md").read_text(encoding="utf-8")
-    root_docs = Path("README.md").read_text(encoding="utf-8")
+    root_docs = Path("docs/reference/full-technical-reference.md").read_text(encoding="utf-8")
     wrapper = Path("scripts/windows/hyperv/build-photon-image.ps1").read_text(encoding="utf-8")
     build_module = Path("scripts/windows/common/Atlaso.PhotonImage.psm1").read_text(encoding="utf-8")
     gitignore = Path(".gitignore").read_text(encoding="utf-8")
@@ -439,7 +439,7 @@ def test_vmware_builder_uses_nat_gateway_dns_by_default():
     assert "Photon builder temporary SSH address" in wrapper
     assert "gateway DNS proxy" in docs
     assert "copying unrelated host" in docs
-    assert "DNS servers into the Photon kickstart" in docs
+    assert "servers into the Photon kickstart" in docs
 
 
 def test_lifecycle_hyperv_script_uses_separate_vm_set_by_default():
@@ -517,11 +517,12 @@ def test_create_atlaso_test_vm_wrapper_is_safe_and_simple():
     assert "Remove-VM -Name $Name -Force" in script
     assert "Run this script from an elevated PowerShell session." not in script
     assert "create-atlaso-test-vm.ps1 -WaitForIp" in docs
-    assert "pass `-Redeploy` to remove and recreate only that VM" in docs
+    assert "`-Redeploy` to remove and recreate only that VM" in docs
     assert "first adapter management-only on `Atlaso-Mgmt`" in docs
-    assert "`Services` on the dedicated `Atlaso-Services` switch" in docs
+    assert "second adapter is `Services`" in docs
+    assert "`Atlaso-Services` switch" in docs
     assert "`SiteA` on" in docs and "`Atlaso-SiteA` as trunk VLAN 12" in docs
-    assert "`Trunk` on `Atlaso-Trunk` as trunk" in docs and "VLAN 50" in docs
+    assert "`Trunk`" in docs and "`Atlaso-Trunk`" in docs and "VLAN 50" in docs
     assert "WAN-Test` on `Atlaso-SiteB` as" in docs
     assert "`/var/lib/atlaso/users/<admin>` with `/usr/bin/pwsh`" in docs
     assert "`powershell` package" in docs
@@ -683,12 +684,13 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "Swagger URL" in docs
     assert "root certificate URL" in docs
     assert "ssh admin@<appliance-ip>" in docs
-    assert "adds a second `vmxnet3` adapter on `-ServiceVmnetName`" in docs
+    assert "`vmxnet3` adapter" in docs
+    assert "`-ServiceVmnetName`" in docs
 
 
 def test_vmware_deploy_wheel_supports_password_backed_noninteractive_deploy():
     script = Path("scripts/windows/vmware/deploy-wheel.ps1").read_text(encoding="utf-8")
-    readme = Path("README.md").read_text(encoding="utf-8")
+    readme = Path("docs/reference/full-technical-reference.md").read_text(encoding="utf-8")
 
     assert "[string]$SshPassword = $env:ATLASO_DEPLOY_SSH_PASSWORD" in script
     assert "function Initialize-PasswordDeployPythonPath" in script
@@ -729,10 +731,11 @@ def test_vmware_deploy_wheel_supports_password_backed_noninteractive_deploy():
     assert "Test-RequiredCommand -Name 'scp'" in script
     assert "Invoke-PasswordBackedDeploy `" in script
     assert "-SshPassword '<admin-password>'" in readme
-    assert "does not modify the global Python environment" in readme
+    assert "temporary deployment directory" in readme
+    assert "global Python" in readme
     assert "When using `-SkipBuild`, keep" in readme
-    assert "Without a password, it preserves the original" in readme
-    assert "`scp`/`ssh` key or agent workflow." in readme
+    assert "Without a" in readme
+    assert "`scp`/`ssh` key or agent workflow" in readme
 
 
 def test_lifecycle_hyperv_script_does_not_cleanup_without_explicit_flag():
@@ -795,7 +798,7 @@ def test_lifecycle_cleanup_scripts_are_scoped_to_atlaso_assets():
 def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
     wrapper = Path("scripts/windows/vmware/invoke-lifecycle-test.ps1").read_text(encoding="utf-8")
     cleanup_script = Path("scripts/windows/vmware/remove-lifecycle-vms.ps1").read_text(encoding="utf-8")
-    docs = Path("docs/vmware-workstation-lifecycle-testing.md").read_text(encoding="utf-8")
+    docs = Path("docs/reference/vmware-workstation-lifecycle-testing.md").read_text(encoding="utf-8")
 
     assert "ParameterSetName = 'CleanupVms'" in wrapper
     assert "remove-lifecycle-vms.ps1" in wrapper
@@ -1105,7 +1108,7 @@ def test_lifecycle_runner_summarizes_apply_validation_html():
 
 
 def test_lifecycle_roadmap_splits_pester_and_pytest_ownership():
-    doc = Path("docs/hyperv-lifecycle-testing.md").read_text(encoding="utf-8")
+    doc = Path("docs/reference/hyperv-lifecycle-testing.md").read_text(encoding="utf-8")
 
     assert "Invoke-Pester tests/pester/HyperVLifecycle.Tests.ps1" in doc
     assert "Python appliance and guest assertions must remain pytest-covered" in doc

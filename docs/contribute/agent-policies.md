@@ -1,0 +1,824 @@
+---
+title: Detailed agent policies
+description: Canonical subsystem contracts and implementation constraints for automated contributors.
+audience:
+  - contributor
+  - maintainer
+status: current
+---
+
+# Detailed agent policies
+
+## Mandatory Agent Startup Gate
+
+- These instructions apply to every agent, subagent, delegated agent, automated contributor, and resumed task.
+- Before planning implementation or changing repository or external state, read the root `AGENTS.md` completely, then
+  read [CONTRIBUTING.md](https://github.com/mdaneri/Atlaso/blob/main/CONTRIBUTING.md),
+  [CODE_OF_CONDUCT.md](https://github.com/mdaneri/Atlaso/blob/main/CODE_OF_CONDUCT.md), and
+  [SECURITY.md](https://github.com/mdaneri/Atlaso/blob/main/SECURITY.md). Treat all four documents as mandatory
+  instructions, not optional reference material.
+- In the first progress update, confirm that the policy files were read, classify the work as `bug`, `enhancement`,
+  `documentation`, or security-sensitive work, and identify the linked GitHub issue. Read-only inspection needed to
+  identify the repository, applicable instructions, or issue is allowed before that confirmation.
+- Repeat this startup gate whenever the repository, worktree, or working directory changes, or when any of the policy
+  files changes during the task.
+- A delegating agent must include this startup gate in every delegated prompt and verify that the delegated agent
+  completed it before accepting or using its work. Delegation never bypasses repository policy.
+- If a policy is unavailable, conflicting, or unclear, stop before implementation and ask for maintainer direction.
+  Never silently bypass a policy.
+
+## Mandatory UI Design Guide Gate
+
+- Any change affecting templates, authored CSS, browser JavaScript, controls, layouts, data grids, dialogs, wizards, or
+  visible copy must read the [Atlaso UI Design Guide](ui-design-guide.md) before planning implementation.
+- In the first progress update for UI work, confirm that the guide was read, classify the interaction as
+  `direct-edit Tabulator`, `wizard-backed Tabulator`, `read-only Tabulator`, `non-grid settings`, or approval-only
+  `custom/other`, and name the existing Atlaso reference being reused. For `custom/other`, cite the explicit maintainer
+  approval and name the closest related Atlaso reference.
+- Tabulator is the only data-grid implementation. Custom data grids and interaction patterns not defined by the guide
+  require explicit maintainer approval before implementation.
+- A delegating agent must include this UI gate in every UI-related delegated prompt and verify that the delegated agent
+  read the guide, classified the interaction, identified the reused or closest related reference, and cited maintainer
+  approval for `custom/other` before accepting or using its work.
+- Repeat this gate when the guide changes during a task. If the guide is unavailable, conflicting, or unclear, stop
+  before UI implementation and ask for maintainer direction.
+
+## Repository Delivery Workflow
+
+- [CONTRIBUTING.md](https://github.com/mdaneri/Atlaso/blob/main/CONTRIBUTING.md) is the canonical delivery workflow.
+  Every repository change requires a GitHub
+  issue created or linked before implementation begins, exactly one applicable type label, relevant documentation
+  updated in the same change, and a pull request linked with `Closes #<issue>`. Do not commit changes directly to
+  `main`.
+- GitHub-managed version-update pull requests generated from `.github/dependabot.yml` are the only exception to the
+  pre-existing issue and per-update documentation requirements. They must carry the `enhancement` type label plus
+  `dependencies`, remain subject to the normal version, CI, review, and squash-merge gates, and must not weaken
+  Atlaso's generated-lock or release boundaries. Before merging a Python update, regenerate every affected `.lock`
+  file with Python 3.14 and pip-tools 7.6.0, preserve hashes and `--allow-unsafe`, refresh the appliance declaration
+  fingerprint, and run the lock and Photon compatibility checks.
+
+## UI Defaults
+
+- Every configurable setting should include an adjacent `i` help control using the `.field-label` and `.help-icon`
+  pattern.
+- The help text should explain what the setting changes, where it applies, and any safety boundary such as dry-run or
+  interface binding.
+- Keep the help inline and compact: use hover/focus tooltips for short explanations instead of adding persistent
+  instructional text to the page.
+- Text-edit form controls, including text, number, password, select, and textarea controls, should use the standard
+  Atlaso sans font and compact app control sizing unless the field is intentionally a monospace config/code preview.
+  Check computed styles when Tailwind/runtime defaults may override form-control CSS.
+- Prefer consistent control types: switch controls for binary settings, selects/list editors for short enumerations,
+  inputs for exact free-form values, textareas for multiline config, tabs for mutually exclusive editing modes, and
+  Tabulator for editable data grids.
+- Give server-rendered tab controls literal initial `aria-selected` values and let the shared tab script update them
+  after restoring persisted state. For authored CSS, pair supported WebKit compatibility properties with their standard
+  declarations and avoid nonessential scroll styling that has no cross-browser fallback.
+
+## Appliance Configuration UX
+
+- Use the DNS page as the default pattern for configurable appliance services where applicable.
+- Place configurable service settings in the right-side rail, matching the DNS page. Keep the service's primary
+  resources or workflow in the main column and place service validation below the settings in that rail; collapse
+  responsively without changing their order.
+- Treat forms as desired-state editors. Settings should autosave on change with `data-autosave-form`, a small
+  `.autosave-status` message, and the existing CSRF/session protections. Avoid visible "Save" buttons for routine
+  desired-state settings when autosave is safe.
+- Keep enforcement separate from editing. Applying changes to the appliance should be a deliberate task action after the
+  user is done, not part of every field change.
+- Do not add service-specific apply cards or service-specific apply submit routes. Applying is a global appliance
+  workflow owned by `/appliance-apply`.
+- In service right-side rails, show a compact `Pending Appliance Changes` card first, then the service-specific
+  `Validation` card. The pending card opens the shared appliance-review modal; the validation card owns only
+  valid/needs-attention state, validation messages, warnings, and compact rendered config preview actions.
+- Top-of-page pending banners should be scoped to the current page's changed apply unit only. The sidebar apply card
+  remains the global pending-unit indicator.
+- The shared appliance-review modal should list changed apply units, check changed valid units by default, show compact
+  summaries, show rendered config diffs/previews, allow users to unselect units, and submit one `appliance-apply` job.
+  Do not restore a standalone appliance-apply page; direct GET requests redirect to Dashboard and open the modal.
+- Apply actions should create one global job/task that captures selected units, skipped changed units, current desired
+  state summaries, rendered config previews/diffs, validation results, adapter commands, dry-run status, and audit
+  event.
+- Label the global submit action around the user's intent, such as `Submit appliance changes`, and explain that the task
+  validates and applies selected desired state through Atlaso adapters.
+- Fresh Photon appliance startup may initialize the factory desired-state baseline automatically when no baseline,
+  appliance-apply job, or non-auth operator audit event exists. This is comparison metadata only and must not run helper
+  commands or mutate host services.
+- Keep dry-run boundaries visible. In development, applying should record command intent through adapters instead of
+  mutating host services directly.
+- Appliance Settings owns appliance FQDN, OS hostname, appliance resolver mode/servers, management UI HTTPS preference,
+  and root SSH login preference. NTPsec owns appliance time service behavior. DNS/DHCP owns rendered DNS records and
+  dnsmasq reload, not appliance resolver, hostname, or NTP enforcement.
+- Use validation panels to show whether desired state is ready to apply, including warnings and rendered config
+  previews. Keep full rendered configs out of side rails; use the shared compact preview action row and global preview
+  modal, while preserving hidden source selectors so autosave refresh code can update the latest text.
+- When autosave changes affect validation or preview output, update the validation card in-place without shifting the
+  page with large `Saved` alerts. Use compact autosave status text near the edited form.
+- Use compact Tabulator grids for editable record sets. Rows should autosave on edit, place new-record rows at the
+  bottom, include a clear `+ Add record here` affordance, and expose destructive actions through a context/menu action
+  rather than inline clutter. New-record placeholder rows should show and enable only the required identity field until
+  that value is filled; default/generated cells stay visually blank and locked to avoid implying a complete row exists.
+- Use tab groups when two editing modes solve the same job. Do not show single-record forms, bulk import, and raw/config
+  editors all at once if tabs can make the workflow clearer.
+- Use tag editors for one-or-more selections such as interfaces, addresses, networks, domains, or labels. Tag editors
+  should allow typed custom values and a `+` menu for known existing options.
+- Use domain- or scope-specific tabs for resources that naturally belong under a parent, such as DNS records under
+  zones. Each tab should keep edits scoped to that parent.
+- When DNS authoritative mode is enabled, every managed forward domain is a dnsmasq `auth-zone` using the shared primary
+  nameserver, SOA administrator, timers, TTL, and server-managed monotonic serial. Generate SOA and NS records plus
+  A/AAAA nameserver glue from selected DNS listen addresses; keep those structural records read-only, accept only
+  matching structural metadata during zone-file import, and reject conflicting operator records. Authoritative mode does
+  not make generated reverse zones authoritative, and reverse-zone cards start as collapsed native disclosures on every
+  page load.
+- Preserve active tab context after autosave, record creation, deletion, or import whenever possible.
+- Prefer explicit status language over generic button text. Avoid labels such as `Save DNS` or `Apply` when the action
+  really means "save desired state", "review appliance changes", "submit appliance changes", "import into this domain",
+  or "apply zone file".
+- Destructive UI actions such as deleting a domain, scope, record set, backup, token, or appliance-owned config should
+  require the shared modal confirmation pattern (`data-confirm-modal`) instead of a browser confirm or immediate submit.
+  The modal copy should name the object, explain what will be removed, and mention whether the appliance is affected
+  immediately or only after global appliance apply.
+
+## Dashboard Operations UX
+
+- Keep `/dashboard` as an adaptive, read-only operations command center. Preserve the application shell and send
+  mutating work to existing workflows instead of adding dashboard-side apply, restart, or service actions.
+- Build the initial HTML and `/dashboard/data` response from the same private snapshot builder. Keep `/api/v1/dashboard`
+  and its public schema independent and backward compatible.
+- Prioritize dashboard attention items as invalid changed apply units, failed tasks from the last 24 hours, unhealthy
+  enabled services, then missing or unexpectedly down configured physical interfaces. Disabled optional services and
+  unused interfaces are not exceptions.
+- Keep valid pending changes separate from invalid changed units. Open changes in the shared appliance-review modal, and
+  link tasks to `/tasks`, service exceptions to `/services`, and interface exceptions to `/physical-interfaces`.
+- Fresh appliances remain in setup readiness until management networking is healthy and one global appliance-apply task
+  has succeeded. Show management discovery, addressing/link state, Appliance Settings validity, desired-state validity,
+  and first-apply readiness while that mode is active.
+- Merge recent tasks and audit events chronologically without rendering task results, command output, raw errors, or
+  audit detail. Dashboard refresh runs every 30 seconds only while visible, refreshes immediately on visibility return,
+  and preserves the last successful snapshot with a stale marker after failure.
+
+## Monitor Operations UX
+
+- Keep `/monitor` read-only and focused on appliance runtime health: CPU, memory pressure, network throughput,
+  unique-device disk activity, interface state, and virtual-machine context.
+- Do not restore per-mount capacity presentation on the Monitor page, including the top-level Disks metric, Disk Usage
+  chart, or capacity table. Filesystem usage may remain in monitor samples and APIs for compatibility and other
+  consumers, but it is intentionally omitted from this page because the mount-level view was not operationally useful.
+- Count disk activity once per underlying device even when the same filesystem is visible through multiple mount or
+  bind-mount paths. Preserve the aggregate-versus-detail hierarchy so appliance totals remain visually distinct from
+  per-CPU, per-interface, and per-device series.
+- Keep chart expansion, series selection, and time-range controls consistent across the remaining charts.
+  Full-screen-only zoom must not change the selected history range.
+
+## Photon OS Appliance Deployment
+
+- Default live appliance testing should use VMware Workstation. VMware Workstation is installed by default at
+  `C:\Program Files\VMware\VMware Workstation`; use `vmrun.exe` there with the helpers under `scripts/windows/vmware/`.
+- The first real OS appliance target is Photon OS 5.0. Keep Hyper-V image-build work under `image/hyperv/`. VMware
+  Workstation work lives under `image/vmware-workstation/` and should share Photon image-build/provisioning code with
+  Hyper-V whenever possible.
+- Before a VMware Workstation image rebuild force-replaces the configured output directory, unregister any existing
+  output VMX with `vmrun -T ws unregister` through the same Workstation/vmrun discovery path used by the rest of the
+  VMware scripts. Keep this cleanup scoped to the configured image output directory.
+- The Hyper-V image is automated with Packer, Photon kickstart JSON, an ISO-embedded GRUB auto-install entry, and
+  provisioning scripts. Do not replace it with manual-only install steps unless the automation path is also kept
+  current.
+- Photon appliance provisioning should run `tdnf -y makecache` and `tdnf -y update` before installing Atlaso so the
+  image lands on the current Photon 5.0 package stream.
+- Both Photon Packer templates must stage `requirements-appliance.lock` into `/tmp/atlaso-src` before shared
+  provisioning syncs the application under `/opt/atlaso`. Keep bootstrap dependency installation hash-locked and fail
+  the image when the staged lock is missing; do not fall back to unpinned dependency resolution.
+- Both Photon Packer templates must also stage `scripts/generate_third_party_notices.py` and
+  `scripts/third_party_notices.json`. Treat third-party notice generation as mandatory and fail the image when its
+  generator, inventory, referenced notice, installed top-level Python distribution metadata, or Photon RPM inventory is
+  missing or invalid; ignore nested package-internal vendored metadata during installed-environment lock verification,
+  and do not skip notice generation to complete a build.
+- Run long TDNF operations in shared Photon provisioning through `scripts/run_tdnf_with_progress.py`. Keep its compact
+  30-second Packer heartbeats with elapsed time and TDNF cache size, capture raw transaction output instead of streaming
+  terminal redraws, preserve the child exit status, and replay only a normalized bounded output tail on failure.
+- Photon 5.0 GA started at Python 3.11, but Atlaso targets the updated Photon 5.0 package stream; on June 21, 2026 live
+  repo metadata showed `python3` as `3.14.5-2.ph5`. Keep Atlaso at `requires-python >=3.14,<3.15`, publish only the
+  `cp314` appliance wheelhouse, and run `python scripts/check_photon_compatibility.py` before treating Photon
+  compatibility as healthy.
+- System-wide PowerShell modules live under `/usr/local/share/powershell/Modules`. Keep that tree root-owned and
+  non-writable by group/other while making directories traversable and module content readable to every local
+  `/usr/bin/pwsh` user. Normalize those permissions after image provisioning copies or installs modules and after each
+  Appliance Update module install, and verify VCF PowerCLI plus `Connect-VIServer` from the unprivileged bootstrap
+  administrator's PowerShell session.
+- The appliance installs Atlaso under `/opt/atlaso`, stores environment in `/etc/atlaso/atlaso.env`, stores durable
+  state in `/var/lib/atlaso`, writes local logs under `/var/log/atlaso`, and preserves fixed service mounts under
+  `/mnt/atlaso-vcf-*`.
+- Appliance provisioning must set `ATLASO_SECRETS_KEY` in `/etc/atlaso/atlaso.env`. Atlaso uses it to encrypt CA root
+  and leaf private keys in the database; preserving it is required for settings-backup portability.
+- Keep the image-build OS/root password separate from the Atlaso web bootstrap password. Packer exposes `ssh_password`
+  for build-time SSH/root use and `bootstrap_admin_password` for the initial `admin` web login; never substitute one for
+  the other.
+- Photon kickstart must disable `sshd.socket` and enable the normal `sshd.service` for deterministic Packer SSH. Do not
+  enable both conflicting units: socket activation can accept port 22 without completing the Packer handshake on a fresh
+  image.
+- Product-owned helper binaries should live under `/opt/atlaso/bin`; do not put Atlaso-owned helpers in
+  `/usr/local/sbin` for Photon appliance images.
+- The appliance systemd unit is `atlaso.service` and should run uvicorn from the provisioned virtual environment as the
+  `atlaso` service user.
+- Photon appliance firewall ownership is nftables-first. Provisioning installs nftables and loads
+  `atlaso-firewall.service`; do not add a Atlaso iptables apply path.
+- Photon Hyper-V images should mask `systemd-ssh-generator` because Atlaso uses normal TCP SSH and does not rely on
+  automatic SSH-over-AF_VSOCK sockets. This prevents noisy `Failed to query local AF_VSOCK CID` console messages on
+  current systemd/Hyper-V combinations.
+- Keep `ATLASO_DRY_RUN_SYSTEM_ADAPTERS=true` for first-boot appliance images. Promote real host mutation one apply unit
+  at a time after validation, preview, job capture, and rollback behavior are reviewed.
+- Privileged appliance enforcement must go through `atlaso-helper` and constrained sudoers entries. Do not give the
+  control plane broad shell, root, or package-manager access.
+- Real mutating helper actions run through `systemd-run` from inside `atlaso-helper` when
+  `ATLASO_HELPER_USE_SYSTEMD_RUN=1` is set. This escapes the `atlaso.service` read-only `/etc` mount namespace without
+  giving the web control plane broad shell/root access. Keep that environment variable in `atlaso.service` and preserve
+  it in the Atlaso sudoers rule.
+- The global `/appliance-apply` workflow remains the only host-mutation workflow. Do not add service-specific apply
+  routes, service-specific apply jobs, or direct helper calls from desired-state edit forms.
+- Appliance Update is runtime maintenance, not desired-state drift. Keep it separate from `/appliance-apply`, stage
+  `/var/lib/atlaso/apply/appliance-update/atlaso-update.json`, and run Photon OS, PowerShell module, and signed Atlaso
+  release work only through `atlaso-helper appliance-update`. Do not restore the retired Python Libraries or independent
+  wheel streams.
+- Represent every manual or scheduled Appliance Update check/install as one parent job with ordered `JobStep` children
+  for the selected Atlaso Release, PowerShell Modules, and Photon OS streams. Checks run every selected child for
+  complete diagnostics. Installs preserve release, PowerShell, then Photon ordering; Photon is explicitly skipped when
+  an earlier selected stream fails. Keep child output, compatibility evidence, and errors independent, and derive the
+  parent outcome from all selected children. Give privileged PowerShell update work the root-owned persistent home
+  `/var/lib/atlaso/powershell`; do not point it at the service's read-only `/root` view.
+- Submit manual Appliance Update checks and installations asynchronously from Update Streams. Refresh only the embedded
+  shared Tasks grid, highlight the newly created task, and keep both task actions disabled until the active Appliance
+  Update task reaches a terminal state; do not restore a separate submission-result card.
+- Appliance Update sources are repository-style desired runtime-maintenance configuration. Support multiple named
+  Photon, PowerShell, and HTTPS Atlaso release sources, using secondary signed Atlaso channels as failover sources. Keep
+  repository tabs inside collapsible ecosystem sections and managed PowerShell modules in their own one-tab-per-module
+  editor. Within each source editor, present identity first, location or discovered runtime data second, binary
+  repository behavior in one consistent option group, and autosave/synchronization state in a separated footer opposite
+  the destructive action. The built-in Photon row must show effective values discovered from `/etc/yum.repos.d`. Source
+  credentials remain encrypted at rest and move to `atlaso-helper appliance-update` only through a separate mode-0600
+  transient staging file; never place credentials, authenticated URLs, or secret-bearing commands in manifests, jobs,
+  audits, or helper output. Source field edits autosave, but writing Photon or PowerShell package-client configuration
+  requires the explicit audited **Synchronize repositories** task through `atlaso-helper appliance-update`; signed
+  Atlaso sources never configure pip.
+- Keep the staged Appliance Update manifest in a compact Validation card at the bottom of the detail rail and open its
+  full JSON through the shared preview modal; do not render the full manifest inline in Update Streams.
+- Atlaso releases must come from signed v2 channel pointers and immutable signed release manifests verified by named
+  Ed25519 public keys under `/etc/atlaso/update-trust.d`. Install the exact ABI wheelhouse offline with
+  `PIP_CONFIG_FILE=/dev/null`, `--no-index`, and hash verification under `/opt/atlaso/releases/<version>`, switch
+  `/opt/atlaso/current` atomically, and preserve `/opt/atlaso/.venv` as a compatibility symlink. Restore the previous
+  release, helper/systemd files, and SQLite snapshot on failure. Inspect Photon transactions before mutation, use the
+  Photon-supported `tdnf repoquery python3` form and select the highest advertised minor ABI, reject unsupported
+  candidate Python ABIs, reconstruct from the retained wheelhouse after supported ABI changes, and do not claim
+  automatic RPM rollback or reboot.
+- Release publication recovery must use the protected **Publish appliance release** manual dispatch with the exact
+  successful `main` push CI SHA. Atlaso starts a new signed update lineage at `v0.9.18`; do not publish or consume a
+  retired-product bridge. Preserve tag/release commit and asset-byte idempotency checks. A rerun after tag/release
+  publication must verify the existing asset bytes before retrying channel advancement. Annotated tag creation must
+  supply its own non-secret GitHub Actions bot identity rather than depend on runner-global Git configuration.
+- Keep the GitHub Pages root as a static, dependency-free informational release-repository page generated by the
+  publication workflow. Signed updater documents remain under `/updates`; the landing page must not become part of the
+  appliance trust contract or introduce JavaScript, external assets, secrets, or unsigned release-selection behavior.
+- Durable automation runs in the separate `atlaso-worker.service`; the web process creates schedules and queued jobs but
+  does not execute them inline. Keep schedule task types allowlisted to Appliance Update check/install, VCF Offline
+  Depot downloads, and enabled immutable managed-script revisions. Revalidate mutable dependencies when the worker
+  claims a job, including rejecting VCF Offline Depot downloads whose profile was disabled after queueing. Skip
+  missed/overlapping runs instead of replaying them, preserve schedule-to-task execution history, and mark an in-flight
+  job failed if the worker restarts.
+- Keep the Automation workspace as three full-space tabs: Schedules, Executions, and Managed Scripts. Add/edit schedules
+  use the five-step wizard (identity/type, type-specific configuration, timing, state, review); timing uses the friendly
+  cron builder with Custom as the advanced five-field escape hatch. Schedule State is directly editable with the
+  standard enable/disable control, while Run now, Edit, and Delete belong in the row context menu. Executions must link
+  every scheduled job to `/tasks`.
+- Managed scripts are immutable revisions executed as the unprivileged `atlaso-automation` account through the
+  constrained helper and transient systemd units. Grid edits to revision-owned fields create a new disabled revision.
+  Source editing uses the large CodeMirror modal with local-file import. The revision cell opens a near-full-window,
+  two-column comparison when at least two revisions exist; use the light Atlaso modal style, list every revision with
+  its creation date and state in base/comparison selectors, keep corresponding rows and line numbers aligned, collapse
+  long unchanged runs, color additions/removals, and use a Prism grammar selected from the interpreter. Manual execution
+  is labeled **Run latest revision**, opens a parameter modal before creating the task, and uses the same literal
+  argument syntax as schedules: backslash continuation for Bash/Python and backtick continuation for PowerShell. Never
+  evaluate arguments through a second shell and never accept secrets as parameters.
+- Packer is a Windows-host prerequisite for the Photon image path; Hyper-V and `qemu-img` may already be available
+  locally but should still be checked in handoff notes.
+
+## Photon VM Debugging Notes
+
+- The Hyper-V management NAT appliance address used during the first Photon bring-up was `192.168.49.1`; verify the
+  actual current address before assuming it with `scripts/windows/hyperv/get-atlaso-vm-ip.ps1`, Hyper-V Manager, or SSH.
+- Current live test appliance access for this lab: web UI `https://192.168.49.1/` with `admin` / `VMware01!`; SSH with
+  `root` / `VMware01!`. These are local lab test credentials only, not production secrets. If connectivity fails, verify
+  the VM IP first because Hyper-V NAT addresses can drift.
+- Use the running Photon VM for real functionality checks after appliance-impacting changes: validate local tests first,
+  then install/test on the VM when behavior depends on Photon, Hyper-V NICs, systemd, nftables, dnsmasq, resolver state,
+  or `/appliance-apply`.
+- Hyper-V lifecycle interop tests must use a completely separate VM set from the normal `Atlaso` test appliance. Prefer
+  `scripts/windows/hyperv/invoke-lifecycle-test.ps1` for one-command runs; it prepares the tiny Linux client image,
+  picks the latest appliance VHDX, runs the test, validates backup/restore by redeploying the appliance and comparing
+  pre/post restore client certificate identity plus restored CA archive fingerprints, and cleans up created lifecycle
+  VMs by default. Use `-SkipBackupRestoreTest` only when the older single-pass run is intentionally needed, use
+  `-KeepVms` only for debugging, and use `-PrepareNetworksOnly`, `-CleanupVmsOnly`, and `-CleanupNetworksOnly` for
+  explicit Hyper-V lab maintenance. Network cleanup must remain opt-in and refuse removal while VMs are attached to
+  Atlaso switches.
+- VMware Workstation lifecycle interop tests use VMX/VMDK artifacts and `vmrun.exe` through
+  `scripts/windows/vmware/invoke-lifecycle-test.ps1`. Keep Workstation lifecycle VMs under
+  `test-results/vmware-workstation-lifecycle/`, keep Workstation management on a subnet separate from Hyper-V such as
+  the default `192.168.167.0/24`, validate vmnet topology with `scripts/windows/vmware/prepare-networks.ps1`, and keep
+  Hyper-V lifecycle evidence authoritative for exact access/trunk VLAN behavior because Workstation vmnets are isolated
+  layer-2 segments rather than Hyper-V-style VLAN port policies.
+- Any newly implemented appliance feature that affects deployed behavior must be added to the Hyper-V lifecycle coverage
+  and validated through the lifecycle test before the feature is treated as complete. Keep the feature's local/unit
+  tests in place, but use the lifecycle run as the interop acceptance check for Photon, Hyper-V networking, service
+  apply behavior, and client-observable results.
+- For the default VMware test appliance, resolve the current IP with `scripts/windows/vmware/get-atlaso-vm-ip.ps1` and
+  check web reachability with `Invoke-WebRequest https://<vmware-ip>/openapi.json -SkipCertificateCheck`. Use the
+  bootstrap `admin` account for SSH connections and run privileged checks through password-backed `sudo`; do not assume
+  root SSH is enabled on VMware test appliances. Check SSH/service state with `systemctl status atlaso --no-pager`,
+  `journalctl -u atlaso -n 120 --no-pager`, and relevant real-state commands such as `nft list ruleset`,
+  `resolvectl query <name>`, `getent hosts <name>`, `ip link`, `systemctl status ntpd --no-pager`, or
+  `systemctl status systemd-timesyncd --no-pager`.
+- When the appliance web UI is unreachable, separate network reachability from service reachability: use host-side
+  `Test-Connection <ip>` for ICMP, `Test-NetConnection <ip> -Port 8000` for the web service, and in-guest
+  `systemctl status atlaso --no-pager` plus `journalctl -u atlaso -n 120 --no-pager`.
+- ICMP can be intentionally blocked by nftables while SSH and TCP/8000 still work. Do not treat failed ping as proof
+  that the VM is down; check TCP ports and Hyper-V console before changing networking.
+- For VMware live appliance patching, prefer `scripts/windows/vmware/deploy-wheel.ps1`; it builds a local wheel, uploads
+  it with `scp`, installs it into `/opt/atlaso/.venv`, syncs `scripts/appliance/atlaso-helper` to
+  `/opt/atlaso/bin/atlaso-helper`, provisions every checked-in public release key under `/etc/atlaso/update-trust.d`,
+  restores venv permissions, restarts `atlaso.service`, and verifies guest plus host `/openapi.json` with a readiness
+  retry. Packer image definitions must explicitly stage `image/common/update-trust`, and provisioning must fail rather
+  than build an appliance with no valid public release key. Use `-IpAddress <appliance-ip>` when the VM IP is known, or
+  `-VmxPath "<path-to-vmx>"` for VMware discovery; do not pipe the VMX path or put the `.vmx` path on a separate line
+  because PowerShell will try to execute it. If uvicorn needs longer after reinstall, pass
+  `-ReadinessTimeoutSeconds 120`. Use `-SkipHelperSync` only when the appliance helper is intentionally unchanged.
+- For manual live appliance patching, build a local wheel with `python -m pip wheel . -w dist`, copy only the Atlaso
+  wheel to the VM, install it with `/opt/atlaso/.venv/bin/python -m pip install --force-reinstall --no-deps`, then
+  restore venv readability for the `atlaso` service user with directory `0755`, file `0644`, and executable bits under
+  `.venv/bin`.
+- After installing a live wheel, restart with `systemctl restart atlaso` and verify both `systemctl is-active atlaso`
+  and internal `curl http://127.0.0.1:8000/openapi.json` from inside the guest, then verify the host-facing console/API
+  with `Invoke-WebRequest https://<ip>/openapi.json -SkipCertificateCheck` from Windows.
+- If `atlaso.service` fails with `status=203/EXEC`, check execute permissions on `/opt/atlaso/.venv/bin/python` for the
+  `atlaso` user. If it fails importing static/templates, confirm package assets are included in the wheel and that
+  `base.html` static query strings changed after JS/CSS edits.
+- Real firewall apply stages rendered nftables config under `/var/lib/atlaso/apply/firewall/atlaso.nft` as the `atlaso`
+  service user before invoking the root helper. Keep `/var/lib/atlaso/apply` and its firewall child owned by
+  `atlaso:atlaso`; root-owned staging files cause `/appliance-apply` to fail before a job is recorded. Atlaso-managed
+  service allow rules are generated from enabled service listener desired state, including management, DNS, DHCP, KMS,
+  VCF Backup, VCF Offline Depot, and VCF Private Registry. Atlaso-managed routing rules allow route-role network pairs
+  and explicit access routing permissions, while always dropping management-to-lab and lab-to-management forwarding.
+  Managed DNS/service listener rules default to the built-in `Any` group; operators can create, rename, remove, and
+  assign firewall groups containing `any`, CIDRs, addresses, or other groups when rule sources or destinations need
+  narrower access. DHCP bootstrap rules are interface-bound UDP/67 for IPv4 zones and UDP/547 for IPv6 zones and should
+  not be group-filtered. Changing a DHCP scope interface, service listener, or routing permission should make the
+  Firewall apply unit move the generated rule to that same bind target.
+- Validate actual firewall state with `nft list ruleset`, not only the UI preview. The helper should run
+  `nft -c -f <staged file>` before apply; syntax errors such as placing `tcp` before `ip saddr` must fail validation and
+  be fixed in the renderer.
+- `atlaso-firewall.service` is a oneshot persistence service. It should be installed with
+  `systemctl enable --now atlaso-firewall.service`; `enabled` plus `inactive` means it was not started after
+  writing/enabling.
+- Real DNS/DHCP apply stages rendered dnsmasq config under `/var/lib/atlaso/apply/dnsmasq/atlaso.conf` as the `atlaso`
+  service user before invoking the root helper. The helper validates with `dnsmasq --test`, installs
+  `/etc/atlaso/dnsmasq.d/atlaso.conf`, manages the Atlaso dnsmasq systemd drop-in, enables `dnsmasq`, and
+  reloads/restarts the service. DNSSEC validation renders `dnssec` plus a Atlaso-managed trust-anchor include under the
+  dnsmasq apply directory; the helper must verify installed dnsmasq DNSSEC support and copy package-provided trust
+  anchors before `dnsmasq --test`. Rebind protection renders `stop-dns-rebind` plus explicit `rebind-domain-ok`
+  exemptions, and query logging uses `log-queries=extra` only as a temporary troubleshooting setting because query names
+  may be sensitive. Operator DNS records support A, AAAA, CNAME, TXT, SRV, MX, CAA, and explicit PTR, while A/AAAA still
+  generate PTR answers through dnsmasq `host-record`. Authoritative mode renders every managed forward zone through one
+  interface-bound `auth-server` plus shared SOA policy and generated NS/glue; dnsmasq treats those selected listeners as
+  authoritative-only, while loopback and other non-authoritative listeners retain PTR and upstream-recursive behavior.
+  When Appliance Settings resolver mode is DHCP and DNS upstreams are empty, use the management interface's observed
+  DHCP DNS servers as dnsmasq forwarder fallback; when converting the management DHCP lease to static, copy those
+  observed DNS servers into Appliance Settings external DNS and DNS service upstreams if those settings were relying on
+  DHCP. DHCP lease readback must use the allowlisted helper path for `/var/lib/atlaso/dnsmasq/dhcp.leases`, not
+  arbitrary file reads. Validate actual DNS with direct queries against both the selected authoritative listener and a
+  non-authoritative recursive listener such as appliance loopback, plus in-guest `getent hosts <name>` for
+  appliance-local resolution, not only the UI preview.
+- Real ESXi PXE apply stages JSON under `/var/lib/atlaso/apply/esxi-pxe/atlaso-esxi-pxe.json` as the `atlaso` service
+  user before invoking the root helper. Kickstart source content lives in the database and is edited through the
+  built-in CodeMirror editor; generated files under `/var/lib/atlaso/pxe/http/esxi/ks/<id>.cfg` are derived runtime
+  copies only. Saving a Kickstart must not write runtime files. Installer ISO choices are discovered from
+  `/mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST`, the VCFDT ESX host component folder; Atlaso may create that folder
+  and upload additional operator-provided `.iso` files there. Host PXE definitions can reference both a database
+  Kickstart and selected installer ISO path. Global `esxi_pxe` apply writes enabled Kickstarts, removes stale generated
+  numeric `.cfg` files, writes HTTP `boot.ipxe` even without host profiles, validates selected ISO paths stay under the
+  ESX_HOST folder, updates rendered/applied timestamps, and redacts root passwords, tokens, keys, licenses, and other
+  secret-looking values from previews, diffs, jobs, logs, audit events, and final responses.
+- Photon image provisioning must upload `third_party/ipxe` into the Packer source tree and stage bundled `undionly.kpxe`
+  and `snponly.efi` under `/var/lib/atlaso/pxe/bootloaders`; fail the image build rather than silently producing an
+  appliance where ESXi PXE validation cannot find first-stage boot files.
+- Real VCF Backup apply stages the rendered OpenSSH drop-in under
+  `/var/lib/atlaso/apply/vcf-backups/atlaso-vcf-backups-sshd.conf` as the `atlaso` service user before invoking the root
+  helper. Provisioning leaves the default `vcf-backup` OS account absent until Local Users apply creates it; the VCF
+  Backup helper validates the Atlaso-rendered `Match User` config and selected OS user, installs
+  `/etc/ssh/sshd_config.d/atlaso-vcf-backups.conf`, prepares `/mnt/atlaso-vcf-backups/backups`, validates `sshd`, and
+  restarts `sshd`. Firewall apply owns the selected interface/port allow rule.
+- Real Appliance Settings apply stages JSON under `/var/lib/atlaso/apply/appliance-settings/atlaso-settings.json` as the
+  `atlaso` service user before invoking the root helper. The helper validates resolver mode, management interface/IP,
+  root SSH preference, and management nginx fields; sets the OS hostname to the appliance FQDN; local DNS mode sets
+  management resolver DNS to `127.0.0.1` and `Domains=~.`; external DNS mode uses configured resolver servers and
+  removes the catch-all domain; root SSH apply writes `/etc/ssh/sshd_config.d/atlaso-root-login.conf`, validates `sshd`,
+  and restarts `sshd`; and management front door apply writes `/etc/nginx/conf.d/atlaso.conf`,
+  `/etc/atlaso/nginx/sites.d/management.conf`, and a `atlaso.service` loopback override. Fresh appliances run
+  `atlaso-bootstrap-https.service` on deployed-VM first boot to generate the integrated root CA and CA-managed
+  `appliance:https` certificate; the root CA must not be baked into reusable images. Nginx redirects public HTTP/80 to
+  HTTPS/443 and reverse-proxies HTTPS to uvicorn on `127.0.0.1:8000`. Appliance FQDN or management IP changes should
+  reissue the managed leaf certificate automatically; root CA replacement remains an explicit rotation workflow. When
+  HTTPS is disabled or factory reset is applied, nginx serves public HTTP/80 as a plain reverse proxy to the same
+  loopback upstream and does not expose a management HTTPS listener. The helper reloads nginx/systemd, then schedules a
+  short delayed `atlaso.service` restart so the apply job can be recorded.
+- The web terminal is off by default, requires management HTTPS, and always includes management when enabled. Configure
+  additional addressed interfaces with the shared tag editor; keep the management tag locked and reject missing,
+  disabled, trunk-only, unused, or addressless selections. Additional selected addresses receive only login/logout,
+  terminal, WebSocket, and static-asset nginx routes plus Firewall-owned TCP/443. Never expose dashboard or API routes
+  on those listeners.
+- Web SSH authorization is an explicit per-local-user checkbox, default off except for the newly provisioned bootstrap
+  administrator. Require the user to be enabled with an interactive shell and an applied Photon password. Enforce the
+  permission on the terminal page, ticket creation, WebSocket attachment, and public-terminal login; do not infer access
+  from a Atlaso role.
+- The management terminal lives under Operations. A terminal opened on an additional selected interface must extend
+  `public_portal_base.html`, use the Public Services login/sign-out experience, and must not render the admin
+  application shell. The terminal connects automatically and keeps one bounded server-side shell per authorized user so
+  reloads and short WebSocket interruptions reattach to the same working directory and buffered output. A second browser
+  must confirm takeover; takeover moves the existing shell and disconnects the old attachment instead of starting or
+  ending the shell. Treat `Ctrl-D` and the `exit` command as intentional shell termination, then retain the transcript
+  in a disconnected state with an in-terminal reconnect action.
+- Keep terminal copy and transcript-download actions as compact icons inside the terminal's top-right corner.
+  Disconnected terminals use the lighter terminal background; session-moved and reconnect messages are terminal
+  overlays, while copy/download success uses the shared transient notification behavior above the footer.
+- Use a root-owned Ed25519 OpenSSH user CA, one-use browser tickets, ephemeral keys, loopback-only 60-second
+  certificates, pinned local host keys, and bounded idle/lifetime/input/output limits. Never expose the CA private key,
+  allow root certificates, forwarding, X11, agent use, user RC, or passwordless `sudo`.
+- Real NTPsec apply stages `/var/lib/atlaso/apply/ntpd/atlaso-ntp.conf` as the `atlaso` service user before invoking the
+  root helper. NTPsec owns appliance time service behavior; Appliance Settings no longer owns the NTP client. Fresh
+  desired state uses the structured upstream grid with NTS-enabled `time.cloudflare.com` and `nts.netnod.se` rows,
+  including descriptions. Per-upstream NTS client mode renders `nts` on source lines; NTS server mode renders
+  `nts enable`, the CA-managed certificate chain and key, and persistent cookie storage under `/var/lib/ntp/nts-keys`.
+  The renderer ignores every interface before explicitly listening on selected addresses, uses restrictive client rules
+  that still permit time service, and maps minimum sources to `tos minsane`. Firewall apply owns TCP/4460 NTS-KE access
+  in addition to UDP/123. The helper requires Photon `ntpsec`, installs `/etc/ntp.conf`, grants the NTS key `root:ntp`
+  mode `0640`, disables competing daemons, enables/restarts `ntpd.service`, and exposes bounded source health through
+  `ntpq -pn`, `ntpq -c rv`, and `ntpq -c ntsinfo`.
+- NTPsec NTS controls must reflect the installed `ntpd` feature set. Detect capability through the allowlisted
+  `atlaso-helper ntpd capabilities` path; when NTS is unavailable, disable the server switch and upstream NTS editors,
+  normalize saved NTS state off, reject NTS enable attempts, and keep ordinary NTP behavior available. Do not imply that
+  packaged/default upstream choices guarantee local NTS support.
+- The Logs page fixed source set is Atlaso App, KMS, NTPsec, Nginx, DNS, DHCP, TFTP, and Audit Events. DNS, DHCP, and
+  TFTP must remain classified views of one allowlisted `dnsmasq.service` journal read, with `dnsmasq-dhcp` and
+  `dnsmasq-tftp` lines routed to their protocol tabs and base/service lines routed to DNS. Keep logs read-only and
+  redacted, auto-refresh every five seconds, and offer 100/200/500-line tail selection. Apply the shared log syntax
+  highlighting to timestamps, severity levels, components, identifiers, addresses, and redaction markers both on initial
+  render and after refresh. Keep source details in tab hover tooltips instead of repeated panel headings, disable
+  unavailable source tabs, and move away from an active tab if its source becomes unavailable. NTPsec, Nginx, and
+  dnsmasq journal reads must use their allowlisted helper actions. Do not restore the retired VCFDT Logs tab without a
+  new explicit requirement.
+- The Tasks grid owns backend filtering and pagination. Keep Status and State as fixed list filters; build Task /
+  Component choices from recorded job types and component labels while allowing a custom fragment. Leaf jobs must not
+  show a tree expander. Task detail modals retain wrapped, syntax-highlighted redacted JSON payloads for auditing, but
+  Console output must remove the helper action envelope and show only process stdout/stderr with stderr in red. Keep
+  result, console, and log previews constrained within the modal and viewport, overlay copy/open controls without
+  reserving blank text rows, and do not style read-only payloads as form controls.
+- The authenticated account menu owns About, username-aware sign out, and admin-only Reboot/Shutdown actions. Power
+  actions must use the shared confirmation modal, create and commit an auditable task before helper invocation, and
+  schedule the real host action through the constrained helper with a delay that lets task/audit persistence finish.
+  Fail closed if delayed scheduling is unavailable; never execute an immediate fallback power action.
+- Real CA apply stages JSON under `/var/lib/atlaso/apply/ca/atlaso-ca.json` as the `atlaso` service user before invoking
+  the root helper. The helper validates the staged CA/certificate payload, writes public CA bundles and service
+  certificate/key files under `/etc/atlaso`, and must not print private keys in stdout, stderr, previews, jobs, docs, or
+  final responses. The public CA portal defaults to `ca.atlaso.internal`: `/` shows public trust material and
+  `/requests` is the authenticated certificate request/revocation workflow. Do not put Certificate Requests in the
+  primary Atlaso sidebar; link it from CA-associated surfaces instead.
+- Real KMS apply stages PyKMIP config under `/var/lib/atlaso/apply/kms/pykmip.conf` as the `atlaso` service user before
+  invoking the root helper. KMS can be activated only when CA desired state is enabled and healthy; the page derives
+  IPv4 and IPv6 listen addresses from the selected access interface or enabled VLAN, creates app-owned DNS records for
+  the derived address families, and auto-ensures KMS server/client CA rows. KMS v1 supports only the PyKMIP backend, so
+  do not show a backend selector; keep backend as hidden desired state if needed for form compatibility. The KMS
+  settings rail should show hostname near the top, stack listen interfaces and derived listen addresses on separate
+  rows, keep port as a compact field, and derive the CA-managed server certificate name from the hostname instead of
+  exposing a separate server-certificate input. The helper validates staged paths, PyKMIP availability, CA-managed
+  certificate/key paths, and installs `/etc/atlaso/kms/pykmip.conf`, `/etc/pykmip/server.conf`, and
+  `atlaso-kms.service`; the service launches PyKMIP through Atlaso's compatibility wrapper for current Photon Python
+  streams; disabling KMS stops the service while preserving `/var/lib/atlaso/kms/pykmip.db`. Never print KMS private
+  keys in previews, jobs, logs, docs, or final responses.
+- Real VCF Offline Depot apply stages nginx config under
+  `/var/lib/atlaso/apply/vcf-offline-depot/atlaso-vcf-offline-depot.conf` as the `atlaso` service user before invoking
+  the root helper. Uploading `vcf-download-tool-*.tar.gz` is desired-state only: validate/store the package and clear
+  stale generated metadata, but do not extract, create runtime folders, invoke VCFDT, or generate a software depot ID
+  from the upload route. Global `vcf_offline_depot` apply must validate the staged nginx site, run `stage-tool` to
+  extract the archive under `/opt/atlaso/vcf-download-tool/extracted`, expose
+  `/opt/atlaso/vcf-download-tool/vcf-download-tool` as the stable executable wrapper, record the tool version using
+  `--version`, run `vcf-download-tool configuration generate --software-depot-id`, apply
+  `application-prodv2.properties`, sync intent, then apply HTTPS. The helper validates CA-managed
+  `vcf_offline_depot:https` cert/key paths, server name/listener uniqueness, document root, auth mode, selected local
+  HTTP user, and static-file directives, then installs or removes `/etc/atlaso/nginx/sites.d/vcf-offline-depot.conf`,
+  writes `/etc/atlaso/nginx/htpasswd/vcf-offline-depot.htpasswd` from the applied Photon password hash when
+  authentication is required, and reloads nginx. The refresh icon for software depot ID must submit the global
+  `/appliance-apply` workflow for `vcf_offline_depot`, not call the helper directly. Manual VCFDT command generation
+  should use `/var/lib/atlaso/vcfDownloadTool/active-tool` token and activation-code file paths, write telemetry and ESX
+  disabled-platform config without exposing secret contents, and model patch-only separately from upgrade-only. Download
+  tokens and activation codes share one Broadcom credentials modal with a credential-type selector; files or pasted text
+  still become the runtime credential files used by VCFDT and existing storage keys remain as compatibility aliases.
+  Manual profile starts create `vcf-depot-download` background jobs that write runtime credential files under
+  `/var/lib/atlaso/vcfDownloadTool/active-tool/secrets`, run VCFDT as the `atlaso` service user, and update job/profile
+  status from the process exit code; missing profile credentials should disable only the profile Start button and must
+  not block applying or disabling the depot service. Enabled VCF Offline Depot profiles are selectable in the real
+  Automation scheduler and execute as the same durable `vcf-depot-download` jobs as manual starts. The application
+  properties editor saves desired-state text and syncs CodeMirror before submit; global apply writes the runtime
+  properties used by the active tool. Depot private keys, HTTP user passwords/hashes, and VCFDT credential contents must
+  remain path references or presence flags only; never print key contents, token values, activation-code values, private
+  keys, passwords, or password hashes in previews, jobs, logs, docs, or final responses.
+- When testing real apply from the UI, select only the intended apply unit. Existing appliances that predate factory
+  baseline initialization may still list units without a last-applied baseline as changed; unselect unrelated units
+  before submitting.
+- Check the latest appliance apply job directly when behavior is unclear: query `Job` rows in the appliance SQLite
+  database or inspect the rendered job JSON in the UI. A failed job can still leave host state unchanged if helper
+  validation failed before apply.
+
+## ESX Storage
+
+- Real ESX Storage apply stages JSON under `/var/lib/atlaso/apply/esx-storage/atlaso-esx-storage.json`. IPv4 and IPv6
+  are equal v1 requirements: one share may enable either or both on one selected interface/VLAN, and each enabled family
+  requires its own listener, generated A/AAAA target name, VMkernel client allowlist, ESX command, and nftables rule.
+- Keep datastore enablement editable through the standard boolean grid icon and a dedicated State step after Clients in
+  the add/edit wizard. Put enabled-share mount guidance in the dedicated Connection Instructions tab, render equivalent
+  family-specific ESXCLI and PowerCLI commands with compact copy actions, and preserve the active ESX Storage tab across
+  reloads.
+- Blank disks require stable `/dev/disk/by-id` identity plus job/manifest/device-bound `FORMAT <volume-name>`
+  authorization and immediate helper revalidation before whole-device ext4 formatting. Mount by UUID under
+  `/mnt/atlaso-esx-storage`, bind shares under `/srv/atlaso/esx-storage`, preserve formatted data on later failure, and
+  never add wipe/reformat/data-delete behavior.
+- Apply only through global `/appliance-apply`. Settings backup and restore include volume/share desired state but never
+  format authorization. iSCSI remains a separate kernel/target-stack feasibility issue.
+
+## Network And Service Binding
+
+- Physical Interfaces are for untagged/access networks. VLAN Interfaces are only for tagged VLAN networks on physical
+  parent interfaces marked as trunk.
+- Physical Interfaces automatically refresh observed Photon/Hyper-V NIC inventory on appliance startup and may also
+  refresh it manually from the page, but host inventory is read-only context; desired-state edits remain separate and
+  enforcement still goes through `/appliance-apply`.
+- Host NIC reconciliation must match observed adapters by MAC address before Linux interface name. When a host NIC
+  disappears, mark the missing physical interface inert, set dependent VLANs disabled/admin down where modeled, remove
+  the missing interface and derived IP addresses from service listeners, disable services left without any listener, and
+  log/audit the cleanup so operators are not trapped behind invalid appliance-apply state.
+- Real network apply is Photon `systemd-networkd` backed. It may install Atlaso-owned `.network`/`.netdev` files under
+  `/etc/systemd/network/`, reload networkd, reconfigure non-management links, create/update desired VLAN links, and
+  delete VLAN links explicitly derived from successful Atlaso network apply history. The appliance image's default
+  management networkd file should match only `eth0`, not `eth*`/`en*`, and Atlaso should retire Photon catchall network
+  defaults such as `50-static-en.network` and `99-dhcp-en.network`. Keep management on `eth0` explicit and do not
+  blindly reconfigure the management link without reachability safeguards. Management uses its own policy-routing table
+  and must never forward traffic from or to access/route networks; non-management lab routes use the lab route table.
+- Do not offer trunk physical interfaces as direct service bind targets. Service bind selectors should include access
+  physical interfaces with an IPv4 or IPv6 CIDR and enabled VLAN interfaces with an IPv4 or IPv6 CIDR.
+- When a service bind target is selected, derive IPv4 and IPv6 listen addresses from the selected interface or VLAN
+  CIDRs. Do not ask the user to enter separate bind IPs unless the service genuinely supports unrelated explicit listen
+  addresses.
+- If a VLAN has dependent state, protect parent interface mode changes that would invalidate it. A physical interface
+  with VLAN children should not be silently changed from trunk to access.
+- Validate required network creation fields before saving. For VLANs, do not persist a new VLAN row unless the parent,
+  VLAN ID, and at least one valid IPv4 or IPv6 CIDR are present.
+- Keep the validation/config preview current after any network or service change that affects rendered appliance state.
+
+## Public Services Front Door
+
+- Management-role interface addresses keep the management front door at `/`, including login redirects and
+  management-only routes.
+- Non-management interface addresses render an unauthenticated public service directory at `/` scoped to the called
+  IP/host. The page must list only enabled public services whose desired listen addresses include that IP, and must show
+  a minimal `No public services on this interface` state when none match.
+- When web terminal access is enabled for the called non-management interface, include a `Web Terminal` service tile
+  linked to that address's HTTPS `/terminal` route. Do not show the tile on unselected interfaces, and do not invent an
+  interface DNS name for the Name/IP toggle.
+- Direct public paths must also be IP-scoped: CA `/ca`, `/requests`, `/ca/downloads/root-ca.pem`, and
+  `/ca/downloads/ca-bundle.pem`; ESXi PXE `/pxe/esxi/`; VCF Offline Depot `/PROD/` with `/PROD` redirecting to `/PROD/`;
+  and VCF Private Registry as a canonical registry URL card/link only.
+- Do not add `/registry` reverse proxying in the public-services site. Registry DNS and canonical registry URLs remain
+  service-owned.
+- Public Services apply stages `/var/lib/atlaso/apply/public-services/atlaso-public-services.conf` as the `atlaso`
+  service user before invoking the root helper. The helper installs `/etc/atlaso/nginx/sites.d/public-services.conf`,
+  reloads nginx, and keeps management nginx config separate.
+- The generated public-services nginx config should create HTTP server blocks only for ESXi PXE service IPs, redirect
+  `/pxe/esxi` to `/pxe/esxi/`, proxy dynamic PXE requests to the app, serve PXE static content through a narrow nginx
+  alias, and avoid exposing public portal, CA, request, depot, management, broad depot roots, registry, or unrelated
+  service paths over HTTP.
+- VCF Offline Depot `/PROD/` is exposed through the depot service-owned HTTPS site, not the generated public-services
+  HTTP site. In authenticated mode, app-owned directory browsing routes redirect unauthenticated users to `/PROD/login`,
+  while static artifact locations use the same `vcf-depot` htpasswd file generated from the applied Photon OS account.
+  Local Users apply must run before exposing the depot with authentication.
+- Public portal/user pages should extend `public_portal_base.html` so they share the compact Atlaso header and bottom
+  appliance footnote. The brand mark links to `/`, the header action is contextual `Login` or `Sign out`, footer
+  metadata should link Swagger `/api/docs` rather than the raw OpenAPI document, and the Python version should link to
+  the official Python site. Public service cards should default to service hostnames, use the configured service
+  scheme/port, and provide a Name/IP toggle stored as the `atlaso_public_address_mode` cookie. CA fingerprint controls
+  should use compact monospace text with a copy icon. Do not apply this public shell to the authenticated admin portal.
+- Styled app-owned directory browsing should wrap depot indexes instead of exposing raw nginx autoindex pages when the
+  user navigates from the public portal.
+
+## DNS And DHCP
+
+- DNS domains are first-class zones. Represent domains as tabs, include a `+ Domain` tab/action, and keep records, hosts
+  import, and zone-file editing inside the selected domain.
+- DNS defaults should include the zone derived from the appliance FQDN and an app-owned A/AAAA record for the appliance
+  hostname pointing at the management IP. Factory reset should keep only that core appliance DNS record, not demo DNS
+  records.
+- DNS records belong under their domain. Store and edit relative hostnames inside a zone; render fully qualified names
+  only where useful for preview, API output, or validation context.
+- Always consider reverse zones for A and AAAA records. DNS record grids should expose reverse/PTR status so missing
+  reverse coverage is visible.
+- Support at least A, AAAA, and CNAME records in DNS record editing. A is IPv4, AAAA is IPv6, and CNAME is an alias
+  target; use selects instead of free-text inputs for short record-type enumerations.
+- Avoid `.local` for VMware Cloud Foundation labs. Warn when a user enters `.local`, recommend `.internal`, and mention
+  that `.local` is reserved for multicast DNS/link-local naming by RFC 6762 and listed as a special-use domain by RFC
+  6761\. Treat `.internal` as Atlaso's recommended private-use internal suffix; do not claim an IETF RFC reserves it
+  unless the app copy cites a current authoritative source.
+- Use `atlaso.internal` as the sample/default internal domain.
+- DHCP should be modeled as IP zones/scopes, not one global range. Each IP zone owns its interface, gateway, prefix,
+  lease range, DNS servers, NTP servers, domain suffix, and per-zone options.
+- DHCP IP zones may be IPv4 or IPv6. IPv4 zones may bind only to access physical interfaces or enabled VLAN interfaces
+  with an IPv4 CIDR; IPv6 zones require a matching IPv6 CIDR. Do not allow trunk physical interfaces, missing
+  interfaces, or addressless interfaces as DHCP bind targets. Render IPv6 zones through dnsmasq DHCPv6/RA syntax and
+  keep ESXi PXE boot-zone selection IPv4-only until DHCPv6 bootfile-url support is explicitly implemented.
+- DHCP also needs global options. Keep global options and per-zone options distinct in the UI.
+- DHCP reservations should use DNS names. If a matching A or AAAA record is missing, ask for the FQDN and create the DNS
+  record from the reservation IP rather than storing a disconnected hostname.
+- DHCP domain fields should suggest current managed DNS domains.
+- DHCP should expose actual leases in a separate tab or panel from desired state.
+- Physical interface grid actions may enable or disable non-management interfaces with shared modal confirmation.
+  Management interfaces cannot be disabled. When a management interface uses DHCP, expose a convert-to-static action for
+  observed IPv4/IPv6 lease addresses and preserve DHCP-provided DNS into Appliance Settings and DNS service fallback as
+  described above.
+
+## Users, Auth, And Roles
+
+- Keep local Users separate from authentication provider settings. LDAP is an authentication source, not the local user
+  list.
+- Users need roles because Atlaso is expected to support OIDC. LDAP/OIDC integrations should support group-to-role
+  mapping.
+- Managed LDAP organizations follow the DNS-zone interaction pattern: organization tabs include a `+ Organization`
+  creation tab, while users and groups are compact editable Tabulator grids with bottom add rows and context-menu
+  actions. Synthetic lab-directory generation asks for user and group counts, invents complete profile and membership
+  data, and displays compliant generated passwords once without persisting or auditing them.
+- Users can hold multiple roles. Store normalized role sets in `roles_json`, keep `role` as the primary compatibility
+  value, evaluate permissions as the union of selected roles, and use a multi-select grid/list editor instead of
+  comma-separated free text where possible.
+- Default local users should be created by seed logic when needed. The VCF Backup SFTP service has a default local user
+  named `vcf-backup`, and the VCF Offline Depot HTTP service has a default local user named `vcf-depot`; keep them
+  visible under Users and selectable by their services.
+- Local Users owns Photon OS account synchronization through the global `/appliance-apply` unit `local_users`. It stages
+  `/var/lib/atlaso/apply/local-users/atlaso-users.json`, creates or updates enabled users under `/var/lib/atlaso/users`
+  with their desired shell, removes disabled or removed managed users with `userdel -r`, and applies staged unlock
+  requests through `passwd -u` plus `faillock --reset`.
+- Local user password rules are configurable desired state on Users. Enforce them on create/reset before staging a
+  Photon OS password, and apply the desired rule to Photon PAM/pwquality through the Local Users apply unit.
+- Photon image provisioning installs Photon's `powershell` package and creates the bootstrap admin OS account under
+  `/var/lib/atlaso/users` with `/usr/bin/pwsh` and the bootstrap admin password, so the default admin has a real Photon
+  account before first apply.
+- Photon image provisioning grants the bootstrap admin normal password-backed sudo through
+  `/etc/sudoers.d/atlaso-bootstrap-admin` for local recovery and debugging. Keep the `atlaso` service account
+  constrained to `atlaso-helper`.
+- Atlaso does not store local user passwords in the database. Set/reset values are held only in process memory until a
+  real Local Users apply sends them to Photon OS; a restart before apply requires the operator to set/reset the password
+  again. Never render plaintext passwords, password hashes, or pending password values in previews, jobs, logs, widgets,
+  docs, or final responses.
+- Existing users without a pending OS password cannot have their OS password recovered by Atlaso; show/reset them as
+  `password not staged; reset to sync`.
+- Never expose secrets in final responses, logs, widgets, or rendered previews beyond intentionally generated one-time
+  credentials already displayed by the app.
+
+## VCF Backups
+
+- VCF Backups is an SFTP endpoint backed by local Atlaso users. The selected SFTP user must come from Users.
+- The default VCF Backup user is `vcf-backup`. Keep it disabled while VCF Backups desired state is off; operators
+  set/reset its Photon OS password before exposure.
+- When VCF Backup desired state is disabled, keep the default `vcf-backup` user disabled so the next Local Users apply
+  removes the Photon OS account.
+- Apply the Local Users unit before VCF Backups when the selected SFTP user is new, renamed, disabled/enabled, has a
+  pending password, changes default shell, or has an unlock request.
+- VCF Backup listen targets must include access physical interfaces with IPs and VLAN interfaces with IPs; exclude trunk
+  physical interfaces.
+- The VCF-facing remote directory should be short and stable: `/backups`.
+- The appliance backup storage is a fixed appliance volume mount, currently `/mnt/atlaso-vcf-backups`; do not make this
+  a routine UI-configurable field.
+- The VCF Backup config preview should make the host-side volume and VCF remote directory clear, and OpenSSH should use
+  `ForceCommand internal-sftp -d /backups` when chroot is enabled.
+- VCF Backup OpenSSH enforcement should remain a user-scoped `Match User` drop-in; do not make it a broad global `sshd`
+  port/listen-address rewrite.
+
+## VCF Helper
+
+- VCF Helper lives under VCF Workflows at `/vcf-helper`. Keep deployment component sets versioned; current targets are
+  `VCF 9.1` with all 17 catalog components and `VVF 9.1` with `vc01`, `ops01`, `vsp01`, `fleetlcm`, `shared01`, and
+  `license`.
+- Domain choices must come from managed DNS zones. Prefix and suffix are optional hostname fragments; normalize them
+  consistently and validate every generated FQDN before writing any records.
+- Starting address input is one IPv4 or IPv6 CIDR. IPv4 creates A records and IPv6 creates AAAA records. Allocate
+  sequential usable addresses inside that network, skip occupied DNS addresses of the selected family, and also skip
+  IPv4 DHCP reservation addresses.
+- Treat generation as one transaction. Existing FQDNs are skipped without modification, and insufficient address
+  capacity or any validation error must create no records. Return created and skipped rows with assigned or existing
+  A/AAAA addresses in fetch responses.
+- Keep component descriptions role-specific, such as `vCenter` and `VCF Automation`. Store helper ownership separately
+  in structured DNS record metadata with source `vcf_helper` and the component hostname; do not replace role
+  descriptions with a generic generated-by label.
+- Deletion must require shared modal confirmation and remove only matching helper-owned A/AAAA records for the selected
+  deployment, prefix, suffix, and domain. Preserve unrelated/manual records. Legacy records without metadata may be
+  removed only when their description exactly matches the expected component description.
+- The FQDN modal stays open after creation so assigned addresses remain reviewable. When every displayed FQDN has an A
+  or AAAA address, replace the create action with `Done` and hide `Cancel`. Enable deletion only when at least one
+  displayed FQDN has an associated address.
+- Keep the modal compact and free of horizontal overflow. Deployment, prefix, and suffix controls should remain short,
+  the IP/prefix control should have more width for IPv6 CIDRs, and edge help tooltips must open inward or downward so
+  their complete text remains inside the modal.
+- VCF Helper edits DNS desired state only. Runtime enforcement remains owned by the global `DNS/DHCP (dnsmasq)`
+  Appliance Apply unit; do not add a VCF Helper apply route or invoke `dnsmasq` directly.
+- Maintain the operator contract in `docs/services/vcf-helper.md` and focused `tests/test_ui.py` coverage whenever
+  catalogs, allocation, ownership, deletion, modal state, or API responses change.
+
+## VCF Offline Depot
+
+- VCF Offline Depot is a static HTTP(S) depot endpoint backed by nginx and the fixed appliance volume mount
+  `/mnt/atlaso-vcf-offline-depot`.
+- The default VCF Offline Depot HTTP user is `vcf-depot`. Keep it visible in Users, selectable by the depot service, and
+  disabled while VCF Offline Depot desired state is off.
+- Apply Local Users before VCF Offline Depot when the selected HTTP user is new, renamed, disabled/enabled, has a
+  pending password, changes default shell, or has an unlock request.
+- Default depot access is authenticated. The `Unauthenticated access` switch is an explicit desired-state exception for
+  isolated open mirrors.
+- The depot helper reads the applied Photon OS password hash from `/etc/shadow` and writes nginx htpasswd material under
+  `/etc/atlaso/nginx/htpasswd/`; Atlaso must not store or render plaintext passwords or password hashes.
+- `/PROD/` is the canonical depot path, `/PROD` redirects to `/PROD/`, and the depot service-owned HTTPS site must
+  follow the configured auth setting and htpasswd file.
+
+## VCF Private Registry
+
+- VCF Private Registry is a Harbor-backed appliance service for staging VCF Supervisor Service bundles in a private OCI
+  registry.
+- The registry listen targets must follow the same service binding rule as VCF Backups: access physical interfaces with
+  IPs and VLAN interfaces with IPs; exclude trunk physical interfaces.
+- The default registry hostname is `registry.atlaso.internal`, and the default Harbor project is
+  `vcf-supervisor-services`.
+- The registry storage path is a fixed appliance volume mount, currently `/mnt/atlaso-vcf-registry`; do not make this a
+  routine UI-configurable field.
+- The registry CA bundle should come from the local Atlaso CA when CA is enabled. When the local CA is disabled, require
+  an uploaded PEM CA bundle and stage it through global appliance apply; do not expose a routine free-form CA bundle
+  path editor.
+- Bundle relocation should be modeled as desired state and previewed as `imgpkg copy` command intent. Development
+  appliance apply jobs must record Harbor and relocation command intent through adapters instead of pushing images or
+  mutating host services directly.
+- Do not render Harbor admin passwords, robot account tokens, or registry credentials in config previews, job results,
+  logs, widgets, or final responses.
+
+## Routing And WAN
+
+- Routes & WAN Simulation owns static route desired state, IPv4 outbound masquerade NAT rules, and interface/VLAN-level
+  `tc/netem` latency/error simulation.
+- All Routing/WAN host mutation must go through the global `/appliance-apply` `wan` unit. Do not add route-specific,
+  NAT-specific, or WAN-policy-specific apply routes or direct helper calls from edit forms.
+- The real apply path stages `/var/lib/atlaso/apply/wan/atlaso-wan.conf`; `atlaso-helper wan validate|apply` validates
+  targets, routes, NAT rules, and netem values before running `ip route`, `nft`, `sysctl`, and `tc`.
+- WAN impairment mode is v1 interface/VLAN-level only. Do not expose a route-specific WAN mode until it is fully
+  implemented in the helper; track that design in `docs/project/routing-wan-roadmap.md`.
+- Atlaso has no `wan` interface role and must not infer NAT or internet connectivity from an interface role.
+  `Routes & WAN Simulation` is the explicit routing/NAT/loss workflow, not an interface classification.
+- NAT v1 is explicit IPv4 masquerade only. Do not add destination NAT, port forwarding, automatic broad NAT, or
+  non-reviewable NAT inferred only from interface role. Route-role networks may forward to other route-role networks by
+  default; access networks require explicit routing rules; management is never a route, NAT, or routing-permission
+  target.
+- NAT outbound targets must be access physical interfaces with an IPv4 CIDR or enabled VLAN interfaces with an IPv4
+  CIDR. IPv6-only interfaces are not valid NAT outbound targets. NAT is explicit desired state and remains reviewed
+  through global apply; it is not inferred from an interface role.
+- Validate live Routing/WAN state with `ip route`, `tc qdisc show`, `nft list ruleset`, and `sysctl net.ipv4.ip_forward`
+  after applying on Photon.
+
+## Database And Verification
+
+- This project is still in MVP scaffold mode. When model/schema changes make the development SQLite database stale,
+  prefer deleting/reseeding `data/atlaso.db` over adding migrations, unless the user explicitly asks for migrations.
+- Do not delete the DB for data-only seed/default updates if a focused in-place update is safer and the schema did not
+  change.
+- Backup / Restore owns desired-state settings archives. Do not include audit events, jobs, API tokens, password hashes,
+  uploaded secret bodies, or runtime history in those archives. The separate passphrase-encrypted LDAP directory
+  recovery export/import is an explicit special case that also lives on Backup / Restore; it preserves slapcat password
+  hashes, remains outside the settings archive, and stages import for global LDAP apply. Restore and factory reset must
+  leave service status rows stopped, disabled, and `unconfigured`; host mutation still belongs only to the global
+  `/appliance-apply` workflow. Factory reset must reseed only core defaults and must not recreate demo VLANs, trunk-only
+  parent NIC posture, routes, NAT rules, WAN policies, DHCP scopes/reservations, firewall rules, CA requests, KMS
+  clients/keys, depot download profiles, or service listener bindings, including after service restart. The only DNS
+  record factory reset should reseed is the app-owned appliance FQDN record pointed at the management IP. After factory
+  reset, only `eth0` should be desired admin up; other physical NICs should be desired admin down until an operator
+  enables them. Disabled service settings should have blank listen interfaces and addresses until an operator selects a
+  valid bind target.
+- Documentation updates are required for every major product, architecture, workflow, safety-boundary, or
+  operator-experience change. In the same change, update `README.md`, `AGENTS.md`, and any topic-specific file under
+  `docs/` whose behavior or operator guidance is affected; do not treat the work as complete while those documents
+  describe the old behavior.
+- Before committing branch work, run `python scripts/check_repo.py` or install the local hook with `pre-commit install`
+  so changed Python, Jinja/HTML, Markdown, CSS, JavaScript, JSON, TOML, YAML, PowerShell, and SVG files get
+  syntax/content checks. The hook is a fast pre-commit guard and does not replace focused tests.
+- Before finalizing UI/backend changes, run focused tests for the touched area when available, then `pytest -q` for
+  broader confidence. Also run `python -m compileall atlaso` after broad Python/template-adjacent changes.
+- Before finalizing appliance deployment changes, also run `python scripts/check_photon_compatibility.py`. If image
+  build files changed and Packer is available, run `packer fmt` and `packer validate` from the changed image target
+  directories such as `image/hyperv/` and `image/vmware-workstation/`.
+- Restart the local uvicorn server after template/static/route changes so the in-app browser sees the new code. Bump the
+  static asset query string in `base.html` after CSS or JS changes.
