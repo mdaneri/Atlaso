@@ -115,6 +115,7 @@ def test_appliance_apply_operator_guide_stays_task_focused() -> None:
     assert len(operator_page.splitlines()) < 200
     assert "../reference/appliance-apply-technical.md" in operator_page
     assert "No original section was removed." in operator_page
+    assert "Every helper or adapter command in that component" in operator_page
     technical_headings = {line for line in technical_page.splitlines() if line.startswith("#")}
     assert {
         "## Workflow and execution model",

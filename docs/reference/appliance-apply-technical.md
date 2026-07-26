@@ -595,8 +595,8 @@ keys, robot accounts, activation codes, encrypted CA private material, and uploa
 Submitting first commits one pending `appliance-apply` master and its ordered component children, then returns HTTP
 `202` to the modal while adapter execution continues as background work. The children progress through `pending`,
 `running`, `succeeded`, `failed`, or `skipped`. Components execute sequentially; the first failed child stops the task
-and skips the remainder. A safe cancellation request finishes the running child, skips the remainder, and releases the
-global mutation lock only after the master becomes terminal.
+and skips the remainder. A safe cancellation request allows every command in the running component to finish, skips
+the remaining components, and releases the global mutation lock only after the master becomes terminal.
 
 Only one appliance apply master may be pending or running at a time, preventing overlapping helper commands from sharing
 staging paths. If Atlaso restarts during an apply, startup fails the running child, skips pending children, fails the

@@ -91,8 +91,9 @@ Components run sequentially. If one component fails, Atlaso stops the sequence a
 **skipped**. Other write operations are locked while the master task is pending or running; read-only pages, task
 inspection, authentication actions, and safe cancellation remain available.
 
-Safe cancellation does not interrupt the helper step already running. It allows that step to finish, skips work that
-has not started, and releases the mutation lock after the master task becomes terminal.
+Safe cancellation does not interrupt the component already running. Every helper or adapter command in that component
+continues to completion. After the component returns, Atlaso skips the remaining components and releases the mutation
+lock when the master task becomes terminal.
 
 ## Verify the result
 
