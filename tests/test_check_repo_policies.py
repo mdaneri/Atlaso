@@ -141,6 +141,25 @@ def test_ui_pattern_foundation_rejects_new_raw_tabulator(tmp_path: Path) -> None
     )
 
 
+def test_ui_pattern_foundation_rejects_raw_tabulator_in_template(tmp_path: Path) -> None:
+    write_ui_foundation_fixture(tmp_path)
+    path = tmp_path / "atlaso" / "app" / "templates" / "inline-grid.html"
+    path.write_text(
+        "<script>\nnew Tabulator('#new-grid');\n</script>\n",
+        encoding="utf-8",
+    )
+
+    findings = check_ui_pattern_foundation(tmp_path)
+
+    assert any(
+        finding.path == path
+        and finding.line == 2
+        and finding.message
+        == "raw Tabulator construction is forbidden; use AtlasoUiPatterns.createGrid"
+        for finding in findings
+    )
+
+
 def test_ui_pattern_foundation_rejects_new_marked_legacy_tabulator(tmp_path: Path) -> None:
     write_ui_foundation_fixture(tmp_path)
     path = tmp_path / "atlaso" / "app" / "static" / "app.js"

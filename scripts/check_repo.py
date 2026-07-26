@@ -466,6 +466,14 @@ def check_ui_pattern_foundation(root: Path) -> list[Finding]:
             findings.append(error)
             continue
         assert text is not None
+        for match in TABULATOR_CONSTRUCTOR_RE.finditer(text):
+            findings.append(
+                Finding(
+                    path,
+                    "raw Tabulator construction is forbidden; use AtlasoUiPatterns.createGrid",
+                    line_for_offset(text, match.start()),
+                )
+            )
         for match in HTML_FORM_RE.finditer(text):
             attributes = match.group("attributes")
             body = match.group("body")

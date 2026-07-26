@@ -15143,7 +15143,7 @@ function initializeAutomationTables() {
         {
           label: "Edit schedule",
           disabled: (component) => component.getData().is_new,
-          action: (event, row) => openScheduleWizard(row.getData(), event?.target),
+          action: (_event, row) => openScheduleWizard(row.getData(), row.getElement()),
         },
         {
           label: "Delete schedule",
