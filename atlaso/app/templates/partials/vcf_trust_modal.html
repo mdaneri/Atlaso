@@ -1,5 +1,5 @@
 <dialog id="vcf-trust-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="vcf-trust-modal-title" {% if vcf_trust_auto_open %}data-vcf-trust-auto-open{% endif %}>
-  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="/vcf-trust/root-ca" method="post" data-vcf-trust-form>
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="/vcf-trust/root-ca" method="post" data-vcf-trust-form data-atlaso-wizard>
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <input type="hidden" name="confirmed_tls_fingerprint" value="" data-vcf-trust-confirmed-tls-fingerprint>
     <input type="hidden" name="awaiting_job_id" value="">
@@ -8,26 +8,26 @@
       <p class="kicker">Remote VCF maintenance</p>
       <h2 id="vcf-trust-modal-title">VCF Certificate Trust</h2>
       <ol class="vcf-sddc-step-list">
-        <li><button class="vcf-sddc-step-button active" type="button" data-vcf-trust-step-nav data-step="target"><span>1</span><strong>Target</strong><small>Appliance and CA</small></button></li>
-        <li><button class="vcf-sddc-step-button" type="button" data-vcf-trust-step-nav data-step="api" disabled><span>2</span><strong>API</strong><small>Administrator login</small></button></li>
-        <li><button class="vcf-sddc-step-button" type="button" data-vcf-trust-step-nav data-step="review" disabled><span>3</span><strong>Review</strong><small>TLS and queue</small></button></li>
+        <li><button class="vcf-sddc-step-button active" type="button" data-vcf-trust-step-nav data-atlaso-wizard-nav="target"><span>1</span><strong>Target</strong><small>Appliance and CA</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-vcf-trust-step-nav data-atlaso-wizard-nav="api" disabled><span>2</span><strong>API</strong><small>Administrator login</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-vcf-trust-step-nav data-atlaso-wizard-nav="review" disabled><span>3</span><strong>Review</strong><small>TLS and queue</small></button></li>
       </ol>
     </aside>
 
     <div class="vcf-sddc-wizard-main">
       <div class="confirm-modal-body vcf-sddc-wizard-body">
         <div class="vcf-sddc-wizard-heading">
-          <p class="kicker" data-vcf-trust-step-kicker>Step 1 of 3</p>
-          <h3 data-vcf-trust-step-title>Target and root CA</h3>
-          <p class="muted" data-vcf-trust-step-description>Choose the VCF appliance and review the active Atlaso root CA.</p>
+          <p class="kicker" data-vcf-trust-step-kicker data-atlaso-wizard-kicker>Step 1 of 3</p>
+          <h3 data-vcf-trust-step-title data-atlaso-wizard-title>Target and root CA</h3>
+          <p class="muted" data-vcf-trust-step-description data-atlaso-wizard-description>Choose the VCF appliance and review the active Atlaso root CA.</p>
         </div>
 
         {% if vcf_trust_errors %}
           <div class="alert error" data-vcf-trust-server-errors>{% for error in vcf_trust_errors %}<div>{{ error }}</div>{% endfor %}</div>
         {% endif %}
-        <div class="alert error hidden" data-vcf-trust-form-errors></div>
+        <div class="alert error hidden" data-vcf-trust-form-errors data-atlaso-wizard-error></div>
 
-        <section class="vcf-sddc-step-page" data-vcf-trust-step="target">
+        <section class="vcf-sddc-step-page" data-vcf-trust-step="target" data-atlaso-wizard-step="target">
           <div class="form-grid">
             <label><span class="field-label"><span>VCF appliance endpoint</span><button class="help-icon" type="button" data-help="The VCF 9 Installer or SDDC Manager API endpoint that receives the Atlaso root CA. Accepts host, host:port, or https://host:port; default port is 443.">i</button></span><input name="address" required></label>
           </div>
@@ -43,14 +43,14 @@
           <label class="switch-field"><span class="field-label"><span>Snapshot exists</span><button class="help-icon" type="button" data-help="Confirm a current snapshot or equivalent rollback exists before changing trust on an existing remote appliance.">i</button></span><input class="switch-input" type="checkbox" name="snapshot_acknowledged" required><span class="switch-track" aria-hidden="true"></span></label>
         </section>
 
-        <section class="vcf-sddc-step-page hidden" data-vcf-trust-step="api">
+        <section class="vcf-sddc-step-page hidden" data-vcf-trust-step="api" data-atlaso-wizard-step="api">
           <div class="form-grid">
             <label><span class="field-label"><span>API administrator</span><button class="help-icon" type="button" data-help="VCF identity used only to obtain a temporary API token and call the trusted-certificate API. It is never stored.">i</button></span><input name="api_username" value="admin@local" autocomplete="username" required></label>
             <label><span class="field-label"><span>API password</span><button class="help-icon" type="button" data-help="One-time VCF API password. It is never written to jobs, logs, audits, or the database.">i</button></span><input name="api_password" type="password" autocomplete="new-password" required></label>
           </div>
         </section>
 
-        <section class="vcf-sddc-step-page hidden" data-vcf-trust-step="review">
+        <section class="vcf-sddc-step-page hidden" data-vcf-trust-step="review" data-atlaso-wizard-step="review">
           <div class="settings-list compact-settings-list">
             <div><span>Target</span><strong data-vcf-trust-review-target>Not inspected yet</strong></div>
             <div><span>HTTPS port</span><strong data-vcf-trust-review-port>443</strong></div>
@@ -69,10 +69,10 @@
       </div>
 
       <div class="confirm-modal-actions vcf-sddc-wizard-actions">
-        <button class="button ghost" type="button" data-vcf-trust-cancel>Close</button>
-        <button class="button secondary hidden" type="button" data-vcf-trust-back>Back</button>
-        <button class="button primary" type="button" data-vcf-trust-next>Next</button>
-        <button class="button primary hidden" type="submit" data-vcf-trust-submit>Run trust task</button>
+        <button class="button ghost" type="button" data-vcf-trust-cancel data-atlaso-wizard-cancel>Close</button>
+        <button class="button secondary hidden" type="button" data-vcf-trust-back data-atlaso-wizard-back>Back</button>
+        <button class="button primary" type="button" data-vcf-trust-next data-atlaso-wizard-next>Next</button>
+        <button class="button primary hidden" type="submit" data-vcf-trust-submit data-atlaso-wizard-submit>Run trust task</button>
       </div>
     </div>
   </form>

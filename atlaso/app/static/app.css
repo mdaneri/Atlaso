@@ -5694,6 +5694,7 @@ textarea {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
   gap: 0;
+  height: min(720px, calc(100vh - 48px));
   max-height: calc(100vh - 48px);
   padding: 0;
   overflow: hidden;

@@ -76,6 +76,11 @@ Preserve desired-state and global appliance-apply boundaries, permissions, serve
 recovery, keyboard access, and responsive behavior. Use the guide's pull-request checklist and provide desktop and
 narrow viewport evidence for affected flows.
 
+Use `window.AtlasoUiPatterns.createGrid(...)` as the only constructor entry point for every new Tabulator collection.
+Use `window.AtlasoUiPatterns.createWizard(...)` and the generic `data-atlaso-wizard-*` DOM contract for every new or
+changed wizard. Raw constructors marked for issue #117 are migration debt, not examples. Issues #117–#119 own the
+existing collection and resource-conversion migrations.
+
 ## Automated contributors and coding agents
 
 Every automated contributor, coding agent, subagent, and delegated agent must complete the Mandatory Agent Startup Gate.

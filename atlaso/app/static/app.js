@@ -1880,7 +1880,7 @@ function initializeDhcpLeasesTable() {
   const csrf = tableElement.dataset.csrf || "";
   const rows = JSON.parse(tableElement.dataset.leases || "[]");
   try {
-    new Tabulator(tableElement, {
+    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
       data: rows,
       layout: "fitColumns",
       height: "300px",
@@ -2510,7 +2510,7 @@ function initializeCaProfilesTable() {
   const csrf = tableElement.dataset.csrf || "";
   const rows = [...JSON.parse(tableElement.dataset.profiles || "[]"), newCaProfileRow()];
   try {
-    new Tabulator(tableElement, {
+    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -2627,7 +2627,7 @@ function initializeCaCertificatesTable() {
   const defaultProfileId = profileOptions[0]?.id || "";
   const rows = [...JSON.parse(tableElement.dataset.certificates || "[]"), newCaCertificateRow(defaultProfileId)];
   try {
-    new Tabulator(tableElement, {
+    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -2986,7 +2986,7 @@ function initializeFirewallRulesTable() {
   const rows = [...JSON.parse(tableElement.dataset.rules || "[]"), newFirewallRuleRow(interfaces[0] || "")];
   const tableHeight = `${Math.min(Math.max(rows.length * 28 + 34, 90), 240)}px`;
   try {
-    new Tabulator(tableElement, {
+    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -3131,7 +3131,7 @@ function initializeManagedFirewallRulesTable() {
   const sourceGroups = JSON.parse(tableElement.dataset.sourceGroups || "[]");
   const sourceGroupOptions = Object.fromEntries(sourceGroups.map((group) => [group.id, group.name]));
   try {
-    new Tabulator(tableElement, {
+    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -3222,7 +3222,7 @@ function initializeServicesTable() {
   const csrf = tableElement.dataset.csrf || "";
   const rows = JSON.parse(tableElement.dataset.services || "[]");
   try {
-    new Tabulator(tableElement, {
+    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -3552,7 +3552,7 @@ function initializeUsersTable() {
   const roleOptions = roleValues(roles);
   const rows = [...JSON.parse(tableElement.dataset.users || "[]"), newUserRow()];
   try {
-    new Tabulator(tableElement, {
+    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -3850,7 +3850,7 @@ function initializeKmsClientsTable() {
   const roleValuesMap = roleValues(JSON.parse(tableElement.dataset.roleOptions || "[]"));
   const rows = [...JSON.parse(tableElement.dataset.clients || "[]"), newKmsClientRow()];
   try {
-    new Tabulator(tableElement, {
+    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -3946,7 +3946,7 @@ function initializeKmsKeysTable() {
   const defaultClientId = clientOptions[0]?.id || "";
   const rows = [...JSON.parse(tableElement.dataset.keys || "[]"), newKmsKeyRow(defaultClientId)];
   try {
-    new Tabulator(tableElement, {
+    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -4540,7 +4540,7 @@ function initializeLdapDirectoryTables() {
     const organizationId = usersElement.dataset.organizationId || "0";
     try {
       const users = [...JSON.parse(usersElement.dataset.users || "[]"), newLdapUserRow(organizationId)];
-      const usersTable = new Tabulator(usersElement, {
+      const usersTable = /* atlaso-legacy-tabulator: #117 */ new Tabulator(usersElement, {
         data: users, index: "id", layout: "fitColumns", height: "420px", rowHeight: 28, placeholder: "No directory users", reactiveData: false,
         rowContextMenu: [
           { label: "Reset password", action: (_event, row) => openLdapPasswordModal(row.getData()), disabled: (component) => component.getData().is_new },
@@ -4573,7 +4573,7 @@ function initializeLdapDirectoryTables() {
     try {
       const groups = JSON.parse(groupsElement.dataset.groups || "[]").map((group) => ({ ...group, member_count: Array.isArray(group.members) ? group.members.length : 0, member_names: Array.isArray(group.members) ? group.members.map((member) => `${member.type}: ${member.name}`).join(", ") : "" }));
       groups.push(newLdapGroupRow(organizationId));
-      const groupsTable = new Tabulator(groupsElement, {
+      const groupsTable = /* atlaso-legacy-tabulator: #117 */ new Tabulator(groupsElement, {
         data: groups, index: "id", layout: "fitColumns", height: "420px", rowHeight: 28, responsiveLayout: "collapse", placeholder: "No directory groups", reactiveData: false,
         rowContextMenu: [
           { label: "Edit membership", action: (_event, row) => openLdapGroupMembersModal(row.getData()), disabled: (component) => component.getData().is_new },
@@ -4819,7 +4819,7 @@ function initializeNTPsecUpstreamsTable() {
     const ntsSupported = tableElement.dataset.ntpNtsSupported !== "false";
     const rows = normalizeNTPsecUpstreamRows(parsedRows);
     rows.push(ntpBlankUpstreamRow());
-    const table = new Tabulator(tableElement, {
+    const table = /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -5441,7 +5441,7 @@ function initializeRoutesWanRoutingTable() {
   const generatedWithKind = generatedRows.map((row) => ({ ...row, kind: "auto route-role rule" }));
   const rows = [...generatedWithKind, ...explicitRows, newWanRoutingRuleRow(defaultSource, defaultDestination)];
   try {
-    new Tabulator(tableElement, {
+    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -5560,7 +5560,7 @@ function initializeRoutesWanNatTable() {
   const defaultTarget = targets[0]?.name || "";
   const rows = [...JSON.parse(tableElement.dataset.natRules || "[]"), newWanNatRuleRow(defaultTarget)];
   try {
-    new Tabulator(tableElement, {
+    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -5660,7 +5660,7 @@ function initializeRoutesWanRoutesTable() {
   const defaultTarget = targets[0]?.name || "";
   const rows = [...JSON.parse(tableElement.dataset.routes || "[]"), newWanRouteRow(defaultTarget)];
   try {
-    new Tabulator(tableElement, {
+    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -5753,7 +5753,7 @@ function initializeRoutesWanPoliciesTable() {
   const csrf = tableElement.dataset.csrf || "";
   const rows = [...JSON.parse(tableElement.dataset.policies || "[]"), newWanPolicyRow()];
   try {
-    new Tabulator(tableElement, {
+    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -6353,7 +6353,7 @@ function initializePhysicalInterfacesTable() {
   });
   const rows = JSON.parse(tableElement.dataset.interfaces || "[]");
   try {
-    new Tabulator(tableElement, {
+    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -6816,7 +6816,7 @@ function initializeOidcGroupMappingsTable() {
   };
 
   try {
-    table = new Tabulator(tableElement, {
+    table = /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -6949,7 +6949,7 @@ function initializeVlanInterfacesTable() {
   const defaultMtu = parentMtus[defaultParent] || 1500;
   const rows = [...JSON.parse(tableElement.dataset.vlans || "[]"), newVlanInterfaceRow(defaultParent, defaultMtu)];
   try {
-    new Tabulator(tableElement, {
+    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -7086,7 +7086,7 @@ function initializeDnsRecordsTableElement(tableElement) {
   const csrf = tableElement.dataset.csrf || "";
 
   try {
-    const table = new Tabulator(tableElement, {
+    const table = /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
       data: records,
       index: "id",
       layout: "fitColumns",
@@ -7223,7 +7223,7 @@ function initializeDhcpScopesTable() {
     return autoSaveDhcpScope(cell, csrf);
   };
   try {
-    new Tabulator(tableElement, {
+    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -7381,7 +7381,7 @@ function initializeDhcpOptionsTable() {
   const scopeValues = Object.fromEntries(scopeOptions.map((item) => [item.id, item.label]));
   const rows = [...JSON.parse(tableElement.dataset.options || "[]"), newDhcpOptionRow()];
   try {
-    new Tabulator(tableElement, {
+    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -7471,7 +7471,7 @@ function initializeDhcpReservationsTable() {
     return autoSaveDhcpReservation(cell, csrf);
   };
   try {
-    new Tabulator(tableElement, {
+    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -7571,7 +7571,7 @@ function initializeEsxiPxeHostsTable() {
   const defaultIsoPath = isoOptions.find((item) => item.id)?.id || "";
   const rows = [...JSON.parse(tableElement.dataset.hosts || "[]"), newEsxiHostRow(defaultIsoPath)];
   try {
-    new Tabulator(tableElement, {
+    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -8230,6 +8230,11 @@ function initializeNonTabbableHelperControls() {
     }
     control.setAttribute("tabindex", "-1");
   });
+  document.addEventListener("mousedown", (event) => {
+    if (event.target instanceof Element && event.target.closest(".help-icon")) {
+      event.preventDefault();
+    }
+  }, true);
 }
 
 function initializeSecretToggles() {
@@ -9353,7 +9358,7 @@ function initializeVcfRegistryBundlesTable() {
   const csrf = tableElement.dataset.csrf || "";
   const rows = [...JSON.parse(tableElement.dataset.bundles || "[]"), newVcfRegistryBundleRow()];
   try {
-    new Tabulator(tableElement, {
+    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -9924,7 +9929,7 @@ function initializeVcfDepotProfilesTable() {
     newVcfDepotProfileRow(),
   ];
   try {
-    vcfDepotProfilesTable = new Tabulator(tableElement, {
+    vcfDepotProfilesTable = /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -10119,7 +10124,7 @@ function initializeVcfDepotTasksTable() {
   const fallback = document.getElementById(tableElement.dataset.fallbackId || "");
   try {
     const tasks = JSON.parse(tableElement.dataset.tasks || "[]");
-    vcfDepotTasksTable = new window.Tabulator(tableElement, {
+    vcfDepotTasksTable = /* atlaso-legacy-tabulator: #117 */ new window.Tabulator(tableElement, {
       data: tasks,
       ajaxURL: "/vcf-offline-depot/tasks/status",
       pagination: true,
@@ -10540,7 +10545,7 @@ function initializeTasksPage() {
   if (tableElement instanceof HTMLElement && typeof window.Tabulator === "function") {
     const initialComponentFilter = page.dataset.taskInitialComponentFilter || "";
     const componentFilterLocked = page.dataset.taskLockComponentFilter === "true";
-    atlasoTasksTable = new window.Tabulator(tableElement, {
+    atlasoTasksTable = /* atlaso-legacy-tabulator: #117 */ new window.Tabulator(tableElement, {
       ajaxURL: "/tasks/status",
       ajaxParams: () => ({ job_id: atlasoSelectedTaskId || page.dataset.selectedTaskId || "" }),
       ajaxRequestFunc: requestTasksTableData,
@@ -12303,7 +12308,7 @@ function initializeAuditEventsTable() {
     const rowPitch = rowHeight + 1;
     const gridChromeHeight = 88;
     const pageSizeForHeight = () => Math.max(5, Math.floor(Math.max(0, tableElement.clientHeight - gridChromeHeight) / rowPitch));
-    const table = new Tabulator(tableElement, {
+    const table = /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -12682,7 +12687,7 @@ function renderApplianceApplyTask(task) {
       { title: "Duration", field: "duration", width: 105, formatter: (cell) => applianceApplyDuration(cell.getRow().getData()) },
     ];
     if (!applianceApplyModalTable) {
-      applianceApplyModalTable = new window.Tabulator(grid, {
+      applianceApplyModalTable = /* atlaso-legacy-tabulator: #117 */ new window.Tabulator(grid, {
         data: [task],
         index: "id",
         layout: "fitColumns",
@@ -13593,61 +13598,18 @@ function initializeVcfTrustForm() {
   const errors = form.querySelector("[data-vcf-trust-form-errors]");
   const submit = form.querySelector("[data-vcf-trust-submit]");
   const next = form.querySelector("[data-vcf-trust-next]");
-  const back = form.querySelector("[data-vcf-trust-back]");
-  const cancel = form.querySelector("[data-vcf-trust-cancel]");
-  const stepPages = [...form.querySelectorAll("[data-vcf-trust-step]")];
-  const stepButtons = [...form.querySelectorAll("[data-vcf-trust-step-nav]")];
-  const stepKicker = form.querySelector("[data-vcf-trust-step-kicker]");
-  const stepTitle = form.querySelector("[data-vcf-trust-step-title]");
-  const stepDescription = form.querySelector("[data-vcf-trust-step-description]");
-  let currentStep = "target";
-  let maxUnlockedStepIndex = 0;
+  let wizard;
   let inspectedTls = "";
   const steps = [
     { id: "target", title: "Target and root CA", description: "Choose the VCF appliance, confirm snapshot readiness, and review the active Atlaso root CA." },
     { id: "api", title: "API credentials", description: "Enter the one-time VCF API administrator credentials used to inspect and import the root CA." },
     { id: "review", title: "Review and queue", description: "Confirm the target HTTPS TLS fingerprint, then queue the certificate trust task." },
   ];
-  const stepIndex = (step) => Math.max(0, steps.findIndex((item) => item.id === step));
-  const stepDefinition = (step) => steps[stepIndex(step)] || steps[0];
   const showError = (message) => {
     if (errors instanceof HTMLElement) {
       errors.textContent = message;
       errors.classList.toggle("hidden", !message);
     }
-  };
-  const controlsForStep = (step) => {
-    const page = form.querySelector(`[data-vcf-trust-step="${CSS.escape(step)}"]`);
-    return page ? [...page.querySelectorAll("input, select, textarea")].filter((control) => !control.disabled) : [];
-  };
-  const validateStep = (step) => {
-    const invalid = controlsForStep(step).find((control) => typeof control.checkValidity === "function" && !control.checkValidity());
-    if (invalid && typeof invalid.reportValidity === "function") {
-      invalid.reportValidity();
-      return false;
-    }
-    return true;
-  };
-  const showStep = (step, { unlock = false } = {}) => {
-    const index = stepIndex(step);
-    if (unlock) maxUnlockedStepIndex = Math.max(maxUnlockedStepIndex, index);
-    if (index > maxUnlockedStepIndex) return;
-    currentStep = step;
-    const definition = stepDefinition(step);
-    stepPages.forEach((page) => page.classList.toggle("hidden", page.dataset.vcfTrustStep !== step));
-    stepButtons.forEach((button) => {
-      const buttonIndex = stepIndex(button.dataset.step || "target");
-      button.disabled = buttonIndex > maxUnlockedStepIndex;
-      button.classList.toggle("active", button.dataset.step === step);
-      button.classList.toggle("complete", buttonIndex < index);
-    });
-    if (stepKicker instanceof HTMLElement) stepKicker.textContent = `Step ${index + 1} of ${steps.length}`;
-    if (stepTitle instanceof HTMLElement) stepTitle.textContent = definition.title;
-    if (stepDescription instanceof HTMLElement) stepDescription.textContent = definition.description;
-    back?.classList.toggle("hidden", index === 0);
-    next?.classList.toggle("hidden", index === steps.length - 1);
-    submit?.classList.toggle("hidden", index !== steps.length - 1);
-    if (submit instanceof HTMLButtonElement) submit.disabled = index !== steps.length - 1;
   };
   const resetConfirmation = () => {
     if (confirmedTls instanceof HTMLInputElement) {
@@ -13688,7 +13650,7 @@ function initializeVcfTrustForm() {
     }
   };
   const inspectTarget = async () => {
-    if (!validateStep("target") || !validateStep("api")) return false;
+    if (!(await wizard.validate("target")) || !(await wizard.validate("api"))) return false;
     showError("");
     if (next instanceof HTMLButtonElement) {
       next.disabled = true;
@@ -13710,7 +13672,7 @@ function initializeVcfTrustForm() {
       const payload = await response.json();
       if (response.status === 409 || payload.status === "tls-confirmation-required") {
         applyTargetInspection(payload);
-        showStep("review", { unlock: true });
+        wizard.showStep("review", { unlock: true });
         return false;
       }
       if (!response.ok) {
@@ -13719,7 +13681,7 @@ function initializeVcfTrustForm() {
         return false;
       }
       applyTargetInspection(payload);
-      maxUnlockedStepIndex = steps.length - 1;
+      wizard.setHighestStep("review");
       return true;
     } catch (_error) {
       showError("Could not inspect the target VCF API. Check connectivity and try again.");
@@ -13731,14 +13693,53 @@ function initializeVcfTrustForm() {
       }
     }
   };
-  cancel?.addEventListener("click", () => {
-    form.reset();
-    resetConfirmation();
-    maxUnlockedStepIndex = 0;
-    showStep("target");
-    if (dialog instanceof HTMLDialogElement) {
-      dialog.close();
-    }
+  wizard = window.AtlasoUiPatterns.createWizard({
+    form,
+    dialog,
+    steps,
+    onNext: async ({ step }) => {
+      if (step.id === "api") {
+        const ready = await inspectTarget();
+        return ready ? "review" : false;
+      }
+      return true;
+    },
+    onSubmit: async () => {
+      showError("");
+      if (submit instanceof HTMLButtonElement) submit.textContent = "Queueing task…";
+      try {
+        const response = await fetch(form.action, {
+          method: "POST",
+          body: new FormData(form),
+          credentials: "same-origin",
+          headers: { "X-Atlaso-VCF-Trust": "1" },
+        });
+        const payload = await response.json();
+        if (response.status === 409 && payload.status === "tls-confirmation-required") {
+          applyTargetInspection(payload);
+          wizard.showStep("review", { unlock: true });
+          if (submit instanceof HTMLButtonElement) submit.textContent = "Run trust task";
+          return { ok: false };
+        }
+        if (!response.ok) {
+          const messages = Array.isArray(payload.errors) ? payload.errors : [payload.error || "The VCF trust task could not be queued."];
+          if (submit instanceof HTMLButtonElement) submit.textContent = "Run trust task";
+          return { ok: false, message: messages.join(" ") };
+        }
+        if (submit instanceof HTMLButtonElement) submit.textContent = "Task queued";
+        wizard.markClean();
+        window.location.assign(payload.redirect || `/tasks?job_id=${encodeURIComponent(payload.job_id || "")}`);
+        return { ok: true, close: false };
+      } catch (_error) {
+        if (submit instanceof HTMLButtonElement) submit.textContent = "Run trust task";
+        return { ok: false, message: "The request could not be completed. Check connectivity and try again." };
+      }
+    },
+    closeOnSubmit: false,
+    onClose: () => {
+      form.reset();
+      resetConfirmation();
+    },
   });
   tlsCheckbox?.addEventListener("change", async () => {
     if (!(confirmedTls instanceof HTMLInputElement) || !(tlsCheckbox instanceof HTMLInputElement)) return;
@@ -13758,93 +13759,9 @@ function initializeVcfTrustForm() {
       if (reviewVersion instanceof HTMLElement) reviewVersion.textContent = "After TLS confirmation";
     }
   });
-  next?.addEventListener("click", async () => {
-    if (currentStep === "target") {
-      if (!validateStep("target")) return;
-      showStep("api", { unlock: true });
-      return;
-    }
-    if (currentStep === "api") {
-      const ready = await inspectTarget();
-      if (!ready) return;
-      showStep("review", { unlock: true });
-      return;
-    }
-    if (!validateStep(currentStep)) return;
-    const index = stepIndex(currentStep);
-    showStep(steps[Math.min(index + 1, steps.length - 1)].id, { unlock: true });
-  });
-  back?.addEventListener("click", () => {
-    const index = stepIndex(currentStep);
-    showStep(steps[Math.max(index - 1, 0)].id);
-  });
-  stepButtons.forEach((button) => {
-    button.addEventListener("click", () => {
-      const targetStep = button.dataset.step || "target";
-      if (stepIndex(targetStep) > stepIndex(currentStep) && !validateStep(currentStep)) return;
-      showStep(targetStep);
-    });
-  });
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    if (currentStep !== "review") {
-      next?.click();
-      return;
-    }
-    if (!validateStep(currentStep)) return;
-    errors?.classList.add("hidden");
-    if (submit instanceof HTMLButtonElement) {
-      submit.disabled = true;
-      submit.textContent = "Queueing task…";
-    }
-    try {
-      const response = await fetch(form.action, {
-        method: "POST",
-        body: new FormData(form),
-        credentials: "same-origin",
-        headers: { "X-Atlaso-VCF-Trust": "1" },
-      });
-      const payload = await response.json();
-      if (response.status === 409 && payload.status === "tls-confirmation-required") {
-        applyTargetInspection(payload);
-        showStep("review", { unlock: true });
-        if (submit instanceof HTMLButtonElement) {
-          submit.disabled = false;
-          submit.textContent = "Run trust task";
-        }
-        return;
-      }
-      if (!response.ok) {
-        const messages = Array.isArray(payload.errors) ? payload.errors : [payload.error || "The VCF trust task could not be queued."];
-        if (errors instanceof HTMLElement) {
-          errors.textContent = messages.join(" ");
-          errors.classList.remove("hidden");
-        }
-        if (submit instanceof HTMLButtonElement) {
-          submit.disabled = false;
-          submit.textContent = "Run trust task";
-        }
-        return;
-      }
-      if (submit instanceof HTMLButtonElement) {
-        submit.textContent = "Task queued";
-      }
-      window.location.assign(payload.redirect || `/tasks?job_id=${encodeURIComponent(payload.job_id || "")}`);
-    } catch (_error) {
-      if (errors instanceof HTMLElement) {
-        errors.textContent = "The request could not be completed. Check connectivity and try again.";
-        errors.classList.remove("hidden");
-      }
-      if (submit instanceof HTMLButtonElement) {
-        submit.disabled = false;
-        submit.textContent = "Run trust task";
-      }
-    }
-  });
   if (dialog instanceof HTMLDialogElement && dialog.hasAttribute("data-vcf-trust-auto-open") && !dialog.open) {
-    dialog.showModal();
+    wizard.open({ reset: false });
   }
-  showStep("target");
 }
 
 async function vcfHelperJson(url, method, payload) {
@@ -13874,17 +13791,10 @@ function initializeVcfSddcDeployment() {
   const dialog = document.getElementById("vcf-sddc-deploy-modal");
   if (!(form instanceof HTMLFormElement) || !(dialog instanceof HTMLDialogElement)) return;
   const open = document.querySelector("[data-vcf-sddc-deploy-open]");
-  const close = form.querySelector("[data-vcf-sddc-close]");
   const next = form.querySelector("[data-vcf-sddc-next]");
   const submit = form.querySelector("[data-vcf-sddc-submit]");
-  const back = form.querySelector("[data-vcf-sddc-back]");
   const errors = form.querySelector("[data-vcf-sddc-errors]");
   const confirmation = form.querySelector("[data-vcf-sddc-confirmation]");
-  const stepPages = [...form.querySelectorAll("[data-vcf-sddc-step]")];
-  const stepNavButtons = [...form.querySelectorAll("[data-vcf-sddc-step-nav]")];
-  const stepKicker = form.querySelector("[data-vcf-sddc-step-kicker]");
-  const stepTitle = form.querySelector("[data-vcf-sddc-step-title]");
-  const stepDescription = form.querySelector("[data-vcf-sddc-step-description]");
   const destination = form.querySelector("[data-vcf-sddc-destination]");
   const propertyContainer = form.querySelector("[data-vcf-sddc-properties]");
   const networkContainer = form.querySelector("[data-vcf-sddc-networks]");
@@ -13915,8 +13825,7 @@ function initializeVcfSddcDeployment() {
   let autoHostnameTouched = false;
   let pendingTlsAction = null;
   let pendingTlsFingerprint = "";
-  let currentStep = "source";
-  let maxUnlockedStepIndex = 0;
+  let wizard;
   const steps = [
     { id: "source", title: "vCenter / ESXi information", description: "Choose the SDDC Manager OVA and the vSphere endpoint used for discovery and import." },
     { id: "resources", title: "Resources and VM name", description: "Select the destination placement, datastore, network mapping, disk mode, and VM name." },
@@ -13948,47 +13857,6 @@ function initializeVcfSddcDeployment() {
     tlsConfirmation?.classList.add("hidden");
     pendingTlsAction = null;
     pendingTlsFingerprint = "";
-  };
-  const stepIndex = (step) => Math.max(0, steps.findIndex((item) => item.id === step));
-  const stepDefinition = (step) => steps[stepIndex(step)] || steps[0];
-  const controlsForStep = (step) => {
-    const page = form.querySelector(`[data-vcf-sddc-step="${CSS.escape(step)}"]`);
-    return page ? [...page.querySelectorAll("input, select, textarea")].filter((control) => !control.disabled) : [];
-  };
-  const validateStep = (step) => {
-    const invalid = controlsForStep(step).find((control) => typeof control.checkValidity === "function" && !control.checkValidity());
-    if (invalid && typeof invalid.reportValidity === "function") {
-      invalid.reportValidity();
-      return false;
-    }
-    return true;
-  };
-  const showStep = (step, { unlock = false } = {}) => {
-    const nextIndex = stepIndex(step);
-    if (unlock) maxUnlockedStepIndex = Math.max(maxUnlockedStepIndex, nextIndex);
-    if (nextIndex > maxUnlockedStepIndex) return;
-    currentStep = step;
-    const definition = stepDefinition(step);
-    stepPages.forEach((page) => page.classList.toggle("hidden", page.dataset.vcfSddcStep !== step));
-    stepNavButtons.forEach((button) => {
-      const index = stepIndex(button.dataset.step || "source");
-      button.disabled = index > maxUnlockedStepIndex;
-      button.classList.toggle("active", button.dataset.step === step);
-      button.classList.toggle("complete", index < nextIndex);
-    });
-    if (stepKicker instanceof HTMLElement) stepKicker.textContent = `Step ${nextIndex + 1} of ${steps.length}`;
-    if (stepTitle instanceof HTMLElement) stepTitle.textContent = definition.title;
-    if (stepDescription instanceof HTMLElement) stepDescription.textContent = definition.description;
-    back?.classList.toggle("hidden", nextIndex === 0);
-    if (next instanceof HTMLButtonElement) {
-      next.classList.toggle("hidden", nextIndex === steps.length - 1);
-      next.textContent = "Next";
-      next.disabled = false;
-    }
-    if (submit instanceof HTMLButtonElement) {
-      submit.classList.toggle("hidden", nextIndex !== steps.length - 1);
-      submit.disabled = nextIndex !== steps.length - 1;
-    }
   };
   const selectedOva = () => ovas.find((row) => row.path === ovaSelect?.value) || null;
   const propertyControl = (key) => propertyContainer instanceof HTMLElement ? propertyContainer.querySelector(`[data-ovf-key="${CSS.escape(key)}"]`) : null;
@@ -14138,8 +14006,6 @@ function initializeVcfSddcDeployment() {
     } catch (error) { showTaskError(error.message); }
   };
 
-  open?.addEventListener("click", () => { syncOva(); dialog.showModal(); });
-  close?.addEventListener("click", () => dialog.close());
   ovaSelect?.addEventListener("change", syncOva);
   vmName?.addEventListener("input", () => {
     if (assignmentMode?.value === "automatic" && !autoHostnameTouched) applyDhcpAssignment({ refreshHostname: true, refreshIp: false });
@@ -14153,7 +14019,7 @@ function initializeVcfSddcDeployment() {
   configureDepot?.addEventListener("change", syncPostPowerOptions);
   syncPostPowerOptions();
   const handleDiscover = async () => {
-    if (!validateStep("source")) return;
+    if (!(await wizard.validate("source"))) return false;
     showError(""); showConfirmation("");
     if (next instanceof HTMLButtonElement) {
       next.disabled = true;
@@ -14172,25 +14038,18 @@ function initializeVcfSddcDeployment() {
       fillVcfInventorySelect(form.elements.host_id, data.inventory?.hosts, "Automatic placement");
       renderNetworks(data.ova?.networks, data.inventory?.networks);
       renderProperties(data.ova?.properties);
-      maxUnlockedStepIndex = steps.length - 1;
-      showStep("resources");
+      wizard.setHighestStep("followup");
+      wizard.showStep("resources", { unlock: true });
+      return true;
     } catch (error) {
       showError(error.message);
+      return false;
     } finally {
       if (next instanceof HTMLButtonElement) {
         next.disabled = false;
         next.textContent = "Next";
       }
     }
-  };
-  const handleNext = async () => {
-    if (currentStep === "source") {
-      await handleDiscover();
-      return;
-    }
-    if (!validateStep(currentStep)) return;
-    const index = stepIndex(currentStep);
-    showStep(steps[Math.min(index + 1, steps.length - 1)].id);
   };
   const handleSubmit = async () => {
     showError(""); showTaskError("");
@@ -14203,35 +14062,41 @@ function initializeVcfSddcDeployment() {
       options: { power_on: shouldPowerOn, add_dns: form.elements.add_dns.checked, apply_trust: shouldPowerOn && form.elements.apply_trust.checked, configure_offline_depot: shouldPowerOn && form.elements.configure_offline_depot.checked, disk_provisioning: form.elements.disk_provisioning.value },
       depot_password: form.elements.depot_password.value,
     };
-    submit.disabled = true;
     try {
       const { response, data } = await vcfHelperJson("/vcf-helper/sddc-manager/deploy", "POST", payload);
-      if (response.status === 409 && data.status === "tls-confirmation-required") { showTlsConfirmation(data.fingerprint || "", handleSubmit); submit.disabled = false; return; }
+      if (response.status === 409 && data.status === "tls-confirmation-required") {
+        showTlsConfirmation(data.fingerprint || "", handleSubmit);
+        return { ok: false };
+      }
       activeJob = data.job_id;
+      wizard.markClean();
       window.location.assign(`/tasks?job_id=${encodeURIComponent(activeJob)}`);
-    } catch (error) { showError(error.message); submit.disabled = false; }
-  };
-  next?.addEventListener("click", handleNext);
-  back?.addEventListener("click", () => {
-    const index = stepIndex(currentStep);
-    showStep(steps[Math.max(index - 1, 0)].id);
-  });
-  stepNavButtons.forEach((button) => {
-    button.addEventListener("click", () => {
-      const targetStep = button.dataset.step || "source";
-      if (stepIndex(targetStep) > stepIndex(currentStep) && !validateStep(currentStep)) return;
-      showStep(targetStep);
-    });
-  });
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    if (currentStep !== "followup") {
-      await handleNext();
-      return;
+      return { ok: true, close: false };
+    } catch (error) {
+      return { ok: false, message: error.message };
     }
-    if (!validateStep(currentStep)) return;
-    await handleSubmit();
+  };
+  wizard = window.AtlasoUiPatterns.createWizard({
+    form,
+    dialog,
+    steps,
+    onNext: async ({ step }) => {
+      if (step.id !== "source") return true;
+      await handleDiscover();
+      return false;
+    },
+    onOpen: () => {
+      syncOva();
+      autoHostnameTouched = false;
+      hideTlsConfirmation();
+      showError("");
+      showConfirmation("");
+      syncPostPowerOptions();
+    },
+    onSubmit: handleSubmit,
+    closeOnSubmit: false,
   });
+  open?.addEventListener("click", (event) => wizard.open({ launcher: event.currentTarget }));
   tlsConfirmInput?.addEventListener("change", async () => {
     if (!(tlsConfirmInput instanceof HTMLInputElement) || !tlsConfirmInput.checked) return;
     if (tlsFingerprint instanceof HTMLInputElement) tlsFingerprint.value = pendingTlsFingerprint;
@@ -14240,7 +14105,6 @@ function initializeVcfSddcDeployment() {
     if (typeof action === "function") await action();
   });
   syncOva();
-  showStep("source");
 }
 
 function initializeVcfTargetDepotHelper() {
@@ -14251,12 +14115,6 @@ function initializeVcfTargetDepotHelper() {
   const tls = form.querySelector("[data-vcf-target-depot-tls-fingerprint]");
   const submit = form.querySelector("[data-vcf-target-depot-submit]");
   const next = form.querySelector("[data-vcf-target-depot-next]");
-  const back = form.querySelector("[data-vcf-target-depot-back]");
-  const stepPages = [...form.querySelectorAll("[data-vcf-target-depot-step]")];
-  const stepButtons = [...form.querySelectorAll("[data-vcf-target-depot-step-nav]")];
-  const stepKicker = form.querySelector("[data-vcf-target-depot-step-kicker]");
-  const stepTitle = form.querySelector("[data-vcf-target-depot-step-title]");
-  const stepDescription = form.querySelector("[data-vcf-target-depot-step-description]");
   const tlsConfirmation = form.querySelector("[data-vcf-target-depot-tls-confirmation]");
   const tlsConfirm = form.querySelector("[data-vcf-target-depot-tls-confirm]");
   const tlsConfirmationFingerprint = form.querySelector("[data-vcf-target-depot-tls-confirmation-fingerprint]");
@@ -14267,8 +14125,7 @@ function initializeVcfTargetDepotHelper() {
   const reviewTls = form.querySelector("[data-vcf-target-depot-review-tls]");
   const queueTarget = form.querySelector("[data-vcf-target-depot-queue-target]");
   const queueAction = form.querySelector("[data-vcf-target-depot-queue-action]");
-  let currentStep = "target";
-  let maxUnlockedStepIndex = 0;
+  let wizard;
   let inspected = null;
   let inspectedTls = "";
   const steps = [
@@ -14280,53 +14137,16 @@ function initializeVcfTargetDepotHelper() {
   ];
   const showError = (message) => { errors.textContent = message; errors.classList.toggle("hidden", !message); };
   const payload = () => ({ csrf: form.elements.csrf.value, address: form.elements.address.value.trim(), api_username: form.elements.api_username.value.trim(), api_password: form.elements.api_password.value, depot_password: form.elements.depot_password.value, confirmed_tls_fingerprint: form.elements.confirmed_tls_fingerprint.value, replace_existing: form.elements.replace_existing.checked });
-  const stepIndex = (step) => Math.max(0, steps.findIndex((item) => item.id === step));
-  const controlsForStep = (step) => {
-    const page = form.querySelector(`[data-vcf-target-depot-step="${CSS.escape(step)}"]`);
-    return page ? [...page.querySelectorAll("input, select, textarea")].filter((control) => !control.disabled) : [];
-  };
-  const validateStep = (step) => {
-    const invalid = controlsForStep(step).find((control) => typeof control.checkValidity === "function" && !control.checkValidity());
-    if (invalid && typeof invalid.reportValidity === "function") {
-      invalid.reportValidity();
-      return false;
-    }
-    return true;
-  };
-  const showStep = (step, { unlock = false } = {}) => {
-    const index = stepIndex(step);
-    if (unlock) maxUnlockedStepIndex = Math.max(maxUnlockedStepIndex, index);
-    if (index > maxUnlockedStepIndex) return;
-    currentStep = step;
-    const definition = steps[index] || steps[0];
-    stepPages.forEach((page) => page.classList.toggle("hidden", page.dataset.vcfTargetDepotStep !== step));
-    stepButtons.forEach((button) => {
-      const buttonIndex = stepIndex(button.dataset.step || "target");
-      button.disabled = buttonIndex > maxUnlockedStepIndex;
-      button.classList.toggle("active", button.dataset.step === step);
-      button.classList.toggle("complete", buttonIndex < index);
-    });
-    if (stepKicker instanceof HTMLElement) stepKicker.textContent = `Step ${index + 1} of ${steps.length}`;
-    if (stepTitle instanceof HTMLElement) stepTitle.textContent = definition.title;
-    if (stepDescription instanceof HTMLElement) stepDescription.textContent = definition.description;
-    back?.classList.toggle("hidden", index === 0);
-    next?.classList.toggle("hidden", index === steps.length - 1);
-    submit?.classList.toggle("hidden", index !== steps.length - 1);
-    if (submit instanceof HTMLButtonElement) submit.disabled = index !== steps.length - 1;
-  };
-  const reset = () => {
-    form.reset();
+  const resetInspection = () => {
     if (tls instanceof HTMLInputElement) tls.value = "";
     inspected = null;
     inspectedTls = "";
-    maxUnlockedStepIndex = 0;
     tlsConfirmation?.classList.add("hidden");
     if (tlsConfirm instanceof HTMLInputElement) {
       tlsConfirm.checked = false;
       tlsConfirm.required = false;
     }
     showError("");
-    showStep("target");
   };
   const renderCurrentDepot = (data) => {
     const hasTargetDetails = Boolean(data.target?.appliance);
@@ -14384,7 +14204,7 @@ function initializeVcfTargetDepotHelper() {
       const { response, data } = await vcfHelperJson("/vcf-helper/offline-depot/inspect-target", "POST", payload());
       if (response.status === 409 && data.status === "tls-confirmation-required") {
         renderCurrentDepot(data);
-        showStep("review", { unlock: true });
+        wizard.showStep("review", { unlock: true });
         return false;
       }
       renderCurrentDepot(data);
@@ -14399,8 +14219,56 @@ function initializeVcfTargetDepotHelper() {
       }
     }
   };
-  document.querySelector("[data-vcf-target-depot-open]")?.addEventListener("click", () => dialog.showModal());
-  form.querySelector("[data-vcf-target-depot-close]")?.addEventListener("click", () => { reset(); dialog.close(); });
+  wizard = window.AtlasoUiPatterns.createWizard({
+    form,
+    dialog,
+    steps,
+    onNext: async ({ step }) => {
+      if (step.id === "depot") {
+        const ready = await inspect();
+        return ready ? "review" : false;
+      }
+      if (step.id === "review") {
+        if (!inspected && !(tls instanceof HTMLInputElement && tls.value)) {
+          const ready = await inspect();
+          if (!ready) return false;
+        }
+        return "queue";
+      }
+      return true;
+    },
+    onOpen: resetInspection,
+    onClose: resetInspection,
+    onSubmit: async () => {
+      showError("");
+      if (submit instanceof HTMLButtonElement) submit.textContent = "Queueing task…";
+      try {
+        const { response, data } = await vcfHelperJson("/vcf-helper/offline-depot/configure", "POST", payload());
+        if (response.status === 409 && data.status === "replacement-confirmation-required") {
+          form.querySelector("[data-vcf-target-depot-replace-row]")?.classList.remove("hidden");
+          wizard.showStep("review", { unlock: true });
+          if (submit instanceof HTMLButtonElement) submit.textContent = "Configure and sync";
+          return { ok: false, message: "Confirm replacement of the existing target depot, then queue again." };
+        }
+        if (response.status === 409 && data.status === "tls-confirmation-required") {
+          renderCurrentDepot(data);
+          wizard.showStep("review", { unlock: true });
+          if (submit instanceof HTMLButtonElement) submit.textContent = "Configure and sync";
+          return { ok: false };
+        }
+        wizard.markClean();
+        window.location.assign(`/tasks?job_id=${encodeURIComponent(data.job_id || "")}`);
+        return { ok: true, close: false };
+      } catch (error) {
+        if (submit instanceof HTMLButtonElement) submit.textContent = "Configure and sync";
+        return { ok: false, message: error.message };
+      }
+    },
+    closeOnSubmit: false,
+  });
+  document.querySelector("[data-vcf-target-depot-open]")?.addEventListener("click", (event) => {
+    wizard.open({ launcher: event.currentTarget });
+  });
   tlsConfirm?.addEventListener("change", async () => {
     if (!(tlsConfirm instanceof HTMLInputElement) || !(tls instanceof HTMLInputElement)) return;
     tls.value = tlsConfirm.checked ? inspectedTls : "";
@@ -14417,70 +14285,6 @@ function initializeVcfTargetDepotHelper() {
       if (reviewVersion instanceof HTMLElement) reviewVersion.textContent = "After TLS confirmation";
     }
   });
-  next?.addEventListener("click", async () => {
-    if (!validateStep(currentStep)) return;
-    if (currentStep === "depot") {
-      const ready = await inspect();
-      if (!ready) return;
-      showStep("review", { unlock: true });
-      return;
-    }
-    if (currentStep === "review") {
-      if (!inspected && !(tls instanceof HTMLInputElement && tls.value)) {
-        const ready = await inspect();
-        if (!ready) return;
-      }
-      showStep("queue", { unlock: true });
-      return;
-    }
-    const index = stepIndex(currentStep);
-    showStep(steps[Math.min(index + 1, steps.length - 1)].id, { unlock: true });
-  });
-  back?.addEventListener("click", () => {
-    const index = stepIndex(currentStep);
-    showStep(steps[Math.max(index - 1, 0)].id);
-  });
-  stepButtons.forEach((button) => {
-    button.addEventListener("click", () => {
-      const targetStep = button.dataset.step || "target";
-      if (stepIndex(targetStep) > stepIndex(currentStep) && !validateStep(currentStep)) return;
-      showStep(targetStep);
-    });
-  });
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    showError("");
-    if (currentStep !== "queue") {
-      next?.click();
-      return;
-    }
-    if (!validateStep("queue")) return;
-    if (submit instanceof HTMLButtonElement) {
-      submit.disabled = true;
-      submit.textContent = "Queueing task…";
-    }
-    try {
-      const { response, data } = await vcfHelperJson("/vcf-helper/offline-depot/configure", "POST", payload());
-      if (response.status === 409 && data.status === "replacement-confirmation-required") {
-        form.querySelector("[data-vcf-target-depot-replace-row]")?.classList.remove("hidden");
-        showStep("review", { unlock: true });
-        showError("Confirm replacement of the existing target depot, then queue again.");
-        if (submit instanceof HTMLButtonElement) { submit.disabled = false; submit.textContent = "Configure and sync"; }
-        return;
-      }
-      if (response.status === 409 && data.status === "tls-confirmation-required") {
-        renderCurrentDepot(data);
-        showStep("review", { unlock: true });
-        if (submit instanceof HTMLButtonElement) { submit.disabled = false; submit.textContent = "Configure and sync"; }
-        return;
-      }
-      window.location.assign(`/tasks?job_id=${encodeURIComponent(data.job_id || "")}`);
-    } catch (error) {
-      showError(error.message);
-      if (submit instanceof HTMLButtonElement) { submit.disabled = false; submit.textContent = "Configure and sync"; }
-    }
-  });
-  showStep("target");
 }
 
 function escapeDashboardHtml(value) {
@@ -15091,14 +14895,6 @@ function initializeAutomationTables() {
       { id: "state", title: "Choose the initial state", description: "Enable the schedule now or save it disabled for review before the worker can queue it." },
       { id: "review", title: "Review the schedule", description: "Confirm the workflow, timing, inputs, and initial state." },
     ];
-    const wizardPages = [...scheduleForm.querySelectorAll("[data-automation-wizard-step]")];
-    const wizardNav = [...scheduleForm.querySelectorAll("[data-automation-wizard-nav]")];
-    const wizardKicker = scheduleForm.querySelector("[data-automation-wizard-kicker]");
-    const wizardTitle = scheduleForm.querySelector("[data-automation-wizard-title]");
-    const wizardDescription = scheduleForm.querySelector("[data-automation-wizard-description]");
-    const wizardErrors = scheduleForm.querySelector("[data-automation-wizard-errors]");
-    const wizardBack = scheduleForm.querySelector("[data-automation-wizard-back]");
-    const wizardNext = scheduleForm.querySelector("[data-automation-wizard-next]");
     const wizardSubmit = scheduleForm.querySelector("[data-automation-wizard-submit]");
     const wizardModalTitle = scheduleForm.querySelector("[data-automation-wizard-modal-title]");
     const configStepLabel = scheduleForm.querySelector("[data-automation-config-step-label]");
@@ -15117,14 +14913,7 @@ function initializeAutomationTables() {
     const cronCustom = scheduleForm.querySelector("[data-automation-cron-custom]");
     const cronSummary = scheduleForm.querySelector("[data-automation-cron-summary]");
     const cronPreview = scheduleForm.querySelector("[data-automation-cron-preview]");
-    let wizardStepIndex = 0;
-    let highestWizardStep = 0;
-
-    const showWizardError = (message = "") => {
-      if (!(wizardErrors instanceof HTMLElement)) return;
-      wizardErrors.textContent = message;
-      wizardErrors.classList.toggle("hidden", !message);
-    };
+    let scheduleWizard;
     const selectedScriptInterpreter = () => scriptRevision instanceof HTMLSelectElement
       ? String(scriptRevision.selectedOptions[0]?.dataset.interpreter || "bash")
       : "bash";
@@ -15176,7 +14965,7 @@ function initializeAutomationTables() {
             : value === "managed_script";
         element.classList.toggle("hidden", !visible);
       });
-      if (wizardSteps[wizardStepIndex]?.id === "config") showWizardStep(wizardStepIndex);
+      if (scheduleWizard?.currentStepId === "config") scheduleWizard.showStep("config");
     };
     const cronWeekdayNames = { "0": "Sunday", "1": "Monday", "2": "Tuesday", "3": "Wednesday", "4": "Thursday", "5": "Friday", "6": "Saturday" };
     const cronPartsFromTime = () => {
@@ -15252,43 +15041,22 @@ function initializeAutomationTables() {
       });
       if (value === "cron") updateCronBuilder();
     };
-    const showWizardStep = (index) => {
-      wizardStepIndex = Math.max(0, Math.min(index, wizardSteps.length - 1));
-      highestWizardStep = Math.max(highestWizardStep, wizardStepIndex);
-      const step = wizardSteps[wizardStepIndex];
-      wizardPages.forEach((page) => page.classList.toggle("hidden", page.getAttribute("data-automation-wizard-step") !== step.id));
-      wizardNav.forEach((button, buttonIndex) => {
-        button.classList.toggle("active", buttonIndex === wizardStepIndex);
-        button.disabled = buttonIndex > highestWizardStep;
-      });
-      if (wizardKicker instanceof HTMLElement) wizardKicker.textContent = `Step ${wizardStepIndex + 1} of ${wizardSteps.length}`;
-      if (wizardTitle instanceof HTMLElement) wizardTitle.textContent = step.title;
-      if (wizardDescription instanceof HTMLElement) wizardDescription.textContent = step.description;
-      wizardBack?.classList.toggle("hidden", wizardStepIndex === 0);
-      wizardNext?.classList.toggle("hidden", wizardStepIndex === wizardSteps.length - 1);
-      wizardSubmit?.classList.toggle("hidden", wizardStepIndex !== wizardSteps.length - 1);
-      showWizardError();
-    };
-    const validateWizardStep = () => {
-      const page = wizardPages[wizardStepIndex];
-      if (!(page instanceof HTMLElement)) return true;
+    const validateScheduleStep = ({ step }) => {
       const taskValue = taskType instanceof HTMLSelectElement ? taskType.value : "";
-      if (wizardSteps[wizardStepIndex].id === "config") {
+      if (step.id === "config") {
         if (taskValue.startsWith("appliance_update_") && !scheduleForm.querySelector('input[name="selected_streams"]:checked')) {
-          showWizardError("Select at least one update stream.");
-          return false;
+          return { valid: false, message: "Select at least one update stream." };
         }
         const requiredConfig = taskValue === "managed_script" ? "revision_id" : taskValue === "vcf_depot_download" ? "vcf_profile_id" : "";
         if (requiredConfig && !String(scheduleForm.elements[requiredConfig]?.value || "")) {
-          showWizardError(taskValue === "managed_script" ? "Choose an enabled managed script revision." : "Choose an enabled VCF Offline Depot profile.");
-          scheduleForm.elements[requiredConfig]?.focus();
-          return false;
+          return {
+            valid: false,
+            message: taskValue === "managed_script"
+              ? "Choose an enabled managed script revision."
+              : "Choose an enabled VCF Offline Depot profile.",
+            field: requiredConfig,
+          };
         }
-      }
-      const invalid = [...page.querySelectorAll("input, select")].find((control) => !control.closest(".hidden") && !control.checkValidity());
-      if (invalid) {
-        invalid.reportValidity();
-        return false;
       }
       return true;
     };
@@ -15320,8 +15088,13 @@ function initializeAutomationTables() {
       reviewValue("[data-automation-review-state]", scheduleForm.elements.enabled.checked ? "Enabled" : "Disabled");
       reviewValue("[data-automation-review-config]", configValue);
     };
-    const openScheduleWizard = (rowData = null) => {
-      scheduleForm.reset();
+    scheduleWizard = window.AtlasoUiPatterns.createWizard({
+      form: scheduleForm,
+      dialog: scheduleModal,
+      steps: wizardSteps,
+      validateStep: validateScheduleStep,
+      prepareReview: populateScheduleReview,
+      onOpen: ({ context: rowData }) => {
       scheduleForm.action = rowData ? `/automation/schedules/${rowData.id}/edit` : "/automation/schedules";
       if (wizardModalTitle instanceof HTMLElement) wizardModalTitle.textContent = rowData ? `Edit ${rowData.name}` : "Add schedule";
       if (wizardSubmit instanceof HTMLButtonElement) wizardSubmit.textContent = rowData ? "Update schedule" : "Create schedule";
@@ -15343,10 +15116,10 @@ function initializeAutomationTables() {
       loadCronBuilder(rowData?.cron_expression || "0 2 * * *");
       updateConfigVisibility();
       updateTimingVisibility();
-      highestWizardStep = 0;
-      showWizardStep(0);
-      scheduleModal.showModal();
-      window.requestAnimationFrame(() => scheduleForm.elements.name.focus({ preventScroll: true }));
+      },
+    });
+    const openScheduleWizard = (rowData = null, launcher = null) => {
+      scheduleWizard.open({ context: rowData, launcher });
     };
     taskType?.addEventListener("change", updateConfigVisibility);
     scriptRevision?.addEventListener("change", updateScriptArgumentsGuidance);
@@ -15356,23 +15129,7 @@ function initializeAutomationTables() {
       control?.addEventListener("change", updateCronBuilder);
     });
     scheduleForm.elements.timezone_name?.addEventListener("input", updateCronBuilder);
-    wizardNext?.addEventListener("click", () => {
-      if (!validateWizardStep()) return;
-      if (wizardStepIndex + 1 === wizardSteps.length - 1) populateScheduleReview();
-      showWizardStep(wizardStepIndex + 1);
-    });
-    wizardBack?.addEventListener("click", () => showWizardStep(wizardStepIndex - 1));
-    wizardNav.forEach((button, index) => button.addEventListener("click", () => {
-      if (index <= highestWizardStep) {
-        if (index === wizardSteps.length - 1) populateScheduleReview();
-        showWizardStep(index);
-      }
-    }));
-    scheduleForm.querySelector("[data-automation-schedule-modal-cancel]")?.addEventListener("click", () => scheduleModal.close());
-    scheduleForm.addEventListener("submit", (event) => {
-      if (wizardStepIndex !== wizardSteps.length - 1 || !validateWizardStep()) event.preventDefault();
-    });
-    schedulesElement.atlasoTabulator = new Tabulator(schedulesElement, {
+    schedulesElement.atlasoTabulator = /* atlaso-legacy-tabulator: #117 */ new Tabulator(schedulesElement, {
       data: scheduleRows,
       layout: "fitColumns",
       placeholder: "No automation schedules have been created.",
@@ -15386,7 +15143,7 @@ function initializeAutomationTables() {
         {
           label: "Edit schedule",
           disabled: (component) => component.getData().is_new,
-          action: (_event, row) => openScheduleWizard(row.getData()),
+          action: (_event, row) => openScheduleWizard(row.getData(), row.getElement()),
         },
         {
           label: "Delete schedule",
@@ -15400,8 +15157,8 @@ function initializeAutomationTables() {
           field: "name",
           minWidth: 150,
           formatter: (cell) => cell.getRow().getData().is_new ? '<button class="add-row-button" type="button">+ Add schedule here</button>' : escapeHtml(cell.getValue()),
-          cellClick: (_event, cell) => {
-            if (cell.getRow().getData().is_new) openScheduleWizard();
+          cellClick: (event, cell) => {
+            if (cell.getRow().getData().is_new) openScheduleWizard(null, event?.target);
           },
         },
         { title: "Task", field: "task_type", minWidth: 150, formatter: (cell) => cell.getRow().getData().is_new ? "" : String(cell.getValue() || "").replaceAll("_", " ") },
@@ -15423,7 +15180,7 @@ function initializeAutomationTables() {
     const openExecutionTask = (rowData) => {
       if (rowData?.task_url) window.location.assign(rowData.task_url);
     };
-    executionsElement.atlasoTabulator = new Tabulator(executionsElement, {
+    executionsElement.atlasoTabulator = /* atlaso-legacy-tabulator: #117 */ new Tabulator(executionsElement, {
       data: executionRows,
       layout: "fitColumns",
       height: "100%",
@@ -15539,7 +15296,7 @@ function initializeAutomationTables() {
       showScriptGridStatus("Creating the first immutable disabled revision…");
       form.requestSubmit();
     };
-    scriptsElement.atlasoTabulator = new Tabulator(scriptsElement, {
+    scriptsElement.atlasoTabulator = /* atlaso-legacy-tabulator: #117 */ new Tabulator(scriptsElement, {
       data: scriptRows,
       layout: "fitColumns",
       placeholder: "No managed scripts have been created.",
@@ -15666,7 +15423,7 @@ function initializeEsxStorageTables() {
     const canWrite = volumeElement.dataset.canWrite === "true";
     const tableRows = canWrite ? [...rows, { is_new: true, name: "" }] : rows;
     const volumeValue = (cell, formatter = (value) => value) => cell.getRow().getData().is_new ? "" : formatter(cell.getValue());
-    new Tabulator(volumeElement, {
+    /* atlaso-legacy-tabulator: #117 */ new Tabulator(volumeElement, {
       data: tableRows,
       layout: "fitColumns",
       placeholder: "No storage volumes are configured.",
@@ -15726,7 +15483,7 @@ function initializeEsxStorageTables() {
       const form = document.querySelector('[data-esx-storage-wizard="share"]');
       form?.esxStorageOpenWizard?.(data);
     };
-    new Tabulator(shareElement, {
+    /* atlaso-legacy-tabulator: #117 */ new Tabulator(shareElement, {
       data: tableRows,
       layout: "fitColumns",
       placeholder: "No NFS datastores are configured.",
@@ -15776,16 +15533,16 @@ function initializeEsxStorageTables() {
 function initializeEsxStorageWizards() {
   const configurations = {
     volume: [
-      ["Name the volume", "Choose a stable Atlaso name and how storage is supplied."],
-      ["Select storage", "Choose the eligible whole disk or mounted ext4 filesystem backing this volume."],
-      ["Review the volume", "Confirm the desired state and the formatting safety boundary."],
+      { id: "identity", title: "Name the volume", description: "Choose a stable Atlaso name and how storage is supplied." },
+      { id: "storage", title: "Select storage", description: "Choose the eligible whole disk or mounted ext4 filesystem backing this volume." },
+      { id: "review", title: "Review the volume", description: "Confirm the desired state and the formatting safety boundary." },
     ],
     share: [
-      ["Define the datastore", "Choose its ESX identity and contained directory."],
-      ["Choose the endpoint", "Select one interface/VLAN, NFS version, and equal IPv4/IPv6 exposure."],
-      ["Choose VMkernel access", "Restrict each enabled family to specific clients, or leave it empty to allow anyone."],
-      ["Choose datastore state", "Enable the datastore now or keep it disabled desired state without deleting backing data."],
-      ["Review the datastore", "Confirm the datastore, endpoint, and family-aware client allowlists."],
+      { id: "identity", title: "Define the datastore", description: "Choose its ESX identity and contained directory." },
+      { id: "endpoint", title: "Choose the endpoint", description: "Select one interface/VLAN, NFS version, and equal IPv4/IPv6 exposure." },
+      { id: "clients", title: "Choose VMkernel access", description: "Restrict each enabled family to specific clients, or leave it empty to allow anyone." },
+      { id: "state", title: "Choose datastore state", description: "Enable the datastore now or keep it disabled desired state without deleting backing data." },
+      { id: "review", title: "Review the datastore", description: "Confirm the datastore, endpoint, and family-aware client allowlists." },
     ],
   };
   const forms = new Map();
@@ -15800,25 +15557,8 @@ function initializeEsxStorageWizards() {
     const steps = configurations[kind];
     const modal = form.closest("dialog");
     if (!steps || !(modal instanceof HTMLDialogElement)) return;
-    forms.set(kind, { form, modal });
-    const pages = [...form.querySelectorAll("[data-esx-storage-wizard-step]")];
-    const navButtons = [...form.querySelectorAll("[data-esx-storage-wizard-nav]")];
-    const kicker = form.querySelector("[data-esx-storage-wizard-kicker]");
-    const title = form.querySelector("[data-esx-storage-wizard-title]");
-    const description = form.querySelector("[data-esx-storage-wizard-description]");
-    const error = form.querySelector("[data-esx-storage-wizard-error]");
     const modalTitle = form.querySelector("[data-esx-storage-wizard-modal-title]");
-    const back = form.querySelector("[data-esx-storage-wizard-back]");
-    const next = form.querySelector("[data-esx-storage-wizard-next]");
     const submit = form.querySelector("[data-esx-storage-wizard-submit]");
-    let currentStep = 0;
-    let highestStep = 0;
-
-    const showError = (message = "") => {
-      if (!(error instanceof HTMLElement)) return;
-      error.textContent = message;
-      error.classList.toggle("hidden", !message);
-    };
     const populateReview = () => {
       if (kind === "volume") {
         const source = form.elements.source_type;
@@ -15841,41 +15581,24 @@ function initializeEsxStorageWizards() {
       setReviewValue(form, "share-endpoint", `${form.elements.interface_name.value} · ${families.join(" + ")}`);
       setReviewValue(form, "share-clients", clients.join(" · "));
     };
-    const showStep = (index) => {
-      currentStep = Math.max(0, Math.min(index, pages.length - 1));
-      highestStep = Math.max(highestStep, currentStep);
-      pages.forEach((page, pageIndex) => page.classList.toggle("hidden", pageIndex !== currentStep));
-      navButtons.forEach((button, buttonIndex) => {
-        button.classList.toggle("active", buttonIndex === currentStep);
-        button.classList.toggle("complete", buttonIndex < currentStep);
-        button.disabled = buttonIndex > highestStep;
-      });
-      if (kicker instanceof HTMLElement) kicker.textContent = `Step ${currentStep + 1} of ${pages.length}`;
-      if (title instanceof HTMLElement) title.textContent = steps[currentStep][0];
-      if (description instanceof HTMLElement) description.textContent = steps[currentStep][1];
-      back?.classList.toggle("hidden", currentStep === 0);
-      next?.classList.toggle("hidden", currentStep === pages.length - 1);
-      submit?.classList.toggle("hidden", currentStep !== pages.length - 1);
-      if (currentStep === pages.length - 1) populateReview();
-      showError();
-    };
-    const validateStep = () => {
-      const page = pages[currentStep];
-      if (!(page instanceof HTMLElement)) return true;
-      const invalid = [...page.querySelectorAll("input, select, textarea")].find((control) => !control.closest("[hidden], .hidden") && !control.checkValidity());
-      if (invalid) {
-        invalid.reportValidity();
-        return false;
-      }
-      if (kind === "share" && currentStep === 1 && !form.querySelector('input[name="address_families"]:checked')) {
-        showError("Enable IPv4, IPv6, or both for this datastore.");
-        return false;
+    const validateStep = ({ step }) => {
+      if (kind === "share" && step.id === "endpoint" && !form.querySelector('input[name="address_families"]:checked')) {
+        return {
+          valid: false,
+          message: "Enable IPv4, IPv6, or both for this datastore.",
+        };
       }
       return true;
     };
     const defaultAction = form.action;
-    const openWizard = (row = null) => {
-      form.reset();
+    let wizard;
+    wizard = window.AtlasoUiPatterns.createWizard({
+      form,
+      dialog: modal,
+      steps,
+      validateStep,
+      prepareReview: populateReview,
+      onOpen: ({ context: row }) => {
       const editing = kind === "share" && row && row.id;
       form.action = editing ? `/esx-storage/shares/${row.id}` : defaultAction;
       if (modalTitle instanceof HTMLElement) modalTitle.textContent = editing ? "Edit NFS datastore" : kind === "share" ? "Add NFS datastore" : "Add storage volume";
@@ -15893,44 +15616,37 @@ function initializeEsxStorageWizards() {
         form.elements.ipv6_clients.value = (row.ipv6_clients || []).join("\n");
         form.elements.enabled.checked = row.enabled !== false;
       }
-      highestStep = 0;
       form.querySelector("[data-esx-storage-volume-source]")?.dispatchEvent(new Event("change"));
       if (!editing) form.querySelector("[data-esx-storage-interface]")?.dispatchEvent(new Event("change"));
-      showStep(0);
-      modal.showModal();
-      window.requestAnimationFrame(() => pages[0]?.querySelector("input, select")?.focus({ preventScroll: true }));
-    };
-    form.esxStorageOpenWizard = openWizard;
-    next?.addEventListener("click", () => { if (validateStep()) showStep(currentStep + 1); });
-    back?.addEventListener("click", () => showStep(currentStep - 1));
-    navButtons.forEach((button, index) => button.addEventListener("click", () => { if (index <= highestStep) showStep(index); }));
-    form.querySelector("[data-esx-storage-wizard-cancel]")?.addEventListener("click", () => modal.close());
-    form.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      if (currentStep !== pages.length - 1 || !validateStep()) return;
-      if (submit instanceof HTMLButtonElement) submit.disabled = true;
-      showError();
-      try {
-        const response = await fetch(form.action, {
-          method: "POST",
-          headers: { Accept: "application/json" },
-          body: new FormData(form),
-        });
-        if (!response.ok) {
-          const payload = await response.json().catch(() => ({}));
-          showError(payload.detail || "The ESX Storage change could not be saved.");
-          return;
+      },
+      onSubmit: async () => {
+        try {
+          const response = await fetch(form.action, {
+            method: "POST",
+            headers: { Accept: "application/json" },
+            body: new FormData(form),
+          });
+          if (!response.ok) {
+            const payload = await response.json().catch(() => ({}));
+            return { ok: false, message: payload.detail || "The ESX Storage change could not be saved." };
+          }
+          const target = kind === "volume" ? "/esx-storage#storage-volumes" : "/esx-storage#nfs-datastores";
+          wizard.markClean();
+          window.history.replaceState(null, "", target);
+          window.location.reload();
+          return { ok: true, close: false };
+        } catch (_error) {
+          return {
+            ok: false,
+            message: "The ESX Storage change could not be saved. Check the connection and try again.",
+          };
         }
-        const target = kind === "volume" ? "/esx-storage#storage-volumes" : "/esx-storage#nfs-datastores";
-        modal.close();
-        window.history.replaceState(null, "", target);
-        window.location.reload();
-      } catch (_error) {
-        showError("The ESX Storage change could not be saved. Check the connection and try again.");
-      } finally {
-        if (submit instanceof HTMLButtonElement) submit.disabled = false;
-      }
+      },
+      closeOnSubmit: false,
     });
+    const openWizard = (row = null, launcher = null) => wizard.open({ context: row, launcher });
+    form.esxStorageOpenWizard = openWizard;
+    forms.set(kind, { form, modal, wizard });
   });
 
   document.addEventListener("click", (event) => {
@@ -15938,7 +15654,7 @@ function initializeEsxStorageWizards() {
     const trigger = event.target.closest("[data-esx-storage-wizard-open]");
     if (!(trigger instanceof HTMLElement)) return;
     const entry = forms.get(trigger.dataset.esxStorageWizardOpen);
-    entry?.form.esxStorageOpenWizard?.();
+    entry?.form.esxStorageOpenWizard?.(null, trigger);
   });
 }
 

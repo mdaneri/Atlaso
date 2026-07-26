@@ -795,7 +795,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v166" in service_worker.text
+    assert "atlaso-pwa-v169" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -807,8 +807,9 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/codemirror/atlaso-codemirror.min.js" in service_worker.text
-    assert "/static/app.css?v=atlaso-brand-20260725-2" in service_worker.text
-    assert "/static/app.js?v=atlaso-brand-20260725-5" in service_worker.text
+    assert "/static/app.css?v=atlaso-ui-foundation-20260726-1" in service_worker.text
+    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-2" in service_worker.text
+    assert "/static/app.js?v=atlaso-ui-foundation-20260726-2" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -817,7 +818,59 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=atlaso-brand-20260725-2" in offline.text
+    assert "/static/app.css?v=atlaso-ui-foundation-20260726-1" in offline.text
+
+
+def test_shared_ui_pattern_shell_and_wizard_contracts(client):
+    import re
+    from pathlib import Path
+
+    templates = Path("atlaso/app/templates")
+    base = (templates / "base.html").read_text(encoding="utf-8")
+    public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
+    for shell in (base, public_base):
+        assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
+            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-2"
+        )
+        assert shell.index(
+            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-2"
+        ) < shell.index("/static/app.js?v=atlaso-ui-foundation-20260726-2")
+
+    wizard_templates = [
+        templates / "automation.html",
+        templates / "esx_storage.html",
+        templates / "partials" / "vcf_trust_modal.html",
+        templates / "partials" / "vcf_sddc_deploy_modal.html",
+        templates / "partials" / "vcf_target_depot_modal.html",
+    ]
+    wizard_markup = "\n".join(
+        path.read_text(encoding="utf-8") for path in wizard_templates
+    )
+    assert len(re.findall(r"<form\b[^>]*\bdata-atlaso-wizard(?:\s|>)", wizard_markup)) == 6
+    for marker in (
+        "data-atlaso-wizard-step=",
+        "data-atlaso-wizard-nav=",
+        "data-atlaso-wizard-cancel",
+        "data-atlaso-wizard-back",
+        "data-atlaso-wizard-next",
+        "data-atlaso-wizard-submit",
+        "data-atlaso-wizard-error",
+    ):
+        assert wizard_markup.count(marker) >= 6
+
+    foundation = client.get("/static/ui-patterns.js")
+    assert foundation.status_code == 200
+    assert "global.AtlasoUiPatterns" in foundation.text
+    assert "createGrid" in foundation.text
+    assert "createWizard" in foundation.text
+    assert "button:not([disabled]):not([tabindex='-1'])" in foundation.text
+    app_js = client.get("/static/app.js")
+    assert app_js.status_code == 200
+    assert 'control.setAttribute("tabindex", "-1")' in app_js.text
+    assert 'event.target.closest(".help-icon")' in app_js.text
+    app_css = client.get("/static/app.css")
+    assert app_css.status_code == 200
+    assert "height: min(720px, calc(100vh - 48px));" in app_css.text
 
 
 def test_reported_template_accessibility_contracts():
@@ -883,8 +936,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=atlaso-brand-20260725-2" in page.text
-    assert "/static/app.js?v=atlaso-brand-20260725-5" in page.text
+    assert "/static/app.css?v=atlaso-ui-foundation-20260726-1" in page.text
+    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-2" in page.text
+    assert "/static/app.js?v=atlaso-ui-foundation-20260726-2" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -12421,8 +12475,8 @@ def test_vcf_helper_page_renders_domain_dropdown(client):
     assert 'next.textContent = "Next"' in app_js
     assert "power_on: shouldPowerOn" in app_js
     assert "add_dns: form.elements.add_dns.checked" in app_js
-    assert "showStep(\"resources\")" in app_js
-    assert "showStep(\"source\")" in app_js
+    assert 'wizard.showStep("resources", { unlock: true })' in app_js
+    assert '{ id: "source", title: "vCenter / ESXi information"' in app_js
     assert "initializeVcfSddcDeployment" in app_js
     assert "initializeVcfTargetDepotHelper" in app_js
     assert "/vcf-helper/offline-depot/inspect-target" in app_js

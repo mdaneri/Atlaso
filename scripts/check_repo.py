@@ -60,6 +60,34 @@ TEXT_SUFFIXES = {
 }
 
 MARKDOWN_LINK_RE = re.compile(r"!?\[[^\]]+\]\(([^)]+)\)")
+TABULATOR_CONSTRUCTOR_RE = re.compile(
+    r"\bnew\s+(?:(?:window|globalThis|global)\.)?Tabulator\s*\("
+)
+HTML_FORM_RE = re.compile(
+    r"<form\b(?P<attributes>[^>]*)>(?P<body>.*?)</form>",
+    re.IGNORECASE | re.DOTALL,
+)
+UI_PATTERN_FOUNDATION = Path("atlaso/app/static/ui-patterns.js")
+LEGACY_TABULATOR_PATH = Path("atlaso/app/static/app.js")
+LEGACY_TABULATOR_MARKER = "atlaso-legacy-tabulator: #117"
+EXPECTED_LEGACY_TABULATOR_COUNT = 35
+WIZARD_REQUIRED_MARKERS = (
+    "data-atlaso-wizard-step",
+    "data-atlaso-wizard-nav",
+    "data-atlaso-wizard-error",
+    "data-atlaso-wizard-back",
+    "data-atlaso-wizard-next",
+    "data-atlaso-wizard-cancel",
+    "data-atlaso-wizard-submit",
+)
+FORBIDDEN_PAGE_WIZARD_CONTROLLER_MARKERS = (
+    'querySelectorAll("[data-atlaso-wizard-step]")',
+    "querySelectorAll('[data-atlaso-wizard-step]')",
+    'querySelectorAll("[data-atlaso-wizard-nav]")',
+    "querySelectorAll('[data-atlaso-wizard-nav]')",
+    "dataset.atlasoWizardStep",
+    "dataset.atlasoWizardNav",
+)
 
 REQUIRED_POLICY_MARKERS = {
     Path("AGENTS.md"): (
@@ -74,6 +102,8 @@ REQUIRED_POLICY_MARKERS = {
         "direct-edit Tabulator",
         "custom/other",
         "explicit maintainer approval",
+        "AtlasoUiPatterns.createGrid",
+        "AtlasoUiPatterns.createWizard",
     ),
     Path("CONTRIBUTING.md"): (
         "## Automated contributors and coding agents",
@@ -83,6 +113,8 @@ REQUIRED_POLICY_MARKERS = {
         "docs/contribute/ui-design-guide.md",
         "custom/other",
         "delegated agent",
+        "AtlasoUiPatterns.createGrid",
+        "AtlasoUiPatterns.createWizard",
     ),
     Path(".github/copilot-instructions.md"): (
         "Mandatory Agent Startup Gate",
@@ -93,12 +125,16 @@ REQUIRED_POLICY_MARKERS = {
         "docs/contribute/ui-design-guide.md",
         "custom/other",
         "linked GitHub issue",
+        "AtlasoUiPatterns.createGrid",
+        "AtlasoUiPatterns.createWizard",
     ),
     Path(".github/pull_request_template.md"): (
         "Closes #",
         "Mandatory Agent Startup Gate",
         "docs/contribute/ui-design-guide.md",
         "custom/other",
+        "AtlasoUiPatterns.createGrid",
+        "AtlasoUiPatterns.createWizard",
     ),
     Path("docs/contribute/ui-design-guide.md"): (
         "# Atlaso UI Design Guide",
@@ -111,6 +147,8 @@ REQUIRED_POLICY_MARKERS = {
         "Reviewed semantic-table exemptions",
         "Custom/other",
         "explicit maintainer approval",
+        "AtlasoUiPatterns.createGrid",
+        "AtlasoUiPatterns.createWizard",
     ),
 }
 
@@ -352,6 +390,117 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
     return findings
 
 
+def check_ui_pattern_foundation(root: Path) -> list[Finding]:
+    """Require new grids and every wizard to use the shared browser foundation."""
+    findings: list[Finding] = []
+    foundation_path = root / UI_PATTERN_FOUNDATION
+    foundation_text, foundation_error = read_text(foundation_path)
+    if foundation_error is not None:
+        return [Finding(foundation_path, "shared UI-pattern foundation is missing or unreadable")]
+    assert foundation_text is not None
+    for marker in ("AtlasoUiPatterns", "createGrid", "createWizard"):
+        if marker not in foundation_text:
+            findings.append(Finding(foundation_path, f"shared UI-pattern API marker is missing: {marker}"))
+
+    static_root = root / "atlaso" / "app" / "static"
+    for path in static_root.rglob("*.js") if static_root.exists() else []:
+        relative = path.relative_to(root)
+        if relative.is_relative_to(Path("atlaso/app/static/vendor")):
+            continue
+        text, error = read_text(path)
+        if error is not None:
+            findings.append(error)
+            continue
+        assert text is not None
+        constructors = list(TABULATOR_CONSTRUCTOR_RE.finditer(text))
+        if relative == UI_PATTERN_FOUNDATION:
+            if len(constructors) != 1:
+                findings.append(
+                    Finding(path, "shared UI-pattern foundation must contain exactly one Tabulator constructor")
+                )
+        else:
+            if relative == LEGACY_TABULATOR_PATH:
+                marker_count = text.count(LEGACY_TABULATOR_MARKER)
+                if (
+                    len(constructors) != EXPECTED_LEGACY_TABULATOR_COUNT
+                    or marker_count != EXPECTED_LEGACY_TABULATOR_COUNT
+                ):
+                    findings.append(
+                        Finding(
+                            path,
+                            "app.js must retain exactly "
+                            f"{EXPECTED_LEGACY_TABULATOR_COUNT} marked #117 Tabulator migration sites",
+                        )
+                    )
+            for match in constructors:
+                line_start = text.rfind("\n", 0, match.start()) + 1
+                prefix = text[line_start:match.start()]
+                if relative != LEGACY_TABULATOR_PATH or LEGACY_TABULATOR_MARKER not in prefix:
+                    findings.append(
+                        Finding(
+                            path,
+                            "raw Tabulator construction is forbidden; use AtlasoUiPatterns.createGrid",
+                            line_for_offset(text, match.start()),
+                        )
+                    )
+            if LEGACY_TABULATOR_MARKER in text and relative != LEGACY_TABULATOR_PATH:
+                findings.append(
+                    Finding(path, "the #117 legacy Tabulator marker is allowed only in app.js")
+                )
+        if relative != UI_PATTERN_FOUNDATION:
+            for marker in FORBIDDEN_PAGE_WIZARD_CONTROLLER_MARKERS:
+                offset = text.find(marker)
+                if offset >= 0:
+                    findings.append(
+                        Finding(
+                            path,
+                            "page-specific wizard step control is forbidden; use AtlasoUiPatterns.createWizard",
+                            line_for_offset(text, offset),
+                        )
+                    )
+
+    template_root = root / "atlaso" / "app" / "templates"
+    for path in template_root.rglob("*.html") if template_root.exists() else []:
+        text, error = read_text(path)
+        if error is not None:
+            findings.append(error)
+            continue
+        assert text is not None
+        for match in TABULATOR_CONSTRUCTOR_RE.finditer(text):
+            findings.append(
+                Finding(
+                    path,
+                    "raw Tabulator construction is forbidden; use AtlasoUiPatterns.createGrid",
+                    line_for_offset(text, match.start()),
+                )
+            )
+        for match in HTML_FORM_RE.finditer(text):
+            attributes = match.group("attributes")
+            body = match.group("body")
+            if "wizard" not in attributes.lower():
+                continue
+            if "data-atlaso-wizard" not in attributes:
+                findings.append(
+                    Finding(
+                        path,
+                        "wizard form must declare data-atlaso-wizard",
+                        line_for_offset(text, match.start()),
+                    )
+                )
+                continue
+            form_text = attributes + body
+            for marker in WIZARD_REQUIRED_MARKERS:
+                if marker not in form_text:
+                    findings.append(
+                        Finding(
+                            path,
+                            f"wizard form is missing shared foundation marker: {marker}",
+                            line_for_offset(text, match.start()),
+                        )
+                    )
+    return findings
+
+
 def check_xmlish_svg(path: Path, text: str) -> list[Finding]:
     import xml.etree.ElementTree as ET
 
@@ -372,6 +521,7 @@ def main(argv: list[str] | None = None) -> int:
     for path in files:
         findings.extend(check_file(path))
     findings.extend(check_agent_policy_gate(ROOT))
+    findings.extend(check_ui_pattern_foundation(ROOT))
 
     if findings:
         print(f"Repository checks failed with {len(findings)} issue(s):", file=sys.stderr)

@@ -17,6 +17,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   privacy-safe external group mappings.
 - [Technical reference](docs/reference/index.md) — API, image building, lifecycle testing, and detailed behavior.
 - [Contributing](CONTRIBUTING.md) — issue, version, validation, and pull-request requirements.
+- [UI Design Guide](docs/contribute/ui-design-guide.md) — approved Atlaso patterns and the shared
+  `AtlasoUiPatterns.createGrid(...)` / `createWizard(...)` browser foundation.
 
 ## Supported appliance targets
 
