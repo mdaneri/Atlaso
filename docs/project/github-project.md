@@ -65,7 +65,12 @@ Complexity, or Milestone values and triage them.
 
 ## Organization migration
 
-When Atlaso moves to the `atlaso-project` organization, move this project with the repository through GitHub account
-settings. After the move, verify the repository link and auto-add workflow and update this page to the organization-owned
-project URL. Do not copy the project as a migration mechanism because a copy does not include the project items,
-collaborators, repository link, or auto-add workflow.
+GitHub does not transfer a user-owned project when its repository moves to an organization. When Atlaso moves to the
+`atlaso-project` organization, create an organization-owned **Atlaso Development** project and rebuild its fields,
+views, charts, collaborators, repository link, and workflows from this page. Re-import every transferred repository
+issue and pull request, reconcile the old and new projects by node ID, and update this page to the organization-owned
+project URL.
+
+A project copy can provide a starting layout, but it does not include items, collaborators, repository links, or
+auto-add workflows. Keep the user-owned project available as a read-only migration record until the organization-owned
+project is complete and the inventory reconciliation passes.
