@@ -747,6 +747,34 @@ function Invoke-ApplianceGuestScript {
     }
 }
 
+function Test-ApplianceOpenApi {
+    param([string]$Url)
+
+    $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+    if ($curl) {
+        & $curl.Source -k -f -sS $Url 2>$null | Out-Null
+        return $LASTEXITCODE -eq 0
+    }
+
+    try {
+        $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -SkipCertificateCheck -TimeoutSec 10
+        return $response.StatusCode -eq 200
+    } catch [System.Management.Automation.ParameterBindingException] {
+        $previousCallback = [System.Net.ServicePointManager]::ServerCertificateValidationCallback
+        try {
+            [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+            $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 10
+            return $response.StatusCode -eq 200
+        } catch {
+            return $false
+        } finally {
+            [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $previousCallback
+        }
+    } catch {
+        return $false
+    }
+}
+
 function Sync-ApplianceHelperScript {
     param([string]$ApplianceVmx)
 
@@ -801,12 +829,8 @@ function Sync-ApplianceApplicationWheel {
 
     $deadline = (Get-Date).AddMinutes(3)
     do {
-        try {
-            $response = Invoke-WebRequest -Uri "$ApplianceUrl/openapi.json" -UseBasicParsing -TimeoutSec 10
-            if ($response.StatusCode -eq 200) {
-                return $wheel.FullName
-            }
-        } catch {
+        if (Test-ApplianceOpenApi -Url "$ApplianceUrl/openapi.json") {
+            return $wheel.FullName
         }
         Start-Sleep -Seconds 5
     } while ((Get-Date) -lt $deadline)

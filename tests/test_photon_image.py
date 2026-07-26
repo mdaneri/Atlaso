@@ -866,6 +866,9 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "'getGuestIPAddress', $Path" in runner
     assert "-TimeoutSeconds 15" in runner
     assert "function Get-PlinkHostKey" in runner
+    assert "function Test-ApplianceOpenApi" in runner
+    assert "& $curl.Source -k -f -sS $Url" in runner
+    assert "ServerCertificateValidationCallback = { $true }" in runner
     assert "$applianceHostKey = Get-PlinkHostKey -HostName $ApplianceIPAddress" in runner
     assert "'--appliance-ssh-hostkey', $applianceHostKey" in runner
     assert "'--client-a-hostkey', $clientAHostKey" in runner
