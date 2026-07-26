@@ -47,6 +47,23 @@ discussion state and do not replace a type label on active work.
 `main` accepts squash merges only after required checks pass. Do not commit
 directly to `main`.
 
+### Dependabot version updates
+
+GitHub-managed version-update pull requests generated from
+`.github/dependabot.yml` are the narrow exception to the pre-existing issue and
+per-update documentation requirements. Dependabot pull requests must carry the
+`enhancement` type label and `dependencies`, and they remain subject to the
+normal version bump, CI, maintainer review, and squash-merge gates.
+
+Dependabot can update Atlaso's Python input manifests, but Atlaso's custom
+`.lock` filenames and appliance declaration fingerprint are stricter than the
+standard pip-compile lock pairing. Before merging a Python update, regenerate
+every affected lock with Python 3.14 and pip-tools 7.6.0, preserving hashes and
+`--allow-unsafe`; refresh the declaration fingerprint in
+`requirements-appliance.lock`; then run the appliance lock and Photon
+compatibility checks. Never merge a bot PR that leaves inputs and generated
+locks out of sync.
+
 ## User-interface contributions
 
 Any change affecting templates, authored CSS, browser JavaScript, controls,

@@ -295,6 +295,13 @@ GitHub-managed CodeQL default setup scans the repository's GitHub Actions,
 JavaScript/TypeScript, and Python sources with the default query suite on pull
 requests, pushes to `main`, and the managed weekly schedule.
 
+GitHub secret-scanning alerts monitor committed content for supported secret
+patterns. Dependabot checks root Python manifests and GitHub Actions every
+Monday, groups version updates by ecosystem, and labels its pull requests
+`enhancement` and `dependencies`. Python update pull requests require a
+maintainer to regenerate Atlaso's custom hash-locked `.lock` files and appliance
+declaration fingerprint with Python 3.14 and pip-tools 7.6.0 before merge.
+
 ### Pull requests and versions
 
 `main` is protected and accepts squash merges only after the version policy,
