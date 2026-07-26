@@ -1,0 +1,4494 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Complete apply-unit ownership, staging, helper, locking, baseline, and interface contracts.">
+      
+      
+        <meta name="author" content="Atlaso contributors">
+      
+      
+        <link rel="canonical" href="https://mdaneri.github.io/Atlaso/docs/reference/appliance-apply-technical/">
+      
+      
+        <link rel="prev" href="../interface-gallery/">
+      
+      
+        <link rel="next" href="../appliance-console-technical/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/brand/favicon.ico">
+      <meta name="generator" content="zensical-0.0.51">
+    
+    
+      
+        <title>Appliance Apply technical reference - Atlaso Documentation</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.62c9b9cc.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/atlaso.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#appliance-apply-technical-reference" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Atlaso Documentation" class="md-header__button md-logo" aria-label="Atlaso Documentation" data-md-component="logo">
+      
+  <img src="../../assets/brand/atlaso-logo-horizontal-dark.svg" alt="Atlaso Documentation">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Atlaso Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Appliance Apply technical reference
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/mdaneri/Atlaso" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mdaneri/Atlaso
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+      
+        
+          
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/" class="md-tabs__link">
+          
+  
+  Getting started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../operate/" class="md-tabs__link">
+          
+  
+  Operate
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../services/" class="md-tabs__link">
+          
+  
+  Services
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+      
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
+          
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../contribute/" class="md-tabs__link">
+          
+  
+  Contribute
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../project/" class="md-tabs__link">
+          
+  
+  Project
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Atlaso Documentation" class="md-nav__button md-logo" aria-label="Atlaso Documentation" data-md-component="logo">
+      
+  <img src="../../assets/brand/atlaso-logo-horizontal-dark.svg" alt="Atlaso Documentation">
+
+    </a>
+    Atlaso Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mdaneri/Atlaso" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mdaneri/Atlaso
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../getting-started/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Getting started
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+            </a>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Getting started
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../operate/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Operate
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Operate
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/dashboard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Dashboard
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/monitor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Monitor
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/logs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Operational logs
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/audit-log/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Audit log
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Tasks
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/appliance-apply/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Appliance Apply
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/appliance-settings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Appliance settings
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/networking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Network configuration
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/appliance-console/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Local appliance console
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/appliance-update/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Appliance Update
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/backup-restore/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Backup and restore
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/automation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Automation
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/web-terminal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Web Terminal
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../services/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Services
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Services
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/dns/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  DNS
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/dhcp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  DHCP
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/firewall/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Firewall
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/ntp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  NTP and NTS
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/certificate-authority/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Certificate Authority
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/esx-storage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  ESX storage
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/ipxe/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Network boot
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/kms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  KMS and KMIP
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/local-users/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Local users
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/managed-ldap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Managed LDAP
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/oidc-provider/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  OpenID Connect provider
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/vcf-backups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  VCF backups
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/vcf-helper/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  VCF Helper
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/vcf-offline-depot/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  VCF Offline Depot
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/vcf-private-registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  VCF Private Registry
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/vcf-trust/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  VCF certificate trust
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reference
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Reference
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API reference
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../interface-gallery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Verified interface gallery
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Appliance Apply technical reference
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Appliance Apply technical reference
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#reference-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Reference map
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#workflow-and-execution-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Workflow and execution model
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Workflow and execution model">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#workflow-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Workflow architecture
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apply-units" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Apply units
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appliance-and-network-units" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Appliance and network units
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Appliance and network units">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#local-users-apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Local Users apply
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#physical-interface-inventory" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Physical interface inventory
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#network-apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Network apply
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#routes-and-wan-apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Routes and WAN apply
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dnsdhcp-apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        DNS/DHCP apply
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="DNS&#x2f;DHCP apply">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#authoritative-dns" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Authoritative DNS
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dns-security-and-logging" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        DNS security and logging
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#service-endpoint-records" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Service endpoint records
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#operator-records-and-resolver-fallback" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Operator records and resolver fallback
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dhcp-addressing-and-leases" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        DHCP addressing and leases
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#infrastructure-and-security-units" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Infrastructure and security units
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Infrastructure and security units">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#esxi-pxe-apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        ESXi PXE apply
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ESXi PXE apply">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#installer-images" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Installer images
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#host-profiles" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Host profiles
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#boot-services-and-apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Boot services and apply
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#esx-storage-apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        ESX Storage apply
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#firewall-apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Firewall apply
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vcf-backups-apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        VCF Backups apply
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#certificate-authority-apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Certificate Authority apply
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#kms-kmip-apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        KMS / KMIP apply
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appliance-settings-and-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Appliance settings and operations
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Appliance settings and operations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ntpsec-apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        NTPsec apply
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#appliance-settings-apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Appliance Settings apply
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#operational-logs-and-appliance-power" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Operational logs and appliance power
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Operational logs and appliance power">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#audit-events" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Audit events
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#appliance-power" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Appliance power
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#task-inspection" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Task inspection
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vcf-offline-depot-apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        VCF Offline Depot apply
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="VCF Offline Depot apply">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#authentication" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Authentication
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tool-staging-downloads-and-https-service" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Tool staging, downloads, and HTTPS service
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#listener-validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Listener validation
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#state-results-and-interface-contracts" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        State, results, and interface contracts
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="State, results, and interface contracts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#baselines-and-diffs" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Baselines and diffs
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#job-result" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Job result
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ui-expectations" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        UI expectations
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../appliance-console-technical/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Local console technical reference
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../full-technical-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Full technical reference
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hyperv-lifecycle-testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hyper-V lifecycle testing
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vmware-workstation-lifecycle-testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  VMware lifecycle testing
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../contribute/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Contribute
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Contribute
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/documentation-authoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Documentation authoring
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/ui-design-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  UI design guide
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/agent-policies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Detailed agent policies
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../project/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Project
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7" id="__nav_7_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Project
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/branding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Brand assets
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../assets/brand/BRAND_GUIDE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Brand kit
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/ca-roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CA roadmap
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--roadmap"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/routing-wan-roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Routing and WAN roadmap
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--roadmap"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/appliance-console-design-qa/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Appliance console design QA
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--historical"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/monitor-apply-ux-design-qa/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Monitor interaction design QA
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--historical"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#reference-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Reference map
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#workflow-and-execution-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Workflow and execution model
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Workflow and execution model">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#workflow-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Workflow architecture
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apply-units" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Apply units
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appliance-and-network-units" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Appliance and network units
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Appliance and network units">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#local-users-apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Local Users apply
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#physical-interface-inventory" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Physical interface inventory
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#network-apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Network apply
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#routes-and-wan-apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Routes and WAN apply
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dnsdhcp-apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        DNS/DHCP apply
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="DNS&#x2f;DHCP apply">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#authoritative-dns" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Authoritative DNS
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dns-security-and-logging" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        DNS security and logging
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#service-endpoint-records" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Service endpoint records
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#operator-records-and-resolver-fallback" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Operator records and resolver fallback
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dhcp-addressing-and-leases" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        DHCP addressing and leases
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#infrastructure-and-security-units" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Infrastructure and security units
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Infrastructure and security units">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#esxi-pxe-apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        ESXi PXE apply
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ESXi PXE apply">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#installer-images" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Installer images
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#host-profiles" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Host profiles
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#boot-services-and-apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Boot services and apply
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#esx-storage-apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        ESX Storage apply
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#firewall-apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Firewall apply
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vcf-backups-apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        VCF Backups apply
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#certificate-authority-apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Certificate Authority apply
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#kms-kmip-apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        KMS / KMIP apply
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appliance-settings-and-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Appliance settings and operations
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Appliance settings and operations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ntpsec-apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        NTPsec apply
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#appliance-settings-apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Appliance Settings apply
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#operational-logs-and-appliance-power" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Operational logs and appliance power
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Operational logs and appliance power">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#audit-events" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Audit events
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#appliance-power" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Appliance power
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#task-inspection" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Task inspection
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vcf-offline-depot-apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        VCF Offline Depot apply
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="VCF Offline Depot apply">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#authentication" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Authentication
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tool-staging-downloads-and-https-service" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Tool staging, downloads, and HTTPS service
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#listener-validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Listener validation
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#state-results-and-interface-contracts" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        State, results, and interface contracts
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="State, results, and interface contracts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#baselines-and-diffs" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Baselines and diffs
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#job-result" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Job result
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ui-expectations" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        UI expectations
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-path__item">
+        <a href="../" class="md-path__link">
+          
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+    <a href="https://github.com/mdaneri/Atlaso/edit/main/docs/reference/appliance-apply-technical.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-pen" viewBox="0 0 24 24"><path d="M12.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v9.34"/><path d="M14 2v5a1 1 0 0 0 1 1h5M10.378 12.622a1 1 0 0 1 3 3.003L8.36 20.637a2 2 0 0 1-.854.506l-2.867.837a.5.5 0 0 1-.62-.62l.836-2.869a2 2 0 0 1 .506-.853z"/></svg>
+    </a>
+  
+  
+    
+      
+    
+    <a href="https://github.com/mdaneri/Atlaso/raw/main/docs/reference/appliance-apply-technical.md" title="View source of this page" class="md-content__button md-icon">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-code-2" viewBox="0 0 24 24"><path d="M4 12.15V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-3.35"/><path d="M14 2v5a1 1 0 0 0 1 1h5M5 16l-3 3 3 3M9 22l3-3-3-3"/></svg>
+    </a>
+  
+
+
+<h1 id="appliance-apply-technical-reference">Appliance Apply technical reference<a class="headerlink" href="#appliance-apply-technical-reference" title="Permanent link">&para;</a></h1>
+<p>This page preserves the complete implementation and subsystem reference formerly embedded in the operator workflow.
+Use <a href="../../operate/appliance-apply/">Apply appliance changes</a> for the review, submission, verification, and recovery task.</p>
+<h2 id="reference-map">Reference map<a class="headerlink" href="#reference-map" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Group</th>
+<th>Use it for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="#workflow-and-execution-model">Workflow and execution model</a></td>
+<td>Global ownership, routes, locking, and unit boundaries.</td>
+</tr>
+<tr>
+<td><a href="#appliance-and-network-units">Appliance and network units</a></td>
+<td>Users, interface inventory, network, routing, and DNS/DHCP.</td>
+</tr>
+<tr>
+<td><a href="#infrastructure-and-security-units">Infrastructure and security units</a></td>
+<td>PXE, storage, firewall, backups, certificates, and KMS.</td>
+</tr>
+<tr>
+<td><a href="#appliance-settings-and-operations">Appliance settings and operations</a></td>
+<td>NTPsec, settings, logs, power, tasks, and depot behavior.</td>
+</tr>
+<tr>
+<td><a href="#state-results-and-interface-contracts">State, results, and interface contracts</a></td>
+<td>Baselines, diffs, task results, recovery, and UI expectations.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="workflow-and-execution-model">Workflow and execution model<a class="headerlink" href="#workflow-and-execution-model" title="Permanent link">&para;</a></h2>
+<h3 id="workflow-architecture">Workflow architecture<a class="headerlink" href="#workflow-architecture" title="Permanent link">&para;</a></h3>
+<p>Service pages edit desired state. They autosave routine settings and grids, show local validation, expose rendered
+config previews through compact preview actions, and link to the global apply review. They should not own
+service-specific apply buttons or service-specific apply submit routes.</p>
+<p><code>Appliance Apply</code> is the global review and submit workflow, presented through a shared modal rather than a standalone
+page. The bottom-left review card and page-level review actions open the modal, which lists changed apply units, checks
+valid changed units by default, and lets an operator unselect any unit that should remain pending. A direct GET to
+<code>/appliance-apply</code> redirects to <code>/dashboard#appliance-apply-review</code>, where the same modal opens automatically. The
+<code>/appliance-apply</code> POST, <code>/appliance-apply/review</code>, and <code>/appliance-apply/status</code> routes remain the backend workflow
+used by the modal.</p>
+<p>Submitting transforms the review modal into a live master/child task grid. One <code>appliance-apply</code> master owns one child
+execution record per selected component. Every signed-in session sees the blocking grid while the master is pending or
+running. Atlaso rejects other UI and API mutations with HTTP <code>423 Locked</code>; read-only pages, authentication/session
+actions, task inspection, and safe master cancellation remain available. Submitted units disappear from the sidebar
+pending count immediately, while unselected changes remain pending.</p>
+<p>Each selected unit runs its helper steps in order and stops at the first failed step. For example, if a unit's
+<code>validate</code> helper fails, Atlaso records that command output in the job and does not run the unit's <code>apply</code>, reload,
+sync, or relocation steps.</p>
+<p>On Photon appliances, real mutating helper actions run through <code>atlaso-helper</code> and then re-enter via a transient
+<code>systemd-run</code> service when <code>ATLASO_HELPER_USE_SYSTEMD_RUN=1</code> is set. The web control plane remains inside the
+<code>atlaso.service</code> sandbox, while the reviewed root helper writes approved <code>/etc</code> files from outside that service's
+read-only mount namespace.</p>
+<h3 id="apply-units">Apply units<a class="headerlink" href="#apply-units" title="Permanent link">&para;</a></h3>
+<p>Current apply units are:</p>
+<ul>
+<li>Local Users</li>
+<li>Network</li>
+<li>Appliance Settings</li>
+<li>Routes &amp; WAN Simulation</li>
+<li>Firewall</li>
+<li>DNS/DHCP (dnsmasq)</li>
+<li>ESXi PXE</li>
+<li>Certificate Authority</li>
+<li>KMS / KMIP</li>
+<li>Managed LDAP</li>
+<li>NTPsec</li>
+<li>VCF Backups</li>
+<li>VCF Offline Depot</li>
+<li>VCF Private Registry</li>
+<li>Public Services</li>
+</ul>
+<p>DNS and DHCP are one unit because they share the rendered dnsmasq config and reload boundary.</p>
+<p>Appliance Settings owns appliance identity, OS hostname, resolver mode, resolver servers, management UI HTTPS
+preference, passwordless web-terminal preference, and root SSH login preference. NTPsec owns appliance time service
+behavior. The app-owned appliance DNS record is derived from that identity, but DNS/DHCP still owns the rendered dnsmasq
+record and service reload boundary.</p>
+<p>The web terminal is disabled globally by default. Enabling it requires management HTTPS and always includes the
+management interface; administrators may also select addressed access/route physical interfaces or enabled VLANs.
+Appliance Settings creates a dedicated Ed25519 OpenSSH user CA under <code>/etc/atlaso/ssh</code>, installs <code>TrustedUserCAKeys</code>
+through <code>/etc/ssh/sshd_config.d/atlaso-web-terminal.conf</code>, and keeps the CA private key root-readable. Public Services
+renders terminal-only HTTPS listeners for selected non-management addresses, adds a <code>Web Terminal</code> directory tile only
+on those selected addresses, and Firewall opens TCP/443 on those interfaces. Individual local users require the explicit
+Web SSH permission, an enabled account, an interactive shell, and an applied Photon password. The management terminal
+uses the Operations shell; selected non-management listeners use the Public Services shell and local Photon
+authentication. The page connects automatically and retains one bounded shell per authorized user across reloads for up
+to the reconnect timeout. Opening it in another browser requires confirmation before the same live shell and buffered
+output move to the new browser. <code>Ctrl-D</code> and <code>exit</code> intentionally terminate the shell; copy/download remain available
+for the retained transcript and reconnect creates a new shell. Apply changed <code>appliance_settings</code>, <code>public_services</code>,
+and <code>firewall</code> units together when terminal bindings change. See
+<a href="../../operate/web-terminal/">Web terminal</a> for the full behavior and troubleshooting notes.</p>
+<p>Browser sessions use a 30-second one-use ticket and an ephemeral key. The constrained helper signs a user certificate
+valid for 60 seconds and restricted to SSH connections originating from <code>127.0.0.1</code>; port, agent, and X11 forwarding
+plus user RC execution are disabled. Atlaso pins the installed Ed25519 SSH host key and connects only to local TCP/22.
+One session per authorized user and four sessions appliance-wide are allowed, with a 15-minute idle timeout and one-hour
+maximum lifetime. SSH authentication is passwordless for the matching interactive Photon OS account, while <code>sudo</code>
+continues to enforce that account's password policy.</p>
+<h2 id="appliance-and-network-units">Appliance and network units<a class="headerlink" href="#appliance-and-network-units" title="Permanent link">&para;</a></h2>
+<h3 id="local-users-apply">Local Users apply<a class="headerlink" href="#local-users-apply" title="Permanent link">&para;</a></h3>
+<p>The real Local Users apply path stages JSON at <code>/var/lib/atlaso/apply/local-users/atlaso-users.json</code>. The <code>local_users</code>
+unit synchronizes Atlaso local users to Photon OS users through <code>atlaso-helper local-users validate|apply</code>. Enabled
+Atlaso users are created under <code>/var/lib/atlaso/users/&lt;username&gt;</code> with the per-user desired shell, defaulting to
+<code>/sbin/nologin</code>; disabled and removed managed users are removed from Photon OS with <code>userdel -r</code>. Photon image
+provisioning creates the bootstrap admin OS account before first apply. When VCF Backup desired state is off, Atlaso
+keeps the default <code>vcf-backup</code> user disabled so Local Users apply removes that OS account.</p>
+<p>Atlaso users can hold multiple UI/API roles. The Users page edits roles through a multi-select grid cell, stores the
+normalized set in <code>roles_json</code>, keeps <code>role</code> as the primary compatibility value, and evaluates permissions as the union
+of all selected role scopes. This changes Atlaso authorization only; Photon OS account sync still writes one OS account,
+home directory, shell, password/update state, and unlock state per local user.</p>
+<p>Passwords are available for OS sync only when an administrator creates or resets a local user password. Atlaso does not
+store local user password hashes or encrypted pending OS passwords in the database; the pending value is held only in
+process memory until a real global apply sends it to <code>chpasswd</code> over stdin and then clears it. If the service restarts
+before apply, the operator must set/reset the password again. Dry-run apply records command intent but keeps the
+in-memory pending password staged. Unlock requests are staged as desired state and applied later with <code>passwd -u</code> plus
+<code>faillock --user &lt;name&gt; --reset</code>. Password policy edits are also desired state; Local Users apply writes a
+Atlaso-managed block in <code>/etc/security/pwquality.conf</code> and ensures <code>/etc/pam.d/system-password</code> runs <code>pam_pwquality.so</code>
+before <code>pam_unix.so</code>. Rendered previews, diffs, job results, logs, and audit details must show only counts and status
+such as <code>password staged</code> or <code>password not staged; reset to sync</code>.</p>
+<h3 id="physical-interface-inventory">Physical interface inventory<a class="headerlink" href="#physical-interface-inventory" title="Permanent link">&para;</a></h3>
+<p>Refreshing Physical Interfaces is inventory only. Appliance startup refreshes observed Linux NIC facts automatically,
+and operators can also run the same refresh manually from the page. Both paths update Atlaso's observed model, but
+neither runs the network adapter nor applies desired state to the host. Reconciliation matches observed NICs by MAC
+address before Linux interface name, so Hyper-V/Linux <code>ethN</code> renumbering after a removed adapter does not transfer
+desired state to a different NIC. Removed host NICs are made inert, dependent VLANs are disabled, service listener
+interfaces and listener addresses are pruned or disabled when no listener remains, and the cleanup is written to the
+Atlaso app log and audit events.</p>
+<p>The management physical interface may define optional static IPv4 and IPv6 gateways. IPv4 must be on-link. IPv6 may be
+on-link or link-local (<code>fe80::/10</code>); neither gateway may equal its interface address. Network apply writes each
+configured management default to both the main table and management policy table <code>100</code>; non-management physical
+interfaces and VLANs cannot set these fields. IPv4 DHCP and IPv6 Disabled or Automatic clear the corresponding static
+gateway. Lab route gateways remain owned by Routes &amp; WAN Simulation in table <code>200</code>, allowing management and lab traffic
+to use different exits.</p>
+<h3 id="network-apply">Network apply<a class="headerlink" href="#network-apply" title="Permanent link">&para;</a></h3>
+<p>The real network apply path is Photon <code>systemd-networkd</code> backed. The <code>network</code> apply unit stages Atlaso's rendered
+network config at <code>/var/lib/atlaso/apply/network/atlaso-network.conf</code>, validates management, physical, VLAN, CIDR, and
+gateway intent, installs Atlaso-owned <code>.network</code> and <code>.netdev</code> files under <code>/etc/systemd/network/</code>, reloads networkd,
+and reconfigures non-management links. Disabled management IPv6 renders <code>IPv6AcceptRA=no</code> with no static IPv6 address or
+route. Automatic renders <code>IPv6AcceptRA=yes</code> with IPv6 link-local addressing. Static renders <code>IPv6AcceptRA=no</code>, the
+configured address, IPv6 link-local addressing, and the optional default route in both the main and management policy
+tables. Management remains explicit on <code>eth0</code>; the helper does not blindly reconfigure the management link during this
+first pass. Management source networks use the Atlaso management route table, while access and route networks use the
+lab route table. When a VLAN was present in successful Atlaso network apply history and is no longer desired, the staged
+config includes an explicit removal target and the helper deletes that VLAN link after verifying it is a VLAN device.</p>
+<h3 id="routes-and-wan-apply">Routes and WAN apply<a class="headerlink" href="#routes-and-wan-apply" title="Permanent link">&para;</a></h3>
+<p>The real Routes &amp; WAN Simulation apply path stages config at <code>/var/lib/atlaso/apply/wan/atlaso-wan.conf</code>. The <code>wan</code> unit
+owns static lab route desired state, routing permissions, IPv4 outbound masquerade NAT rules, and interface/VLAN-level
+WAN simulation through <code>tc/netem</code>; it does not represent an interface role. Atlaso has no <code>wan</code> interface role. The
+static management IPv4 gateway is installed as the main-table default so appliance-originated traffic can select a route
+before a source address exists, and is also installed in management table 100 for management source-policy routing.
+Static routes may target IPv4-only, IPv6-only, or dual-stack non-management access physical interfaces and enabled
+VLANs; IPv6 routes render through <code>ip -6 route</code>. Lab routes are installed in Atlaso table 200 so their gateways do not
+compete with the management default. NAT v1 is explicit IPv4 masquerade only: no destination NAT, port forwarding, IPv6
+NAT, or automatic broad NAT is created from interface roles. Operators edit NAT rules on <code>/routes-wan</code>, choose a
+non-management access physical interface or enabled VLAN with an IPv4 CIDR as the outbound interface, and review the
+rendered nftables table and command intent on the global apply page. Route-specific WAN impairment is planned but not
+exposed in v1; the design notes live in <code>docs/routing-wan-roadmap.md</code>.</p>
+<p>Through <code>atlaso-helper wan validate|apply</code>, the helper validates staged routes, routing rules, NAT rules, WAN targets,
+and netem policy values. Apply installs <code>/etc/atlaso/nftables.d/atlaso-nat.nft</code>, enables <code>net.ipv4.ip_forward=1</code> only
+when enabled lab routing or NAT requires forwarding, applies source policy rules with <code>ip rule</code>, applies the NAT table
+with <code>nft</code>, applies static routes with <code>ip route replace ... table 200</code>, and applies or clears <code>tc qdisc</code> netem state on
+route targets with assigned policies. Removed route deletion is staged only when a route existed in the selected unit's
+last-applied baseline and is absent from current desired state. Management is never a route, NAT, or routing-permission
+target, and the Firewall unit generates explicit management-to-lab and lab-to-management forward drops.</p>
+<h3 id="dnsdhcp-apply">DNS/DHCP apply<a class="headerlink" href="#dnsdhcp-apply" title="Permanent link">&para;</a></h3>
+<p>The real DNS/DHCP apply path is dnsmasq-backed. The <code>dnsmasq</code> apply unit stages Atlaso's rendered dnsmasq config at
+<code>/var/lib/atlaso/apply/dnsmasq/atlaso.conf</code>, validates it with <code>dnsmasq --test</code>, installs
+<code>/etc/atlaso/dnsmasq.d/atlaso.conf</code>, enables <code>dnsmasq</code>, and reloads or restarts the service through <code>atlaso-helper</code>. DNS
+and DHCP remain one global apply unit because they share one dnsmasq config and service reload boundary. The Services
+page keeps separate DNS and DHCP rows for desired-state visibility, while their runtime state is read from the shared
+<code>dnsmasq.service</code>.</p>
+<h4 id="authoritative-dns">Authoritative DNS<a class="headerlink" href="#authoritative-dns" title="Permanent link">&para;</a></h4>
+<p>Authoritative DNS remains inside that same unit. When enabled, the renderer emits one <code>auth-zone=&lt;domain&gt;</code> for each
+managed forward domain, one <code>auth-server=&lt;primary-nameserver&gt;,&lt;selected-interface&gt;...</code>, shared
+<code>auth-soa=&lt;serial&gt;,&lt;administrator&gt;,&lt;refresh&gt;,&lt;retry&gt;,&lt;expiry&gt;</code>, and <code>auth-ttl=&lt;seconds&gt;</code>. Generated <code>host-record</code> lines
+provide A/AAAA glue for every selected DNS listen address. dnsmasq makes interfaces named by <code>auth-server</code>
+authoritative-only: those listeners provide complete authoritative positive and negative answers but refuse unrelated
+recursion and non-authoritative reverse zones. The same process continues PTR and upstream-recursive service on
+non-authoritative listeners such as loopback. Validate the installed state with
+<code>sudo grep -E '^(auth-zone|auth-server|auth-soa|auth-ttl|host-record=ns)' /etc/atlaso/dnsmasq.d/atlaso.conf</code>,
+<code>systemctl is-active dnsmasq</code>, authoritative queries such as <code>dig @&lt;selected-listener&gt; &lt;zone&gt; SOA</code>,
+<code>dig @&lt;selected-listener&gt; &lt;zone&gt; NS</code>, <code>dig @&lt;selected-listener&gt; &lt;nameserver&gt; A</code>, and
+<code>dig @&lt;selected-listener&gt; missing.&lt;zone&gt; A</code>, then recursive-path queries such as <code>dig @127.0.0.1 -x &lt;record-address&gt;</code>
+and <code>dig @127.0.0.1 example.com A</code>. The missing-name result should be authoritative NXDOMAIN with the generated SOA in
+authority.</p>
+<h4 id="dns-security-and-logging">DNS security and logging<a class="headerlink" href="#dns-security-and-logging" title="Permanent link">&para;</a></h4>
+<p>DNSSEC validation, rebind protection, and query logging are desired-state dnsmasq settings. DNSSEC renders <code>dnssec</code> plus
+a Atlaso-managed trust-anchor include under <code>/var/lib/atlaso/apply/dnsmasq/</code>; the helper verifies installed dnsmasq
+DNSSEC support and copies package-provided trust anchors before running <code>dnsmasq --test</code>. Rebind protection renders
+<code>stop-dns-rebind</code> and explicit <code>rebind-domain-ok</code> exemptions. Query logging renders <code>log-queries=extra</code> only when
+enabled and should be treated as temporary troubleshooting because it can expose client query names.</p>
+<h4 id="service-endpoint-records">Service endpoint records<a class="headerlink" href="#service-endpoint-records" title="Permanent link">&para;</a></h4>
+<p>Service-owned endpoint DNS uses a canonical alias plus generated target records. When a service such as KMS, ESXi PXE,
+VCF Offline Depot, or VCF Private Registry selects one or more listen interfaces, Atlaso creates direct A/AAAA records
+for each selected listener target and makes the main service name, such as <code>depot.atlaso.internal</code>, a CNAME to the first
+selected target. This alias is created even for a single selected interface. Appliance Settings controls generated
+target names globally: the default <code>ip</code> mode creates names such as <code>depot-192-168-87-12.atlaso.internal</code>, while
+<code>interface</code> mode preserves the older style such as <code>depot-eth2.atlaso.internal</code>. Operators can use the canonical name by
+default and use the generated target names for networks that cannot reach the first selected listener. Atlaso does not
+create a multi-A default for the canonical service name because clients may resolve an unreachable address. If the first
+selected interface is removed, interface order changes, or the target naming mode changes, the CNAME target moves to the
+next first valid selected target and stale app-owned generated records are removed.</p>
+<h4 id="operator-records-and-resolver-fallback">Operator records and resolver fallback<a class="headerlink" href="#operator-records-and-resolver-fallback" title="Permanent link">&para;</a></h4>
+<p>Operator-managed DNS records support A, AAAA, CNAME, TXT, SRV, MX, CAA, and explicit PTR records. A and AAAA records
+still generate matching dnsmasq PTR answers through <code>host-record</code>; explicit PTR rows are for custom reverse names that
+do not map directly to an address record.</p>
+<p>When Appliance Settings resolver mode is still DHCP and DNS upstreams are empty, the DNS/DHCP desired-state preview uses
+the management interface's observed DHCP DNS servers as fallback forwarders. Converting the management interface from
+DHCP to static preserves the observed lease addresses and copies DHCP-provided DNS servers into Appliance Settings
+external DNS and into DNS service upstreams when those settings were relying on DHCP fallback.</p>
+<h4 id="dhcp-addressing-and-leases">DHCP addressing and leases<a class="headerlink" href="#dhcp-addressing-and-leases" title="Permanent link">&para;</a></h4>
+<p>DHCP IP zones can be IPv4 or IPv6. IPv4 zones bind only to valid IPv4 service targets, and IPv6 zones bind only to valid
+IPv6 service targets: access physical interfaces or enabled VLAN interfaces must have the matching CIDR family. Trunk
+physical interfaces, missing interfaces, and addressless interfaces are rejected before apply. Each zone stores one
+comma-separated range expression. IPv4 expressions should use full addresses for ranges and single leases, for example
+<code>192.168.87.100-192.168.87.200, 192.168.87.30</code>; Atlaso also accepts compact range ends such as <code>192.168.87.100-200</code> in a
+<code>/24</code> or <code>192.168.87.100-87.200</code> in a <code>/16</code> and expands them in canonical output. IPv6 expressions use full IPv6
+addresses for the same range and single-lease pattern, for example <code>fd00:50::100-fd00:50::200, fd00:50::30</code>. The
+rendered dnsmasq config owns DHCPv4 ranges, DHCPv6 ranges with router advertisements, options, reservations, and the
+lease file at <code>/var/lib/atlaso/dnsmasq/dhcp.leases</code>; live lease readback goes through the allowlisted
+<code>atlaso-helper dnsmasq leases --real</code> path.</p>
+<h2 id="infrastructure-and-security-units">Infrastructure and security units<a class="headerlink" href="#infrastructure-and-security-units" title="Permanent link">&para;</a></h2>
+<h3 id="esxi-pxe-apply">ESXi PXE apply<a class="headerlink" href="#esxi-pxe-apply" title="Permanent link">&para;</a></h3>
+<p>The ESXi PXE apply unit owns generated installer boot artifacts. Operators edit Kickstart source in the database through
+the built-in CodeMirror editor; filesystem copies are derived artifacts, not desired state. Saving a Kickstart updates
+the database source hash and marks <code>esxi_pxe</code> changed, but does not write <code>/var/lib/atlaso/pxe/http/esxi/ks/&lt;id&gt;.cfg</code>.
+Boot-time Kickstart requests use <code>/pxe/esxi/ks/&lt;file&gt;.cfg?mac=&lt;normalized-mac&gt;</code> so Atlaso can render <code>{{variable}}</code>
+markers for the selected host. The endpoint requires an explicit valid MAC and does not infer MAC identity from source
+IP or DHCP leases.</p>
+<h4 id="installer-images">Installer images<a class="headerlink" href="#installer-images" title="Permanent link">&para;</a></h4>
+<p>The ESXi PXE page also discovers installer ISOs under <code>/mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST</code>, the VCFDT ESX
+host component folder, and creates that folder when needed. The Installer ISOs tab lists images found there, marks
+user-uploaded images separately from VCFDT-discovered images with dates, allows uploading additional <code>.iso</code> files, and
+allows deleting either source. Deleting an ISO clears host/default PXE references to that image; generated runtime files
+are reconciled on the next global <code>esxi_pxe</code> apply.</p>
+<h4 id="host-profiles">Host profiles<a class="headerlink" href="#host-profiles" title="Permanent link">&para;</a></h4>
+<p>Host references are edited in a Tabulator grid. Each host can select a database Kickstart and installer ISO and can
+define custom Kickstart variables as JSON. Built-in variables include host identity, selected DHCP scope values such as
+<code>{{dhcp.gateway}}</code>, <code>{{dhcp.dns_servers}}</code>, and <code>{{dhcp.ntp_servers}}</code>, and the PXE HTTP base URL; custom values are
+referenced as <code>{{custom.&lt;name&gt;}}</code>. The grid also has a default profile for undefined MAC addresses; when enabled with an
+installer ISO, Atlaso generates the top-level default <code>boot.cfg</code>, HTTP <code>boot.cfg</code>, and <code>pxelinux.cfg/default</code> artifacts
+from that profile instead of falling back to the first host reference. The default profile cannot use a Kickstart
+because dynamic Kickstart rendering requires a defined host MAC.</p>
+<h4 id="boot-services-and-apply">Boot services and apply<a class="headerlink" href="#boot-services-and-apply" title="Permanent link">&para;</a></h4>
+<p>The ESXi PXE boot service selects one or more IPv4 DHCP IP zones instead of a freeform interface/IP pair. Atlaso derives
+the PXE interfaces, TFTP server addresses, DNS records, firewall bind targets, and generated dnsmasq scope tags from
+those zones; the DHCP page shows those generated PXE lines separately from operator-managed DHCP options. Native UEFI
+HTTP boot URLs are generated per selected IPv4 zone from that zone's appliance address unless an operator supplies a
+manual absolute URL, in which case the same URL is returned in every selected zone.</p>
+<p>Host PXE definitions can optionally include an IP address. Blank IPs keep normal DHCP behavior. A concrete host IP
+creates or updates an ESXi-managed DHCP reservation and matching DNS A/AAAA record, and the IP must fall inside one of
+the selected ESXi PXE DHCP zones. The default undefined-MAC profile remains DHCP-only and never creates a reservation.</p>
+<p>The real apply path stages schema-v2 <code>/var/lib/atlaso/apply/esxi-pxe/atlaso-esxi-pxe.json</code>. Through
+<code>atlaso-helper esxi-pxe validate|apply</code>, the helper validates the manifest, writes enabled Kickstarts to the PXE HTTP
+root, validates selected installer ISO paths remain under the ESX_HOST folder, extracts selected installers to
+<code>/var/lib/atlaso/pxe/http/esxi/images/&lt;image-key&gt;/</code>, stages the iPXE first-stage boot files <code>undionly.kpxe</code> and
+<code>snponly.efi</code>, stages <code>pxelinux.0</code> and <code>mboot.c32</code>, writes an HTTP <code>boot.ipxe</code> entrypoint even when no host profiles
+exist, and generates host-specific <code>boot.cfg</code> plus PXELINUX configs. For ESXi UEFI, the helper uses the selected ISO's
+<code>EFI/BOOT/BOOTX64.EFI</code> as <code>mboot.efi</code> and places it beside the matching host <code>boot.cfg</code>; when <code>crypto64.efi</code> is present,
+it is copied into the same host boot directory. The helper searches Photon package paths plus
+<code>/var/lib/atlaso/pxe/bootloaders</code> for <code>undionly.kpxe</code>, <code>snponly.efi</code>, and <code>pxelinux.0</code>; Photon image provisioning stages
+Atlaso's bundled iPXE <code>undionly.kpxe</code> and <code>snponly.efi</code> artifacts there because the appliance package stream may not
+ship those filenames. The helper also installs an nginx listener on the configured PXE HTTP port that redirects
+<code>/pxe/esxi</code> to <code>/pxe/esxi/</code>, returns a compact status response at <code>/pxe/esxi/</code>, proxies dynamic <code>/pxe/esxi/ks/</code> and
+<code>boot.ipxe</code> requests to Atlaso, and serves the remaining <code>/pxe/esxi/</code> boot/image artifacts statically. Atlaso redacts
+Kickstart secrets and secret-looking host variables from previews, diffs, job output, logs, and audit events. Drift
+detection compares the generated filesystem copy to the database source hash and never imports filesystem changes
+without an explicit admin action.</p>
+<p>ESXi PXE boot settings also affect DNS/DHCP and Firewall desired state. Apply the changed DNS/DHCP, ESXi PXE, and
+Firewall units together when the DHCP IP zone, HTTP port, or boot files change so dnsmasq returns zone-scoped
+guide-aligned first-stage and second-stage boot files and the appliance exposes UDP/69 plus the PXE HTTP port on the
+selected bind targets.</p>
+<h3 id="esx-storage-apply">ESX Storage apply<a class="headerlink" href="#esx-storage-apply" title="Permanent link">&para;</a></h3>
+<p>The <code>esx_storage</code> unit stages <code>/var/lib/atlaso/apply/esx-storage/atlaso-esx-storage.json</code> and is the only path that may
+initialize approved blank disks, mount ESX Storage volumes, create bind exports, or change <code>rpcbind.service</code> and
+<code>nfs-server.service</code>. IPv4 and IPv6 are equivalent: every enabled family is validated against the selected
+interface/VLAN, its own VMkernel allowlist, generated A/AAAA target, ESX command, and family-specific firewall rule.</p>
+<p>Blank whole-disk initialization requires the global review modal to show the stable <code>/dev/disk/by-id</code> path plus model,
+serial, WWN, and size and accept the exact <code>FORMAT &lt;volume-name&gt;</code> confirmation. The server binds that authorization to
+the appliance-apply job ID, manifest SHA256, and stable identity. The helper validates the complete manifest,
+re-inventories the disk immediately before <code>mkfs.ext4</code>, mounts by UUID, and never performs destructive rollback.
+Settings backups and apply baselines exclude format authorization.</p>
+<p>NFS 3 and 4.1 run over TCP with NFS 2/4.0 disabled and mountd fixed to TCP/20048. Exports use AUTH_SYS with
+<code>rw,sync,no_subtree_check,no_root_squash</code> and per-family client CIDRs. NFS 3 firewall rules open TCP/111, TCP/20048, and
+TCP/2049; NFS 4.1 rules open TCP/2049. Endpoint changes reconcile app-owned DNS records and make ESX Storage, DNS/DHCP,
+and Firewall pending together. See <a href="../../services/esx-storage/">ESX Storage over NFS</a>.</p>
+<h3 id="firewall-apply">Firewall apply<a class="headerlink" href="#firewall-apply" title="Permanent link">&para;</a></h3>
+<p>Managed LDAP contributes Firewall-owned TCP/636 rules on every selected LDAP listener interface. Plaintext TCP/389 is
+never generated.</p>
+<p>The Firewall apply unit derives Atlaso-managed service allow rules from enabled service listener desired state.
+Management, DNS, DHCP, KMS, NTPsec, VCF Backup, VCF Offline Depot, and VCF Private Registry listeners appear in the
+managed service rules grid on the Firewall page, while custom firewall rules remain editable in the main grid. Managed
+DNS and service listener rules default to the built-in <code>Any</code> group. Operators can create, rename, remove, and assign
+firewall groups containing <code>any</code>, CIDRs, addresses, or other groups when rule sources or destinations need narrower
+access than the default. DHCP bootstrap rules are the exception: they remain interface-bound input rules without group
+filtering because clients and relay paths may arrive before a client address is assigned. IPv4 DHCP zones open UDP/67;
+IPv6 DHCP zones open UDP/547; NTPsec opens UDP/123 on selected bind targets and TCP/4460 when NTPsec NTS server mode is
+enabled. If a DHCP zone or service listener moves from a physical interface to a VLAN such as <code>eth2.50</code>, the firewall
+preview and apply diff should move the generated rule to that same interface. Apply the changed Firewall unit with the
+service unit that changed when the global apply page shows both as pending.</p>
+<p>The <code>public_services</code> unit stages <code>/var/lib/atlaso/apply/public-services/atlaso-public-services.conf</code> and installs
+<code>/etc/atlaso/nginx/sites.d/public-services.conf</code>. It renders HTTP server blocks only for non-management interface IPs
+where ESXi PXE is enabled, redirects <code>/pxe/esxi</code> to <code>/pxe/esxi/</code>, proxies dynamic PXE requests to Atlaso, and serves
+remaining <code>/pxe/esxi/</code> boot artifacts from the narrow PXE HTTP alias. It also renders hostname-specific HTTPS/SNI server
+blocks for the CA portal using the CA-managed <code>ca_portal:https</code> certificate, so <code>ca.atlaso.internal</code> and other HTTPS
+service names can share an IP without sharing a leaf certificate. It must not expose VCF Offline Depot, management,
+broad depot roots, or <code>/registry</code> proxy locations over HTTP. The app-owned public service directory at <code>/</code> defaults
+service cards to hostnames, offers a Name/IP toggle stored in the <code>atlaso_public_address_mode</code> cookie, and builds card
+URLs from each service's configured scheme and port. VCF Offline Depot and registry access use their service-owned HTTPS
+front doors. Firewall apply owns the generated HTTP/HTTPS allow rules, while management nginx remains separate on
+management-role IPs and redirects management HTTP/80 to HTTPS/443.</p>
+<h3 id="vcf-backups-apply">VCF Backups apply<a class="headerlink" href="#vcf-backups-apply" title="Permanent link">&para;</a></h3>
+<p>The real VCF Backups apply path is OpenSSH-backed. The <code>vcf_backups</code> unit stages Atlaso's rendered <code>Match User</code> drop-in
+at <code>/var/lib/atlaso/apply/vcf-backups/atlaso-vcf-backups-sshd.conf</code>, validates that it is Atlaso-rendered and scoped to
+the selected backup user, verifies the selected OS account exists, installs
+<code>/etc/ssh/sshd_config.d/atlaso-vcf-backups.conf</code>, prepares the fixed chroot storage mount and <code>/backups</code> upload
+directory, validates <code>sshd</code>, and restarts <code>sshd</code> through <code>atlaso-helper</code>. The selected backup user should be
+synchronized through the Local Users apply unit before VCF Backups is applied. Firewall apply owns the selected
+interface and port allow rule.</p>
+<h3 id="certificate-authority-apply">Certificate Authority apply<a class="headerlink" href="#certificate-authority-apply" title="Permanent link">&para;</a></h3>
+<p>The real Certificate Authority apply path stages JSON at <code>/var/lib/atlaso/apply/ca/atlaso-ca.json</code>. Fresh appliances
+enable the integrated CA at first boot, generate root material, issue the managed <code>appliance:https</code> certificate, and
+write the initial management HTTPS files before nginx exposes the console. When enabled, Atlaso generates and stores the
+local root CA and issued leaf private keys encrypted in the database with <code>ATLASO_SECRETS_KEY</code>, auto-ensures
+certificates for Atlaso HTTPS, the CA portal, Managed LDAP, KMS/KMIP, VCF Offline Depot, and VCF Private Registry, and
+renders a redacted apply preview. Through <code>atlaso-helper ca validate|apply</code>, the helper validates the staged JSON,
+rejects certificate/key mismatches when OpenSSL can check them, writes <code>root-ca.pem</code>, <code>root.crt</code>, <code>ca-bundle.pem</code>, and
+service certificate/key/chain files under <code>/etc/atlaso</code>, and keeps private keys out of job output. Rewriting the managed
+LDAPS key preserves <code>root:ldap</code> ownership and mode <code>0640</code> so a later CA-only apply cannot prevent <code>slapd.service</code> from
+reading its key after restart. Root CA material is not regenerated by ordinary CA identity edits after it exists; root
+replacement is an explicit rotation workflow so service certificates and client trust can be redeployed deliberately.</p>
+<p>Settings backups include encrypted CA private-key material. Restoring usable CA custody requires the same
+<code>ATLASO_SECRETS_KEY</code>; otherwise operators should reissue the CA/certificates.</p>
+<h3 id="kms-kmip-apply">KMS / KMIP apply<a class="headerlink" href="#kms-kmip-apply" title="Permanent link">&para;</a></h3>
+<p>The real KMS apply path is PyKMIP-backed and lab-only. The KMS page derives IPv4 and IPv6 listen addresses from the
+selected access physical interface or enabled VLAN, creates app-owned canonical CNAME and generated A/AAAA target
+records for the KMIP hostname, and requires an enabled healthy CA before KMS can be activated. When KMS is enabled, CA
+desired state auto-ensures the <code>kms:server</code> certificate and enabled KMIP client certificates; apply remains invalid
+until the issued server certificate and key are available.</p>
+<p>The <code>kms</code> unit stages <code>/var/lib/atlaso/apply/kms/pykmip.conf</code>. Through <code>atlaso-helper kms validate|apply</code>, the helper
+validates that the staged config stays under the KMS apply directory, checks the derived listen address,
+certificate/key/CA file paths, PyKMIP availability, and SQLite database path, then installs
+<code>/etc/atlaso/kms/pykmip.conf</code>, writes <code>/etc/pykmip/server.conf</code>, installs <code>atlaso-kms.service</code>, and enables/restarts the
+listener. The service launches PyKMIP through Atlaso's compatibility wrapper so Photon Python streams where legacy
+<code>ssl.wrap_socket</code> was removed can still run the lab KMIP server. Disabling KMS stops and disables <code>atlaso-kms.service</code>
+while preserving <code>/var/lib/atlaso/kms/pykmip.db</code>. Firewall apply owns TCP/5696 access to the selected interface.</p>
+<h2 id="appliance-settings-and-operations">Appliance settings and operations<a class="headerlink" href="#appliance-settings-and-operations" title="Permanent link">&para;</a></h2>
+<h3 id="ntpsec-apply">NTPsec apply<a class="headerlink" href="#ntpsec-apply" title="Permanent link">&para;</a></h3>
+<p>The real NTPsec apply path is Photon <code>ntpd.service</code> backed. The <strong>NTP / NTS</strong> page owns enabled state, service hostname,
+upstream NTP sources, per-source NTS client selection, optional NTS server certificate/key paths, hardening directives,
+bind targets, derived listen addresses, UDP/123, and client allow sources. Fresh NTPsec desired state uses NTS-capable
+upstream rows for <code>time.cloudflare.com</code> and <code>nts.netnod.se</code> with NTS enabled and descriptions populated. This is a clean
+desired-state replacement: the retired Chrony table and old Appliance Settings time fields are not imported, restored,
+or migrated.</p>
+<p>The <code>ntpd</code> unit stages <code>/var/lib/atlaso/apply/ntpd/atlaso-ntp.conf</code>. Through <code>atlaso-helper ntpd validate|apply</code>, the
+helper confines the staged file to that directory, requires Photon <code>ntpsec</code> and NTPsec binary identity without starting
+another daemon, validates upstream identities, explicit listen addresses, restrictive client access, and NTS
+certificate/key/cookie paths, then atomically installs <code>/etc/ntp.conf</code>. Per-source NTS renders
+<code>server &lt;hostname&gt; iburst nts</code>; server mode renders <code>nts enable</code>, the CA-managed certificate chain, the private-key
+path, and persistent <code>/var/lib/ntp/nts-keys</code> cookie storage. The read-only status action runs bounded <code>ntpq -pn</code>,
+<code>ntpq -c rv</code>, and <code>ntpq -c ntsinfo</code>; logs read only <code>ntpd.service</code>. When enabled, apply grants the NTS key <code>root:ntp</code>
+mode <code>0640</code>, stops/disables competing time daemons, and enables/restarts <code>ntpd.service</code>. When disabled, it
+stops/disables <code>ntpd.service</code>. Firewall apply owns UDP/123 access and, when enabled, TCP/4460 NTS-KE access to the
+selected interfaces.</p>
+<p>The read-only <code>atlaso-helper ntpd capabilities</code> action requires Photon’s <code>ntpsec</code> package and verifies the <code>ntpd</code> binary
+identifies itself as NTPsec without starting a daemon. If those checks fail, Atlaso disables the NTS server switch and
+per-upstream NTS editors, marks NTS cells unavailable, and rejects attempts to persist or apply NTS state. The normal
+NTP service, source health, UDP/123 listener, and non-NTS upstreams continue to work once the required package is
+present.</p>
+<h3 id="appliance-settings-apply">Appliance Settings apply<a class="headerlink" href="#appliance-settings-apply" title="Permanent link">&para;</a></h3>
+<p>The <code>appliance_settings</code> unit owns the centralized VMware Customer Experience Improvement Program (CEIP) preference. It
+defaults to disabled and is new desired state: Atlaso does not migrate or infer it from the retired VCF Download
+Tool-specific choice. During real apply, the helper applies and verifies the choice for installed VCF PowerCLI at
+<code>AllUsers</code> scope and writes the matching <code>ENABLE</code> or <code>DISABLE</code> VCF Download Tool telemetry flag when that runtime
+exists. Explicit PowerCLI <code>User</code> and <code>Session</code> overrides remain outside Atlaso ownership, and missing optional VMware
+products are reported as skipped.</p>
+<p>The real Appliance Settings apply path stages JSON at <code>/var/lib/atlaso/apply/appliance-settings/atlaso-settings.json</code>.
+The <code>appliance_settings</code> unit records the appliance FQDN, resolver mode, resolver servers, local DNS desired-state flag,
+management interface/IP, management UI HTTPS preference, root SSH login preference, derived nginx public ports <code>80</code> and
+<code>443</code>, and the uvicorn loopback upstream. Through <code>atlaso-helper appliance-settings validate|apply</code>, the helper sets the
+OS hostname to the appliance FQDN, local DNS mode configures the management resolver to <code>127.0.0.1</code> with <code>Domains=~.</code>,
+and external DNS mode configures the management resolver to the selected external DNS servers and removes the local
+catch-all domain. The helper always installs <code>/etc/nginx/conf.d/atlaso.conf</code> plus
+<code>/etc/atlaso/nginx/sites.d/management.conf</code>, writes a loopback-only <code>atlaso.service</code> override, reloads nginx/systemd,
+and schedules a short delayed restart of <code>atlaso.service</code> so the apply job can be recorded before uvicorn moves behind
+nginx. It also writes <code>/etc/ssh/sshd_config.d/atlaso-root-login.conf</code>, validates <code>sshd</code>, and restarts <code>sshd</code>; root SSH
+is disabled by default and enabled only when the Appliance Settings switch is applied. When management UI HTTPS is
+enabled, the helper requires the CA-managed <code>appliance:https</code> cert/key files, redirects public HTTP/80 to HTTPS/443, and
+reverse-proxies HTTPS traffic to uvicorn on <code>127.0.0.1:8000</code>. Appliance FQDN or management IP changes automatically
+refresh the managed appliance leaf certificate before apply. When management UI HTTPS is disabled, including after
+factory reset plus apply, nginx serves public HTTP/80 as a plain reverse proxy to uvicorn on <code>127.0.0.1:8000</code> and does
+not expose a management HTTPS listener.</p>
+<h3 id="operational-logs-and-appliance-power">Operational logs and appliance power<a class="headerlink" href="#operational-logs-and-appliance-power" title="Permanent link">&para;</a></h3>
+<p>The Logs page uses fixed read-only tabs for Atlaso App, KMS, LDAP / LDAPS, NTPsec, Nginx, HTTP Access, HTTP Errors, DNS,
+DHCP, and TFTP. DNS, DHCP, and TFTP are classified from one allowlisted <code>dnsmasq.service</code> journal read; lines emitted by
+<code>dnsmasq-dhcp</code> and <code>dnsmasq-tftp</code> go to their matching tabs, while base <code>dnsmasq</code> and service lifecycle messages stay
+under DNS. The LDAP / LDAPS tab reads only the fixed <code>slapd.service</code> journal through <code>atlaso-helper ldap logs</code>. The HTTP
+tabs expose the standard nginx access and error files for management and other nginx-hosted services through fixed
+<code>atlaso-helper nginx access-logs</code> and <code>error-logs</code> actions; callers cannot supply arbitrary paths. The page
+auto-refreshes every five seconds, shows the update time in one compact status pill, and supports selectable 100, 200,
+and 500 line tails. Client-side log highlighting distinguishes timestamps, severity levels, components, identifiers,
+addresses, and redaction markers and is reapplied after refresh. The panel is constrained to the viewport so its header
+and tabs remain visible; vertical scrolling belongs to the terminal output. Long lines wrap within that terminal
+scroller so no log source expands the page or creates a horizontal scrollbar. Each source path or systemd unit is
+exposed through the tab tooltip; unavailable sources have disabled tabs, while an all-unavailable page still exposes the
+first source's explanation. LDAP, NTPsec, Nginx, and dnsmasq journal reads use fixed allowlisted helper actions; the
+server redacts sensitive-looking content before returning it. The retired VCFDT tab is not part of the fixed source set.</p>
+<h4 id="audit-events">Audit events<a class="headerlink" href="#audit-events" title="Permanent link">&para;</a></h4>
+<p>Audit Events has its own Operations navigation entry and a read-only Tabulator grid with column filters and local
+pagination. The UI derives page size from the visible holder height and compact row pitch, recalculating it on grid
+resize rather than using a fixed row count or page-size selector. This avoids an internal scrollbar, long details remain
+available through cell tooltips, and a responsive minimum height preserves useful grid space while the parent page
+remains fixed. It is intentionally separate from stream-oriented log sources.</p>
+<h4 id="appliance-power">Appliance power<a class="headerlink" href="#appliance-power" title="Permanent link">&para;</a></h4>
+<p>The authenticated account menu exposes About and username-aware sign out to every signed-in operator. Administrators
+also receive Reboot and Shutdown. Both power actions require the shared confirmation modal and create a durable
+<code>appliance-reboot</code> or <code>appliance-shutdown</code> task before invoking <code>atlaso-helper appliance-power &lt;action&gt; --real</code>. The
+helper uses a transient <code>systemd-run --on-active=5</code> unit so the task result and audit event can be committed before
+<code>systemctl reboot</code> or <code>systemctl poweroff</code> runs. If delayed scheduling is unavailable, the helper fails closed instead
+of executing the power action immediately. These actions are runtime maintenance and do not create or apply
+desired-state units.</p>
+<h4 id="task-inspection">Task inspection<a class="headerlink" href="#task-inspection" title="Permanent link">&para;</a></h4>
+<p>The Tasks page uses backend-owned filtering and pagination. Status and state are fixed lists; Task / Component offers
+recorded task/component choices plus a custom fragment. Redacted result payloads remain wrapped, syntax-highlighted JSON
+audit previews. Console output removes helper execution-envelope JSON, shows only process stdout/stderr, and colors
+stderr red. The task-log dialog uses nearly the full available viewport. Result, console, and log previews remain
+constrained to the viewport, include overlaid copy/open controls without blank header rows, and are read-only renderings
+rather than text form controls.</p>
+<h3 id="vcf-offline-depot-apply">VCF Offline Depot apply<a class="headerlink" href="#vcf-offline-depot-apply" title="Permanent link">&para;</a></h3>
+<p>VCF Offline Depot no longer owns a separate telemetry switch. Command previews, manual and scheduled download
+preparation, and <code>atlaso-helper vcf-offline-depot apply-ceip</code> always consume the centralized Appliance Settings
+preference and write an exact <code>ENABLE</code> or <code>DISABLE</code> flag before VCFDT runs.</p>
+<h4 id="authentication">Authentication<a class="headerlink" href="#authentication" title="Permanent link">&para;</a></h4>
+<p>Authentication behavior: <code>/PROD/login</code> accepts the bootstrap administrator for compatibility and the selected enabled
+depot user through the stdin-only <code>atlaso-helper local-users authenticate &lt;username&gt;</code> Photon password check. HTML
+navigation redirects to the form; non-browser requests receive a standard <code>401</code> Basic challenge, so ordinary
+<code>curl -u vcf-depot:&lt;password&gt;</code> and <code>wget --user=vcf-depot --password=&lt;password&gt;</code> flows work. Apply both changed
+<code>vcf_offline_depot</code> and <code>public_services</code> units when this nginx behavior changes because either front door may own the
+shared service-IP listener. Local Users apply refreshes an existing managed depot <code>htpasswd</code> entry from the current
+Photon hash and writes a locked, non-matching entry if that account is missing or locked. No second application password
+hash is stored.</p>
+<h4 id="tool-staging-downloads-and-https-service">Tool staging, downloads, and HTTPS service<a class="headerlink" href="#tool-staging-downloads-and-https-service" title="Permanent link">&para;</a></h4>
+<p>The real VCF Offline Depot apply path stages nginx config at
+<code>/var/lib/atlaso/apply/vcf-offline-depot/atlaso-vcf-offline-depot.conf</code>. The preview and staged config use the
+CA-managed <code>vcf_offline_depot:https</code> certificate/key file paths, expose only <code>settings.depot_store_path/PROD/</code> at the
+HTTPS <code>/PROD/</code> path, and enable range-friendly static-file behavior for large depot artifacts. Non-<code>/PROD</code> paths on the
+depot hostname return 404 so the depot site does not capture Atlaso management UI, CA, or request portal browsing on
+shared appliances; CA portal routes are served by the public-services SNI site using the separate <code>ca_portal:https</code>
+certificate. By default, <code>/PROD/</code> accepts either a Atlaso browser session through nginx <code>auth_request</code> or HTTPS Basic
+Authentication backed by the selected local user's applied Photon password hash. Command-line clients that wait for a
+401 challenge, including GNU Wget, should send credentials preemptively (for example, with <code>--auth-no-challenge</code>)
+because unauthenticated browser requests redirect to <code>/PROD/login</code>. Operators may explicitly enable unauthenticated
+access for an isolated open mirror. VCF Offline Depot bind validation excludes management-role interfaces; existing
+desired state that still references a management interface remains visible but invalid until moved to a non-management
+service interface. Uploading a VCFDT archive is desired-state only: it validates/stores the package and clears generated
+metadata, but it does not extract, create runtime folders, invoke <code>vcf-download-tool</code>, or generate a software depot ID.
+Global apply <code>stage-tool</code> extracts the uploaded archive under <code>/opt/atlaso/vcf-download-tool/extracted</code>, writes a stable
+<code>/opt/atlaso/vcf-download-tool/vcf-download-tool</code> wrapper for helper-owned apply work, records the tool version from
+<code>--version</code>, applies <code>application-prodv2.properties</code> to both the helper extraction tree and
+<code>/var/lib/atlaso/vcfDownloadTool/active-tool/conf/</code>, and then
+<code>vcf-download-tool configuration generate --software-depot-id</code> captures the Broadcom software depot ID. The refresh icon
+in the UI confirms and submits the same global <code>/appliance-apply</code> workflow for <code>vcf_offline_depot</code>; it is not a
+service-specific helper call. Download tokens and activation codes share one Broadcom credentials modal with a
+credential-type selector and can be uploaded as files or pasted text; storage keys remain separate for compatibility.
+Metadata and binaries profiles prefer the runtime download-token file used by <code>--depot-download-token-file</code> when
+present, otherwise they use the runtime activation-code file used by <code>--depot-download-activation-code-file</code>. The VCFDT
+preview is generated as a bash script with <code>/var/lib/atlaso/vcfDownloadTool/active-tool</code> runtime token and
+activation-code file paths, telemetry flag setup, <code>conf/esxUserConfig.json</code> for disabled ESX platforms, and command
+intent for install, upgrade, upgrade-only, patch-only, Day-N component, metadata, and ESX downloads. Operators can
+manually start one profile from the Download Profiles grid; the Start button is disabled until that profile has a token
+or activation-code file, but missing profile credentials do not block applying the depot service or disabling it. Start
+creates a durable <code>vcf-depot-download</code> task, writes runtime token or activation-code files under the VCFDT working tree,
+runs VCFDT as the Atlaso service user, and keeps credential bodies out of task output. Enabled profiles can also be
+scheduled under Operations → Automation. The application properties editor saves desired-state text and syncs the
+CodeMirror value before submit; global apply writes the runtime <code>application-prodv2.properties</code> used by the active tool.
+Through
+<code>atlaso-helper vcf-offline-depot validate|stage-tool|apply-properties|generate-software-depot-id|sync-intent|apply-https</code>,
+the helper validates the staged site, rejects broad depot-root exposure and duplicate hostname/listener combinations,
+prepares <code>/mnt/atlaso-vcf-offline-depot/PROD</code> as web-readable static content, regenerates the managed htpasswd file from
+the selected local user's active Photon password hash, installs or removes
+<code>/etc/atlaso/nginx/sites.d/vcf-offline-depot.conf</code>, validates with <code>nginx -t</code>, and reloads nginx. Disabling the depot
+removes the nginx site and managed htpasswd file; depot files remain intact.</p>
+<h4 id="listener-validation">Listener validation<a class="headerlink" href="#listener-validation" title="Permanent link">&para;</a></h4>
+<p>Generated nginx listeners use <code>address:port</code> for IPv4 and <code>[address]:port</code> for IPv6 across the dedicated depot site and
+shared Public Services front door. The privileged helper rejects unbracketed IPv6 listen endpoints before installing
+configuration or invoking <code>nginx -t</code>.</p>
+<h2 id="state-results-and-interface-contracts">State, results, and interface contracts<a class="headerlink" href="#state-results-and-interface-contracts" title="Permanent link">&para;</a></h2>
+<h3 id="baselines-and-diffs">Baselines and diffs<a class="headerlink" href="#baselines-and-diffs" title="Permanent link">&para;</a></h3>
+<p>After each successfully applied component, Atlaso stores that unit's last-applied baseline in the existing <code>settings</code>
+table. The baseline includes the normalized snapshot hash, compact summary, rendered config preview, config path, and
+apply timestamp. This per-component commit means an earlier success remains current when a later child fails or the
+remaining children are skipped.</p>
+<p>On fresh Photon appliance startup, Atlaso records the factory desired-state baseline automatically when there is no
+existing baseline, no appliance-apply job, and no non-auth operator audit event. This startup baseline is comparison
+metadata only: it does not submit an apply job, run helper commands, or mutate host services. It also records the
+provisioned bootstrap admin OS account as synced because image provisioning already created that Photon account and set
+its password.</p>
+<p>When desired state changes later, the global apply page compares the current rendered config preview to the last-applied
+preview and shows a unified config diff when available. On first apply, no baseline exists yet, so the page shows the
+current preview instead.</p>
+<p>Rendered previews and job results must redact sensitive-looking values such as passwords, tokens, credentials, private
+keys, robot accounts, activation codes, encrypted CA private material, and uploaded secret contents.</p>
+<h3 id="job-result">Job result<a class="headerlink" href="#job-result" title="Permanent link">&para;</a></h3>
+<p>Submitting first commits one pending <code>appliance-apply</code> master and its ordered component children, then returns HTTP
+<code>202</code> to the modal while adapter execution continues as background work. The children progress through <code>pending</code>,
+<code>running</code>, <code>succeeded</code>, <code>failed</code>, or <code>skipped</code>. Components execute sequentially; the first failed child stops the task
+and skips the remainder. A safe cancellation request allows every command in the running component to finish, skips
+the remaining components, and releases the global mutation lock only after the master becomes terminal.</p>
+<p>Only one appliance apply master may be pending or running at a time, preventing overlapping helper commands from sharing
+staging paths. If Atlaso restarts during an apply, startup fails the running child, skips pending children, fails the
+master, and releases the lock. The submitted desired-state snapshot hash is checked again before execution, and the task
+fails closed with a resubmit message if a selected unit changes while it is queued. The master and children record:</p>
+<ul>
+<li>selected apply units;</li>
+<li>skipped changed units;</li>
+<li>validation errors and warnings;</li>
+<li>compact summaries;</li>
+<li>rendered config previews and diffs;</li>
+<li>adapter commands and dry-run status;</li>
+<li>per-component status, timing, progress, result, and error.</li>
+</ul>
+<p>In development, adapter commands are dry-run records. They capture command intent without changing host services.</p>
+<p>Atlaso also writes a compact operational breadcrumb for each appliance apply submission to <code>/var/log/atlaso/atlaso.log</code>,
+including the job id, selected units, skipped changed units, dry-run/live status, per-unit result, and adapter command
+return codes. Audit events are mirrored to the same app log with sensitive-looking values redacted. Operators can adjust
+local log verbosity and optional external syslog forwarding from Settings.</p>
+<h3 id="ui-expectations">UI expectations<a class="headerlink" href="#ui-expectations" title="Permanent link">&para;</a></h3>
+<p>Service right rails should show:</p>
+<ul>
+<li><code>Pending Appliance Changes</code>, with status and an action that opens the shared review modal;</li>
+<li><code>Validation</code>, with errors, warnings, and compact rendered config preview actions.</li>
+</ul>
+<p>The top pending banner is page-scoped: show it only when the current page's apply unit has changed. The sidebar review
+card remains global, shows only unsubmitted pending units, and disappears when no changes require review. Active
+submitted work is represented by the blocking master/child grid instead of a second pending banner or sidebar count.</p>
+<p>Validation side rails should not render full config blocks inline. Keep the path/name visible in a compact preview
+action row and open the shared preview modal for the full rendered text. The hidden source element in that row should
+retain the existing <code>data-...-preview</code> selector so autosave refreshes continue to replace the latest preview content.
+Appliance Apply keeps component diffs collapsed until the operator opens the relevant row.</p>
+<p>Editable Tabulator grids should keep new-record placeholder rows visually incomplete until the required identity field
+is filled. Only the required first field should be visible and editable at first; generated defaults and secondary cells
+should stay blank and locked so operators do not mistake a placeholder for a saved complete row.</p>
+<p>The global submit button should be labeled <code>Submit appliance changes</code>. Avoid reintroducing labels such as
+<code>Create appliance apply task</code>, <code>DNS Apply</code>, <code>DHCP Apply</code>, <code>SFTP Apply</code>, or other service-scoped apply actions.</p>
+
+
+
+
+
+
+
+
+
+  
+  
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-circle-arrow-up" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m16 12-4-4-4 4M12 16V8"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../interface-gallery/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Verified interface gallery">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Verified interface gallery
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../appliance-console-technical/" class="md-footer__link md-footer__link--next" aria-label="Next: Local console technical reference">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Local console technical reference
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright © 2026 Atlaso contributors
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["content.action.edit","content.action.view","content.code.copy","navigation.footer","navigation.indexes","navigation.instant","navigation.instant.prefetch","navigation.path","navigation.sections","navigation.tabs","navigation.tabs.sticky","navigation.top","navigation.tracking","search.highlight"],"search":"../../assets/javascripts/workers/search.b6b7e04f.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7f30b55.min.js"></script>
+      
+    
+  </body>
+</html>
