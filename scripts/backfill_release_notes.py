@@ -20,7 +20,19 @@ PROVENANCE_RE = re.compile(
     r"^Signed appliance release built from `(?P<commit>[0-9a-f]{40})`\.\s*(?P<notes>.*)$",
     flags=re.DOTALL,
 )
+RELEASE_NOTES_COMMENT_RE = re.compile(r"<!--\s*Release notes .*?-->\s*", flags=re.DOTALL)
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+BACKFILL_COMMENT = (
+    "<!-- Release notes grouped by Atlaso from GitHub-generated changes "
+    "using .github/release.yml -->"
+)
+CATEGORY_TITLES = (
+    "New and improved",
+    "Fixes",
+    "Documentation",
+    "Dependency updates",
+    "Other changes",
+)
 
 
 @dataclass(frozen=True)
@@ -137,19 +149,116 @@ def tag_commit(repository: str, tag: str) -> str:
     return commit
 
 
+def pull_request_labels(repository: str, number: int) -> set[str]:
+    response = gh_json(["api", f"repos/{repository}/pulls/{number}"])
+    labels = response.get("labels") if isinstance(response, dict) else None
+    if not isinstance(labels, list):
+        raise SystemExit(f"GitHub returned invalid labels for pull request #{number}")
+    names = {
+        str(label["name"])
+        for label in labels
+        if isinstance(label, dict) and isinstance(label.get("name"), str)
+    }
+    return names
+
+
+def release_category(labels: set[str]) -> str:
+    if "dependencies" in labels:
+        return "Dependency updates"
+    if "enhancement" in labels:
+        return "New and improved"
+    if "bug" in labels:
+        return "Fixes"
+    if "documentation" in labels:
+        return "Documentation"
+    return "Other changes"
+
+
+def trailing_pull_request_number(repository: str, line: str) -> int | None:
+    match = re.search(
+        rf"https://github\.com/{re.escape(repository)}/pull/(?P<number>[0-9]+)\s*$",
+        line,
+        flags=re.IGNORECASE,
+    )
+    return int(match.group("number")) if match is not None else None
+
+
+def group_generated_notes(repository: str, body: str) -> str:
+    lines = body.strip().splitlines()
+    try:
+        changes_index = lines.index("## What's Changed")
+    except ValueError as exc:
+        raise SystemExit("GitHub generated notes without a What's Changed section") from exc
+    full_changelog_indexes = [
+        index
+        for index, line in enumerate(lines)
+        if line.startswith("**Full Changelog**:")
+    ]
+    if len(full_changelog_indexes) != 1:
+        raise SystemExit("GitHub generated notes without exactly one Full Changelog link")
+    full_changelog_index = full_changelog_indexes[0]
+    if full_changelog_index <= changes_index:
+        raise SystemExit("GitHub generated notes placed Full Changelog before What's Changed")
+
+    middle = lines[changes_index + 1 : full_changelog_index]
+    extra_index = next(
+        (index for index, line in enumerate(middle) if line.startswith("## ")),
+        len(middle),
+    )
+    change_lines = [line for line in middle[:extra_index] if line.strip()]
+    configured_headings = [
+        line.removeprefix("### ")
+        for line in change_lines
+        if line.startswith("### ")
+    ]
+    if configured_headings:
+        if any(title not in CATEGORY_TITLES for title in configured_headings):
+            raise SystemExit("GitHub generated notes with an unknown release category")
+        if any(not (line.startswith("### ") or line.startswith("* ")) for line in change_lines):
+            raise SystemExit("GitHub generated an unsupported categorized What's Changed entry")
+        return body.strip()
+    if any(not line.startswith("* ") for line in change_lines):
+        raise SystemExit("GitHub generated an unsupported What's Changed entry")
+    extra_sections = "\n".join(middle[extra_index:]).strip()
+
+    grouped: dict[str, list[str]] = {title: [] for title in CATEGORY_TITLES}
+    for line in change_lines:
+        pull_request_number = trailing_pull_request_number(repository, line)
+        if pull_request_number is None:
+            grouped["Other changes"].append(line)
+            continue
+        labels = pull_request_labels(repository, pull_request_number)
+        grouped[release_category(labels)].append(line)
+
+    blocks = [BACKFILL_COMMENT, "## What's Changed"]
+    blocks.extend(
+        f"### {title}\n" + "\n".join(grouped[title])
+        for title in CATEGORY_TITLES
+        if grouped[title]
+    )
+    if extra_sections:
+        blocks.append(extra_sections)
+    blocks.append(lines[full_changelog_index])
+    return "\n\n".join(blocks)
+
+
 def generated_notes(repository: str, tag: str, previous_tag: str) -> str:
     response = gh_json(
         ["api", "--method", "POST", f"repos/{repository}/releases/generate-notes"],
         payload={
             "tag_name": tag,
             "previous_tag_name": previous_tag,
-            "configuration_file_path": RELEASE_CONFIG_PATH,
         },
     )
     body = response.get("body") if isinstance(response, dict) else None
     if not isinstance(body, str) or not body.strip():
         raise SystemExit(f"GitHub generated an empty release-note body for {tag}")
-    return body.strip()
+    return group_generated_notes(repository, body)
+
+
+def comparable_notes(notes: str) -> str:
+    without_comment = RELEASE_NOTES_COMMENT_RE.sub("", notes).strip()
+    return "\n".join(line.rstrip() for line in without_comment.splitlines() if line.strip())
 
 
 def release_identity(release: dict[str, Any]) -> dict[str, Any]:
@@ -208,7 +317,7 @@ def plan_updates(
         current_notes = match.group("notes").strip()
         if not current_notes:
             action = "update"
-        elif current_notes == notes:
+        elif comparable_notes(current_notes) == comparable_notes(notes):
             action = "unchanged"
         else:
             raise SystemExit(f"{tag} has unexpected or manually customized release notes; refusing to overwrite them")
