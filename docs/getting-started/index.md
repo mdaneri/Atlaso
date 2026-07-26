@@ -11,6 +11,17 @@ status: current
 Atlaso is delivered as a Photon OS 5.0 appliance. VMware Workstation is the default live-test and documentation target;
 Hyper-V provides the authoritative lifecycle environment for exact access and trunk VLAN behavior.
 
+<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
+## Interface overview
+
+This verified appliance view provides visual orientation before you begin.
+
+![Atlaso sign-in page in the desktop viewport.](../assets/screenshots/login-desktop.webp)
+
+*Figure: Appliance sign-in in the verified desktop viewport.*
+
+<!-- END GENERATED INTERFACE OVERVIEW -->
+
 ## First-use sequence
 
 1. Build or obtain the appliance by following the [full technical reference](../reference/full-technical-reference.md).
@@ -23,3 +34,26 @@ Hyper-V provides the authoritative lifecycle environment for exact access and tr
 
 Do not treat an assigned IP address, a running VM, or a green service alone as application readiness. Verify the
 host-facing `/openapi.json` endpoint before beginning configuration.
+
+<!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
+## Additional verified states
+
+These captures show responsive layouts and useful operational states referenced by this page.
+
+### Services
+
+![Atlaso Services page in the clean-appliance desktop viewport.](../assets/screenshots/services-clean-desktop.webp)
+
+*Figure: Services in the verified clean-appliance desktop state.*
+
+![Atlaso Services page in the clean-appliance responsive viewport.](../assets/screenshots/services-clean-responsive.webp)
+
+*Figure: Services in the verified clean-appliance responsive state.*
+
+### Sign in
+
+![Atlaso sign-in page in the responsive viewport.](../assets/screenshots/login-responsive.webp)
+
+*Figure: Appliance sign-in in the verified responsive viewport.*
+
+<!-- END GENERATED ADDITIONAL SCREENSHOTS -->

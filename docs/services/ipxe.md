@@ -12,6 +12,17 @@ status: current
 Cleaned Markdown copy of the Broadcom Tech Docs content for ESX installation, kickstart, `boot.cfg`, PXELINUX, iPXE, and
 native UEFI HTTP boot.
 
+<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
+## Interface overview
+
+This verified appliance view provides visual orientation before you begin.
+
+![Atlaso ESXi PXE page in the clean-appliance desktop viewport.](../assets/screenshots/esxi-pxe-clean-desktop.webp)
+
+*Figure: ESXi PXE in the verified clean-appliance desktop state.*
+
+<!-- END GENERATED INTERFACE OVERVIEW -->
+
 Atlaso note: ESXi PXE host-specific `boot.cfg` artifacts should pass Kickstart URLs as
 `/pxe/esxi/ks/<file>.cfg?mac=<normalized-mac>`. The MAC query parameter is required so Atlaso can render restricted
 `{{variable}}` Kickstart markers from the database source and the selected host's custom variable map. Atlaso
@@ -1128,3 +1139,16 @@ IPAPPEND 2
 ```
 
 That allows the installer to receive the PXELINUX `BOOTIF` information.
+
+<!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
+## Additional verified states
+
+These captures show responsive layouts and useful operational states referenced by this page.
+
+### ESXi PXE
+
+![Atlaso ESXi PXE page in the clean-appliance responsive viewport.](../assets/screenshots/esxi-pxe-clean-responsive.webp)
+
+*Figure: ESXi PXE in the verified clean-appliance responsive state.*
+
+<!-- END GENERATED ADDITIONAL SCREENSHOTS -->

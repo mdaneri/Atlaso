@@ -12,6 +12,17 @@ status: current
 see current health and follow links into the owning workflow, but the dashboard never applies configuration, restarts a
 service, or mutates appliance state.
 
+<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
+## Interface overview
+
+This verified appliance view provides visual orientation before you begin.
+
+![Atlaso Dashboard page in the clean-appliance desktop viewport.](../assets/screenshots/dashboard-clean-desktop.webp)
+
+*Figure: Dashboard in the verified clean-appliance desktop state.*
+
+<!-- END GENERATED INTERFACE OVERVIEW -->
+
 ## Overall state
 
 The status band reports one of three states:
@@ -51,3 +62,32 @@ The browser refreshes every 30 seconds while the page is visible, pauses while h
 becoming visible. A failed refresh keeps the last successful DOM and displays a stale-data notice.
 
 `/api/v1/dashboard` remains the existing bearer-authenticated public API and is not backed by this private UI response.
+
+<!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
+## Additional verified states
+
+These captures show responsive layouts and useful operational states referenced by this page.
+
+### Dashboard
+
+![Atlaso About dialog showing version 0.9.21, build identity, and Python version.](../assets/screenshots/about-modal-desktop.webp)
+
+*Figure: Atlaso About dialog with the deployed version and build identity.*
+
+![Atlaso dashboard after a successful DNS appliance apply.](../assets/screenshots/dashboard-applied-desktop.webp)
+
+*Figure: Dashboard after a successful DNS appliance apply.*
+
+![Atlaso dashboard with a failed appliance apply task in actionable exceptions.](../assets/screenshots/dashboard-apply-failed-desktop.webp)
+
+*Figure: Dashboard reporting a failed appliance apply task.*
+
+![Atlaso Dashboard page in the clean-appliance responsive viewport.](../assets/screenshots/dashboard-clean-responsive.webp)
+
+*Figure: Dashboard in the verified clean-appliance responsive state.*
+
+![Atlaso dashboard showing pending appliance changes and a validation exception.](../assets/screenshots/dashboard-pending-desktop.webp)
+
+*Figure: Dashboard with valid pending changes and a unit needing attention.*
+
+<!-- END GENERATED ADDITIONAL SCREENSHOTS -->

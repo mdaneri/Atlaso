@@ -10,7 +10,9 @@ status: current
 
 # Reference
 
+- [API reference](api.md)
 - [Verified interface gallery](interface-gallery.md)
+- [Local console technical reference](appliance-console-technical.md)
 - [Full technical reference](full-technical-reference.md)
 - [Hyper-V lifecycle testing](hyperv-lifecycle-testing.md)
 - [VMware Workstation lifecycle testing](vmware-workstation-lifecycle-testing.md)

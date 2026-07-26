@@ -14,6 +14,17 @@ reviewable phases. Phase 3 adds explicit organization selection, current-state c
 local-role/LDAP-group mappings to the constrained Authorization Code protocol surface. Provider enablement requires the
 applied management HTTPS setting, canonical issuer, active RS256 key, and protocol readiness.
 
+<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
+## Interface overview
+
+This verified appliance view provides visual orientation before you begin.
+
+![Atlaso Authentication page in the clean-appliance desktop viewport.](../assets/screenshots/authentication-clean-desktop.webp)
+
+*Figure: Authentication in the verified clean-appliance desktop state.*
+
+<!-- END GENERATED INTERFACE OVERVIEW -->
+
 ## Architecture and trust boundaries
 
 The canonical issuer is exactly `https://<applied-appliance-fqdn>/identity`. It is configured from Appliance Settings,
@@ -158,3 +169,26 @@ during ordinary downgrade. If complete rollback requires their removal, restore 
 Until the final phase succeeds, Atlaso does not claim VCF OIDC compatibility. The constrained design excludes implicit,
 password, device, client-credentials, token-exchange, and dynamic-registration flows; refresh tokens; consent; external
 LDAP sources; social/federated identity; SAML; SCIM; wildcard redirects; front-channel logout; and back-channel logout.
+
+<!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
+## Additional verified states
+
+These captures show responsive layouts and useful operational states referenced by this page.
+
+### Authentication
+
+![Atlaso Authentication page in the clean-appliance responsive viewport.](../assets/screenshots/authentication-clean-responsive.webp)
+
+*Figure: Authentication in the verified clean-appliance responsive state.*
+
+### Authentication: Oidc Group Mappings
+
+![Atlaso Authentication page showing the OIDC external group mapping grid at the desktop viewport.](../assets/screenshots/authentication-group-mappings-desktop.webp)
+
+*Figure: OIDC external group mappings in the desktop direct-edit collection.*
+
+![Atlaso Authentication page showing the OIDC external group mapping grid at the responsive viewport.](../assets/screenshots/authentication-group-mappings-responsive.webp)
+
+*Figure: OIDC external group mappings in the responsive direct-edit collection.*
+
+<!-- END GENERATED ADDITIONAL SCREENSHOTS -->

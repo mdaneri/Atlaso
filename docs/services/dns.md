@@ -12,6 +12,17 @@ Atlaso manages DNS desired state through dnsmasq. Editing settings, zones, or re
 and the global DNS/DHCP preview; it does not mutate the appliance until an operator submits the `DNS/DHCP (dnsmasq)`
 unit through Appliance Apply.
 
+<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
+## Interface overview
+
+This verified appliance view provides visual orientation before you begin.
+
+![Atlaso DNS page in the clean-appliance desktop viewport.](../assets/screenshots/dns-clean-desktop.webp)
+
+*Figure: DNS in the verified clean-appliance desktop state.*
+
+<!-- END GENERATED INTERFACE OVERVIEW -->
+
 ## Local and authoritative modes
 
 With **Authoritative** off, each managed domain renders as `local=/domain/`. Atlaso answers known local records and
@@ -82,3 +93,20 @@ existing PTR behavior and configured upstream recursion remain available on a no
 addresses and names with the appliance's selected listener and managed data. To provide recursion on an external
 address, leave Authoritative off for that listener or select a separate DNS interface that is not part of the
 authoritative interface set.
+
+<!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
+## Additional verified states
+
+These captures show responsive layouts and useful operational states referenced by this page.
+
+### DNS
+
+![Atlaso DNS page after the desired dnsmasq configuration was applied successfully.](../assets/screenshots/dns-applied-desktop.webp)
+
+*Figure: DNS desired state after a successful dnsmasq apply.*
+
+![Atlaso DNS page in the clean-appliance responsive viewport.](../assets/screenshots/dns-clean-responsive.webp)
+
+*Figure: DNS in the verified clean-appliance responsive state.*
+
+<!-- END GENERATED ADDITIONAL SCREENSHOTS -->

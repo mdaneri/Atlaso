@@ -12,6 +12,17 @@ status: current
 
 ![Atlaso — Everything your virtualization lab needs](../assets/brand/atlaso-docs-header-light-1600x400.png)
 
+<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
+## Interface overview
+
+This verified appliance view provides visual orientation before you begin.
+
+![Atlaso Physical Interfaces page in the clean-appliance desktop viewport.](../assets/screenshots/physical-interfaces-clean-desktop.webp)
+
+*Figure: Physical Interfaces in the verified clean-appliance desktop state.*
+
+<!-- END GENERATED INTERFACE OVERVIEW -->
+
 **Everything your virtualization lab needs.**
 
 Infrastructure • Storage • Identity • Networking • Lifecycle
@@ -1080,3 +1091,46 @@ python scripts/check_photon_compatibility.py
 
 The MVP test suite covers auth, token revocation, scope enforcement, audit records, UI smoke rendering, and OpenAPI
 contract checks.
+
+<!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
+## Additional verified states
+
+These captures show responsive layouts and useful operational states referenced by this page.
+
+### API reference
+
+![Atlaso Swagger API reference page in the clean-appliance desktop viewport.](../assets/screenshots/swagger-clean-desktop.webp)
+
+*Figure: Swagger API reference in the verified clean-appliance desktop state.*
+
+![Atlaso Swagger API reference page in the clean-appliance responsive viewport.](../assets/screenshots/swagger-clean-responsive.webp)
+
+*Figure: Swagger API reference in the verified clean-appliance responsive state.*
+
+### Physical interfaces
+
+![Atlaso Physical Interfaces page in the clean-appliance responsive viewport.](../assets/screenshots/physical-interfaces-clean-responsive.webp)
+
+*Figure: Physical Interfaces in the verified clean-appliance responsive state.*
+
+### Routes and WAN simulation
+
+![Atlaso Routes and WAN Simulation page in the clean-appliance desktop viewport.](../assets/screenshots/routes-wan-clean-desktop.webp)
+
+*Figure: Routes and WAN Simulation in the verified clean-appliance desktop state.*
+
+![Atlaso Routes and WAN Simulation page in the clean-appliance responsive viewport.](../assets/screenshots/routes-wan-clean-responsive.webp)
+
+*Figure: Routes and WAN Simulation in the verified clean-appliance responsive state.*
+
+### VLAN interfaces
+
+![Atlaso VLAN Interfaces page in the clean-appliance desktop viewport.](../assets/screenshots/vlan-interfaces-clean-desktop.webp)
+
+*Figure: VLAN Interfaces in the verified clean-appliance desktop state.*
+
+![Atlaso VLAN Interfaces page in the clean-appliance responsive viewport.](../assets/screenshots/vlan-interfaces-clean-responsive.webp)
+
+*Figure: VLAN Interfaces in the verified clean-appliance responsive state.*
+
+<!-- END GENERATED ADDITIONAL SCREENSHOTS -->

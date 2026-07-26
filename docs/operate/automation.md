@@ -12,6 +12,17 @@ Atlaso's core scheduler runs in the separate persistent `atlaso-worker.service`.
 schedule records; the worker claims pending work and writes the normal task, audit, result, and error history. It
 supports:
 
+<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
+## Interface overview
+
+This verified appliance view provides visual orientation before you begin.
+
+![Atlaso Automation page in the clean-appliance desktop viewport.](../assets/screenshots/automation-clean-desktop.webp)
+
+*Figure: Automation in the verified clean-appliance desktop state.*
+
+<!-- END GENERATED INTERFACE OVERVIEW -->
+
 - Appliance Update checks and installs with selected update streams.
 - Enabled VCF Offline Depot download profiles. The worker rechecks the profile immediately before execution, so a
   profile disabled after queueing fails closed instead of starting a download.
@@ -100,3 +111,16 @@ Task detail keeps the complete redacted result payload for audit and diagnosis, 
 managed process stdout and stderr. The helper execution envelope is removed from that console view, stdout keeps the
 normal terminal colors, and stderr is shown separately in red. Result and log previews keep copy/open controls overlaid
 in the corner without reserving blank text rows.
+
+<!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
+## Additional verified states
+
+These captures show responsive layouts and useful operational states referenced by this page.
+
+### Automation
+
+![Atlaso Automation page in the clean-appliance responsive viewport.](../assets/screenshots/automation-clean-responsive.webp)
+
+*Figure: Automation in the verified clean-appliance responsive state.*
+
+<!-- END GENERATED ADDITIONAL SCREENSHOTS -->

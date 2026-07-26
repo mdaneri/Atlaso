@@ -39,6 +39,39 @@ CAPTURE_OVERRIDES = {
     },
 }
 
+DOCUMENTATION_PAGES = {
+    "getting-started/index.md": ("login-", "services-"),
+    "operate/dashboard.md": ("about-", "dashboard-"),
+    "operate/audit-log.md": ("audit-log-",),
+    "operate/logs.md": ("logs-",),
+    "operate/monitor.md": ("monitor-",),
+    "operate/appliance-apply.md": ("appliance-review-",),
+    "operate/appliance-settings.md": ("settings-",),
+    "operate/tasks.md": ("tasks-",),
+    "operate/appliance-console.md": ("appliance-console-",),
+    "operate/appliance-update.md": ("appliance-update-",),
+    "operate/backup-restore.md": ("backup-restore-",),
+    "operate/automation.md": ("automation-",),
+    "operate/networking.md": ("physical-interfaces-", "routes-wan-", "vlan-interfaces-"),
+    "operate/web-terminal.md": ("terminal-",),
+    "services/dns.md": ("dns-",),
+    "services/dhcp.md": ("dhcp-",),
+    "services/firewall.md": ("firewall-",),
+    "services/ntp.md": ("ntp-",),
+    "services/esx-storage.md": ("esx-storage-",),
+    "services/ipxe.md": ("esxi-pxe-",),
+    "services/kms.md": ("kms-",),
+    "services/local-users.md": ("users-",),
+    "services/managed-ldap.md": ("ldap-",),
+    "services/oidc-provider.md": ("authentication-",),
+    "services/certificate-authority.md": ("ca-public-", "ca-requests-", "certificate-authority-"),
+    "services/vcf-backups.md": ("vcf-backups-",),
+    "services/vcf-helper.md": ("vcf-helper-",),
+    "services/vcf-offline-depot.md": ("vcf-offline-depot-",),
+    "services/vcf-private-registry.md": ("vcf-private-registry-",),
+    "reference/api.md": ("swagger-",),
+}
+
 ROUTES = {
     "appliance-update": ("/appliance-update", "Appliance Update"),
     "audit-log": ("/audit-log", "Audit Events"),
@@ -175,6 +208,17 @@ SPECIAL = {
 }
 
 
+def documentation_page(stem: str) -> str:
+    matches = [
+        page
+        for page, prefixes in DOCUMENTATION_PAGES.items()
+        if any(stem.startswith(prefix) for prefix in prefixes)
+    ]
+    if len(matches) != 1:
+        raise ValueError(f"{stem} must map to exactly one documentation page; found {matches}")
+    return matches[0]
+
+
 def clean_entry(stem: str) -> tuple[str, str, str, str]:
     suffix = "-clean-responsive" if stem.endswith("-clean-responsive") else "-clean-desktop"
     slug = stem.removesuffix(suffix)
@@ -212,6 +256,7 @@ def metadata(path: Path) -> dict[str, object]:
             if stem == "appliance-console-applied"
             else "chrome-browser"
         ),
+        "documentation_page": documentation_page(stem),
         "brand_variant": "console-light" if stem == "appliance-console-applied" else "light",
         "sensitive_data_reviewed": True,
     }

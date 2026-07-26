@@ -8,108 +8,114 @@ status: current
 
 # Local appliance console
 
-Photon appliances reserve only the first virtual terminal (`tty1`) for the Atlaso local appliance console. Other virtual
-terminals keep the normal Photon login prompt; use `Alt+F2`, `Alt+F3`, and later function-key terminals for ordinary
-local login.
+Use the local console when the management UI is unavailable or when you need direct status and recovery controls.
+Atlaso owns only the first virtual terminal (`tty1`); `Alt+F2`, `Alt+F3`, and later terminals keep the normal Photon
+login prompt.
 
-The console is a read-mostly recovery surface using the same pale blue, slate, blue, green, amber, and red palette as
-the web UI, mapped to the colors supported by the Linux virtual console. Its pale-blue header keeps the Atlaso version
-beside the appliance title, leaves one separating row, then shows Photon OS with normalized system architecture, kernel,
-CPU, memory, and 1/5/15-minute load averages on separate rows. Common `x86_64`/`AMD64` values display as `amd64`,
-`aarch64`/`arm64` as `arm64`, and other architectures remain as reported. Load values stay in the normal header color
-below 75% of the logical CPU count, turn amber when any average reaches 75%, and turn red when any average reaches 100%
-or more. A complete pale-blue spacer row and a blank body row separate Load from the management URLs. The management
-block uses stable table columns for Interface, IPv4/GW/mode, IPv6/GW/mode, and DNS. Below it, **Appliance services**
-uses the same desired/runtime projections as the web Services page for Authentication, Certificate Authority, DHCP, DNS,
-ESXi PXE, Firewall, KMS / KMIP, Managed LDAP, NTP / NTS, Routing, VCF Backup SFTP, VCF Offline Depot, and VCF Private
-Registry. Backing systemd units additionally distinguish running, stopped, failed, and unavailable runtime states. Each
-row uses the built-in Photon console font's supported symbols and compact state text: `▶ on` or `▶ off` for a running
-runtime, `■ on` or `■ off` for stopped, `! crashed` for failed, and `? on` for an enabled service whose runtime is
-unavailable. An absent optional unit such as KMS is reported as stopped while the service is intentionally disabled, and
-becomes unavailable only if the service is enabled but its runtime cannot be provided. Firewall uses its Atlaso desired
-enablement and independently reports whether its persistence unit is ready. The normal 80x30 tty shows the complete list
-in two columns; shorter supported terminals show aggregate counts and exceptions. It refreshes every 5 seconds by
-default and after resize or completed actions without continuously clearing the screen. During the first 30 seconds
-after tty1 starts, a not-yet-created management-interface inventory row displays as **Initializing appliance
-networking...** instead of a failure; the normal status replaces it on the next refresh as soon as inventory is
-available. Unrelated failures remain visible immediately, and a still-missing management interface becomes the normal
-actionable error after the grace period. Set `ATLASO_CONSOLE_REFRESH_SECONDS` in `/etc/atlaso/atlaso.env` to an integer
-from 1 through 300 and restart `atlaso-console.service` to change the normal refresh interval. Invalid values fall back
-to 5 seconds. A terminal smaller than 72 columns by 22 rows shows only the resize requirement.
+<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
+## Interface overview
 
-Press `F1` to open a five-page framed help dialog covering the screen regions, service-state legend, function keys and
-authentication boundaries, dialog navigation, recovery behavior, and safety controls. Move between pages with
-Left/Right, PageUp/PageDown, `n`/`p`, or the Previous/Next buttons. Enter selects the focused button; Esc or F1 closes
-Help. Help does not require authentication. The footer uses the compact `<F12> Power` label; its full shutdown/restart
-behavior remains explained in Help and in the authenticated F12 dialog.
+This verified appliance view provides visual orientation before you begin.
 
-Press `F3` from the main screen to authenticate with the Photon root password and hand `tty1` temporarily to the
-interactive `top` process. Exit `top` with `q` to restore and redraw the Atlaso console. Authentication is required on
-every entry and is not reused from F2, F4, or F12 because `top` can signal and terminate processes.
+![Atlaso Photon appliance console showing management networking and service status.](../assets/screenshots/appliance-console-applied.webp)
 
-Press `F4` to open an interactive root Bash login session on `tty1`. F4 requires the Photon root password on every entry
-and records shell open/close audit events as `console:root`. Use `exit` or `Ctrl+D` to close Bash and restore a
-physically cleared appliance screen. The password is not retained, logged, or reused by another menu.
+*Figure: VMware console after a successful appliance apply.*
 
-Every entry into `F2 Customize` requires the Photon `root` password and authorization is discarded when the menu closes.
-It intentionally exposes only:
+<!-- END GENERATED INTERFACE OVERVIEW -->
 
-- management IPv4 and IPv6 modes, addresses, and gateways for the existing management interface, together with external
-  DNS servers in the same editor;
-- persistent Firewall enable/disable state; and
-- reversible **Disable all appliance services** maintenance isolation.
+## Before you begin
 
-The management-network editor uses one compact framed form for IPv4, IPv6, and DNS. Move between controls with `Tab`,
-`Shift+Tab`, or Up/Down; change mode selectors with Left/Right; and edit text at the cursor with Left/Right, Home/End,
-Backspace, and Delete. Address and gateway fields are disabled unless their family is in Static mode. Closing the editor
-physically clears its window before rebuilding the Customize menu. Password prompts use the same cursor-aware text
-editing behavior.
+- Open the VM console in VMware Workstation or Hyper-V.
+- Use the Photon `root` password for authenticated recovery actions.
+- Treat console networking and service changes as real appliance mutations.
+- Prefer the web UI for routine desired-state editing when it is reachable.
 
-IPv4 supports DHCP or static address/prefix with an optional on-link gateway. IPv6 is independent and supports Disabled,
-Automatic RA/SLAAC, or static address/prefix with an optional gateway. A static IPv6 gateway must be within the
-configured prefix or link-local (`fe80::/10`) and cannot equal the interface address. Selecting Disabled or Automatic
-clears stored static IPv6 address and gateway state.
+## Read the main screen
 
-Network, DNS, and Firewall edits update Atlaso desired state and create one synchronous global `appliance-apply` task
-with `console:root` as the actor. The combined management editor selects Network and Appliance Settings together, plus
-Firewall only if the address change alters its valid rendered state. Other unrelated pending units remain unselected.
-The console rejects a change while another appliance-apply task is active and forces the selected reviewed helper path
-to run as a real local recovery action even when ordinary adapters are configured for dry-run. Validation or apply
-failures leave the new desired state pending for web review and show a bounded local error; the console never falls back
-to unvalidated host commands.
+The main screen refreshes every five seconds and shows:
 
-Disabling Firewall persists `FirewallSettings.enabled=false` and applies the existing ruleset-clearing configuration.
-Enabling it rebuilds current Atlaso rules. This state survives reboot, remains visible in the web UI, and is independent
-of service isolation.
+- the Atlaso and Photon versions, architecture, kernel, CPU, memory, and load;
+- management interfaces, addresses, gateways, address modes, DNS servers, and management URLs;
+- desired and runtime state for Atlaso-managed services; and
+- the available function-key actions.
 
-Maintenance isolation snapshots service enable/active state under `/var/lib/atlaso/console/services.json`, then stops
-and disables the appliance application services. It deliberately preserves `atlaso-console.service`,
-`systemd-networkd.service`, `systemd-resolved.service`, and `atlaso-firewall.service`. The F2 menu changes to **Restore
-appliance services** while isolation is active and restores only units that were enabled or active in the snapshot.
+During the first 30 seconds after startup, a missing interface inventory is shown as
+**Initializing appliance networking...**. If the interface remains missing after that period, the console reports the
+normal actionable error.
 
-Every entry into `F12` separately requires the root password. Restart and shutdown require confirmation and use the
-delayed, auditable constrained appliance-power helper. `F12` remains separate from the F2 customization list.
+Service state uses compact labels:
 
-## ESX Storage status
+| Label       | Meaning                                            |
+| ----------- | -------------------------------------------------- |
+| `▶ on/off`  | The runtime is running.                            |
+| `■ on/off`  | The runtime is stopped.                            |
+| `! crashed` | A backing unit failed.                             |
+| `? on`      | The service is enabled but runtime is unavailable. |
 
-The Appliance services list includes **ESX Storage NFS** with desired enablement from `/esx-storage` and live
-`nfs-server.service` state. Maintenance isolation snapshots and restores both `nfs-server.service` and
-`rpcbind.service`; it never unmounts or deletes ESX datastore data.
+## Choose an action
 
-## Runtime ownership
+| Key   | Action                 | Authentication | Use it for                                                   |
+| ----- | ---------------------- | -------------- | ------------------------------------------------------------ |
+| `F1`  | Help                   | None           | Screen regions, state legend, navigation, and safety notes.  |
+| `F2`  | Customize              | Root password  | Management networking, DNS, Firewall, and service isolation. |
+| `F3`  | Process monitor        | Root password  | A temporary interactive `top` session.                       |
+| `F4`  | Root shell             | Root password  | Advanced diagnosis when bounded recovery is insufficient.    |
+| `F12` | Restart or shut down   | Root password  | Audited appliance power actions with confirmation.           |
 
-`atlaso-console.service` owns `/dev/tty1`, conflicts with and replaces only `getty@tty1.service`, and restarts
-automatically. Image provisioning masks `getty@tty1.service` without changing the getty template or later virtual
-terminals. It also masks `ctrl-alt-del.target` and sets systemd `CtrlAltDelBurstAction=none`, so Ctrl+Alt+Del cannot
-bypass the authenticated F12 reboot and shutdown workflow. The appliance sets systemd `ShowStatus=no`: unit progress
-remains available in the journal but is not written over the full-screen tty1 UI. Completed recovery actions and return
-from interactive processes force a physical redraw. Additional bounded redraws at 1, 3, and 8 seconds repair late
-terminal writes while startup or service jobs settle, without introducing continuous redraw flicker.
+Authentication is required again every time an authenticated action opens. Atlaso does not reuse a password or an
+authorization result between menus.
 
-The installed GRUB screen uses a fixed 640x480 Atlaso theme with **Atlaso** at the top and a **Powered by** attribution
-with the official Photon OS logo, rendered at its original aspect ratio, along the lower edge. The single boot entry
-uses a blank display title so the menu renderer keeps the splash visible for the five-second automatic boot without
-adding a redundant label. `/opt/atlaso/bin/atlaso-install-boot-branding` installs the root-owned theme under
-`/boot/grub2/themes/atlaso`, preserves the original GRUB configuration once as `grub.cfg.atlaso-backup`, and changes
-only the theme reference and Photon menu-entry label. It does not add Plymouth or change boot timing and kernel
-arguments, so the graphic ends when GRUB hands control to the Photon kernel.
+## Recover management networking
+
+1. Press `F2` and authenticate as Photon `root`.
+2. Open the management network editor.
+3. Choose the IPv4 and IPv6 modes.
+4. Enter static addresses and gateways only when the corresponding mode is **Static**.
+5. Enter external DNS servers.
+6. Review the values and submit the change.
+7. Wait for the global appliance-apply task to complete.
+8. Confirm that the console shows the expected management address and URL.
+9. Verify `https://<management-address>/openapi.json` from another machine.
+
+The editor supports IPv4 DHCP or static configuration. IPv6 can be disabled, automatic through RA/SLAAC, or static. A
+static IPv6 gateway must be on-link or link-local and cannot equal the interface address.
+
+The recovery action updates Atlaso desired state and submits one synchronous global appliance-apply task. It never
+falls back to unvalidated host commands. A validation or apply failure leaves the new desired state pending for review
+in the web UI.
+
+## Isolate or restore appliance services
+
+Use **Disable all appliance services** when troubleshooting requires maintenance isolation. Atlaso records the current
+enabled and active state, stops the application services, and preserves the console, management networking, resolver,
+and firewall persistence services.
+
+While isolation is active, the action changes to **Restore appliance services**. Restore uses the saved state and does
+not enable units that were previously disabled.
+
+## Open a process monitor or root shell
+
+- Press `F3`, authenticate, and use `top`. Press `q` to return to the Atlaso screen.
+- Press `F4`, authenticate, and use the root Bash session only for necessary diagnosis. Run `exit` or press `Ctrl+D` to
+  return.
+
+Root-shell open and close events are audited as `console:root`. The screen is cleared before the status interface is
+redrawn.
+
+## Restart or shut down
+
+Press `F12`, authenticate, choose the power action, and confirm it. Restart and shutdown use the delayed, audited,
+constrained power helper. `Ctrl+Alt+Del` is disabled so it cannot bypass this workflow.
+
+## Verify recovery
+
+After any console change:
+
+1. Check the displayed management addressing and service exceptions.
+2. Open the management URL from another machine.
+3. Verify `/openapi.json`.
+4. Review the resulting task and audit event in the web UI.
+5. Resolve or roll back any desired state left pending by a failed action.
+
+For systemd ownership, redraw behavior, GRUB branding, service-isolation boundaries, and configuration paths, see the
+[local console technical reference](../reference/appliance-console-technical.md).

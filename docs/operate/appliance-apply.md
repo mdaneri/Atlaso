@@ -10,6 +10,17 @@ status: current
 
 Atlaso separates desired-state editing from appliance enforcement.
 
+<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
+## Interface overview
+
+This verified appliance view provides visual orientation before you begin.
+
+![Review appliance changes dialog with selected valid units and one unit needing attention.](../assets/screenshots/appliance-review-modal-desktop.webp)
+
+*Figure: Appliance change review with valid and invalid desired-state units.*
+
+<!-- END GENERATED INTERFACE OVERVIEW -->
+
 Service pages edit desired state. They autosave routine settings and grids, show local validation, expose rendered
 config previews through compact preview actions, and link to the global apply review. They should not own
 service-specific apply buttons or service-specific apply submit routes.

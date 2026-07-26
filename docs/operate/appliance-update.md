@@ -16,6 +16,17 @@ status, progress, timestamps, compatibility evidence, error, and bounded redacte
 shared source snapshot and aggregates the selected channel and release, verified key ID, checksums, service checks,
 rollback result, and final outcome.
 
+<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
+## Interface overview
+
+This verified appliance view provides visual orientation before you begin.
+
+![Atlaso Appliance Update page in the clean-appliance desktop viewport.](../assets/screenshots/appliance-update-clean-desktop.webp)
+
+*Figure: Appliance Update in the verified clean-appliance desktop state.*
+
+<!-- END GENERATED INTERFACE OVERVIEW -->
+
 ## Update streams
 
 Atlaso has three update streams:
@@ -240,3 +251,16 @@ To promote, run **Promote appliance release**, choose `preview` or `stable`, and
 `v` prefix.
 
 Schedules for checks or installs live under **Operations → Automation**. See [`automation.md`](automation.md).
+
+<!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
+## Additional verified states
+
+These captures show responsive layouts and useful operational states referenced by this page.
+
+### Appliance Update
+
+![Atlaso Appliance Update page in the clean-appliance responsive viewport.](../assets/screenshots/appliance-update-clean-responsive.webp)
+
+*Figure: Appliance Update in the verified clean-appliance responsive state.*
+
+<!-- END GENERATED ADDITIONAL SCREENSHOTS -->
