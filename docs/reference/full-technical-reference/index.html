@@ -3677,6 +3677,19 @@ when the current version is <code>2.4.6</code>:</p>
 <code>--base-root</code> is supplied, it also requires the pull request to be exactly one patch above its base. <code>--version</code> and
 <code>--base-root</code> are mutually exclusive, and an explicit target cannot skip a patch or change the major or minor version.
 Updating an older pull request from <code>main</code> lets the workflow recalculate the next unused patch version.</p>
+<p>Repository auto-merge remains an explicit maintainer choice per pull request. A <code>main</code> push runs
+<code>update-auto-merge-prs.yml</code>, which uses GitHub's update-branch API only for open, same-repository, non-draft pull requests
+that have auto-merge enabled and report <code>BEHIND</code>. Each request includes the observed head SHA, so a concurrent contributor
+push causes GitHub to reject the stale update instead of merging over it. Forks, conflicted branches, and pull requests
+without auto-merge are never updated by this workflow.</p>
+<p>An internal branch update performed with <code>GITHUB_TOKEN</code> also creates a <code>pull_request</code> CI run that GitHub holds for
+approval. Those approval-gated jobs have diagnostic names and are not required contexts. The version workflow's trusted
+<code>workflow_dispatch</code> run uses the canonical <code>Version policy</code>, <code>Repository checks</code>, and <code>Python tests</code> names enforced by
+the <code>main</code> ruleset. This preserves required validation without a personal access token or automatic approval of
+untrusted workflow code. Because a token-authenticated update does not trigger <code>pull_request_target</code>, the updater waits
+for GitHub's new head SHA and sends a typed repository dispatch. GitHub loads that handler from protected <code>main</code>; it
+re-fetches the PR and verifies that it remains open, same-repository, based on <code>main</code>, and at the expected head before
+checking out or pushing. The privileged updater has no manual-dispatch trigger.</p>
 <p>The application update build continues to append <code>+g&lt;commit&gt;</code> metadata to wheel versions. A merged pull request does not
 create a Git tag, GitHub release, or changelog entry; those remain deliberate release-management actions.</p>
 <p>Run from Windows PowerShell using the WSL development virtualenv:</p>
