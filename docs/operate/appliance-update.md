@@ -256,7 +256,8 @@ requests GitHub's default merged-pull-request, contributor, and comparison conte
 their current labels using the same Atlaso category precedence. It updates only a legacy provenance-only body, skips
 notes that already match, and refuses unexpected or manually customized text. Immediately before each edit it
 revalidates that the body and release identity still match the preflight snapshot. After every edit it verifies that the
-title, tag, target, publication state, and asset identity remain unchanged:
+title, tag, target, publication state, and asset identity remain unchanged. Body verification accepts GitHub CLI
+normalization between LF and CRLF line endings but no other text difference:
 
 ```bash
 python scripts/backfill_release_notes.py --start-tag v0.9.18 --apply

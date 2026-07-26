@@ -261,6 +261,10 @@ def comparable_notes(notes: str) -> str:
     return "\n".join(line.rstrip() for line in without_comment.splitlines() if line.strip())
 
 
+def normalized_body(body: str) -> str:
+    return body.replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
 def release_identity(release: dict[str, Any]) -> dict[str, Any]:
     assets = release.get("assets", [])
     if not isinstance(assets, list):
@@ -364,13 +368,13 @@ def apply_plans(plans: list[ReleaseNotePlan], *, repository: str) -> None:
         if release_identity(current) != plan.identity:
             raise SystemExit(f"{plan.tag} release identity or assets changed after preflight")
         current_body = str(current.get("body", "")).strip()
-        if current_body == plan.expected_body.strip():
+        if normalized_body(current_body) == normalized_body(plan.expected_body):
             continue
-        if current_body != plan.original_body:
+        if normalized_body(current_body) != normalized_body(plan.original_body):
             raise SystemExit(f"{plan.tag} release body changed after preflight; refusing to overwrite it")
         edit_release_body(repository, plan.tag, plan.expected_body)
         updated = release_by_tag(repository, plan.tag)
-        if str(updated.get("body", "")).strip() != plan.expected_body.strip():
+        if normalized_body(str(updated.get("body", ""))) != normalized_body(plan.expected_body):
             raise SystemExit(f"{plan.tag} release body did not match after update")
         if release_identity(updated) != plan.identity:
             raise SystemExit(f"{plan.tag} release identity or assets changed while updating its body")
