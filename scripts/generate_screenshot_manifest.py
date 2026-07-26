@@ -37,6 +37,16 @@ CAPTURE_OVERRIDES = {
         "source_commit": "15caa646452",
         "atlaso_version": "0.9.22",
     },
+    "terminal-clean-desktop": {
+        "source_commit": "d10ffe3e2959+installed-record",
+        "atlaso_version": "0.9.26",
+        "capture_method": "chrome-browser",
+    },
+    "terminal-clean-responsive": {
+        "source_commit": "d10ffe3e2959+installed-record",
+        "atlaso_version": "0.9.26",
+        "capture_method": "chrome-browser",
+    },
 }
 
 DOCUMENTATION_PAGES = {
@@ -204,6 +214,18 @@ SPECIAL = {
         "succeeded-log",
         "Successful appliance apply log with captured commands and audit events.",
         "Atlaso task log showing successful dnsmasq validation, apply, and reload.",
+    ),
+    "terminal-clean-desktop": (
+        "/terminal",
+        "enabled-connected",
+        "Web terminal connected to the verified Photon appliance in the desktop viewport.",
+        "Atlaso Web terminal connected as the admin user in the desktop viewport.",
+    ),
+    "terminal-clean-responsive": (
+        "/terminal",
+        "enabled-connected",
+        "Web terminal connected to the verified Photon appliance in the responsive viewport.",
+        "Atlaso Web terminal connected as the admin user in the responsive viewport.",
     ),
 }
 

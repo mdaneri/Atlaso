@@ -18,11 +18,15 @@ shell.
 
 This verified appliance view provides visual orientation before you begin.
 
-![Atlaso Web terminal page in the clean-appliance desktop viewport.](../assets/screenshots/terminal-clean-desktop.webp)
+![Atlaso Web terminal connected as the admin user in the desktop viewport.](../assets/screenshots/terminal-clean-desktop.webp)
 
-*Figure: Web terminal in the verified clean-appliance desktop state.*
+*Figure: Web terminal connected to the verified Photon appliance in the desktop viewport.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
+
+Opening **Web terminal** while the feature is globally disabled keeps the authenticated Atlaso application shell and
+shows an unavailable status with links to **Appliance Settings** and pending appliance changes. The browser page does
+not expose an API-style JSON error. JSON errors remain appropriate for the terminal ticket API and WebSocket protocol.
 
 ## Configure access
 
@@ -98,8 +102,8 @@ These captures show responsive layouts and useful operational states referenced 
 
 ### Web terminal
 
-![Atlaso Web terminal page in the clean-appliance responsive viewport.](../assets/screenshots/terminal-clean-responsive.webp)
+![Atlaso Web terminal connected as the admin user in the responsive viewport.](../assets/screenshots/terminal-clean-responsive.webp)
 
-*Figure: Web terminal in the verified clean-appliance responsive state.*
+*Figure: Web terminal connected to the verified Photon appliance in the responsive viewport.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
