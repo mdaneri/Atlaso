@@ -5,7 +5,9 @@ Atlaso vendors two iPXE first-stage PXE boot artifacts for ESXi PXE bootstrap:
 - `bootloaders/undionly.kpxe`
 - `bootloaders/snponly.efi`
 
-Photon 5's `ipxe` package does not currently ship these filenames, while Atlaso's ESXi PXE defaults and dnsmasq rendering expect them. Photon image provisioning stages these files into `/var/lib/atlaso/pxe/bootloaders`, where `atlaso-helper esxi-pxe validate|apply` searches before package paths.
+Photon 5's `ipxe` package does not currently ship these filenames, while Atlaso's ESXi PXE defaults and dnsmasq
+rendering expect them. Photon image provisioning stages these files into `/var/lib/atlaso/pxe/bootloaders`, where
+`atlaso-helper esxi-pxe validate|apply` searches before package paths.
 
 ## Source
 
@@ -42,4 +44,5 @@ a3fec333e4ae52c33b3ef8b140422a16019c4d7aa63a13f8ac3c95079fad0715  bootloaders/sn
 
 ## License
 
-iPXE's upstream `COPYING` and `COPYING.GPLv2` files are included in this directory. Refreshing these binaries should also refresh the source commit, generated `.licence` reports, hashes, and this README.
+iPXE's upstream `COPYING` and `COPYING.GPLv2` files are included in this directory. Refreshing these binaries should
+also refresh the source commit, generated `.licence` reports, hashes, and this README.

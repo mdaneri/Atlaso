@@ -31,6 +31,8 @@ SKIP_PARTS = {
     "__pycache__",
     "build",
     "dist",
+    "node_modules",
+    "site",
     "test-results",
 }
 
@@ -66,7 +68,7 @@ REQUIRED_POLICY_MARKERS = {
         "CONTRIBUTING.md",
         "CODE_OF_CONDUCT.md",
         "SECURITY.md",
-        "docs/ui-design-guide.md",
+        "docs/contribute/ui-design-guide.md",
         "first progress update",
         "delegating agent",
         "direct-edit Tabulator",
@@ -78,7 +80,7 @@ REQUIRED_POLICY_MARKERS = {
         "## User-interface contributions",
         "Mandatory Agent Startup Gate",
         "Mandatory UI Design Guide Gate",
-        "docs/ui-design-guide.md",
+        "docs/contribute/ui-design-guide.md",
         "custom/other",
         "delegated agent",
     ),
@@ -88,17 +90,17 @@ REQUIRED_POLICY_MARKERS = {
         "CONTRIBUTING.md",
         "CODE_OF_CONDUCT.md",
         "SECURITY.md",
-        "docs/ui-design-guide.md",
+        "docs/contribute/ui-design-guide.md",
         "custom/other",
         "linked GitHub issue",
     ),
     Path(".github/pull_request_template.md"): (
         "Closes #",
         "Mandatory Agent Startup Gate",
-        "docs/ui-design-guide.md",
+        "docs/contribute/ui-design-guide.md",
         "custom/other",
     ),
-    Path("docs/ui-design-guide.md"): (
+    Path("docs/contribute/ui-design-guide.md"): (
         "# Atlaso UI Design Guide",
         "Tabulator is the only data-grid implementation",
         "Physical Interfaces",
@@ -135,7 +137,7 @@ def relative_path(path: Path) -> Path:
 
 def should_skip(path: Path) -> bool:
     rel = relative_path(path)
-    if any(part in SKIP_PARTS for part in rel.parts):
+    if any(part in SKIP_PARTS or part.startswith(".venv") for part in rel.parts):
         return True
     return any(rel == prefix or rel.is_relative_to(prefix) for prefix in SKIP_PREFIXES)
 

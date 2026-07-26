@@ -2,3 +2,5 @@ image/hyperv/scripts/*.sh text eol=lf
 image/hyperv/sudoers.d/* text eol=lf
 image/hyperv/systemd/* text eol=lf
 scripts/appliance/atlaso-helper text eol=lf
+docs/assets/screenshots/manifest.json text eol=lf
+docs/reference/interface-gallery.md text eol=lf
