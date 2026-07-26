@@ -116,6 +116,122 @@ def test_release_note_categories_keep_dependencies_out_of_enhancements():
     assert "- dependencies" in enhancement
 
 
+def test_historical_generated_notes_use_pull_request_labels(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    generated_body = """\
+## What's Changed
+* Add a feature by @example in https://github.com/mdaneri/Atlaso/pull/10
+* Update a dependency by @dependabot in https://github.com/mdaneri/Atlaso/pull/11
+* Fix a bug by @example in https://github.com/mdaneri/Atlaso/pull/12
+
+## New Contributors
+* @example made their first contribution in https://github.com/mdaneri/Atlaso/pull/10
+
+**Full Changelog**: https://github.com/mdaneri/Atlaso/compare/v0.9.17...v0.9.18
+"""
+    labels = {
+        10: [{"name": "enhancement"}],
+        11: [{"name": "enhancement"}, {"name": "dependencies"}],
+        12: [{"name": "bug"}],
+    }
+
+    def fake_gh_json(arguments: list[str], *, payload=None):
+        if arguments[-1].endswith("/releases/generate-notes"):
+            assert payload == {
+                "tag_name": "v0.9.18",
+                "previous_tag_name": "v0.9.17",
+            }
+            return {"body": generated_body}
+        number = int(arguments[-1].rsplit("/", 1)[-1])
+        return {"labels": labels[number]}
+
+    monkeypatch.setattr(backfill_release_notes, "gh_json", fake_gh_json)
+
+    notes = backfill_release_notes.generated_notes(
+        "mdaneri/Atlaso",
+        "v0.9.18",
+        "v0.9.17",
+    )
+
+    assert notes.index("### New and improved") < notes.index("### Fixes")
+    assert notes.index("### Fixes") < notes.index("### Dependency updates")
+    enhancement_section = notes.split("### New and improved", 1)[1].split("### Fixes", 1)[0]
+    dependency_section = notes.split("### Dependency updates", 1)[1].split("## New Contributors", 1)[0]
+    assert "pull/10" in enhancement_section
+    assert "pull/11" not in enhancement_section
+    assert "pull/11" in dependency_section
+    assert "## New Contributors" in notes
+    assert "**Full Changelog**" in notes
+
+
+def test_comparable_notes_ignores_generator_comment_and_blank_lines():
+    github_notes = """\
+<!-- Release notes generated using configuration in .github/release.yml at v0.9.30 -->
+
+## What's Changed
+### Fixes
+* Fix release notes
+
+**Full Changelog**: https://example.test/compare
+"""
+    backfill_notes = """\
+<!-- Release notes grouped by Atlaso from GitHub-generated changes using .github/release.yml -->
+
+## What's Changed
+
+### Fixes
+* Fix release notes
+
+
+**Full Changelog**: https://example.test/compare
+"""
+    assert backfill_release_notes.comparable_notes(github_notes) == (
+        backfill_release_notes.comparable_notes(backfill_notes)
+    )
+
+
+def test_already_configured_generated_notes_are_preserved():
+    body = """\
+<!-- Release notes generated using configuration in .github/release.yml at v0.9.30 -->
+
+## What's Changed
+### New and improved
+* Generate grouped GitHub release notes in https://github.com/mdaneri/Atlaso/pull/146
+
+**Full Changelog**: https://github.com/mdaneri/Atlaso/compare/v0.9.29...v0.9.30
+"""
+    assert backfill_release_notes.group_generated_notes("mdaneri/Atlaso", body) == body.strip()
+
+
+def test_historical_notes_select_the_trailing_repository_pull_request(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    body = """\
+## What's Changed
+* Document https://github.com/mdaneri/Atlaso/pull/999 by @example in https://github.com/mdaneri/Atlaso/pull/10
+
+**Full Changelog**: https://github.com/mdaneri/Atlaso/compare/v0.9.17...v0.9.18
+"""
+    requested: list[int] = []
+
+    def fake_pull_request_labels(repository: str, number: int) -> set[str]:
+        assert repository == "mdaneri/Atlaso"
+        requested.append(number)
+        return {"documentation"}
+
+    monkeypatch.setattr(
+        backfill_release_notes,
+        "pull_request_labels",
+        fake_pull_request_labels,
+    )
+
+    notes = backfill_release_notes.group_generated_notes("mdaneri/Atlaso", body)
+
+    assert requested == [10]
+    assert "### Documentation" in notes
+
+
 def test_backfill_selects_published_range_and_previous_release(
     monkeypatch: pytest.MonkeyPatch,
 ):
