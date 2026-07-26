@@ -12,6 +12,13 @@ MANIFEST = SCREENSHOTS / "manifest.json"
 SOURCE_COMMIT = "0247c34bc85e+working-tree"
 ATLASO_VERSION = "0.9.21"
 
+CAPTURE_OVERRIDES = {
+    "swagger-clean-responsive": {
+        "source_commit": "15caa646452",
+        "atlaso_version": "0.9.22",
+    },
+}
+
 ROUTES = {
     "appliance-update": ("/appliance-update", "Appliance Update"),
     "audit-log": ("/audit-log", "Audit Events"),
@@ -159,7 +166,7 @@ def metadata(path: Path) -> dict[str, object]:
     else:
         route, state, caption, alt = clean_entry(stem)
     responsive = "responsive" in stem
-    return {
+    entry = {
         "path": path.relative_to(ROOT / "docs").as_posix(),
         "route": route,
         "state": state,
@@ -176,6 +183,8 @@ def metadata(path: Path) -> dict[str, object]:
         "brand_variant": "console-light" if stem == "appliance-console-applied" else "light",
         "sensitive_data_reviewed": True,
     }
+    entry.update(CAPTURE_OVERRIDES.get(stem, {}))
+    return entry
 
 
 def main() -> None:
