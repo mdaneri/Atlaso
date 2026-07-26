@@ -145,6 +145,29 @@ def test_routing_wan_only_plan_and_routing_rule_payload():
     }
 
 
+def test_oidc_only_plan_is_focused_and_mutually_exclusive():
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--password", "test", "--oidc-only", "--plan-only"])
+
+    plan = lifecycle.lifecycle_plan(args)
+
+    assert plan["oidc_only"] is True
+    assert plan["routing_wan_only"] is False
+    assert plan["checks"] == [
+        "appliance health",
+        (
+            "OIDC Authorization Code, explicit Local selection, client-specific "
+            "local-role group mapping, scope-filtered claims, PKCE S256, signed "
+            "browser session, five-minute RS256 tokens, UserInfo revalidation, "
+            "replay rejection, and exact logout redirect"
+        ),
+    ]
+    with pytest.raises(SystemExit):
+        lifecycle.parse_args(
+            ["--password", "test", "--oidc-only", "--routing-wan-only"]
+        )
+
+
 def test_full_lifecycle_plan_includes_passwordless_web_terminal_acceptance():
     lifecycle = load_lifecycle_module()
     args = lifecycle.parse_args(["--password", "test", "--plan-only"])

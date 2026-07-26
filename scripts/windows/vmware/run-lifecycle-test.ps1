@@ -26,6 +26,7 @@ param(
     [string]$WanCidr = '172.31.50.1/24',
     [switch]$AllowDryRunApply,
     [switch]$SkipBackupRestoreTest,
+    [switch]$OidcOnly,
     [switch]$RoutingWanOnly,
     [switch]$FullEsxiPxeInstall,
     [string]$PxeInstallerIsoPath = '',
@@ -43,6 +44,9 @@ if (-not $SshPassword) {
     $SshPassword = $AdminPassword
 }
 if ($RoutingWanOnly) {
+    $SkipBackupRestoreTest = $true
+}
+if ($OidcOnly) {
     $SkipBackupRestoreTest = $true
 }
 
@@ -895,8 +899,8 @@ function Add-LifecycleResultStep {
 }
 
 $resolvedVmrun = Resolve-VmrunPath
-if ($RoutingWanOnly -and $FullEsxiPxeInstall) {
-    throw "-RoutingWanOnly and -FullEsxiPxeInstall are mutually exclusive."
+if (($RoutingWanOnly -and $FullEsxiPxeInstall) -or ($OidcOnly -and ($RoutingWanOnly -or $FullEsxiPxeInstall))) {
+    throw "-OidcOnly, -RoutingWanOnly, and -FullEsxiPxeInstall are mutually exclusive."
 }
 $applianceName = "$LabName-Appliance"
 $clientAName = "$LabName-ClientA"
@@ -916,6 +920,7 @@ $plan = [ordered]@{
     site_a_network        = $SiteANetwork
     trunk_network         = $TrunkNetwork
     site_b_network        = $SiteBNetwork
+    oidc_only             = [bool]$OidcOnly
     routing_wan_only      = [bool]$RoutingWanOnly
     full_esxi_pxe_install = [bool]$FullEsxiPxeInstall
     pxe_installer_iso     = $PxeInstallerIsoPath
@@ -1014,6 +1019,7 @@ try {
     if ($clientAHostKey) { $basePythonArgs += @('--client-a-hostkey', $clientAHostKey) }
     if ($clientBHostKey) { $basePythonArgs += @('--client-b-hostkey', $clientBHostKey) }
     if ($AllowDryRunApply) { $basePythonArgs += '--allow-dry-run' }
+    if ($OidcOnly) { $basePythonArgs += '--oidc-only' }
     if ($RoutingWanOnly) { $basePythonArgs += '--routing-wan-only' }
 
     $initialResultRoot = if ($SkipBackupRestoreTest) { $resultRoot } else { Join-Path $resultRoot 'initial' }

@@ -154,8 +154,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--certificate-baseline-result", default="", help="Compare restored CA certificate evidence with a previous lifecycle result.json.")
     parser.add_argument("--restored-state-run", action="store_true", help="Run restored-state checks instead of configuring desired state from scratch.")
     parser.add_argument("--routing-wan-only", action="store_true", help="Run only network, routing, NAT, WAN, and client forwarding checks.")
+    parser.add_argument(
+        "--oidc-only",
+        action="store_true",
+        help="Run only appliance readiness and the deployed OIDC Authorization Code acceptance check.",
+    )
     parser.add_argument("--plan-only", action="store_true", help="Write the intended lifecycle plan without changing the appliance.")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.oidc_only and (args.routing_wan_only or args.restored_state_run):
+        parser.error("--oidc-only cannot be combined with --routing-wan-only or --restored-state-run.")
+    return args
 
 
 class HttpClient:
@@ -480,6 +488,34 @@ def ssh_until_success(
 
 def lifecycle_plan(args: argparse.Namespace) -> dict[str, Any]:
     vlan_name = f"{args.trunk_interface}.{args.vlan_id}"
+    oidc_check = (
+        "OIDC Authorization Code, explicit Local selection, client-specific "
+        "local-role group mapping, scope-filtered claims, PKCE S256, signed "
+        "browser session, five-minute RS256 tokens, UserInfo revalidation, "
+        "replay rejection, and exact logout redirect"
+    )
+    checks = (
+        ["appliance health", oidc_check]
+        if args.oidc_only
+        else [
+            "appliance health",
+            "interface and VLAN desired state",
+            "DNS and DHCP desired state",
+            "firewall, routing, NAT, and WAN desired state",
+            "CA desired state, root certificate download, atomic generated certificate request with explicit SAN verification, client CSR request, issued certificate download, and client-side verification",
+            "NTPsec desired state, NTS upstream and server mode, ntpq health, UDP/123 compatibility, and Alpine chrony-nts authenticated synchronization",
+            "KMS desired state, DNS/firewall apply, PyKMIP service, and TLS client-certificate probe",
+            "Managed LDAP desired state, two isolated organization suffixes, duplicate uid support, nested groups, configurable LDAP/LDAPS listeners, management-interface exclusion, and CA hostname verification",
+            "VCF Backup desired state, local user sync, SFTP listener, and client probe",
+            "VCF Offline Depot browser login, curl/wget Basic auth, and Local Users password rotation",
+            "ESXi PXE desired state, DHCP boot options, TFTP artifacts, and Hyper-V PXE VM smoke",
+            "ESX NFS 3 and 4.1 desired state, blank-disk initialization, equal IPv4/IPv6 DNS targets, exports, sockets, firewall rules, and persistence evidence",
+            "passwordless admin web terminal on management and one selected extra interface",
+            oidc_check,
+            "client DNS/DHCP/routing probes",
+            "optional signed release preview upgrade plus deliberately broken development rollback with database identity verification",
+        ]
+    )
     return {
         "appliance_url": args.appliance_url,
         "interfaces": {
@@ -508,26 +544,10 @@ def lifecycle_plan(args: argparse.Namespace) -> dict[str, Any]:
             "client_ip": pxe_client_ip(args) if args.pxe_client_mac else "",
             "installer_iso_path": args.pxe_installer_iso_path if args.pxe_test_mode == "esxi" else "",
         },
-        "checks": [
-            "appliance health",
-            "interface and VLAN desired state",
-            "DNS and DHCP desired state",
-            "firewall, routing, NAT, and WAN desired state",
-            "CA desired state, root certificate download, atomic generated certificate request with explicit SAN verification, client CSR request, issued certificate download, and client-side verification",
-            "NTPsec desired state, NTS upstream and server mode, ntpq health, UDP/123 compatibility, and Alpine chrony-nts authenticated synchronization",
-            "KMS desired state, DNS/firewall apply, PyKMIP service, and TLS client-certificate probe",
-            "Managed LDAP desired state, two isolated organization suffixes, duplicate uid support, nested groups, configurable LDAP/LDAPS listeners, management-interface exclusion, and CA hostname verification",
-            "VCF Backup desired state, local user sync, SFTP listener, and client probe",
-            "VCF Offline Depot browser login, curl/wget Basic auth, and Local Users password rotation",
-            "ESXi PXE desired state, DHCP boot options, TFTP artifacts, and Hyper-V PXE VM smoke",
-            "ESX NFS 3 and 4.1 desired state, blank-disk initialization, equal IPv4/IPv6 DNS targets, exports, sockets, firewall rules, and persistence evidence",
-            "passwordless admin web terminal on management and one selected extra interface",
-            "OIDC Authorization Code, explicit Local selection, client-specific local-role group mapping, scope-filtered claims, PKCE S256, signed browser session, five-minute RS256 tokens, UserInfo revalidation, replay rejection, and exact logout redirect",
-            "client DNS/DHCP/routing probes",
-            "optional signed release preview upgrade plus deliberately broken development rollback with database identity verification",
-        ],
+        "checks": checks,
         "client_checks_enabled": not args.skip_client_checks,
         "routing_wan_only": bool(args.routing_wan_only),
+        "oidc_only": bool(args.oidc_only),
         "settings_backup_export": bool(args.export_settings_backup),
         "settings_backup_restore": bool(args.restore_settings_backup),
         "certificate_baseline_check": bool(args.certificate_baseline_result),
@@ -3522,6 +3542,11 @@ def run_routing_wan_lifecycle(results: list[StepResult], client: HttpClient, arg
     run_step(results, "wan-packet-loss-check", wan_packet_loss_check, client, args)
 
 
+def run_oidc_lifecycle(results: list[StepResult], client: HttpClient, args: argparse.Namespace) -> None:
+    run_step(results, "appliance-health", appliance_health, client, args)
+    run_step(results, "oidc-authorization-code-check", oidc_authorization_code_check, client, args)
+
+
 def run_restored_lifecycle(results: list[StepResult], client: HttpClient, args: argparse.Namespace) -> None:
     if not args.restore_settings_backup:
         raise LifecycleError("--restored-state-run requires --restore-settings-backup.")
@@ -3675,7 +3700,9 @@ def main() -> int:
 
     client = HttpClient(args.appliance_url)
     try:
-        if args.routing_wan_only:
+        if args.oidc_only:
+            run_oidc_lifecycle(results, client, args)
+        elif args.routing_wan_only:
             run_routing_wan_lifecycle(results, client, args)
         elif args.restored_state_run:
             run_restored_lifecycle(results, client, args)
