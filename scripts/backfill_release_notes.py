@@ -27,6 +27,7 @@ REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 class ReleaseNotePlan:
     tag: str
     previous_tag: str
+    original_body: str
     expected_body: str
     action: str
     identity: dict[str, Any]
@@ -215,6 +216,7 @@ def plan_updates(
             ReleaseNotePlan(
                 tag=tag,
                 previous_tag=previous_tag,
+                original_body=current_body.strip(),
                 expected_body=expected_body,
                 action=action,
                 identity=release_identity(release),
@@ -249,6 +251,14 @@ def apply_plans(plans: list[ReleaseNotePlan], *, repository: str) -> None:
     for plan in plans:
         if plan.action == "unchanged":
             continue
+        current = release_by_tag(repository, plan.tag)
+        if release_identity(current) != plan.identity:
+            raise SystemExit(f"{plan.tag} release identity or assets changed after preflight")
+        current_body = str(current.get("body", "")).strip()
+        if current_body == plan.expected_body.strip():
+            continue
+        if current_body != plan.original_body:
+            raise SystemExit(f"{plan.tag} release body changed after preflight; refusing to overwrite it")
         edit_release_body(repository, plan.tag, plan.expected_body)
         updated = release_by_tag(repository, plan.tag)
         if str(updated.get("body", "")).strip() != plan.expected_body.strip():

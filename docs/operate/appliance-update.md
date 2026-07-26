@@ -252,8 +252,9 @@ python scripts/backfill_release_notes.py --start-tag v0.9.18
 Review every rendered body before adding `--apply`. The command resolves each release's annotated tag to its exact
 commit, uses the immediately preceding published semantic-version release as its comparison point, and preflights the
 entire range before the first edit. It updates only a legacy provenance-only body, skips notes that already match, and
-refuses unexpected or manually customized text. After every edit it verifies that the title, tag, target, publication
-state, and asset identity remain unchanged:
+refuses unexpected or manually customized text. Immediately before each edit it revalidates that the body and release
+identity still match the preflight snapshot. After every edit it verifies that the title, tag, target, publication state,
+and asset identity remain unchanged:
 
 ```bash
 python scripts/backfill_release_notes.py --start-tag v0.9.18 --apply

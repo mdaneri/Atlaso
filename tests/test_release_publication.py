@@ -207,6 +207,7 @@ def test_backfill_apply_updates_legacy_body_and_skips_matching_notes(
         backfill_release_notes.ReleaseNotePlan(
             tag="v0.9.18",
             previous_tag="v0.9.17",
+            original_body=str(first_release["body"]),
             expected_body=first_body,
             action="update",
             identity=backfill_release_notes.release_identity(first_release),
@@ -214,6 +215,7 @@ def test_backfill_apply_updates_legacy_body_and_skips_matching_notes(
         backfill_release_notes.ReleaseNotePlan(
             tag="v0.9.19",
             previous_tag="v0.9.18",
+            original_body=str(second_release["body"]),
             expected_body=str(second_release["body"]),
             action="unchanged",
             identity=backfill_release_notes.release_identity(second_release),
@@ -226,8 +228,13 @@ def test_backfill_apply_updates_legacy_body_and_skips_matching_notes(
 
     updated = dict(first_release)
     updated["body"] = first_body
+    responses = iter([first_release, updated])
     monkeypatch.setattr(backfill_release_notes, "edit_release_body", fake_edit)
-    monkeypatch.setattr(backfill_release_notes, "release_by_tag", lambda _repository, _tag: updated)
+    monkeypatch.setattr(
+        backfill_release_notes,
+        "release_by_tag",
+        lambda _repository, _tag: next(responses),
+    )
 
     backfill_release_notes.apply_plans(plans, repository="mdaneri/Atlaso")
 
@@ -242,6 +249,7 @@ def test_backfill_apply_verifies_release_identity(
     plan = backfill_release_notes.ReleaseNotePlan(
         tag="v0.9.18",
         previous_tag="v0.9.17",
+        original_body=str(release["body"]),
         expected_body=body,
         action="update",
         identity=backfill_release_notes.release_identity(release),
@@ -249,11 +257,45 @@ def test_backfill_apply_verifies_release_identity(
     changed = dict(release)
     changed["body"] = body
     changed["name"] = "Unexpected title"
-    monkeypatch.setattr(backfill_release_notes, "edit_release_body", lambda *_args: None)
+    edits: list[tuple[object, ...]] = []
+    monkeypatch.setattr(
+        backfill_release_notes,
+        "edit_release_body",
+        lambda *_args: edits.append(_args),
+    )
     monkeypatch.setattr(backfill_release_notes, "release_by_tag", lambda *_args: changed)
 
-    with pytest.raises(SystemExit, match="identity or assets changed"):
+    with pytest.raises(SystemExit, match="identity or assets changed after preflight"):
         backfill_release_notes.apply_plans([plan], repository="mdaneri/Atlaso")
+    assert edits == []
+
+
+def test_backfill_apply_refuses_body_changed_after_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    release = release_fixture("v0.9.18", "a" * 40, release_id=18)
+    body = "Signed appliance release built from `" + ("a" * 40) + "`.\n\n## Generated notes"
+    plan = backfill_release_notes.ReleaseNotePlan(
+        tag="v0.9.18",
+        previous_tag="v0.9.17",
+        original_body=str(release["body"]),
+        expected_body=body,
+        action="update",
+        identity=backfill_release_notes.release_identity(release),
+    )
+    customized = dict(release)
+    customized["body"] = str(release["body"]) + "\n\nMaintainer-authored notes."
+    edits: list[tuple[object, ...]] = []
+    monkeypatch.setattr(backfill_release_notes, "release_by_tag", lambda *_args: customized)
+    monkeypatch.setattr(
+        backfill_release_notes,
+        "edit_release_body",
+        lambda *_args: edits.append(_args),
+    )
+
+    with pytest.raises(SystemExit, match="body changed after preflight"):
+        backfill_release_notes.apply_plans([plan], repository="mdaneri/Atlaso")
+    assert edits == []
 
 
 def test_backfill_preview_is_read_only_and_preflight_failure_blocks_apply(
@@ -262,6 +304,7 @@ def test_backfill_preview_is_read_only_and_preflight_failure_blocks_apply(
     plan = backfill_release_notes.ReleaseNotePlan(
         tag="v0.9.18",
         previous_tag="v0.9.17",
+        original_body="legacy body",
         expected_body="body",
         action="update",
         identity={},
