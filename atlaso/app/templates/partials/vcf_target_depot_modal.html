@@ -1,5 +1,5 @@
 <dialog id="vcf-target-depot-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="vcf-target-depot-title">
-  <form class="confirm-modal-panel vcf-sddc-wizard-panel" data-vcf-target-depot-form>
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" data-vcf-target-depot-form data-atlaso-wizard>
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <input type="hidden" name="confirmed_tls_fingerprint" data-vcf-target-depot-tls-fingerprint>
 
@@ -7,24 +7,24 @@
       <p class="kicker">VCF Helper</p>
       <h2 id="vcf-target-depot-title">Configure VCF Offline Depot</h2>
       <ol class="vcf-sddc-step-list">
-        <li><button class="vcf-sddc-step-button active" type="button" data-vcf-target-depot-step-nav data-step="target"><span>1</span><strong>Target</strong><small>Endpoint and depot</small></button></li>
-        <li><button class="vcf-sddc-step-button" type="button" data-vcf-target-depot-step-nav data-step="api" disabled><span>2</span><strong>API</strong><small>Administrator login</small></button></li>
-        <li><button class="vcf-sddc-step-button" type="button" data-vcf-target-depot-step-nav data-step="depot" disabled><span>3</span><strong>Depot</strong><small>HTTP password</small></button></li>
-        <li><button class="vcf-sddc-step-button" type="button" data-vcf-target-depot-step-nav data-step="review" disabled><span>4</span><strong>Review</strong><small>Current settings</small></button></li>
-        <li><button class="vcf-sddc-step-button" type="button" data-vcf-target-depot-step-nav data-step="queue" disabled><span>5</span><strong>Queue</strong><small>Start task</small></button></li>
+        <li><button class="vcf-sddc-step-button active" type="button" data-vcf-target-depot-step-nav data-atlaso-wizard-nav="target"><span>1</span><strong>Target</strong><small>Endpoint and depot</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-vcf-target-depot-step-nav data-atlaso-wizard-nav="api" disabled><span>2</span><strong>API</strong><small>Administrator login</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-vcf-target-depot-step-nav data-atlaso-wizard-nav="depot" disabled><span>3</span><strong>Depot</strong><small>HTTP password</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-vcf-target-depot-step-nav data-atlaso-wizard-nav="review" disabled><span>4</span><strong>Review</strong><small>Current settings</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-vcf-target-depot-step-nav data-atlaso-wizard-nav="queue" disabled><span>5</span><strong>Queue</strong><small>Start task</small></button></li>
       </ol>
     </aside>
 
     <div class="vcf-sddc-wizard-main">
       <div class="confirm-modal-body vcf-sddc-wizard-body">
         <div class="vcf-sddc-wizard-heading">
-          <p class="kicker" data-vcf-target-depot-step-kicker>Step 1 of 5</p>
-          <h3 data-vcf-target-depot-step-title>Target and local depot</h3>
-          <p class="muted" data-vcf-target-depot-step-description>Choose the remote VCF appliance and review the local Atlaso depot endpoint.</p>
+          <p class="kicker" data-vcf-target-depot-step-kicker data-atlaso-wizard-kicker>Step 1 of 5</p>
+          <h3 data-vcf-target-depot-step-title data-atlaso-wizard-title>Target and local depot</h3>
+          <p class="muted" data-vcf-target-depot-step-description data-atlaso-wizard-description>Choose the remote VCF appliance and review the local Atlaso depot endpoint.</p>
         </div>
-        <div class="alert error hidden" data-vcf-target-depot-errors></div>
+        <div class="alert error hidden" data-vcf-target-depot-errors data-atlaso-wizard-error></div>
 
-        <section class="vcf-sddc-step-page" data-vcf-target-depot-step="target">
+        <section class="vcf-sddc-step-page" data-vcf-target-depot-step="target" data-atlaso-wizard-step="target">
           <div class="settings-list compact-settings-list">
             <div><span>Local endpoint</span><strong>{{ vcf_target_depot.url }}</strong></div>
             <div><span>HTTP user</span><strong>{{ vcf_target_depot.username or 'not configured' }}</strong></div>
@@ -35,20 +35,20 @@
           </div>
         </section>
 
-        <section class="vcf-sddc-step-page hidden" data-vcf-target-depot-step="api">
+        <section class="vcf-sddc-step-page hidden" data-vcf-target-depot-step="api" data-atlaso-wizard-step="api">
           <div class="form-grid">
             <label><span class="field-label"><span>API administrator</span><button class="help-icon" type="button" data-help="One-time VCF API administrator used to inspect, update, and verify depot settings.">i</button></span><input name="api_username" value="admin@local" autocomplete="username" required></label>
             <label><span class="field-label"><span>API password</span><button class="help-icon" type="button" data-help="One-time VCF API password. It is never persisted.">i</button></span><input name="api_password" type="password" autocomplete="new-password" required></label>
           </div>
         </section>
 
-        <section class="vcf-sddc-step-page hidden" data-vcf-target-depot-step="depot">
+        <section class="vcf-sddc-step-page hidden" data-vcf-target-depot-step="depot" data-atlaso-wizard-step="depot">
           <div class="form-grid">
             <label><span class="field-label"><span>{{ vcf_target_depot.username or 'Depot user' }} password</span><button class="help-icon" type="button" data-help="One-time password VCF uses to authenticate to the Atlaso HTTPS depot. It is never persisted.">i</button></span><input name="depot_password" type="password" autocomplete="new-password" required></label>
           </div>
         </section>
 
-        <section class="vcf-sddc-step-page hidden" data-vcf-target-depot-step="review">
+        <section class="vcf-sddc-step-page hidden" data-vcf-target-depot-step="review" data-atlaso-wizard-step="review">
           <div class="settings-list compact-settings-list">
             <div><span>Target</span><strong data-vcf-target-depot-review-target>Not inspected yet</strong></div>
             <div><span>HTTPS port</span><strong data-vcf-target-depot-review-port>443</strong></div>
@@ -70,7 +70,7 @@
           </div>
         </section>
 
-        <section class="vcf-sddc-step-page hidden" data-vcf-target-depot-step="queue">
+        <section class="vcf-sddc-step-page hidden" data-vcf-target-depot-step="queue" data-atlaso-wizard-step="queue">
           <div class="settings-list compact-settings-list">
             <div><span>Local depot</span><strong>{{ vcf_target_depot.url }}</strong></div>
             <div><span>Target</span><strong data-vcf-target-depot-queue-target>Not inspected yet</strong></div>
@@ -81,10 +81,10 @@
       </div>
 
       <div class="confirm-modal-actions vcf-sddc-wizard-actions">
-        <button class="button ghost" type="button" data-vcf-target-depot-close>Close</button>
-        <button class="button secondary hidden" type="button" data-vcf-target-depot-back>Back</button>
-        <button class="button primary" type="button" data-vcf-target-depot-next>Next</button>
-        <button class="button primary hidden" type="submit" data-vcf-target-depot-submit>Configure and sync</button>
+        <button class="button ghost" type="button" data-vcf-target-depot-close data-atlaso-wizard-cancel>Close</button>
+        <button class="button secondary hidden" type="button" data-vcf-target-depot-back data-atlaso-wizard-back>Back</button>
+        <button class="button primary" type="button" data-vcf-target-depot-next data-atlaso-wizard-next>Next</button>
+        <button class="button primary hidden" type="submit" data-vcf-target-depot-submit data-atlaso-wizard-submit>Configure and sync</button>
       </div>
     </div>
   </form>

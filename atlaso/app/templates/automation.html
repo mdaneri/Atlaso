@@ -17,34 +17,34 @@
   <div id="automation-schedules-table" class="tabulator-grid compact-grid automation-fill-grid"></div>
   <script type="application/json" id="automation-schedules-data">{{ automation_schedule_rows|tojson }}</script>
   <dialog id="automation-schedule-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="automation-schedule-modal-title">
-    <form id="automation-schedule-create-form" class="confirm-modal-panel vcf-sddc-wizard-panel" action="/automation/schedules" method="post" data-automation-schedule-form>
+    <form id="automation-schedule-create-form" class="confirm-modal-panel vcf-sddc-wizard-panel" action="/automation/schedules" method="post" data-automation-schedule-form data-atlaso-wizard>
       <input type="hidden" name="csrf" value="{{ csrf_token }}">
       <aside class="vcf-sddc-wizard-rail" aria-label="Automation schedule steps">
         <p class="kicker">Automation schedule</p>
         <h2 id="automation-schedule-modal-title" data-automation-wizard-modal-title>Add schedule</h2>
         <ol class="vcf-sddc-step-list">
-          <li><button class="vcf-sddc-step-button active" type="button" data-automation-wizard-nav data-step="identity"><span>1</span><strong>Schedule</strong><small>Name and task type</small></button></li>
-          <li><button class="vcf-sddc-step-button" type="button" data-automation-wizard-nav data-step="config" disabled><span>2</span><strong data-automation-config-step-label>Update streams</strong><small data-automation-config-step-subtitle>Choose streams</small></button></li>
-          <li><button class="vcf-sddc-step-button" type="button" data-automation-wizard-nav data-step="timing" disabled><span>3</span><strong>Timing</strong><small>When it runs</small></button></li>
-          <li><button class="vcf-sddc-step-button" type="button" data-automation-wizard-nav data-step="state" disabled><span>4</span><strong>State</strong><small>Enable or stage</small></button></li>
-          <li><button class="vcf-sddc-step-button" type="button" data-automation-wizard-nav data-step="review" disabled><span>5</span><strong>Review</strong><small>Confirm schedule</small></button></li>
+          <li><button class="vcf-sddc-step-button active" type="button" data-automation-wizard-nav data-atlaso-wizard-nav="identity"><span>1</span><strong>Schedule</strong><small>Name and task type</small></button></li>
+          <li><button class="vcf-sddc-step-button" type="button" data-automation-wizard-nav data-atlaso-wizard-nav="config" disabled><span>2</span><strong data-automation-config-step-label>Update streams</strong><small data-automation-config-step-subtitle>Choose streams</small></button></li>
+          <li><button class="vcf-sddc-step-button" type="button" data-automation-wizard-nav data-atlaso-wizard-nav="timing" disabled><span>3</span><strong>Timing</strong><small>When it runs</small></button></li>
+          <li><button class="vcf-sddc-step-button" type="button" data-automation-wizard-nav data-atlaso-wizard-nav="state" disabled><span>4</span><strong>State</strong><small>Enable or stage</small></button></li>
+          <li><button class="vcf-sddc-step-button" type="button" data-automation-wizard-nav data-atlaso-wizard-nav="review" disabled><span>5</span><strong>Review</strong><small>Confirm schedule</small></button></li>
         </ol>
       </aside>
       <div class="vcf-sddc-wizard-main">
         <div class="confirm-modal-body vcf-sddc-wizard-body">
           <div class="vcf-sddc-wizard-heading">
-            <p class="kicker" data-automation-wizard-kicker>Step 1 of 5</p>
-            <h3 data-automation-wizard-title>Name the schedule</h3>
-            <p class="muted" data-automation-wizard-description>Set the schedule identity and choose its allowlisted task type.</p>
+            <p class="kicker" data-automation-wizard-kicker data-atlaso-wizard-kicker>Step 1 of 5</p>
+            <h3 data-automation-wizard-title data-atlaso-wizard-title>Name the schedule</h3>
+            <p class="muted" data-automation-wizard-description data-atlaso-wizard-description>Set the schedule identity and choose its allowlisted task type.</p>
           </div>
-          <div class="alert error hidden" data-automation-wizard-errors></div>
-          <section class="vcf-sddc-step-page" data-automation-wizard-step="identity">
+          <div class="alert error hidden" data-automation-wizard-errors data-atlaso-wizard-error></div>
+          <section class="vcf-sddc-step-page" data-automation-wizard-step="identity" data-atlaso-wizard-step="identity">
             <div class="form-grid automation-schedule-form">
               <label><span class="field-label"><span>Schedule name</span><button class="help-icon" type="button" data-help="Names this automation and appears as the scheduler identity in task history.">i</button></span><input name="name" required autocomplete="off"></label>
               <label><span class="field-label"><span>Task type</span><button class="help-icon" type="button" data-help="Chooses the allowlisted Atlaso workflow. The scheduler never accepts an arbitrary root command.">i</button></span><select name="task_type" data-automation-task-type>{% for task_type in automation_task_types %}<option value="{{ task_type }}">{{ task_type|replace('_', ' ') }}</option>{% endfor %}</select></label>
             </div>
           </section>
-          <section class="vcf-sddc-step-page hidden" data-automation-wizard-step="config">
+          <section class="vcf-sddc-step-page hidden" data-automation-wizard-step="config" data-atlaso-wizard-step="config">
             <div class="form-grid automation-schedule-form">
               <fieldset class="full automation-option-panel" data-automation-config="appliance-update">
                 <legend><span class="field-label"><span>Update streams</span><button class="help-icon" type="button" data-help="Selects the same repository-backed update streams available on Appliance Update. Check schedules do not install changes; install schedules do.">i</button></span></legend>
@@ -55,7 +55,7 @@
               <label class="full hidden" data-automation-config="managed-script"><span class="field-label"><span>Script parameters</span><button class="help-icon" type="button" data-automation-script-arguments-help data-help="Enter one logical command line. Quote values containing spaces and use the continuation marker shown for the selected interpreter. Atlaso parses literal arguments without shell evaluation. Parameters are stored with the schedule and task history; do not enter secrets.">i</button></span><textarea name="script_arguments" rows="3" data-automation-script-arguments placeholder="Choose a managed script to see its parameter syntax." spellcheck="false"></textarea><small class="muted" data-automation-script-arguments-hint>Choose a managed script to see its continuation syntax.</small></label>
             </div>
           </section>
-          <section class="vcf-sddc-step-page hidden" data-automation-wizard-step="timing">
+          <section class="vcf-sddc-step-page hidden" data-automation-wizard-step="timing" data-atlaso-wizard-step="timing">
             <div class="form-grid automation-schedule-form">
               <label><span class="field-label"><span>Schedule kind</span><button class="help-icon" type="button" data-help="Cron repeats using five fields. One-time schedules disable themselves after their due run is queued.">i</button></span><select name="schedule_kind" data-automation-schedule-kind><option value="cron">Cron</option><option value="once">One time</option></select></label>
               <label><span class="field-label"><span>Timezone</span><button class="help-icon" type="button" data-help="IANA timezone used to interpret cron and one-time values. Stored execution timestamps remain UTC.">i</button></span><input name="timezone_name" value="UTC" placeholder="America/Los_Angeles" required autocomplete="off"></label>
@@ -74,13 +74,13 @@
               <label class="full hidden" data-automation-schedule-timing="once"><span class="field-label"><span>One-time run</span><button class="help-icon" type="button" data-help="Local date and time interpreted in the selected timezone. The schedule disables itself after the due run is queued.">i</button></span><input type="datetime-local" name="run_once_at" data-automation-timing-required></label>
             </div>
           </section>
-          <section class="vcf-sddc-step-page hidden" data-automation-wizard-step="state">
+          <section class="vcf-sddc-step-page hidden" data-automation-wizard-step="state" data-atlaso-wizard-step="state">
             <div class="form-grid automation-schedule-form">
               <label class="switch-field automation-policy-row full"><span class="field-label"><span>Schedule enabled</span><button class="help-icon" type="button" data-help="Allows the durable worker to queue this schedule when due. Leave it disabled to save the complete definition for review without execution.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
               <div class="alert info full"><strong>Disabled is safe for staging.</strong> You can review the finished definition in the schedule grid and enable it later with the standard State control.</div>
             </div>
           </section>
-          <section class="vcf-sddc-step-page hidden" data-automation-wizard-step="review">
+          <section class="vcf-sddc-step-page hidden" data-automation-wizard-step="review" data-atlaso-wizard-step="review">
             <div class="settings-list compact-settings-list automation-schedule-review">
               <div><span>Name</span><strong data-automation-review-name></strong></div>
               <div><span>Workflow</span><strong data-automation-review-task></strong></div>
@@ -93,10 +93,10 @@
           </section>
         </div>
         <div class="confirm-modal-actions vcf-sddc-wizard-actions">
-          <button class="button ghost" type="button" data-automation-schedule-modal-cancel>Cancel</button>
-          <button class="button secondary hidden" type="button" data-automation-wizard-back>Back</button>
-          <button class="button primary" type="button" data-automation-wizard-next>Next</button>
-          <button class="button primary hidden" type="submit" data-automation-wizard-submit>Create schedule</button>
+          <button class="button ghost" type="button" data-automation-schedule-modal-cancel data-atlaso-wizard-cancel>Cancel</button>
+          <button class="button secondary hidden" type="button" data-automation-wizard-back data-atlaso-wizard-back>Back</button>
+          <button class="button primary" type="button" data-automation-wizard-next data-atlaso-wizard-next>Next</button>
+          <button class="button primary hidden" type="submit" data-automation-wizard-submit data-atlaso-wizard-submit>Create schedule</button>
         </div>
       </div>
     </form>

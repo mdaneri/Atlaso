@@ -54,6 +54,27 @@ established patterns are not truthful and what new interaction contract future w
 Use a semantic HTML table only for a small, non-interactive summary or review preview that is not a browsable or
 editable resource collection. A collection does not become exempt merely because it currently has few rows.
 
+## Shared browser foundation
+
+The classic browser asset `static/ui-patterns.js` exposes `window.AtlasoUiPatterns` in both the management and public
+shells. It loads after the vendored Tabulator asset and before page code. The service worker precaches the same
+versioned asset.
+
+- `AtlasoUiPatterns.createGrid(...)` is the only approved constructor entry point for a new direct-edit,
+  wizard-backed, or read-only Tabulator. It owns shared loading, ready, empty, error, permission, status, keyboard,
+  context-menu, and server-rendered fallback behavior. The fallback remains visible until Tabulator emits
+  `tableBuilt`, and it is retained or restored when initialization fails.
+- `AtlasoUiPatterns.createWizard(...)` is the only approved step-controller entry point. It owns step locking,
+  synchronous and asynchronous validation, review entry, navigation, discard confirmation through the shared
+  confirmation modal, recoverable errors, focus containment, first-control focus, and launcher-focus restoration.
+- Wizard templates use `data-atlaso-wizard` on the form and the generic `data-atlaso-wizard-*` attributes for steps,
+  navigation, status, and actions. Page adapters keep only business-specific discovery, validation, conditional-field,
+  review-population, and submission callbacks.
+
+Do not copy the legacy raw Tabulator initializers marked for issue #117. Issue #117 owns their migration to
+`createGrid`; issues #118 and #119 retain their resource-conversion scopes. The repository policy check rejects new raw
+constructors, wizard markup without the generic contract, and page-specific generic step-controller logic.
+
 ## Tabulator collection contract
 
 All primary resource collections use the repository's vendored Tabulator assets and shared Atlaso grid styles. Do not

@@ -2,7 +2,8 @@
   "name": "atlaso-documentation",
   "private": true,
   "scripts": {
-    "lint:markdown": "markdownlint-cli2"
+    "lint:markdown": "markdownlint-cli2",
+    "test:javascript": "node --test tests/javascript/*.test.js"
   },
   "devDependencies": {
     "markdownlint-cli2": "0.23.1"

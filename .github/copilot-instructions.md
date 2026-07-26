@@ -12,6 +12,8 @@ visible copy, also complete the **Mandatory UI Design Guide Gate** in `AGENTS.md
 `docs/contribute/ui-design-guide.md`
 before planning implementation. Classify the interaction and name the existing Atlaso reference being reused.
 Approval-only `custom/other` work must cite explicit maintainer approval and the closest related Atlaso reference.
+New Tabulators must use `window.AtlasoUiPatterns.createGrid(...)`; every new or changed wizard must use
+`window.AtlasoUiPatterns.createWizard(...)` and the generic `data-atlaso-wizard-*` DOM contract.
 
 `AGENTS.md` and `CONTRIBUTING.md` are authoritative. In particular:
 
