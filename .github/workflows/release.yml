@@ -242,6 +242,7 @@ jobs:
                 <p>Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation. This site publishes machine-readable channel pointers for transactional Atlaso appliance updates.</p>
                 <code class="source">https://mdaneri.github.io/Atlaso/updates</code>
                 <nav aria-label="Release repository links">
+                  <a href="./docs/">Documentation</a>
                   <a href="./updates/channels/development/manifest.json">Development channel</a>
                   <a href="https://github.com/mdaneri/Atlaso/releases">GitHub Releases</a>
                   <a href="https://github.com/mdaneri/Atlaso">Source repository</a>

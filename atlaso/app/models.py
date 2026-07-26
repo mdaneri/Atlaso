@@ -814,6 +814,47 @@ class OidcClientRedirectUri(Base):
     client: Mapped[OidcClient] = relationship(back_populates="redirect_uris")
 
 
+class OidcGroupMapping(Base):
+    __tablename__ = "oidc_group_mappings"
+    __table_args__ = (
+        CheckConstraint(
+            "(source_type = 'local_role' AND local_role <> '' "
+            "AND ldap_group_id IS NULL AND organization_id IS NULL) OR "
+            "(source_type = 'ldap_group' AND local_role = '' "
+            "AND ldap_group_id IS NOT NULL AND organization_id IS NOT NULL)",
+            name="ck_oidc_group_mapping_source",
+        ),
+        UniqueConstraint("mapping_key", name="uq_oidc_group_mapping_key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    mapping_key: Mapped[str] = mapped_column(String(240), unique=True, index=True)
+    source_type: Mapped[str] = mapped_column(String(32), index=True)
+    local_role: Mapped[str] = mapped_column(String(50), default="")
+    ldap_group_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ldap_groups.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    organization_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ldap_organizations.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    oidc_client_id: Mapped[int | None] = mapped_column(
+        ForeignKey("oidc_clients.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    external_group_name: Mapped[str] = mapped_column(String(160))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    ldap_group: Mapped[LdapGroup | None] = relationship()
+    organization: Mapped[LdapOrganization | None] = relationship()
+    client: Mapped[OidcClient | None] = relationship()
+
+
 class OidcSubject(Base):
     __tablename__ = "oidc_subjects"
     __table_args__ = (

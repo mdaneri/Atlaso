@@ -50,7 +50,19 @@ jobs:
         with:
           python-version: '3.14'
           cache: pip
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
       - run: python -m pip install -e ".[dev]"
+      - run: python -m pip install --require-hashes -r requirements-docs.lock
+      - run: npm ci
+      - run: npm run lint:markdown
+      - run: zensical build --clean --strict
+      - run: python scripts/generate_docs_redirects.py
+      - run: python scripts/check_docs.py
+      - run: python scripts/generate_embedded_screenshot_sections.py
+      - run: git diff --exit-code
       - name: Enforce the exact appliance dependency lock
         run: python scripts/check_appliance_lock.py
       - run: python scripts/check_repo.py

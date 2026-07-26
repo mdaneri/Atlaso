@@ -8,7 +8,13 @@ from sqlalchemy.orm import Session, selectinload
 
 from atlaso.app.adapters.system import SystemAdapter
 from atlaso.app.config import get_settings
-from atlaso.app.models import LdapOrganization, LdapUser, OidcSubject, User
+from atlaso.app.models import (
+    LdapOrganization,
+    LdapSettings,
+    LdapUser,
+    OidcSubject,
+    User,
+)
 from atlaso.app.services.ldap import ldap_user_dn
 
 
@@ -62,6 +68,9 @@ def verify_managed_ldap_credentials(
     username: str,
     password: str,
 ) -> VerifiedIdentity | None:
+    source_settings = db.execute(select(LdapSettings)).scalar_one_or_none()
+    if source_settings is None or not source_settings.enabled:
+        return None
     normalized_username = username.strip()
     user = db.execute(
         select(LdapUser)

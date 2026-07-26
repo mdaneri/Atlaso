@@ -154,8 +154,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--certificate-baseline-result", default="", help="Compare restored CA certificate evidence with a previous lifecycle result.json.")
     parser.add_argument("--restored-state-run", action="store_true", help="Run restored-state checks instead of configuring desired state from scratch.")
     parser.add_argument("--routing-wan-only", action="store_true", help="Run only network, routing, NAT, WAN, and client forwarding checks.")
+    parser.add_argument(
+        "--oidc-only",
+        action="store_true",
+        help="Run only appliance readiness and the deployed OIDC Authorization Code acceptance check.",
+    )
     parser.add_argument("--plan-only", action="store_true", help="Write the intended lifecycle plan without changing the appliance.")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.oidc_only and (args.routing_wan_only or args.restored_state_run):
+        parser.error("--oidc-only cannot be combined with --routing-wan-only or --restored-state-run.")
+    return args
 
 
 class HttpClient:
@@ -480,6 +488,34 @@ def ssh_until_success(
 
 def lifecycle_plan(args: argparse.Namespace) -> dict[str, Any]:
     vlan_name = f"{args.trunk_interface}.{args.vlan_id}"
+    oidc_check = (
+        "OIDC Authorization Code, explicit Local selection, client-specific "
+        "local-role group mapping, scope-filtered claims, PKCE S256, signed "
+        "browser session, five-minute RS256 tokens, UserInfo revalidation, "
+        "replay rejection, and exact logout redirect"
+    )
+    checks = (
+        ["appliance health", oidc_check]
+        if args.oidc_only
+        else [
+            "appliance health",
+            "interface and VLAN desired state",
+            "DNS and DHCP desired state",
+            "firewall, routing, NAT, and WAN desired state",
+            "CA desired state, root certificate download, atomic generated certificate request with explicit SAN verification, client CSR request, issued certificate download, and client-side verification",
+            "NTPsec desired state, NTS upstream and server mode, ntpq health, UDP/123 compatibility, and Alpine chrony-nts authenticated synchronization",
+            "KMS desired state, DNS/firewall apply, PyKMIP service, and TLS client-certificate probe",
+            "Managed LDAP desired state, two isolated organization suffixes, duplicate uid support, nested groups, configurable LDAP/LDAPS listeners, management-interface exclusion, and CA hostname verification",
+            "VCF Backup desired state, local user sync, SFTP listener, and client probe",
+            "VCF Offline Depot browser login, curl/wget Basic auth, and Local Users password rotation",
+            "ESXi PXE desired state, DHCP boot options, TFTP artifacts, and Hyper-V PXE VM smoke",
+            "ESX NFS 3 and 4.1 desired state, blank-disk initialization, equal IPv4/IPv6 DNS targets, exports, sockets, firewall rules, and persistence evidence",
+            "passwordless admin web terminal on management and one selected extra interface",
+            oidc_check,
+            "client DNS/DHCP/routing probes",
+            "optional signed release preview upgrade plus deliberately broken development rollback with database identity verification",
+        ]
+    )
     return {
         "appliance_url": args.appliance_url,
         "interfaces": {
@@ -508,26 +544,10 @@ def lifecycle_plan(args: argparse.Namespace) -> dict[str, Any]:
             "client_ip": pxe_client_ip(args) if args.pxe_client_mac else "",
             "installer_iso_path": args.pxe_installer_iso_path if args.pxe_test_mode == "esxi" else "",
         },
-        "checks": [
-            "appliance health",
-            "interface and VLAN desired state",
-            "DNS and DHCP desired state",
-            "firewall, routing, NAT, and WAN desired state",
-            "CA desired state, root certificate download, atomic generated certificate request with explicit SAN verification, client CSR request, issued certificate download, and client-side verification",
-            "NTPsec desired state, NTS upstream and server mode, ntpq health, UDP/123 compatibility, and Alpine chrony-nts authenticated synchronization",
-            "KMS desired state, DNS/firewall apply, PyKMIP service, and TLS client-certificate probe",
-            "Managed LDAP desired state, two isolated organization suffixes, duplicate uid support, nested groups, configurable LDAP/LDAPS listeners, management-interface exclusion, and CA hostname verification",
-            "VCF Backup desired state, local user sync, SFTP listener, and client probe",
-            "VCF Offline Depot browser login, curl/wget Basic auth, and Local Users password rotation",
-            "ESXi PXE desired state, DHCP boot options, TFTP artifacts, and Hyper-V PXE VM smoke",
-            "ESX NFS 3 and 4.1 desired state, blank-disk initialization, equal IPv4/IPv6 DNS targets, exports, sockets, firewall rules, and persistence evidence",
-            "passwordless admin web terminal on management and one selected extra interface",
-            "OIDC Authorization Code, PKCE S256, signed browser session, five-minute RS256 tokens, UserInfo, replay rejection, and exact logout redirect",
-            "client DNS/DHCP/routing probes",
-            "optional signed release preview upgrade plus deliberately broken development rollback with database identity verification",
-        ],
+        "checks": checks,
         "client_checks_enabled": not args.skip_client_checks,
         "routing_wan_only": bool(args.routing_wan_only),
+        "oidc_only": bool(args.oidc_only),
         "settings_backup_export": bool(args.export_settings_backup),
         "settings_backup_restore": bool(args.restore_settings_backup),
         "certificate_baseline_check": bool(args.certificate_baseline_result),
@@ -1181,7 +1201,7 @@ def oidc_authorization_code_check(client: HttpClient, args: argparse.Namespace) 
             "name": "Lifecycle OIDC client",
             "redirect_uris": [redirect_uri],
             "post_logout_redirect_uris": [logout_uri],
-            "allowed_scopes": ["openid", "profile"],
+            "allowed_scopes": ["openid", "profile", "email", "groups"],
             "allow_loopback_redirects": False,
             "access_token_lifetime_seconds": 300,
             "id_token_lifetime_seconds": 300,
@@ -1191,6 +1211,17 @@ def oidc_authorization_code_check(client: HttpClient, args: argparse.Namespace) 
     )
     oidc_client = created["client"]
     client_secret = created["client_secret"]
+    mapped_group_name = "Lifecycle Administrators"
+    client.json_request(
+        "POST",
+        "/api/v1/oidc/group-mappings",
+        json_body={
+            "source_type": "local_role",
+            "local_role": "admin",
+            "oidc_client_id": oidc_client["id"],
+            "external_group_name": mapped_group_name,
+        },
+    )
     provider = client.json_request("GET", "/api/v1/oidc/provider")
     provider["enabled"] = True
     provider["issuer_url"] = "https://core.atlaso.internal/identity"
@@ -1220,7 +1251,7 @@ def oidc_authorization_code_check(client: HttpClient, args: argparse.Namespace) 
             "response_mode": "query",
             "client_id": oidc_client["client_id"],
             "redirect_uri": redirect_uri,
-            "scope": "openid profile",
+            "scope": "openid profile email groups",
             "state": "lifecycle-state",
             "nonce": "lifecycle-nonce",
             "code_challenge": challenge,
@@ -1234,6 +1265,8 @@ def oidc_authorization_code_check(client: HttpClient, args: argparse.Namespace) 
     )
     if status != 200:
         raise LifecycleError(f"OIDC authorization page failed with HTTP {status}: {body[:300]}")
+    if '<select name="source" required>' not in body or '<option value="local">Local</option>' not in body:
+        raise LifecycleError("OIDC unbound client did not require an explicit Local or organization selection.")
     transaction_match = re.search(r'name="transaction" value="([^"]+)"', body)
     csrf_match = re.search(r'name="csrf" value="([^"]+)"', body)
     cookie = header_value(headers, "Set-Cookie")
@@ -1248,6 +1281,7 @@ def oidc_authorization_code_check(client: HttpClient, args: argparse.Namespace) 
         form={
             "transaction": transaction_match.group(1),
             "csrf": csrf_match.group(1),
+            "source": "local",
             "username": args.username,
             "password": args.password,
         },
@@ -1281,14 +1315,38 @@ def oidc_authorization_code_check(client: HttpClient, args: argparse.Namespace) 
     tokens = json.loads(token_body)
     if tokens.get("expires_in") != 300 or not tokens.get("id_token") or not tokens.get("access_token"):
         raise LifecycleError("OIDC token response did not contain five-minute ID and access tokens.")
+    try:
+        payload_segment = tokens["id_token"].split(".")[1]
+        id_claims = json.loads(
+            base64.urlsafe_b64decode(payload_segment + ("=" * (-len(payload_segment) % 4)))
+        )
+    except (IndexError, ValueError, json.JSONDecodeError) as exc:
+        raise LifecycleError("OIDC ID token payload was not a valid JWT JSON object.") from exc
+    expected_claims = {
+        "preferred_username": args.username,
+        "organization": "Local",
+        "email_verified": False,
+        "groups": [mapped_group_name],
+    }
+    for claim_name, expected_value in expected_claims.items():
+        if id_claims.get(claim_name) != expected_value:
+            raise LifecycleError(
+                f"OIDC ID token claim {claim_name} was {id_claims.get(claim_name)!r}, expected {expected_value!r}."
+            )
     userinfo_status, userinfo_body, _userinfo_headers = client.request(
         "GET",
         "/identity/userinfo",
         headers={"Authorization": f"Bearer {tokens['access_token']}"},
         follow_redirects=False,
     )
-    if userinfo_status != 200 or not json.loads(userinfo_body).get("sub"):
+    userinfo = json.loads(userinfo_body)
+    if userinfo_status != 200 or not userinfo.get("sub"):
         raise LifecycleError(f"OIDC UserInfo failed with HTTP {userinfo_status}: {userinfo_body[:300]}")
+    for claim_name, expected_value in expected_claims.items():
+        if userinfo.get(claim_name) != expected_value:
+            raise LifecycleError(
+                f"OIDC UserInfo claim {claim_name} was {userinfo.get(claim_name)!r}, expected {expected_value!r}."
+            )
     replay_status, _replay_body, _replay_headers = client.request(
         "POST",
         "/identity/token",
@@ -1319,6 +1377,9 @@ def oidc_authorization_code_check(client: HttpClient, args: argparse.Namespace) 
         "issuer": enabled.get("issuer_url"),
         "token_lifetime_seconds": tokens.get("expires_in"),
         "userinfo_subject_present": True,
+        "explicit_source": "local",
+        "mapped_groups": id_claims.get("groups"),
+        "scope_filtered_claims": sorted(expected_claims),
         "replay_status": replay_status,
         "logout_redirect": expected_logout,
     }
@@ -3481,6 +3542,11 @@ def run_routing_wan_lifecycle(results: list[StepResult], client: HttpClient, arg
     run_step(results, "wan-packet-loss-check", wan_packet_loss_check, client, args)
 
 
+def run_oidc_lifecycle(results: list[StepResult], client: HttpClient, args: argparse.Namespace) -> None:
+    run_step(results, "appliance-health", appliance_health, client, args)
+    run_step(results, "oidc-authorization-code-check", oidc_authorization_code_check, client, args)
+
+
 def run_restored_lifecycle(results: list[StepResult], client: HttpClient, args: argparse.Namespace) -> None:
     if not args.restore_settings_backup:
         raise LifecycleError("--restored-state-run requires --restore-settings-backup.")
@@ -3634,7 +3700,9 @@ def main() -> int:
 
     client = HttpClient(args.appliance_url)
     try:
-        if args.routing_wan_only:
+        if args.oidc_only:
+            run_oidc_lifecycle(results, client, args)
+        elif args.routing_wan_only:
             run_routing_wan_lifecycle(results, client, args)
         elif args.restored_state_run:
             run_restored_lifecycle(results, client, args)

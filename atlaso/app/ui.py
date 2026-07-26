@@ -23,6 +23,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import String, cast, desc, func, or_, select
@@ -70,6 +71,7 @@ from atlaso.app.models import (
     ManagedPackage,
     NatRule,
     NtpSettings,
+    OidcGroupMapping,
     OidcSigningKey,
     PhysicalInterface,
     Role,
@@ -317,17 +319,22 @@ from atlaso.app.services.oidc import (
     OidcConfigurationError,
     OidcConflictError,
     create_client as create_oidc_client_record,
+    create_group_mapping as create_oidc_group_mapping_record,
     ensure_provider_settings as ensure_oidc_provider_settings,
     generate_signing_key as generate_oidc_signing_key,
     get_client as get_oidc_client,
     issuer_endpoint_urls as oidc_issuer_endpoint_urls,
     list_clients as list_oidc_clients,
+    list_group_mappings as list_oidc_group_mappings,
     list_subjects as list_oidc_subjects,
     normalize_issuer_url as normalize_oidc_issuer_url,
     oidc_client_to_dict,
+    group_mapping_to_dict as oidc_group_mapping_to_dict,
     provider_validation_errors as oidc_provider_validation_errors,
     rotate_client_secret as rotate_oidc_client_secret_value,
     signing_key_to_dict as oidc_signing_key_to_dict,
+    update_group_mapping as update_oidc_group_mapping_record,
+    validate_all_mapping_contexts as validate_oidc_mapping_contexts,
 )
 from atlaso.app.services.local_users import (
     LOCAL_USERS_PASSWORD_POLICY_KEY,
@@ -17487,13 +17494,19 @@ def authentication_context(
             "jwks_uri": "",
             "end_session_endpoint": "",
         }
+    oidc_client_rows = list_oidc_clients(db)
+    oidc_ldap_group_rows = db.execute(
+        select(LdapGroup)
+        .options(selectinload(LdapGroup.organization))
+        .order_by(LdapGroup.organization_id, LdapGroup.name)
+    ).scalars().all()
     context.update(
         {
             "oidc_provider": provider,
             "oidc_flow_available": OIDC_AUTHORIZATION_FLOW_AVAILABLE,
             "oidc_validation_errors": oidc_provider_validation_errors(db, provider),
             "oidc_urls": endpoint_urls,
-            "oidc_clients": [oidc_client_to_dict(row) for row in list_oidc_clients(db)],
+            "oidc_clients": [oidc_client_to_dict(row) for row in oidc_client_rows],
             "oidc_keys": [
                 oidc_signing_key_to_dict(row)
                 for row in db.execute(
@@ -17501,6 +17514,38 @@ def authentication_context(
                 ).scalars().all()
             ],
             "oidc_subjects": list_oidc_subjects(db),
+            "oidc_group_mappings": jsonable_encoder(
+                [
+                    oidc_group_mapping_to_dict(row)
+                    for row in list_oidc_group_mappings(db)
+                ]
+            ),
+            "oidc_local_roles": [role.value for role in Role],
+            "oidc_ldap_group_options": [
+                {
+                    "id": row.id,
+                    "label": (
+                        f"{row.organization.name} / {row.name}"
+                        f"{'' if row.enabled else ' (disabled)'}"
+                    ),
+                    "organization_id": row.organization_id,
+                    "organization_name": row.organization.name,
+                    "enabled": row.enabled,
+                }
+                for row in oidc_ldap_group_rows
+            ],
+            "oidc_client_options": [
+                {
+                    "id": row.id,
+                    "name": row.name,
+                    "organization_id": row.organization_id,
+                    "organization_name": (
+                        row.organization.name if row.organization is not None else "Unbound"
+                    ),
+                    "enabled": row.enabled,
+                }
+                for row in oidc_client_rows
+            ],
             "oidc_organizations": db.execute(
                 select(LdapOrganization)
                 .where(LdapOrganization.enabled.is_(True))
@@ -17629,6 +17674,201 @@ def create_oidc_client_from_ui(
             oidc_client_id=row.client_id,
         ),
     )
+
+
+@router.post(
+    "/authentication/oidc/group-mappings",
+    response_class=HTMLResponse,
+    response_model=None,
+)
+def create_oidc_group_mapping_from_ui(
+    request: Request,
+    source_type: str = Form(...),
+    local_role: str = Form(""),
+    ldap_group_id: str = Form(""),
+    oidc_client_id: str = Form(""),
+    external_group_name: str = Form(...),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> Response:
+    verify_csrf(request, csrf)
+    require_admin_identity(identity)
+    try:
+        row = create_oidc_group_mapping_record(
+            db,
+            source_type=source_type,
+            local_role=local_role,
+            ldap_group_id=int(ldap_group_id) if ldap_group_id.strip() else None,
+            oidc_client_id=int(oidc_client_id) if oidc_client_id.strip() else None,
+            external_group_name=external_group_name,
+        )
+    except OidcConflictError:
+        db.rollback()
+        detail = "A mapping already exists for this source and mapping scope."
+        if request.headers.get("X-Atlaso-Grid") == "1":
+            return JSONResponse({"detail": detail}, status_code=409)
+        return render(
+            request,
+            "authentication.html",
+            authentication_context(
+                db,
+                identity,
+                raw_token=None,
+                oidc_error=detail,
+            ),
+            status_code=409,
+        )
+    except (OidcConfigurationError, ValueError):
+        db.rollback()
+        detail = (
+            "Review the group source, client scope, and external name; "
+            "the mapping is not valid in its effective context."
+        )
+        if request.headers.get("X-Atlaso-Grid") == "1":
+            return JSONResponse({"detail": detail}, status_code=422)
+        return render(
+            request,
+            "authentication.html",
+            authentication_context(
+                db,
+                identity,
+                raw_token=None,
+                oidc_error=detail,
+            ),
+            status_code=422,
+        )
+    record_audit(
+        db,
+        actor=identity.username,
+        action="create_oidc_group_mapping",
+        resource_type="oidc_group_mapping",
+        resource_id=str(row.id),
+        detail=(
+            f"source_type={row.source_type}; organization_id={row.organization_id or 'local'}; "
+            f"client_id={row.oidc_client_id or 'default'}"
+        ),
+    )
+    if request.headers.get("X-Atlaso-Grid") == "1":
+        return JSONResponse(
+            jsonable_encoder(oidc_group_mapping_to_dict(row)),
+            status_code=201,
+        )
+    return RedirectResponse("/authentication#oidc-group-mappings", status_code=303)
+
+
+@router.post(
+    "/authentication/oidc/group-mappings/{mapping_id}/edit",
+    response_model=None,
+)
+def update_oidc_group_mapping_from_ui(
+    request: Request,
+    mapping_id: int,
+    oidc_client_id: str = Form(""),
+    external_group_name: str = Form(...),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> Response:
+    verify_csrf(request, csrf)
+    require_admin_identity(identity)
+    row = db.get(OidcGroupMapping, mapping_id)
+    if row is None:
+        return JSONResponse({"detail": "OIDC group mapping not found."}, status_code=404)
+    try:
+        row = update_oidc_group_mapping_record(
+            db,
+            row=row,
+            oidc_client_id=int(oidc_client_id) if oidc_client_id.strip() else None,
+            external_group_name=external_group_name,
+        )
+    except OidcConflictError:
+        db.rollback()
+        return JSONResponse(
+            {"detail": "A mapping already exists for this source and mapping scope."},
+            status_code=409,
+        )
+    except (OidcConfigurationError, ValueError):
+        db.rollback()
+        return JSONResponse(
+            {
+                "detail": (
+                    "Review the group source, client scope, and external name; "
+                    "the mapping is not valid in its effective context."
+                )
+            },
+            status_code=422,
+        )
+    record_audit(
+        db,
+        actor=identity.username,
+        action="update_oidc_group_mapping",
+        resource_type="oidc_group_mapping",
+        resource_id=str(row.id),
+        detail=(
+            f"source_type={row.source_type}; organization_id={row.organization_id or 'local'}; "
+            f"client_id={row.oidc_client_id or 'default'}"
+        ),
+    )
+    return JSONResponse(jsonable_encoder(oidc_group_mapping_to_dict(row)))
+
+
+@router.post(
+    "/authentication/oidc/group-mappings/{mapping_id}/delete",
+    response_model=None,
+)
+def delete_oidc_group_mapping_from_ui(
+    request: Request,
+    mapping_id: int,
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> Response:
+    verify_csrf(request, csrf)
+    require_admin_identity(identity)
+    row = db.get(OidcGroupMapping, mapping_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="OIDC group mapping not found.")
+    source_type = row.source_type
+    organization_id = row.organization_id
+    client_id = row.oidc_client_id
+    try:
+        db.delete(row)
+        db.flush()
+        validate_oidc_mapping_contexts(db)
+    except OidcConfigurationError:
+        db.rollback()
+        detail = (
+            "Deleting this override would create duplicate effective external "
+            "group names. Update the remaining mappings first."
+        )
+        if request.headers.get("X-Atlaso-Grid") == "1":
+            return JSONResponse({"detail": detail}, status_code=422)
+        return render(
+            request,
+            "authentication.html",
+            authentication_context(
+                db,
+                identity,
+                raw_token=None,
+                oidc_error=detail,
+            ),
+            status_code=422,
+        )
+    record_audit(
+        db,
+        actor=identity.username,
+        action="delete_oidc_group_mapping",
+        resource_type="oidc_group_mapping",
+        resource_id=str(mapping_id),
+        detail=(
+            f"source_type={source_type}; organization_id={organization_id or 'local'}; "
+            f"client_id={client_id or 'default'}"
+        ),
+    )
+    if request.headers.get("X-Atlaso-Grid") == "1":
+        return Response(status_code=204)
+    return RedirectResponse("/authentication#oidc-group-mappings", status_code=303)
 
 
 @router.post("/authentication/oidc/clients/{client_record_id}/rotate-secret", response_class=HTMLResponse, response_model=None)

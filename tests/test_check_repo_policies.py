@@ -49,7 +49,7 @@ def test_agent_policy_gate_rejects_missing_entry_point(tmp_path: Path) -> None:
 
 def test_agent_policy_gate_rejects_missing_ui_guide(tmp_path: Path) -> None:
     write_policy_files(tmp_path)
-    missing_path = tmp_path / "docs" / "ui-design-guide.md"
+    missing_path = tmp_path / "docs" / "contribute" / "ui-design-guide.md"
     missing_path.unlink()
 
     findings = check_agent_policy_gate(tmp_path)
