@@ -237,7 +237,28 @@ python scripts/build_release_bundle.py \
 
 Publication is idempotent. An existing tag or release must identify the same commit and exact asset bytes or the
 workflow fails. Annotated release tags use an explicit GitHub Actions bot identity and do not depend on runner-global
-Git configuration.
+Git configuration. Each GitHub Release description keeps the exact signed source commit first, then appends GitHub's
+generated changelog. The checked-in release-note configuration groups merged pull requests as new and improved work,
+fixes, documentation, dependency updates, or other changes; dependency updates are excluded from the enhancement group
+so they appear only once.
+
+To preview generated notes for the current signed-release lineage without changing GitHub, authenticate `gh` for the
+repository and run:
+
+```bash
+python scripts/backfill_release_notes.py --start-tag v0.9.18
+```
+
+Review every rendered body before adding `--apply`. The command resolves each release's annotated tag to its exact
+commit, uses the immediately preceding published semantic-version release as its comparison point, and preflights the
+entire range before the first edit. It updates only a legacy provenance-only body, skips notes that already match, and
+refuses unexpected or manually customized text. Immediately before each edit it revalidates that the body and release
+identity still match the preflight snapshot. After every edit it verifies that the title, tag, target, publication state,
+and asset identity remain unchanged:
+
+```bash
+python scripts/backfill_release_notes.py --start-tag v0.9.18 --apply
+```
 
 Atlaso starts a new signed update lineage at `v0.9.18`; it does not consume or publish the retired product's update
 bridge. If an otherwise successful `main` release fails after signing but before publication, run **Publish appliance
