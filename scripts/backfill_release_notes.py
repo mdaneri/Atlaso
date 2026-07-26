@@ -16,7 +16,6 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_CONFIG_PATH = ".github/release.yml"
 SEMVER_TAG_RE = re.compile(r"^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
-PULL_REQUEST_URL_RE = re.compile(r"https://github\.com/[^/\s]+/[^/\s]+/pull/(?P<number>[0-9]+)")
 PROVENANCE_RE = re.compile(
     r"^Signed appliance release built from `(?P<commit>[0-9a-f]{40})`\.\s*(?P<notes>.*)$",
     flags=re.DOTALL,
@@ -175,6 +174,15 @@ def release_category(labels: set[str]) -> str:
     return "Other changes"
 
 
+def trailing_pull_request_number(repository: str, line: str) -> int | None:
+    match = re.search(
+        rf"https://github\.com/{re.escape(repository)}/pull/(?P<number>[0-9]+)\s*$",
+        line,
+        flags=re.IGNORECASE,
+    )
+    return int(match.group("number")) if match is not None else None
+
+
 def group_generated_notes(repository: str, body: str) -> str:
     lines = body.strip().splitlines()
     try:
@@ -215,11 +223,11 @@ def group_generated_notes(repository: str, body: str) -> str:
 
     grouped: dict[str, list[str]] = {title: [] for title in CATEGORY_TITLES}
     for line in change_lines:
-        match = PULL_REQUEST_URL_RE.search(line)
-        if match is None:
+        pull_request_number = trailing_pull_request_number(repository, line)
+        if pull_request_number is None:
             grouped["Other changes"].append(line)
             continue
-        labels = pull_request_labels(repository, int(match.group("number")))
+        labels = pull_request_labels(repository, pull_request_number)
         grouped[release_category(labels)].append(line)
 
     blocks = [BACKFILL_COMMENT, "## What's Changed"]

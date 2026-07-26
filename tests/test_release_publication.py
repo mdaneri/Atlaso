@@ -204,6 +204,34 @@ def test_already_configured_generated_notes_are_preserved():
     assert backfill_release_notes.group_generated_notes("mdaneri/Atlaso", body) == body.strip()
 
 
+def test_historical_notes_select_the_trailing_repository_pull_request(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    body = """\
+## What's Changed
+* Document https://github.com/mdaneri/Atlaso/pull/999 by @example in https://github.com/mdaneri/Atlaso/pull/10
+
+**Full Changelog**: https://github.com/mdaneri/Atlaso/compare/v0.9.17...v0.9.18
+"""
+    requested: list[int] = []
+
+    def fake_pull_request_labels(repository: str, number: int) -> set[str]:
+        assert repository == "mdaneri/Atlaso"
+        requested.append(number)
+        return {"documentation"}
+
+    monkeypatch.setattr(
+        backfill_release_notes,
+        "pull_request_labels",
+        fake_pull_request_labels,
+    )
+
+    notes = backfill_release_notes.group_generated_notes("mdaneri/Atlaso", body)
+
+    assert requested == [10]
+    assert "### Documentation" in notes
+
+
 def test_backfill_selects_published_range_and_previous_release(
     monkeypatch: pytest.MonkeyPatch,
 ):
