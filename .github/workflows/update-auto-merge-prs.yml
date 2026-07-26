@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -72,4 +71,37 @@ jobs:
               fi
               message="$(jq -r '.message // "Update accepted."' <<<"$response")"
               echo "PR #$number: $message"
+              updated_head_sha=""
+              for attempt in {1..12}; do
+                current_head_sha="$(
+                  gh pr view \
+                    --repo "$GITHUB_REPOSITORY" \
+                    "$number" \
+                    --json headRefOid \
+                    --jq '.headRefOid'
+                )"
+                if [[ "$current_head_sha" != "$expected_head_sha" ]]; then
+                  updated_head_sha="$current_head_sha"
+                  break
+                fi
+                sleep 2
+              done
+              if [[ -z "$updated_head_sha" ]]; then
+                echo "::warning title=Trusted validation not started::PR #$number did not report its updated head before the polling deadline."
+                continue
+              fi
+              jq -n \
+                --argjson pull_number "$number" \
+                --arg expected_head_sha "$updated_head_sha" \
+                '{
+                  event_type: "refresh-pull-request-version",
+                  client_payload: {
+                    pull_number: $pull_number,
+                    expected_head_sha: $expected_head_sha
+                  }
+                }' |
+                gh api \
+                  --method POST \
+                  "repos/$GITHUB_REPOSITORY/dispatches" \
+                  --input -
             done

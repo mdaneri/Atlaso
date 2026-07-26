@@ -6,6 +6,9 @@ on:
       - opened
       - reopened
       - synchronize
+  repository_dispatch:
+    types:
+      - refresh-pull-request-version
 
 permissions:
   actions: write
@@ -13,26 +16,58 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: version-bump-${{ github.event.pull_request.number }}
+  group: version-bump-${{ github.event.pull_request.number || github.event.client_payload.pull_number }}
   cancel-in-progress: true
 
 jobs:
   bump:
     name: Bump patch version
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name == 'repository_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
+      - name: Resolve and validate pull request
+        id: pull-request
+        shell: bash
+        env:
+          EXPECTED_HEAD_SHA: ${{ github.event.client_payload.expected_head_sha }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.client_payload.pull_number }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::A valid pull request number is required."
+            exit 1
+          fi
+          pull_request="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")"
+          state="$(jq -r '.state' <<<"$pull_request")"
+          base_ref="$(jq -r '.base.ref' <<<"$pull_request")"
+          head_repository="$(jq -r '.head.repo.full_name // ""' <<<"$pull_request")"
+          head_ref="$(jq -r '.head.ref' <<<"$pull_request")"
+          head_sha="$(jq -r '.head.sha' <<<"$pull_request")"
+          if [[ "$state" != "open" || "$base_ref" != "main" || "$head_repository" != "$GITHUB_REPOSITORY" ]]; then
+            echo "::error::Version automation accepts only open, same-repository pull requests targeting main."
+            exit 1
+          fi
+          if [[ -n "$EXPECTED_HEAD_SHA" && "$head_sha" != "$EXPECTED_HEAD_SHA" ]]; then
+            echo "::error::The pull request head changed before trusted version automation started."
+            exit 1
+          fi
+          {
+            echo "base_sha=$(jq -r '.base.sha' <<<"$pull_request")"
+            echo "head_ref=$head_ref"
+            echo "head_sha=$head_sha"
+          } >> "$GITHUB_OUTPUT"
       - name: Check out trusted base automation
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ steps.pull-request.outputs.base_sha }}
           path: trusted
           persist-credentials: false
       - name: Check out pull request branch
         uses: actions/checkout@v7
         with:
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.repository }}
+          ref: ${{ steps.pull-request.outputs.head_sha }}
           path: target
           fetch-depth: 0
       - name: Calculate and apply expected patch version
@@ -50,7 +85,7 @@ jobs:
         if: steps.changes.outputs.changed == 'true'
         shell: bash
         env:
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REF: ${{ steps.pull-request.outputs.head_ref }}
         run: |
           version="$(sed -n 's/^version = "\([0-9][0-9.]*\)"$/\1/p' target/pyproject.toml | head -n 1)"
           git -C target config user.name "github-actions[bot]"
@@ -59,11 +94,11 @@ jobs:
           git -C target commit -m "chore: bump version to ${version}"
           git -C target push origin "HEAD:${HEAD_REF}"
       - name: Run required checks for version commit
-        if: steps.changes.outputs.changed == 'true'
+        if: steps.changes.outputs.changed == 'true' || github.event_name == 'repository_dispatch'
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ steps.pull-request.outputs.base_sha }}
           GH_TOKEN: ${{ github.token }}
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REF: ${{ steps.pull-request.outputs.head_ref }}
         run: |
           gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/dispatches" \
             -f ref="${HEAD_REF}" \

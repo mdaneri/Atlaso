@@ -52,7 +52,8 @@ without auto-merge remain maintainer-controlled.
 The trusted version workflow may update an internal pull request with `GITHUB_TOKEN`. GitHub places the duplicate
 `pull_request` workflow run created by that update behind an approval gate, so those diagnostic jobs use non-required
 names. The trusted dispatch run retains the canonical `Version policy`, `Repository checks`, and `Python tests` names
-required by the `main` ruleset.
+required by the `main` ruleset. Automated branch updates request version refresh through a typed repository dispatch,
+which always uses the workflow revision on protected `main`; there is no privileged manual-dispatch entry point.
 
 ### Dependabot version updates
 
