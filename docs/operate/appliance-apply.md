@@ -133,5 +133,15 @@ prevents a queued task from applying state that the administrator did not inspec
 - A successful component updates only that component's last-applied baseline.
 - Fresh-appliance baseline initialization records comparison metadata only; it does not run helper commands.
 
-For apply-unit ownership, staging paths, helper commands, baselines, locking, and execution internals, see the
-[Appliance Apply technical reference](../reference/appliance-apply-technical.md).
+## Complete technical contents
+
+No original section was removed. The [Appliance Apply technical reference](../reference/appliance-apply-technical.md)
+is divided into these scannable groups:
+
+| Reference group | Contents |
+| --- | --- |
+| [Workflow and execution model](../reference/appliance-apply-technical.md#workflow-and-execution-model) | Backend routes, global locking, helper boundaries, and apply-unit ownership. |
+| [Appliance and network units](../reference/appliance-apply-technical.md#appliance-and-network-units) | Users, inventory, networking, routing, and DNS/DHCP. |
+| [Infrastructure and security units](../reference/appliance-apply-technical.md#infrastructure-and-security-units) | PXE, storage, firewall, backups, certificates, and KMS/KMIP. |
+| [Appliance settings and operations](../reference/appliance-apply-technical.md#appliance-settings-and-operations) | NTPsec, appliance settings, logs, power, tasks, and VCF Offline Depot. |
+| [State, results, and interface contracts](../reference/appliance-apply-technical.md#state-results-and-interface-contracts) | Baselines, diffs, job results, recovery, and UI expectations. |

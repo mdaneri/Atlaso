@@ -110,8 +110,21 @@ def test_appliance_apply_operator_guide_stays_task_focused() -> None:
         "## Verify the result",
         "## Recover from a failed apply",
         "## Safety boundaries",
+        "## Complete technical contents",
     } <= headings
     assert len(operator_page.splitlines()) < 200
     assert "../reference/appliance-apply-technical.md" in operator_page
-    assert "## Local Users Apply" not in operator_page
-    assert "## Local Users Apply" in technical_page
+    assert "No original section was removed." in operator_page
+    technical_headings = {line for line in technical_page.splitlines() if line.startswith("#")}
+    assert {
+        "## Workflow and execution model",
+        "## Appliance and network units",
+        "## Infrastructure and security units",
+        "## Appliance settings and operations",
+        "## State, results, and interface contracts",
+        "### Workflow architecture",
+        "### Local Users apply",
+        "### DNS/DHCP apply",
+        "### Job result",
+        "### UI expectations",
+    } <= technical_headings
