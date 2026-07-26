@@ -44,6 +44,16 @@ label on active work.
 
 `main` accepts squash merges only after required checks pass. Do not commit directly to `main`.
 
+Maintainers may explicitly enable auto-merge on an internal, ready-for-review pull request. When `main` advances, Atlaso
+automatically updates only those auto-merge-enabled branches that are in this repository, are not drafts, have no merge
+conflict, and are behind `main`. The update uses the observed head commit as a concurrency guard. Forks and pull requests
+without auto-merge remain maintainer-controlled.
+
+The trusted version workflow may update an internal pull request with `GITHUB_TOKEN`. GitHub places the duplicate
+`pull_request` workflow run created by that update behind an approval gate, so those diagnostic jobs use non-required
+names. The trusted dispatch run retains the canonical `Version policy`, `Repository checks`, and `Python tests` names
+required by the `main` ruleset.
+
 ### Dependabot version updates
 
 GitHub-managed version-update pull requests generated from
