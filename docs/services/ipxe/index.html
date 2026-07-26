@@ -1,0 +1,5373 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Configure and troubleshoot Atlaso network boot and scripted ESX installation workflows.">
+      
+      
+        <meta name="author" content="Atlaso contributors">
+      
+      
+        <link rel="canonical" href="https://mdaneri.github.io/Atlaso/docs/services/ipxe/">
+      
+      
+        <link rel="prev" href="../esx-storage/">
+      
+      
+        <link rel="next" href="../managed-ldap/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/brand/favicon.ico">
+      <meta name="generator" content="zensical-0.0.51">
+    
+    
+      
+        <title>ESX 9.1 Scripted Installation and Network Boot Notes - Atlaso Documentation</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.62c9b9cc.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/atlaso.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#esx-91-scripted-installation-and-network-boot-notes" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Atlaso Documentation" class="md-header__button md-logo" aria-label="Atlaso Documentation" data-md-component="logo">
+      
+  <img src="../../assets/brand/atlaso-logo-horizontal-dark.svg" alt="Atlaso Documentation">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Atlaso Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ESX 9.1 Scripted Installation and Network Boot Notes
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/mdaneri/Atlaso" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mdaneri/Atlaso
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+      
+        
+          
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/" class="md-tabs__link">
+          
+  
+  Getting started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../operate/" class="md-tabs__link">
+          
+  
+  Operate
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+      
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
+          
+  
+  Services
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/" class="md-tabs__link">
+          
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../contribute/" class="md-tabs__link">
+          
+  
+  Contribute
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../project/" class="md-tabs__link">
+          
+  
+  Project
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Atlaso Documentation" class="md-nav__button md-logo" aria-label="Atlaso Documentation" data-md-component="logo">
+      
+  <img src="../../assets/brand/atlaso-logo-horizontal-dark.svg" alt="Atlaso Documentation">
+
+    </a>
+    Atlaso Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mdaneri/Atlaso" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mdaneri/Atlaso
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../getting-started/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Getting started
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+            </a>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Getting started
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../operate/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Operate
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Operate
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/dashboard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Dashboard
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/appliance-apply/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Appliance Apply
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/appliance-console/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Local appliance console
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/appliance-update/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Appliance Update
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/automation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Automation
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/web-terminal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Web Terminal
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Services
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Services
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dns/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  DNS
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../esx-storage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  ESX storage
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Network boot
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Network boot
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#table-of-contents" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Table of contents
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scripted-installation-approaches" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Scripted installation approaches
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#enter-boot-options-for-a-scripted-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Enter boot options for a scripted install
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Enter boot options for a scripted install">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#manual-boot-option-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Manual boot-option example
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#boot-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Boot options
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Boot options">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#supported-boot-options-for-esx-installation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Supported boot options for ESX installation
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#default-kscfg-installation-script" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Default <code>ks.cfg</code> installation script
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Default ks.cfg installation script">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#default-sample-script" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Default sample script
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bootcfg-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>boot.cfg</code> file
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="boot.cfg file">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#bootcfg-syntax" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>boot.cfg</code> syntax
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bootcfg-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>boot.cfg</code> commands
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#installation-and-upgrade-script-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Installation and upgrade script commands
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Installation and upgrade script commands">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#core-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Core commands
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#clearpart-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>clearpart</code> options
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#install-upgrade-and-installorupgrade-disk-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>install</code>, <code>upgrade</code>, and <code>installorupgrade</code> disk options
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#keyboard-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Keyboard types
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#licensing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Licensing
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#network-command-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>network</code> command options
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#part-or-partition-command-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>part</code> or <code>partition</code> command options
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#script-section-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Script section commands
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Script section commands">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#include-or-include" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>%include</code> or <code>include</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pre" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>%pre</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>%post</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#firstboot" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>%firstboot</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#disk-device-names" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Disk device names
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#network-boot-background" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Network boot background
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Network boot background">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tftp-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        TFTP server
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#syslinux-and-pxelinux" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        SYSLINUX and PXELINUX
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ipxe" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        iPXE
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#uefi-pxe-and-uefi-http" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        UEFI PXE and UEFI HTTP
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#alternative-network-boot-approaches" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Alternative network boot approaches
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pxelinux-configuration-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        PXELINUX configuration files
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="PXELINUX configuration files">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#required-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Required files
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pxe-configuration-filename" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        PXE configuration filename
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pxe-configuration-file-location" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        PXE configuration file location
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#boot-the-esx-installer-by-using-pxe-and-tftp" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Boot the ESX installer by using PXE and TFTP
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Boot the ESX installer by using PXE and TFTP">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Prerequisites
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#legacy-bios-pxelinux-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Legacy BIOS PXELINUX setup
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#uefi-pxe-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        UEFI PXE setup
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#common-pxetftp-installer-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Common PXE/TFTP installer setup
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#uefi-host-specific-bootcfg" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        UEFI host-specific <code>boot.cfg</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#boot-the-esx-installer-by-using-ipxe-and-http" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Boot the ESX installer by using iPXE and HTTP
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Boot the ESX installer by using iPXE and HTTP">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#prerequisites-for-ipxe-and-http" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Prerequisites for iPXE and HTTP
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#build-and-copy-ipxe" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Build and copy iPXE
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#legacy-bios-with-pxelinux" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Legacy BIOS with PXELINUX
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#uefi-ipxe-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        UEFI iPXE setup
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#http-installer-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        HTTP installer layout
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#uefi-host-specific-bootcfg-for-ipxehttp" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        UEFI host-specific <code>boot.cfg</code> for iPXE/HTTP
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#boot-the-esx-installer-by-using-native-uefi-http" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Boot the ESX installer by using native UEFI HTTP
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Boot the ESX installer by using native UEFI HTTP">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#prerequisites-for-using-native-uefi-http" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Prerequisites for using native UEFI HTTP
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#http-boot-loader-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        HTTP boot-loader setup
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#http-installer-layout_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        HTTP installer layout
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#booting-a-vm-with-uefi-http-boot" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Booting a VM with UEFI HTTP boot
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#default-vs-host-specific-bootcfg" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Default vs host-specific <code>boot.cfg</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sample-dhcp-configurations" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sample DHCP configurations
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Sample DHCP configurations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pxe-and-tftp-with-ipv4" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        PXE and TFTP with IPv4
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pxe-and-tftp-with-ipv6" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        PXE and TFTP with IPv6
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ipxe-and-http-with-ipv4" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        iPXE and HTTP with IPv4
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ipxe-and-http-with-ipv6" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        iPXE and HTTP with IPv6
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#native-uefi-http-with-ipv4" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Native UEFI HTTP with IPv4
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#native-uefi-http-with-ipv6" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Native UEFI HTTP with IPv6
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dhcp-option-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        DHCP option summary
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#practical-notes-for-atlaso-style-automation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Practical notes for Atlaso-style automation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../managed-ldap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Managed LDAP
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../oidc-provider/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  OpenID Connect provider
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vcf-helper/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  VCF Helper
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vcf-trust/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  VCF certificate trust
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../reference/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reference
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Reference
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/interface-gallery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Verified interface gallery
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/full-technical-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Full technical reference
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/hyperv-lifecycle-testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hyper-V lifecycle testing
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/vmware-workstation-lifecycle-testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  VMware lifecycle testing
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../contribute/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Contribute
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Contribute
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/documentation-authoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Documentation authoring
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/ui-design-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  UI design guide
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/agent-policies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Detailed agent policies
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../project/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Project
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7" id="__nav_7_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Project
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/branding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Brand assets
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../assets/brand/BRAND_GUIDE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Brand kit
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/ca-roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CA roadmap
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--roadmap"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/routing-wan-roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Routing and WAN roadmap
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--roadmap"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/appliance-console-design-qa/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Appliance console design QA
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--historical"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/monitor-apply-ux-design-qa/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Monitor interaction design QA
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--historical"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#table-of-contents" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Table of contents
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scripted-installation-approaches" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Scripted installation approaches
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#enter-boot-options-for-a-scripted-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Enter boot options for a scripted install
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Enter boot options for a scripted install">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#manual-boot-option-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Manual boot-option example
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#boot-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Boot options
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Boot options">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#supported-boot-options-for-esx-installation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Supported boot options for ESX installation
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#default-kscfg-installation-script" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Default <code>ks.cfg</code> installation script
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Default ks.cfg installation script">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#default-sample-script" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Default sample script
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bootcfg-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>boot.cfg</code> file
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="boot.cfg file">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#bootcfg-syntax" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>boot.cfg</code> syntax
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bootcfg-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>boot.cfg</code> commands
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#installation-and-upgrade-script-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Installation and upgrade script commands
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Installation and upgrade script commands">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#core-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Core commands
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#clearpart-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>clearpart</code> options
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#install-upgrade-and-installorupgrade-disk-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>install</code>, <code>upgrade</code>, and <code>installorupgrade</code> disk options
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#keyboard-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Keyboard types
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#licensing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Licensing
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#network-command-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>network</code> command options
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#part-or-partition-command-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>part</code> or <code>partition</code> command options
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#script-section-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Script section commands
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Script section commands">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#include-or-include" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>%include</code> or <code>include</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pre" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>%pre</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>%post</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#firstboot" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>%firstboot</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#disk-device-names" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Disk device names
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#network-boot-background" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Network boot background
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Network boot background">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tftp-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        TFTP server
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#syslinux-and-pxelinux" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        SYSLINUX and PXELINUX
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ipxe" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        iPXE
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#uefi-pxe-and-uefi-http" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        UEFI PXE and UEFI HTTP
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#alternative-network-boot-approaches" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Alternative network boot approaches
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pxelinux-configuration-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        PXELINUX configuration files
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="PXELINUX configuration files">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#required-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Required files
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pxe-configuration-filename" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        PXE configuration filename
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pxe-configuration-file-location" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        PXE configuration file location
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#boot-the-esx-installer-by-using-pxe-and-tftp" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Boot the ESX installer by using PXE and TFTP
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Boot the ESX installer by using PXE and TFTP">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Prerequisites
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#legacy-bios-pxelinux-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Legacy BIOS PXELINUX setup
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#uefi-pxe-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        UEFI PXE setup
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#common-pxetftp-installer-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Common PXE/TFTP installer setup
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#uefi-host-specific-bootcfg" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        UEFI host-specific <code>boot.cfg</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#boot-the-esx-installer-by-using-ipxe-and-http" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Boot the ESX installer by using iPXE and HTTP
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Boot the ESX installer by using iPXE and HTTP">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#prerequisites-for-ipxe-and-http" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Prerequisites for iPXE and HTTP
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#build-and-copy-ipxe" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Build and copy iPXE
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#legacy-bios-with-pxelinux" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Legacy BIOS with PXELINUX
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#uefi-ipxe-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        UEFI iPXE setup
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#http-installer-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        HTTP installer layout
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#uefi-host-specific-bootcfg-for-ipxehttp" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        UEFI host-specific <code>boot.cfg</code> for iPXE/HTTP
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#boot-the-esx-installer-by-using-native-uefi-http" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Boot the ESX installer by using native UEFI HTTP
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Boot the ESX installer by using native UEFI HTTP">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#prerequisites-for-using-native-uefi-http" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Prerequisites for using native UEFI HTTP
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#http-boot-loader-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        HTTP boot-loader setup
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#http-installer-layout_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        HTTP installer layout
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#booting-a-vm-with-uefi-http-boot" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Booting a VM with UEFI HTTP boot
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#default-vs-host-specific-bootcfg" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Default vs host-specific <code>boot.cfg</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sample-dhcp-configurations" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sample DHCP configurations
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Sample DHCP configurations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pxe-and-tftp-with-ipv4" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        PXE and TFTP with IPv4
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pxe-and-tftp-with-ipv6" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        PXE and TFTP with IPv6
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ipxe-and-http-with-ipv4" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        iPXE and HTTP with IPv4
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ipxe-and-http-with-ipv6" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        iPXE and HTTP with IPv6
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#native-uefi-http-with-ipv4" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Native UEFI HTTP with IPv4
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#native-uefi-http-with-ipv6" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Native UEFI HTTP with IPv6
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dhcp-option-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        DHCP option summary
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#practical-notes-for-atlaso-style-automation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Practical notes for Atlaso-style automation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-path__item">
+        <a href="../" class="md-path__link">
+          
+  
+  <span class="md-ellipsis">
+    Services
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+    <a href="https://github.com/mdaneri/Atlaso/edit/main/docs/services/ipxe.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-pen" viewBox="0 0 24 24"><path d="M12.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v9.34"/><path d="M14 2v5a1 1 0 0 0 1 1h5M10.378 12.622a1 1 0 0 1 3 3.003L8.36 20.637a2 2 0 0 1-.854.506l-2.867.837a.5.5 0 0 1-.62-.62l.836-2.869a2 2 0 0 1 .506-.853z"/></svg>
+    </a>
+  
+  
+    
+      
+    
+    <a href="https://github.com/mdaneri/Atlaso/raw/main/docs/services/ipxe.md" title="View source of this page" class="md-content__button md-icon">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-code-2" viewBox="0 0 24 24"><path d="M4 12.15V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-3.35"/><path d="M14 2v5a1 1 0 0 0 1 1h5M5 16l-3 3 3 3M9 22l3-3-3-3"/></svg>
+    </a>
+  
+
+
+<h1 id="esx-91-scripted-installation-and-network-boot-notes">ESX 9.1 Scripted Installation and Network Boot Notes<a class="headerlink" href="#esx-91-scripted-installation-and-network-boot-notes" title="Permanent link">&para;</a></h1>
+<p>Cleaned Markdown copy of the Broadcom Tech Docs content for ESX installation, kickstart, <code>boot.cfg</code>, PXELINUX, iPXE, and
+native UEFI HTTP boot.</p>
+<p>Atlaso note: ESXi PXE host-specific <code>boot.cfg</code> artifacts should pass Kickstart URLs as
+<code>/pxe/esxi/ks/&lt;file&gt;.cfg?mac=&lt;normalized-mac&gt;</code>. The MAC query parameter is required so Atlaso can render restricted
+<code>{{variable}}</code> Kickstart markers from the database source and the selected host's custom variable map. Atlaso
+intentionally does not infer the host MAC from request source IP or dnsmasq leases.</p>
+<blockquote>
+<p>Terminology note: Broadcom documentation uses <strong>ESX</strong> in these 9.x installation pages. Older VMware material often
+used <strong>ESXi</strong>.</p>
+</blockquote>
+<hr />
+<h2 id="table-of-contents">Table of contents<a class="headerlink" href="#table-of-contents" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="#scripted-installation-approaches">Scripted installation approaches</a></li>
+<li><a href="#enter-boot-options-for-a-scripted-install">Enter boot options for a scripted install</a></li>
+<li><a href="#boot-options">Boot options</a></li>
+<li><a href="#default-kscfg-installation-script">Default <code>ks.cfg</code> installation script</a></li>
+<li><a href="#bootcfg-file"><code>boot.cfg</code> file</a></li>
+<li><a href="#installation-and-upgrade-script-commands">Installation and upgrade script commands</a></li>
+<li><a href="#network-boot-background">Network boot background</a></li>
+<li><a href="#pxelinux-configuration-files">PXELINUX configuration files</a></li>
+<li><a href="#boot-the-esx-installer-by-using-pxe-and-tftp">Boot the ESX installer by using PXE and TFTP</a></li>
+<li><a href="#boot-the-esx-installer-by-using-ipxe-and-http">Boot the ESX installer by using iPXE and HTTP</a></li>
+<li><a href="#boot-the-esx-installer-by-using-native-uefi-http">Boot the ESX installer by using native UEFI HTTP</a></li>
+<li><a href="#sample-dhcp-configurations">Sample DHCP configurations</a></li>
+</ul>
+<hr />
+<h2 id="scripted-installation-approaches">Scripted installation approaches<a class="headerlink" href="#scripted-installation-approaches" title="Permanent link">&para;</a></h2>
+<p>You can install ESX on multiple machines by using either:</p>
+<ul>
+<li>A single installation script for all machines.</li>
+<li>A separate installation script for each machine.</li>
+</ul>
+<p>For example, disk names can vary from host to host, so one common setting to control in a script is the disk selected
+for ESX installation.</p>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Recommended action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Always install on the first disk across multiple machines.</td>
+<td>Create one script.</td>
+</tr>
+<tr>
+<td>Install ESX on a different disk for each machine.</td>
+<td>Create multiple scripts.</td>
+</tr>
+</tbody>
+</table>
+<p>For the commands required to specify the installation disk, see
+<a href="#installation-and-upgrade-script-commands">Installation and upgrade script commands</a>.</p>
+<hr />
+<h2 id="enter-boot-options-for-a-scripted-install">Enter boot options for a scripted install<a class="headerlink" href="#enter-boot-options-for-a-scripted-install" title="Permanent link">&para;</a></h2>
+<p>At boot time, you might need to specify options to access the kickstart file.</p>
+<ul>
+<li>In the boot loader, press <strong>Shift+O</strong> to edit boot options.</li>
+<li>For PXE boot installation, pass options through the <code>kernelopt</code> line of the <code>boot.cfg</code> file.</li>
+<li>To specify the location of the installation script, set <code>ks=filepath</code>, where <code>filepath</code> is the location of the
+  kickstart file.</li>
+<li>If <code>ks=filepath</code> is omitted, the text installer runs instead of a scripted install.</li>
+</ul>
+<h3 id="manual-boot-option-example">Manual boot-option example<a class="headerlink" href="#manual-boot-option-example" title="Permanent link">&para;</a></h3>
+<p>At the <code>runweasel</code> prompt, type the <code>ks=</code> location plus any other boot command-line options:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>ks=http://00.00.00.00/kickstart/ks-osdc-pdp101.cfg nameserver=00.00.0.0 ip=00.00.00.000 netmask=255.255.255.0 gateway=00.00.00.000
+</span></code></pre></div>
+<hr />
+<h2 id="boot-options">Boot options<a class="headerlink" href="#boot-options" title="Permanent link">&para;</a></h2>
+<h3 id="supported-boot-options-for-esx-installation">Supported boot options for ESX installation<a class="headerlink" href="#supported-boot-options-for-esx-installation" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Boot option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>BOOTIF=hwtype-MAC address</code></td>
+<td>Similar to <code>netdevice</code>, except in PXELINUX format as described by the <code>IPAPPEND</code> option in SYSLINUX.</td>
+</tr>
+<tr>
+<td><code>gateway=ip address</code></td>
+<td>Sets the network gateway used to download the installation script and installation media.</td>
+</tr>
+<tr>
+<td><code>ip=ip address</code></td>
+<td>Sets a static IP address used to download the installation script and installation media. PXELINUX format is also supported.</td>
+</tr>
+<tr>
+<td><code>ks=cdrom:/path</code></td>
+<td>Performs a scripted installation with the script at <code>path</code> on the CD-ROM drive. Each CD-ROM is mounted and checked until the file is found.</td>
+</tr>
+<tr>
+<td><code>ks=file://path</code></td>
+<td>Performs a scripted installation with the script at <code>path</code>.</td>
+</tr>
+<tr>
+<td><code>ks=protocol://serverpath</code></td>
+<td>Performs a scripted installation with a script located on the network. Supported protocols are <code>http</code>, <code>https</code>, <code>ftp</code>, and <code>nfs</code>. Example: <code>ks=nfs://host/porturl-path</code>.</td>
+</tr>
+<tr>
+<td><code>ks=usb</code></td>
+<td>Performs a scripted installation using <code>ks.cfg</code> from the root of an attached USB drive. Only FAT16 and FAT32 are supported.</td>
+</tr>
+<tr>
+<td><code>ks=usb:/path</code></td>
+<td>Performs a scripted installation with the script at the specified USB path.</td>
+</tr>
+<tr>
+<td><code>ksdevice=device</code></td>
+<td>Uses a specific network adapter when looking for the installation script and media. Specify a MAC address, such as <code>00:50:56:C0:00:01</code>, or a <code>vmnicNN</code> name.</td>
+</tr>
+<tr>
+<td><code>nameserver=ip address</code></td>
+<td>Specifies a DNS server used to download the installation script and media.</td>
+</tr>
+<tr>
+<td><code>netdevice=device</code></td>
+<td>Uses a specific network adapter when looking for the installation script and media. Specify a MAC address or <code>vmnicNN</code>.</td>
+</tr>
+<tr>
+<td><code>netmask=subnet mask</code></td>
+<td>Specifies the subnet mask for the network interface used to download the script and media.</td>
+</tr>
+<tr>
+<td><code>vlanid=vlanid</code></td>
+<td>Configures the network card to use the specified VLAN.</td>
+</tr>
+<tr>
+<td><code>systemMediaSize</code></td>
+<td>Increases the size of system storage partitions on the boot media. Supported values are <code>default</code> and <code>max</code>.</td>
+</tr>
+</tbody>
+</table>
+<p><code>systemMediaSize</code> values:</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>default</code></td>
+<td>138 GB.</td>
+</tr>
+<tr>
+<td><code>max</code></td>
+<td>Consume all available space, useful for multi-terabyte servers.</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>Important: The ESX installer does <strong>not</strong> validate SSL certificates for URLs. Verify URLs before using them.</p>
+</blockquote>
+<hr />
+<h2 id="default-kscfg-installation-script">Default <code>ks.cfg</code> installation script<a class="headerlink" href="#default-kscfg-installation-script" title="Permanent link">&para;</a></h2>
+<p>The default <code>ks.cfg</code> installation script is located in the initial RAM disk at:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>/etc/vmware/weasel/ks.cfg
+</span></code></pre></div>
+<p>You can specify the default script by using this boot option:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>ks=file://etc/vmware/weasel/ks.cfg
+</span></code></pre></div>
+<p>When installing ESX using the default <code>ks.cfg</code> script, the default root password is:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>myp@ssw0rd
+</span></code></pre></div>
+<p>You cannot modify the default script on the installation media. After installation, use the vSphere Client to log in to
+the vCenter managing the ESX host and modify settings.</p>
+<p>With ESX 8.0 and later, if the system has supported data processing units (DPUs), the <code>ks.cfg</code> script can also install
+ESX on the DPUs.</p>
+<h3 id="default-sample-script">Default sample script<a class="headerlink" href="#default-sample-script" title="Permanent link">&para;</a></h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a># Sample scripted installation file
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a># Accept the VMware End User License Agreement
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>vmaccepteula
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a># Set the root password for the DCUI and Tech Support Mode
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>rootpw myp@ssw0rd
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a># Install on the first local disk available on the machine
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>install --firstdisk --overwritevmfs
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>
+</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a># If the system has DPUs, also specify a PCI slot:
+</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a># install --firstdisk --overwritevmfs --dpupcislots=&lt;PCIeSlotID&gt;
+</span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>
+</span><span id="__span-4-15"><a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a># Set the network to DHCP on the first network adapter
+</span><span id="__span-4-16"><a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>network --bootproto=dhcp --device=vmnic0
+</span><span id="__span-4-17"><a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>
+</span><span id="__span-4-18"><a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a># A sample post-install script
+</span><span id="__span-4-19"><a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a>%post --interpreter=python --ignorefailure=true
+</span><span id="__span-4-20"><a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a>import time
+</span><span id="__span-4-21"><a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a>stampFile = open(&#39;/finished.stamp&#39;, mode=&#39;w&#39;)
+</span><span id="__span-4-22"><a id="__codelineno-4-22" name="__codelineno-4-22" href="#__codelineno-4-22"></a>stampFile.write(time.asctime())
+</span></code></pre></div>
+<hr />
+<h2 id="bootcfg-file"><code>boot.cfg</code> file<a class="headerlink" href="#bootcfg-file" title="Permanent link">&para;</a></h2>
+<p>The boot loader configuration file, <code>boot.cfg</code>, specifies:</p>
+<ul>
+<li>The kernel.</li>
+<li>Kernel options.</li>
+<li>Boot modules used by <code>mboot.c32</code> or <code>mboot.efi</code>.</li>
+</ul>
+<p>The file is provided in the ESX installer. Modify the <code>kernelopt</code> line to specify the installation script location or
+pass other boot options.</p>
+<h3 id="bootcfg-syntax"><code>boot.cfg</code> syntax<a class="headerlink" href="#bootcfg-syntax" title="Permanent link">&para;</a></h3>
+<div class="language-ini highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1"># boot.cfg -- mboot configuration file</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="c1"># Any line preceded with &#39;#&#39; is a comment.</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="na">title</span><span class="o">=</span><span class="s">STRING</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="na">prefix</span><span class="o">=</span><span class="s">DIRPATH</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="na">kernel</span><span class="o">=</span><span class="s">FILEPATH</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="na">kernelopt</span><span class="o">=</span><span class="s">STRING</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="na">modules</span><span class="o">=</span><span class="s">FILEPATH1---FILEPATH2...---FILEPATHn</span>
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="c1"># Any other line must remain unchanged.</span>
+</span></code></pre></div>
+<h3 id="bootcfg-commands"><code>boot.cfg</code> commands<a class="headerlink" href="#bootcfg-commands" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>title=STRING</code></td>
+<td>Sets the boot loader title to <code>STRING</code>.</td>
+</tr>
+<tr>
+<td><code>prefix=DIRPATH</code></td>
+<td>Optional. Adds <code>DIRPATH/</code> before every <code>FILEPATH</code> in the <code>kernel=</code> and <code>modules=</code> commands that does not already start with <code>/</code> or <code>http://</code>.</td>
+</tr>
+<tr>
+<td><code>kernel=FILEPATH</code></td>
+<td>Sets the kernel path to <code>FILEPATH</code>.</td>
+</tr>
+<tr>
+<td><code>kernelopt=STRING</code></td>
+<td>Appends <code>STRING</code> to the kernel boot options.</td>
+</tr>
+<tr>
+<td><code>modules=FILEPATH1---FILEPATH2...---FILEPATHn</code></td>
+<td>Lists modules to load, separated by three hyphens: <code>---</code>.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="installation-and-upgrade-script-commands">Installation and upgrade script commands<a class="headerlink" href="#installation-and-upgrade-script-commands" title="Permanent link">&para;</a></h2>
+<p>To modify the default installation or upgrade script, or to create your own, use the supported kickstart commands.</p>
+<p>To determine which disk to install or upgrade ESX on, the installation script requires one of these commands:</p>
+<ul>
+<li><code>install</code></li>
+<li><code>upgrade</code></li>
+<li><code>installorupgrade</code></li>
+</ul>
+<p>The <code>install</code> command creates the default partitions, including a VMFS datastore that occupies all available space after
+other partitions are created.</p>
+<p>With ESX 8.0 and later, if the system has supported DPUs, consider installation or reinstallation of ESX on DPUs along
+with ESX on hosts. ESX update and upgrade on DPUs is not supported by interactive or scripted methods. Use vSphere
+Lifecycle Manager for DPU update or upgrade.</p>
+<p>The use of SD and USB devices for storing ESX-OSData partitions is deprecated. SD and USB devices can only be used to
+create boot bank partitions: boot-bank 0 and boot-bank 1. You can provide a persistent disk of at least 32 GB for
+ESX-OSData by using <code>systemDisk</code> with the <code>install</code> command.</p>
+<h3 id="core-commands">Core commands<a class="headerlink" href="#core-commands" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th style="text-align: right;">Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>accepteula</code> or <code>vmaccepteula</code></td>
+<td style="text-align: right;">Yes</td>
+<td>Accepts the ESX license agreement.</td>
+</tr>
+<tr>
+<td><code>clearpart</code></td>
+<td style="text-align: right;">No</td>
+<td>Clears existing partitions on the disk. Requires <code>install</code>. Carefully edit this command in existing scripts.</td>
+</tr>
+<tr>
+<td><code>dryrun</code></td>
+<td style="text-align: right;">No</td>
+<td>Parses and checks the installation script but does not install.</td>
+</tr>
+<tr>
+<td><code>install</code></td>
+<td style="text-align: right;">Conditional</td>
+<td>Specifies a fresh installation. One of <code>install</code>, <code>upgrade</code>, or <code>installorupgrade</code> is required.</td>
+</tr>
+<tr>
+<td><code>installorupgrade</code></td>
+<td style="text-align: right;">Conditional</td>
+<td>Installs or upgrades. One of <code>install</code>, <code>upgrade</code>, or <code>installorupgrade</code> is required.</td>
+</tr>
+<tr>
+<td><code>keyboard</code></td>
+<td style="text-align: right;">No</td>
+<td>Sets the keyboard type.</td>
+</tr>
+<tr>
+<td><code>network</code></td>
+<td style="text-align: right;">No</td>
+<td>Specifies network settings for the installed system.</td>
+</tr>
+<tr>
+<td><code>paranoid</code></td>
+<td style="text-align: right;">No</td>
+<td>Causes warning messages to interrupt installation. Without it, warnings are logged.</td>
+</tr>
+<tr>
+<td><code>part</code> or <code>partition</code></td>
+<td style="text-align: right;">No</td>
+<td>Creates an extra VMFS datastore on the system. Cannot be used on the same disk as <code>install</code>.</td>
+</tr>
+<tr>
+<td><code>reboot</code></td>
+<td style="text-align: right;">No</td>
+<td>Reboots the machine after scripted installation completes.</td>
+</tr>
+<tr>
+<td><code>rootpw</code></td>
+<td style="text-align: right;">Yes</td>
+<td>Sets the root password.</td>
+</tr>
+<tr>
+<td><code>serialnum</code> or <code>vmserialnum</code></td>
+<td style="text-align: right;">No</td>
+<td>Configures licensing. Starting with ESX 9.0, ESX is licensed automatically after vCenter is licensed.</td>
+</tr>
+<tr>
+<td><code>upgrade</code></td>
+<td style="text-align: right;">Conditional</td>
+<td>Specifies an upgrade. One of <code>install</code>, <code>upgrade</code>, or <code>installorupgrade</code> is required.</td>
+</tr>
+<tr>
+<td><code>%include</code> or <code>include</code></td>
+<td style="text-align: right;">No</td>
+<td>Specifies another installation script to parse.</td>
+</tr>
+<tr>
+<td><code>%pre</code></td>
+<td style="text-align: right;">No</td>
+<td>Runs a script before kickstart configuration is evaluated.</td>
+</tr>
+<tr>
+<td><code>%post</code></td>
+<td style="text-align: right;">No</td>
+<td>Runs after package installation is complete. Multiple sections run in order.</td>
+</tr>
+<tr>
+<td><code>%firstboot</code></td>
+<td style="text-align: right;">No</td>
+<td>Creates an init script that runs only during first boot. It does not run if Secure Boot is enabled.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="clearpart-options"><code>clearpart</code> options<a class="headerlink" href="#clearpart-options" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--drives=</code></td>
+<td>Removes partitions on the specified drives.</td>
+</tr>
+<tr>
+<td><code>--alldrives</code></td>
+<td>Allows clearing partitions on every drive.</td>
+</tr>
+<tr>
+<td><code>--ignoredrives=</code></td>
+<td>Removes partitions on all drives except those specified. Required unless <code>--drives=</code> or <code>--alldrives</code> is specified.</td>
+</tr>
+<tr>
+<td><code>--overwritevmfs</code></td>
+<td>Allows overwriting VMFS partitions on specified drives. By default, VMFS partitions are not overwritten.</td>
+</tr>
+<tr>
+<td><code>--firstdisk=disk-type1[,disk-type2,...]</code></td>
+<td>Partitions the first eligible disk found using the specified filter order.</td>
+</tr>
+</tbody>
+</table>
+<p>Default disk eligibility order for <code>--firstdisk</code>:</p>
+<ol>
+<li>Locally attached storage: <code>local</code></li>
+<li>Network storage: <code>remote</code></li>
+</ol>
+<p>You can override the default order with a comma-separated filter list. Filters can include ESX state, model/vendor
+information, or VMkernel driver names. Example:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>--firstdisk=ST3120814A,mptsas,local
+</span></code></pre></div>
+<p>Useful filters:</p>
+<table>
+<thead>
+<tr>
+<th>Filter</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>esx</code></td>
+<td>First disk with ESX installed.</td>
+</tr>
+<tr>
+<td><code>localesx</code></td>
+<td>Local storage that contains an ESX image.</td>
+</tr>
+<tr>
+<td><code>remoteesx</code></td>
+<td>Remote storage that contains an ESX image.</td>
+</tr>
+<tr>
+<td><code>model</code> / <code>vendor</code> values</td>
+<td>Match by device model or vendor text.</td>
+</tr>
+<tr>
+<td>VMkernel driver name</td>
+<td>Match disks using a specific driver, such as <code>mptsas</code>.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="install-upgrade-and-installorupgrade-disk-options"><code>install</code>, <code>upgrade</code>, and <code>installorupgrade</code> disk options<a class="headerlink" href="#install-upgrade-and-installorupgrade-disk-options" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Applies to</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--disk=</code> or <code>--drive=</code></td>
+<td><code>install</code>, <code>upgrade</code>, <code>installorupgrade</code></td>
+<td>Specifies the disk to partition. Use a disk name or full ESX filesystem path.</td>
+</tr>
+<tr>
+<td><code>--firstdisk=disk-type1[,disk-type2,...]</code></td>
+<td><code>install</code>, <code>upgrade</code>, <code>installorupgrade</code></td>
+<td>Partitions the first eligible disk found using the filter order.</td>
+</tr>
+<tr>
+<td><code>--ignoressd</code></td>
+<td><code>install</code> with <code>--firstdisk</code></td>
+<td>Excludes SSDs from eligibility. Invalid with <code>--disk</code>, <code>--drive</code>, <code>upgrade</code>, and <code>installorupgrade</code>.</td>
+</tr>
+<tr>
+<td><code>--overwritevsan</code></td>
+<td><code>install</code>, <code>installorupgrade</code></td>
+<td>Required when installing on a disk that is part of a vSAN disk group. If no vSAN partition exists on the selected disk, installation fails.</td>
+</tr>
+<tr>
+<td><code>--overwritevmfs</code></td>
+<td><code>install</code>, <code>installorupgrade</code></td>
+<td>Allows installation where an existing VMFS datastore exists. Required to overwrite VMFS during install.</td>
+</tr>
+<tr>
+<td><code>--preservevmfs</code></td>
+<td><code>install</code></td>
+<td>Preserves an existing VMFS datastore during installation.</td>
+</tr>
+<tr>
+<td><code>--novmfsondisk</code></td>
+<td><code>install</code></td>
+<td>Prevents a VMFS partition from being created on this disk. Use with <code>--overwritevmfs</code> if a VMFS partition exists.</td>
+</tr>
+<tr>
+<td><code>--systemdisk</code></td>
+<td><code>install</code></td>
+<td>When booting from USB or SD, specifies the local persistent disk for ESX-OSData.</td>
+</tr>
+<tr>
+<td><code>--repartitionsystemdisk</code></td>
+<td><code>install</code></td>
+<td>Repartitions the persistent disk specified by <code>systemDisk</code> if it is not empty or contains a datastore.</td>
+</tr>
+<tr>
+<td><code>--forceunsupportedinstall</code></td>
+<td><code>install</code></td>
+<td>Blocks the installation of deprecated CPUs.</td>
+</tr>
+</tbody>
+</table>
+<p>Disk examples:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>install --disk=naa.6d09466044143600247aee55ca2a6405 --overwritevmfs
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>install --disk=/vmfs/devices/disks/mpx.vmhba1:C0:T0:L0 --overwritevmfs
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>install --firstdisk=local --overwritevmfs
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>install --firstdisk=usb --systemDisk=&lt;diskID&gt;
+</span></code></pre></div>
+<p>vSAN overwrite behavior:</p>
+<table>
+<thead>
+<tr>
+<th>Selected disk</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SSD in a vSAN disk group</td>
+<td>The SSD and all underlying HDDs in the same disk group are wiped.</td>
+</tr>
+<tr>
+<td>HDD in a disk group larger than two disks</td>
+<td>Only the selected HDD is wiped.</td>
+</tr>
+<tr>
+<td>HDD in a disk group with two or fewer disks</td>
+<td>The SSD and selected HDD are wiped.</td>
+</tr>
+</tbody>
+</table>
+<p>If a local persistent disk is unavailable, or the disk is less than 32 GB, warning messages appear, but installation
+continues.</p>
+<h3 id="keyboard-types">Keyboard types<a class="headerlink" href="#keyboard-types" title="Permanent link">&para;</a></h3>
+<p>Supported <code>keyboard</code> values include:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>Belgian
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>Brazilian
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>Croatian
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>Czechoslovakian
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>Danish
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>Estonian
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>Finnish
+</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>French
+</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>German
+</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>Greek
+</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>Icelandic
+</span><span id="__span-8-12"><a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>Italian
+</span><span id="__span-8-13"><a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a>Japanese
+</span><span id="__span-8-14"><a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a>Latin American
+</span><span id="__span-8-15"><a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a>Norwegian
+</span><span id="__span-8-16"><a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a>Polish
+</span><span id="__span-8-17"><a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a>Portuguese
+</span><span id="__span-8-18"><a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a>Russian
+</span><span id="__span-8-19"><a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a>Slovenian
+</span><span id="__span-8-20"><a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a>Spanish
+</span><span id="__span-8-21"><a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a>Swedish
+</span><span id="__span-8-22"><a id="__codelineno-8-22" name="__codelineno-8-22" href="#__codelineno-8-22"></a>Swiss French
+</span><span id="__span-8-23"><a id="__codelineno-8-23" name="__codelineno-8-23" href="#__codelineno-8-23"></a>Swiss German
+</span><span id="__span-8-24"><a id="__codelineno-8-24" name="__codelineno-8-24" href="#__codelineno-8-24"></a>Turkish
+</span><span id="__span-8-25"><a id="__codelineno-8-25" name="__codelineno-8-25" href="#__codelineno-8-25"></a>Ukrainian
+</span><span id="__span-8-26"><a id="__codelineno-8-26" name="__codelineno-8-26" href="#__codelineno-8-26"></a>United Kingdom
+</span><span id="__span-8-27"><a id="__codelineno-8-27" name="__codelineno-8-27" href="#__codelineno-8-27"></a>US Default
+</span><span id="__span-8-28"><a id="__codelineno-8-28" name="__codelineno-8-28" href="#__codelineno-8-28"></a>US Dvorak
+</span></code></pre></div>
+<h3 id="licensing">Licensing<a class="headerlink" href="#licensing" title="Permanent link">&para;</a></h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>serialnum --esx=&lt;license-key&gt;
+</span></code></pre></div>
+<p>Starting with ESX 9.0, ESX is no longer licensed manually. After licensing the connected vCenter instance, ESX hosts are
+licensed automatically.</p>
+<h3 id="network-command-options"><code>network</code> command options<a class="headerlink" href="#network-command-options" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--bootproto=[dhcp\|static]</code></td>
+<td>Uses DHCP or static networking.</td>
+</tr>
+<tr>
+<td><code>--device=</code></td>
+<td>Specifies the uplink device by MAC address or <code>vmnicNN</code>, for example <code>vmnic0</code>.</td>
+</tr>
+<tr>
+<td><code>--ip=</code></td>
+<td>Static IP address. Required with <code>--bootproto=static</code>; ignored otherwise.</td>
+</tr>
+<tr>
+<td><code>--gateway=</code></td>
+<td>Default gateway. Used with <code>--bootproto=static</code>.</td>
+</tr>
+<tr>
+<td><code>--nameserver=</code></td>
+<td>Primary DNS server. Used with <code>--bootproto=static</code>. Can accept two IPs, for example <code>--nameserver="10.126.87.104,10.126.87.120"</code>.</td>
+</tr>
+<tr>
+<td><code>--netmask=</code></td>
+<td>Subnet mask. Used with <code>--bootproto=static</code>.</td>
+</tr>
+<tr>
+<td><code>--hostname=</code></td>
+<td>Host name for the installed system.</td>
+</tr>
+<tr>
+<td><code>--vlanid=</code></td>
+<td>VLAN ID, from 1 to 4096. Used with DHCP or static.</td>
+</tr>
+<tr>
+<td><code>--addvmportgroup=(0\|1)</code></td>
+<td>Whether to add the <code>VM Network</code> port group. Default is <code>1</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>Example:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>network --bootproto=static \
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>  --device=vmnic0 \
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>  --ip=192.168.10.51 \
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>  --netmask=255.255.255.0 \
+</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>  --gateway=192.168.10.1 \
+</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>  --nameserver=&quot;192.168.10.10,1.1.1.1&quot; \
+</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>  --hostname=esx01.lab.local \
+</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>  --vlanid=10 \
+</span><span id="__span-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>  --addvmportgroup=0
+</span></code></pre></div>
+<h3 id="part-or-partition-command-options"><code>part</code> or <code>partition</code> command options<a class="headerlink" href="#part-or-partition-command-options" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>datastore name</code></td>
+<td>Specifies where the partition is mounted.</td>
+</tr>
+<tr>
+<td><code>--ondisk=</code> or <code>--ondrive=</code></td>
+<td>Specifies the disk or drive where the partition is created.</td>
+</tr>
+<tr>
+<td><code>--onfirstdisk=disk-type1[,disk-type2,...]</code></td>
+<td>Creates the datastore on the first eligible disk matching the filter order.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="script-section-commands">Script section commands<a class="headerlink" href="#script-section-commands" title="Permanent link">&para;</a></h3>
+<h4 id="include-or-include"><code>%include</code> or <code>include</code><a class="headerlink" href="#include-or-include" title="Permanent link">&para;</a></h4>
+<p>Specifies another installation script to parse:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>%include part.cfg
+</span></code></pre></div>
+<h4 id="pre"><code>%pre</code><a class="headerlink" href="#pre" title="Permanent link">&para;</a></h4>
+<p>Runs before the kickstart configuration is evaluated. It can generate files for inclusion in the kickstart file.</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--interpreter=[python\|busybox]</code></td>
+<td>Interpreter to use. Default is <code>busybox</code>.</td>
+</tr>
+</tbody>
+</table>
+<h4 id="post"><code>%post</code><a class="headerlink" href="#post" title="Permanent link">&para;</a></h4>
+<p>Runs after package installation completes. Multiple <code>%post</code> sections run in order.</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--interpreter=[python\|busybox]</code></td>
+<td>Interpreter to use. Default is <code>busybox</code>.</td>
+</tr>
+<tr>
+<td><code>--timeout=secs</code></td>
+<td>Maximum runtime before the script is stopped.</td>
+</tr>
+<tr>
+<td><code>--ignorefailure=[true\|false]</code></td>
+<td>If <code>true</code>, installation is considered successful even if the <code>%post</code> script fails.</td>
+</tr>
+</tbody>
+</table>
+<h4 id="firstboot"><code>%firstboot</code><a class="headerlink" href="#firstboot" title="Permanent link">&para;</a></h4>
+<p>Runs only during first boot. It does not run on subsequent boots.</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--interpreter=[python\|busybox]</code></td>
+<td>Interpreter to use. Default is <code>busybox</code>.</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>Warning: <code>%firstboot</code> semantics are not checked until the system boots for the first time. Errors might not appear
+until after installation completes. <code>%firstboot</code> does not run if Secure Boot is enabled.</p>
+</blockquote>
+<h3 id="disk-device-names">Disk device names<a class="headerlink" href="#disk-device-names" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Example</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>NAA</td>
+<td><code>naa.6d09466044143600247aee55ca2a6405</code></td>
+<td>SCSI INQUIRY identifier.</td>
+</tr>
+<tr>
+<td>EUI</td>
+<td><code>eui.3966623838646463</code></td>
+<td>SCSI INQUIRY identifier.</td>
+</tr>
+<tr>
+<td>T10</td>
+<td><code>t10.SanDisk00Cruzer_Blade000000004C530001171118101244</code></td>
+<td>SCSI INQUIRY identifier.</td>
+</tr>
+<tr>
+<td>VML</td>
+<td><code>vml.00025261</code></td>
+<td>Legacy VMkernel identifier.</td>
+</tr>
+<tr>
+<td>MPX</td>
+<td><code>mpx.vmhba0:C0:T0:L0</code></td>
+<td>Path-based identifier.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="network-boot-background">Network boot background<a class="headerlink" href="#network-boot-background" title="Permanent link">&para;</a></h2>
+<h3 id="tftp-server">TFTP server<a class="headerlink" href="#tftp-server" title="Permanent link">&para;</a></h3>
+<p>Trivial File Transfer Protocol (TFTP) is similar to FTP and is typically used for network booting systems or loading
+firmware on devices such as routers.</p>
+<ul>
+<li>TFTP is available on Linux and Windows.</li>
+<li>Most Linux distributions include <code>tftp-hpa</code>.</li>
+<li>If you need a supported solution, use a supported TFTP server from your vendor.</li>
+<li>On Windows, the Broadcom text mentions <code>tftpd32</code> version 2.11 or later.</li>
+</ul>
+<h3 id="syslinux-and-pxelinux">SYSLINUX and PXELINUX<a class="headerlink" href="#syslinux-and-pxelinux" title="Permanent link">&para;</a></h3>
+<p>For PXE in a legacy BIOS environment, you must understand the boot environment:</p>
+<ul>
+<li><strong>SYSLINUX</strong> is an open-source boot environment for legacy BIOS firmware.</li>
+<li>The ESX BIOS boot loader, <code>mboot.c32</code>, runs as a SYSLINUX plugin.</li>
+<li>SYSLINUX can boot from several media types, including disk, ISO, and network.</li>
+<li><strong>PXELINUX</strong> is a SYSLINUX configuration for booting from a TFTP server according to the PXE standard.</li>
+</ul>
+<p>When PXELINUX boots the ESX installer, these files are transferred by TFTP:</p>
+<ul>
+<li><code>pxelinux.0</code></li>
+<li><code>mboot.c32</code></li>
+<li>PXELINUX configuration file</li>
+<li>Kernel</li>
+<li>Boot modules</li>
+</ul>
+<p>VMware builds the <code>mboot.c32</code> plugin to work with SYSLINUX 3.86 and tests PXE booting only with that version. Other
+versions might be incompatible.</p>
+<h3 id="ipxe">iPXE<a class="headerlink" href="#ipxe" title="Permanent link">&para;</a></h3>
+<p><strong>iPXE</strong> is open-source software that provides HTTP support for network boot. It can be used to perform the initial
+boot.</p>
+<p>VMware includes a build of iPXE as part of Auto Deploy. The source tree for that build is available in the Open Source
+Disclosure Package for VMware vCenter.</p>
+<h3 id="uefi-pxe-and-uefi-http">UEFI PXE and UEFI HTTP<a class="headerlink" href="#uefi-pxe-and-uefi-http" title="Permanent link">&para;</a></h3>
+<p>Most UEFI firmware natively includes PXE support and can boot from a TFTP server. The firmware can directly load the ESX
+UEFI boot loader:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>mboot.efi
+</span></code></pre></div>
+<p>Additional software such as PXELINUX is not required for UEFI PXE.</p>
+<p>Some UEFI firmware supports native UEFI HTTP boot, introduced in UEFI specification version 2.5. With UEFI HTTP boot,
+firmware can load the ESX boot loader from an HTTP server without additional software such as iPXE.</p>
+<p>Apple Macintosh products do not include PXE boot support. They use an Apple-specific network boot protocol instead.</p>
+<h3 id="alternative-network-boot-approaches">Alternative network boot approaches<a class="headerlink" href="#alternative-network-boot-approaches" title="Permanent link">&para;</a></h3>
+<p>Alternative approaches include:</p>
+<ul>
+<li>Configure DHCP to provide different boot-loader filenames to different hosts by MAC address or other criteria.</li>
+<li>Use iPXE as the initial boot loader to chain to different installers or scripts.</li>
+</ul>
+<hr />
+<h2 id="pxelinux-configuration-files">PXELINUX configuration files<a class="headerlink" href="#pxelinux-configuration-files" title="Permanent link">&para;</a></h2>
+<p>This section gives general PXELINUX configuration information. For syntax details, see the SYSLINUX documentation.</p>
+<h3 id="required-files">Required files<a class="headerlink" href="#required-files" title="Permanent link">&para;</a></h3>
+<p>In the PXE configuration file, include paths to:</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mboot.c32</code></td>
+<td>ESX boot loader for BIOS systems.</td>
+</tr>
+<tr>
+<td><code>boot.cfg</code></td>
+<td>Boot loader configuration file.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="pxe-configuration-filename">PXE configuration filename<a class="headerlink" href="#pxe-configuration-filename" title="Permanent link">&para;</a></h3>
+<p>The PXELINUX initial boot file, <code>pxelinux.0</code>, tries to load a PXE configuration file in this order:</p>
+<ol>
+<li>MAC address of the target ESX host, prefixed with ARP type code <code>01</code> for Ethernet.</li>
+<li>Target ESX host IP address in hexadecimal notation.</li>
+<li><code>default</code>.</li>
+</ol>
+<table>
+<thead>
+<tr>
+<th>Filename choice</th>
+<th>Example</th>
+<th>Use case</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>01-mac_address_of_target_ESX_host</code></td>
+<td><code>01-23-45-67-89-0a-bc</code></td>
+<td>Host-specific configuration.</td>
+</tr>
+<tr>
+<td>Hexadecimal target IP</td>
+<td>Depends on host IP</td>
+<td>Host-specific configuration by IP.</td>
+</tr>
+<tr>
+<td><code>default</code></td>
+<td><code>default</code></td>
+<td>Fallback/default configuration.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="pxe-configuration-file-location">PXE configuration file location<a class="headerlink" href="#pxe-configuration-file-location" title="Permanent link">&para;</a></h3>
+<p>Save PXELINUX configuration files under:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>/tftpboot/pxelinux.cfg/
+</span></code></pre></div>
+<p>Example for a host whose MAC address is <code>00-21-5a-ce-40-f6</code>:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>/tftpboot/pxelinux.cfg/01-00-21-5a-ce-40-f6
+</span></code></pre></div>
+<hr />
+<h2 id="boot-the-esx-installer-by-using-pxe-and-tftp">Boot the ESX installer by using PXE and TFTP<a class="headerlink" href="#boot-the-esx-installer-by-using-pxe-and-tftp" title="Permanent link">&para;</a></h2>
+<p>This procedure supports both UEFI and legacy BIOS hosts.</p>
+<h3 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Requirement</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ESX installer ISO image</td>
+<td>Downloaded from the Broadcom Support Portal.</td>
+</tr>
+<tr>
+<td>Supported target host hardware</td>
+<td>Check the Broadcom Compatibility Guide for the ESX version.</td>
+</tr>
+<tr>
+<td>PXE-capable NIC</td>
+<td>Required on the target ESX host.</td>
+</tr>
+<tr>
+<td>DHCP server</td>
+<td>Must be configurable for PXE booting.</td>
+</tr>
+<tr>
+<td>TFTP server</td>
+<td>Required.</td>
+</tr>
+<tr>
+<td>Network security</td>
+<td>Allow TFTP traffic, UDP port 69.</td>
+</tr>
+<tr>
+<td>Firmware/networking</td>
+<td>Legacy BIOS supports IPv4 only. UEFI PXE supports IPv4 or IPv6.</td>
+</tr>
+<tr>
+<td>Optional kickstart file</td>
+<td>Used for scripted installation.</td>
+</tr>
+<tr>
+<td>VLAN support</td>
+<td>Use a native VLAN in most cases. If specifying VLAN ID for PXE boot, verify NIC support.</td>
+</tr>
+<tr>
+<td>SYSLINUX 3.86</td>
+<td>Required for legacy BIOS systems.</td>
+</tr>
+</tbody>
+</table>
+<p>For legacy BIOS machines, the procedure supports booting multiple ESX installer versions using the same <code>pxelinux.0</code>
+loader and different PXELINUX configuration files based on MAC address.</p>
+<p>For UEFI machines, the procedure supports booting multiple ESX installer versions using the same <code>mboot.efi</code> loader and
+different <code>boot.cfg</code> files based on MAC address.</p>
+<h3 id="legacy-bios-pxelinux-setup">Legacy BIOS PXELINUX setup<a class="headerlink" href="#legacy-bios-pxelinux-setup" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Obtain SYSLINUX version 3.86.</li>
+<li>Unpack it.</li>
+<li>Copy <code>pxelinux.0</code> to the top-level <code>/tftpboot</code> directory.</li>
+<li>Create a PXELINUX configuration file.</li>
+</ol>
+<p>Example PXELINUX configuration:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>DEFAULT install
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>NOHALT 1
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>LABEL install
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>  KERNEL ESX-9.x.x-XXXXXX/mboot.c32
+</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>  APPEND -c ESX-9.x.x-XXXXXX/boot.cfg
+</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>  IPAPPEND 2
+</span></code></pre></div>
+<p><code>ESX-9.x.x-XXXXXX</code> is the TFTP subdirectory containing the ESX installer files.</p>
+<p>Save the PXELINUX configuration under:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>/tftpboot/pxelinux.cfg/
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Desired behavior</th>
+<th>Filename</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Same installer for all hosts</td>
+<td><code>default</code></td>
+</tr>
+<tr>
+<td>Different installer for one host</td>
+<td><code>01-mac_address_of_target_ESX_host</code>, for example <code>01-23-45-67-89-0a-bc</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="uefi-pxe-setup">UEFI PXE setup<a class="headerlink" href="#uefi-pxe-setup" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Copy these files from the ESX installer ISO to <code>/tftpboot</code>:</li>
+</ol>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>efi/boot/bootx64.efi
+</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>efi/boot/crypto64.efi
+</span></code></pre></div>
+<ol>
+<li>Rename <code>efi/boot/bootx64.efi</code> to:</li>
+</ol>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>mboot.efi
+</span></code></pre></div>
+<p>Newer versions of <code>mboot.efi</code> can generally boot older ESX versions. Older versions might not boot newer ESX versions.
+If you boot different ESX versions, use <code>mboot.efi</code> from the newest ESX version.</p>
+<h3 id="common-pxetftp-installer-setup">Common PXE/TFTP installer setup<a class="headerlink" href="#common-pxetftp-installer-setup" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p>Configure the DHCP server.</p>
+</li>
+<li>
+<p>Create a TFTP subdirectory for the ESX installer files, for example:</p>
+</li>
+</ol>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>/tftpboot/ESX-9.x.x-xxxxx
+</span></code></pre></div>
+<ol>
+<li>
+<p>Copy the ESX installer image contents into that directory.</p>
+</li>
+<li>
+<p>Modify <code>boot.cfg</code>.</p>
+</li>
+</ol>
+<p>Add a <code>prefix</code> line:</p>
+<div class="language-ini highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="na">prefix</span><span class="o">=</span><span class="s">ESX-9.x.x-xxxxxx</span>
+</span></code></pre></div>
+<p>Then apply these edits:</p>
+<ul>
+<li>If filenames in <code>kernel=</code> and <code>modules=</code> begin with <code>/</code>, remove the leading <code>/</code>.</li>
+<li>If <code>kernelopt=</code> contains <code>cdromBoot</code>, remove only <code>cdromBoot</code>.</li>
+<li>For scripted installation, add <code>kernelopt=</code> after the <code>kernel</code> command to specify the kickstart location.</li>
+</ul>
+<p>Example:</p>
+<div class="language-ini highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="na">kernelopt</span><span class="o">=</span><span class="s">ks=http://XXX.XXX.XXX.XXX/esxi_ksFiles/ks.cfg</span>
+</span></code></pre></div>
+<h3 id="uefi-host-specific-bootcfg">UEFI host-specific <code>boot.cfg</code><a class="headerlink" href="#uefi-host-specific-bootcfg" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Desired behavior</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Same installer for all UEFI hosts</td>
+<td>Copy or link <code>boot.cfg</code> to <code>/tftpboot/boot.cfg</code>.</td>
+</tr>
+<tr>
+<td>Different installer per UEFI host</td>
+<td>Create <code>/tftpboot/01-mac_address_of_target_ESX_host/</code> and place that host's <code>boot.cfg</code> there.</td>
+</tr>
+</tbody>
+</table>
+<p>Example host-specific path:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>/tftpboot/01-23-45-67-89-0a-bc/boot.cfg
+</span></code></pre></div>
+<hr />
+<h2 id="boot-the-esx-installer-by-using-ipxe-and-http">Boot the ESX installer by using iPXE and HTTP<a class="headerlink" href="#boot-the-esx-installer-by-using-ipxe-and-http" title="Permanent link">&para;</a></h2>
+<p>You can use iPXE to boot the ESX installer from an HTTP server. The prerequisites and steps depend on whether the host
+uses UEFI or legacy BIOS firmware.</p>
+<h3 id="prerequisites-for-ipxe-and-http">Prerequisites for iPXE and HTTP<a class="headerlink" href="#prerequisites-for-ipxe-and-http" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Requirement</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ESX installer ISO image</td>
+<td>Downloaded from the Broadcom Support Portal.</td>
+</tr>
+<tr>
+<td>Supported target host hardware</td>
+<td>Check the Broadcom Compatibility Guide.</td>
+</tr>
+<tr>
+<td>PXE-capable NIC</td>
+<td>Required on the target ESX host.</td>
+</tr>
+<tr>
+<td>DHCP server</td>
+<td>Must be configurable for PXE booting.</td>
+</tr>
+<tr>
+<td>TFTP server</td>
+<td>Required for initial iPXE/PXE boot.</td>
+</tr>
+<tr>
+<td>TFTP network access</td>
+<td>Allow UDP port 69.</td>
+</tr>
+<tr>
+<td>HTTP server</td>
+<td>Must be accessible by target ESX hosts.</td>
+</tr>
+<tr>
+<td>Firmware/networking</td>
+<td>Legacy BIOS supports IPv4 only. UEFI PXE supports IPv4 or IPv6.</td>
+</tr>
+<tr>
+<td>Optional kickstart file</td>
+<td>Used for scripted installation.</td>
+</tr>
+<tr>
+<td>VLAN support</td>
+<td>Use a native VLAN in most cases. If specifying VLAN ID, verify NIC support.</td>
+</tr>
+<tr>
+<td>SYSLINUX 3.86</td>
+<td>Required for legacy BIOS systems.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="build-and-copy-ipxe">Build and copy iPXE<a class="headerlink" href="#build-and-copy-ipxe" title="Permanent link">&para;</a></h3>
+<p>Obtain the iPXE source code and build the required binary.</p>
+<p>For legacy BIOS hosts:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>make<span class="w"> </span>bin/undionly.kpxe
+</span></code></pre></div>
+<p>For UEFI hosts:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-24-1"><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>make<span class="w"> </span>bin-x86_64-efi/snponly.efi
+</span></code></pre></div>
+<p>Copy the resulting file to your TFTP root:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-25-1"><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>/tftpboot/undionly.kpxe
+</span><span id="__span-25-2"><a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a>/tftpboot/snponly.efi
+</span></code></pre></div>
+<h3 id="legacy-bios-with-pxelinux">Legacy BIOS with PXELINUX<a class="headerlink" href="#legacy-bios-with-pxelinux" title="Permanent link">&para;</a></h3>
+<p>For legacy BIOS hosts, also configure PXELINUX:</p>
+<ol>
+<li>Obtain SYSLINUX 3.86.</li>
+<li>Copy <code>pxelinux.0</code> to <code>/tftpboot</code>.</li>
+<li>Create a PXELINUX configuration file.</li>
+</ol>
+<p>Example:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-26-1"><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a>DEFAULT install
+</span><span id="__span-26-2"><a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a>NOHALT 1
+</span><span id="__span-26-3"><a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a>LABEL install
+</span><span id="__span-26-4"><a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a>  KERNEL ESX-9.x.x-XXXXXX/mboot.c32
+</span><span id="__span-26-5"><a id="__codelineno-26-5" name="__codelineno-26-5" href="#__codelineno-26-5"></a>  APPEND -c ESX-9.x.x-XXXXXX/boot.cfg
+</span><span id="__span-26-6"><a id="__codelineno-26-6" name="__codelineno-26-6" href="#__codelineno-26-6"></a>  IPAPPEND 2
+</span></code></pre></div>
+<p>Save the file under:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-27-1"><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a>/tftpboot/pxelinux.cfg/
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Desired behavior</th>
+<th>Filename</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Same installer for all hosts</td>
+<td><code>default</code></td>
+</tr>
+<tr>
+<td>Different installer for one host</td>
+<td><code>01-mac_address_of_target_ESX_host</code>, for example <code>01-23-45-67-89-0a-bc</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="uefi-ipxe-setup">UEFI iPXE setup<a class="headerlink" href="#uefi-ipxe-setup" title="Permanent link">&para;</a></h3>
+<p>For UEFI hosts:</p>
+<ol>
+<li>Copy <code>efi/boot/bootx64.efi</code> from the ESX ISO to <code>/tftpboot</code>.</li>
+<li>Rename it to <code>mboot.efi</code>.</li>
+</ol>
+<p>Use the newest <code>mboot.efi</code> if you plan to boot multiple ESX versions.</p>
+<h3 id="http-installer-layout">HTTP installer layout<a class="headerlink" href="#http-installer-layout" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p>Configure DHCP.</p>
+</li>
+<li>
+<p>Create an HTTP directory with the same name as the ESX installer version, for example:</p>
+</li>
+</ol>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-28-1"><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a>/var/www/html/ESX-9.x.x-XXXXXX
+</span></code></pre></div>
+<ol>
+<li>
+<p>Copy the ESX installer image contents into that directory.</p>
+</li>
+<li>
+<p>Modify <code>boot.cfg</code>.</p>
+</li>
+</ol>
+<p>Add:</p>
+<div class="language-ini highlight"><pre><span></span><code><span id="__span-29-1"><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="na">prefix</span><span class="o">=</span><span class="s">http://XXX.XXX.XXX.XXX/ESX-9.x.x-XXXXXX</span>
+</span></code></pre></div>
+<p>Then apply these edits:</p>
+<ul>
+<li>Remove leading <code>/</code> from <code>kernel=</code> and <code>modules=</code> paths.</li>
+<li>Remove only <code>cdromBoot</code> from <code>kernelopt=</code> if present.</li>
+<li>For scripted installs, add a <code>kernelopt=</code> line pointing to the kickstart file.</li>
+</ul>
+<p>Example:</p>
+<div class="language-ini highlight"><pre><span></span><code><span id="__span-30-1"><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a><span class="na">kernelopt</span><span class="o">=</span><span class="s">ks=http://XXX.XXX.XXX.XXX/esxi_ksFiles/ks.cfg</span>
+</span></code></pre></div>
+<h3 id="uefi-host-specific-bootcfg-for-ipxehttp">UEFI host-specific <code>boot.cfg</code> for iPXE/HTTP<a class="headerlink" href="#uefi-host-specific-bootcfg-for-ipxehttp" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Desired behavior</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Same installer for all UEFI hosts</td>
+<td>Copy or link <code>boot.cfg</code> to <code>/tftpboot/boot.cfg</code>.</td>
+</tr>
+<tr>
+<td>Different installer per UEFI host</td>
+<td>Create <code>/tftpboot/01-mac_address_of_target_ESX_host/</code> and place that host's <code>boot.cfg</code> there.</td>
+</tr>
+</tbody>
+</table>
+<p>Example:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-31-1"><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a>/tftpboot/01-23-45-67-89-0a-bc/boot.cfg
+</span></code></pre></div>
+<hr />
+<h2 id="boot-the-esx-installer-by-using-native-uefi-http">Boot the ESX installer by using native UEFI HTTP<a class="headerlink" href="#boot-the-esx-installer-by-using-native-uefi-http" title="Permanent link">&para;</a></h2>
+<p>Native UEFI HTTP boot does not require PXELINUX or iPXE if the firmware supports HTTP boot.</p>
+<h3 id="prerequisites-for-using-native-uefi-http">Prerequisites for using native UEFI HTTP<a class="headerlink" href="#prerequisites-for-using-native-uefi-http" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Requirement</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>UEFI firmware with HTTP boot</td>
+<td>Required on the ESX host.</td>
+</tr>
+<tr>
+<td>ESX installer ISO image</td>
+<td>Downloaded from the Broadcom Support Portal.</td>
+</tr>
+<tr>
+<td>Supported target host hardware</td>
+<td>Check the Broadcom Compatibility Guide.</td>
+</tr>
+<tr>
+<td>UEFI networking support</td>
+<td>Required on the target NIC.</td>
+</tr>
+<tr>
+<td>DHCP server</td>
+<td>Must be configurable for UEFI HTTP booting.</td>
+</tr>
+<tr>
+<td>Optional kickstart file</td>
+<td>Used for scripted installation.</td>
+</tr>
+<tr>
+<td>VLAN support</td>
+<td>Use a native VLAN in most cases. If specifying VLAN ID for HTTP(S) boot, verify NIC support.</td>
+</tr>
+</tbody>
+</table>
+<p>Native UEFI HTTP supports booting multiple ESX installer versions. You can use the same <code>mboot.efi</code> initial boot loader
+for all targets and provide different <code>boot.cfg</code> files by MAC address.</p>
+<p>Do not mix IPv4 and IPv6 during the boot process. Use either IPv4 or IPv6 consistently.</p>
+<h3 id="http-boot-loader-setup">HTTP boot-loader setup<a class="headerlink" href="#http-boot-loader-setup" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Copy <code>efi/boot/bootx64.efi</code> from the ESX ISO to a directory on the HTTP server.</li>
+<li>Rename it to <code>mboot.efi</code>.</li>
+</ol>
+<p>Example:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-32-1"><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a>http://www.example.com/esx/mboot.efi
+</span></code></pre></div>
+<p>Use <code>mboot.efi</code> from the newest ESX version if you plan to boot multiple installer versions.</p>
+<h3 id="http-installer-layout_1">HTTP installer layout<a class="headerlink" href="#http-installer-layout_1" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p>Configure DHCP.</p>
+</li>
+<li>
+<p>Create a directory on the HTTP server for the ESX installer, for example:</p>
+</li>
+</ol>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-33-1"><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a>http://www.example.com/esx/ESX-9.x.x-XXXXXX
+</span></code></pre></div>
+<ol>
+<li>
+<p>Copy the ESX installer image contents into that directory.</p>
+</li>
+<li>
+<p>Modify <code>boot.cfg</code>.</p>
+</li>
+</ol>
+<p>Add:</p>
+<div class="language-ini highlight"><pre><span></span><code><span id="__span-34-1"><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a><span class="na">prefix</span><span class="o">=</span><span class="s">http://www.example.com/esx/ESX-9.x.x-XXXXXX</span>
+</span></code></pre></div>
+<p>Then apply these edits:</p>
+<ul>
+<li>Remove leading <code>/</code> from filenames in <code>kernel=</code> and <code>modules=</code>.</li>
+<li>Remove only <code>cdromBoot</code> from <code>kernelopt=</code> if present.</li>
+<li>For scripted installation, add <code>kernelopt=</code> after the <code>kernel</code> command and point it to the kickstart file.</li>
+</ul>
+<p>Example:</p>
+<div class="language-ini highlight"><pre><span></span><code><span id="__span-35-1"><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a><span class="na">kernelopt</span><span class="o">=</span><span class="s">ks=http://www.example.com/esx_ksFiles/ks.cfg</span>
+</span></code></pre></div>
+<h3 id="booting-a-vm-with-uefi-http-boot">Booting a VM with UEFI HTTP boot<a class="headerlink" href="#booting-a-vm-with-uefi-http-boot" title="Permanent link">&para;</a></h3>
+<p>For virtual machines, you can use these VM configuration parameters:</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Description</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>networkBootProtocol</code></td>
+<td>Boot protocol, IPv4 or IPv6.</td>
+<td><code>networkBootProtocol = httpv4</code></td>
+</tr>
+<tr>
+<td><code>networkBootUri</code></td>
+<td>HTTP URL to the ESX boot loader.</td>
+<td><code>networkBootUri = http://xxx.xxx.xx.x/esx9.xxxx/efi/boot/bootx64.efi</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="default-vs-host-specific-bootcfg">Default vs host-specific <code>boot.cfg</code><a class="headerlink" href="#default-vs-host-specific-bootcfg" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Desired behavior</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Same installer for all UEFI HTTP hosts</td>
+<td>Add <code>boot.cfg</code> to the same directory as <code>mboot.efi</code>, for example <code>http://www.example.com/esx/boot.cfg</code>.</td>
+</tr>
+<tr>
+<td>Different installer per UEFI HTTP host</td>
+<td>Create a subdirectory named with the target host MAC address, for example <code>01-23-45-67-89-0a-bc</code>, and place the custom <code>boot.cfg</code> there.</td>
+</tr>
+</tbody>
+</table>
+<p>Example host-specific URL:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-36-1"><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a>http://www.example.com/esx/01-23-45-67-89-0a-bc/boot.cfg
+</span></code></pre></div>
+<p>Hosts without a custom <code>boot.cfg</code> on the HTTP server boot from the default <code>boot.cfg</code> file.</p>
+<hr />
+<h2 id="sample-dhcp-configurations">Sample DHCP configurations<a class="headerlink" href="#sample-dhcp-configurations" title="Permanent link">&para;</a></h2>
+<p>The DHCP server must provide enough boot information for the ESX host to find its initial boot loader.</p>
+<ul>
+<li>For <strong>PXE boot</strong>, DHCP provides the address of the <strong>TFTP server</strong> and the boot loader filename, such as <code>pxelinux.0</code>,
+  <code>mboot.efi</code>, <code>undionly.kpxe</code>, or <code>snponly.efi</code>.</li>
+<li>For <strong>native UEFI HTTP boot</strong>, DHCP provides an HTTP URL to the initial boot loader, usually <code>mboot.efi</code>.</li>
+<li>Do <strong>not</strong> run a second DHCP server on a network that already has one. Multiple DHCP replies can give hosts
+  conflicting IP addresses or the wrong boot loader information.</li>
+<li>The examples below are ISC DHCP-style snippets, not complete DHCP server configurations.</li>
+<li>For Microsoft DHCP or another DHCP server, map these concepts to that server's equivalent of <code>next-server</code>,
+  <code>filename</code>, and DHCPv6 bootfile URL options.</li>
+</ul>
+<h3 id="pxe-and-tftp-with-ipv4">PXE and TFTP with IPv4<a class="headerlink" href="#pxe-and-tftp-with-ipv4" title="Permanent link">&para;</a></h3>
+<p>This example PXE boots ESX from a TFTP server at IPv4 address <code>xxx.xxx.xxx.xxx</code>.</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-37-1"><a id="__codelineno-37-1" name="__codelineno-37-1" href="#__codelineno-37-1"></a># ISC DHCP server configuration file snippet.
+</span><span id="__span-37-2"><a id="__codelineno-37-2" name="__codelineno-37-2" href="#__codelineno-37-2"></a># This is not a complete configuration file.
+</span><span id="__span-37-3"><a id="__codelineno-37-3" name="__codelineno-37-3" href="#__codelineno-37-3"></a>
+</span><span id="__span-37-4"><a id="__codelineno-37-4" name="__codelineno-37-4" href="#__codelineno-37-4"></a>allow booting;
+</span><span id="__span-37-5"><a id="__codelineno-37-5" name="__codelineno-37-5" href="#__codelineno-37-5"></a>allow bootp;
+</span><span id="__span-37-6"><a id="__codelineno-37-6" name="__codelineno-37-6" href="#__codelineno-37-6"></a>
+</span><span id="__span-37-7"><a id="__codelineno-37-7" name="__codelineno-37-7" href="#__codelineno-37-7"></a>option client-system-arch code 93 = unsigned integer 16;
+</span><span id="__span-37-8"><a id="__codelineno-37-8" name="__codelineno-37-8" href="#__codelineno-37-8"></a>
+</span><span id="__span-37-9"><a id="__codelineno-37-9" name="__codelineno-37-9" href="#__codelineno-37-9"></a>class &quot;pxeclients&quot; {
+</span><span id="__span-37-10"><a id="__codelineno-37-10" name="__codelineno-37-10" href="#__codelineno-37-10"></a>   match if substring(option vendor-class-identifier, 0, 9) = &quot;PXEClient&quot;;
+</span><span id="__span-37-11"><a id="__codelineno-37-11" name="__codelineno-37-11" href="#__codelineno-37-11"></a>   next-server xxx.xxx.xxx.xxx;
+</span><span id="__span-37-12"><a id="__codelineno-37-12" name="__codelineno-37-12" href="#__codelineno-37-12"></a>
+</span><span id="__span-37-13"><a id="__codelineno-37-13" name="__codelineno-37-13" href="#__codelineno-37-13"></a>   if option client-system-arch = 00:07 or option client-system-arch = 00:09 {
+</span><span id="__span-37-14"><a id="__codelineno-37-14" name="__codelineno-37-14" href="#__codelineno-37-14"></a>      filename = &quot;mboot.efi&quot;;
+</span><span id="__span-37-15"><a id="__codelineno-37-15" name="__codelineno-37-15" href="#__codelineno-37-15"></a>   } else {
+</span><span id="__span-37-16"><a id="__codelineno-37-16" name="__codelineno-37-16" href="#__codelineno-37-16"></a>      filename = &quot;pxelinux.0&quot;;
+</span><span id="__span-37-17"><a id="__codelineno-37-17" name="__codelineno-37-17" href="#__codelineno-37-17"></a>   }
+</span><span id="__span-37-18"><a id="__codelineno-37-18" name="__codelineno-37-18" href="#__codelineno-37-18"></a>}
+</span></code></pre></div>
+<p>When a machine attempts to PXE boot, DHCP provides an IP address and the location of either <code>pxelinux.0</code> or <code>mboot.efi</code>
+on the TFTP server.</p>
+<h3 id="pxe-and-tftp-with-ipv6">PXE and TFTP with IPv6<a class="headerlink" href="#pxe-and-tftp-with-ipv6" title="Permanent link">&para;</a></h3>
+<p>This example PXE boots ESX from a TFTP server at IPv6 address <code>xxxx:xxxx:xxxx:xxxx::xxxx</code>.</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-38-1"><a id="__codelineno-38-1" name="__codelineno-38-1" href="#__codelineno-38-1"></a># ISC DHCPv6 server configuration file snippet.
+</span><span id="__span-38-2"><a id="__codelineno-38-2" name="__codelineno-38-2" href="#__codelineno-38-2"></a># This is not a complete configuration file.
+</span><span id="__span-38-3"><a id="__codelineno-38-3" name="__codelineno-38-3" href="#__codelineno-38-3"></a>
+</span><span id="__span-38-4"><a id="__codelineno-38-4" name="__codelineno-38-4" href="#__codelineno-38-4"></a>allow booting;
+</span><span id="__span-38-5"><a id="__codelineno-38-5" name="__codelineno-38-5" href="#__codelineno-38-5"></a>allow bootp;
+</span><span id="__span-38-6"><a id="__codelineno-38-6" name="__codelineno-38-6" href="#__codelineno-38-6"></a>
+</span><span id="__span-38-7"><a id="__codelineno-38-7" name="__codelineno-38-7" href="#__codelineno-38-7"></a>option dhcp6.bootfile-url code 59 = string;
+</span><span id="__span-38-8"><a id="__codelineno-38-8" name="__codelineno-38-8" href="#__codelineno-38-8"></a>option dhcp6.bootfile-url &quot;tftp://[xxxx:xxxx:xxxx:xxxx::xxxx]/mboot.efi&quot;;
+</span></code></pre></div>
+<p>When a machine attempts to PXE boot, DHCPv6 provides an IP address and the location of <code>mboot.efi</code> on the TFTP server.</p>
+<h3 id="ipxe-and-http-with-ipv4">iPXE and HTTP with IPv4<a class="headerlink" href="#ipxe-and-http-with-ipv4" title="Permanent link">&para;</a></h3>
+<p>This example boots ESX by first loading iPXE from a TFTP server at IPv4 address <code>xxx.xxx.xxx.xxx</code>.</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-39-1"><a id="__codelineno-39-1" name="__codelineno-39-1" href="#__codelineno-39-1"></a># ISC DHCP server configuration file snippet.
+</span><span id="__span-39-2"><a id="__codelineno-39-2" name="__codelineno-39-2" href="#__codelineno-39-2"></a># This is not a complete configuration file.
+</span><span id="__span-39-3"><a id="__codelineno-39-3" name="__codelineno-39-3" href="#__codelineno-39-3"></a>
+</span><span id="__span-39-4"><a id="__codelineno-39-4" name="__codelineno-39-4" href="#__codelineno-39-4"></a>allow booting;
+</span><span id="__span-39-5"><a id="__codelineno-39-5" name="__codelineno-39-5" href="#__codelineno-39-5"></a>allow bootp;
+</span><span id="__span-39-6"><a id="__codelineno-39-6" name="__codelineno-39-6" href="#__codelineno-39-6"></a>
+</span><span id="__span-39-7"><a id="__codelineno-39-7" name="__codelineno-39-7" href="#__codelineno-39-7"></a>option client-system-arch code 93 = unsigned integer 16;
+</span><span id="__span-39-8"><a id="__codelineno-39-8" name="__codelineno-39-8" href="#__codelineno-39-8"></a>
+</span><span id="__span-39-9"><a id="__codelineno-39-9" name="__codelineno-39-9" href="#__codelineno-39-9"></a>class &quot;pxeclients&quot; {
+</span><span id="__span-39-10"><a id="__codelineno-39-10" name="__codelineno-39-10" href="#__codelineno-39-10"></a>   match if substring(option vendor-class-identifier, 0, 9) = &quot;PXEClient&quot;;
+</span><span id="__span-39-11"><a id="__codelineno-39-11" name="__codelineno-39-11" href="#__codelineno-39-11"></a>   next-server xxx.xxx.xxx.xxx;
+</span><span id="__span-39-12"><a id="__codelineno-39-12" name="__codelineno-39-12" href="#__codelineno-39-12"></a>
+</span><span id="__span-39-13"><a id="__codelineno-39-13" name="__codelineno-39-13" href="#__codelineno-39-13"></a>   if option client-system-arch = 00:07 or option client-system-arch = 00:09 {
+</span><span id="__span-39-14"><a id="__codelineno-39-14" name="__codelineno-39-14" href="#__codelineno-39-14"></a>      if exists user-class and option user-class = &quot;iPXE&quot; {
+</span><span id="__span-39-15"><a id="__codelineno-39-15" name="__codelineno-39-15" href="#__codelineno-39-15"></a>         # Instruct iPXE to load mboot.efi as secondary boot loader.
+</span><span id="__span-39-16"><a id="__codelineno-39-16" name="__codelineno-39-16" href="#__codelineno-39-16"></a>         filename = &quot;mboot.efi&quot;;
+</span><span id="__span-39-17"><a id="__codelineno-39-17" name="__codelineno-39-17" href="#__codelineno-39-17"></a>      } else {
+</span><span id="__span-39-18"><a id="__codelineno-39-18" name="__codelineno-39-18" href="#__codelineno-39-18"></a>         # Load the snponly.efi build of iPXE as the initial boot loader.
+</span><span id="__span-39-19"><a id="__codelineno-39-19" name="__codelineno-39-19" href="#__codelineno-39-19"></a>         filename = &quot;snponly.efi&quot;;
+</span><span id="__span-39-20"><a id="__codelineno-39-20" name="__codelineno-39-20" href="#__codelineno-39-20"></a>      }
+</span><span id="__span-39-21"><a id="__codelineno-39-21" name="__codelineno-39-21" href="#__codelineno-39-21"></a>   } else {
+</span><span id="__span-39-22"><a id="__codelineno-39-22" name="__codelineno-39-22" href="#__codelineno-39-22"></a>      if exists user-class and option user-class = &quot;iPXE&quot; {
+</span><span id="__span-39-23"><a id="__codelineno-39-23" name="__codelineno-39-23" href="#__codelineno-39-23"></a>         # Instruct iPXE to load PXELINUX as secondary boot loader.
+</span><span id="__span-39-24"><a id="__codelineno-39-24" name="__codelineno-39-24" href="#__codelineno-39-24"></a>         filename = &quot;pxelinux.0&quot;;
+</span><span id="__span-39-25"><a id="__codelineno-39-25" name="__codelineno-39-25" href="#__codelineno-39-25"></a>      } else {
+</span><span id="__span-39-26"><a id="__codelineno-39-26" name="__codelineno-39-26" href="#__codelineno-39-26"></a>         # Load the undionly.kpxe build of iPXE as the initial boot loader.
+</span><span id="__span-39-27"><a id="__codelineno-39-27" name="__codelineno-39-27" href="#__codelineno-39-27"></a>         filename = &quot;undionly.kpxe&quot;;
+</span><span id="__span-39-28"><a id="__codelineno-39-28" name="__codelineno-39-28" href="#__codelineno-39-28"></a>      }
+</span><span id="__span-39-29"><a id="__codelineno-39-29" name="__codelineno-39-29" href="#__codelineno-39-29"></a>   }
+</span><span id="__span-39-30"><a id="__codelineno-39-30" name="__codelineno-39-30" href="#__codelineno-39-30"></a>}
+</span></code></pre></div>
+<p>Flow:</p>
+<ol>
+<li>The host PXE boots and receives either <code>undionly.kpxe</code> for legacy BIOS or <code>snponly.efi</code> for UEFI.</li>
+<li>iPXE starts and asks DHCP again.</li>
+<li>DHCP detects <code>option user-class = "iPXE"</code> and returns the second-stage loader:</li>
+<li>legacy BIOS: <code>pxelinux.0</code></li>
+<li>UEFI: <code>mboot.efi</code></li>
+<li>iPXE remains resident, giving the boot process HTTP capability for loading additional files.</li>
+</ol>
+<h3 id="ipxe-and-http-with-ipv6">iPXE and HTTP with IPv6<a class="headerlink" href="#ipxe-and-http-with-ipv6" title="Permanent link">&para;</a></h3>
+<p>This example boots ESX by first loading iPXE from a TFTP server at IPv6 address <code>xxxx:xxxx:xxxx:xxxx::xxxx</code>.</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-40-1"><a id="__codelineno-40-1" name="__codelineno-40-1" href="#__codelineno-40-1"></a># ISC DHCPv6 server configuration file snippet.
+</span><span id="__span-40-2"><a id="__codelineno-40-2" name="__codelineno-40-2" href="#__codelineno-40-2"></a># This is not a complete configuration file.
+</span><span id="__span-40-3"><a id="__codelineno-40-3" name="__codelineno-40-3" href="#__codelineno-40-3"></a>
+</span><span id="__span-40-4"><a id="__codelineno-40-4" name="__codelineno-40-4" href="#__codelineno-40-4"></a>allow booting;
+</span><span id="__span-40-5"><a id="__codelineno-40-5" name="__codelineno-40-5" href="#__codelineno-40-5"></a>allow bootp;
+</span><span id="__span-40-6"><a id="__codelineno-40-6" name="__codelineno-40-6" href="#__codelineno-40-6"></a>
+</span><span id="__span-40-7"><a id="__codelineno-40-7" name="__codelineno-40-7" href="#__codelineno-40-7"></a>option dhcp6.bootfile-url code 59 = string;
+</span><span id="__span-40-8"><a id="__codelineno-40-8" name="__codelineno-40-8" href="#__codelineno-40-8"></a>
+</span><span id="__span-40-9"><a id="__codelineno-40-9" name="__codelineno-40-9" href="#__codelineno-40-9"></a>if exists user-class and option user-class = &quot;iPXE&quot; {
+</span><span id="__span-40-10"><a id="__codelineno-40-10" name="__codelineno-40-10" href="#__codelineno-40-10"></a>   # Instruct iPXE to load mboot.efi as secondary boot loader.
+</span><span id="__span-40-11"><a id="__codelineno-40-11" name="__codelineno-40-11" href="#__codelineno-40-11"></a>   option dhcp6.bootfile-url &quot;tftp://[xxxx:xxxx:xxxx:xxxx::xxxx]/mboot.efi&quot;;
+</span><span id="__span-40-12"><a id="__codelineno-40-12" name="__codelineno-40-12" href="#__codelineno-40-12"></a>} else {
+</span><span id="__span-40-13"><a id="__codelineno-40-13" name="__codelineno-40-13" href="#__codelineno-40-13"></a>   # Load the snponly.efi build of iPXE as the initial boot loader.
+</span><span id="__span-40-14"><a id="__codelineno-40-14" name="__codelineno-40-14" href="#__codelineno-40-14"></a>   option dhcp6.bootfile-url &quot;tftp://[xxxx:xxxx:xxxx:xxxx::xxxx]/snponly.efi&quot;;
+</span><span id="__span-40-15"><a id="__codelineno-40-15" name="__codelineno-40-15" href="#__codelineno-40-15"></a>}
+</span></code></pre></div>
+<p>Flow:</p>
+<ol>
+<li>The host receives <code>snponly.efi</code> from DHCPv6.</li>
+<li>iPXE starts and asks DHCPv6 again.</li>
+<li>DHCPv6 detects <code>option user-class = "iPXE"</code> and returns <code>mboot.efi</code>.</li>
+<li>iPXE remains resident, giving the boot process HTTP capability for loading additional files.</li>
+</ol>
+<h3 id="native-uefi-http-with-ipv4">Native UEFI HTTP with IPv4<a class="headerlink" href="#native-uefi-http-with-ipv4" title="Permanent link">&para;</a></h3>
+<p>This example boots ESX by using native UEFI HTTP over IPv4 from <code>www.example.com</code>.</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-41-1"><a id="__codelineno-41-1" name="__codelineno-41-1" href="#__codelineno-41-1"></a># ISC DHCP server configuration file snippet.
+</span><span id="__span-41-2"><a id="__codelineno-41-2" name="__codelineno-41-2" href="#__codelineno-41-2"></a># This is not a complete configuration file.
+</span><span id="__span-41-3"><a id="__codelineno-41-3" name="__codelineno-41-3" href="#__codelineno-41-3"></a>
+</span><span id="__span-41-4"><a id="__codelineno-41-4" name="__codelineno-41-4" href="#__codelineno-41-4"></a>allow booting;
+</span><span id="__span-41-5"><a id="__codelineno-41-5" name="__codelineno-41-5" href="#__codelineno-41-5"></a>allow bootp;
+</span><span id="__span-41-6"><a id="__codelineno-41-6" name="__codelineno-41-6" href="#__codelineno-41-6"></a>
+</span><span id="__span-41-7"><a id="__codelineno-41-7" name="__codelineno-41-7" href="#__codelineno-41-7"></a>option client-system-arch code 93 = unsigned integer 16;
+</span><span id="__span-41-8"><a id="__codelineno-41-8" name="__codelineno-41-8" href="#__codelineno-41-8"></a>
+</span><span id="__span-41-9"><a id="__codelineno-41-9" name="__codelineno-41-9" href="#__codelineno-41-9"></a>class &quot;httpclients&quot; {
+</span><span id="__span-41-10"><a id="__codelineno-41-10" name="__codelineno-41-10" href="#__codelineno-41-10"></a>   match if substring(option vendor-class-identifier, 0, 10) = &quot;HTTPClient&quot;;
+</span><span id="__span-41-11"><a id="__codelineno-41-11" name="__codelineno-41-11" href="#__codelineno-41-11"></a>   option vendor-class-identifier &quot;HTTPClient&quot;;
+</span><span id="__span-41-12"><a id="__codelineno-41-12" name="__codelineno-41-12" href="#__codelineno-41-12"></a>
+</span><span id="__span-41-13"><a id="__codelineno-41-13" name="__codelineno-41-13" href="#__codelineno-41-13"></a>   if option client-system-arch = 00:10 {
+</span><span id="__span-41-14"><a id="__codelineno-41-14" name="__codelineno-41-14" href="#__codelineno-41-14"></a>      # x86_64 UEFI HTTP client.
+</span><span id="__span-41-15"><a id="__codelineno-41-15" name="__codelineno-41-15" href="#__codelineno-41-15"></a>      filename = &quot;http://www.example.com/esx/mboot.efi&quot;;
+</span><span id="__span-41-16"><a id="__codelineno-41-16" name="__codelineno-41-16" href="#__codelineno-41-16"></a>   }
+</span><span id="__span-41-17"><a id="__codelineno-41-17" name="__codelineno-41-17" href="#__codelineno-41-17"></a>}
+</span></code></pre></div>
+<h3 id="native-uefi-http-with-ipv6">Native UEFI HTTP with IPv6<a class="headerlink" href="#native-uefi-http-with-ipv6" title="Permanent link">&para;</a></h3>
+<p>This example boots ESX by using native UEFI HTTP over IPv6 from <code>www.example.com</code>.</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-42-1"><a id="__codelineno-42-1" name="__codelineno-42-1" href="#__codelineno-42-1"></a># ISC DHCPv6 server configuration file snippet.
+</span><span id="__span-42-2"><a id="__codelineno-42-2" name="__codelineno-42-2" href="#__codelineno-42-2"></a># This is not a complete configuration file.
+</span><span id="__span-42-3"><a id="__codelineno-42-3" name="__codelineno-42-3" href="#__codelineno-42-3"></a>
+</span><span id="__span-42-4"><a id="__codelineno-42-4" name="__codelineno-42-4" href="#__codelineno-42-4"></a>allow booting;
+</span><span id="__span-42-5"><a id="__codelineno-42-5" name="__codelineno-42-5" href="#__codelineno-42-5"></a>allow bootp;
+</span><span id="__span-42-6"><a id="__codelineno-42-6" name="__codelineno-42-6" href="#__codelineno-42-6"></a>
+</span><span id="__span-42-7"><a id="__codelineno-42-7" name="__codelineno-42-7" href="#__codelineno-42-7"></a>option dhcp6.bootfile-url code 59 = string;
+</span><span id="__span-42-8"><a id="__codelineno-42-8" name="__codelineno-42-8" href="#__codelineno-42-8"></a>option dhcp6.user-class code 15 = { integer 16, string };
+</span><span id="__span-42-9"><a id="__codelineno-42-9" name="__codelineno-42-9" href="#__codelineno-42-9"></a>option dhcp6.vendor-class code 16 = { integer 32, integer 16, string };
+</span><span id="__span-42-10"><a id="__codelineno-42-10" name="__codelineno-42-10" href="#__codelineno-42-10"></a>
+</span><span id="__span-42-11"><a id="__codelineno-42-11" name="__codelineno-42-11" href="#__codelineno-42-11"></a>if option dhcp6.client-arch-type = 00:10 {
+</span><span id="__span-42-12"><a id="__codelineno-42-12" name="__codelineno-42-12" href="#__codelineno-42-12"></a>   # x86_64 HTTP client.
+</span><span id="__span-42-13"><a id="__codelineno-42-13" name="__codelineno-42-13" href="#__codelineno-42-13"></a>   option dhcp6.vendor-class 0 10 &quot;HTTPClient&quot;;
+</span><span id="__span-42-14"><a id="__codelineno-42-14" name="__codelineno-42-14" href="#__codelineno-42-14"></a>   option dhcp6.bootfile-url &quot;http://www.example.com/esx/mboot.efi&quot;;
+</span><span id="__span-42-15"><a id="__codelineno-42-15" name="__codelineno-42-15" href="#__codelineno-42-15"></a>}
+</span></code></pre></div>
+<h3 id="dhcp-option-summary">DHCP option summary<a class="headerlink" href="#dhcp-option-summary" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Boot method</th>
+<th style="text-align: right;">DHCP transport</th>
+<th>Initial boot loader returned by DHCP</th>
+<th>Loader location style</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Legacy BIOS PXE + TFTP</td>
+<td style="text-align: right;">IPv4</td>
+<td><code>pxelinux.0</code></td>
+<td>TFTP filename plus <code>next-server</code></td>
+</tr>
+<tr>
+<td>UEFI PXE + TFTP</td>
+<td style="text-align: right;">IPv4</td>
+<td><code>mboot.efi</code></td>
+<td>TFTP filename plus <code>next-server</code></td>
+</tr>
+<tr>
+<td>UEFI PXE + TFTP</td>
+<td style="text-align: right;">IPv6</td>
+<td><code>mboot.efi</code></td>
+<td><code>dhcp6.bootfile-url</code> with <code>tftp://[...]</code></td>
+</tr>
+<tr>
+<td>Legacy BIOS iPXE + HTTP</td>
+<td style="text-align: right;">IPv4</td>
+<td>first <code>undionly.kpxe</code>, then <code>pxelinux.0</code></td>
+<td>TFTP filename plus <code>next-server</code></td>
+</tr>
+<tr>
+<td>UEFI iPXE + HTTP</td>
+<td style="text-align: right;">IPv4</td>
+<td>first <code>snponly.efi</code>, then <code>mboot.efi</code></td>
+<td>TFTP filename plus <code>next-server</code></td>
+</tr>
+<tr>
+<td>UEFI iPXE + HTTP</td>
+<td style="text-align: right;">IPv6</td>
+<td>first <code>snponly.efi</code>, then <code>mboot.efi</code></td>
+<td><code>dhcp6.bootfile-url</code> with <code>tftp://[...]</code></td>
+</tr>
+<tr>
+<td>Native UEFI HTTP</td>
+<td style="text-align: right;">IPv4</td>
+<td><code>http://.../mboot.efi</code></td>
+<td>HTTP URL in <code>filename</code></td>
+</tr>
+<tr>
+<td>Native UEFI HTTP</td>
+<td style="text-align: right;">IPv6</td>
+<td><code>http://.../mboot.efi</code></td>
+<td>HTTP URL in <code>dhcp6.bootfile-url</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="practical-notes-for-atlaso-style-automation">Practical notes for Atlaso-style automation<a class="headerlink" href="#practical-notes-for-atlaso-style-automation" title="Permanent link">&para;</a></h2>
+<p>For an automated ESX deployment system that supports multiple images and multiple kickstart files, the key inputs are:</p>
+<table>
+<thead>
+<tr>
+<th>Object</th>
+<th>Fields to track</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ESX image</td>
+<td>Version, ISO source (<code>uploaded</code> or VCFDT-discovered), source date, extracted HTTP path, TFTP support path, <code>mboot.efi</code> version, <code>mboot.c32</code>, <code>boot.cfg</code> template.</td>
+</tr>
+<tr>
+<td>Kickstart file</td>
+<td>Name, revision, database source of truth, rendered filesystem copy path, checksum.</td>
+</tr>
+<tr>
+<td>Host definition</td>
+<td>Hostname, MAC address or default undefined-MAC profile, optional static reservation IP, boot mode, image ID, kickstart ID, DHCP reservation, DNS name, optional VLAN, DHCP boot options.</td>
+</tr>
+<tr>
+<td>Boot profile</td>
+<td>One or more DHCP IP zones, Legacy PXELINUX, UEFI PXE/TFTP, iPXE first-stage plus PXELINUX/<code>mboot.efi</code> second-stage, or native UEFI HTTP; maps to zone-scoped DHCP <code>filename</code>, <code>next-server</code>, or <code>dhcp6.bootfile-url</code> values.</td>
+</tr>
+</tbody>
+</table>
+<p>Suggested generated artifacts per host:</p>
+<table>
+<thead>
+<tr>
+<th>Boot mode</th>
+<th>Generated file/location</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Legacy BIOS PXELINUX</td>
+<td><code>/tftpboot/pxelinux.cfg/01-aa-bb-cc-dd-ee-ff</code></td>
+</tr>
+<tr>
+<td>UEFI PXE/TFTP</td>
+<td><code>/tftpboot/01-aa-bb-cc-dd-ee-ff/boot.cfg</code></td>
+</tr>
+<tr>
+<td>Legacy BIOS iPXE</td>
+<td>First-stage <code>undionly.kpxe</code>, second-stage <code>pxelinux.0</code>, then host-specific PXELINUX config pointing to <code>mboot.c32</code> and <code>boot.cfg</code>.</td>
+</tr>
+<tr>
+<td>UEFI iPXE</td>
+<td>First-stage <code>snponly.efi</code>, second-stage <code>mboot.efi</code>, then host-specific <code>boot.cfg</code> with HTTP <code>prefix=</code>.</td>
+</tr>
+<tr>
+<td>Native UEFI HTTP</td>
+<td><code>http://server/esx/01-aa-bb-cc-dd-ee-ff/boot.cfg</code> or default <code>boot.cfg</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>A default undefined-MAC profile can generate <code>/tftpboot/pxelinux.cfg/default</code>, <code>/tftpboot/boot.cfg</code>, and the native HTTP
+default <code>boot.cfg</code>. Host-specific MAC artifacts should still override that default when a matching definition exists.</p>
+<p>A rendered <code>boot.cfg</code> should usually set:</p>
+<div class="language-ini highlight"><pre><span></span><code><span id="__span-43-1"><a id="__codelineno-43-1" name="__codelineno-43-1" href="#__codelineno-43-1"></a><span class="na">prefix</span><span class="o">=</span><span class="s">http://&lt;server&gt;/&lt;image-path&gt;</span>
+</span><span id="__span-43-2"><a id="__codelineno-43-2" name="__codelineno-43-2" href="#__codelineno-43-2"></a><span class="na">kernelopt</span><span class="o">=</span><span class="s">ks=http://&lt;server&gt;/&lt;kickstart-path&gt;/&lt;host&gt;.cfg</span>
+</span></code></pre></div>
+<p>For legacy PXELINUX, preserve:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-44-1"><a id="__codelineno-44-1" name="__codelineno-44-1" href="#__codelineno-44-1"></a>IPAPPEND 2
+</span></code></pre></div>
+<p>That allows the installer to receive the PXELINUX <code>BOOTIF</code> information.</p>
+
+
+
+
+
+
+
+
+
+  
+  
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-circle-arrow-up" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m16 12-4-4-4 4M12 16V8"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../esx-storage/" class="md-footer__link md-footer__link--prev" aria-label="Previous: ESX storage">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                ESX storage
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../managed-ldap/" class="md-footer__link md-footer__link--next" aria-label="Next: Managed LDAP">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Managed LDAP
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright © 2026 Atlaso contributors
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["content.action.edit","content.action.view","content.code.copy","navigation.footer","navigation.indexes","navigation.instant","navigation.instant.prefetch","navigation.path","navigation.sections","navigation.tabs","navigation.tabs.sticky","navigation.top","navigation.tracking","search.highlight"],"search":"../../assets/javascripts/workers/search.b6b7e04f.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7f30b55.min.js"></script>
+      
+    
+  </body>
+</html>

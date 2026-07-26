@@ -1,0 +1,3530 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Detailed Atlaso development, appliance image, API, and integration reference.">
+      
+      
+        <meta name="author" content="Atlaso contributors">
+      
+      
+        <link rel="canonical" href="https://mdaneri.github.io/Atlaso/docs/reference/full-technical-reference/">
+      
+      
+        <link rel="prev" href="../interface-gallery/">
+      
+      
+        <link rel="next" href="../hyperv-lifecycle-testing/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/brand/favicon.ico">
+      <meta name="generator" content="zensical-0.0.51">
+    
+    
+      
+        <title>Full technical reference - Atlaso Documentation</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.62c9b9cc.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/atlaso.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#full-technical-reference" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Atlaso Documentation" class="md-header__button md-logo" aria-label="Atlaso Documentation" data-md-component="logo">
+      
+  <img src="../../assets/brand/atlaso-logo-horizontal-dark.svg" alt="Atlaso Documentation">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Atlaso Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Full technical reference
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/mdaneri/Atlaso" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mdaneri/Atlaso
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+      
+        
+          
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/" class="md-tabs__link">
+          
+  
+  Getting started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../operate/" class="md-tabs__link">
+          
+  
+  Operate
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../services/" class="md-tabs__link">
+          
+  
+  Services
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+      
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
+          
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../contribute/" class="md-tabs__link">
+          
+  
+  Contribute
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../project/" class="md-tabs__link">
+          
+  
+  Project
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Atlaso Documentation" class="md-nav__button md-logo" aria-label="Atlaso Documentation" data-md-component="logo">
+      
+  <img src="../../assets/brand/atlaso-logo-horizontal-dark.svg" alt="Atlaso Documentation">
+
+    </a>
+    Atlaso Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mdaneri/Atlaso" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mdaneri/Atlaso
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../getting-started/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Getting started
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+            </a>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Getting started
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../operate/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Operate
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Operate
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/dashboard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Dashboard
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/appliance-apply/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Appliance Apply
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/appliance-console/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Local appliance console
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/appliance-update/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Appliance Update
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/automation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Automation
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/web-terminal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Web Terminal
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../services/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Services
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Services
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/dns/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  DNS
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/esx-storage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  ESX storage
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/ipxe/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Network boot
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/managed-ldap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Managed LDAP
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/oidc-provider/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  OpenID Connect provider
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/vcf-helper/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  VCF Helper
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/vcf-trust/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  VCF certificate trust
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reference
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Reference
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../interface-gallery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Verified interface gallery
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Full technical reference
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Full technical reference
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#community-and-licensing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Community and licensing
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#photon-os-appliance-image" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Photon OS Appliance Image
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#development" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Development
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Development">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pull-requests-and-versions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Pull requests and versions
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vcf-helper" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        VCF Helper
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#public-service-front-door" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Public Service Front Door
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#operational-logs-and-appliance-power" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Operational Logs And Appliance Power
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appliance-apply-workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Appliance Apply Workflow
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#backup-restore-and-factory-reset" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Backup, Restore, And Factory Reset
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#brand-assets" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Brand Assets
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#safety-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Safety Boundary
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#esx-storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        ESX Storage
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rest-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        REST API
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api-token-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        API Token Example
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api-scopes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        API Scopes
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hyper-v-workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Hyper-V Workflow
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vmware-workstation-workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        VMware Workstation Workflow
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#powershell-roadmap" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        PowerShell Roadmap
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Tests
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hyperv-lifecycle-testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hyper-V lifecycle testing
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vmware-workstation-lifecycle-testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  VMware lifecycle testing
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../contribute/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Contribute
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Contribute
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/documentation-authoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Documentation authoring
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/ui-design-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  UI design guide
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/agent-policies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Detailed agent policies
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../project/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Project
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7" id="__nav_7_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Project
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/branding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Brand assets
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../assets/brand/BRAND_GUIDE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Brand kit
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/ca-roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CA roadmap
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--roadmap"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/routing-wan-roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Routing and WAN roadmap
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--roadmap"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/appliance-console-design-qa/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Appliance console design QA
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--historical"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/monitor-apply-ux-design-qa/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Monitor interaction design QA
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--historical"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#community-and-licensing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Community and licensing
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#photon-os-appliance-image" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Photon OS Appliance Image
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#development" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Development
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Development">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pull-requests-and-versions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Pull requests and versions
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vcf-helper" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        VCF Helper
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#public-service-front-door" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Public Service Front Door
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#operational-logs-and-appliance-power" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Operational Logs And Appliance Power
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appliance-apply-workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Appliance Apply Workflow
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#backup-restore-and-factory-reset" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Backup, Restore, And Factory Reset
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#brand-assets" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Brand Assets
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#safety-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Safety Boundary
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#esx-storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        ESX Storage
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rest-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        REST API
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api-token-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        API Token Example
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api-scopes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        API Scopes
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hyper-v-workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Hyper-V Workflow
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vmware-workstation-workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        VMware Workstation Workflow
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#powershell-roadmap" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        PowerShell Roadmap
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Tests
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-path__item">
+        <a href="../" class="md-path__link">
+          
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+    <a href="https://github.com/mdaneri/Atlaso/edit/main/docs/reference/full-technical-reference.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-pen" viewBox="0 0 24 24"><path d="M12.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v9.34"/><path d="M14 2v5a1 1 0 0 0 1 1h5M10.378 12.622a1 1 0 0 1 3 3.003L8.36 20.637a2 2 0 0 1-.854.506l-2.867.837a.5.5 0 0 1-.62-.62l.836-2.869a2 2 0 0 1 .506-.853z"/></svg>
+    </a>
+  
+  
+    
+      
+    
+    <a href="https://github.com/mdaneri/Atlaso/raw/main/docs/reference/full-technical-reference.md" title="View source of this page" class="md-content__button md-icon">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-code-2" viewBox="0 0 24 24"><path d="M4 12.15V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-3.35"/><path d="M14 2v5a1 1 0 0 0 1 1h5M5 16l-3 3 3 3M9 22l3-3-3-3"/></svg>
+    </a>
+  
+
+
+<h1 id="full-technical-reference">Full technical reference<a class="headerlink" href="#full-technical-reference" title="Permanent link">&para;</a></h1>
+<p><img alt="Atlaso — Everything your virtualization lab needs" src="../../assets/brand/atlaso-docs-header-light-1600x400.png" /></p>
+<p><strong>Everything your virtualization lab needs.</strong></p>
+<p>Infrastructure • Storage • Identity • Networking • Lifecycle</p>
+<p>Atlaso is a Linux-based, web-managed infrastructure appliance for homelabs, VMware Cloud Foundation labs, POCs, training
+environments, isolated network labs, and WAN simulation testing. Atlaso supports POC, lab, and test environments by
+simplifying deployment, maintenance, and validation.</p>
+<p>Its product pillars are <strong>Infrastructure • Connectivity • Automation</strong>.</p>
+<p>Fresh appliances use <code>core.atlaso.internal</code> as the management identity and <code>atlaso.internal</code> as the default managed DNS
+zone. Service names include <code>ca.atlaso.internal</code>, <code>kms.atlaso.internal</code>, and <code>depot.atlaso.internal</code>. Future clustered
+deployments are expected to use <code>core-01</code>, <code>core-02</code>, and <code>core-vip</code>; clustering is not implemented in 0.9.18.</p>
+<p>Atlaso 0.9.18 is a clean break. Existing appliances from the retired product must be redeployed; Atlaso provides no
+data, configuration, certificate, or update-channel migration.</p>
+<h2 id="community-and-licensing">Community and licensing<a class="headerlink" href="#community-and-licensing" title="Permanent link">&para;</a></h2>
+<p>Contributions follow the <a href="https://github.com/mdaneri/Atlaso/blob/main/CONTRIBUTING.md">contributing guide</a>,
+<a href="https://github.com/mdaneri/Atlaso/blob/main/CODE_OF_CONDUCT.md">Code of Conduct</a>, and
+<a href="https://github.com/mdaneri/Atlaso/blob/main/SECURITY.md">Security Policy</a>. Atlaso authored code is available under the
+<a href="https://github.com/mdaneri/Atlaso/blob/main/LICENSE">MIT License</a>. Each released appliance includes an automatically
+generated <code>/usr/share/doc/atlaso/THIRD_PARTY_NOTICES.md</code> inventory for every shipped Python package, Photon RPM, and
+bundled component; the same release-specific notice file is published with the signed release assets. Third-party
+software retains its own license terms, including the bundled iPXE bootloaders.</p>
+<p>The MVP is a safe runnable scaffold. It provides the FastAPI control plane, appliance-style web UI, local
+authentication, JWT bearer API tokens, audit logging, OpenAPI 3.1, dry-run system adapters, and Windows/Hyper-V script
+scaffolding. It does not apply real host networking, firewall, service, SFTP, registry, repository, DNS, DHCP, CA, or
+KMS changes by default.</p>
+<h2 id="photon-os-appliance-image">Photon OS Appliance Image<a class="headerlink" href="#photon-os-appliance-image" title="Permanent link">&para;</a></h2>
+<p>The first real OS appliance target is Photon OS 5.0 on Hyper-V. The image builder lives in
+<a href="https://github.com/mdaneri/Atlaso/tree/main/image/hyperv"><code>image/hyperv/</code></a> and provisions:</p>
+<ul>
+<li>a Photon OS 5.0 Generation 2 Hyper-V VM with Secure Boot off;</li>
+<li>updated Photon packages from the configured Photon 5.0 repositories, with a second update pass after appliance
+  packages are installed;</li>
+<li>the <code>atlaso</code> system user;</li>
+<li><code>/opt/atlaso</code> for the installed application;</li>
+<li><code>/etc/atlaso/atlaso.env</code> for appliance environment settings;</li>
+<li><code>/etc/atlaso/build-info</code> for build/update provenance;</li>
+<li>masked <code>systemd-ssh-generator</code> so Photon does not attempt automatic SSH-over-AF_VSOCK sockets on Hyper-V while normal
+  TCP SSH remains available;</li>
+<li><code>/var/lib/atlaso</code> for durable state;</li>
+<li><code>/var/log/atlaso</code> for local logs;</li>
+<li>fixed appliance mount points under <code>/mnt/atlaso-vcf-*</code>;</li>
+<li>operator-approved ESX Storage ext4 mounts under <code>/mnt/atlaso-esx-storage</code>, with Photon <code>nfs-utils</code> and <code>rpcbind</code>
+  installed but disabled until global apply;</li>
+<li><code>atlaso.service</code> running uvicorn from a Python virtual environment;</li>
+<li>nginx enabled as the default management front door, with deployed-VM first boot generating the integrated root CA and
+  <code>appliance:https</code> certificate, redirecting HTTP/80 to CA-backed HTTPS/443, and proxying HTTPS/443 to uvicorn on
+  <code>127.0.0.1:8000</code>;</li>
+<li><code>atlaso-firewall.service</code> loading the appliance nftables firewall;</li>
+<li>a Atlaso recovery console on tty1 with authenticated configuration and power menus, <code>top</code>, and an
+  authenticated/audited root Bash handoff, while tty2 and later terminals retain normal Photon login prompts; and</li>
+<li><code>/opt/atlaso/bin/atlaso-helper</code> and a constrained sudoers template.</li>
+</ul>
+<p>Finished Hyper-V appliance VMs and VMware OVF/OVA appliances also attach two durable expandable data disks: one for the
+VCF Offline Depot at <code>/mnt/atlaso-vcf-offline-depot</code> and one for VCF Backups at <code>/mnt/atlaso-vcf-backups</code>. Keep those
+workloads off the OS disk. On first boot, <code>atlaso-data-disks.service</code> labels blank attached data disks as <code>ATLASO_DEPOT</code>
+and <code>ATLASO_BKUP</code>, formats them as ext4, persists them in <code>/etc/fstab</code>, and mounts them at those fixed paths before
+<code>atlaso.service</code> starts.</p>
+<p>Atlaso writes operational events to <code>/var/log/atlaso/atlaso.log</code>. Audit events, desired-state edits, and appliance apply
+submissions are mirrored there with sensitive values redacted. The Settings page controls local file verbosity and can
+also forward the same operational events to an external syslog receiver.</p>
+<p>The <code>Monitor</code> page is an operator-facing, read-only runtime view for appliance resource health. It charts thick
+appliance totals alongside thin per-logical-CPU, per-interface RX/TX, and unique-device disk activity over the last one,
+three, or six hours, plus memory pressure and compact per-interface and virtual-machine context. Disk Activity retains a
+deduplicated per-device read/write table; all per-mount capacity presentation, including the top-level Disks metric,
+Disk Usage chart, and capacity table, is intentionally omitted. Disk activity totals count each underlying device once
+even when several mount rows share it. Each chart can be expanded into a near-full-screen view without changing its
+active time range; only that expanded view exposes editable percentage zoom and drag-to-select time-window zoom.
+Hovering near a sampled point or line segment emphasizes the associated series, legend entry, and exact sample; clicking
+the chart or a legend item pins that series until it is cleared or another series is selected. The 1h, 3h, 6h, 12h, and
+24h history selectors use the same sampled data. The sampler records one row about every 30 seconds and keeps the
+24-hour window plus a small buffer. Collection uses Linux <code>/proc</code>, <code>/sys</code>, filesystem usage, DMI data,
+<code>systemd-detect-virt</code>, and <code>vmtoolsd</code> when present; it does not call privileged helpers or mutate host services. Set
+<code>ATLASO_MONITOR_ENABLED=false</code> to disable both the background sampler and request-time collection from <code>/monitor/data</code>
+or <code>/api/v1/monitor</code>. When disabled, Atlaso may read existing monitor rows but it does not probe the host or create new
+<code>monitor_samples</code> rows. See <a href="../../project/monitor-apply-ux-design-qa/">Monitor hierarchy and interaction design QA</a> for
+the current hierarchy, interaction behavior, responsive expectations, and the history of the removed Disk Usage panel.</p>
+<p>The authenticated <code>/dashboard</code> page is the compact operations command center. Its server-rendered snapshot shows overall
+appliance state, setup readiness, actionable exceptions, valid pending changes, active tasks, enabled service health,
+the management network path, and a six-entry task/audit activity feed. Invalid changed apply units, recent failed tasks,
+unhealthy enabled services, and missing or unexpectedly down configured interfaces are prioritized in that order.
+Disabled optional services and unused interfaces remain quiet. The page refreshes from the session-authenticated
+<code>/dashboard/data</code> UI endpoint every 30 seconds while visible, retains the last successful snapshot on failure, and marks
+retained data stale. This private UI endpoint does not replace or change the bearer-authenticated <code>/api/v1/dashboard</code>
+contract. Dashboard actions are links into existing workflows; the page does not apply configuration, restart services,
+or mutate the appliance.</p>
+<p>Photon OS 5.0 GA shipped with Python 3.11, but the current Photon 5.0 updates stream has moved beyond that baseline. On
+June 21, 2026, live repository metadata showed <code>python3</code> as <code>3.14.5-2.ph5</code>. Atlaso targets Python 3.14 only
+(<code>requires-python &gt;=3.14,&lt;3.15</code>); verify the appliance stream with:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>python3<span class="w"> </span>scripts/check_photon_compatibility.py
+</span></code></pre></div>
+<p>Build inputs are the current Photon OS 5.0 ISO URL and checksum. On Hyper-V, use the Windows wrapper so the Photon
+kickstart is attached as a local single remastered ISO instead of depending on early installer networking:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="n">build-photon-image</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>  <span class="n">-IsoUrl</span> <span class="s2">&quot;https://packages.broadcom.com/photon/5.0/GA/iso/photon-5.0-dde71ec57.x86_64.iso&quot;</span> <span class="p">`</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>  <span class="n">-IsoChecksum</span> <span class="s2">&quot;sha512:6a7a258399a258da742032987c043ab25503698d35edafaf1ae000f12127da1a161d8b84caa17fd8f23d129e81e1faa7ab087c20ab9229772a643f8f9475305f&quot;</span> <span class="p">`</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>  <span class="n">-SshPassword</span> <span class="s2">&quot;&lt;one-time-build-root-password&gt;&quot;</span> <span class="p">`</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>  <span class="n">-BootstrapAdminPassword</span> <span class="s2">&quot;&lt;initial-atlaso-admin-password&gt;&quot;</span>
+</span></code></pre></div>
+<p>Run Packer from an elevated PowerShell session or as a user in the <code>Hyper-V Administrators</code> group. Prepare the Atlaso
+Hyper-V management network before building:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="n">create-switches</span><span class="p">.</span><span class="n">ps1</span>
+</span></code></pre></div>
+<p>The Packer build VM uses the <code>Atlaso-Mgmt</code> switch by default with temporary static address <code>192.168.49.30/24</code> and
+gateway <code>192.168.49.254</code>. This avoids fragile <code>Default Switch</code> host-IP detection while still giving the builder NAT
+internet access for <code>tdnf update</code>. Unless <code>-BuilderStaticDns</code> is supplied, the wrapper discovers the host's active IPv4
+DNS servers and uses them for both the temporary Photon builder and the finished appliance management interface, with
+public DNS only as a fallback. The wrapper writes <code>photon-ks.json</code>, embeds it into a remastered Photon ISO, replaces the
+ISO's UEFI GRUB config with a Atlaso auto-install entry, and passes that single ISO to Packer. Photon then boots with
+<code>ks=cdrom:/photon-ks.json</code> without Packer typing boot commands. Raw <code>packer build .</code> is intentionally blocked unless the
+ISO is marked as wrapper-prepared; the wrapper is the tested Windows Server 2025 path. Build runs pass Packer's <code>-force</code>
+flag by default so the fixed output directory can be rebuilt in one command. Use <code>-OutputDirectory &lt;path&gt;</code> to keep
+multiple artifacts or <code>-KeepExistingOutput</code> when you want Packer to fail instead of replacing an existing output
+directory. Use <code>-PackerOnError abort</code> to keep a failed builder VM for debugging, or <code>-PackerOnError ask</code> to choose the
+failure action interactively. During provisioning, the shared Photon path reads <code>[project].version</code> from the staged
+<code>pyproject.toml</code> with Python's TOML parser and validates the repository's strict <code>X.Y.Z</code> release format before creating
+the bootstrap release directory. Missing, unreadable, malformed, or invalid version metadata fails the build with the
+specific version-policy error instead of an ambiguous shell match failure. Both Photon Packer targets stage
+<code>requirements-appliance.lock</code> with the application source so bootstrap dependency installation can retain
+<code>--require-hashes</code>; a missing staged lock fails the image rather than falling back to unpinned dependencies. They also
+stage the third-party notice generator and its vendored-component inventory so the image can generate the required
+Python, Photon RPM, and bundled-component notice at build time. Installed Python inventory reads only top-level
+virtual-environment distributions; package-internal vendored metadata is not treated as a separately installed locked
+dependency. Long TDNF operations capture their raw transaction output and emit one compact Packer status line every 30
+seconds with elapsed time and cache size. Successful operations report their duration; failures preserve the TDNF exit
+status and replay a normalized, bounded output tail. This avoids progress redraws appearing as hundreds of empty
+Packer-prefixed lines without hiding actionable failures.</p>
+<p>The image builder does not configure a custom pip package index by default. If your build network requires an internal
+PyPI mirror, pass <code>-PipGlobalIndex</code> or <code>-PipGlobalIndexUrl</code> to set Photon site-level pip configuration before the Atlaso
+virtual environment is created. The provisioner does not upgrade pip as a separate bootstrap step; it uses the
+Photon-packaged pip to install Atlaso so a transient public PyPI pip release download cannot fail the image before the
+application install starts. Leave both options empty to keep standard pip behavior:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="n">build-photon-image</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>  <span class="n">-IsoUrl</span> <span class="s2">&quot;&lt;photon-5.0-iso-url&gt;&quot;</span> <span class="p">`</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>  <span class="n">-IsoChecksum</span> <span class="s2">&quot;&lt;packer-checksum&gt;&quot;</span> <span class="p">`</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>  <span class="n">-PipGlobalIndex</span> <span class="s2">&quot;https://packages.vcfd.broadcom.net/artifactory/api/pypi/upstream-pypi-virtual/pypi&quot;</span> <span class="p">`</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>  <span class="n">-PipGlobalIndexUrl</span> <span class="s2">&quot;https://packages.vcfd.broadcom.net/artifactory/api/pypi/upstream-pypi-virtual/simple&quot;</span>
+</span></code></pre></div>
+<p>The generated appliance intentionally keeps <code>ATLASO_DRY_RUN_SYSTEM_ADAPTERS=true</code>. Real host mutation is staged per
+apply unit after the helper-backed command path is reviewed. Build disposable demo or lifecycle images with
+<code>-EnableRealSystemAdapters</code> when the VM should actually mutate Photon services through the reviewed helper paths.
+Firewall desired state is nftables-backed. The image installs nftables and boots with management access to SSH, HTTPS,
+and the Atlaso web UI.</p>
+<p>Appliance Update is a separate runtime-maintenance workflow from global <code>/appliance-apply</code>. Repository-style sources
+cover Photon/tdnf, PowerShell Gallery or internal PowerShell repositories, and signed Atlaso release channels; the
+retired Python Libraries and independent wheel streams are not available. Update work is queued to
+<code>atlaso-worker.service</code>; the same worker runs Automation schedules, managed scripts, and VCF Offline Depot downloads.</p>
+<p>Successful <code>main</code> CI publishes immutable signed release bundles to GitHub Releases and advances the signed <code>development</code>
+pointer on GitHub Pages. The Pages root provides a static release-repository landing page, while appliances use the
+signed machine-readable documents under <code>/updates</code>. <code>preview</code> and <code>stable</code> promotions reuse an existing verified
+release. A protected manual publication dispatch can recover an exact commit only when it already has a successful
+<code>main</code> push CI run. Publication refuses any existing tag or release whose commit or asset bytes differ. The same
+dispatch safely retries channel advancement after a release has already published because it verifies the existing asset
+bytes first. See <a href="../../operate/appliance-update/">Appliance Update</a> and <a href="../../operate/automation/">Automation</a>.</p>
+<p>The exported Hyper-V appliance resets to <code>192.168.49.1/24</code> on <code>Atlaso-Mgmt</code>; the Windows host side should be
+<code>192.168.49.254/24</code>. <code>scripts/windows/hyperv/create-switches.ps1</code> configures that address and a NAT for the management
+network so Photon package checks work when the host has internet access.</p>
+<h2 id="development">Development<a class="headerlink" href="#development" title="Permanent link">&para;</a></h2>
+<p>Primary workflow:</p>
+<ol>
+<li>Develop inside WSL2 on Windows 11.</li>
+<li>Run unit and API tests in WSL2.</li>
+<li>Build the Photon OS Hyper-V appliance image with Packer.</li>
+<li>Test the appliance in Hyper-V with PowerShell automation.</li>
+</ol>
+<p>UI work must follow the mandatory <a href="../../contribute/ui-design-guide/">Atlaso UI Design Guide</a>. Classify each affected
+interaction as direct-edit Tabulator, wizard-backed Tabulator, read-only Tabulator, non-grid settings, or approval-only
+custom/other. Reuse the guide's named reference instead of creating a page-specific grid or interaction; custom/other
+must cite maintainer approval and the closest related reference. Existing-surface remediation is tracked in
+<a href="https://github.com/mdaneri/Atlaso/issues/115">GitHub issue #115</a>.</p>
+<p>Install and run:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>python3.14<span class="w"> </span>-m<span class="w"> </span>venv<span class="w"> </span>.venv
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nb">source</span><span class="w"> </span>.venv/bin/activate
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span><span class="s2">&quot;.[dev]&quot;</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>uvicorn<span class="w"> </span>atlaso.app.main:app<span class="w"> </span>--reload<span class="w"> </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--port<span class="w"> </span><span class="m">8000</span>
+</span></code></pre></div>
+<p>Run the repository syntax/content checks before committing broad UI, template, or documentation changes:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>python<span class="w"> </span>scripts/check_repo.py
+</span></code></pre></div>
+<p>Install the local pre-commit hook to run the same checks automatically against changed Python, Jinja/HTML, Markdown,
+CSS, JavaScript, JSON, TOML, YAML, PowerShell, and SVG files:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>pre-commit<span class="w"> </span>install
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>pre-commit<span class="w"> </span>run<span class="w"> </span>--all-files
+</span></code></pre></div>
+<p>The checker is intentionally syntax-first: Python AST parsing, Jinja template parsing, <code>node --check</code> for JavaScript,
+structural CSS balancing, JSON/TOML parsing, Markdown fence/local-link checks, SVG XML parsing, UTF-8 validation, and
+unresolved merge-conflict marker detection. It skips vendored static assets, bundled third-party payloads, build output,
+and test-result artifacts.</p>
+<h3 id="pull-requests-and-versions">Pull requests and versions<a class="headerlink" href="#pull-requests-and-versions" title="Permanent link">&para;</a></h3>
+<p><code>main</code> is protected and accepts squash merges only after the version policy, repository checks, and complete pytest
+suite pass. Each pull request carries one SemVer patch increment. The trusted <code>Version bump</code> workflow updates the Python
+project version, Python runtime fallback, and PowerShell module version together on branches in this repository. Fork
+pull requests must run the same command before they can pass the required version check:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>python<span class="w"> </span>scripts/version.py<span class="w"> </span>bump<span class="w"> </span>--base-root<span class="w"> </span>/path/to/main-checkout
+</span></code></pre></div>
+<p>Do not edit only one version source. <code>python scripts/version.py check</code> verifies that all three sources agree; when
+<code>--base-root</code> is supplied, it also requires the pull request to be exactly one patch above its base. Updating an older
+pull request from <code>main</code> lets the workflow recalculate the next unused patch version.</p>
+<p>The application update build continues to append <code>+g&lt;commit&gt;</code> metadata to wheel versions. A merged pull request does not
+create a Git tag, GitHub release, or changelog entry; those remain deliberate release-management actions.</p>
+<p>Run from Windows PowerShell using the WSL development virtualenv:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">wsl</span> <span class="n">-e</span> <span class="n">sh</span> <span class="n">-lc</span> <span class="s2">&quot;cd /mnt/c/Users/m_dan/Documents/Atlaso &amp;&amp; /home/m_dan/.venvs/atlaso/bin/python -m uvicorn atlaso.app.main:app --host 127.0.0.1 --port 8000&quot;</span>
+</span></code></pre></div>
+<p>Run in the background from Windows PowerShell:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">wsl</span> <span class="n">-e</span> <span class="n">sh</span> <span class="n">-lc</span> <span class="s2">&quot;cd /mnt/c/Users/m_dan/Documents/Atlaso &amp;&amp; setsid -f /home/m_dan/.venvs/atlaso/bin/python -m uvicorn atlaso.app.main:app --host 127.0.0.1 --port 8000 &gt;/tmp/atlaso-uvicorn.log 2&gt;&amp;1&quot;</span>
+</span></code></pre></div>
+<p>View the background server log:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">wsl</span> <span class="n">-e</span> <span class="n">sh</span> <span class="n">-lc</span> <span class="s2">&quot;tail -f /tmp/atlaso-uvicorn.log&quot;</span>
+</span></code></pre></div>
+<p>Stop the background server:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">wsl</span> <span class="n">-e</span> <span class="n">sh</span> <span class="n">-lc</span> <span class="s2">&quot;pkill -f &#39;uvicorn atlaso.app.main:app&#39;&quot;</span>
+</span></code></pre></div>
+<p>Development URL:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>http://127.0.0.1:8000
+</span></code></pre></div>
+<p>Bootstrap local login:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>username: admin
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>password: atlaso-admin
+</span></code></pre></div>
+<p>For a real appliance image, pass <code>-var "bootstrap_admin_password=&lt;initial-atlaso-admin-password&gt;"</code> to Packer. This
+credential is independent from the build-time <code>ssh_password</code>. On Photon appliances, the bootstrap admin also exists as a
+password-backed sudo OS account for local recovery and debugging.</p>
+<p>Default local VCF backup SFTP user:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>username: vcf-backup
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>status: disabled until VCF Backups is enabled and Local Users apply creates the Photon OS account
+</span></code></pre></div>
+<p>Set/reset this account from <code>Users</code>, then apply Local Users before exposing the SFTP endpoint beyond a development lab.</p>
+<h2 id="vcf-helper">VCF Helper<a class="headerlink" href="#vcf-helper" title="Permanent link">&para;</a></h2>
+<p>VCF Helper at <code>/vcf-helper</code> generates DNS desired state, deploys SDDC Manager OVAs found under
+<code>/mnt/atlaso-vcf-offline-depot/PROD/COMP/SDDC_MANAGER_VCF</code>, imports the active Atlaso root CA into VCF 9 appliances, and
+configures an existing VCF Installer or SDDC Manager to use the applied local VCF Offline Depot. OVA deployment and
+remote depot configuration are monitored background jobs; target and depot credentials remain transient. DNS creation
+remains desired-state only and is enforced through global <code>Appliance Apply</code>. See <a href="../../services/vcf-helper/">VCF Helper</a>
+and <a href="../../services/vcf-trust/">VCF Certificate Trust</a>.</p>
+<p>Default local VCF Offline Depot HTTP user:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>username: vcf-depot
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>status: disabled until VCF Offline Depot is enabled, a Photon OS password is staged through Users, and Local Users apply creates the Photon OS account
+</span></code></pre></div>
+<p>Set/reset this account from <code>Users</code>, then apply Local Users. The first service setup requires the changed VCF Offline
+Depot and Public Services units so both nginx front doors share the same authentication behavior, but later Local Users
+password applies refresh the existing nginx credential automatically. The same applied Photon password works in the
+<code>/PROD/login</code> browser form and with HTTPS Basic Auth from <code>curl</code> or <code>wget</code>. Leave <code>Unauthenticated access</code> off for
+normal VCF clients; enable it only for an isolated open mirror.</p>
+<p>VCF Offline Depot uses the proprietary VCF Download Tool to stage disconnected VCF 9 depot content. Uploading the VCF
+Download Tool file (<code>vcf-download-tool-*.tar.gz</code>) only validates and stores desired state, clears stale generated
+metadata, and records that a package is ready for apply; upload does not extract the archive, create runtime folders,
+run the tool, or generate a software depot ID. Global appliance apply for <code>vcf_offline_depot</code> validates the rendered
+nginx site, runs helper-owned <code>stage-tool</code>, extracts the uploaded archive under
+<code>/opt/atlaso/vcf-download-tool/extracted</code>, exposes <code>/opt/atlaso/vcf-download-tool/vcf-download-tool</code> as the stable
+wrapper, records the tool version from <code>vcf-download-tool --version</code>, applies <code>application-prodv2.properties</code> to both
+the helper extraction tree and <code>/var/lib/atlaso/vcfDownloadTool/active-tool/conf/</code>, runs
+<code>vcf-download-tool configuration generate --software-depot-id</code>, syncs intent, and then applies HTTPS. Upload Broadcom
+credentials through the unified Broadcom credentials modal as either a download token or activation code, by file or
+pasted text; existing storage keys remain separate, and credential bodies are never returned in responses, previews,
+logs, or job output. Metadata and binaries profiles prefer the runtime download-token file used by
+<code>--depot-download-token-file</code> when present, otherwise they use the runtime activation-code file used by
+<code>--depot-download-activation-code-file</code>. Global appliance apply records show only sanitized filenames, presence flags,
+generated software depot ID metadata, generated tool version metadata, and generated command intent. The generated VCFDT
+script uses <code>/var/lib/atlaso/vcfDownloadTool/active-tool</code> runtime credential paths, writes the telemetry flag, supports
+install, upgrade, upgrade-only, patch-only, Day-N component, and ESX activation-code workflows, and writes ESX
+disabled-platform selections to <code>conf/esxUserConfig.json</code>. Operators can manually start an individual download profile
+from the Download Profiles grid; Start is disabled until that profile has a token or activation-code file, but missing
+profile credentials do not block applying or disabling the depot service. Start creates a durable <code>vcf-depot-download</code>
+task, prepares runtime credential files under the VCFDT working tree, and runs the selected VCFDT commands as the Atlaso
+service user. Enabled profiles can also be scheduled under Operations → Automation. When enabled, the depot apply unit
+stages nginx config under <code>/var/lib/atlaso/apply/vcf-offline-depot/</code>, serves the fixed depot store as an HTTPS static
+document root, uses the CA-managed <code>vcf_offline_depot:https</code> certificate/key file paths, and protects <code>/PROD/</code> with HTTP
+Basic Auth backed by the selected local <code>vcf-depot</code> user unless unauthenticated access is explicitly enabled.</p>
+<h2 id="public-service-front-door">Public Service Front Door<a class="headerlink" href="#public-service-front-door" title="Permanent link">&para;</a></h2>
+<p>VMware CEIP consent is centralized under <strong>Settings → VMware Product Preferences</strong>. The single appliance-wide choice
+defaults to disabled and is used by VCF Download Tool command previews and runtime preparation, VCF PowerCLI at vendor
+<code>AllUsers</code> scope, and future Atlaso-managed VMware product integrations. Atlaso does not migrate or infer this value
+from the retired VCF Download Tool-specific choice. Explicit PowerCLI <code>User</code> and <code>Session</code> overrides remain outside
+Atlaso ownership.</p>
+<p>Atlaso renders a generated <code>public_services</code> nginx site for non-management service IPs. Requests to <code>/</code> on a
+management-role address keep the HTTPS management portal/login behavior. Requests to <code>/</code> on a non-management service IP
+render an unauthenticated public service directory scoped to the called host or IP. The generated HTTP nginx site serves
+only ESXi PXE paths; CA, certificate requests, VCF Offline Depot, and registry links use their app or service-owned
+HTTPS front doors.</p>
+<p>Direct public service paths remain scoped per IP in the app: Certificate Authority <code>/ca</code>, <code>/requests</code>,
+<code>/ca/downloads/root-ca.pem</code>, and <code>/ca/downloads/ca-bundle.pem</code>; ESXi PXE <code>/pxe/esxi/</code> with <code>/pxe/esxi</code> redirecting to
+<code>/pxe/esxi/</code>; VCF Offline Depot <code>/PROD/</code> with <code>/PROD</code> redirecting to <code>/PROD/</code>; and VCF Private Registry as a canonical
+registry URL link only. The generated public-services HTTP site proxies only dynamic ESXi Kickstart requests and serves
+PXE static content through a narrow nginx alias on matching PXE service IPs. It does not expose CA, depot, management,
+or <code>/registry</code> HTTP proxies.</p>
+<p>The public portal uses the compact Atlaso shell across the directory, CA trust page, request portal, and depot browser.
+Public user pages extend <code>public_portal_base.html</code>, the brand mark links back to <code>/</code>, the header action is contextual
+<code>Login</code> or <code>Sign out</code>, and GitHub, Swagger, Python, and version metadata live in the shared bottom footnote. Public
+service cards default to hostname URLs and include a Name/IP switch near the login action; the preference is stored in
+the <code>atlaso_public_address_mode</code> cookie. Card links use each service's configured scheme and port, such as the ESXi PXE
+HTTP port, the VCF Offline Depot HTTPS port, and registry canonical URL. Service-owned HTTPS <code>/PROD/</code> locations follow
+the VCF Offline Depot unauthenticated-access setting; in the default authenticated mode, directory browsing redirects to
+<code>/PROD/login</code>, while artifact downloads remain protected by the same <code>vcf-depot</code> htpasswd file after the depot unit is
+applied.</p>
+<h2 id="operational-logs-and-appliance-power">Operational Logs And Appliance Power<a class="headerlink" href="#operational-logs-and-appliance-power" title="Permanent link">&para;</a></h2>
+<p>The authenticated Logs page is a read-only, redacted view of fixed appliance sources: VCFDT is retired from this page,
+while Atlaso App, KMS, NTPsec, Nginx, DNS, DHCP, and TFTP remain available as tabs. DNS, DHCP, and TFTP are classified
+views of the shared <code>dnsmasq.service</code> journal so operators can inspect each protocol without losing the common dnsmasq
+runtime boundary. The page fetches the latest content every five seconds and lets the operator select a 100, 200, or 500
+line tail. Log syntax highlighting distinguishes timestamps, severity levels, components, identifiers, addresses, and
+redaction markers and is reapplied after each refresh. The log panel stays within the viewport; its header and source
+tabs remain visible while the terminal output owns vertical scrolling. Long log lines wrap inside that terminal scroller
+instead of widening the page or adding a horizontal scrollbar. File or systemd source details appear in each tab's hover
+tooltip instead of consuming a separate panel header, and an unavailable source disables its tab. NTPsec, Nginx, and
+dnsmasq output comes from their systemd journals through allowlisted helper actions; log rendering continues to redact
+sensitive-looking lines before display.</p>
+<p>Audit Events is a separate Operations page because it is structured history rather than stream output. Its read-only
+Tabulator grid fills the available viewport and uses local pagination sized dynamically from the visible holder height
+and compact row pitch, without a fixed row count or page-size selector. The page size is recalculated when the grid
+resizes, preventing an internal scrollbar; long detail values use ellipsis with the full value available on hover. The
+responsive grid minimum preserves a useful working area without scrolling the parent page.</p>
+<p>The top-right account menu contains About, <code>Sign out (&lt;username&gt;)</code>, and admin-only Reboot and Shutdown actions. About
+reports the installed Atlaso build and Python version. Reboot and Shutdown always use the shared confirmation modal,
+create and commit an auditable task first, and then ask the constrained helper to schedule the host action after a
+five-second delay. These runtime maintenance tasks are separate from global Appliance Apply. Shutdown powers off the
+appliance, so hypervisor or physical access is required to start it again.</p>
+<p>The Tasks grid uses backend-owned filtering and pagination. Status and state use fixed choices, while Task / Component
+offers recorded task/component choices and accepts a custom fragment. Task detail modals render redacted result payloads
+as wrapped, syntax-highlighted JSON audit previews. Console output omits helper execution-envelope JSON, shows process
+stdout and stderr separately, and colors stderr red. The task-log dialog uses nearly the full available viewport for
+operational output. Preview controls are overlaid without reserving blank text rows, and read-only output remains inside
+the viewport rather than appearing as a form control.</p>
+<h2 id="appliance-apply-workflow">Appliance Apply Workflow<a class="headerlink" href="#appliance-apply-workflow" title="Permanent link">&para;</a></h2>
+<p>Atlaso treats service pages as desired-state editors. Routine setting and grid edits save into the control-plane
+database, but they do not mutate host services on each field change.</p>
+<p>Use <code>Appliance Apply</code> to review and submit appliance changes. The bottom-left pending card and page-level review actions
+open a wide review modal. There is no separate appliance-apply page; a direct GET to <code>/appliance-apply</code> redirects to the
+Dashboard and opens the same modal. The workflow:</p>
+<ul>
+<li>lists changed apply units such as Local Users, Appliance Settings, Network, Routes &amp; WAN Simulation, DNS/DHCP, ESXi
+  PXE, ESX Storage, Firewall, Certificate Authority, KMS, Managed LDAP, VCF Backups, VCF Offline Depot, VCF Private
+  Registry, and Public Services;</li>
+<li>checks changed valid units by default;</li>
+<li>shows compact summaries with collapsed, on-demand rendered config previews or diffs;</li>
+<li>lets operators unselect changed units that should stay pending;</li>
+<li>atomically creates one <code>appliance-apply</code> master task plus an ordered child execution record for every selected
+  component, then reuses the modal as a non-dismissible live task grid;</li>
+<li>keeps failed and cancelled results open for inspection, while successful master-task results close automatically after
+  15 seconds;</li>
+<li>hides submitted units from the sidebar pending count immediately, while unselected units remain available for review;</li>
+<li>blocks other authenticated mutations with <code>423 Locked</code> while the master is active, while read-only inspection,
+  authentication/session lifecycle actions, and safe parent cancellation remain available;</li>
+<li>executes component children sequentially, persists each successful component baseline immediately, fails fast on the
+  first component failure, and marks remaining children skipped;</li>
+<li>retains the terminal result until an administrator closes it. The main Tasks grid exposes the same expandable
+  master/child hierarchy and read-only redacted child evidence.</li>
+</ul>
+<p>Within each selected component, helper commands run sequentially and stop on the first failure. A failed <code>validate</code>
+command prevents the matching <code>apply</code> or follow-on reload/sync command from running. Parent cancellation completes the
+currently running component, skips the remaining children, marks the master cancelled, and releases the global lock.
+Restart recovery fails an interrupted running child and skips the remainder before failing the master.</p>
+<p>Fresh Photon appliance startup records a factory desired-state baseline when no baseline, appliance-apply job, or
+non-auth operator audit event exists. This only initializes comparison state and marks the provisioned bootstrap admin
+OS account as synced; it does not run helper commands or mutate host services.</p>
+<p>Local Users stages <code>/var/lib/atlaso/apply/local-users/atlaso-users.json</code> and synchronizes Atlaso local users to Photon
+OS accounts. Users can hold multiple Atlaso roles, edited from the Users grid with a multi-select role editor;
+permissions are the union of the selected roles while Photon OS sync still applies one local account and shell per user.
+Each user has a desired default shell, defaulting to <code>/sbin/nologin</code>, and enabled users are created or updated with that
+shell. New or reset passwords are held only in process memory until a successful real global apply sends them to
+<code>chpasswd</code>; Atlaso does not store local user password hashes or encrypted pending OS passwords in the database, and
+previews and job results show counts/status only. Disabled or removed managed users are removed from Photon OS with
+<code>userdel -r</code>, unlock requests reset <code>passwd</code> and <code>faillock</code>, and the desired password policy is written to Photon
+PAM/pwquality during Local Users apply.</p>
+<p>Appliance Settings owns the appliance FQDN, OS hostname, resolver mode, resolver servers, management UI HTTPS
+preference, passwordless web-terminal preference, and root SSH login preference. NTPsec owns appliance time service
+desired state and NTP/NTS enforcement. The helper installs nginx Atlaso site config, writes a loopback-only
+<code>atlaso.service</code> override, applies the Atlaso-owned root SSH and web-terminal CA sshd drop-ins and schedules a short
+delayed restart so the apply job can finish recording before uvicorn moves behind nginx. Root SSH and the web terminal
+are disabled by default. The web terminal requires management HTTPS, is always bound to the management interface when
+enabled, and may be bound to additional addressed non-management interfaces selected by an administrator.
+Extra-interface nginx listeners expose only login/logout, terminal, WebSocket, and static asset routes; they do not
+expose the dashboard or API. Each local user has an explicit <strong>Web SSH</strong> permission, default off; access also requires
+an enabled user, an interactive shell, and an applied Photon password. The bootstrap administrator starts with
+permission enabled. The management listener uses the Operations/admin shell, while selected additional listeners render
+the terminal inside the Public Services shell and authenticate eligible local users against Photon. The terminal
+connects automatically and retains one bounded server-side shell per authorized user across page reloads and short
+WebSocket interruptions. A different browser must confirm moving that same live shell; takeover preserves its working
+directory and buffered terminal output while disconnecting the original browser. <code>Ctrl-D</code> and <code>exit</code> intentionally end
+the shell, after which the transcript remains available for copy or download and the terminal offers an in-place
+reconnect action. Each attachment uses a one-use browser ticket, while the shell itself uses an ephemeral Ed25519 key
+and a 60-second OpenSSH user certificate restricted to loopback source with forwarding, agent, X11, and user RC
+disabled. The certificate removes the SSH-password prompt, but <code>sudo</code> retains the Photon OS account password policy.
+When management UI HTTPS is enabled, it uses the CA-managed <code>appliance:https</code> certificate, redirects public HTTP/80 to
+HTTPS/443, and reverse-proxies HTTPS to uvicorn on <code>127.0.0.1:8000</code>. When management UI HTTPS is disabled, including
+after factory reset plus apply, nginx serves public HTTP/80 as a plain reverse proxy to the same loopback upstream and
+does not expose a management HTTPS listener. See <a href="../../operate/web-terminal/">Web terminal</a> for the operator flow and
+security boundaries.</p>
+<p>Routes &amp; WAN Simulation stages <code>/var/lib/atlaso/apply/wan/atlaso-wan.conf</code> and owns static lab route desired state,
+routing permissions, IPv4 masquerade NAT rules, and interface/VLAN-level <code>tc/netem</code> WAN impairment. Atlaso has no <code>wan</code>
+interface role: WAN Simulation is an explicit traffic-behavior workflow, not an interface classification, and NAT
+eligibility is never inferred from role. Physical Interfaces owns optional static management IPv4 and IPv6 gateways and
+installs each configured default in both the main table and policy-routing table <code>100</code>; IPv6 accepts an on-link or
+link-local gateway. Routes &amp; WAN owns non-management route gateways in table <code>200</code>, so management and lab traffic can
+use different default gateways without forwarding through management. Routes can target non-management access physical
+interfaces and enabled VLANs with IPv4, IPv6, or dual-stack CIDRs. Route-role networks forward to other route-role
+networks by default; access networks require explicit routing rules. NAT v1 is explicit IPv4 outbound masquerade only;
+there is no destination NAT or port forwarding, and the outbound interface must have an IPv4 CIDR. Route-specific WAN
+impairment is roadmap work tracked in <code>docs/routing-wan-roadmap.md</code>; v1 exposes only interface/VLAN-level impairment.</p>
+<p>DNS and DHCP share one <code>DNS/DHCP (dnsmasq)</code> apply unit because they render and reload the same dnsmasq config. The
+Services page shows DNS and DHCP as separate desired-state rows, but their runtime status comes from the shared
+<code>dnsmasq.service</code>. DNS listen addresses are derived from selected access physical or enabled VLAN interface CIDRs,
+including both IPv4 and IPv6 when present. When Authoritative DNS is enabled, every managed forward domain emits
+<code>auth-zone</code>, with shared interface-bound <code>auth-server</code>, <code>auth-soa</code>, and <code>auth-ttl</code> directives; Atlaso generates
+read-only SOA/NS records and A/AAAA nameserver glue from the selected listen addresses and advances the SOA serial on
+DNS mutations. dnsmasq treats those selected interfaces as authoritative-only, while non-authoritative listeners such as
+loopback retain existing PTR and upstream-recursive behavior. Generated reverse zones retain their existing PTR
+behavior. When the appliance resolver is still in DHCP mode and DNS upstream servers are blank, the DNS page and
+rendered dnsmasq preview use the management interface's observed DHCP DNS servers as fallback forwarders; converting a
+management DHCP lease to static copies those observed DNS servers into Appliance Settings external DNS and into DNS
+service upstreams when either side was relying on DHCP. DNS can render DNSSEC validation with package-provided trust
+anchors, rebind protection with explicit domain exemptions, temporary <code>log-queries=extra</code> troubleshooting, and
+operator-managed A/AAAA/CNAME/TXT/SRV/MX/CAA/PTR records. See <a href="../../services/dns/"><code>docs/dns.md</code></a> for authoritative
+behavior and verification. DHCP IP zones can be IPv4 or IPv6: IPv4 zones bind to interfaces with IPv4 CIDR, IPv6 zones
+bind to interfaces with IPv6 CIDR and render dnsmasq DHCPv6/RA config. Each DHCP zone uses one comma-separated range
+expression, such as <code>192.168.87.100-200, 192.168.87.222, 192.168.87.226-228</code> for a <code>/24</code> or <code>192.168.87.100-87.200</code> for
+a <code>/16</code>; IPv6 ranges use full IPv6 addresses. Live lease readback uses the Atlaso-owned dnsmasq lease file under
+<code>/var/lib/atlaso/dnsmasq/</code>. The <strong>NTP / NTS</strong> page owns NTPsec desired state, including its upstream grid, explicit
+address binding, restrictive client access, <code>tos minsane</code>, source health through <code>ntpq</code>, and Firewall-owned UDP/123. The
+helper requires Photon’s <code>ntpsec</code> package and NTPsec binary identity. Fresh desired state uses NTS-enabled
+<code>time.cloudflare.com</code> and <code>nts.netnod.se</code>; NTS server mode uses CA-managed certificate material, persistent cookie keys,
+and Firewall-owned TCP/4460 while ordinary NTP remains available. Certificate Authority stores CA and leaf private keys
+encrypted in the database with <code>ATLASO_SECRETS_KEY</code>, auto-ensures VCF/KMS/service certificates when enabled, and stages
+<code>/var/lib/atlaso/apply/ca/atlaso-ca.json</code>; the helper writes public bundles and service certificate/key files under
+<code>/etc/atlaso</code>. The public CA portal defaults to <code>ca.atlaso.internal</code>: <code>/</code> shows public trust material and <code>/requests</code> is
+the authenticated certificate request/revocation workflow. The management console keeps CA configuration under
+<code>/certificate-authority</code>; <code>/ca</code> and <code>/ca/requests</code> remain compatibility paths.</p>
+<p>ESXi PXE stores Kickstart source files in the Atlaso database. The database is the source of truth; generated files
+under <code>/var/lib/atlaso/pxe/http/esxi/ks/&lt;id&gt;.cfg</code> are runtime copies for drift/apply bookkeeping, while boot-time
+Kickstart responses are rendered dynamically by Atlaso from <code>/pxe/esxi/ks/&lt;file&gt;.cfg?mac=&lt;normalized-mac&gt;</code>. Kickstart
+templates may use restricted <code>{{variable}}</code> markers such as <code>{{host.hostname}}</code>, <code>{{host.ip_address}}</code>,
+<code>{{dhcp.gateway}}</code>, <code>{{dhcp.netmask}}</code>, <code>{{dhcp.dns_servers}}</code>, <code>{{dhcp.ntp_servers}}</code>, <code>{{dhcp.domain}}</code>,
+<code>{{pxe.http_base_url}}</code>, and per-host custom values under <code>{{custom.&lt;name&gt;}}</code>. Missing, invalid, disabled, or unknown
+MAC selectors return an error; Atlaso does not infer MAC addresses from source IP or leases. Saving in the CodeMirror
+editor updates desired state and marks the <code>esxi_pxe</code> apply unit changed. ESXi PXE boot settings select one or more IPv4
+DHCP IP zones instead of a freeform interface/IP pair; Atlaso derives the PXE interfaces, TFTP server addresses, DNS
+records, firewall bind targets, and dnsmasq scope tags from those zones. Native UEFI HTTP URLs are generated per
+selected IPv4 zone unless an operator supplies a manual absolute URL. Installer ISO choices are discovered from
+<code>/mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST</code>, the VCFDT ESX host component folder; Atlaso creates that folder when
+needed, marks VCFDT-discovered images separately from user-uploaded images with dates, and lets operators upload or
+delete <code>.iso</code> files from the Installer ISOs tab. Deleting an ISO clears host/default PXE references to that image;
+generated runtime files are reconciled on the next global apply. Host PXE definitions are edited in the Host References
+grid, can reference both a database Kickstart and a selected installer ISO path, may include an optional IP address that
+creates an ESXi-managed DHCP reservation plus DNS A/AAAA record, and include custom Kickstart variables as JSON. The
+default/undefined-MAC profile can boot installer media but cannot use a Kickstart because dynamic Kickstart rendering
+requires a defined host MAC. Global appliance apply stages schema-v2
+<code>/var/lib/atlaso/apply/esxi-pxe/atlaso-esxi-pxe.json</code>, validates selected ISO paths stay under the ESX_HOST folder,
+extracts selected installers to <code>/var/lib/atlaso/pxe/http/esxi/images/&lt;image-key&gt;/</code>, generates default and host-specific
+<code>boot.cfg</code> plus PXELINUX configs, writes an HTTP <code>boot.ipxe</code> entrypoint even when there are no host profiles, stages
+<code>undionly.kpxe</code>, <code>snponly.efi</code>, <code>pxelinux.0</code>, <code>mboot.efi</code>, and <code>mboot.c32</code>, installs a dedicated ESXi PXE HTTP listener
+on the configured HTTP port that redirects <code>/pxe/esxi</code> to <code>/pxe/esxi/</code>, serves a small <code>/pxe/esxi/</code> status response,
+proxies dynamic <code>/pxe/esxi/ks/</code> and <code>boot.ipxe</code> requests to Atlaso, serves boot/image artifacts statically, records
+render/apply timestamps, and redacts sensitive Kickstart values from previews, diffs, jobs, logs, and audit events. The
+helper searches Photon package paths plus <code>/var/lib/atlaso/pxe/bootloaders</code> for the iPXE/SYSLINUX first-stage files;
+Photon image provisioning stages Atlaso's bundled iPXE <code>undionly.kpxe</code> and <code>snponly.efi</code> artifacts there because the
+appliance package stream may not ship those filenames. When ESXi PXE boot settings change, review and apply the changed
+DNS/DHCP, ESXi PXE, and Firewall units together so dnsmasq, generated boot artifacts, and UDP/69 plus the configured PXE
+HTTP port allow rules stay aligned.</p>
+<p>VCF Offline Depot stages nginx HTTPS static-site config under <code>/var/lib/atlaso/apply/vcf-offline-depot/</code>, validates the
+CA-managed <code>vcf_offline_depot:https</code> certificate/key paths, and installs
+<code>/etc/atlaso/nginx/sites.d/vcf-offline-depot.conf</code> through <code>atlaso-helper</code>. The default local HTTP user is <code>vcf-depot</code>;
+apply Local Users after setting or changing its password, then apply VCF Offline Depot so the helper can derive the
+nginx htpasswd entry from the applied Photon password hash. VCF Backups stages an OpenSSH <code>Match User</code> drop-in under
+<code>/var/lib/atlaso/apply/vcf-backups/</code>; when the service desired state is off, the default <code>vcf-backup</code> user is disabled
+so the next Local Users apply removes that OS account. Real VCF Backup apply validates the selected OS backup user,
+installs <code>/etc/ssh/sshd_config.d/atlaso-vcf-backups.conf</code>, prepares the fixed chroot volume and <code>/backups</code> upload
+directory, and restarts <code>sshd</code> through <code>atlaso-helper</code>. Apply Local Users before VCF Backups when the selected SFTP user
+is new, disabled/enabled, removed, has a pending password, changes shell, or has an unlock request.</p>
+<p>Public Services stages <code>/var/lib/atlaso/apply/public-services/atlaso-public-services.conf</code> and installs
+<code>/etc/atlaso/nginx/sites.d/public-services.conf</code> through <code>atlaso-helper</code>. The renderer creates HTTP server blocks only
+for non-management IPs where ESXi PXE is enabled, proxies dynamic PXE requests to the app, serves PXE static artifacts
+through a narrow alias, and leaves CA, certificate requests, depot, registry, and management routes on their
+HTTPS/app-owned front doors. When web terminal access is selected for a non-management interface, that interface's
+Public Services directory includes a <code>Web Terminal</code> tile linked to its HTTPS <code>/terminal</code> route. Management-role IPs stay
+on the management front door.</p>
+<p>The firewall preview derives Atlaso-managed service allow rules from service desired state, including management, DNS,
+DHCP, NTPsec, KMS, VCF Backup, VCF Offline Depot, and VCF Private Registry listeners. It also derives managed routing
+rules: route-role network pairs are allowed, explicit access routing rules are allowed, and management-to-lab or
+lab-to-management forwarding is always dropped. Managed listener rules default to the built-in <code>Any</code> group; operators
+can create, rename, remove, and assign firewall groups containing <code>any</code>, CIDRs, addresses, or other groups when rule
+sources or destinations need narrower access. DHCP bootstrap remains interface-bound because clients may not have an
+address yet: IPv4 zones open UDP/67 and IPv6 zones open UDP/547. NTPsec opens UDP/123 on selected service bind targets
+and adds TCP/4460 when NTS server mode is enabled. Moving a DHCP scope, service listener, or routing permission to a
+VLAN such as <code>eth2.50</code> also changes the Firewall apply unit. In development, system adapters remain dry-run by default
+and record command intent instead of mutating host services directly.</p>
+<p>KMS / KMIP is PyKMIP-backed and intended for lab compatibility testing, not production HSM use. The KMS page derives
+IPv4 and IPv6 listen addresses from the selected service interface, manages app-owned A and/or AAAA records for the KMS
+hostname, and requires an enabled healthy CA before activation. Real KMS apply stages
+<code>/var/lib/atlaso/apply/kms/pykmip.conf</code>, installs <code>/etc/atlaso/kms/pykmip.conf</code> and <code>/etc/pykmip/server.conf</code>, and
+manages <code>atlaso-kms.service</code>; the service launches PyKMIP through Atlaso's compatibility wrapper so current Photon
+Python streams remain supported. Disabling KMS stops the service while preserving <code>/var/lib/atlaso/kms/pykmip.db</code>.</p>
+<p>Managed LDAP provides an OpenLDAP 2.6 service for VCF Automation 9.1 while Atlaso operator sign-in remains local. Each
+VCF organization receives an isolated suffix and LMDB database, organization-local users and nested groups, and a
+read-only bind identity whose secret is encrypted with <code>ATLASO_SECRETS_KEY</code>. Organizations use DNS-style tabs, users and
+groups use editable Tabulator grids with add rows and context menus, and operators can generate counted synthetic
+users/groups with complete profiles, memberships, and one-time passwords for lab testing. The <code>/ldap</code> page owns service
+settings and directory data; the Managed LDAP tile in <code>/vcf-helper</code> owns manual bundles and guided VCF configuration;
+Backup / Restore owns the separate passphrase-encrypted LDAP recovery workflow. CA-managed LDAPS is enabled by default
+with a configurable port; optional plaintext LDAP has its own configurable port and is disabled by default. External
+listeners are limited to addressed non-management access or route interfaces and enabled VLANs, while privileged
+reconciliation uses local <code>ldapi:///</code> with SASL EXTERNAL. VCF configuration includes the mandatory <code>serviceAccount</code> to
+<code>employeeType</code> mapping, but Atlaso does not import groups or assign VCF roles. See
+<a href="../../services/managed-ldap/">Managed LDAP for VCF Automation 9.1</a>.</p>
+<p>The Authentication page contains Atlaso's constrained OIDC provider. Phase 2 implements Authorization Code with
+confidential <code>client_secret_basic</code>, mandatory PKCE S256, exact redirects, required state and nonce, signed secure
+browser sessions, five-minute RS256 ID/access JWTs, UserInfo revalidation, and RP-initiated logout. Provider enablement
+requires the canonical issuer, applied management HTTPS, an active signing key, and protocol readiness. Unbound clients
+authenticate Local identities; organization-bound clients authenticate only their fixed managed LDAP organization, and
+managed LDAP OIDC sessions never grant operator UI access. See
+<a href="../../services/oidc-provider/">Constrained OpenID Connect provider</a>.</p>
+<p>On the Photon appliance, real mutating helper actions re-enter through a transient <code>systemd-run</code> service when
+<code>ATLASO_HELPER_USE_SYSTEMD_RUN=1</code> is set. This keeps the web control plane inside its restricted <code>atlaso.service</code>
+sandbox while allowing the reviewed root helper to write approved <code>/etc</code> configuration files from outside the service's
+read-only mount namespace.</p>
+<p>More detail lives in <a href="../../operate/appliance-apply/">Appliance Apply</a>.</p>
+<h2 id="backup-restore-and-factory-reset">Backup, Restore, And Factory Reset<a class="headerlink" href="#backup-restore-and-factory-reset" title="Permanent link">&para;</a></h2>
+<p><code>Backup / Restore</code> exports Atlaso desired-state settings as a JSON archive. The archive includes appliance, network,
+DNS/DHCP, <code>ntp_settings</code>, ESXi PXE Kickstarts and host references, firewall, CA, KMS, VCF service, safe generic
+desired-state settings, and encrypted CA private-key material. The retired <code>chrony_settings</code> table is neither exported
+nor restored. The archive does not include audit events, jobs, API tokens, password hashes, uploaded secret bodies,
+generated PXE runtime files, or other runtime history. Restoring usable CA private material requires the same
+<code>ATLASO_SECRETS_KEY</code>.</p>
+<p>Restoring a settings archive replaces desired-state configuration in the control-plane database only. Factory reset
+removes current desired-state configuration and reseeds only core Atlaso defaults. It does not recreate demo VLANs,
+routes, NAT rules, WAN policies, trunk-only parent NIC posture, DHCP scopes or reservations, firewall rules, CA
+requests, KMS clients or keys, depot download profiles, or service listener bindings, including after a service restart.
+The core reset keeps only the appliance DNS zone derived from the appliance FQDN and an app-owned appliance A/AAAA
+record pointing at the management IP. The core reset leaves only <code>eth0</code> desired up for management; other physical NICs
+are desired admin down until an operator enables them. Disabled service settings reset with blank listen interfaces and
+addresses so <code>Appliance Apply</code> can submit a clean disabled baseline. Both restore and factory reset force service status
+rows to stopped, disabled, and <code>unconfigured</code>; host services are not mutated until the operator reviews and submits
+selected units through the global <code>Appliance Apply</code> workflow.</p>
+<h2 id="brand-assets">Brand Assets<a class="headerlink" href="#brand-assets" title="Permanent link">&para;</a></h2>
+<p>Reusable SVG assets live in <code>atlaso/app/static/brand/</code> and are documented in <code>docs/branding.md</code>.</p>
+<h2 id="safety-boundary">Safety Boundary<a class="headerlink" href="#safety-boundary" title="Permanent link">&para;</a></h2>
+<p>Python is the control plane and desired-state owner. Atlaso does not reimplement routing, firewalling, DNS, DHCP, SFTP,
+or HTTPS serving in Python; CA v1 is the exception for local trust custody, where Python generates and encrypts
+CA/certificate material while host file writes still go through <code>atlaso-helper</code>.</p>
+<p>The MVP follows these boundaries:</p>
+<ul>
+<li>App package: <code>atlaso</code></li>
+<li>Service user: <code>atlaso</code></li>
+<li>Default database: <code>data/atlaso.db</code></li>
+<li>VCF Offline Depot store and HTTPS document root: <code>/mnt/atlaso-vcf-offline-depot</code></li>
+<li>VCF private registry volume mount: <code>/mnt/atlaso-vcf-registry</code></li>
+<li>VCF backup volume mount: <code>/mnt/atlaso-vcf-backups</code></li>
+<li>VCF backup SFTP remote directory: <code>/backups</code></li>
+<li>System adapters default to dry-run mode.</li>
+<li>On appliance startup, Physical Interfaces automatically refresh read-only Linux NIC inventory from Photon/Hyper-V and
+  persist the observed host facts. Operators can also refresh inventory manually; observed host facts are separate from
+  desired interface state and do not create an appliance apply job. Host NIC reconciliation matches by MAC address
+  before Linux interface name so removing a NIC and rebooting cannot move desired state to a different adapter; removed
+  host NICs are made inert, dependent VLANs are disabled, service listener interfaces and listener addresses are pruned
+  or disabled when no listener remains, and the cleanup is written to the app log and audit events.</li>
+<li>Real network apply is Photon <code>systemd-networkd</code> backed: it stages Atlaso's desired network state, installs
+  Atlaso-owned <code>.network</code>/<code>.netdev</code> files under <code>/etc/systemd/network/</code>, reloads networkd, reconfigures non-management
+  links, and reconciles VLAN links. The appliance image's default <code>00-atlaso-mgmt.network</code> matches only <code>eth0</code>, Atlaso
+  retires Photon catchall network defaults, and apply keeps management explicit while avoiding blind management-link
+  reconfiguration. Management source networks use the management route table; access and route networks use the lab
+  route table.</li>
+<li>Photon image provisioning installs Photon's <code>powershell</code> package, system-wide <code>VCF.PowerCLI</code> <code>9.1.0.25380678</code>, and
+  Python <code>vcf-sdk</code> <code>9.1.0.0</code>. It keeps the system module tree root-owned and read-only to non-root users, verifies
+  <code>Connect-VIServer</code> from the bootstrap administrator's unprivileged PowerShell session, records tool versions in
+  <code>/etc/atlaso/build-info</code>, and creates that OS account under <code>/var/lib/atlaso/users</code> with <code>/usr/bin/pwsh</code>. Appliance
+  Update preserves the same permissions after managed PowerShell module installs. PowerCLI is for interactive
+  administration and reviewed future workflows; the web service does not expose arbitrary PowerShell execution.</li>
+<li>Local Users apply stages <code>/var/lib/atlaso/apply/local-users/atlaso-users.json</code>, creates or updates enabled local users
+  under <code>/var/lib/atlaso/users</code> with their desired shell, removes disabled or removed managed users with <code>userdel -r</code>,
+  handles staged unlock requests with <code>passwd -u</code> and <code>faillock --reset</code>, writes the desired PAM/pwquality password
+  policy, and clears in-memory pending OS passwords only after a successful real apply.</li>
+<li>Appliance Settings apply stages <code>/var/lib/atlaso/apply/appliance-settings/atlaso-settings.json</code>, sets the OS hostname
+  to the appliance FQDN, configures the management resolver for local or external DNS mode, manages root SSH login
+  through <code>/etc/ssh/sshd_config.d/atlaso-root-login.conf</code>, manages passwordless browser SSH trust through
+  <code>/etc/ssh/sshd_config.d/atlaso-web-terminal.conf</code>, and can switch the management UI to CA-backed HTTPS through nginx
+  plus a loopback-only <code>atlaso.service</code> override. NTPsec owns appliance time service desired state and NTP enforcement.</li>
+<li>Certificate Authority apply stages <code>/var/lib/atlaso/apply/ca/atlaso-ca.json</code>, validates CA/certificate material,
+  writes public CA bundles and service certificates under <code>/etc/atlaso</code>, and keeps private keys out of previews, logs,
+  and job results.</li>
+<li>VCF Backups apply stages <code>/var/lib/atlaso/apply/vcf-backups/atlaso-vcf-backups-sshd.conf</code>, validates the
+  Atlaso-rendered OpenSSH drop-in and selected OS backup user, installs
+  <code>/etc/ssh/sshd_config.d/atlaso-vcf-backups.conf</code>, prepares <code>/mnt/atlaso-vcf-backups/backups</code>, and restarts <code>sshd</code>.
+  Firewall apply owns the listener allow rule for the selected interface and port.</li>
+<li>Public Services apply stages <code>/var/lib/atlaso/apply/public-services/atlaso-public-services.conf</code>, installs
+  <code>/etc/atlaso/nginx/sites.d/public-services.conf</code>, renders one server per non-management service IP, and exposes only
+  the narrow terminal route set when an extra interface is selected. It must not expose management-only dashboard/API
+  routes or <code>/registry</code> proxying.</li>
+<li>Privileged changes must use reviewed <code>atlaso-helper</code> commands and sudo allowlists. On the Photon appliance, real
+  mutating helper actions run through <code>systemd-run</code> from inside the helper so they are not trapped in the web service's
+  read-only <code>/etc</code> mount namespace.</li>
+<li>Subprocess calls must use argument arrays, not arbitrary shell strings.</li>
+<li>The global <code>/appliance-apply</code> workflow is the only appliance enforcement path.</li>
+</ul>
+<h2 id="esx-storage">ESX Storage<a class="headerlink" href="#esx-storage" title="Permanent link">&para;</a></h2>
+<p>Photon image provisioning disables and verifies VCF PowerCLI CEIP participation at <code>AllUsers</code> scope. Appliance Settings
+apply enforces the central VMware CEIP choice for installed VCF PowerCLI and VCF Download Tool runtimes; missing
+optional products are skipped. Appliance Update reapplies the central choice after managed <code>VCF.PowerCLI</code> installs or
+updates.</p>
+<p>ESX Storage lives at <code>/esx-storage</code> under VCF Workflows and publishes ESX 9.x datastores over NFS 3 or NFS 4.1. IPv4 and
+IPv6 are equal v1 connection families: each share selects one addressed interface/VLAN and enables IPv4, IPv6, or both
+with matching VMkernel client allowlists. Atlaso generates explicit family-specific A/AAAA target names, copyable ESXCLI
+and PowerCLI connection commands, the canonical <code>nfs.&lt;domain&gt;</code> alias, PTR-capable app-owned host records, and equivalent
+family-specific nftables rules. Datastore state is editable through the standard grid icon or the add/edit wizard, while
+a dedicated Connection Instructions tab keeps mount guidance separate from desired-state editing.</p>
+<p>Blank whole disks require stable <code>/dev/disk/by-id</code> identity, complete job-scoped <code>FORMAT &lt;volume-name&gt;</code> authorization,
+immediate safety revalidation, whole-device ext4 formatting, and UUID mounts under <code>/mnt/atlaso-esx-storage</code>; existing
+mounted ext4 volumes are also supported. Global apply stages
+<code>/var/lib/atlaso/apply/esx-storage/atlaso-esx-storage.json</code>, manages bind exports under <code>/srv/atlaso/esx-storage</code>, and
+enables <code>rpcbind</code>/<code>nfs-server</code> only while valid shares are active. Removing desired state never deletes stored data.
+Settings backup/restore includes the service, volume identities, and shares but never format authorization. See
+<a href="../../services/esx-storage/">ESX Storage over NFS</a> for network, DNS, mount, safety, lifecycle, and iSCSI-boundary
+details.</p>
+<h2 id="rest-api">REST API<a class="headerlink" href="#rest-api" title="Permanent link">&para;</a></h2>
+<p>API prefix:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>/api/v1
+</span></code></pre></div>
+<p>OpenAPI and docs:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>http://127.0.0.1:8000/openapi.json
+</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>http://127.0.0.1:8000/api/docs
+</span></code></pre></div>
+<p>The OpenAPI document uses OpenAPI 3.1 and includes a JWT bearer security scheme. Physical-interface responses and PATCH
+updates expose optional <code>ipv6_gateway</code> alongside <code>ipv6_enabled</code> and <code>ipv6_cidr</code>. Existing clients may omit it. A value
+is accepted only for static management IPv6 and must be on-link or link-local; setting IPv6 to Disabled or Automatic
+clears the stored static gateway.</p>
+<p>Initial resource areas:</p>
+<ul>
+<li>Auth</li>
+<li>API Tokens</li>
+<li>Dashboard</li>
+<li>Monitor</li>
+<li>Interfaces</li>
+<li>VLANs</li>
+<li>Routes</li>
+<li>NAT</li>
+<li>WAN</li>
+<li>VCF Offline Depot</li>
+<li>ESX Storage status, disk inventory, volumes, and NFS shares</li>
+<li>Services</li>
+<li>Logs</li>
+<li>Audit</li>
+<li>Jobs</li>
+<li>Settings</li>
+</ul>
+<p>Several future appliance resources are intentionally scaffolded as dry-run or status-only surfaces until their native
+Linux adapters are implemented.</p>
+<h2 id="api-token-example">API Token Example<a class="headerlink" href="#api-token-example" title="Permanent link">&para;</a></h2>
+<p>Create a bearer token from the bootstrap admin account:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="w">  </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="w">  </span><span class="s2">&quot;http://127.0.0.1:8000/api/v1/auth/login?username=admin&amp;password=atlaso-admin&quot;</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-18-5"><a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
+</span><span id="__span-18-6"><a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="s1">    &quot;name&quot;: &quot;development token&quot;,</span>
+</span><span id="__span-18-7"><a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a><span class="s1">    &quot;scopes&quot;: [</span>
+</span><span id="__span-18-8"><a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a><span class="s1">      &quot;read:dashboard&quot;,</span>
+</span><span id="__span-18-9"><a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a><span class="s1">      &quot;read:monitoring&quot;,</span>
+</span><span id="__span-18-10"><a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a><span class="s1">      &quot;read:routes&quot;,</span>
+</span><span id="__span-18-11"><a id="__codelineno-18-11" name="__codelineno-18-11" href="#__codelineno-18-11"></a><span class="s1">      &quot;read:wan&quot;,</span>
+</span><span id="__span-18-12"><a id="__codelineno-18-12" name="__codelineno-18-12" href="#__codelineno-18-12"></a><span class="s1">      &quot;write:wan&quot;,</span>
+</span><span id="__span-18-13"><a id="__codelineno-18-13" name="__codelineno-18-13" href="#__codelineno-18-13"></a><span class="s1">      &quot;read:services&quot;,</span>
+</span><span id="__span-18-14"><a id="__codelineno-18-14" name="__codelineno-18-14" href="#__codelineno-18-14"></a><span class="s1">      &quot;read:audit&quot;</span>
+</span><span id="__span-18-15"><a id="__codelineno-18-15" name="__codelineno-18-15" href="#__codelineno-18-15"></a><span class="s1">    ]</span>
+</span><span id="__span-18-16"><a id="__codelineno-18-16" name="__codelineno-18-16" href="#__codelineno-18-16"></a><span class="s1">  }&#39;</span>
+</span></code></pre></div>
+<p>Call the dashboard API:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="w">  </span>http://127.0.0.1:8000/api/v1/dashboard
+</span></code></pre></div>
+<p>Create a WAN policy:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="w">  </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-20-3"><a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-20-4"><a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-20-5"><a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a><span class="w">  </span>http://127.0.0.1:8000/api/v1/wan/policies<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-20-6"><a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
+</span><span id="__span-20-7"><a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a><span class="s1">    &quot;name&quot;: &quot;Slow WAN&quot;,</span>
+</span><span id="__span-20-8"><a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a><span class="s1">    &quot;latency_ms&quot;: 100,</span>
+</span><span id="__span-20-9"><a id="__codelineno-20-9" name="__codelineno-20-9" href="#__codelineno-20-9"></a><span class="s1">    &quot;jitter_ms&quot;: 10,</span>
+</span><span id="__span-20-10"><a id="__codelineno-20-10" name="__codelineno-20-10" href="#__codelineno-20-10"></a><span class="s1">    &quot;packet_loss_percent&quot;: 0.5,</span>
+</span><span id="__span-20-11"><a id="__codelineno-20-11" name="__codelineno-20-11" href="#__codelineno-20-11"></a><span class="s1">    &quot;bandwidth_mbit&quot;: 100</span>
+</span><span id="__span-20-12"><a id="__codelineno-20-12" name="__codelineno-20-12" href="#__codelineno-20-12"></a><span class="s1">  }&#39;</span>
+</span></code></pre></div>
+<p>Create an outbound NAT rule:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-21-2"><a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="w">  </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-21-3"><a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-21-4"><a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-21-5"><a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a><span class="w">  </span>http://127.0.0.1:8000/api/v1/nat/rules<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-21-6"><a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
+</span><span id="__span-21-7"><a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a><span class="s1">    &quot;name&quot;: &quot;SiteA outbound WAN&quot;,</span>
+</span><span id="__span-21-8"><a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a><span class="s1">    &quot;source&quot;: &quot;192.168.50.0/24&quot;,</span>
+</span><span id="__span-21-9"><a id="__codelineno-21-9" name="__codelineno-21-9" href="#__codelineno-21-9"></a><span class="s1">    &quot;outbound_interface&quot;: &quot;eth1.20&quot;,</span>
+</span><span id="__span-21-10"><a id="__codelineno-21-10" name="__codelineno-21-10" href="#__codelineno-21-10"></a><span class="s1">    &quot;masquerade&quot;: true,</span>
+</span><span id="__span-21-11"><a id="__codelineno-21-11" name="__codelineno-21-11" href="#__codelineno-21-11"></a><span class="s1">    &quot;priority&quot;: 100</span>
+</span><span id="__span-21-12"><a id="__codelineno-21-12" name="__codelineno-21-12" href="#__codelineno-21-12"></a><span class="s1">  }&#39;</span>
+</span></code></pre></div>
+<p>Problem-details errors use this shape:</p>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="p">{</span>
+</span><span id="__span-22-2"><a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;https://atlaso.internal/errors/validation-error&quot;</span><span class="p">,</span>
+</span><span id="__span-22-3"><a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="w">  </span><span class="nt">&quot;title&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Validation error&quot;</span><span class="p">,</span>
+</span><span id="__span-22-4"><a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a><span class="w">  </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">422</span><span class="p">,</span>
+</span><span id="__span-22-5"><a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a><span class="w">  </span><span class="nt">&quot;detail&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Invalid request payload&quot;</span><span class="p">,</span>
+</span><span id="__span-22-6"><a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a><span class="w">  </span><span class="nt">&quot;instance&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;/api/v1/wan/policies&quot;</span><span class="p">,</span>
+</span><span id="__span-22-7"><a id="__codelineno-22-7" name="__codelineno-22-7" href="#__codelineno-22-7"></a><span class="w">  </span><span class="nt">&quot;error_code&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;VALIDATION_ERROR&quot;</span><span class="p">,</span>
+</span><span id="__span-22-8"><a id="__codelineno-22-8" name="__codelineno-22-8" href="#__codelineno-22-8"></a><span class="w">  </span><span class="nt">&quot;request_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;req_123&quot;</span>
+</span><span id="__span-22-9"><a id="__codelineno-22-9" name="__codelineno-22-9" href="#__codelineno-22-9"></a><span class="p">}</span>
+</span></code></pre></div>
+<h2 id="api-scopes">API Scopes<a class="headerlink" href="#api-scopes" title="Permanent link">&para;</a></h2>
+<p>Supported initial scopes:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>read:dashboard
+</span><span id="__span-23-2"><a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>read:monitoring
+</span><span id="__span-23-3"><a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a>read:interfaces
+</span><span id="__span-23-4"><a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a>write:interfaces
+</span><span id="__span-23-5"><a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a>read:vlans
+</span><span id="__span-23-6"><a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a>write:vlans
+</span><span id="__span-23-7"><a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a>read:routes
+</span><span id="__span-23-8"><a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a>write:routes
+</span><span id="__span-23-9"><a id="__codelineno-23-9" name="__codelineno-23-9" href="#__codelineno-23-9"></a>read:wan
+</span><span id="__span-23-10"><a id="__codelineno-23-10" name="__codelineno-23-10" href="#__codelineno-23-10"></a>write:wan
+</span><span id="__span-23-11"><a id="__codelineno-23-11" name="__codelineno-23-11" href="#__codelineno-23-11"></a>read:firewall
+</span><span id="__span-23-12"><a id="__codelineno-23-12" name="__codelineno-23-12" href="#__codelineno-23-12"></a>write:firewall
+</span><span id="__span-23-13"><a id="__codelineno-23-13" name="__codelineno-23-13" href="#__codelineno-23-13"></a>read:dns
+</span><span id="__span-23-14"><a id="__codelineno-23-14" name="__codelineno-23-14" href="#__codelineno-23-14"></a>write:dns
+</span><span id="__span-23-15"><a id="__codelineno-23-15" name="__codelineno-23-15" href="#__codelineno-23-15"></a>read:dhcp
+</span><span id="__span-23-16"><a id="__codelineno-23-16" name="__codelineno-23-16" href="#__codelineno-23-16"></a>write:dhcp
+</span><span id="__span-23-17"><a id="__codelineno-23-17" name="__codelineno-23-17" href="#__codelineno-23-17"></a>read:ca
+</span><span id="__span-23-18"><a id="__codelineno-23-18" name="__codelineno-23-18" href="#__codelineno-23-18"></a>write:ca
+</span><span id="__span-23-19"><a id="__codelineno-23-19" name="__codelineno-23-19" href="#__codelineno-23-19"></a>read:kms
+</span><span id="__span-23-20"><a id="__codelineno-23-20" name="__codelineno-23-20" href="#__codelineno-23-20"></a>write:kms
+</span><span id="__span-23-21"><a id="__codelineno-23-21" name="__codelineno-23-21" href="#__codelineno-23-21"></a>read:repository
+</span><span id="__span-23-22"><a id="__codelineno-23-22" name="__codelineno-23-22" href="#__codelineno-23-22"></a>write:repository
+</span><span id="__span-23-23"><a id="__codelineno-23-23" name="__codelineno-23-23" href="#__codelineno-23-23"></a>read:vcf-registry
+</span><span id="__span-23-24"><a id="__codelineno-23-24" name="__codelineno-23-24" href="#__codelineno-23-24"></a>write:vcf-registry
+</span><span id="__span-23-25"><a id="__codelineno-23-25" name="__codelineno-23-25" href="#__codelineno-23-25"></a>read:vcf-backups
+</span><span id="__span-23-26"><a id="__codelineno-23-26" name="__codelineno-23-26" href="#__codelineno-23-26"></a>write:vcf-backups
+</span><span id="__span-23-27"><a id="__codelineno-23-27" name="__codelineno-23-27" href="#__codelineno-23-27"></a>read:services
+</span><span id="__span-23-28"><a id="__codelineno-23-28" name="__codelineno-23-28" href="#__codelineno-23-28"></a>write:services
+</span><span id="__span-23-29"><a id="__codelineno-23-29" name="__codelineno-23-29" href="#__codelineno-23-29"></a>read:logs
+</span><span id="__span-23-30"><a id="__codelineno-23-30" name="__codelineno-23-30" href="#__codelineno-23-30"></a>read:audit
+</span><span id="__span-23-31"><a id="__codelineno-23-31" name="__codelineno-23-31" href="#__codelineno-23-31"></a>write:backup
+</span><span id="__span-23-32"><a id="__codelineno-23-32" name="__codelineno-23-32" href="#__codelineno-23-32"></a>admin:all
+</span></code></pre></div>
+<p>Role checks and scope checks are both enforced. A viewer cannot mint admin scopes, and a network-admin cannot mint CA or
+repository administration scopes.</p>
+<h2 id="hyper-v-workflow">Hyper-V Workflow<a class="headerlink" href="#hyper-v-workflow" title="Permanent link">&para;</a></h2>
+<p>Windows-side automation lives in <code>scripts/windows/</code>, with shared helpers under <code>scripts/windows/common/</code> and
+provider-specific entry points under <code>scripts/windows/hyperv/</code> and <code>scripts/windows/vmware/</code>.</p>
+<p>From WSL2:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-24-1"><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>powershell.exe<span class="w"> </span>-ExecutionPolicy<span class="w"> </span>Bypass<span class="w"> </span>-File<span class="w"> </span>scripts/windows/hyperv/create-switches.ps1
+</span></code></pre></div>
+<p>The scaffold uses these switch names:</p>
+<ul>
+<li><code>Atlaso-Mgmt</code></li>
+<li><code>Atlaso-Services</code></li>
+<li><code>Atlaso-SiteA</code></li>
+<li><code>Atlaso-SiteB</code></li>
+<li><code>Atlaso-Trunk</code></li>
+</ul>
+<p>The primary appliance image target remains Hyper-V VHDX. VMware Workstation VMX/VMDK is also available for local desktop
+parity work; ESXi/vSphere OVA and KVM/Proxmox QCOW2 are future packaging targets.</p>
+<p>The Photon image build scaffold lives in:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-25-1"><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>image/hyperv/
+</span></code></pre></div>
+<p>Use the existing scripts to create switches, create a VM from the Packer VHDX, start the VM, attach test NICs, and run
+smoke checks. The first appliance smoke pass should verify SSH, <code>systemctl status atlaso</code>, web UI login,
+<code>/openapi.json</code>, <code>/api/v1/dashboard</code>, reboot persistence, and dry-run <code>/appliance-apply</code> job output.</p>
+<p>For a normal Hyper-V test appliance, use the explicit Hyper-V wrapper:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-26-1"><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-26-2"><a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="n">create-atlaso-test-vm</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-26-3"><a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a>  <span class="n">-WaitForIp</span>
+</span></code></pre></div>
+<p>Lifecycle interop testing uses a separate Hyper-V VM set and must not reuse or destroy the normal <code>Atlaso</code> test VM. The
+simple entry point is:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-27-1"><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-27-2"><a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span>
+</span></code></pre></div>
+<p>The wrapper prepares the tiny Alpine client VHDX, selects the newest appliance VHDX under <code>image/hyperv/output</code>, creates
+a unique <code>AtlasoLifecycle-*</code> lab, validates DNS, DHCP, firewall, routing, NAT, WAN netem simulation, CA apply with
+deterministic packet-loss/recovery proof, CA apply with a ClientA CSR request and issued-certificate verification, VCF
+Backup SFTP with the <code>vcf-backup</code> OS user, client-side connectivity, and by default a backup/restore redeploy pass that
+confirms the restored ClientA certificate has the same serial number and SHA-256 fingerprint as the pre-restore
+certificate and that the restored CA archive fingerprints match the original settings backup. It prints a human-readable
+console summary, writes <code>result.json</code>, then removes the VMs it created. It defaults to the local Hyper-V lab password
+for admin and appliance/client SSH access; appliance host-state probes log in as <code>admin</code> because root SSH is disabled by
+default, then run checks through sudo. It uses a separate policy-compliant default for VCF Backup SFTP test access; pass
+<code>-AdminPassword</code>, <code>-SshPassword</code>, and <code>-VcfBackupPassword</code> to override those defaults. Pass <code>-SkipBackupRestoreTest</code>
+only when you need the older single-pass run, and pass <code>-KeepVms</code> only when preserving a failed lab for inspection. Use
+<code>-PrepareNetworksOnly</code> to set up the Hyper-V switches/NAT, <code>-CleanupVmsOnly</code> to remove only lifecycle VMs, and
+<code>-CleanupNetworksOnly</code> to remove Atlaso switches/NAT after all attached VMs are gone. Details live in
+<a href="../hyperv-lifecycle-testing/">Hyper-V Lifecycle Testing</a>.</p>
+<p>When troubleshooting a Hyper-V builder VM, use <code>scripts/windows/hyperv/get-atlaso-vm-ip.ps1</code> from an elevated PowerShell
+session to read the current IPv4 address reported by Hyper-V.</p>
+<h2 id="vmware-workstation-workflow">VMware Workstation Workflow<a class="headerlink" href="#vmware-workstation-workflow" title="Permanent link">&para;</a></h2>
+<p>The Workstation image target lives in:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-28-1"><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a>image/vmware-workstation/
+</span></code></pre></div>
+<p>It shares Photon ISO remastering, kickstart generation, checksum validation, Packer var-file generation, and appliance
+provisioning with the Hyper-V image path. The original Photon source ISO cache is shared under <code>image/common/source</code>;
+the Workstation image installs <code>open-vm-tools</code> instead of Hyper-V guest integration packages.</p>
+<p>Build the image with:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-29-1"><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-29-2"><a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">build-photon-image</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-29-3"><a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a>  <span class="n">-IsoUrl</span> <span class="s2">&quot;&lt;photon-iso-url-or-path&gt;&quot;</span> <span class="p">`</span>
+</span><span id="__span-29-4"><a id="__codelineno-29-4" name="__codelineno-29-4" href="#__codelineno-29-4"></a>  <span class="n">-IsoChecksum</span> <span class="s2">&quot;&lt;packer-checksum&gt;&quot;</span>
+</span></code></pre></div>
+<p>Before a forced Workstation rebuild deletes the output directory, the wrapper finds any existing output VMX and
+unregisters it with <code>vmrun -T ws unregister</code> through the same VMware Workstation discovery path used by the rest of the
+VMware scripts. The cleanup is scoped to the configured image output directory so stale template registrations do not
+survive a rebuild. The remastered kickstart disables Photon's socket-activated SSH unit and enables the normal
+<code>sshd.service</code>, ensuring Packer receives a deterministic SSH daemon after the first installed-system boot. The temporary
+Photon root/build password remains separate from the Atlaso web bootstrap administrator password.</p>
+<p>Lifecycle testing uses VMX/VMDK artifacts and <code>vmrun.exe</code>:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-30-1"><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-30-2"><a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span>
+</span></code></pre></div>
+<p>Results are written under <code>test-results/vmware-workstation-lifecycle/&lt;timestamp&gt;</code>. Workstation vmnets provide isolated
+layer-2 segments, but they do not model Hyper-V access/trunk VLAN port controls exactly; keep Hyper-V lifecycle evidence
+authoritative for that VLAN-specific behavior. Details live in
+<a href="../vmware-workstation-lifecycle-testing/">VMware Workstation Lifecycle Testing</a>.</p>
+<p>For a normal Workstation test appliance on the management vmnet:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-31-1"><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-31-2"><a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">create-atlaso-test-vm</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-31-3"><a id="__codelineno-31-3" name="__codelineno-31-3" href="#__codelineno-31-3"></a>  <span class="n">-Redeploy</span> <span class="p">`</span>
+</span><span id="__span-31-4"><a id="__codelineno-31-4" name="__codelineno-31-4" href="#__codelineno-31-4"></a>  <span class="n">-ResetDataDisks</span> <span class="p">`</span>
+</span><span id="__span-31-5"><a id="__codelineno-31-5" name="__codelineno-31-5" href="#__codelineno-31-5"></a>  <span class="n">-WaitForIp</span>
+</span></code></pre></div>
+<p>To deploy the current repo to an existing VMware test appliance without rebuilding the image, use the wheel deploy
+helper. If you already know the appliance IP, this is the most direct path:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-32-1"><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="n">deploy-wheel</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-32-2"><a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a>  <span class="n">-IpAddress</span> <span class="n">192</span><span class="p">.</span><span class="n">168</span><span class="p">.</span><span class="n">167</span><span class="p">.</span><span class="n">10</span> <span class="p">`</span>
+</span><span id="__span-32-3"><a id="__codelineno-32-3" name="__codelineno-32-3" href="#__codelineno-32-3"></a>  <span class="n">-SshPassword</span> <span class="s1">&#39;&lt;admin-password&gt;&#39;</span>
+</span></code></pre></div>
+<p>If you want the helper to resolve the guest IP from VMware Tools, pass the VMX path as the <code>-VmxPath</code> argument:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-33-1"><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="n">deploy-wheel</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-33-2"><a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a>  <span class="n">-VmxPath</span> <span class="s2">&quot;image\vmware-workstation\test-vms\Atlaso-VMware\Atlaso-VMware.vmx&quot;</span> <span class="p">`</span>
+</span><span id="__span-33-3"><a id="__codelineno-33-3" name="__codelineno-33-3" href="#__codelineno-33-3"></a>  <span class="n">-SshPassword</span> <span class="s1">&#39;&lt;admin-password&gt;&#39;</span>
+</span></code></pre></div>
+<p>Do not pipe the VMX path or put it on a separate line by itself; PowerShell will try to execute the <code>.vmx</code> file. The
+helper builds <code>python -m pip wheel . -w dist</code>, uploads the latest <code>atlaso-*.whl</code> and the OIDC <code>Authlib</code> runtime wheel,
+installs both into <code>/opt/atlaso/.venv</code>, syncs <code>scripts/appliance/atlaso-helper</code> to <code>/opt/atlaso/bin/atlaso-helper</code>,
+restores virtualenv permissions, restarts <code>atlaso.service</code>, and verifies both guest loopback and host-facing
+<code>/openapi.json</code>. With <code>-SshPassword</code>, the helper uses the local Python runtime and Paramiko so SSH and sudo do not
+prompt interactively. If the selected Python cannot already import Paramiko, the helper installs it and its dependencies
+into the temporary deployment directory from the wheels downloaded under <code>dist</code>; it does not modify the global Python
+environment. When using <code>-SkipBuild</code>, keep those dependency wheels in <code>dist</code> or install the Atlaso Python dependencies
+first. You can also set <code>ATLASO_DEPLOY_SSH_PASSWORD</code> instead of passing the password on the command line. Without a
+password, it preserves the original <code>scp</code>/<code>ssh</code> key or agent workflow. Helper sync matters because the privileged helper
+is installed outside the Python virtualenv and is not replaced by <code>pip install</code>. If the app takes longer to import after
+reinstalling the wheel, increase the readiness wait with <code>-ReadinessTimeoutSeconds 120</code>.</p>
+<p>Pass <code>-IncludeLabNetworkAdapters</code> only after <code>VMnet2</code>, <code>VMnet3</code>, and <code>VMnet4</code> exist for the SiteA, WAN/SiteB, and
+trunk-like validation networks.</p>
+<p>Discover the running Workstation appliance address with:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-34-1"><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-34-2"><a id="__codelineno-34-2" name="__codelineno-34-2" href="#__codelineno-34-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">get-atlaso</span><span class="n">-vm-ip</span><span class="p">.</span><span class="n">ps1</span>
+</span></code></pre></div>
+<h2 id="powershell-roadmap">PowerShell Roadmap<a class="headerlink" href="#powershell-roadmap" title="Permanent link">&para;</a></h2>
+<p>The future PowerShell module scaffold lives in:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-35-1"><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a>clients/powershell/Atlaso/
+</span></code></pre></div>
+<p>The first generated or hand-wrapped cmdlets should map cleanly to the OpenAPI operation IDs. Token authentication should
+be preferred for automation. <code>-SkipCertificateCheck</code> may be added for lab testing only and must not be the default.</p>
+<h2 id="tests">Tests<a class="headerlink" href="#tests" title="Permanent link">&para;</a></h2>
+<p>Run:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-36-1"><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a>pytest
+</span><span id="__span-36-2"><a id="__codelineno-36-2" name="__codelineno-36-2" href="#__codelineno-36-2"></a>python<span class="w"> </span>-m<span class="w"> </span>compileall<span class="w"> </span>atlaso
+</span><span id="__span-36-3"><a id="__codelineno-36-3" name="__codelineno-36-3" href="#__codelineno-36-3"></a>python<span class="w"> </span>scripts/check_photon_compatibility.py
+</span></code></pre></div>
+<p>The MVP test suite covers auth, token revocation, scope enforcement, audit records, UI smoke rendering, and OpenAPI
+contract checks.</p>
+
+
+
+
+
+
+
+
+
+  
+  
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-circle-arrow-up" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m16 12-4-4-4 4M12 16V8"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../interface-gallery/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Verified interface gallery">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Verified interface gallery
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../hyperv-lifecycle-testing/" class="md-footer__link md-footer__link--next" aria-label="Next: Hyper-V lifecycle testing">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Hyper-V lifecycle testing
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright © 2026 Atlaso contributors
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["content.action.edit","content.action.view","content.code.copy","navigation.footer","navigation.indexes","navigation.instant","navigation.instant.prefetch","navigation.path","navigation.sections","navigation.tabs","navigation.tabs.sticky","navigation.top","navigation.tracking","search.highlight"],"search":"../../assets/javascripts/workers/search.b6b7e04f.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7f30b55.min.js"></script>
+      
+    
+  </body>
+</html>
