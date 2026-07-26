@@ -128,17 +128,30 @@ def test_login_and_dashboard_render(client):
 
 
 def test_web_terminal_requires_login_and_renders_admin_only_unavailable_state(client):
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import User
+
     unauthenticated = client.get("/terminal", follow_redirects=False)
     assert unauthenticated.status_code == 303
     assert unauthenticated.headers["location"] == "/login?next=/terminal"
 
     login(client)
+    with SessionLocal() as db:
+        admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
+        admin.web_terminal_access = False
+        db.commit()
     response = client.get("/terminal")
 
     assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
     assert "Appliance Web Terminal" in response.text
-    assert "Passwordless local SSH as admin" in response.text
+    assert "Terminal status for admin" in response.text
+    assert "No shell starts until the requirement below is resolved." in response.text
+    assert "Passwordless local SSH as admin" not in response.text
     assert "Web terminal access is disabled in Appliance Settings." in response.text
+    assert '"detail":' not in response.text
     assert "/static/vendor/xterm/xterm.js?v=5.5.0" in response.text
     assert "/static/terminal.js?v=web-terminal-review-20260716-3" in response.text
     assert "data-terminal-connect" not in response.text

@@ -232,9 +232,9 @@ def terminal_page(
     if identity is None:
         return RedirectResponse("/login?next=/terminal", status_code=303)
     user = db.get(User, int(identity.user_id))
-    if not _user_has_terminal_permission(user):
-        raise HTTPException(status_code=403, detail="Web SSH access is not enabled for this user")
     desired, selected, addresses, management_addresses = _terminal_network_state(db)
+    if desired.web_terminal_enabled and not _user_has_terminal_permission(user):
+        raise HTTPException(status_code=403, detail="Web SSH access is not enabled for this user")
     server_host = str((request.scope.get("server") or ("", 0))[0])
     page_addresses = addresses if desired.web_terminal_enabled else management_addresses
     if not _request_uses_selected_listener(request.headers, server_host, page_addresses):

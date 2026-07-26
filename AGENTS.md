@@ -54,3 +54,5 @@ The following cross-cutting boundaries always apply:
   agent policies and canonical OIDC service guide.
 - Never expose credentials, authenticated URLs, private keys, raw secrets, or secret-bearing commands in UI, jobs,
   audits, logs, documentation, screenshots, or video.
+- Browser navigation to a globally disabled Web Terminal must render the authenticated Atlaso unavailable-state page;
+  reserve JSON and protocol errors for ticket, API, and WebSocket consumers.

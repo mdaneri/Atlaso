@@ -13,6 +13,10 @@ appears under **Operations > Web terminal** on management after it is enabled in
 changes are applied. Selected additional listeners expose it through the Public Services portal instead of the admin
 shell.
 
+Opening **Web terminal** while the feature is globally disabled keeps the authenticated Atlaso application shell and
+shows an unavailable status with links to **Appliance Settings** and pending appliance changes. The browser page does
+not expose an API-style JSON error. JSON errors remain appropriate for the terminal ticket API and WebSocket protocol.
+
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 
