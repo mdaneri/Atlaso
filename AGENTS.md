@@ -31,7 +31,8 @@ normal version, CI, review, and squash-merge gates, and synchronized generated l
 [Detailed agent policies](docs/contribute/agent-policies.md) for the complete dependency-update contract.
 
 Use `python scripts/version.py bump` or `.\scripts\version.ps1` to increment and synchronize the current patch version.
-When an explicit target is required, pass `--version X.Y.Z` to Python or `-Version X.Y.Z` to PowerShell. Never update
+When an explicit target is required, pass the current version or exact next patch through `--version X.Y.Z` to Python or
+`-Version X.Y.Z` to PowerShell. Explicit targets cannot skip a patch or change the major or minor version. Never update
 individual version sources manually.
 
 ## Documentation and branding

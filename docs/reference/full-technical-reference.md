@@ -264,24 +264,25 @@ pull requests must run the same command before they can pass the required versio
 python scripts/version.py bump --base-root /path/to/main-checkout
 ```
 
-For a local version update, `python scripts/version.py bump` increments the current patch version by one. Pass an
-explicit target only when the intended version is already known:
+For a local version update, `python scripts/version.py bump` increments the current patch version by one. Pass the
+current version for an idempotent no-op or the exact next patch when the intended version is already known. For example,
+when the current version is `2.4.6`:
 
 ```bash
-python scripts/version.py bump --version 1.0.0
+python scripts/version.py bump --version 2.4.7
 ```
 
 On Windows, the PowerShell wrapper provides the same two operations:
 
 ```powershell
 .\scripts\version.ps1
-.\scripts\version.ps1 -Version 1.0.0
+.\scripts\version.ps1 -Version 2.4.7
 ```
 
 Do not edit only one version source. `python scripts/version.py check` verifies that all three sources agree; when
 `--base-root` is supplied, it also requires the pull request to be exactly one patch above its base. `--version` and
-`--base-root` are mutually exclusive. Updating an older pull request from `main` lets the workflow recalculate the next
-unused patch version.
+`--base-root` are mutually exclusive, and an explicit target cannot skip a patch or change the major or minor version.
+Updating an older pull request from `main` lets the workflow recalculate the next unused patch version.
 
 The application update build continues to append `+g<commit>` metadata to wheel versions. A merged pull request does not
 create a Git tag, GitHub release, or changelog entry; those remain deliberate release-management actions.

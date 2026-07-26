@@ -196,9 +196,14 @@ def bump(
     if target_version is not None:
         if base_root is not None:
             raise VersionError("--version cannot be combined with --base-root")
-        expected = target_version
-        if current == expected:
+        if current == target_version:
             return current, False
+        expected = current.next_patch()
+        if target_version != expected:
+            raise VersionError(
+                f"--version must be the current version {current} or next patch {expected}; "
+                f"found {target_version}"
+            )
     else:
         base_root = root if base_root is None else base_root.resolve()
         base = consistent_version(base_root)
@@ -237,7 +242,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--version",
-        help="Explicit X.Y.Z target for bump; when omitted, bump increments the current patch version.",
+        help="Explicit current or next-patch X.Y.Z target; when omitted, bump increments the patch.",
     )
     args = parser.parse_args(argv)
 

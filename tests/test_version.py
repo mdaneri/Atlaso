@@ -111,11 +111,35 @@ def test_bump_uses_explicit_target_version(tmp_path):
 
     bumped, changed = versioning.bump(
         tmp_path,
-        target_version=versioning.Version(3, 0, 0),
+        target_version=versioning.Version(2, 4, 7),
     )
 
-    assert (str(bumped), changed) == ("3.0.0", True)
+    assert (str(bumped), changed) == ("2.4.7", True)
     assert versioning.consistent_version(tmp_path) == bumped
+
+
+def test_bump_explicit_current_version_is_idempotent(tmp_path):
+    write_version_sources(tmp_path, "2.4.6")
+
+    bumped, changed = versioning.bump(
+        tmp_path,
+        target_version=versioning.Version(2, 4, 6),
+    )
+
+    assert (str(bumped), changed) == ("2.4.6", False)
+    assert versioning.consistent_version(tmp_path) == bumped
+
+
+def test_bump_rejects_explicit_target_beyond_next_patch(tmp_path):
+    write_version_sources(tmp_path, "2.4.6")
+
+    with pytest.raises(versioning.VersionError, match="next patch 2.4.7"):
+        versioning.bump(
+            tmp_path,
+            target_version=versioning.Version(3, 0, 0),
+        )
+
+    assert versioning.consistent_version(tmp_path) == versioning.Version(2, 4, 6)
 
 
 def test_bump_rejects_explicit_version_with_base_root(tmp_path):
@@ -135,11 +159,11 @@ def test_bump_rejects_explicit_version_with_base_root(tmp_path):
 def test_main_bump_accepts_explicit_version(tmp_path, capsys):
     write_version_sources(tmp_path, "2.4.6")
 
-    result = versioning.main(["bump", "--root", str(tmp_path), "--version", "2.5.0"])
+    result = versioning.main(["bump", "--root", str(tmp_path), "--version", "2.4.7"])
 
     assert result == 0
-    assert capsys.readouterr().out == "Bumped repository version to 2.5.0\n"
-    assert versioning.consistent_version(tmp_path) == versioning.Version(2, 5, 0)
+    assert capsys.readouterr().out == "Bumped repository version to 2.4.7\n"
+    assert versioning.consistent_version(tmp_path) == versioning.Version(2, 4, 7)
 
 
 def test_main_rejects_invalid_explicit_version(tmp_path, capsys):
