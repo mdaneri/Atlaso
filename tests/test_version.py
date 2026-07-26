@@ -8,6 +8,7 @@ import pytest
 
 
 SCRIPT = Path("scripts/version.py")
+POWERSHELL_WRAPPER = Path("scripts/version.ps1")
 SPEC = importlib.util.spec_from_file_location("atlaso_version_script", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 versioning = importlib.util.module_from_spec(SPEC)
@@ -103,6 +104,62 @@ def test_bump_is_idempotent_when_target_is_expected_patch(tmp_path):
     bumped, changed = versioning.bump(target, base)
 
     assert (str(bumped), changed) == ("2.4.7", False)
+
+
+def test_bump_uses_explicit_target_version(tmp_path):
+    write_version_sources(tmp_path, "2.4.6")
+
+    bumped, changed = versioning.bump(
+        tmp_path,
+        target_version=versioning.Version(3, 0, 0),
+    )
+
+    assert (str(bumped), changed) == ("3.0.0", True)
+    assert versioning.consistent_version(tmp_path) == bumped
+
+
+def test_bump_rejects_explicit_version_with_base_root(tmp_path):
+    base = tmp_path / "base"
+    target = tmp_path / "target"
+    write_version_sources(base, "2.4.6")
+    write_version_sources(target, "2.4.6")
+
+    with pytest.raises(versioning.VersionError, match="cannot be combined"):
+        versioning.bump(
+            target,
+            base,
+            target_version=versioning.Version(3, 0, 0),
+        )
+
+
+def test_main_bump_accepts_explicit_version(tmp_path, capsys):
+    write_version_sources(tmp_path, "2.4.6")
+
+    result = versioning.main(["bump", "--root", str(tmp_path), "--version", "2.5.0"])
+
+    assert result == 0
+    assert capsys.readouterr().out == "Bumped repository version to 2.5.0\n"
+    assert versioning.consistent_version(tmp_path) == versioning.Version(2, 5, 0)
+
+
+def test_main_rejects_invalid_explicit_version(tmp_path, capsys):
+    write_version_sources(tmp_path, "2.4.6")
+
+    result = versioning.main(["bump", "--root", str(tmp_path), "--version", "v2.5"])
+
+    assert result == 1
+    assert "--version must use X.Y.Z semantic versioning" in capsys.readouterr().err
+    assert versioning.consistent_version(tmp_path) == versioning.Version(2, 4, 6)
+
+
+def test_powershell_wrapper_delegates_to_version_script():
+    wrapper = POWERSHELL_WRAPPER.read_text(encoding="utf-8")
+
+    assert "ValidatePattern" in wrapper
+    assert "(Join-Path $PSScriptRoot 'version.py')" in wrapper
+    assert "'bump'" in wrapper
+    assert "$versionArguments += @('--version', $Version)" in wrapper
+    assert "if ($LASTEXITCODE -ne 0)" in wrapper
 
 
 def test_check_discovers_version_sources_when_product_paths_change(tmp_path):

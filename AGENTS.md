@@ -30,6 +30,10 @@ issue and per-update documentation requirements. They still require the `enhance
 normal version, CI, review, and squash-merge gates, and synchronized generated locks. See
 [Detailed agent policies](docs/contribute/agent-policies.md) for the complete dependency-update contract.
 
+Use `python scripts/version.py bump` or `.\scripts\version.ps1` to increment and synchronize the current patch version.
+When an explicit target is required, pass `--version X.Y.Z` to Python or `-Version X.Y.Z` to PowerShell. Never update
+individual version sources manually.
+
 ## Documentation and branding
 
 Markdown is the canonical documentation source. Follow the
