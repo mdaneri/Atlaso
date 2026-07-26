@@ -20,6 +20,7 @@
 ## Repository Delivery Workflow
 
 - [CONTRIBUTING.md](CONTRIBUTING.md) is the canonical delivery workflow. Every repository change requires a GitHub issue created or linked before implementation begins, exactly one applicable type label, relevant documentation updated in the same change, and a pull request linked with `Closes #<issue>`. Do not commit changes directly to `main`.
+- GitHub-managed version-update pull requests generated from `.github/dependabot.yml` are the only exception to the pre-existing issue and per-update documentation requirements. They must carry the `enhancement` type label plus `dependencies`, remain subject to the normal version, CI, review, and squash-merge gates, and must not weaken Atlaso's generated-lock or release boundaries. Before merging a Python update, regenerate every affected `.lock` file with Python 3.14 and pip-tools 7.6.0, preserve hashes and `--allow-unsafe`, refresh the appliance declaration fingerprint, and run the lock and Photon compatibility checks.
 
 ## UI Defaults
 

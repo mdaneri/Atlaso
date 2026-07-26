@@ -1,0 +1,36 @@
+version: 2
+
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: America/Los_Angeles
+    open-pull-requests-limit: 2
+    labels:
+      - enhancement
+      - dependencies
+    groups:
+      python-dependencies:
+        applies-to: version-updates
+        patterns:
+          - "*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:30"
+      timezone: America/Los_Angeles
+    open-pull-requests-limit: 2
+    labels:
+      - enhancement
+      - dependencies
+    groups:
+      github-actions-dependencies:
+        applies-to: version-updates
+        patterns:
+          - "*"
