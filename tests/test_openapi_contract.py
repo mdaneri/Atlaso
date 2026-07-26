@@ -55,9 +55,19 @@ def test_initial_api_resources_are_documented(client):
         "/api/v1/audit",
         "/api/v1/jobs",
         "/api/v1/settings",
+        "/api/v1/oidc/group-mappings",
     ]
     for path in expected:
         assert path in paths
+
+
+def test_oidc_group_mapping_openapi_contract(client):
+    schema = client.get("/openapi.json").json()
+    path = schema["paths"]["/api/v1/oidc/group-mappings"]
+    assert path["get"]["operationId"] == "listOidcGroupMappings"
+    assert path["post"]["operationId"] == "createOidcGroupMapping"
+    assert "OidcGroupMappingCreate" in schema["components"]["schemas"]
+    assert "OidcGroupMappingResponse" in schema["components"]["schemas"]
 
 
 def test_route_wan_mode_contract_is_interface_only(client):

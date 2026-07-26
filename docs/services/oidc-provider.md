@@ -10,8 +10,9 @@ status: current
 # Constrained OpenID Connect provider
 
 Atlaso is delivering an in-process OpenID Connect provider for appliance integrations and VCF lab environments in five
-reviewable phases. Phase 2 provides the constrained Authorization Code protocol surface. Provider enablement requires
-the applied management HTTPS setting, canonical issuer, active RS256 key, and protocol readiness.
+reviewable phases. Phase 3 adds explicit organization selection, current-state claims, and privacy-safe
+local-role/LDAP-group mappings to the constrained Authorization Code protocol surface. Provider enablement requires the
+applied management HTTPS setting, canonical issuer, active RS256 key, and protocol readiness.
 
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
@@ -98,30 +99,69 @@ conditional `UPDATE ... RETURNING` operation, so a code can succeed once even wh
 
 `/identity/authorize`, `/identity/token`, `/identity/userinfo`, and `/identity/logout` require HTTPS. A forwarded HTTPS
 indication is trusted only from the loopback management proxy. Browser authentication rotates the OIDC session
-identifier and CSRF value and never sets an operator UI user session. Unbound clients permit local identities only; an
-organization-bound client permits only its fixed enabled managed-LDAP organization.
+identifier and CSRF value and never sets an operator UI user session.
 
-ID and access tokens have five-minute lifetimes, client ID audience, and fixed `JWT` / `at+jwt` types. UserInfo
-validates the signing key, fixed algorithm, issuer, audience, expiry, source, organization and subject before returning
-claims. Logout requires a valid ID-token hint for a post-logout redirect and matches that URI byte-for-byte before
-returning optional state.
+An organization-bound client permits only its configured enabled managed-LDAP organization. Its sign-in page names that
+organization and contains no source selector; a submitted source value is rejected. An unbound client requires an
+explicit **Local** or enabled managed-LDAP organization selection on every interactive sign-in. The server resolves the
+exact selection against current persisted state. It never infers a source from a username, so identical usernames in
+Local and multiple organizations remain unambiguous, and it never treats a form-provided organization ID as trusted.
+
+ID and access tokens have five-minute lifetimes, client ID audience, and fixed `JWT` / `at+jwt` types. UserInfo validates
+the signing key, fixed algorithm, issuer, audience, expiry, client, identity source, organization, and subject against
+current database state before returning claims. Disabling a client, managed LDAP source, organization, or user blocks
+new authorization and token issuance immediately and makes UserInfo reject an existing access token. Already-issued
+JWTs remain bounded by the existing short lifetime. Logout requires a valid ID-token hint for a post-logout redirect and
+matches that URI byte-for-byte before returning optional state.
+
+## Claims and external group mappings
+
+Claims are filtered strictly by the scopes granted to the authorization code:
+
+- `openid` supplies required protocol claims such as opaque `sub`, issuer, audience, timestamps, authentication time,
+  and nonce.
+- `profile` adds `preferred_username`, display `name`, and the selected `organization`.
+- `email` adds `email` and always sets `email_verified` to `false`; Atlaso does not verify mailbox ownership.
+- `groups` adds a sorted list of explicit external mapping values.
+
+The Authentication page provides a direct-edit mapping grid for local Atlaso roles and managed LDAP groups. A mapping
+with no client is the Local or organization default. A client-specific mapping for the same source replaces that
+default; it does not append a second name. Local mappings may target only unbound clients. LDAP mappings may target
+unbound clients or clients bound to the group's organization. Atlaso rejects duplicate source/scope rows and
+case-insensitive collisions among effective external names for every affected client and identity organization.
+
+Local group claims are derived from the user's current normalized Atlaso roles. Managed LDAP group claims use current
+enabled direct and nested memberships from the existing cycle-safe group graph. Disabled groups and memberships that no
+longer exist stop contributing immediately. Only the configured external strings are emitted. LDAP group names, DNs,
+suffixes, bind identities, endpoints, server details, and unmapped names never enter ID tokens, access tokens, UserInfo,
+jobs, audits, or logs.
+
+![OIDC external group mapping grid at the desktop viewport](../assets/screenshots/authentication-group-mappings-desktop.webp)
+
+The direct-edit collection keeps source, organization, optional client override, and external name in one compact
+workspace. The responsive capture shows the same server-backed mapping contract at the narrow documentation viewport.
+
+![OIDC external group mapping grid at the responsive viewport](../assets/screenshots/authentication-group-mappings-responsive.webp)
 
 ## Backup, restore, reset, and key custody
 
 Settings backup includes provider settings, stable subject mappings, confidential-client metadata and Argon2 hashes,
-exact redirects, and encrypted signing private keys. It never includes plaintext client secrets or identity passwords. A
-restored signing key is usable only with the same `ATLASO_SECRETS_KEY`; preserve that key through the appliance recovery
-process.
+exact redirects, local-role/LDAP-group mappings, and encrypted signing private keys. Mappings use stable archive
+references such as organization slug, group name, and public client ID rather than copying database IDs. It never
+includes plaintext client secrets or identity passwords. A restored signing key is usable only with the same
+`ATLASO_SECRETS_KEY`; preserve that key through the appliance recovery process.
 
-Factory reset deletes provider settings, clients, redirects, subjects, and signing keys before reseeding disabled
-defaults. Normal database upgrades are additive: older binaries ignore the new tables. Do not destructively drop OIDC
-tables during ordinary downgrade. If complete rollback requires their removal, restore the pre-upgrade SQLite snapshot.
+Factory reset deletes provider settings, clients, redirects, subjects, group mappings, and signing keys before reseeding
+disabled defaults. Normal database upgrades create the mapping table additively through the existing metadata startup
+path; older databases retain their records. Older binaries ignore the new table. Do not destructively drop OIDC tables
+during ordinary downgrade. If complete rollback requires their removal, restore the pre-upgrade SQLite snapshot.
 
 ## Staged rollout and unsupported features
 
 1. Authentication foundation and disabled provider skeleton.
 2. Authorization Code flow, browser-session hardening, token issuance, UserInfo, and RP-initiated logout.
-3. Organization selection, scope-filtered claims, and explicit local-role/LDAP-group mappings.
+3. Organization selection, scope-filtered current-state claims, and explicit local-role/LDAP-group mappings. **Delivered
+   in this phase.**
 4. Administration and lifecycle completion, issuer/applied-certificate validation, centralized redaction, and
    integration export.
 5. VCF 9.1 interoperability and all acceptance scenarios.
@@ -140,5 +180,15 @@ These captures show responsive layouts and useful operational states referenced 
 ![Atlaso Authentication page in the clean-appliance responsive viewport.](../assets/screenshots/authentication-clean-responsive.webp)
 
 *Figure: Authentication in the verified clean-appliance responsive state.*
+
+### Authentication: Oidc Group Mappings
+
+![Atlaso Authentication page showing the OIDC external group mapping grid at the desktop viewport.](../assets/screenshots/authentication-group-mappings-desktop.webp)
+
+*Figure: OIDC external group mappings in the desktop direct-edit collection.*
+
+![Atlaso Authentication page showing the OIDC external group mapping grid at the responsive viewport.](../assets/screenshots/authentication-group-mappings-responsive.webp)
+
+*Figure: OIDC external group mappings in the responsive direct-edit collection.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->

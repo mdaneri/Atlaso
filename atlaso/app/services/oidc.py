@@ -19,19 +19,25 @@ from sqlalchemy.orm import Session, selectinload
 
 from atlaso.app.models import (
     ApplianceSettings,
+    LdapGroup,
+    LdapGroupMembership,
     LdapOrganization,
+    LdapSettings,
     LdapUser,
     OidcClient,
     OidcClientRedirectUri,
     OidcAuthorizationCode,
     OidcAuthorizationTransaction,
+    OidcGroupMapping,
     OidcProviderSettings,
     OidcSigningKey,
     OidcSubject,
+    Role,
     Setting,
     User,
     utcnow,
 )
+from atlaso.app.security import user_roles
 from atlaso.app.secrets import encrypt_secret
 from atlaso.app.secrets import decrypt_secret
 from atlaso.app.services.identity_credentials import VerifiedIdentity, ensure_oidc_subject
@@ -252,7 +258,21 @@ def discovery_document(db: Session) -> dict[str, object]:
         "token_endpoint_auth_methods_supported": [OIDC_TOKEN_ENDPOINT_AUTH_METHOD],
         "code_challenge_methods_supported": ["S256"],
         "scopes_supported": list(OIDC_SCOPES),
-        "claims_supported": ["iss", "sub", "aud", "exp", "iat", "auth_time", "nonce"],
+        "claims_supported": [
+            "iss",
+            "sub",
+            "aud",
+            "exp",
+            "iat",
+            "auth_time",
+            "nonce",
+            "preferred_username",
+            "name",
+            "organization",
+            "email",
+            "email_verified",
+            "groups",
+        ],
         "claims_parameter_supported": False,
         "request_parameter_supported": False,
         "request_uri_parameter_supported": False,
@@ -501,6 +521,7 @@ def create_client(
     for uri in normalized_logout_redirects:
         db.add(OidcClientRedirectUri(oidc_client_id=row.id, kind="post_logout", uri=uri))
     db.flush()
+    validate_all_mapping_contexts(db)
     return get_client(db, row.id), raw_secret
 
 
@@ -544,6 +565,495 @@ def list_clients(db: Session) -> list[OidcClient]:
             .order_by(OidcClient.name, OidcClient.id)
         ).scalars()
     )
+
+
+def managed_ldap_source_enabled(db: Session) -> bool:
+    settings = db.execute(select(LdapSettings)).scalar_one_or_none()
+    return bool(settings and settings.enabled)
+
+
+def enabled_login_organizations(db: Session) -> list[LdapOrganization]:
+    if not managed_ldap_source_enabled(db):
+        return []
+    return list(
+        db.execute(
+            select(LdapOrganization)
+            .where(LdapOrganization.enabled.is_(True))
+            .order_by(LdapOrganization.name, LdapOrganization.id)
+        ).scalars()
+    )
+
+
+def resolve_login_source(
+    db: Session,
+    *,
+    client: OidcClient,
+    selection: str,
+) -> tuple[str, int | None]:
+    """Resolve only a server-recognized source choice for this client."""
+    if client.organization_id is not None:
+        if selection:
+            raise OidcConfigurationError("Bound clients do not accept an organization selection.")
+        organization = db.get(LdapOrganization, client.organization_id)
+        if (
+            organization is None
+            or not organization.enabled
+            or not managed_ldap_source_enabled(db)
+        ):
+            raise OidcConfigurationError("The client authentication source is disabled.")
+        return "managed_ldap", organization.id
+    if selection == "local":
+        return "local", None
+    prefix = "managed_ldap:"
+    organization_value = selection.removeprefix(prefix)
+    if not selection.startswith(prefix) or not organization_value.isdigit():
+        raise OidcConfigurationError("Select Local or an enabled managed LDAP organization.")
+    organization_id = int(organization_value)
+    if organization_id not in {row.id for row in enabled_login_organizations(db)}:
+        raise OidcConfigurationError("Select Local or an enabled managed LDAP organization.")
+    return "managed_ldap", organization_id
+
+
+def identity_permitted_for_client(
+    db: Session,
+    *,
+    client: OidcClient,
+    identity: VerifiedIdentity,
+) -> bool:
+    if not client.enabled:
+        return False
+    if client.organization_id is not None:
+        return bool(
+            identity.source == "managed_ldap"
+            and identity.organization_id == client.organization_id
+            and managed_ldap_source_enabled(db)
+            and (
+                (organization := db.get(LdapOrganization, client.organization_id))
+                is not None
+                and organization.enabled
+            )
+        )
+    if identity.source == "local":
+        return identity.organization_id is None
+    if identity.source != "managed_ldap" or identity.organization_id is None:
+        return False
+    organization = db.get(LdapOrganization, identity.organization_id)
+    return bool(
+        managed_ldap_source_enabled(db)
+        and organization is not None
+        and organization.enabled
+    )
+
+
+def _mapping_key(
+    *,
+    source_type: str,
+    local_role: str,
+    ldap_group_id: int | None,
+    organization_id: int | None,
+    oidc_client_id: int | None,
+) -> str:
+    scope = f"client:{oidc_client_id}" if oidc_client_id is not None else "default"
+    if source_type == "local_role":
+        return f"{scope}:local_role:{local_role.casefold()}"
+    return f"{scope}:organization:{organization_id}:ldap_group:{ldap_group_id}"
+
+
+def _normalize_external_group_name(value: str) -> str:
+    normalized = value.strip()
+    if (
+        not normalized
+        or len(normalized) > 160
+        or any(ord(character) < 0x20 for character in normalized)
+    ):
+        raise OidcConfigurationError(
+            "External group names must contain 1-160 printable characters."
+        )
+    return normalized
+
+
+def list_group_mappings(db: Session) -> list[OidcGroupMapping]:
+    return list(
+        db.execute(
+            select(OidcGroupMapping)
+            .options(
+                selectinload(OidcGroupMapping.ldap_group),
+                selectinload(OidcGroupMapping.organization),
+                selectinload(OidcGroupMapping.client),
+            )
+            .order_by(
+                OidcGroupMapping.organization_id,
+                OidcGroupMapping.oidc_client_id,
+                OidcGroupMapping.source_type,
+                OidcGroupMapping.local_role,
+                OidcGroupMapping.id,
+            )
+        ).scalars()
+    )
+
+
+def group_mapping_to_dict(row: OidcGroupMapping) -> dict[str, object]:
+    source_name = (
+        row.local_role
+        if row.source_type == "local_role"
+        else (row.ldap_group.name if row.ldap_group is not None else "")
+    )
+    return {
+        "id": row.id,
+        "source_type": row.source_type,
+        "source_name": source_name,
+        "local_role": row.local_role,
+        "ldap_group_id": row.ldap_group_id,
+        "organization_id": row.organization_id,
+        "organization_name": row.organization.name if row.organization is not None else "Local",
+        "oidc_client_id": row.oidc_client_id,
+        "oidc_client_name": row.client.name if row.client is not None else "",
+        "external_group_name": row.external_group_name,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    }
+
+
+def _mapping_source_key(row: OidcGroupMapping) -> str:
+    if row.source_type == "local_role":
+        return f"local_role:{row.local_role.casefold()}"
+    return f"ldap_group:{row.ldap_group_id}"
+
+
+def _effective_mapping_rows(
+    db: Session,
+    *,
+    client: OidcClient | None,
+    source: str,
+    organization_id: int | None,
+) -> dict[str, OidcGroupMapping]:
+    rows = list_group_mappings(db)
+    relevant: list[OidcGroupMapping]
+    if source == "local":
+        relevant = [
+            row
+            for row in rows
+            if row.source_type == "local_role" and row.organization_id is None
+        ]
+    else:
+        relevant = [
+            row
+            for row in rows
+            if row.source_type == "ldap_group"
+            and row.organization_id == organization_id
+        ]
+    effective = {
+        _mapping_source_key(row): row
+        for row in relevant
+        if row.oidc_client_id is None
+    }
+    if client is not None:
+        effective.update(
+            {
+                _mapping_source_key(row): row
+                for row in relevant
+                if row.oidc_client_id == client.id
+            }
+        )
+    return effective
+
+
+def _validate_effective_mapping_rows(rows: dict[str, OidcGroupMapping]) -> None:
+    names: dict[str, str] = {}
+    for source_key, row in rows.items():
+        normalized_name = row.external_group_name.casefold()
+        existing_source = names.get(normalized_name)
+        if existing_source is not None and existing_source != source_key:
+            raise OidcConfigurationError(
+                "Effective external group names must be unique case-insensitively "
+                "for each client and organization."
+            )
+        names[normalized_name] = source_key
+
+
+def validate_all_mapping_contexts(db: Session) -> None:
+    clients = list_clients(db)
+    _validate_effective_mapping_rows(
+        _effective_mapping_rows(
+            db,
+            client=None,
+            source="local",
+            organization_id=None,
+        )
+    )
+    for client in clients:
+        if client.organization_id is None:
+            _validate_effective_mapping_rows(
+                _effective_mapping_rows(
+                    db,
+                    client=client,
+                    source="local",
+                    organization_id=None,
+                )
+            )
+    organizations = list(
+        db.execute(select(LdapOrganization).order_by(LdapOrganization.id)).scalars()
+    )
+    for organization in organizations:
+        _validate_effective_mapping_rows(
+            _effective_mapping_rows(
+                db,
+                client=None,
+                source="managed_ldap",
+                organization_id=organization.id,
+            )
+        )
+        for client in clients:
+            if client.organization_id in {None, organization.id}:
+                _validate_effective_mapping_rows(
+                    _effective_mapping_rows(
+                        db,
+                        client=client,
+                        source="managed_ldap",
+                        organization_id=organization.id,
+                    )
+                )
+
+
+def create_group_mapping(
+    db: Session,
+    *,
+    source_type: str,
+    local_role: str,
+    ldap_group_id: int | None,
+    oidc_client_id: int | None,
+    external_group_name: str,
+    validate_effective_contexts: bool = True,
+) -> OidcGroupMapping:
+    client = get_client(db, oidc_client_id) if oidc_client_id is not None else None
+    normalized_role = local_role.strip().casefold()
+    organization_id: int | None = None
+    group: LdapGroup | None = None
+    if source_type == "local_role":
+        if normalized_role not in {role.value for role in Role} or ldap_group_id is not None:
+            raise OidcConfigurationError("Select one supported local Atlaso role.")
+        if client is not None and client.organization_id is not None:
+            raise OidcConfigurationError(
+                "Local role overrides are valid only for unbound OIDC clients."
+            )
+    elif source_type == "ldap_group":
+        if normalized_role or ldap_group_id is None:
+            raise OidcConfigurationError("Select one managed LDAP group.")
+        group = db.get(LdapGroup, ldap_group_id)
+        if group is None:
+            raise OidcConfigurationError("Managed LDAP group not found.")
+        organization_id = group.organization_id
+        if (
+            client is not None
+            and client.organization_id is not None
+            and client.organization_id != organization_id
+        ):
+            raise OidcConfigurationError(
+                "A client override must use a group from its bound organization."
+            )
+    else:
+        raise OidcConfigurationError("Unsupported OIDC group mapping source.")
+    mapping_key = _mapping_key(
+        source_type=source_type,
+        local_role=normalized_role,
+        ldap_group_id=group.id if group is not None else None,
+        organization_id=organization_id,
+        oidc_client_id=client.id if client is not None else None,
+    )
+    if db.execute(
+        select(OidcGroupMapping).where(OidcGroupMapping.mapping_key == mapping_key)
+    ).scalar_one_or_none():
+        raise OidcConflictError(
+            "A mapping already exists for this source and mapping scope."
+        )
+    row = OidcGroupMapping(
+        mapping_key=mapping_key,
+        source_type=source_type,
+        local_role=normalized_role,
+        ldap_group_id=group.id if group is not None else None,
+        organization_id=organization_id,
+        oidc_client_id=client.id if client is not None else None,
+        external_group_name=_normalize_external_group_name(external_group_name),
+        updated_at=utcnow(),
+    )
+    db.add(row)
+    db.flush()
+    if validate_effective_contexts:
+        validate_all_mapping_contexts(db)
+    return db.execute(
+        select(OidcGroupMapping)
+        .where(OidcGroupMapping.id == row.id)
+        .options(
+            selectinload(OidcGroupMapping.ldap_group),
+            selectinload(OidcGroupMapping.organization),
+            selectinload(OidcGroupMapping.client),
+        )
+    ).scalar_one()
+
+
+def update_group_mapping(
+    db: Session,
+    *,
+    row: OidcGroupMapping,
+    oidc_client_id: int | None,
+    external_group_name: str,
+) -> OidcGroupMapping:
+    client = get_client(db, oidc_client_id) if oidc_client_id is not None else None
+    if row.source_type == "local_role":
+        if client is not None and client.organization_id is not None:
+            raise OidcConfigurationError(
+                "Local role overrides are valid only for unbound OIDC clients."
+            )
+    elif row.source_type == "ldap_group":
+        if (
+            client is not None
+            and client.organization_id is not None
+            and client.organization_id != row.organization_id
+        ):
+            raise OidcConfigurationError(
+                "A client override must use a group from its bound organization."
+            )
+    else:
+        raise OidcConfigurationError("Unsupported OIDC group mapping source.")
+    mapping_key = _mapping_key(
+        source_type=row.source_type,
+        local_role=row.local_role,
+        ldap_group_id=row.ldap_group_id,
+        organization_id=row.organization_id,
+        oidc_client_id=client.id if client is not None else None,
+    )
+    conflict = db.execute(
+        select(OidcGroupMapping).where(
+            OidcGroupMapping.mapping_key == mapping_key,
+            OidcGroupMapping.id != row.id,
+        )
+    ).scalar_one_or_none()
+    if conflict is not None:
+        raise OidcConflictError(
+            "A mapping already exists for this source and mapping scope."
+        )
+    row.mapping_key = mapping_key
+    row.oidc_client_id = client.id if client is not None else None
+    row.external_group_name = _normalize_external_group_name(external_group_name)
+    row.updated_at = utcnow()
+    db.add(row)
+    db.flush()
+    validate_all_mapping_contexts(db)
+    return db.execute(
+        select(OidcGroupMapping)
+        .where(OidcGroupMapping.id == row.id)
+        .options(
+            selectinload(OidcGroupMapping.ldap_group),
+            selectinload(OidcGroupMapping.organization),
+            selectinload(OidcGroupMapping.client),
+        )
+    ).scalar_one()
+
+
+def _resolved_enabled_ldap_group_ids(db: Session, user: LdapUser) -> set[int]:
+    groups = {
+        row.id: row
+        for row in db.execute(
+            select(LdapGroup).where(
+                LdapGroup.organization_id == user.organization_id,
+                LdapGroup.enabled.is_(True),
+            )
+        ).scalars()
+    }
+    memberships = list(
+        db.execute(
+            select(LdapGroupMembership).where(
+                LdapGroupMembership.group_id.in_(groups)
+            )
+        ).scalars()
+    )
+    resolved = {
+        membership.group_id
+        for membership in memberships
+        if membership.member_user_id == user.id and membership.group_id in groups
+    }
+    parents: dict[int, set[int]] = {}
+    for membership in memberships:
+        if (
+            membership.member_group_id in groups
+            and membership.group_id in groups
+        ):
+            parents.setdefault(int(membership.member_group_id), set()).add(
+                membership.group_id
+            )
+    pending = list(resolved)
+    while pending:
+        current = pending.pop()
+        for parent_id in parents.get(current, set()):
+            if parent_id not in resolved:
+                resolved.add(parent_id)
+                pending.append(parent_id)
+    return resolved
+
+
+def mapped_external_groups(
+    db: Session,
+    *,
+    client: OidcClient,
+    identity: VerifiedIdentity,
+) -> list[str]:
+    effective = _effective_mapping_rows(
+        db,
+        client=client,
+        source=identity.source,
+        organization_id=identity.organization_id,
+    )
+    _validate_effective_mapping_rows(effective)
+    selected_source_keys: set[str] = set()
+    if identity.source == "local":
+        user = db.get(User, identity.source_record_id)
+        if user is None or not user.enabled or user.auth_provider != "local":
+            raise OidcConfigurationError("Identity is disabled.")
+        selected_source_keys = {
+            f"local_role:{role.casefold()}" for role in user_roles(user)
+        }
+    elif identity.source == "managed_ldap":
+        user = db.get(LdapUser, identity.source_record_id)
+        if user is None or not user.enabled:
+            raise OidcConfigurationError("Identity is disabled.")
+        selected_source_keys = {
+            f"ldap_group:{group_id}"
+            for group_id in _resolved_enabled_ldap_group_ids(db, user)
+        }
+    names = [
+        row.external_group_name
+        for source_key, row in effective.items()
+        if source_key in selected_source_keys
+    ]
+    return sorted(names, key=str.casefold)
+
+
+def scoped_identity_claims(
+    db: Session,
+    *,
+    client: OidcClient,
+    identity: VerifiedIdentity,
+    scopes: str,
+) -> dict[str, object]:
+    granted = set(scopes.split())
+    claims: dict[str, object] = {}
+    if "profile" in granted:
+        claims.update(
+            {
+                "preferred_username": identity.username,
+                "name": identity.display_name,
+                "organization": identity.organization_name,
+            }
+        )
+    if "email" in granted:
+        claims.update({"email": identity.email, "email_verified": False})
+    if "groups" in granted:
+        claims["groups"] = mapped_external_groups(
+            db,
+            client=client,
+            identity=identity,
+        )
+    return claims
 
 
 def list_subjects(db: Session) -> list[dict[str, object]]:
@@ -664,25 +1174,42 @@ def issue_authorization_code(
     ):
         raise OidcConfigurationError("Authorization request expired.")
     client = db.get(OidcClient, transaction.oidc_client_id)
-    if client is None or not client.enabled or (client.organization and not client.organization.enabled):
+    if client is None:
         raise OidcConfigurationError("Unknown or disabled client.")
-    if client.organization_id is None and identity.source != "local":
+    current_identity = identity_from_source(
+        db,
+        source=identity.source,
+        source_record_id=identity.source_record_id,
+        organization_id=identity.organization_id,
+    )
+    if (
+        current_identity is None
+        or not identity_permitted_for_client(
+            db,
+            client=client,
+            identity=current_identity,
+        )
+    ):
         raise OidcConfigurationError("Identity is not permitted for this client.")
-    if client.organization_id is not None and (identity.source != "managed_ldap" or identity.organization_id != client.organization_id):
-        raise OidcConfigurationError("Identity is not permitted for this client.")
+    scoped_identity_claims(
+        db,
+        client=client,
+        identity=current_identity,
+        scopes=transaction.scopes,
+    )
     raw = _new_opaque_value()
-    subject = ensure_oidc_subject(db, identity)
+    subject = ensure_oidc_subject(db, current_identity)
     transaction.subject_id = subject.id
-    transaction.organization_id = identity.organization_id
-    transaction.source = identity.source
+    transaction.organization_id = current_identity.organization_id
+    transaction.source = current_identity.source
     transaction.auth_time = auth_time
     db.add(OidcAuthorizationCode(
         code_hash=_token_hash(raw), oidc_client_id=client.id, subject_id=subject.id,
-        organization_id=identity.organization_id, redirect_uri=transaction.redirect_uri,
+        organization_id=current_identity.organization_id, redirect_uri=transaction.redirect_uri,
         scopes=transaction.scopes, state=transaction.state, nonce=transaction.nonce,
         code_challenge=transaction.code_challenge,
         browser_session_id=authenticated_browser_session_id,
-        source=identity.source,
+        source=current_identity.source,
         auth_time=auth_time,
         expires_at=utcnow() + timedelta(seconds=client.authorization_code_lifetime_seconds),
     ))
@@ -724,19 +1251,39 @@ def issue_tokens(db: Session, *, code: OidcAuthorizationCode, client: OidcClient
     subject = db.get(OidcSubject, code.subject_id)
     if subject is None:
         raise OidcConfigurationError("Invalid authorization code.")
+    source_record_id = (
+        subject.local_user_id if code.source == "local" else subject.ldap_user_id
+    )
+    if source_record_id is None:
+        raise OidcConfigurationError("Invalid authorization code.")
+    identity = identity_from_source(
+        db,
+        source=code.source,
+        source_record_id=source_record_id,
+        organization_id=code.organization_id,
+    )
+    if (
+        identity is None
+        or not identity_permitted_for_client(db, client=client, identity=identity)
+    ):
+        raise OidcConfigurationError("Invalid authorization code.")
+    identity_claims = scoped_identity_claims(
+        db,
+        client=client,
+        identity=identity,
+        scopes=code.scopes,
+    )
     now = utcnow(); issued = int(now.timestamp())
     common = {"iss": normalize_issuer_url(provider.issuer_url), "sub": subject.subject_uuid, "aud": client.client_id, "iat": issued, "auth_time": int(_aware(code.auth_time).timestamp())}
     id_claims = common | {
         "exp": issued + OIDC_TOKEN_LIFETIME_SECONDS,
         "nonce": code.nonce,
         "client_id": client.client_id,
-    }
+    } | identity_claims
     access_claims = common | {
         "exp": issued + OIDC_TOKEN_LIFETIME_SECONDS,
         "scope": code.scopes,
         "client_id": client.client_id,
-        "source": code.source,
-        "organization_id": code.organization_id,
     }
     return {
         "token_type": "Bearer",
@@ -764,6 +1311,8 @@ def identity_from_source(
             organization_name="Local",
         )
     if source == "managed_ldap":
+        if not managed_ldap_source_enabled(db):
+            return None
         user = db.execute(
             select(LdapUser)
             .where(LdapUser.id == source_record_id)
@@ -841,7 +1390,10 @@ def validate_bearer_token(
     return claims
 
 
-def validate_userinfo_claims(db: Session, claims: dict[str, object]) -> OidcSubject:
+def validate_userinfo_claims(
+    db: Session,
+    claims: dict[str, object],
+) -> tuple[OidcSubject, VerifiedIdentity, OidcClient]:
     client = client_by_public_id(db, str(claims.get("client_id") or ""))
     if client is None or not client.enabled:
         raise OidcConfigurationError("Invalid token.")
@@ -850,12 +1402,16 @@ def validate_userinfo_claims(db: Session, claims: dict[str, object]) -> OidcSubj
     ).scalar_one_or_none()
     if subject is None:
         raise OidcConfigurationError("Invalid token.")
-    source = str(claims.get("source") or "")
-    organization_id = claims.get("organization_id")
-    if organization_id is not None and not isinstance(organization_id, int):
-        raise OidcConfigurationError("Invalid token.")
-    source_record_id = subject.local_user_id if source == "local" else subject.ldap_user_id
-    if source_record_id is None:
+    if subject.local_user_id is not None:
+        source = "local"
+        source_record_id = subject.local_user_id
+        organization_id = None
+    elif subject.ldap_user_id is not None:
+        source = "managed_ldap"
+        source_record_id = subject.ldap_user_id
+        ldap_user = db.get(LdapUser, subject.ldap_user_id)
+        organization_id = ldap_user.organization_id if ldap_user is not None else None
+    else:
         raise OidcConfigurationError("Invalid token.")
     identity = identity_from_source(
         db,
@@ -865,6 +1421,6 @@ def validate_userinfo_claims(db: Session, claims: dict[str, object]) -> OidcSubj
     )
     if identity is None:
         raise OidcConfigurationError("Invalid token.")
-    if client.organization_id != identity.organization_id:
+    if not identity_permitted_for_client(db, client=client, identity=identity):
         raise OidcConfigurationError("Invalid token.")
-    return subject
+    return subject, identity, client

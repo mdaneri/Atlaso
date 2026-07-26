@@ -996,6 +996,34 @@ class OidcClientEnabledUpdate(BaseModel):
     enabled: bool
 
 
+class OidcGroupMappingCreate(BaseModel):
+    source_type: Literal["local_role", "ldap_group"]
+    local_role: str = Field(default="", max_length=50)
+    ldap_group_id: int | None = None
+    oidc_client_id: int | None = None
+    external_group_name: str = Field(min_length=1, max_length=160)
+
+
+class OidcGroupMappingUpdate(BaseModel):
+    oidc_client_id: int | None = None
+    external_group_name: str = Field(min_length=1, max_length=160)
+
+
+class OidcGroupMappingResponse(BaseModel):
+    id: int
+    source_type: Literal["local_role", "ldap_group"]
+    source_name: str
+    local_role: str
+    ldap_group_id: int | None
+    organization_id: int | None
+    organization_name: str
+    oidc_client_id: int | None
+    oidc_client_name: str
+    external_group_name: str
+    created_at: datetime
+    updated_at: datetime
+
+
 class OidcSigningKeyResponse(BaseModel):
     id: int
     kid: str

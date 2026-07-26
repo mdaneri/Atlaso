@@ -782,7 +782,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v165" in service_worker.text
+    assert "atlaso-pwa-v166" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -794,8 +794,8 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/codemirror/atlaso-codemirror.min.js" in service_worker.text
-    assert "/static/app.css?v=atlaso-brand-20260725-1" in service_worker.text
-    assert "/static/app.js?v=atlaso-brand-20260725-1" in service_worker.text
+    assert "/static/app.css?v=atlaso-brand-20260725-2" in service_worker.text
+    assert "/static/app.js?v=atlaso-brand-20260725-5" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -804,7 +804,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=atlaso-brand-20260725-1" in offline.text
+    assert "/static/app.css?v=atlaso-brand-20260725-2" in offline.text
 
 
 def test_reported_template_accessibility_contracts():
@@ -870,8 +870,8 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=atlaso-brand-20260725-1" in page.text
-    assert "/static/app.js?v=atlaso-brand-20260725-1" in page.text
+    assert "/static/app.css?v=atlaso-brand-20260725-2" in page.text
+    assert "/static/app.js?v=atlaso-brand-20260725-5" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
