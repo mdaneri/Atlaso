@@ -12,6 +12,7 @@ status: current
 
 - [API reference](api.md)
 - [Verified interface gallery](interface-gallery.md)
+- [Appliance Apply technical reference](appliance-apply-technical.md)
 - [Local console technical reference](appliance-console-technical.md)
 - [Full technical reference](full-technical-reference.md)
 - [Hyper-V lifecycle testing](hyperv-lifecycle-testing.md)

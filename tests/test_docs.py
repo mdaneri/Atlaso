@@ -95,3 +95,37 @@ def test_embedded_screenshot_generation_is_idempotent(
     assert "Keep this second paragraph too." in first
     assert first.count("## Interface overview") == 1
     assert first.count("## Additional verified states") == 1
+
+
+def test_appliance_apply_operator_guide_stays_task_focused() -> None:
+    root = Path(__file__).resolve().parents[1]
+    operator_page = (root / "docs" / "operate" / "appliance-apply.md").read_text(encoding="utf-8")
+    technical_page = (root / "docs" / "reference" / "appliance-apply-technical.md").read_text(encoding="utf-8")
+    headings = {line for line in operator_page.splitlines() if line.startswith("## ")}
+
+    assert {
+        "## Before you begin",
+        "## Review pending changes",
+        "## Submit and monitor",
+        "## Verify the result",
+        "## Recover from a failed apply",
+        "## Safety boundaries",
+        "## Complete technical contents",
+    } <= headings
+    assert len(operator_page.splitlines()) < 200
+    assert "../reference/appliance-apply-technical.md" in operator_page
+    assert "No original section was removed." in operator_page
+    assert "Every helper or adapter command in that component" in operator_page
+    technical_headings = {line for line in technical_page.splitlines() if line.startswith("#")}
+    assert {
+        "## Workflow and execution model",
+        "## Appliance and network units",
+        "## Infrastructure and security units",
+        "## Appliance settings and operations",
+        "## State, results, and interface contracts",
+        "### Workflow architecture",
+        "### Local Users apply",
+        "### DNS/DHCP apply",
+        "### Job result",
+        "### UI expectations",
+    } <= technical_headings
