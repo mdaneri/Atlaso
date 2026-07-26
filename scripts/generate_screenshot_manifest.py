@@ -38,12 +38,12 @@ CAPTURE_OVERRIDES = {
         "atlaso_version": "0.9.22",
     },
     "terminal-clean-desktop": {
-        "source_commit": "7bf5aa1",
+        "source_commit": "d10ffe3e2959+installed-record",
         "atlaso_version": "0.9.26",
         "capture_method": "chrome-browser",
     },
     "terminal-clean-responsive": {
-        "source_commit": "7bf5aa1",
+        "source_commit": "d10ffe3e2959+installed-record",
         "atlaso_version": "0.9.26",
         "capture_method": "chrome-browser",
     },
