@@ -95,3 +95,23 @@ def test_embedded_screenshot_generation_is_idempotent(
     assert "Keep this second paragraph too." in first
     assert first.count("## Interface overview") == 1
     assert first.count("## Additional verified states") == 1
+
+
+def test_appliance_apply_operator_guide_stays_task_focused() -> None:
+    root = Path(__file__).resolve().parents[1]
+    operator_page = (root / "docs" / "operate" / "appliance-apply.md").read_text(encoding="utf-8")
+    technical_page = (root / "docs" / "reference" / "appliance-apply-technical.md").read_text(encoding="utf-8")
+    headings = {line for line in operator_page.splitlines() if line.startswith("## ")}
+
+    assert {
+        "## Before you begin",
+        "## Review pending changes",
+        "## Submit and monitor",
+        "## Verify the result",
+        "## Recover from a failed apply",
+        "## Safety boundaries",
+    } <= headings
+    assert len(operator_page.splitlines()) < 200
+    assert "../reference/appliance-apply-technical.md" in operator_page
+    assert "## Local Users Apply" not in operator_page
+    assert "## Local Users Apply" in technical_page

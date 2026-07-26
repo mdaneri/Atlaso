@@ -54,6 +54,7 @@ nav = [
     { "Overview" = "reference/index.md" },
     { "API reference" = "reference/api.md" },
     { "Verified interface gallery" = "reference/interface-gallery.md" },
+    { "Appliance Apply technical reference" = "reference/appliance-apply-technical.md" },
     { "Local console technical reference" = "reference/appliance-console-technical.md" },
     { "Full technical reference" = "reference/full-technical-reference.md" },
     { "Hyper-V lifecycle testing" = "reference/hyperv-lifecycle-testing.md" },
