@@ -155,6 +155,12 @@ def test_full_lifecycle_plan_includes_passwordless_web_terminal_acceptance():
     assert any("atomic generated certificate request with explicit SAN verification" in check for check in plan["checks"])
     assert "ldap" in plan["apply_units"]
     assert any("Managed LDAP desired state" in check for check in plan["checks"])
+    assert any(
+        "explicit Local selection" in check
+        and "local-role group mapping" in check
+        and "scope-filtered claims" in check
+        for check in plan["checks"]
+    )
 
 
 def test_release_database_identity_uses_privileged_appliance_command(monkeypatch):

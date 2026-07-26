@@ -522,7 +522,7 @@ def lifecycle_plan(args: argparse.Namespace) -> dict[str, Any]:
             "ESXi PXE desired state, DHCP boot options, TFTP artifacts, and Hyper-V PXE VM smoke",
             "ESX NFS 3 and 4.1 desired state, blank-disk initialization, equal IPv4/IPv6 DNS targets, exports, sockets, firewall rules, and persistence evidence",
             "passwordless admin web terminal on management and one selected extra interface",
-            "OIDC Authorization Code, PKCE S256, signed browser session, five-minute RS256 tokens, UserInfo, replay rejection, and exact logout redirect",
+            "OIDC Authorization Code, explicit Local selection, client-specific local-role group mapping, scope-filtered claims, PKCE S256, signed browser session, five-minute RS256 tokens, UserInfo revalidation, replay rejection, and exact logout redirect",
             "client DNS/DHCP/routing probes",
             "optional signed release preview upgrade plus deliberately broken development rollback with database identity verification",
         ],
@@ -1181,7 +1181,7 @@ def oidc_authorization_code_check(client: HttpClient, args: argparse.Namespace) 
             "name": "Lifecycle OIDC client",
             "redirect_uris": [redirect_uri],
             "post_logout_redirect_uris": [logout_uri],
-            "allowed_scopes": ["openid", "profile"],
+            "allowed_scopes": ["openid", "profile", "email", "groups"],
             "allow_loopback_redirects": False,
             "access_token_lifetime_seconds": 300,
             "id_token_lifetime_seconds": 300,
@@ -1191,6 +1191,17 @@ def oidc_authorization_code_check(client: HttpClient, args: argparse.Namespace) 
     )
     oidc_client = created["client"]
     client_secret = created["client_secret"]
+    mapped_group_name = "Lifecycle Administrators"
+    client.json_request(
+        "POST",
+        "/api/v1/oidc/group-mappings",
+        json_body={
+            "source_type": "local_role",
+            "local_role": "admin",
+            "oidc_client_id": oidc_client["id"],
+            "external_group_name": mapped_group_name,
+        },
+    )
     provider = client.json_request("GET", "/api/v1/oidc/provider")
     provider["enabled"] = True
     provider["issuer_url"] = "https://core.atlaso.internal/identity"
@@ -1220,7 +1231,7 @@ def oidc_authorization_code_check(client: HttpClient, args: argparse.Namespace) 
             "response_mode": "query",
             "client_id": oidc_client["client_id"],
             "redirect_uri": redirect_uri,
-            "scope": "openid profile",
+            "scope": "openid profile email groups",
             "state": "lifecycle-state",
             "nonce": "lifecycle-nonce",
             "code_challenge": challenge,
@@ -1234,6 +1245,8 @@ def oidc_authorization_code_check(client: HttpClient, args: argparse.Namespace) 
     )
     if status != 200:
         raise LifecycleError(f"OIDC authorization page failed with HTTP {status}: {body[:300]}")
+    if '<select name="source" required>' not in body or '<option value="local">Local</option>' not in body:
+        raise LifecycleError("OIDC unbound client did not require an explicit Local or organization selection.")
     transaction_match = re.search(r'name="transaction" value="([^"]+)"', body)
     csrf_match = re.search(r'name="csrf" value="([^"]+)"', body)
     cookie = header_value(headers, "Set-Cookie")
@@ -1248,6 +1261,7 @@ def oidc_authorization_code_check(client: HttpClient, args: argparse.Namespace) 
         form={
             "transaction": transaction_match.group(1),
             "csrf": csrf_match.group(1),
+            "source": "local",
             "username": args.username,
             "password": args.password,
         },
@@ -1281,14 +1295,38 @@ def oidc_authorization_code_check(client: HttpClient, args: argparse.Namespace) 
     tokens = json.loads(token_body)
     if tokens.get("expires_in") != 300 or not tokens.get("id_token") or not tokens.get("access_token"):
         raise LifecycleError("OIDC token response did not contain five-minute ID and access tokens.")
+    try:
+        payload_segment = tokens["id_token"].split(".")[1]
+        id_claims = json.loads(
+            base64.urlsafe_b64decode(payload_segment + ("=" * (-len(payload_segment) % 4)))
+        )
+    except (IndexError, ValueError, json.JSONDecodeError) as exc:
+        raise LifecycleError("OIDC ID token payload was not a valid JWT JSON object.") from exc
+    expected_claims = {
+        "preferred_username": args.username,
+        "organization": "Local",
+        "email_verified": False,
+        "groups": [mapped_group_name],
+    }
+    for claim_name, expected_value in expected_claims.items():
+        if id_claims.get(claim_name) != expected_value:
+            raise LifecycleError(
+                f"OIDC ID token claim {claim_name} was {id_claims.get(claim_name)!r}, expected {expected_value!r}."
+            )
     userinfo_status, userinfo_body, _userinfo_headers = client.request(
         "GET",
         "/identity/userinfo",
         headers={"Authorization": f"Bearer {tokens['access_token']}"},
         follow_redirects=False,
     )
-    if userinfo_status != 200 or not json.loads(userinfo_body).get("sub"):
+    userinfo = json.loads(userinfo_body)
+    if userinfo_status != 200 or not userinfo.get("sub"):
         raise LifecycleError(f"OIDC UserInfo failed with HTTP {userinfo_status}: {userinfo_body[:300]}")
+    for claim_name, expected_value in expected_claims.items():
+        if userinfo.get(claim_name) != expected_value:
+            raise LifecycleError(
+                f"OIDC UserInfo claim {claim_name} was {userinfo.get(claim_name)!r}, expected {expected_value!r}."
+            )
     replay_status, _replay_body, _replay_headers = client.request(
         "POST",
         "/identity/token",
@@ -1319,6 +1357,9 @@ def oidc_authorization_code_check(client: HttpClient, args: argparse.Namespace) 
         "issuer": enabled.get("issuer_url"),
         "token_lifetime_seconds": tokens.get("expires_in"),
         "userinfo_subject_present": True,
+        "explicit_source": "local",
+        "mapped_groups": id_claims.get("groups"),
+        "scope_filtered_claims": sorted(expected_claims),
         "replay_status": replay_status,
         "logout_redirect": expected_logout,
     }

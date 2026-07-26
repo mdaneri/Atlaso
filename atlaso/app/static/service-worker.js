@@ -1,10 +1,10 @@
-const ATLASO_CACHE = "atlaso-pwa-v165";
+const ATLASO_CACHE = "atlaso-pwa-v166";
 const ATLASO_ASSETS = [
   "/manifest.webmanifest",
   "/favicon.ico",
   "/static/offline.html",
-  "/static/app.css?v=atlaso-brand-20260725-1",
-  "/static/app.js?v=atlaso-brand-20260725-1",
+  "/static/app.css?v=atlaso-brand-20260725-2",
+  "/static/app.js?v=atlaso-brand-20260725-5",
   "/static/terminal.js?v=web-terminal-review-20260716-3",
   "/static/vendor/xterm/xterm.css?v=5.5.0",
   "/static/vendor/xterm/xterm.js?v=5.5.0",

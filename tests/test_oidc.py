@@ -119,6 +119,7 @@ def _finish_local_login(client, transaction: str, csrf: str):
         data={
             "transaction": transaction,
             "csrf": csrf,
+            "source": "local",
             "username": "admin",
             "password": "atlaso-admin",
         },
@@ -141,6 +142,12 @@ def _exchange_code(
         },
         headers={"Authorization": f"Basic {credentials}"},
     )
+
+
+def _jwt_claims(token: str) -> dict[str, object]:
+    segment = token.split(".")[1]
+    padded = segment + ("=" * (-len(segment) % 4))
+    return json.loads(base64.urlsafe_b64decode(padded))
 
 
 def test_oidc_public_documents_require_complete_protocol_readiness(client):
@@ -325,7 +332,7 @@ def test_sqlite_foreign_keys_are_enabled(client):
 def test_managed_ldap_credential_service_checks_persisted_scope_before_helper(client, monkeypatch):
     from atlaso.app.adapters.system import AdapterResult
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import LdapOrganization, LdapUser
+    from atlaso.app.models import LdapOrganization, LdapSettings, LdapUser
     from atlaso.app.services import identity_credentials
 
     calls: list[tuple[str, str]] = []
@@ -341,6 +348,8 @@ def test_managed_ldap_credential_service_checks_persisted_scope_before_helper(cl
 
     monkeypatch.setattr(identity_credentials, "SystemAdapter", AuthenticationAdapter)
     with SessionLocal() as db:
+        settings = db.execute(select(LdapSettings)).scalar_one()
+        settings.enabled = True
         organization = LdapOrganization(
             name="Research",
             slug="research",
@@ -387,11 +396,11 @@ def test_managed_ldap_credential_service_checks_persisted_scope_before_helper(cl
         assert len(calls) == 1
 
 
-def test_oidc_backup_restore_preserves_subject_client_and_encrypted_key(client):
+def test_oidc_backup_restore_preserves_subject_client_mapping_and_encrypted_key(client):
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import OidcClient, OidcSigningKey, OidcSubject, User
+    from atlaso.app.models import OidcClient, OidcGroupMapping, OidcSigningKey, OidcSubject, User
     from atlaso.app.services.identity_credentials import VerifiedIdentity, ensure_oidc_subject
-    from atlaso.app.services.oidc import create_client, generate_signing_key
+    from atlaso.app.services.oidc import create_client, create_group_mapping, generate_signing_key
     from atlaso.app.services.settings_archive import (
         export_settings_archive,
         factory_reset_desired_state,
@@ -419,6 +428,14 @@ def test_oidc_backup_restore_preserves_subject_client_and_encrypted_key(client):
             enabled=True,
         )
         key, _ = generate_signing_key(db, rotate=False)
+        create_group_mapping(
+            db,
+            source_type="local_role",
+            local_role="admin",
+            ldap_group_id=None,
+            oidc_client_id=client_row.id,
+            external_group_name="Backup Administrators",
+        )
         encrypted_private_key = key.private_key_encrypted
         db.commit()
         archive = export_settings_archive(db, actor="admin")
@@ -428,6 +445,7 @@ def test_oidc_backup_restore_preserves_subject_client_and_encrypted_key(client):
         assert _secret not in serialized
         factory_reset_desired_state(db)
         assert db.execute(select(OidcClient)).scalar_one_or_none() is None
+        assert db.execute(select(OidcGroupMapping)).scalar_one_or_none() is None
         restore_settings_archive(db, archive)
         assert db.execute(select(OidcSubject)).scalar_one().subject_uuid == subject_uuid
         assert db.execute(select(OidcClient)).scalar_one().client_id == client_row.client_id
@@ -435,6 +453,9 @@ def test_oidc_backup_restore_preserves_subject_client_and_encrypted_key(client):
             db.execute(select(OidcSigningKey)).scalar_one().private_key_encrypted
             == encrypted_private_key
         )
+        restored_mapping = db.execute(select(OidcGroupMapping)).scalar_one()
+        assert restored_mapping.external_group_name == "Backup Administrators"
+        assert restored_mapping.oidc_client_id == db.execute(select(OidcClient.id)).scalar_one()
 
 
 def test_authentication_page_exposes_authorization_code_oidc_ui(client):
@@ -449,7 +470,9 @@ def test_authentication_page_exposes_authorization_code_oidc_ui(client):
     page = client.get("/authentication")
     assert page.status_code == 200
     assert "OpenID Connect Provider" in page.text
-    assert "Authorization Code flow is available" in page.text
+    assert "Authorization Code, organization selection, and scoped claims" in page.text
+    assert 'id="oidc-group-mappings-table"' in page.text
+    assert 'data-fallback-id="oidc-group-mappings-fallback"' in page.text
     assert "VCF 9.1 Identity Broker" in page.text
     assert "Paste the exact VCF Identity Broker redirect URI" in page.text
     assert 'name="enabled"' in page.text
@@ -522,6 +545,423 @@ def test_authentication_ui_deletes_bound_client_before_ldap_organization(client)
         assert db.get(LdapOrganization, organization_id) is None
 
 
+def test_unbound_clients_require_validated_source_and_bound_clients_hide_selector(
+    client, monkeypatch
+):
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import LdapOrganization, LdapSettings, LdapUser
+    from atlaso.app.services import identity_credentials
+
+    class AuthenticationAdapter:
+        def authenticate_ldap_user(self, user_dn: str, password: str) -> AdapterResult:
+            return AdapterResult(
+                command=["atlaso-helper", "ldap", "authenticate", user_dn],
+                dry_run=False,
+                returncode=0 if password == "Directory-Password!" else 1,
+            )
+
+    monkeypatch.setattr(identity_credentials, "SystemAdapter", AuthenticationAdapter)
+    with SessionLocal() as db:
+        settings = db.execute(select(LdapSettings)).scalar_one()
+        settings.enabled = True
+        enabled = LdapOrganization(
+            name="Research",
+            slug="research",
+            suffix_dn="dc=research,dc=example,dc=test",
+            enabled=True,
+        )
+        disabled = LdapOrganization(
+            name="Disabled directory",
+            slug="disabled-directory",
+            suffix_dn="dc=disabled,dc=example,dc=test",
+            enabled=False,
+        )
+        db.add_all([enabled, disabled])
+        db.flush()
+        db.add_all(
+            [
+                LdapUser(
+                    organization_id=enabled.id,
+                    uid="admin",
+                    display_name="Directory Admin",
+                    enabled=True,
+                ),
+                LdapUser(
+                    organization_id=disabled.id,
+                    uid="admin",
+                    display_name="Disabled Admin",
+                    enabled=True,
+                ),
+            ]
+        )
+        enabled_id = enabled.id
+        disabled_id = disabled.id
+        db.commit()
+
+    client_id, _secret = _configure_protocol_client()
+    params = _authorization_parameters(client_id, "a" * 64)
+    page = client.get("https://testserver/identity/authorize", params=params)
+    assert page.status_code == 200
+    assert '<select name="source" required>' in page.text
+    assert '<option value="local">Local</option>' in page.text
+    assert f'value="managed_ldap:{enabled_id}"' in page.text
+    assert f'value="managed_ldap:{disabled_id}"' not in page.text
+    transaction = re.search(r'name="transaction" value="([^"]+)"', page.text).group(1)
+    csrf = re.search(r'name="csrf" value="([^"]+)"', page.text).group(1)
+
+    invalid = client.post(
+        "https://testserver/identity/authorize",
+        data={
+            "transaction": transaction,
+            "csrf": csrf,
+            "source": f"managed_ldap:{disabled_id}",
+            "username": "admin",
+            "password": "atlaso-admin",
+        },
+        follow_redirects=False,
+    )
+    assert invalid.status_code == 400
+    assert "Select Local or an available organization." in invalid.text
+    local = client.post(
+        "https://testserver/identity/authorize",
+        data={
+            "transaction": transaction,
+            "csrf": csrf,
+            "source": "local",
+            "username": "admin",
+            "password": "atlaso-admin",
+        },
+        follow_redirects=False,
+    )
+    assert local.status_code == 303
+
+    bound_client_id, _bound_secret = _configure_protocol_client(
+        organization_id=enabled_id
+    )
+    bound_page = client.get(
+        "https://testserver/identity/authorize",
+        params=_authorization_parameters(bound_client_id, "b" * 64),
+    )
+    assert bound_page.status_code == 200
+    assert 'name="source"' not in bound_page.text
+    assert "Research" in bound_page.text
+    bound_transaction = re.search(
+        r'name="transaction" value="([^"]+)"', bound_page.text
+    ).group(1)
+    bound_csrf = re.search(r'name="csrf" value="([^"]+)"', bound_page.text).group(1)
+    injected = client.post(
+        "https://testserver/identity/authorize",
+        data={
+            "transaction": bound_transaction,
+            "csrf": bound_csrf,
+            "source": f"managed_ldap:{enabled_id}",
+            "username": "admin",
+            "password": "Directory-Password!",
+        },
+        follow_redirects=False,
+    )
+    assert injected.status_code == 400
+    accepted = client.post(
+        "https://testserver/identity/authorize",
+        data={
+            "transaction": bound_transaction,
+            "csrf": bound_csrf,
+            "username": "admin",
+            "password": "Directory-Password!",
+        },
+        follow_redirects=False,
+    )
+    assert accepted.status_code == 303
+
+
+def test_local_role_mappings_override_defaults_reject_collisions_and_filter_scopes(client):
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import OidcClient
+
+    client_id, secret = _configure_protocol_client()
+    headers = _admin_headers(client)
+    with SessionLocal() as db:
+        client_record_id = db.execute(
+            select(OidcClient.id).where(OidcClient.client_id == client_id)
+        ).scalar_one()
+
+    default_admin = client.post(
+        "/api/v1/oidc/group-mappings",
+        headers=headers,
+        json={
+            "source_type": "local_role",
+            "local_role": "admin",
+            "external_group_name": "Atlaso Administrators",
+        },
+    )
+    assert default_admin.status_code == 201, default_admin.text
+    default_viewer = client.post(
+        "/api/v1/oidc/group-mappings",
+        headers=headers,
+        json={
+            "source_type": "local_role",
+            "local_role": "viewer",
+            "external_group_name": "Atlaso Viewers",
+        },
+    )
+    assert default_viewer.status_code == 201, default_viewer.text
+    collision = client.post(
+        "/api/v1/oidc/group-mappings",
+        headers=headers,
+        json={
+            "source_type": "local_role",
+            "local_role": "admin",
+            "oidc_client_id": client_record_id,
+            "external_group_name": "ATLASO VIEWERS",
+        },
+    )
+    assert collision.status_code == 422
+    assert "unique case-insensitively" in collision.text
+    override = client.post(
+        "/api/v1/oidc/group-mappings",
+        headers=headers,
+        json={
+            "source_type": "local_role",
+            "local_role": "admin",
+            "oidc_client_id": client_record_id,
+            "external_group_name": "VCF Administrators",
+        },
+    )
+    assert override.status_code == 201, override.text
+    listed = client.get("/api/v1/oidc/group-mappings", headers=headers)
+    assert listed.status_code == 200
+    assert {row["external_group_name"] for row in listed.json()} == {
+        "Atlaso Administrators",
+        "Atlaso Viewers",
+        "VCF Administrators",
+    }
+
+    verifier = "c" * 64
+    transaction, csrf, _cookie = _start_login(
+        client,
+        _authorization_parameters(
+            client_id,
+            verifier,
+            scope="openid profile email groups",
+        ),
+    )
+    login = _finish_local_login(client, transaction, csrf)
+    code = parse_qs(urlsplit(login.headers["location"]).query)["code"][0]
+    all_tokens = _exchange_code(
+        client,
+        client_id=client_id,
+        secret=secret,
+        code=code,
+        verifier=verifier,
+    ).json()
+    all_claims = _jwt_claims(all_tokens["id_token"])
+    assert all_claims["preferred_username"] == "admin"
+    assert all_claims["name"] == "admin"
+    assert all_claims["organization"] == "Local"
+    assert all_claims["email"] == ""
+    assert all_claims["email_verified"] is False
+    assert all_claims["groups"] == ["VCF Administrators"]
+    assert "Atlaso Administrators" not in all_tokens["id_token"]
+    access_claims = _jwt_claims(all_tokens["access_token"])
+    assert "organization_id" not in access_claims
+    assert "source" not in access_claims
+
+    openid_verifier = "d" * 64
+    openid_transaction, openid_csrf, _cookie = _start_login(
+        client,
+        _authorization_parameters(client_id, openid_verifier, scope="openid"),
+    )
+    openid_login = _finish_local_login(client, openid_transaction, openid_csrf)
+    openid_code = parse_qs(urlsplit(openid_login.headers["location"]).query)["code"][0]
+    openid_tokens = _exchange_code(
+        client,
+        client_id=client_id,
+        secret=secret,
+        code=openid_code,
+        verifier=openid_verifier,
+    ).json()
+    openid_claims = _jwt_claims(openid_tokens["id_token"])
+    for claim_name in (
+        "preferred_username",
+        "name",
+        "organization",
+        "email",
+        "email_verified",
+        "groups",
+    ):
+        assert claim_name not in openid_claims
+    openid_userinfo = client.get(
+        "https://testserver/identity/userinfo",
+        headers={"Authorization": f"Bearer {openid_tokens['access_token']}"},
+    )
+    assert openid_userinfo.status_code == 200
+    assert openid_userinfo.json() == {"sub": openid_claims["sub"]}
+
+
+def test_ldap_nested_cycle_mappings_emit_only_external_names_and_revalidate_source(
+    client, monkeypatch
+):
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import (
+        LdapGroup,
+        LdapGroupMembership,
+        LdapOrganization,
+        LdapSettings,
+        LdapUser,
+    )
+    from atlaso.app.services import identity_credentials
+    from atlaso.app.services.oidc import create_group_mapping
+
+    class AuthenticationAdapter:
+        def authenticate_ldap_user(self, user_dn: str, password: str) -> AdapterResult:
+            return AdapterResult(
+                command=["atlaso-helper", "ldap", "authenticate", user_dn],
+                dry_run=False,
+                returncode=0 if password == "Directory-Password!" else 1,
+            )
+
+    monkeypatch.setattr(identity_credentials, "SystemAdapter", AuthenticationAdapter)
+    with SessionLocal() as db:
+        settings = db.execute(select(LdapSettings)).scalar_one()
+        settings.enabled = True
+        organization = LdapOrganization(
+            name="Engineering",
+            slug="engineering",
+            suffix_dn="dc=engineering,dc=example,dc=test",
+            enabled=True,
+        )
+        db.add(organization)
+        db.flush()
+        user = LdapUser(
+            organization_id=organization.id,
+            uid="engineer",
+            display_name="Engineering User",
+            email="engineer@example.test",
+            enabled=True,
+        )
+        direct = LdapGroup(
+            organization_id=organization.id,
+            name="cn=raw-direct-secret",
+            enabled=True,
+        )
+        parent = LdapGroup(
+            organization_id=organization.id,
+            name="cn=raw-parent-secret",
+            enabled=True,
+        )
+        unmapped = LdapGroup(
+            organization_id=organization.id,
+            name="cn=raw-unmapped-secret",
+            enabled=True,
+        )
+        disabled = LdapGroup(
+            organization_id=organization.id,
+            name="cn=raw-disabled-secret",
+            enabled=False,
+        )
+        db.add_all([user, direct, parent, unmapped, disabled])
+        db.flush()
+        db.add_all(
+            [
+                LdapGroupMembership(group_id=direct.id, member_user_id=user.id),
+                LdapGroupMembership(group_id=parent.id, member_group_id=direct.id),
+                LdapGroupMembership(group_id=direct.id, member_group_id=parent.id),
+                LdapGroupMembership(group_id=unmapped.id, member_user_id=user.id),
+                LdapGroupMembership(group_id=disabled.id, member_user_id=user.id),
+            ]
+        )
+        create_group_mapping(
+            db,
+            source_type="ldap_group",
+            local_role="",
+            ldap_group_id=direct.id,
+            oidc_client_id=None,
+            external_group_name="Engineering Direct",
+        )
+        create_group_mapping(
+            db,
+            source_type="ldap_group",
+            local_role="",
+            ldap_group_id=parent.id,
+            oidc_client_id=None,
+            external_group_name="Engineering Nested",
+        )
+        create_group_mapping(
+            db,
+            source_type="ldap_group",
+            local_role="",
+            ldap_group_id=disabled.id,
+            oidc_client_id=None,
+            external_group_name="Must Not Emit",
+        )
+        organization_id = organization.id
+        db.commit()
+
+    client_id, secret = _configure_protocol_client(organization_id=organization_id)
+    verifier = "e" * 64
+    transaction, csrf, _cookie = _start_login(
+        client,
+        _authorization_parameters(
+            client_id,
+            verifier,
+            login_hint="engineer",
+            scope="openid profile email groups",
+        ),
+    )
+    login = client.post(
+        "https://testserver/identity/authorize",
+        data={
+            "transaction": transaction,
+            "csrf": csrf,
+            "username": "engineer",
+            "password": "Directory-Password!",
+        },
+        follow_redirects=False,
+    )
+    assert login.status_code == 303
+    code = parse_qs(urlsplit(login.headers["location"]).query)["code"][0]
+    token_response = _exchange_code(
+        client,
+        client_id=client_id,
+        secret=secret,
+        code=code,
+        verifier=verifier,
+    )
+    assert token_response.status_code == 200, token_response.text
+    tokens = token_response.json()
+    claims = _jwt_claims(tokens["id_token"])
+    assert claims["groups"] == ["Engineering Direct", "Engineering Nested"]
+    assert claims["organization"] == "Engineering"
+    assert claims["email"] == "engineer@example.test"
+    for private_value in (
+        "raw-direct-secret",
+        "raw-parent-secret",
+        "raw-unmapped-secret",
+        "raw-disabled-secret",
+        "dc=engineering",
+    ):
+        assert private_value not in tokens["id_token"]
+        assert private_value not in tokens["access_token"]
+    userinfo = client.get(
+        "https://testserver/identity/userinfo",
+        headers={"Authorization": f"Bearer {tokens['access_token']}"},
+    )
+    assert userinfo.status_code == 200
+    assert userinfo.json()["groups"] == ["Engineering Direct", "Engineering Nested"]
+
+    with SessionLocal() as db:
+        settings = db.execute(select(LdapSettings)).scalar_one()
+        settings.enabled = False
+        db.commit()
+    disabled_source = client.get(
+        "https://testserver/identity/userinfo",
+        headers={"Authorization": f"Bearer {tokens['access_token']}"},
+    )
+    assert disabled_source.status_code == 401
+
+
 def test_authorization_code_local_flow_rotates_session_and_rejects_replay(client):
     from joserfc import jwt
     from joserfc.jwk import RSAKey
@@ -579,7 +1019,12 @@ def test_authorization_code_local_flow_rotates_session_and_rejects_replay(client
         headers={"Authorization": f"Bearer {tokens['access_token']}"},
     )
     assert userinfo.status_code == 200
-    assert userinfo.json() == {"sub": id_token.claims["sub"]}
+    assert userinfo.json() == {
+        "sub": id_token.claims["sub"],
+        "preferred_username": "admin",
+        "name": "admin",
+        "organization": "Local",
+    }
     replay = _exchange_code(
         client,
         client_id=client_id,
@@ -851,7 +1296,7 @@ def test_logout_requires_valid_hint_and_exact_registered_redirect(client):
 def test_fixed_organization_managed_ldap_flow_never_creates_operator_session(client, monkeypatch):
     from atlaso.app.adapters.system import AdapterResult
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import LdapOrganization, LdapUser
+    from atlaso.app.models import LdapOrganization, LdapSettings, LdapUser
     from atlaso.app.services import identity_credentials
 
     class AuthenticationAdapter:
@@ -864,6 +1309,8 @@ def test_fixed_organization_managed_ldap_flow_never_creates_operator_session(cli
 
     monkeypatch.setattr(identity_credentials, "SystemAdapter", AuthenticationAdapter)
     with SessionLocal() as db:
+        settings = db.execute(select(LdapSettings)).scalar_one()
+        settings.enabled = True
         organization = LdapOrganization(
             name="Research",
             slug="research",
@@ -958,6 +1405,7 @@ def test_oidc_login_throttle_is_bounded_and_never_persists_password(client):
             data={
                 "transaction": transaction,
                 "csrf": csrf,
+                "source": "local",
                 "username": "admin",
                 "password": password,
             },
@@ -990,6 +1438,7 @@ def test_oidc_login_throttle_survives_browser_session_renewal(client):
             data={
                 "transaction": transaction,
                 "csrf": csrf,
+                "source": "local",
                 "username": "renewal-test-user",
                 "password": "Invalid-Password!",
             },
@@ -1005,6 +1454,7 @@ def test_oidc_login_throttle_survives_browser_session_renewal(client):
         data={
             "transaction": renewed_transaction,
             "csrf": renewed_csrf,
+            "source": "local",
             "username": "renewal-test-user",
             "password": "Invalid-Password!",
         },

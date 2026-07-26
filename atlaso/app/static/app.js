@@ -6597,6 +6597,338 @@ function initializePhysicalInterfacesTable() {
   }
 }
 
+function setOidcGroupMappingMessage(message = "", state = "idle") {
+  const status = document.getElementById("oidc-group-mapping-status");
+  if (!(status instanceof HTMLElement)) {
+    return;
+  }
+  status.textContent = message;
+  status.dataset.state = state;
+}
+
+function showOidcGroupMappingError(message = "") {
+  const element = document.getElementById("oidc-group-mapping-error");
+  if (!(element instanceof HTMLElement)) {
+    return;
+  }
+  element.textContent = message;
+  element.classList.toggle("hidden", !message);
+}
+
+async function postOidcGroupMappingAction(url, data, csrf, { expectJson = true } = {}) {
+  const body = new FormData();
+  body.set("csrf", csrf);
+  Object.entries(data).forEach(([key, value]) => body.set(key, value ?? ""));
+  const response = await fetch(url, {
+    method: "POST",
+    body,
+    credentials: "same-origin",
+    headers: { "X-Atlaso-Grid": "1" },
+  });
+  if (!response.ok) {
+    let message = "";
+    try {
+      const payload = await response.json();
+      message = String(payload.detail || "");
+    } catch {
+      message = (await response.text()).trim().replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    }
+    throw new Error(message || "The OIDC group mapping could not be saved.");
+  }
+  return expectJson ? response.json() : null;
+}
+
+function initializeOidcGroupMappingsTable() {
+  const tableElement = document.getElementById("oidc-group-mappings-table");
+  if (!(tableElement instanceof HTMLElement)) {
+    return;
+  }
+  const fallback = document.getElementById(tableElement.dataset.fallbackId || "");
+  if (typeof Tabulator === "undefined") {
+    showOidcGroupMappingError("Tabulator did not load. Showing the read-only fallback table.");
+    return;
+  }
+  const csrf = tableElement.dataset.csrf || "";
+  const roleOptions = JSON.parse(tableElement.dataset.roleOptions || "[]");
+  const groupOptions = JSON.parse(tableElement.dataset.groupOptions || "[]");
+  const clientOptions = JSON.parse(tableElement.dataset.clientOptions || "[]");
+  const sourceLabels = {};
+  roleOptions.forEach((role) => {
+    sourceLabels[`role:${role}`] = `Local / ${role}`;
+  });
+  groupOptions.forEach((group) => {
+    sourceLabels[`group:${group.id}`] = group.label;
+  });
+  const groupById = new Map(groupOptions.map((group) => [Number(group.id), group]));
+  const clientById = new Map(clientOptions.map((client) => [Number(client.id), client]));
+  const newRow = () => ({
+    id: `__new__-${Date.now()}`,
+    is_new: true,
+    source_type: "",
+    source_selection: "",
+    source_name: "",
+    organization_id: null,
+    organization_name: "",
+    oidc_client_id: null,
+    oidc_client_name: "",
+    external_group_name: "",
+  });
+  const rows = JSON.parse(tableElement.dataset.mappings || "[]").map((row) => ({
+    ...row,
+    is_new: false,
+    source_selection: row.source_type === "local_role"
+      ? `role:${row.local_role}`
+      : `group:${row.ldap_group_id}`,
+  }));
+  rows.push(newRow());
+
+  const compatibleClientValues = (data) => {
+    const values = {
+      "": data.source_type === "ldap_group" ? "Organization default" : "Local default",
+    };
+    clientOptions.forEach((client) => {
+      const compatible = data.source_type === "local_role"
+        ? client.organization_id === null
+        : client.organization_id === null || Number(client.organization_id) === Number(data.organization_id);
+      if (compatible) {
+        values[String(client.id)] = `${client.name}${client.enabled ? "" : " (disabled)"}`;
+      }
+    });
+    return values;
+  };
+  const sourceValues = Object.fromEntries(Object.entries(sourceLabels));
+
+  let table;
+  const setMappingCount = (total) => {
+    const count = document.getElementById("oidc-group-mapping-count");
+    if (!(count instanceof HTMLElement)) {
+      return;
+    }
+    count.textContent = `${total} mapping${total === 1 ? "" : "s"}`;
+  };
+  const updateMappingCount = () => {
+    if (table) {
+      setMappingCount(table.getData().filter((row) => !row.is_new).length);
+    }
+  };
+  const saveCell = async (cell) => {
+    const row = cell.getRow();
+    const data = row.getData();
+    const wasNew = Boolean(data.is_new);
+    showOidcGroupMappingError("");
+    if (
+      data.is_new
+      && (
+        !data.source_type
+        || !data.source_selection
+        || !String(data.external_group_name || "").trim()
+      )
+    ) {
+      row.reformat();
+      setOidcGroupMappingMessage(
+        data.source_type
+          ? "Complete the source and external group name to add this mapping."
+          : "Select a mapping source to begin a new record.",
+        "idle",
+      );
+      return;
+    }
+    setOidcGroupMappingMessage("Saving mapping…", "saving");
+    try {
+      const payload = wasNew
+        ? await postOidcGroupMappingAction(
+            "/authentication/oidc/group-mappings",
+            {
+              source_type: data.source_type,
+              local_role: data.source_type === "local_role"
+                ? String(data.source_selection).replace(/^role:/, "")
+                : "",
+              ldap_group_id: data.source_type === "ldap_group"
+                ? String(data.source_selection).replace(/^group:/, "")
+                : "",
+              oidc_client_id: data.oidc_client_id || "",
+              external_group_name: data.external_group_name,
+            },
+            csrf,
+          )
+        : await postOidcGroupMappingAction(
+            `/authentication/oidc/group-mappings/${data.id}/edit`,
+            {
+              oidc_client_id: data.oidc_client_id || "",
+              external_group_name: data.external_group_name,
+            },
+            csrf,
+          );
+      await row.update({
+        ...payload,
+        is_new: false,
+        source_selection: payload.source_type === "local_role"
+          ? `role:${payload.local_role}`
+          : `group:${payload.ldap_group_id}`,
+      });
+      if (wasNew) {
+        await table.addRow(newRow(), false);
+      }
+      row.reformat();
+      updateMappingCount();
+      setOidcGroupMappingMessage("Mapping saved.", "saved");
+      showTransientGridStatus(wasNew ? "Added" : "Saved");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "The OIDC group mapping could not be saved.";
+      showOidcGroupMappingError(message);
+      setOidcGroupMappingMessage("Mapping was not saved. Correct the highlighted values and try again.", "error");
+      if (!data.is_new && typeof cell.restoreOldValue === "function") {
+        cell.restoreOldValue();
+      }
+    }
+  };
+
+  const deleteMapping = async (row) => {
+    const data = row.getData();
+    if (data.is_new) {
+      return;
+    }
+    const confirmed = await requestConfirmation({
+      title: `Delete mapping for ${data.source_name}?`,
+      message: "This removes the explicit external group mapping immediately. New OIDC claims will no longer emit this value; no appliance service is changed.",
+      label: "Delete group mapping",
+    });
+    if (!confirmed) {
+      return;
+    }
+    showOidcGroupMappingError("");
+    setOidcGroupMappingMessage("Deleting mapping…", "saving");
+    try {
+      await postOidcGroupMappingAction(
+        `/authentication/oidc/group-mappings/${data.id}/delete`,
+        {},
+        csrf,
+        { expectJson: false },
+      );
+      await row.delete();
+      updateMappingCount();
+      setOidcGroupMappingMessage("Mapping deleted.", "saved");
+      showTransientGridStatus("Deleted");
+    } catch (error) {
+      showOidcGroupMappingError(error instanceof Error ? error.message : "The mapping could not be deleted.");
+      setOidcGroupMappingMessage("Mapping was not deleted.", "error");
+    }
+  };
+
+  try {
+    table = new Tabulator(tableElement, {
+      data: rows,
+      index: "id",
+      layout: "fitColumns",
+      height: "320px",
+      rowHeight: 28,
+      placeholder: "No external group mappings configured.",
+      reactiveData: false,
+      rowFormatter: (row) => markNewRecordRow(row, "source_selection"),
+      rowContextMenu: [
+        {
+          label: "Delete mapping",
+          disabled: (component) => component.getData().is_new,
+          action: (event, row) => deleteMapping(row),
+        },
+      ],
+      columns: lockNewRecordColumns([
+        {
+          title: "Source",
+          field: "source_selection",
+          editor: "list",
+          editorParams: { values: sourceValues },
+          editable: (cell) => cell.getRow().getData().is_new,
+          formatter: (cell) => {
+            if (cell.getRow().getData().is_new && !cell.getValue()) {
+              return dnsAddRowHintFormatter(cell, "+ Add record here");
+            }
+            return escapeHtml(sourceLabels[cell.getValue()] || cell.getRow().getData().source_name || "");
+          },
+          minWidth: 225,
+          cellEdited: async (cell) => {
+            const selection = String(cell.getValue() || "");
+            const sourceType = selection.startsWith("role:") ? "local_role" : "ldap_group";
+            const group = sourceType === "ldap_group"
+              ? groupById.get(Number(selection.replace(/^group:/, "")))
+              : null;
+            await cell.getRow().update({
+              source_type: sourceType,
+              source_name: sourceLabels[selection] || "",
+              organization_id: group?.organization_id ?? null,
+              organization_name: group?.organization_name || "Local",
+              oidc_client_id: null,
+              oidc_client_name: "",
+            });
+            reformatPendingNewRecord(cell);
+            await saveCell(cell);
+          },
+        },
+        {
+          title: "Source type",
+          field: "source_type",
+          editable: false,
+          formatter: (cell) => escapeHtml(
+            cell.getValue() === "local_role"
+              ? "Local role"
+              : (cell.getValue() === "ldap_group" ? "Managed LDAP group" : ""),
+          ),
+          minWidth: 160,
+        },
+        {
+          title: "Identity organization",
+          field: "organization_name",
+          editable: false,
+          formatter: (cell) => escapeHtml(cell.getValue() || ""),
+          minWidth: 175,
+        },
+        {
+          title: "Client scope",
+          field: "oidc_client_id",
+          editor: "list",
+          editorParams: (cell) => ({ values: compatibleClientValues(cell.getRow().getData()), clearable: true }),
+          formatter: (cell) => {
+            const data = cell.getRow().getData();
+            if (!data.source_selection) {
+              return "";
+            }
+            const client = clientById.get(Number(cell.getValue()));
+            if (client) {
+              return escapeHtml(`${client.name}${client.enabled ? "" : " (disabled)"}`);
+            }
+            return escapeHtml(data.source_type === "ldap_group" ? "Organization default" : "Local default");
+          },
+          minWidth: 190,
+          cellEdited: saveCell,
+        },
+        {
+          title: "External group",
+          field: "external_group_name",
+          editor: "input",
+          formatter: (cell) => (
+            cell.getRow().getData().source_selection
+              ? dnsAddRowHintFormatter(cell, "privacy-safe external name")
+              : ""
+          ),
+          minWidth: 220,
+          cellEdited: saveCell,
+        },
+      ], "source_selection"),
+    });
+    if (fallback instanceof HTMLElement) {
+      fallback.classList.add("hidden");
+    }
+    setMappingCount(rows.filter((row) => !row.is_new).length);
+    setOidcGroupMappingMessage("Edit a mapped external name or client scope to autosave.", "idle");
+  } catch (error) {
+    showOidcGroupMappingError(
+      error instanceof Error
+        ? error.message
+        : "The mapping grid could not render. Showing the read-only fallback table.",
+    );
+  }
+}
+
 function initializeVlanInterfacesTable() {
   const tableElement = document.getElementById("vlan-interfaces-table");
   if (!(tableElement instanceof HTMLElement)) {
@@ -15691,6 +16023,7 @@ document.addEventListener("DOMContentLoaded", initializeRoutesWanRoutingTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanNatTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanPoliciesTable);
 document.addEventListener("DOMContentLoaded", initializePhysicalInterfacesTable);
+document.addEventListener("DOMContentLoaded", initializeOidcGroupMappingsTable);
 document.addEventListener("DOMContentLoaded", initializeVlanInterfacesTable);
 document.addEventListener("DOMContentLoaded", initializeCodeMirrorEditors);
 document.addEventListener("DOMContentLoaded", initializeKickstartEditorDirtyState);

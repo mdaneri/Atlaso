@@ -46,6 +46,7 @@ from atlaso.app.models import (
     OidcClientRedirectUri,
     OidcAuthorizationCode,
     OidcAuthorizationTransaction,
+    OidcGroupMapping,
     OidcProviderSettings,
     OidcSigningKey,
     OidcSubject,
@@ -113,6 +114,7 @@ SCALAR_TABLES = {
 }
 
 RESTORE_DELETE_MODELS = [
+    OidcGroupMapping,
     Schedule,
     AutomationScriptRevision,
     AutomationScript,
@@ -198,7 +200,7 @@ def export_settings_archive(db: Session, *, actor: str) -> dict[str, Any]:
             "Contains Atlaso desired-state configuration only.",
             "Audit events, jobs, API tokens, password hashes, and uploaded secret bodies are not included; encrypted CA private-key material is included for trust portability.",
             "Managed LDAP metadata is included, but LDAP password hashes and VCF bind secrets require the separate encrypted LDAP recovery archive or credential resets.",
-            "OIDC client secret hashes, exact redirect configuration, and encrypted signing keys are included; plaintext client secrets are never included.",
+            "OIDC client secret hashes, exact redirect configuration, external group mappings, and encrypted signing keys are included; plaintext client secrets are never included.",
             "Restoring usable CA and OIDC signing private-key material requires the same ATLASO_SECRETS_KEY.",
             "Restore updates the control-plane database; host services change only after global appliance apply.",
         ],
@@ -220,6 +222,7 @@ def export_settings_archive(db: Session, *, actor: str) -> dict[str, Any]:
     data["oidc_subjects"] = _oidc_subjects_to_archive(db)
     data["oidc_clients"] = _oidc_clients_to_archive(db)
     data["oidc_client_redirect_uris"] = _oidc_client_redirect_uris_to_archive(db)
+    data["oidc_group_mappings"] = _oidc_group_mappings_to_archive(db)
     data["oidc_signing_keys"] = [
         _row_to_dict(row)
         for row in db.execute(select(OidcSigningKey).order_by(OidcSigningKey.created_at)).scalars().all()
@@ -374,6 +377,36 @@ def _oidc_client_redirect_uris_to_archive(db: Session) -> list[dict[str, Any]]:
     return rows
 
 
+def _oidc_group_mappings_to_archive(db: Session) -> list[dict[str, Any]]:
+    organizations = {
+        row.id: row.slug
+        for row in db.execute(select(LdapOrganization)).scalars().all()
+    }
+    clients = {
+        row.id: row.client_id
+        for row in db.execute(select(OidcClient)).scalars().all()
+    }
+    groups = {
+        row.id: row.name
+        for row in db.execute(select(LdapGroup)).scalars().all()
+    }
+    rows: list[dict[str, Any]] = []
+    for mapping in db.execute(
+        select(OidcGroupMapping).order_by(OidcGroupMapping.id)
+    ).scalars().all():
+        rows.append(
+            {
+                "source_type": mapping.source_type,
+                "local_role": mapping.local_role,
+                "ldap_group_name": groups.get(mapping.ldap_group_id, ""),
+                "organization_slug": organizations.get(mapping.organization_id, ""),
+                "client_id": clients.get(mapping.oidc_client_id, ""),
+                "external_group_name": mapping.external_group_name,
+            }
+        )
+    return rows
+
+
 def _vcf_backup_settings_to_archive(db: Session) -> list[dict[str, Any]]:
     users = {user.id: user.username for user in db.execute(select(User)).scalars().all()}
     rows = []
@@ -518,6 +551,10 @@ def restore_settings_archive(db: Session, archive: dict[str, Any]) -> dict[str, 
         db,
         data.get("oidc_client_redirect_uris", []),
     )
+    counts["oidc_group_mappings"] = _restore_oidc_group_mappings(
+        db,
+        data.get("oidc_group_mappings", []),
+    )
     counts["oidc_signing_keys"] = _insert_rows(db, OidcSigningKey, data.get("oidc_signing_keys", []))
     counts["vcf_backup_settings"] = _restore_vcf_backup_settings(db, data.get("vcf_backup_settings", []))
     counts["vcf_offline_depot_settings"] = _restore_vcf_offline_depot_settings(db, data.get("vcf_offline_depot_settings", []))
@@ -565,6 +602,7 @@ def desired_state_counts(db: Session) -> dict[str, int]:
     counts["ldap_group_memberships"] = len(db.execute(select(LdapGroupMembership)).scalars().all())
     counts["oidc_clients"] = len(db.execute(select(OidcClient)).scalars().all())
     counts["oidc_client_redirect_uris"] = len(db.execute(select(OidcClientRedirectUri)).scalars().all())
+    counts["oidc_group_mappings"] = len(db.execute(select(OidcGroupMapping)).scalars().all())
     counts["oidc_signing_keys"] = len(db.execute(select(OidcSigningKey)).scalars().all())
     counts["oidc_subjects"] = len(db.execute(select(OidcSubject)).scalars().all())
     counts["vcf_backup_settings"] = len(db.execute(select(VcfBackupSettings)).scalars().all())
@@ -866,6 +904,56 @@ def _restore_oidc_client_redirect_uris(db: Session, rows: list[dict[str, Any]]) 
             continue
         payload["oidc_client_id"] = client_record_id
         db.add(OidcClientRedirectUri(**payload))
+        restored += 1
+    db.flush()
+    return restored
+
+
+def _restore_oidc_group_mappings(db: Session, rows: list[dict[str, Any]]) -> int:
+    from atlaso.app.services.oidc import create_group_mapping
+
+    organizations = {
+        row.slug: row.id
+        for row in db.execute(select(LdapOrganization)).scalars().all()
+    }
+    groups = {
+        (row.organization_id, row.name): row.id
+        for row in db.execute(select(LdapGroup)).scalars().all()
+    }
+    clients = {
+        row.client_id: row.id
+        for row in db.execute(select(OidcClient)).scalars().all()
+    }
+    restored = 0
+    for row in rows:
+        source_type = str(row.get("source_type") or "")
+        organization_slug = str(row.get("organization_slug") or "")
+        organization_id = organizations.get(organization_slug)
+        group_id = (
+            groups.get(
+                (
+                    organization_id,
+                    str(row.get("ldap_group_name") or ""),
+                )
+            )
+            if source_type == "ldap_group"
+            else None
+        )
+        client_public_id = str(row.get("client_id") or "")
+        client_record_id = clients.get(client_public_id) if client_public_id else None
+        if (
+            (source_type == "ldap_group" and group_id is None)
+            or (client_public_id and client_record_id is None)
+        ):
+            continue
+        create_group_mapping(
+            db,
+            source_type=source_type,
+            local_role=str(row.get("local_role") or ""),
+            ldap_group_id=group_id,
+            oidc_client_id=client_record_id,
+            external_group_name=str(row.get("external_group_name") or ""),
+        )
         restored += 1
     db.flush()
     return restored
