@@ -845,13 +845,15 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     runner = Path("scripts/windows/vmware/run-lifecycle-test.ps1").read_text(encoding="utf-8")
 
     assert "[switch]$RoutingWanOnly" in wrapper
+    assert "[switch]$OidcOnly" in wrapper
     assert "[switch]$FullEsxiPxeInstall" in wrapper
     assert "[string]$PxeInstallerIsoPath = ''" in wrapper
-    assert "$effectiveSkipBackupRestoreTest = [bool]($SkipBackupRestoreTest -or $RoutingWanOnly)" in wrapper
+    assert "$effectiveSkipBackupRestoreTest = [bool]($SkipBackupRestoreTest -or $RoutingWanOnly -or $OidcOnly)" in wrapper
+    assert "if ($OidcOnly) { $arguments += '-OidcOnly' }" in wrapper
     assert "if ($RoutingWanOnly) { $arguments += '-RoutingWanOnly' }" in wrapper
     assert "if ($FullEsxiPxeInstall) { $arguments += '-FullEsxiPxeInstall' }" in wrapper
     assert "if ($PxeInstallerIsoPath) { $arguments += @('-PxeInstallerIsoPath', $PxeInstallerIsoPath) }" in wrapper
-    assert "-RoutingWanOnly and -FullEsxiPxeInstall are mutually exclusive." in wrapper
+    assert "-OidcOnly, -RoutingWanOnly, and -FullEsxiPxeInstall are mutually exclusive." in wrapper
 
     assert "function Get-GuestIPv4ViaGuestOps" in runner
     assert "function Invoke-VmrunBounded" in runner

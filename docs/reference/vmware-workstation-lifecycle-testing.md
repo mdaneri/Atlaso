@@ -84,6 +84,11 @@ default runs the restored backup/restore pass. Pass `-SkipBackupRestoreTest` onl
 intended. Unless `-ApplianceIPAddress` is passed, the wrapper waits for VMware Tools to report the appliance's DHCP
 management IPv4 address and derives the appliance URL from that discovered address.
 
+For focused deployed OIDC acceptance independent of the full service-network topology, pass `-OidcOnly`. The wrapper
+still clones the selected appliance, installs the exact branch wheel, proves appliance readiness, and runs the OIDC
+Authorization Code acceptance check. It skips unrelated multi-NIC service configuration, client VM creation and probes,
+and the backup/restore pass.
+
 Useful commands:
 
 ```powershell

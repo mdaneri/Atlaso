@@ -50,5 +50,7 @@ The following cross-cutting boundaries always apply:
 - Keep development system adapters in dry-run mode unless a reviewed apply unit explicitly promotes real mutation.
 - VMware Workstation is the default live appliance target; use Hyper-V lifecycle coverage for exact VLAN behavior.
 - Validate live appliance readiness through `/openapi.json`, not VMware Tools IP discovery or service color alone.
+- OIDC clients use explicit validated identity sources and emit only granted, explicitly mapped claims; see the detailed
+  agent policies and canonical OIDC service guide.
 - Never expose credentials, authenticated URLs, private keys, raw secrets, or secret-bearing commands in UI, jobs,
   audits, logs, documentation, screenshots, or video.

@@ -941,26 +941,37 @@ if ($PlanOnly) {
 New-Item -ItemType Directory -Force -Path $vmRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $seedRoot | Out-Null
 
-$clientASeedIso = Join-Path $seedRoot "$clientAName-seed.iso"
-$clientBSeedIso = Join-Path $seedRoot "$clientBName-seed.iso"
-New-CloudInitSeedIso -Path $clientASeedIso -HostName ($clientAName.ToLowerInvariant())
-New-CloudInitSeedIso -Path $clientBSeedIso -HostName ($clientBName.ToLowerInvariant())
+$clientASeedIso = ''
+$clientBSeedIso = ''
+if (-not $OidcOnly) {
+    $clientASeedIso = Join-Path $seedRoot "$clientAName-seed.iso"
+    $clientBSeedIso = Join-Path $seedRoot "$clientBName-seed.iso"
+    New-CloudInitSeedIso -Path $clientASeedIso -HostName ($clientAName.ToLowerInvariant())
+    New-CloudInitSeedIso -Path $clientBSeedIso -HostName ($clientBName.ToLowerInvariant())
+}
 
 try {
     $applianceVmx = Copy-VmDirectory -SourceVmx $ApplianceVmxPath -DestinationDirectory (Join-Path $vmRoot $applianceName) -Name $applianceName
     Set-VmxNetworkAdapter -Path $applianceVmx -Index 0 -Vmnet $ManagementNetwork
-    Set-VmxNetworkAdapter -Path $applianceVmx -Index 1 -Vmnet $SiteANetwork
-    Set-VmxNetworkAdapter -Path $applianceVmx -Index 2 -Vmnet $TrunkNetwork
-    Set-VmxNetworkAdapter -Path $applianceVmx -Index 3 -Vmnet $SiteBNetwork
-
-    $clientAVmx = New-ClientVm -Name $clientAName -Directory (Join-Path $vmRoot $clientAName) -DiskPath $ClientVmdkPath -SeedIso $clientASeedIso -Networks @($ManagementNetwork, $SiteANetwork, $TrunkNetwork)
-    $clientBVmx = New-ClientVm -Name $clientBName -Directory (Join-Path $vmRoot $clientBName) -DiskPath $ClientVmdkPath -SeedIso $clientBSeedIso -Networks @($ManagementNetwork, $SiteBNetwork)
+    $clientAVmx = ''
+    $clientBVmx = ''
+    if (-not $OidcOnly) {
+        Set-VmxNetworkAdapter -Path $applianceVmx -Index 1 -Vmnet $SiteANetwork
+        Set-VmxNetworkAdapter -Path $applianceVmx -Index 2 -Vmnet $TrunkNetwork
+        Set-VmxNetworkAdapter -Path $applianceVmx -Index 3 -Vmnet $SiteBNetwork
+        $clientAVmx = New-ClientVm -Name $clientAName -Directory (Join-Path $vmRoot $clientAName) -DiskPath $ClientVmdkPath -SeedIso $clientASeedIso -Networks @($ManagementNetwork, $SiteANetwork, $TrunkNetwork)
+        $clientBVmx = New-ClientVm -Name $clientBName -Directory (Join-Path $vmRoot $clientBName) -DiskPath $ClientVmdkPath -SeedIso $clientBSeedIso -Networks @($ManagementNetwork, $SiteBNetwork)
+    }
     $esxiVmx = ''
     if ($FullEsxiPxeInstall) {
         $esxiVmx = New-EsxiPxeVm -Name $esxiName -Directory (Join-Path $vmRoot $esxiName) -Network $SiteANetwork -MacAddress $esxiMacAddress
     }
 
-    foreach ($vmx in @($applianceVmx, $clientAVmx, $clientBVmx)) {
+    $vmxsToStart = @($applianceVmx)
+    if (-not $OidcOnly) {
+        $vmxsToStart += @($clientAVmx, $clientBVmx)
+    }
+    foreach ($vmx in $vmxsToStart) {
         Start-WorkstationVm -Path $vmx
     }
 
@@ -981,11 +992,21 @@ try {
     Sync-ApplianceHelperScript -ApplianceVmx $applianceVmx
     $applianceWheelPath = Sync-ApplianceApplicationWheel -ApplianceVmx $applianceVmx
     $applianceHostKey = Get-PlinkHostKey -HostName $ApplianceIPAddress -UserName $ApplianceSshUser -Password $SshPassword
-    $clientAHost = Wait-GuestIPv4 -Path $clientAVmx -GuestUser $ClientSshUser -GuestPassword $SshPassword -Name $clientAName
-    $clientBHost = Wait-GuestIPv4 -Path $clientBVmx -GuestUser $ClientSshUser -GuestPassword $SshPassword -Name $clientBName
-    $clientAHostKey = Get-PlinkHostKey -HostName $clientAHost -UserName $ClientSshUser -Password $SshPassword
-    $clientBHostKey = Get-PlinkHostKey -HostName $clientBHost -UserName $ClientSshUser -Password $SshPassword
-    $appliancePxeInstallerIsoPath = Resolve-ApplianceEsxiIsoPath -ApplianceVmx $applianceVmx
+    $clientAHost = ''
+    $clientBHost = ''
+    $clientAHostKey = ''
+    $clientBHostKey = ''
+    if (-not $OidcOnly) {
+        $clientAHost = Wait-GuestIPv4 -Path $clientAVmx -GuestUser $ClientSshUser -GuestPassword $SshPassword -Name $clientAName
+        $clientBHost = Wait-GuestIPv4 -Path $clientBVmx -GuestUser $ClientSshUser -GuestPassword $SshPassword -Name $clientBName
+        $clientAHostKey = Get-PlinkHostKey -HostName $clientAHost -UserName $ClientSshUser -Password $SshPassword
+        $clientBHostKey = Get-PlinkHostKey -HostName $clientBHost -UserName $ClientSshUser -Password $SshPassword
+    }
+    $appliancePxeInstallerIsoPath = if ($FullEsxiPxeInstall) {
+        Resolve-ApplianceEsxiIsoPath -ApplianceVmx $applianceVmx
+    } else {
+        ''
+    }
 
     $basePythonArgs = @(
         (Join-Path $repoRoot 'scripts\interop\lifecycle_test.py'),
