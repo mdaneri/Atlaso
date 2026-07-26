@@ -61,7 +61,7 @@ def main() -> None:
                     "",
                 ]
             )
-    GALLERY.write_text("\n".join(lines), encoding="utf-8")
+    GALLERY.write_text("\n".join(lines), encoding="utf-8", newline="\n")
     print(f"Wrote {len(payload['screenshots'])} images to {GALLERY.relative_to(ROOT)}")
 
 

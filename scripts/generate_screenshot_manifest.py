@@ -183,6 +183,7 @@ def main() -> None:
     MANIFEST.write_text(
         json.dumps({"schema_version": 1, "screenshots": screenshots}, indent=2) + "\n",
         encoding="utf-8",
+        newline="\n",
     )
     print(f"Wrote {len(screenshots)} screenshot records to {MANIFEST.relative_to(ROOT)}")
 
