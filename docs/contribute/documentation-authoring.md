@@ -48,6 +48,9 @@ RFC 1918 addresses, reserved example domains, and non-secret sample identities.
 - Store optimized WebP images under `docs/assets/screenshots/`.
 - Provide descriptive alt text and a caption that adds context instead of repeating the alt text.
 - Record every image in `docs/assets/screenshots/manifest.json`.
+- Assign every image to the canonical page that explains it and run
+  `python scripts/generate_embedded_screenshot_sections.py`. The generated **Interface overview** section stays near
+  the page introduction; responsive and state-transition captures remain in **Additional verified states**.
 - Capture browser content at 1600×1000 and responsive examples at 900×1200.
 - Strip metadata and check every frame for credentials, personal data, misleading state, and stale branding.
 

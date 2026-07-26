@@ -10,6 +10,17 @@ status: current
 
 VCF Helper prepares deployment DNS desired state. It is available under `VCF Workflows` at `/vcf-helper`.
 
+<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
+## Interface overview
+
+This verified appliance view provides visual orientation before you begin.
+
+![Atlaso VCF Helper page in the clean-appliance desktop viewport.](../assets/screenshots/vcf-helper-clean-desktop.webp)
+
+*Figure: VCF Helper in the verified clean-appliance desktop state.*
+
+<!-- END GENERATED INTERFACE OVERVIEW -->
+
 The helper creates DNS records in Atlaso, deploys SDDC Manager OVAs, and configures VCF 9 appliances to use the applied
 local offline depot. DNS does not reload `dnsmasq` or change the appliance directly. Review and submit the changed
 `DNS/DHCP (dnsmasq)` unit through the global `/appliance-apply` workflow after generation or deletion.
@@ -131,3 +142,56 @@ when their description exactly matches the expected component description.
 Fetch responses report created, skipped, deleted, and preserved rows with their assigned addresses, plus validation or
 allocation errors. All mutations use the existing authenticated session, CSRF validation, audit logging, and DNS desired
 state model.
+
+<!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
+## Additional verified states
+
+These captures show responsive layouts and useful operational states referenced by this page.
+
+### KMS and KMIP
+
+![Atlaso KMS and KMIP page in the clean-appliance desktop viewport.](../assets/screenshots/kms-clean-desktop.webp)
+
+*Figure: KMS and KMIP in the verified clean-appliance desktop state.*
+
+![Atlaso KMS and KMIP page in the clean-appliance responsive viewport.](../assets/screenshots/kms-clean-responsive.webp)
+
+*Figure: KMS and KMIP in the verified clean-appliance responsive state.*
+
+### Users
+
+![Atlaso Users page in the clean-appliance desktop viewport.](../assets/screenshots/users-clean-desktop.webp)
+
+*Figure: Users in the verified clean-appliance desktop state.*
+
+![Atlaso Users page in the clean-appliance responsive viewport.](../assets/screenshots/users-clean-responsive.webp)
+
+*Figure: Users in the verified clean-appliance responsive state.*
+
+### VCF Helper
+
+![Atlaso VCF Helper page in the clean-appliance responsive viewport.](../assets/screenshots/vcf-helper-clean-responsive.webp)
+
+*Figure: VCF Helper in the verified clean-appliance responsive state.*
+
+### VCF Offline Depot
+
+![Atlaso VCF Offline Depot page in the clean-appliance desktop viewport.](../assets/screenshots/vcf-offline-depot-clean-desktop.webp)
+
+*Figure: VCF Offline Depot in the verified clean-appliance desktop state.*
+
+![Atlaso VCF Offline Depot page in the clean-appliance responsive viewport.](../assets/screenshots/vcf-offline-depot-clean-responsive.webp)
+
+*Figure: VCF Offline Depot in the verified clean-appliance responsive state.*
+
+### VCF Private Registry
+
+![Atlaso VCF Private Registry page in the clean-appliance desktop viewport.](../assets/screenshots/vcf-private-registry-clean-desktop.webp)
+
+*Figure: VCF Private Registry in the verified clean-appliance desktop state.*
+
+![Atlaso VCF Private Registry page in the clean-appliance responsive viewport.](../assets/screenshots/vcf-private-registry-clean-responsive.webp)
+
+*Figure: VCF Private Registry in the verified clean-appliance responsive state.*
+
+<!-- END GENERATED ADDITIONAL SCREENSHOTS -->

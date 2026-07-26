@@ -13,6 +13,17 @@ appears under **Operations > Web terminal** on management after it is enabled in
 changes are applied. Selected additional listeners expose it through the Public Services portal instead of the admin
 shell.
 
+<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
+## Interface overview
+
+This verified appliance view provides visual orientation before you begin.
+
+![Atlaso Web terminal page in the clean-appliance desktop viewport.](../assets/screenshots/terminal-clean-desktop.webp)
+
+*Figure: Web terminal in the verified clean-appliance desktop state.*
+
+<!-- END GENERATED INTERFACE OVERVIEW -->
+
 ## Configure access
 
 1. Enable **Management UI HTTPS**.
@@ -79,3 +90,16 @@ confirm `atlaso.service` is active, and verify the selected address separately:
 - `https://<address>/terminal` should redirect to login or open the terminal;
 - `https://<address>/dashboard` and `/openapi.json` must remain unavailable on an additional listener;
 - the management `/openapi.json` endpoint must remain reachable.
+
+<!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
+## Additional verified states
+
+These captures show responsive layouts and useful operational states referenced by this page.
+
+### Web terminal
+
+![Atlaso Web terminal page in the clean-appliance responsive viewport.](../assets/screenshots/terminal-clean-responsive.webp)
+
+*Figure: Web terminal in the verified clean-appliance responsive state.*
+
+<!-- END GENERATED ADDITIONAL SCREENSHOTS -->

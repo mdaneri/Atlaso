@@ -37,6 +37,7 @@ nav = [
   { "Reference" = [
     { "Overview" = "reference/index.md" },
     { "Verified interface gallery" = "reference/interface-gallery.md" },
+    { "Local console technical reference" = "reference/appliance-console-technical.md" },
     { "Full technical reference" = "reference/full-technical-reference.md" },
     { "Hyper-V lifecycle testing" = "reference/hyperv-lifecycle-testing.md" },
     { "VMware lifecycle testing" = "reference/vmware-workstation-lifecycle-testing.md" },

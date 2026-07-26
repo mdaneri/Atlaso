@@ -19,6 +19,35 @@ CAPTURE_OVERRIDES = {
     },
 }
 
+DOCUMENTATION_PAGES = {
+    "getting-started/index.md": ("login-", "services-"),
+    "operate/dashboard.md": ("about-", "audit-log-", "dashboard-", "logs-", "monitor-"),
+    "operate/appliance-apply.md": ("appliance-review-", "settings-", "tasks-"),
+    "operate/appliance-console.md": ("appliance-console-",),
+    "operate/appliance-update.md": ("appliance-update-", "backup-restore-", "vcf-backups-"),
+    "operate/automation.md": ("automation-",),
+    "operate/web-terminal.md": ("terminal-",),
+    "services/dns.md": ("dhcp-", "dns-", "firewall-", "ntp-"),
+    "services/esx-storage.md": ("esx-storage-",),
+    "services/ipxe.md": ("esxi-pxe-",),
+    "services/managed-ldap.md": ("ldap-",),
+    "services/oidc-provider.md": ("authentication-",),
+    "services/vcf-helper.md": (
+        "kms-",
+        "users-",
+        "vcf-helper-",
+        "vcf-offline-depot-",
+        "vcf-private-registry-",
+    ),
+    "services/vcf-trust.md": ("ca-public-", "ca-requests-", "certificate-authority-"),
+    "reference/full-technical-reference.md": (
+        "physical-interfaces-",
+        "routes-wan-",
+        "swagger-",
+        "vlan-interfaces-",
+    ),
+}
+
 ROUTES = {
     "appliance-update": ("/appliance-update", "Appliance Update"),
     "audit-log": ("/audit-log", "Audit Events"),
@@ -143,6 +172,17 @@ SPECIAL = {
 }
 
 
+def documentation_page(stem: str) -> str:
+    matches = [
+        page
+        for page, prefixes in DOCUMENTATION_PAGES.items()
+        if any(stem.startswith(prefix) for prefix in prefixes)
+    ]
+    if len(matches) != 1:
+        raise ValueError(f"{stem} must map to exactly one documentation page; found {matches}")
+    return matches[0]
+
+
 def clean_entry(stem: str) -> tuple[str, str, str, str]:
     suffix = "-clean-responsive" if stem.endswith("-clean-responsive") else "-clean-desktop"
     slug = stem.removesuffix(suffix)
@@ -180,6 +220,7 @@ def metadata(path: Path) -> dict[str, object]:
             if stem == "appliance-console-applied"
             else "chrome-browser"
         ),
+        "documentation_page": documentation_page(stem),
         "brand_variant": "console-light" if stem == "appliance-console-applied" else "light",
         "sensitive_data_reviewed": True,
     }

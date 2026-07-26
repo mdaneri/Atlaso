@@ -11,6 +11,17 @@ status: current
 Atlaso ESX Storage publishes ESX 9.x datastores over kernel NFS 3 and NFS 4.1. IPv4 and IPv6 have equal status: a share
 may enable IPv4, IPv6, or both, and Atlaso never treats either family as preferred, secondary, fallback, or future work.
 
+<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
+## Interface overview
+
+This verified appliance view provides visual orientation before you begin.
+
+![Atlaso ESX Storage page in the clean-appliance desktop viewport.](../assets/screenshots/esx-storage-clean-desktop.webp)
+
+*Figure: ESX Storage in the verified clean-appliance desktop state.*
+
+<!-- END GENERATED INTERFACE OVERVIEW -->
+
 The Storage Volumes and NFS Datastores grids each end with an add row. Selecting it opens a guided modal that validates
 the current step before advancing and summarizes the desired state before creation. Storage selectors show discovered
 eligible devices directly and select the first available device; when inventory has no eligible choice, they show a
@@ -178,3 +189,16 @@ modules/management stack required for a supportable implementation. iSCSI requir
 architecture review covering the target kernel, target management implementation, authentication, LUN lifecycle,
 persistence, firewalling, upgrade compatibility, and lifecycle acceptance. ESX Storage does not emulate iSCSI with an
 unsupported userspace target.
+
+<!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
+## Additional verified states
+
+These captures show responsive layouts and useful operational states referenced by this page.
+
+### ESX Storage
+
+![Atlaso ESX Storage page in the clean-appliance responsive viewport.](../assets/screenshots/esx-storage-clean-responsive.webp)
+
+*Figure: ESX Storage in the verified clean-appliance responsive state.*
+
+<!-- END GENERATED ADDITIONAL SCREENSHOTS -->

@@ -12,6 +12,17 @@ Atlaso can operate a single OpenLDAP 2.6 service for VCF Automation while keepin
 LDAP naming context and LMDB database. This service is independent from Atlaso operator authentication: Atlaso sign-in
 remains local in v1.
 
+<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
+## Interface overview
+
+This verified appliance view provides visual orientation before you begin.
+
+![Atlaso Managed LDAP page in the clean-appliance desktop viewport.](../assets/screenshots/ldap-clean-desktop.webp)
+
+*Figure: Managed LDAP in the verified clean-appliance desktop state.*
+
+<!-- END GENERATED INTERFACE OVERVIEW -->
+
 ## Security boundary
 
 - LDAPS is enabled by default on configurable TCP port 636 and uses a CA-managed certificate.
@@ -97,3 +108,16 @@ Normal settings backup contains LDAP metadata but no bind secrets or password ha
 passphrase-encrypted LDAP recovery export to preserve `slapcat` data. Recovery import decrypts and validates the archive
 in memory, then stages it for the next global LDAP apply. A restart before apply requires the archive and passphrase
 again.
+
+<!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
+## Additional verified states
+
+These captures show responsive layouts and useful operational states referenced by this page.
+
+### Managed LDAP
+
+![Atlaso Managed LDAP page in the clean-appliance responsive viewport.](../assets/screenshots/ldap-clean-responsive.webp)
+
+*Figure: Managed LDAP in the verified clean-appliance responsive state.*
+
+<!-- END GENERATED ADDITIONAL SCREENSHOTS -->

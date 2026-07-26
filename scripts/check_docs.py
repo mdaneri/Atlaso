@@ -19,6 +19,7 @@ ALLOWED_AUDIENCES = {"operator", "contributor", "maintainer"}
 ALLOWED_STATUSES = {"current", "roadmap", "historical", "redirect"}
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 LINK_RE = re.compile(r"!?\[[^\]]+\]\(([^)]+)\)")
+IMAGE_RE = re.compile(r"!\[[^\]]+\]\(([^)]+)\)")
 
 
 @dataclass(frozen=True)
@@ -230,6 +231,7 @@ def validate_screenshots() -> list[Finding]:
         "caption",
         "alt",
         "capture_method",
+        "documentation_page",
         "brand_variant",
         "sensitive_data_reviewed",
     }
@@ -273,6 +275,25 @@ def validate_screenshots() -> list[Finding]:
                 findings.append(Finding(manifest_path, f"screenshot has an empty {field}: {relative}"))
         if entry["sensitive_data_reviewed"] is not True:
             findings.append(Finding(manifest_path, f"screenshot is not marked reviewed: {relative}"))
+        documentation_page = entry["documentation_page"]
+        if not isinstance(documentation_page, str) or not documentation_page.strip():
+            findings.append(Finding(manifest_path, f"screenshot has no documentation page: {relative}"))
+        else:
+            page = DOCS / documentation_page
+            if not page.is_file():
+                findings.append(Finding(manifest_path, f"screenshot documentation page is missing: {documentation_page}"))
+            else:
+                linked = {
+                    (page.parent / match.group(1)).resolve()
+                    for match in IMAGE_RE.finditer(page.read_text(encoding="utf-8"))
+                }
+                if image.resolve() not in linked:
+                    findings.append(
+                        Finding(
+                            page,
+                            f"assigned screenshot is not embedded in this page: {relative}",
+                        )
+                    )
     files = {
         path.relative_to(DOCS).as_posix()
         for path in (DOCS / "assets" / "screenshots").rglob("*.webp")

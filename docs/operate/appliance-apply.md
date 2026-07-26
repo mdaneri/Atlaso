@@ -10,6 +10,17 @@ status: current
 
 Atlaso separates desired-state editing from appliance enforcement.
 
+<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
+## Interface overview
+
+This verified appliance view provides visual orientation before you begin.
+
+![Review appliance changes dialog with selected valid units and one unit needing attention.](../assets/screenshots/appliance-review-modal-desktop.webp)
+
+*Figure: Appliance change review with valid and invalid desired-state units.*
+
+<!-- END GENERATED INTERFACE OVERVIEW -->
+
 Service pages edit desired state. They autosave routine settings and grids, show local validation, expose rendered
 config previews through compact preview actions, and link to the global apply review. They should not own
 service-specific apply buttons or service-specific apply submit routes.
@@ -587,3 +598,54 @@ should stay blank and locked so operators do not mistake a placeholder for a sav
 
 The global submit button should be labeled `Submit appliance changes`. Avoid reintroducing labels such as
 `Create appliance apply task`, `DNS Apply`, `DHCP Apply`, `SFTP Apply`, or other service-scoped apply actions.
+
+<!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
+## Additional verified states
+
+These captures show responsive layouts and useful operational states referenced by this page.
+
+### Appliance Settings
+
+![Atlaso Settings page in the clean-appliance desktop viewport.](../assets/screenshots/settings-clean-desktop.webp)
+
+*Figure: Settings in the verified clean-appliance desktop state.*
+
+![Atlaso Settings page in the clean-appliance responsive viewport.](../assets/screenshots/settings-clean-responsive.webp)
+
+*Figure: Settings in the verified clean-appliance responsive state.*
+
+![Atlaso Settings page with valid pending appliance identity changes.](../assets/screenshots/settings-pending-desktop.webp)
+
+*Figure: Valid Appliance Settings waiting for global appliance apply.*
+
+![Atlaso configuration preview dialog with the rendered Appliance Settings JSON.](../assets/screenshots/settings-preview-modal-desktop.webp)
+
+*Figure: Rendered Appliance Settings configuration preview.*
+
+![Atlaso Settings validation card explaining that the appliance FQDN is invalid.](../assets/screenshots/settings-validation-error-desktop.webp)
+
+*Figure: Appliance Settings validation error for an invalid FQDN.*
+
+### Tasks
+
+![Atlaso task detail dialog for a failed appliance apply.](../assets/screenshots/tasks-apply-failed-detail-desktop.webp)
+
+*Figure: Failed appliance apply task with redacted operator detail.*
+
+![Atlaso task detail dialog showing a successful DNS appliance apply.](../assets/screenshots/tasks-apply-succeeded-detail-desktop.webp)
+
+*Figure: Successful appliance apply task with verified dnsmasq output.*
+
+![Atlaso task log showing successful dnsmasq validation, apply, and reload.](../assets/screenshots/tasks-apply-succeeded-log-desktop.webp)
+
+*Figure: Successful appliance apply log with captured commands and audit events.*
+
+![Atlaso Tasks page in the clean-appliance desktop viewport.](../assets/screenshots/tasks-clean-desktop.webp)
+
+*Figure: Tasks in the verified clean-appliance desktop state.*
+
+![Atlaso Tasks page in the clean-appliance responsive viewport.](../assets/screenshots/tasks-clean-responsive.webp)
+
+*Figure: Tasks in the verified clean-appliance responsive state.*
+
+<!-- END GENERATED ADDITIONAL SCREENSHOTS -->
