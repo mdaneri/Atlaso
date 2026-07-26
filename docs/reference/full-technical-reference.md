@@ -201,10 +201,14 @@ retired Python Libraries and independent wheel streams are not available. Update
 Successful `main` CI publishes immutable signed release bundles to GitHub Releases and advances the signed `development`
 pointer on GitHub Pages. The Pages root provides a static release-repository landing page, while appliances use the
 signed machine-readable documents under `/updates`. `preview` and `stable` promotions reuse an existing verified
-release. A protected manual publication dispatch can recover an exact commit only when it already has a successful
-`main` push CI run. Publication refuses any existing tag or release whose commit or asset bytes differ. The same
-dispatch safely retries channel advancement after a release has already published because it verifies the existing asset
-bytes first. See [Appliance Update](../operate/appliance-update.md) and [Automation](../operate/automation.md).
+release. GitHub Release descriptions preserve the exact signed source commit and append generated notes grouped from
+merged pull-request labels, contributors, and comparison metadata. A protected manual publication dispatch can recover
+an exact commit only when it already has a successful `main` push CI run. Publication refuses any existing tag or
+release whose commit or asset bytes differ. The same dispatch safely retries channel advancement after a release has
+already published because it verifies the existing asset bytes first. The guarded backfill command updates only
+provenance-only legacy descriptions, preflights the complete selected range, and verifies that release identity and
+assets remain unchanged after each body edit. See [Appliance Update](../operate/appliance-update.md) and
+[Automation](../operate/automation.md).
 
 The exported Hyper-V appliance resets to `192.168.49.1/24` on `Atlaso-Mgmt`; the Windows host side should be
 `192.168.49.254/24`. `scripts/windows/hyperv/create-switches.ps1` configures that address and a NAT for the management

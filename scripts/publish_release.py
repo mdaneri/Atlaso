@@ -37,11 +37,11 @@ def version() -> str:
     return result.stdout.strip()
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--commit", required=True)
     parser.add_argument("--assets", type=Path, required=True)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if re.fullmatch(r"[0-9a-f]{40}", args.commit) is None:
         raise SystemExit("release commit must be a full lowercase hexadecimal commit")
     assets = sorted(path.resolve() for path in args.assets.iterdir() if path.is_file())
@@ -109,6 +109,7 @@ def main() -> int:
             "--verify-tag",
             "--title",
             f"Atlaso {tag}",
+            "--generate-notes",
             "--notes",
             f"Signed appliance release built from `{args.commit}`.",
         ]
