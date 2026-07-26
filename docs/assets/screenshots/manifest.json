@@ -81,7 +81,7 @@
       "caption": "Audit Events in the verified clean-appliance desktop state.",
       "alt": "Atlaso Audit Events page in the clean-appliance desktop viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "operate/dashboard.md",
+      "documentation_page": "operate/audit-log.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -95,7 +95,7 @@
       "caption": "Audit Events in the verified clean-appliance responsive state.",
       "alt": "Atlaso Audit Events page in the clean-appliance responsive viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "operate/dashboard.md",
+      "documentation_page": "operate/audit-log.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -193,7 +193,7 @@
       "caption": "Backup and Restore in the verified clean-appliance desktop state.",
       "alt": "Atlaso Backup and Restore page in the clean-appliance desktop viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "operate/appliance-update.md",
+      "documentation_page": "operate/backup-restore.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -207,7 +207,7 @@
       "caption": "Backup and Restore in the verified clean-appliance responsive state.",
       "alt": "Atlaso Backup and Restore page in the clean-appliance responsive viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "operate/appliance-update.md",
+      "documentation_page": "operate/backup-restore.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -221,7 +221,7 @@
       "caption": "Public certificate portal in the verified clean-appliance desktop state.",
       "alt": "Atlaso Public certificate portal page in the clean-appliance desktop viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "services/vcf-trust.md",
+      "documentation_page": "services/certificate-authority.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -235,7 +235,7 @@
       "caption": "Public certificate portal in the verified clean-appliance responsive state.",
       "alt": "Atlaso Public certificate portal page in the clean-appliance responsive viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "services/vcf-trust.md",
+      "documentation_page": "services/certificate-authority.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -249,7 +249,7 @@
       "caption": "Certificate requests in the verified clean-appliance desktop state.",
       "alt": "Atlaso Certificate requests page in the clean-appliance desktop viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "services/vcf-trust.md",
+      "documentation_page": "services/certificate-authority.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -263,7 +263,7 @@
       "caption": "Certificate requests in the verified clean-appliance responsive state.",
       "alt": "Atlaso Certificate requests page in the clean-appliance responsive viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "services/vcf-trust.md",
+      "documentation_page": "services/certificate-authority.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -277,7 +277,7 @@
       "caption": "Certificate Authority in the verified clean-appliance desktop state.",
       "alt": "Atlaso Certificate Authority page in the clean-appliance desktop viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "services/vcf-trust.md",
+      "documentation_page": "services/certificate-authority.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -291,7 +291,7 @@
       "caption": "Certificate Authority in the verified clean-appliance responsive state.",
       "alt": "Atlaso Certificate Authority page in the clean-appliance responsive viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "services/vcf-trust.md",
+      "documentation_page": "services/certificate-authority.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -375,7 +375,7 @@
       "caption": "DHCP in the verified clean-appliance desktop state.",
       "alt": "Atlaso DHCP page in the clean-appliance desktop viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "services/dns.md",
+      "documentation_page": "services/dhcp.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -389,7 +389,7 @@
       "caption": "DHCP in the verified clean-appliance responsive state.",
       "alt": "Atlaso DHCP page in the clean-appliance responsive viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "services/dns.md",
+      "documentation_page": "services/dhcp.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -501,7 +501,7 @@
       "caption": "Firewall in the verified clean-appliance desktop state.",
       "alt": "Atlaso Firewall page in the clean-appliance desktop viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "services/dns.md",
+      "documentation_page": "services/firewall.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -515,7 +515,7 @@
       "caption": "Firewall in the verified clean-appliance responsive state.",
       "alt": "Atlaso Firewall page in the clean-appliance responsive viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "services/dns.md",
+      "documentation_page": "services/firewall.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -529,7 +529,7 @@
       "caption": "KMS and KMIP in the verified clean-appliance desktop state.",
       "alt": "Atlaso KMS and KMIP page in the clean-appliance desktop viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "services/vcf-helper.md",
+      "documentation_page": "services/kms.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -543,7 +543,7 @@
       "caption": "KMS and KMIP in the verified clean-appliance responsive state.",
       "alt": "Atlaso KMS and KMIP page in the clean-appliance responsive viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "services/vcf-helper.md",
+      "documentation_page": "services/kms.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -613,7 +613,7 @@
       "caption": "Logs in the verified clean-appliance desktop state.",
       "alt": "Atlaso Logs page in the clean-appliance desktop viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "operate/dashboard.md",
+      "documentation_page": "operate/logs.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -627,7 +627,7 @@
       "caption": "Logs in the verified clean-appliance responsive state.",
       "alt": "Atlaso Logs page in the clean-appliance responsive viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "operate/dashboard.md",
+      "documentation_page": "operate/logs.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -641,7 +641,7 @@
       "caption": "Runtime monitoring after a successful appliance apply.",
       "alt": "Atlaso Monitor page showing live appliance runtime metrics after apply.",
       "capture_method": "chrome-browser",
-      "documentation_page": "operate/dashboard.md",
+      "documentation_page": "operate/monitor.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -655,7 +655,7 @@
       "caption": "Monitor in the verified clean-appliance desktop state.",
       "alt": "Atlaso Monitor page in the clean-appliance desktop viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "operate/dashboard.md",
+      "documentation_page": "operate/monitor.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -669,7 +669,7 @@
       "caption": "Monitor in the verified clean-appliance responsive state.",
       "alt": "Atlaso Monitor page in the clean-appliance responsive viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "operate/dashboard.md",
+      "documentation_page": "operate/monitor.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -683,7 +683,7 @@
       "caption": "NTP and NTS in the verified clean-appliance desktop state.",
       "alt": "Atlaso NTP and NTS page in the clean-appliance desktop viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "services/dns.md",
+      "documentation_page": "services/ntp.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -697,7 +697,7 @@
       "caption": "NTP and NTS in the verified clean-appliance responsive state.",
       "alt": "Atlaso NTP and NTS page in the clean-appliance responsive viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "services/dns.md",
+      "documentation_page": "services/ntp.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -711,7 +711,7 @@
       "caption": "Physical Interfaces in the verified clean-appliance desktop state.",
       "alt": "Atlaso Physical Interfaces page in the clean-appliance desktop viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "reference/full-technical-reference.md",
+      "documentation_page": "operate/networking.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -725,7 +725,7 @@
       "caption": "Physical Interfaces in the verified clean-appliance responsive state.",
       "alt": "Atlaso Physical Interfaces page in the clean-appliance responsive viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "reference/full-technical-reference.md",
+      "documentation_page": "operate/networking.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -739,7 +739,7 @@
       "caption": "Routes and WAN Simulation in the verified clean-appliance desktop state.",
       "alt": "Atlaso Routes and WAN Simulation page in the clean-appliance desktop viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "reference/full-technical-reference.md",
+      "documentation_page": "operate/networking.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -753,7 +753,7 @@
       "caption": "Routes and WAN Simulation in the verified clean-appliance responsive state.",
       "alt": "Atlaso Routes and WAN Simulation page in the clean-appliance responsive viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "reference/full-technical-reference.md",
+      "documentation_page": "operate/networking.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -795,7 +795,7 @@
       "caption": "Settings in the verified clean-appliance desktop state.",
       "alt": "Atlaso Settings page in the clean-appliance desktop viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "operate/appliance-apply.md",
+      "documentation_page": "operate/appliance-settings.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -809,7 +809,7 @@
       "caption": "Settings in the verified clean-appliance responsive state.",
       "alt": "Atlaso Settings page in the clean-appliance responsive viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "operate/appliance-apply.md",
+      "documentation_page": "operate/appliance-settings.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -823,7 +823,7 @@
       "caption": "Valid Appliance Settings waiting for global appliance apply.",
       "alt": "Atlaso Settings page with valid pending appliance identity changes.",
       "capture_method": "chrome-browser",
-      "documentation_page": "operate/appliance-apply.md",
+      "documentation_page": "operate/appliance-settings.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -837,7 +837,7 @@
       "caption": "Rendered Appliance Settings configuration preview.",
       "alt": "Atlaso configuration preview dialog with the rendered Appliance Settings JSON.",
       "capture_method": "chrome-browser",
-      "documentation_page": "operate/appliance-apply.md",
+      "documentation_page": "operate/appliance-settings.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -851,7 +851,7 @@
       "caption": "Appliance Settings validation error for an invalid FQDN.",
       "alt": "Atlaso Settings validation card explaining that the appliance FQDN is invalid.",
       "capture_method": "chrome-browser",
-      "documentation_page": "operate/appliance-apply.md",
+      "documentation_page": "operate/appliance-settings.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -865,7 +865,7 @@
       "caption": "Swagger API reference in the verified clean-appliance desktop state.",
       "alt": "Atlaso Swagger API reference page in the clean-appliance desktop viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "reference/full-technical-reference.md",
+      "documentation_page": "reference/api.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -879,7 +879,7 @@
       "caption": "Swagger API reference in the verified clean-appliance responsive state.",
       "alt": "Atlaso Swagger API reference page in the clean-appliance responsive viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "reference/full-technical-reference.md",
+      "documentation_page": "reference/api.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -893,7 +893,7 @@
       "caption": "Failed appliance apply task with redacted operator detail.",
       "alt": "Atlaso task detail dialog for a failed appliance apply.",
       "capture_method": "chrome-browser",
-      "documentation_page": "operate/appliance-apply.md",
+      "documentation_page": "operate/tasks.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -907,7 +907,7 @@
       "caption": "Successful appliance apply task with verified dnsmasq output.",
       "alt": "Atlaso task detail dialog showing a successful DNS appliance apply.",
       "capture_method": "chrome-browser",
-      "documentation_page": "operate/appliance-apply.md",
+      "documentation_page": "operate/tasks.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -921,7 +921,7 @@
       "caption": "Successful appliance apply log with captured commands and audit events.",
       "alt": "Atlaso task log showing successful dnsmasq validation, apply, and reload.",
       "capture_method": "chrome-browser",
-      "documentation_page": "operate/appliance-apply.md",
+      "documentation_page": "operate/tasks.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -935,7 +935,7 @@
       "caption": "Tasks in the verified clean-appliance desktop state.",
       "alt": "Atlaso Tasks page in the clean-appliance desktop viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "operate/appliance-apply.md",
+      "documentation_page": "operate/tasks.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -949,7 +949,7 @@
       "caption": "Tasks in the verified clean-appliance responsive state.",
       "alt": "Atlaso Tasks page in the clean-appliance responsive viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "operate/appliance-apply.md",
+      "documentation_page": "operate/tasks.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -991,7 +991,7 @@
       "caption": "Users in the verified clean-appliance desktop state.",
       "alt": "Atlaso Users page in the clean-appliance desktop viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "services/vcf-helper.md",
+      "documentation_page": "services/local-users.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -1005,7 +1005,7 @@
       "caption": "Users in the verified clean-appliance responsive state.",
       "alt": "Atlaso Users page in the clean-appliance responsive viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "services/vcf-helper.md",
+      "documentation_page": "services/local-users.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -1019,7 +1019,7 @@
       "caption": "VCF Backups in the verified clean-appliance desktop state.",
       "alt": "Atlaso VCF Backups page in the clean-appliance desktop viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "operate/appliance-update.md",
+      "documentation_page": "services/vcf-backups.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -1033,7 +1033,7 @@
       "caption": "VCF Backups in the verified clean-appliance responsive state.",
       "alt": "Atlaso VCF Backups page in the clean-appliance responsive viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "operate/appliance-update.md",
+      "documentation_page": "services/vcf-backups.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -1075,7 +1075,7 @@
       "caption": "VCF Offline Depot in the verified clean-appliance desktop state.",
       "alt": "Atlaso VCF Offline Depot page in the clean-appliance desktop viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "services/vcf-helper.md",
+      "documentation_page": "services/vcf-offline-depot.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -1089,7 +1089,7 @@
       "caption": "VCF Offline Depot in the verified clean-appliance responsive state.",
       "alt": "Atlaso VCF Offline Depot page in the clean-appliance responsive viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "services/vcf-helper.md",
+      "documentation_page": "services/vcf-offline-depot.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -1103,7 +1103,7 @@
       "caption": "VCF Private Registry in the verified clean-appliance desktop state.",
       "alt": "Atlaso VCF Private Registry page in the clean-appliance desktop viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "services/vcf-helper.md",
+      "documentation_page": "services/vcf-private-registry.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -1117,7 +1117,7 @@
       "caption": "VCF Private Registry in the verified clean-appliance responsive state.",
       "alt": "Atlaso VCF Private Registry page in the clean-appliance responsive viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "services/vcf-helper.md",
+      "documentation_page": "services/vcf-private-registry.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -1131,7 +1131,7 @@
       "caption": "VLAN Interfaces in the verified clean-appliance desktop state.",
       "alt": "Atlaso VLAN Interfaces page in the clean-appliance desktop viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "reference/full-technical-reference.md",
+      "documentation_page": "operate/networking.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
@@ -1145,7 +1145,7 @@
       "caption": "VLAN Interfaces in the verified clean-appliance responsive state.",
       "alt": "Atlaso VLAN Interfaces page in the clean-appliance responsive viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "reference/full-technical-reference.md",
+      "documentation_page": "operate/networking.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     }

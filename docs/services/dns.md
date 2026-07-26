@@ -99,16 +99,6 @@ authoritative interface set.
 
 These captures show responsive layouts and useful operational states referenced by this page.
 
-### DHCP
-
-![Atlaso DHCP page in the clean-appliance desktop viewport.](../assets/screenshots/dhcp-clean-desktop.webp)
-
-*Figure: DHCP in the verified clean-appliance desktop state.*
-
-![Atlaso DHCP page in the clean-appliance responsive viewport.](../assets/screenshots/dhcp-clean-responsive.webp)
-
-*Figure: DHCP in the verified clean-appliance responsive state.*
-
 ### DNS
 
 ![Atlaso DNS page after the desired dnsmasq configuration was applied successfully.](../assets/screenshots/dns-applied-desktop.webp)
@@ -118,25 +108,5 @@ These captures show responsive layouts and useful operational states referenced 
 ![Atlaso DNS page in the clean-appliance responsive viewport.](../assets/screenshots/dns-clean-responsive.webp)
 
 *Figure: DNS in the verified clean-appliance responsive state.*
-
-### Firewall
-
-![Atlaso Firewall page in the clean-appliance desktop viewport.](../assets/screenshots/firewall-clean-desktop.webp)
-
-*Figure: Firewall in the verified clean-appliance desktop state.*
-
-![Atlaso Firewall page in the clean-appliance responsive viewport.](../assets/screenshots/firewall-clean-responsive.webp)
-
-*Figure: Firewall in the verified clean-appliance responsive state.*
-
-### NTP and NTS
-
-![Atlaso NTP and NTS page in the clean-appliance desktop viewport.](../assets/screenshots/ntp-clean-desktop.webp)
-
-*Figure: NTP and NTS in the verified clean-appliance desktop state.*
-
-![Atlaso NTP and NTS page in the clean-appliance responsive viewport.](../assets/screenshots/ntp-clean-responsive.webp)
-
-*Figure: NTP and NTS in the verified clean-appliance responsive state.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->

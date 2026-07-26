@@ -11,9 +11,15 @@ status: current
 Use these guides for day-to-day appliance work:
 
 - [Dashboard](dashboard.md) — read-only operational attention and setup readiness.
+- [Monitor](monitor.md) — runtime CPU, memory, network, disk-activity, and interface health.
+- [Operational logs](logs.md) and [Audit log](audit-log.md) — correlate runtime evidence and operator actions.
+- [Tasks](tasks.md) — follow submitted operations to a verified terminal result.
 - [Appliance Apply](appliance-apply.md) — review and submit selected desired-state changes.
+- [Appliance settings](appliance-settings.md) — manage appliance-wide identity and access desired state.
+- [Network configuration](networking.md) — physical interfaces, VLANs, routing, and WAN desired state.
 - [Local appliance console](appliance-console.md) — local status and recovery access.
 - [Appliance Update](appliance-update.md) — signed Atlaso, PowerShell, and Photon update streams.
+- [Backup and restore](backup-restore.md) — protect and recover Atlaso settings.
 - [Automation](automation.md) — schedules, executions, and immutable managed scripts.
 - [Web Terminal](web-terminal.md) — constrained browser terminal sessions.
 

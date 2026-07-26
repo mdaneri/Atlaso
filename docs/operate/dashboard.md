@@ -68,16 +68,6 @@ becoming visible. A failed refresh keeps the last successful DOM and displays a 
 
 These captures show responsive layouts and useful operational states referenced by this page.
 
-### Audit events
-
-![Atlaso Audit Events page in the clean-appliance desktop viewport.](../assets/screenshots/audit-log-clean-desktop.webp)
-
-*Figure: Audit Events in the verified clean-appliance desktop state.*
-
-![Atlaso Audit Events page in the clean-appliance responsive viewport.](../assets/screenshots/audit-log-clean-responsive.webp)
-
-*Figure: Audit Events in the verified clean-appliance responsive state.*
-
 ### Dashboard
 
 ![Atlaso About dialog showing version 0.9.21, build identity, and Python version.](../assets/screenshots/about-modal-desktop.webp)
@@ -99,29 +89,5 @@ These captures show responsive layouts and useful operational states referenced 
 ![Atlaso dashboard showing pending appliance changes and a validation exception.](../assets/screenshots/dashboard-pending-desktop.webp)
 
 *Figure: Dashboard with valid pending changes and a unit needing attention.*
-
-### Logs
-
-![Atlaso Logs page in the clean-appliance desktop viewport.](../assets/screenshots/logs-clean-desktop.webp)
-
-*Figure: Logs in the verified clean-appliance desktop state.*
-
-![Atlaso Logs page in the clean-appliance responsive viewport.](../assets/screenshots/logs-clean-responsive.webp)
-
-*Figure: Logs in the verified clean-appliance responsive state.*
-
-### Monitor
-
-![Atlaso Monitor page showing live appliance runtime metrics after apply.](../assets/screenshots/monitor-applied-desktop.webp)
-
-*Figure: Runtime monitoring after a successful appliance apply.*
-
-![Atlaso Monitor page in the clean-appliance desktop viewport.](../assets/screenshots/monitor-clean-desktop.webp)
-
-*Figure: Monitor in the verified clean-appliance desktop state.*
-
-![Atlaso Monitor page in the clean-appliance responsive viewport.](../assets/screenshots/monitor-clean-responsive.webp)
-
-*Figure: Monitor in the verified clean-appliance responsive state.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->

@@ -263,24 +263,4 @@ These captures show responsive layouts and useful operational states referenced 
 
 *Figure: Appliance Update in the verified clean-appliance responsive state.*
 
-### Backup and restore
-
-![Atlaso Backup and Restore page in the clean-appliance desktop viewport.](../assets/screenshots/backup-restore-clean-desktop.webp)
-
-*Figure: Backup and Restore in the verified clean-appliance desktop state.*
-
-![Atlaso Backup and Restore page in the clean-appliance responsive viewport.](../assets/screenshots/backup-restore-clean-responsive.webp)
-
-*Figure: Backup and Restore in the verified clean-appliance responsive state.*
-
-### VCF backups
-
-![Atlaso VCF Backups page in the clean-appliance desktop viewport.](../assets/screenshots/vcf-backups-clean-desktop.webp)
-
-*Figure: VCF Backups in the verified clean-appliance desktop state.*
-
-![Atlaso VCF Backups page in the clean-appliance responsive viewport.](../assets/screenshots/vcf-backups-clean-responsive.webp)
-
-*Figure: VCF Backups in the verified clean-appliance responsive state.*
-
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->

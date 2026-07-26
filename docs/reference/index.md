@@ -10,6 +10,7 @@ status: current
 
 # Reference
 
+- [API reference](api.md)
 - [Verified interface gallery](interface-gallery.md)
 - [Local console technical reference](appliance-console-technical.md)
 - [Full technical reference](full-technical-reference.md)

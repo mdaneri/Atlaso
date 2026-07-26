@@ -1,0 +1,68 @@
+---
+title: Appliance settings
+description: Configure Atlaso identity, resolver, management HTTPS, and root SSH desired state.
+audience:
+  - operator
+status: current
+---
+
+# Appliance settings
+
+Open **Appliance Settings** to edit appliance-wide desired state: the appliance FQDN, OS hostname, resolver mode and
+servers, management UI HTTPS preference, and root SSH login preference.
+
+<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
+## Interface overview
+
+This verified appliance view provides visual orientation before you begin.
+
+![Atlaso Settings page in the clean-appliance desktop viewport.](../assets/screenshots/settings-clean-desktop.webp)
+
+*Figure: Settings in the verified clean-appliance desktop state.*
+
+<!-- END GENERATED INTERFACE OVERVIEW -->
+
+## Before you begin
+
+Confirm the intended management hostname and DNS records. Keep an alternate console session available before changing
+management connectivity or SSH policy. Routine field changes autosave, but they do not change the host immediately.
+
+## Edit and validate
+
+1. Change only the fields required for the maintenance window.
+2. Watch the compact autosave status.
+3. Resolve errors or warnings in the Validation card.
+4. Open the rendered preview and confirm the hostname, resolver, HTTPS, and SSH effects.
+5. Open **Pending Appliance Changes** and submit the valid Appliance Settings unit.
+
+The review modal may include other changed units. Unselect unrelated work before submission.
+
+## Verify and recover
+
+After the task succeeds, confirm the expected management URL and resolver behavior. If management access is lost, use
+the [local appliance console](appliance-console.md) to inspect networking and restore a known-good configuration.
+
+<!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
+## Additional verified states
+
+These captures show responsive layouts and useful operational states referenced by this page.
+
+### Appliance Settings
+
+![Atlaso Settings page in the clean-appliance responsive viewport.](../assets/screenshots/settings-clean-responsive.webp)
+
+*Figure: Settings in the verified clean-appliance responsive state.*
+
+![Atlaso Settings page with valid pending appliance identity changes.](../assets/screenshots/settings-pending-desktop.webp)
+
+*Figure: Valid Appliance Settings waiting for global appliance apply.*
+
+![Atlaso configuration preview dialog with the rendered Appliance Settings JSON.](../assets/screenshots/settings-preview-modal-desktop.webp)
+
+*Figure: Rendered Appliance Settings configuration preview.*
+
+![Atlaso Settings validation card explaining that the appliance FQDN is invalid.](../assets/screenshots/settings-validation-error-desktop.webp)
+
+*Figure: Appliance Settings validation error for an invalid FQDN.*
+
+<!-- END GENERATED ADDITIONAL SCREENSHOTS -->

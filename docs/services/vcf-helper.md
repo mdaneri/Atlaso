@@ -148,50 +148,10 @@ state model.
 
 These captures show responsive layouts and useful operational states referenced by this page.
 
-### KMS and KMIP
-
-![Atlaso KMS and KMIP page in the clean-appliance desktop viewport.](../assets/screenshots/kms-clean-desktop.webp)
-
-*Figure: KMS and KMIP in the verified clean-appliance desktop state.*
-
-![Atlaso KMS and KMIP page in the clean-appliance responsive viewport.](../assets/screenshots/kms-clean-responsive.webp)
-
-*Figure: KMS and KMIP in the verified clean-appliance responsive state.*
-
-### Users
-
-![Atlaso Users page in the clean-appliance desktop viewport.](../assets/screenshots/users-clean-desktop.webp)
-
-*Figure: Users in the verified clean-appliance desktop state.*
-
-![Atlaso Users page in the clean-appliance responsive viewport.](../assets/screenshots/users-clean-responsive.webp)
-
-*Figure: Users in the verified clean-appliance responsive state.*
-
 ### VCF Helper
 
 ![Atlaso VCF Helper page in the clean-appliance responsive viewport.](../assets/screenshots/vcf-helper-clean-responsive.webp)
 
 *Figure: VCF Helper in the verified clean-appliance responsive state.*
-
-### VCF Offline Depot
-
-![Atlaso VCF Offline Depot page in the clean-appliance desktop viewport.](../assets/screenshots/vcf-offline-depot-clean-desktop.webp)
-
-*Figure: VCF Offline Depot in the verified clean-appliance desktop state.*
-
-![Atlaso VCF Offline Depot page in the clean-appliance responsive viewport.](../assets/screenshots/vcf-offline-depot-clean-responsive.webp)
-
-*Figure: VCF Offline Depot in the verified clean-appliance responsive state.*
-
-### VCF Private Registry
-
-![Atlaso VCF Private Registry page in the clean-appliance desktop viewport.](../assets/screenshots/vcf-private-registry-clean-desktop.webp)
-
-*Figure: VCF Private Registry in the verified clean-appliance desktop state.*
-
-![Atlaso VCF Private Registry page in the clean-appliance responsive viewport.](../assets/screenshots/vcf-private-registry-clean-responsive.webp)
-
-*Figure: VCF Private Registry in the verified clean-appliance responsive state.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
