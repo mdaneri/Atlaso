@@ -8,6 +8,9 @@ Create or link an issue before beginning implementation. Every pull request must
 `Closes #<issue>` in its description. An issue describes the problem or intended outcome; its pull request contains the
 implementation. GitHub closes the issue when that pull request merges.
 
+The public [Atlaso Development Project](docs/project/github-project.md) tracks every repository issue and pull request.
+GitHub adds new items automatically; maintainers assign release and planning metadata during triage.
+
 Each linked issue must have exactly one type label:
 
 | Label           | Use                                                   |

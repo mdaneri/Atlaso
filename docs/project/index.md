@@ -11,6 +11,7 @@ status: current
 
 ## Current project guidance
 
+- [Atlaso Development Project](github-project.md)
 - [Atlaso Brand Assets](branding.md)
 - [Atlaso Brand Kit](../assets/brand/BRAND_GUIDE.md)
 
