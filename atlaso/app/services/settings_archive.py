@@ -910,7 +910,10 @@ def _restore_oidc_client_redirect_uris(db: Session, rows: list[dict[str, Any]]) 
 
 
 def _restore_oidc_group_mappings(db: Session, rows: list[dict[str, Any]]) -> int:
-    from atlaso.app.services.oidc import create_group_mapping
+    from atlaso.app.services.oidc import (
+        create_group_mapping,
+        validate_all_mapping_contexts,
+    )
 
     organizations = {
         row.slug: row.id
@@ -953,9 +956,11 @@ def _restore_oidc_group_mappings(db: Session, rows: list[dict[str, Any]]) -> int
             ldap_group_id=group_id,
             oidc_client_id=client_record_id,
             external_group_name=str(row.get("external_group_name") or ""),
+            validate_effective_contexts=False,
         )
         restored += 1
     db.flush()
+    validate_all_mapping_contexts(db)
     return restored
 
 

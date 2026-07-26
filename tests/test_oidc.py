@@ -458,6 +458,77 @@ def test_oidc_backup_restore_preserves_subject_client_mapping_and_encrypted_key(
         assert restored_mapping.oidc_client_id == db.execute(select(OidcClient.id)).scalar_one()
 
 
+def test_oidc_backup_restore_validates_the_final_effective_mapping_set(client):
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import OidcClient, OidcGroupMapping
+    from atlaso.app.services.oidc import create_group_mapping, update_group_mapping
+    from atlaso.app.services.settings_archive import (
+        export_settings_archive,
+        factory_reset_desired_state,
+        restore_settings_archive,
+    )
+
+    client_id, _secret = _configure_protocol_client()
+    with SessionLocal() as db:
+        client_row = db.execute(
+            select(OidcClient).where(OidcClient.client_id == client_id)
+        ).scalar_one()
+        create_group_mapping(
+            db,
+            source_type="local_role",
+            local_role="admin",
+            ldap_group_id=None,
+            oidc_client_id=None,
+            external_group_name="Default Admin",
+        )
+        create_group_mapping(
+            db,
+            source_type="local_role",
+            local_role="viewer",
+            ldap_group_id=None,
+            oidc_client_id=None,
+            external_group_name="Default Viewer",
+        )
+        admin_override = create_group_mapping(
+            db,
+            source_type="local_role",
+            local_role="admin",
+            ldap_group_id=None,
+            oidc_client_id=client_row.id,
+            external_group_name="Temporary Admin",
+        )
+        create_group_mapping(
+            db,
+            source_type="local_role",
+            local_role="viewer",
+            ldap_group_id=None,
+            oidc_client_id=client_row.id,
+            external_group_name="Client Viewer",
+        )
+        update_group_mapping(
+            db,
+            row=admin_override,
+            oidc_client_id=client_row.id,
+            external_group_name="Default Viewer",
+        )
+        db.commit()
+
+        archive = export_settings_archive(db, actor="admin")
+        factory_reset_desired_state(db)
+        counts = restore_settings_archive(db, archive)
+
+        assert counts["oidc_group_mappings"] == 4
+        restored = db.execute(
+            select(OidcGroupMapping).order_by(OidcGroupMapping.id)
+        ).scalars().all()
+        assert [row.external_group_name for row in restored] == [
+            "Default Admin",
+            "Default Viewer",
+            "Default Viewer",
+            "Client Viewer",
+        ]
+
+
 def test_authentication_page_exposes_authorization_code_oidc_ui(client):
     login = client.get("/login")
     csrf = login.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -797,6 +868,89 @@ def test_local_role_mappings_override_defaults_reject_collisions_and_filter_scop
     )
     assert openid_userinfo.status_code == 200
     assert openid_userinfo.json() == {"sub": openid_claims["sub"]}
+
+
+def test_group_mapping_delete_rejects_a_revealed_effective_name_collision(client):
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import OidcClient, OidcGroupMapping
+    from atlaso.app.services.oidc import create_group_mapping, update_group_mapping
+
+    client_id, _secret = _configure_protocol_client()
+    headers = _admin_headers(client)
+    with SessionLocal() as db:
+        client_row = db.execute(
+            select(OidcClient).where(OidcClient.client_id == client_id)
+        ).scalar_one()
+        create_group_mapping(
+            db,
+            source_type="local_role",
+            local_role="admin",
+            ldap_group_id=None,
+            oidc_client_id=None,
+            external_group_name="Default Admin",
+        )
+        create_group_mapping(
+            db,
+            source_type="local_role",
+            local_role="viewer",
+            ldap_group_id=None,
+            oidc_client_id=None,
+            external_group_name="Default Viewer",
+        )
+        admin_override = create_group_mapping(
+            db,
+            source_type="local_role",
+            local_role="admin",
+            ldap_group_id=None,
+            oidc_client_id=client_row.id,
+            external_group_name="Temporary Admin",
+        )
+        viewer_override = create_group_mapping(
+            db,
+            source_type="local_role",
+            local_role="viewer",
+            ldap_group_id=None,
+            oidc_client_id=client_row.id,
+            external_group_name="Client Viewer",
+        )
+        update_group_mapping(
+            db,
+            row=admin_override,
+            oidc_client_id=client_row.id,
+            external_group_name="Default Viewer",
+        )
+        viewer_override_id = viewer_override.id
+        db.commit()
+
+    api_delete = client.delete(
+        f"/api/v1/oidc/group-mappings/{viewer_override_id}",
+        headers=headers,
+    )
+    assert api_delete.status_code == 422
+    assert "not valid in its effective context" in api_delete.json()["detail"]
+    with SessionLocal() as db:
+        assert db.get(OidcGroupMapping, viewer_override_id) is not None
+
+    login_page = client.get("/login")
+    csrf = login_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    signed_in = client.post(
+        "/login",
+        data={"username": "admin", "password": "atlaso-admin", "csrf": csrf},
+        follow_redirects=False,
+    )
+    assert signed_in.status_code == 303
+    authentication_page = client.get("/authentication")
+    csrf = authentication_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    ui_delete = client.post(
+        f"/authentication/oidc/group-mappings/{viewer_override_id}/delete",
+        data={"csrf": csrf},
+        headers={"X-Atlaso-Grid": "1"},
+        follow_redirects=False,
+    )
+    assert ui_delete.status_code == 422
+    assert "duplicate effective external group names" in ui_delete.json()["detail"]
+    with SessionLocal() as db:
+        assert db.get(OidcGroupMapping, viewer_override_id) is not None
 
 
 def test_ldap_nested_cycle_mappings_emit_only_external_names_and_revalidate_source(

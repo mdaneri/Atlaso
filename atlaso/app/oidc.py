@@ -86,6 +86,13 @@ def _public_configuration_error(exc: OidcConfigurationError) -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
 
+def _group_mapping_error_detail() -> str:
+    return (
+        "Review the group source, client scope, and external name; "
+        "the mapping is not valid in its effective context."
+    )
+
+
 @public_router.get("/.well-known/openid-configuration", response_model=None)
 def get_openid_configuration(
     request: Request, db: Session = Depends(get_db)
@@ -964,9 +971,16 @@ def delete_oidc_group_mapping(
     source_type = row.source_type
     organization_id = row.organization_id
     client_id = row.oidc_client_id
-    db.delete(row)
-    db.flush()
-    validate_all_mapping_contexts(db)
+    try:
+        db.delete(row)
+        db.flush()
+        validate_all_mapping_contexts(db)
+    except OidcConfigurationError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=_group_mapping_error_detail(),
+        ) from None
     record_audit(
         db,
         actor=identity.username,

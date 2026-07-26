@@ -17703,10 +17703,11 @@ def create_oidc_group_mapping_from_ui(
             oidc_client_id=int(oidc_client_id) if oidc_client_id.strip() else None,
             external_group_name=external_group_name,
         )
-    except (OidcConfigurationError, OidcConflictError, ValueError) as exc:
+    except OidcConflictError:
         db.rollback()
+        detail = "A mapping already exists for this source and mapping scope."
         if request.headers.get("X-Atlaso-Grid") == "1":
-            return JSONResponse({"detail": str(exc)}, status_code=422)
+            return JSONResponse({"detail": detail}, status_code=409)
         return render(
             request,
             "authentication.html",
@@ -17714,7 +17715,26 @@ def create_oidc_group_mapping_from_ui(
                 db,
                 identity,
                 raw_token=None,
-                oidc_error=str(exc),
+                oidc_error=detail,
+            ),
+            status_code=409,
+        )
+    except (OidcConfigurationError, ValueError):
+        db.rollback()
+        detail = (
+            "Review the group source, client scope, and external name; "
+            "the mapping is not valid in its effective context."
+        )
+        if request.headers.get("X-Atlaso-Grid") == "1":
+            return JSONResponse({"detail": detail}, status_code=422)
+        return render(
+            request,
+            "authentication.html",
+            authentication_context(
+                db,
+                identity,
+                raw_token=None,
+                oidc_error=detail,
             ),
             status_code=422,
         )
@@ -17762,9 +17782,23 @@ def update_oidc_group_mapping_from_ui(
             oidc_client_id=int(oidc_client_id) if oidc_client_id.strip() else None,
             external_group_name=external_group_name,
         )
-    except (OidcConfigurationError, OidcConflictError, ValueError) as exc:
+    except OidcConflictError:
         db.rollback()
-        return JSONResponse({"detail": str(exc)}, status_code=422)
+        return JSONResponse(
+            {"detail": "A mapping already exists for this source and mapping scope."},
+            status_code=409,
+        )
+    except (OidcConfigurationError, ValueError):
+        db.rollback()
+        return JSONResponse(
+            {
+                "detail": (
+                    "Review the group source, client scope, and external name; "
+                    "the mapping is not valid in its effective context."
+                )
+            },
+            status_code=422,
+        )
     record_audit(
         db,
         actor=identity.username,
@@ -17798,9 +17832,29 @@ def delete_oidc_group_mapping_from_ui(
     source_type = row.source_type
     organization_id = row.organization_id
     client_id = row.oidc_client_id
-    db.delete(row)
-    db.flush()
-    validate_oidc_mapping_contexts(db)
+    try:
+        db.delete(row)
+        db.flush()
+        validate_oidc_mapping_contexts(db)
+    except OidcConfigurationError:
+        db.rollback()
+        detail = (
+            "Deleting this override would create duplicate effective external "
+            "group names. Update the remaining mappings first."
+        )
+        if request.headers.get("X-Atlaso-Grid") == "1":
+            return JSONResponse({"detail": detail}, status_code=422)
+        return render(
+            request,
+            "authentication.html",
+            authentication_context(
+                db,
+                identity,
+                raw_token=None,
+                oidc_error=detail,
+            ),
+            status_code=422,
+        )
     record_audit(
         db,
         actor=identity.username,

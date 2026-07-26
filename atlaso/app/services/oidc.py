@@ -823,6 +823,7 @@ def create_group_mapping(
     ldap_group_id: int | None,
     oidc_client_id: int | None,
     external_group_name: str,
+    validate_effective_contexts: bool = True,
 ) -> OidcGroupMapping:
     client = get_client(db, oidc_client_id) if oidc_client_id is not None else None
     normalized_role = local_role.strip().casefold()
@@ -877,7 +878,8 @@ def create_group_mapping(
     )
     db.add(row)
     db.flush()
-    validate_all_mapping_contexts(db)
+    if validate_effective_contexts:
+        validate_all_mapping_contexts(db)
     return db.execute(
         select(OidcGroupMapping)
         .where(OidcGroupMapping.id == row.id)
