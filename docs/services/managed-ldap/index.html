@@ -1190,6 +1190,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#oidc-organization-and-group-use" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        OIDC organization and group use
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#apply-and-recovery" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -2097,6 +2108,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#oidc-organization-and-group-use" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        OIDC organization and group use
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#apply-and-recovery" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -2275,6 +2297,16 @@ user and group. Administrator credentials are transient and are not stored.</p>
 </span></code></pre></div>
 <p>Atlaso does not import LDAP groups into VCF or assign VCF organization roles. Complete those steps in VCF Automation and
 retain local break-glass administrators.</p>
+<h2 id="oidc-organization-and-group-use">OIDC organization and group use<a class="headerlink" href="#oidc-organization-and-group-use" title="Permanent link">&para;</a></h2>
+<p>Managed LDAP can also supply identities to Atlaso's constrained OIDC provider. A bound OIDC client uses only its
+configured enabled organization and does not show an organization selector. An unbound client requires the user to
+choose <strong>Local</strong> or one currently enabled organization; duplicate usernames across organizations are therefore never
+used to infer a source.</p>
+<p>The Authentication page maps selected managed LDAP groups to external OIDC group names. Atlaso evaluates current enabled
+direct and nested membership through the same cycle-safe group graph used by the directory model. Organization mappings
+are defaults; a compatible client-specific mapping replaces the default for the same LDAP group. Only mapped external
+values are emitted when the client receives the <code>groups</code> scope. Raw LDAP group names, DNs, suffixes, listener details,
+disabled groups, and unmapped groups remain private.</p>
 <h2 id="apply-and-recovery">Apply and recovery<a class="headerlink" href="#apply-and-recovery" title="Permanent link">&para;</a></h2>
 <p>The <code>ldap</code> apply unit stages secret-bearing JSON at <code>/var/lib/atlaso/apply/ldap/atlaso-ldap.json</code> with mode <code>0600</code>. The
 file is excluded from previews and task payloads and removed after helper processing. When LDAP-related CA, DNS, or

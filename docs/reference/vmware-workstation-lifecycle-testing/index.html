@@ -2281,6 +2281,10 @@ VMDK when needed, creates a unique <code>AtlasoWorkstationLifecycle-*</code> lab
 default runs the restored backup/restore pass. Pass <code>-SkipBackupRestoreTest</code> only when the older single-pass behavior is
 intended. Unless <code>-ApplianceIPAddress</code> is passed, the wrapper waits for VMware Tools to report the appliance's DHCP
 management IPv4 address and derives the appliance URL from that discovered address.</p>
+<p>For focused deployed OIDC acceptance independent of the full service-network topology, pass <code>-OidcOnly</code>. The wrapper
+still clones the selected appliance, installs the exact branch wheel, proves appliance readiness, and runs the OIDC
+Authorization Code acceptance check. It skips unrelated multi-NIC service configuration, client VM creation and probes,
+and the backup/restore pass.</p>
 <p>Useful commands:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c"># Print selected paths and topology without creating VMs.</span>
 </span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
