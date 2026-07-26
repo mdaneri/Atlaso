@@ -288,6 +288,21 @@ Do not edit only one version source. `python scripts/version.py check` verifies 
 `--base-root` are mutually exclusive, and an explicit target cannot skip a patch or change the major or minor version.
 Updating an older pull request from `main` lets the workflow recalculate the next unused patch version.
 
+Repository auto-merge remains an explicit maintainer choice per pull request. A `main` push runs
+`update-auto-merge-prs.yml`, which uses GitHub's update-branch API only for open, same-repository, non-draft pull requests
+that have auto-merge enabled and report `BEHIND`. Each request includes the observed head SHA, so a concurrent contributor
+push causes GitHub to reject the stale update instead of merging over it. Forks, conflicted branches, and pull requests
+without auto-merge are never updated by this workflow.
+
+An internal branch update performed with `GITHUB_TOKEN` also creates a `pull_request` CI run that GitHub holds for
+approval. Those approval-gated jobs have diagnostic names and are not required contexts. The version workflow's trusted
+`workflow_dispatch` run uses the canonical `Version policy`, `Repository checks`, and `Python tests` names enforced by
+the `main` ruleset. This preserves required validation without a personal access token or automatic approval of
+untrusted workflow code. Because a token-authenticated update does not trigger `pull_request_target`, the updater waits
+for GitHub's new head SHA and sends a typed repository dispatch. GitHub loads that handler from protected `main`; it
+re-fetches the PR and verifies that it remains open, same-repository, based on `main`, and at the expected head before
+checking out or pushing. The privileged updater has no manual-dispatch trigger.
+
 The application update build continues to append `+g<commit>` metadata to wheel versions. A merged pull request does not
 create a Git tag, GitHub release, or changelog entry; those remain deliberate release-management actions.
 

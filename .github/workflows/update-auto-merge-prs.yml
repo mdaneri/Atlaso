@@ -1,0 +1,107 @@
+name: Update auto-merge pull requests
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-auto-merge-pull-requests
+  cancel-in-progress: false
+
+jobs:
+  update:
+    name: Update eligible branches
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Update same-repository auto-merge branches
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pull_requests="[]"
+          for attempt in 1 2 3; do
+            pull_requests="$(
+              gh pr list \
+                --repo "$GITHUB_REPOSITORY" \
+                --state open \
+                --base main \
+                --limit 100 \
+                --json number,isDraft,isCrossRepository,autoMergeRequest,mergeStateStatus,headRefOid
+            )"
+            if ! jq -e '
+              any(
+                .[];
+                .isDraft == false
+                and .isCrossRepository == false
+                and .autoMergeRequest != null
+                and .mergeStateStatus == "UNKNOWN"
+              )
+            ' <<<"$pull_requests" >/dev/null; then
+              break
+            fi
+            sleep "$((attempt * 5))"
+          done
+          jq -r '
+            .[]
+            | select(
+                .isDraft == false
+                and .isCrossRepository == false
+                and .autoMergeRequest != null
+                and .mergeStateStatus == "BEHIND"
+              )
+            | [.number, .headRefOid]
+            | @tsv
+          ' <<<"$pull_requests" |
+            while IFS=$'\t' read -r number expected_head_sha; do
+              if ! response="$(
+                gh api \
+                  --method PUT \
+                  "repos/$GITHUB_REPOSITORY/pulls/$number/update-branch" \
+                  -f "expected_head_sha=$expected_head_sha" 2>&1
+              )"; then
+                echo "::warning title=Pull request branch update skipped::PR #$number was not updated because its state changed or GitHub rejected the request."
+                continue
+              fi
+              message="$(jq -r '.message // "Update accepted."' <<<"$response")"
+              echo "PR #$number: $message"
+              updated_head_sha=""
+              for attempt in {1..12}; do
+                current_head_sha="$(
+                  gh pr view \
+                    --repo "$GITHUB_REPOSITORY" \
+                    "$number" \
+                    --json headRefOid \
+                    --jq '.headRefOid'
+                )"
+                if [[ "$current_head_sha" != "$expected_head_sha" ]]; then
+                  updated_head_sha="$current_head_sha"
+                  break
+                fi
+                sleep 2
+              done
+              if [[ -z "$updated_head_sha" ]]; then
+                echo "::warning title=Trusted validation not started::PR #$number did not report its updated head before the polling deadline."
+                continue
+              fi
+              jq -n \
+                --argjson pull_number "$number" \
+                --arg expected_head_sha "$updated_head_sha" \
+                '{
+                  event_type: "refresh-pull-request-version",
+                  client_payload: {
+                    pull_number: $pull_number,
+                    expected_head_sha: $expected_head_sha
+                  }
+                }' |
+                gh api \
+                  --method POST \
+                  "repos/$GITHUB_REPOSITORY/dispatches" \
+                  --input -
+            done
