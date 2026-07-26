@@ -13,13 +13,34 @@
         <loc>https://mdaneri.github.io/Atlaso/docs/operate/dashboard/</loc>
       </url>
       <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/operate/monitor/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/operate/logs/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/operate/audit-log/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/operate/tasks/</loc>
+      </url>
+      <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/operate/appliance-apply/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/operate/appliance-settings/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/operate/networking/</loc>
       </url>
       <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/operate/appliance-console/</loc>
       </url>
       <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/operate/appliance-update/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/operate/backup-restore/</loc>
       </url>
       <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/operate/automation/</loc>
@@ -34,10 +55,28 @@
         <loc>https://mdaneri.github.io/Atlaso/docs/services/dns/</loc>
       </url>
       <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/services/dhcp/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/services/firewall/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/services/ntp/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/services/certificate-authority/</loc>
+      </url>
+      <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/services/esx-storage/</loc>
       </url>
       <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/services/ipxe/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/services/kms/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/services/local-users/</loc>
       </url>
       <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/services/managed-ldap/</loc>
@@ -46,7 +85,16 @@
         <loc>https://mdaneri.github.io/Atlaso/docs/services/oidc-provider/</loc>
       </url>
       <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/services/vcf-backups/</loc>
+      </url>
+      <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/services/vcf-helper/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/services/vcf-offline-depot/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/services/vcf-private-registry/</loc>
       </url>
       <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/services/vcf-trust/</loc>
@@ -55,7 +103,13 @@
         <loc>https://mdaneri.github.io/Atlaso/docs/reference/</loc>
       </url>
       <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/reference/api/</loc>
+      </url>
+      <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/reference/interface-gallery/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/reference/appliance-console-technical/</loc>
       </url>
       <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/reference/full-technical-reference/</loc>
