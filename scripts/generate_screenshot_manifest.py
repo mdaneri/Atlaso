@@ -13,6 +13,26 @@ SOURCE_COMMIT = "0247c34bc85e+working-tree"
 ATLASO_VERSION = "0.9.21"
 
 CAPTURE_OVERRIDES = {
+    "authentication-clean-desktop": {
+        "source_commit": "3083851+working-tree",
+        "atlaso_version": "0.9.24",
+        "capture_method": "playwright-chromium",
+    },
+    "authentication-clean-responsive": {
+        "source_commit": "3083851+working-tree",
+        "atlaso_version": "0.9.24",
+        "capture_method": "playwright-chromium",
+    },
+    "authentication-group-mappings-desktop": {
+        "source_commit": "3083851+working-tree",
+        "atlaso_version": "0.9.24",
+        "capture_method": "playwright-chromium",
+    },
+    "authentication-group-mappings-responsive": {
+        "source_commit": "3083851+working-tree",
+        "atlaso_version": "0.9.24",
+        "capture_method": "playwright-chromium",
+    },
     "swagger-clean-responsive": {
         "source_commit": "15caa646452",
         "atlaso_version": "0.9.22",
@@ -73,6 +93,18 @@ SPECIAL = {
         "review-modal",
         "Appliance change review with valid and invalid desired-state units.",
         "Review appliance changes dialog with selected valid units and one unit needing attention.",
+    ),
+    "authentication-group-mappings-desktop": (
+        "/authentication#oidc-group-mappings",
+        "group-mappings",
+        "OIDC external group mappings in the desktop direct-edit collection.",
+        "Atlaso Authentication page showing the OIDC external group mapping grid at the desktop viewport.",
+    ),
+    "authentication-group-mappings-responsive": (
+        "/authentication#oidc-group-mappings",
+        "group-mappings",
+        "OIDC external group mappings in the responsive direct-edit collection.",
+        "Atlaso Authentication page showing the OIDC external group mapping grid at the responsive viewport.",
     ),
     "dashboard-applied-desktop": (
         "/dashboard",

@@ -654,6 +654,18 @@ status: current
   list.
 - Users need roles because Atlaso is expected to support OIDC. LDAP/OIDC integrations should support group-to-role
   mapping.
+- Organization-bound OIDC clients authenticate only against their configured enabled managed LDAP organization and
+  must not render an organization selector. Unbound clients require an explicit server-validated `Local` or enabled
+  managed LDAP organization choice; never infer a source from an ambiguous username or accept a raw organization ID
+  from a form.
+- OIDC external groups come only from explicit local-role or managed-LDAP-group mappings. Organization defaults apply
+  first and a compatible client mapping replaces the default for the same source. Enforce case-insensitive uniqueness
+  of effective names per client and identity organization, resolve enabled direct and nested LDAP membership through
+  the cycle-safe graph, and never emit LDAP DNs, server details, or unmapped group names.
+- Filter OIDC identity claims by granted scope: `openid` carries required protocol claims, `profile` adds username,
+  display name, and organization, `email` adds email with `email_verified=false`, and `groups` adds mapped external
+  names. Authorization and UserInfo must revalidate current client, source, organization, user, and group state; the
+  existing short JWT lifetime is the only bound on already-issued tokens.
 - Managed LDAP organizations follow the DNS-zone interaction pattern: organization tabs include a `+ Organization`
   creation tab, while users and groups are compact editable Tabulator grids with bottom add rows and context-menu
   actions. Synthetic lab-directory generation asks for user and group counts, invents complete profile and membership

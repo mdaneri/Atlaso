@@ -26,6 +26,7 @@ param(
     [string]$WanCidr = '172.31.50.1/24',
     [switch]$AllowDryRunApply,
     [switch]$SkipBackupRestoreTest,
+    [switch]$OidcOnly,
     [switch]$RoutingWanOnly,
     [switch]$FullEsxiPxeInstall,
     [string]$PxeInstallerIsoPath = '',
@@ -43,6 +44,9 @@ if (-not $SshPassword) {
     $SshPassword = $AdminPassword
 }
 if ($RoutingWanOnly) {
+    $SkipBackupRestoreTest = $true
+}
+if ($OidcOnly) {
     $SkipBackupRestoreTest = $true
 }
 
@@ -743,6 +747,34 @@ function Invoke-ApplianceGuestScript {
     }
 }
 
+function Test-ApplianceOpenApi {
+    param([string]$Url)
+
+    $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+    if ($curl) {
+        & $curl.Source -k -f -sS $Url 2>$null | Out-Null
+        return $LASTEXITCODE -eq 0
+    }
+
+    try {
+        $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -SkipCertificateCheck -TimeoutSec 10
+        return $response.StatusCode -eq 200
+    } catch [System.Management.Automation.ParameterBindingException] {
+        $previousCallback = [System.Net.ServicePointManager]::ServerCertificateValidationCallback
+        try {
+            [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+            $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 10
+            return $response.StatusCode -eq 200
+        } catch {
+            return $false
+        } finally {
+            [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $previousCallback
+        }
+    } catch {
+        return $false
+    }
+}
+
 function Sync-ApplianceHelperScript {
     param([string]$ApplianceVmx)
 
@@ -797,12 +829,8 @@ function Sync-ApplianceApplicationWheel {
 
     $deadline = (Get-Date).AddMinutes(3)
     do {
-        try {
-            $response = Invoke-WebRequest -Uri "$ApplianceUrl/openapi.json" -UseBasicParsing -TimeoutSec 10
-            if ($response.StatusCode -eq 200) {
-                return $wheel.FullName
-            }
-        } catch {
+        if (Test-ApplianceOpenApi -Url "$ApplianceUrl/openapi.json") {
+            return $wheel.FullName
         }
         Start-Sleep -Seconds 5
     } while ((Get-Date) -lt $deadline)
@@ -895,8 +923,8 @@ function Add-LifecycleResultStep {
 }
 
 $resolvedVmrun = Resolve-VmrunPath
-if ($RoutingWanOnly -and $FullEsxiPxeInstall) {
-    throw "-RoutingWanOnly and -FullEsxiPxeInstall are mutually exclusive."
+if (($RoutingWanOnly -and $FullEsxiPxeInstall) -or ($OidcOnly -and ($RoutingWanOnly -or $FullEsxiPxeInstall))) {
+    throw "-OidcOnly, -RoutingWanOnly, and -FullEsxiPxeInstall are mutually exclusive."
 }
 $applianceName = "$LabName-Appliance"
 $clientAName = "$LabName-ClientA"
@@ -916,6 +944,7 @@ $plan = [ordered]@{
     site_a_network        = $SiteANetwork
     trunk_network         = $TrunkNetwork
     site_b_network        = $SiteBNetwork
+    oidc_only             = [bool]$OidcOnly
     routing_wan_only      = [bool]$RoutingWanOnly
     full_esxi_pxe_install = [bool]$FullEsxiPxeInstall
     pxe_installer_iso     = $PxeInstallerIsoPath
@@ -936,26 +965,37 @@ if ($PlanOnly) {
 New-Item -ItemType Directory -Force -Path $vmRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $seedRoot | Out-Null
 
-$clientASeedIso = Join-Path $seedRoot "$clientAName-seed.iso"
-$clientBSeedIso = Join-Path $seedRoot "$clientBName-seed.iso"
-New-CloudInitSeedIso -Path $clientASeedIso -HostName ($clientAName.ToLowerInvariant())
-New-CloudInitSeedIso -Path $clientBSeedIso -HostName ($clientBName.ToLowerInvariant())
+$clientASeedIso = ''
+$clientBSeedIso = ''
+if (-not $OidcOnly) {
+    $clientASeedIso = Join-Path $seedRoot "$clientAName-seed.iso"
+    $clientBSeedIso = Join-Path $seedRoot "$clientBName-seed.iso"
+    New-CloudInitSeedIso -Path $clientASeedIso -HostName ($clientAName.ToLowerInvariant())
+    New-CloudInitSeedIso -Path $clientBSeedIso -HostName ($clientBName.ToLowerInvariant())
+}
 
 try {
     $applianceVmx = Copy-VmDirectory -SourceVmx $ApplianceVmxPath -DestinationDirectory (Join-Path $vmRoot $applianceName) -Name $applianceName
     Set-VmxNetworkAdapter -Path $applianceVmx -Index 0 -Vmnet $ManagementNetwork
-    Set-VmxNetworkAdapter -Path $applianceVmx -Index 1 -Vmnet $SiteANetwork
-    Set-VmxNetworkAdapter -Path $applianceVmx -Index 2 -Vmnet $TrunkNetwork
-    Set-VmxNetworkAdapter -Path $applianceVmx -Index 3 -Vmnet $SiteBNetwork
-
-    $clientAVmx = New-ClientVm -Name $clientAName -Directory (Join-Path $vmRoot $clientAName) -DiskPath $ClientVmdkPath -SeedIso $clientASeedIso -Networks @($ManagementNetwork, $SiteANetwork, $TrunkNetwork)
-    $clientBVmx = New-ClientVm -Name $clientBName -Directory (Join-Path $vmRoot $clientBName) -DiskPath $ClientVmdkPath -SeedIso $clientBSeedIso -Networks @($ManagementNetwork, $SiteBNetwork)
+    $clientAVmx = ''
+    $clientBVmx = ''
+    if (-not $OidcOnly) {
+        Set-VmxNetworkAdapter -Path $applianceVmx -Index 1 -Vmnet $SiteANetwork
+        Set-VmxNetworkAdapter -Path $applianceVmx -Index 2 -Vmnet $TrunkNetwork
+        Set-VmxNetworkAdapter -Path $applianceVmx -Index 3 -Vmnet $SiteBNetwork
+        $clientAVmx = New-ClientVm -Name $clientAName -Directory (Join-Path $vmRoot $clientAName) -DiskPath $ClientVmdkPath -SeedIso $clientASeedIso -Networks @($ManagementNetwork, $SiteANetwork, $TrunkNetwork)
+        $clientBVmx = New-ClientVm -Name $clientBName -Directory (Join-Path $vmRoot $clientBName) -DiskPath $ClientVmdkPath -SeedIso $clientBSeedIso -Networks @($ManagementNetwork, $SiteBNetwork)
+    }
     $esxiVmx = ''
     if ($FullEsxiPxeInstall) {
         $esxiVmx = New-EsxiPxeVm -Name $esxiName -Directory (Join-Path $vmRoot $esxiName) -Network $SiteANetwork -MacAddress $esxiMacAddress
     }
 
-    foreach ($vmx in @($applianceVmx, $clientAVmx, $clientBVmx)) {
+    $vmxsToStart = @($applianceVmx)
+    if (-not $OidcOnly) {
+        $vmxsToStart += @($clientAVmx, $clientBVmx)
+    }
+    foreach ($vmx in $vmxsToStart) {
         Start-WorkstationVm -Path $vmx
     }
 
@@ -976,11 +1016,21 @@ try {
     Sync-ApplianceHelperScript -ApplianceVmx $applianceVmx
     $applianceWheelPath = Sync-ApplianceApplicationWheel -ApplianceVmx $applianceVmx
     $applianceHostKey = Get-PlinkHostKey -HostName $ApplianceIPAddress -UserName $ApplianceSshUser -Password $SshPassword
-    $clientAHost = Wait-GuestIPv4 -Path $clientAVmx -GuestUser $ClientSshUser -GuestPassword $SshPassword -Name $clientAName
-    $clientBHost = Wait-GuestIPv4 -Path $clientBVmx -GuestUser $ClientSshUser -GuestPassword $SshPassword -Name $clientBName
-    $clientAHostKey = Get-PlinkHostKey -HostName $clientAHost -UserName $ClientSshUser -Password $SshPassword
-    $clientBHostKey = Get-PlinkHostKey -HostName $clientBHost -UserName $ClientSshUser -Password $SshPassword
-    $appliancePxeInstallerIsoPath = Resolve-ApplianceEsxiIsoPath -ApplianceVmx $applianceVmx
+    $clientAHost = ''
+    $clientBHost = ''
+    $clientAHostKey = ''
+    $clientBHostKey = ''
+    if (-not $OidcOnly) {
+        $clientAHost = Wait-GuestIPv4 -Path $clientAVmx -GuestUser $ClientSshUser -GuestPassword $SshPassword -Name $clientAName
+        $clientBHost = Wait-GuestIPv4 -Path $clientBVmx -GuestUser $ClientSshUser -GuestPassword $SshPassword -Name $clientBName
+        $clientAHostKey = Get-PlinkHostKey -HostName $clientAHost -UserName $ClientSshUser -Password $SshPassword
+        $clientBHostKey = Get-PlinkHostKey -HostName $clientBHost -UserName $ClientSshUser -Password $SshPassword
+    }
+    $appliancePxeInstallerIsoPath = if ($FullEsxiPxeInstall) {
+        Resolve-ApplianceEsxiIsoPath -ApplianceVmx $applianceVmx
+    } else {
+        ''
+    }
 
     $basePythonArgs = @(
         (Join-Path $repoRoot 'scripts\interop\lifecycle_test.py'),
@@ -1014,6 +1064,7 @@ try {
     if ($clientAHostKey) { $basePythonArgs += @('--client-a-hostkey', $clientAHostKey) }
     if ($clientBHostKey) { $basePythonArgs += @('--client-b-hostkey', $clientBHostKey) }
     if ($AllowDryRunApply) { $basePythonArgs += '--allow-dry-run' }
+    if ($OidcOnly) { $basePythonArgs += '--oidc-only' }
     if ($RoutingWanOnly) { $basePythonArgs += '--routing-wan-only' }
 
     $initialResultRoot = if ($SkipBackupRestoreTest) { $resultRoot } else { Join-Path $resultRoot 'initial' }

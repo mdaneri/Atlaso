@@ -102,6 +102,10 @@ param(
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
+    [switch]$OidcOnly,
+
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(ParameterSetName = 'Plan')]
     [switch]$FullEsxiPxeInstall,
 
     [Parameter(ParameterSetName = 'Run')]
@@ -244,8 +248,8 @@ if (-not $SshPassword) {
 if (-not $VcfBackupPassword) {
     $VcfBackupPassword = 'VMware01!Test'
 }
-if ($RoutingWanOnly -and $FullEsxiPxeInstall) {
-    throw "-RoutingWanOnly and -FullEsxiPxeInstall are mutually exclusive."
+if (($RoutingWanOnly -and $FullEsxiPxeInstall) -or ($OidcOnly -and ($RoutingWanOnly -or $FullEsxiPxeInstall))) {
+    throw "-OidcOnly, -RoutingWanOnly, and -FullEsxiPxeInstall are mutually exclusive."
 }
 if (-not $ApplianceVmxPath) {
     if ($PlanOnly) {
@@ -281,7 +285,7 @@ if (-not $SkipClientPrepare -and -not $PlanOnly) {
     }
 }
 
-$effectiveSkipBackupRestoreTest = [bool]($SkipBackupRestoreTest -or $RoutingWanOnly)
+$effectiveSkipBackupRestoreTest = [bool]($SkipBackupRestoreTest -or $RoutingWanOnly -or $OidcOnly)
 
 $arguments = @(
     '-ExecutionPolicy', 'Bypass',
@@ -311,6 +315,7 @@ if ($VmrunPath) { $arguments += @('-VmrunPath', $VmrunPath) }
 if (-not $KeepVms) { $arguments += '-CleanupCreatedLab' }
 if ($AllowDryRunApply) { $arguments += '-AllowDryRunApply' }
 if ($effectiveSkipBackupRestoreTest) { $arguments += '-SkipBackupRestoreTest' }
+if ($OidcOnly) { $arguments += '-OidcOnly' }
 if ($RoutingWanOnly) { $arguments += '-RoutingWanOnly' }
 if ($FullEsxiPxeInstall) { $arguments += '-FullEsxiPxeInstall' }
 if ($PxeInstallerIsoPath) { $arguments += @('-PxeInstallerIsoPath', $PxeInstallerIsoPath) }
@@ -321,6 +326,7 @@ Write-Host "Appliance VMX: $ApplianceVmxPath"
 Write-Host "Client VMDK: $ClientVmdkPath"
 Write-Host "Appliance URL: $(if ($effectiveApplianceUrl) { $effectiveApplianceUrl } else { 'discovered at runtime' })"
 Write-Host ("Routing/WAN only: {0}" -f ([bool]$RoutingWanOnly))
+Write-Host ("OIDC only: {0}" -f ([bool]$OidcOnly))
 Write-Host ("Full ESXi PXE install: {0}" -f ([bool]$FullEsxiPxeInstall))
 Write-Host ("Backup/restore validation: {0}" -f (-not $effectiveSkipBackupRestoreTest))
 Write-Host ("Cleanup created VMs: {0}" -f (-not $KeepVms))

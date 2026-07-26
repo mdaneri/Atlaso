@@ -87,6 +87,19 @@ The VCF 9.1 mapping includes:
 Atlaso does not import LDAP groups into VCF or assign VCF organization roles. Complete those steps in VCF Automation and
 retain local break-glass administrators.
 
+## OIDC organization and group use
+
+Managed LDAP can also supply identities to Atlaso's constrained OIDC provider. A bound OIDC client uses only its
+configured enabled organization and does not show an organization selector. An unbound client requires the user to
+choose **Local** or one currently enabled organization; duplicate usernames across organizations are therefore never
+used to infer a source.
+
+The Authentication page maps selected managed LDAP groups to external OIDC group names. Atlaso evaluates current enabled
+direct and nested membership through the same cycle-safe group graph used by the directory model. Organization mappings
+are defaults; a compatible client-specific mapping replaces the default for the same LDAP group. Only mapped external
+values are emitted when the client receives the `groups` scope. Raw LDAP group names, DNs, suffixes, listener details,
+disabled groups, and unmapped groups remain private.
+
 ## Apply and recovery
 
 The `ldap` apply unit stages secret-bearing JSON at `/var/lib/atlaso/apply/ldap/atlaso-ldap.json` with mode `0600`. The

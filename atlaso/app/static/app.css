@@ -2581,6 +2581,15 @@ textarea {
   font-size: 13px;
 }
 
+.responsive-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.responsive-table-scroll .data-table {
+  margin-bottom: 0;
+}
+
 .data-table th {
   color: #475569;
   font-size: 11px;
