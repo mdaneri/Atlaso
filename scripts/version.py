@@ -186,19 +186,36 @@ def _replace_version(path: Path, pattern: re.Pattern[str], version: Version, sou
     path.write_text(updated, encoding="utf-8", newline="\n")
 
 
-def bump(root: Path, base_root: Path | None = None) -> tuple[Version, bool]:
+def bump(
+    root: Path,
+    base_root: Path | None = None,
+    target_version: Version | None = None,
+) -> tuple[Version, bool]:
     root = root.resolve()
-    base_root = root if base_root is None else base_root.resolve()
     current = consistent_version(root)
-    base = consistent_version(base_root)
-    expected = base.next_patch()
-    allowed = allowed_pr_versions(base_root, root)
-    if current in allowed:
-        return current, False
-    if current != base:
-        raise VersionError(
-            f"Cannot automatically replace {current}; target must match base {base} or expected patch {expected}"
-        )
+    if target_version is not None:
+        if base_root is not None:
+            raise VersionError("--version cannot be combined with --base-root")
+        if current == target_version:
+            return current, False
+        expected = current.next_patch()
+        if target_version != expected:
+            raise VersionError(
+                f"--version must be the current version {current} or next patch {expected}; "
+                f"found {target_version}"
+            )
+    else:
+        base_root = root if base_root is None else base_root.resolve()
+        base = consistent_version(base_root)
+        expected = base.next_patch()
+        allowed = allowed_pr_versions(base_root, root)
+        if current in allowed:
+            return current, False
+        if current != base:
+            raise VersionError(
+                f"Cannot automatically replace {current}; target must match base {base} "
+                f"or expected patch {expected}"
+            )
 
     _replace_version(_version_path(root, "Python project"), PROJECT_VERSION_RE, expected, "Python project")
     _replace_version(
@@ -223,9 +240,18 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="Base-branch checkout; check requires exactly one patch above it and bump derives from it.",
     )
+    parser.add_argument(
+        "--version",
+        help="Explicit current or next-patch X.Y.Z target; when omitted, bump increments the patch.",
+    )
     args = parser.parse_args(argv)
 
     try:
+        if args.version is not None and args.command != "bump":
+            raise VersionError("--version is only valid with the bump command")
+        target_version = (
+            Version.parse(args.version, source="--version") if args.version is not None else None
+        )
         if args.command == "project-get":
             print(read_project_version(args.root))
         elif args.command == "get":
@@ -235,7 +261,7 @@ def main(argv: list[str] | None = None) -> int:
             version = check(args.root, args.base_root)
             print(f"Version policy passed: {version}")
         else:
-            version, changed = bump(args.root, args.base_root)
+            version, changed = bump(args.root, args.base_root, target_version)
             action = "Bumped repository version to" if changed else "Repository version already at"
             print(f"{action} {version}")
     except VersionError as exc:
