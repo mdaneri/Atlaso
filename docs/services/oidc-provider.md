@@ -143,12 +143,20 @@ jobs, audits, or logs.
 
 ## Administration and lifecycle
 
-The provider settings rail follows the DNS desired-state and validation pattern. It autosaves provider state but rejects
-enablement until every readiness check passes. OIDC has no service-specific apply action: client, key, mapping, and
-provider lifecycle changes are application state, while Management HTTPS remains enforced through global Appliance
-Apply.
+The dedicated **OpenID Connect** navigation page keeps Provider, Clients, Signing Keys, Group Mappings, and Stable
+Subjects in page-level tabs. On the Provider tab, validation, issuer DNS state, and published URLs occupy the main
+workspace while the editable Provider Settings panel remains in the standard right-hand service settings column.
+Provider state autosaves but rejects enablement until every readiness check passes.
 
-Confidential clients are browsed in a Tabulator collection and created or edited through the shared reviewed wizard.
+OIDC has no independent network listener. Its read-only listener fields show the addressed management interface and
+fixed HTTPS port 443 because the endpoints share Atlaso's applied Management HTTPS ingress, certificate, and nginx
+listener. The canonical issuer rejects an explicit port. The issuer host is the Appliance Settings FQDN: when local DNS
+is enabled, Appliance Settings owns its A or AAAA desired-state record; otherwise the operator must register the same
+name in external DNS. OIDC has no service-specific apply action: client, key, mapping, and provider lifecycle changes
+are application state, while Management HTTPS and app-owned DNS remain enforced through global Appliance Apply.
+
+Confidential clients are browsed in a Tabulator collection. The bottom **+ Add client here** row and existing client
+rows open the shared reviewed wizard for creation and editing.
 Editing can change the operator label, identity-source binding, granted scopes, exact redirect and post-logout URIs,
 loopback-development posture, and enabled state. It never changes the generated client ID or exposes the Argon2 secret
 hash. Creation and secret rotation show plaintext exactly once.
@@ -213,11 +221,11 @@ These captures show responsive layouts and useful operational states referenced 
 
 ### Authentication: Oidc Group Mappings
 
-![Atlaso Authentication page showing the OIDC external group mapping grid at the desktop viewport.](../assets/screenshots/authentication-group-mappings-desktop.webp)
+![Atlaso OpenID Connect page showing the external group mapping grid at the desktop viewport.](../assets/screenshots/authentication-group-mappings-desktop.webp)
 
 *Figure: OIDC external group mappings in the desktop direct-edit collection.*
 
-![Atlaso Authentication page showing the OIDC external group mapping grid at the responsive viewport.](../assets/screenshots/authentication-group-mappings-responsive.webp)
+![Atlaso OpenID Connect page showing the external group mapping grid at the responsive viewport.](../assets/screenshots/authentication-group-mappings-responsive.webp)
 
 *Figure: OIDC external group mappings in the responsive direct-edit collection.*
 

@@ -137,17 +137,29 @@ SPECIAL = {
         "Appliance change review with valid and invalid desired-state units.",
         "Review appliance changes dialog with selected valid units and one unit needing attention.",
     ),
+    "authentication-clean-desktop": (
+        "/openid-connect#oidc-provider",
+        "oidc-provider-settings",
+        "OIDC provider status and issuer information with service settings in the right column.",
+        "Atlaso OpenID Connect provider status with right-column service settings.",
+    ),
+    "authentication-clean-responsive": (
+        "/openid-connect#oidc-provider",
+        "oidc-provider-settings",
+        "OIDC provider settings with status and issuer information stacked at the responsive viewport.",
+        "Atlaso OpenID Connect provider settings stacked with status and issuer information at a narrow viewport.",
+    ),
     "authentication-group-mappings-desktop": (
-        "/authentication#oidc-group-mappings",
+        "/openid-connect#oidc-group-mappings",
         "group-mappings",
         "OIDC external group mappings in the desktop direct-edit collection.",
-        "Atlaso Authentication page showing the OIDC external group mapping grid at the desktop viewport.",
+        "Atlaso OpenID Connect page showing the external group mapping grid at the desktop viewport.",
     ),
     "authentication-group-mappings-responsive": (
-        "/authentication#oidc-group-mappings",
+        "/openid-connect#oidc-group-mappings",
         "group-mappings",
         "OIDC external group mappings in the responsive direct-edit collection.",
-        "Atlaso Authentication page showing the OIDC external group mapping grid at the responsive viewport.",
+        "Atlaso OpenID Connect page showing the external group mapping grid at the responsive viewport.",
     ),
     "dashboard-applied-desktop": (
         "/dashboard",

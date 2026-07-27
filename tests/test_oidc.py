@@ -716,7 +716,7 @@ def test_oidc_backup_restore_validates_the_final_effective_mapping_set(client):
         ]
 
 
-def test_authentication_page_exposes_authorization_code_oidc_ui(client):
+def test_openid_connect_page_exposes_authorization_code_oidc_ui(client):
     login = client.get("/login")
     csrf = login.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     signed_in = client.post(
@@ -725,13 +725,26 @@ def test_authentication_page_exposes_authorization_code_oidc_ui(client):
         follow_redirects=False,
     )
     assert signed_in.status_code == 303
-    page = client.get("/authentication")
+    authentication_page = client.get("/authentication")
+    assert authentication_page.status_code == 200
+    assert 'href="/openid-connect"' in authentication_page.text
+    assert 'id="oidc-provider"' not in authentication_page.text
+
+    page = client.get("/openid-connect")
     assert page.status_code == 200
     assert "OpenID Connect Provider" in page.text
-    assert "Authorization Code, organization selection, and scoped claims" in page.text
+    assert "<h1>OpenID Connect</h1>" in page.text
+    assert 'aria-label="OpenID Connect administration"' in page.text
+    assert page.text.count('class="tab-button') >= 5
     assert 'id="oidc-group-mappings-table"' in page.text
     assert 'data-fallback-id="oidc-group-mappings-fallback"' in page.text
-    assert 'class="split-workspace service-settings-workspace" id="oidc-provider"' in page.text
+    assert 'class="split-workspace service-settings-workspace tab-panel active" id="oidc-provider"' in page.text
+    assert 'class="panel detail-panel service-settings-column"' in page.text
+    assert "<h2>Issuer DNS</h2>" in page.text
+    assert "the only supported issuer host" in page.text
+    assert "<span>Listener interface</span>" in page.text
+    assert "<span>HTTPS port</span>" in page.text
+    assert "443 / TCP" in page.text
     assert "<h2>Validation</h2>" in page.text
     assert "data-oidc-provider-validation-status" in page.text
     assert "<noscript>" in page.text
@@ -740,7 +753,11 @@ def test_authentication_page_exposes_authorization_code_oidc_ui(client):
     assert 'id="oidc-keys-table"' in page.text
     assert 'id="oidc-subjects-table"' in page.text
     assert page.text.count("data-atlaso-wizard") >= 2
+    assert page.text.count("vcf-sddc-wizard-rail") >= 2
+    assert "vcf-sddc-wizard-shell" not in page.text
     assert "Atlaso never guesses" in page.text
+    assert "+ Add client here" in page.text
+    assert "Register client" not in page.text
     assert 'name="enabled"' in page.text
     assert 'data-autosave-status-id="oidc-provider-autosave-status"' in page.text
     assert page.text.count('class="help-icon"') >= 10
@@ -790,7 +807,7 @@ def test_authentication_ui_deletes_bound_client_before_ldap_organization(client)
         follow_redirects=False,
     )
     assert signed_in.status_code == 303
-    page = client.get("/authentication")
+    page = client.get("/openid-connect")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     assert '"name": "Bound VCF client"' in page.text
     assert 'data-fallback-id="oidc-clients-fallback"' in page.text
@@ -801,7 +818,7 @@ def test_authentication_ui_deletes_bound_client_before_ldap_organization(client)
         follow_redirects=False,
     )
     assert deleted.status_code == 303
-    assert deleted.headers["location"] == "/authentication#oidc-clients"
+    assert deleted.headers["location"] == "/openid-connect#oidc-clients"
     organization_deleted = client.post(
         f"/ldap/organizations/{organization_id}/delete",
         data={"csrf": csrf},

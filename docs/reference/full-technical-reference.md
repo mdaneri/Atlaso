@@ -662,7 +662,11 @@ reconciliation uses local `ldapi:///` with SASL EXTERNAL. VCF configuration incl
 `employeeType` mapping, but Atlaso does not import groups or assign VCF roles. See
 [Managed LDAP for VCF Automation 9.1](../services/managed-ldap.md).
 
-The Authentication page contains Atlaso's constrained OIDC provider. It implements Authorization Code with
+The dedicated `/openid-connect` page contains Atlaso's constrained OIDC provider in Provider, Clients, Signing Keys,
+Group Mappings, and Stable Subjects tabs. Provider validation and published state remain in the main workspace while
+its editable settings use the standard right-hand service column. The derived listener is the addressed management
+interface on fixed HTTPS port 443; Appliance Settings owns the issuer FQDN and its app-owned local DNS record. The
+provider implements Authorization Code with
 confidential `client_secret_basic`, mandatory PKCE S256, exact redirects, required state and nonce, signed secure
 browser sessions, five-minute RS256 ID/access JWTs, UserInfo revalidation, and RP-initiated logout. Provider enablement
 requires the canonical issuer, an applied Management HTTPS certificate valid for the exact issuer FQDN, an active

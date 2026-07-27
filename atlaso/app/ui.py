@@ -17460,6 +17460,20 @@ def authentication(
     )
 
 
+@router.get("/openid-connect", response_class=HTMLResponse, response_model=None)
+def openid_connect(
+    request: Request,
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    require_admin_identity(identity)
+    return render(
+        request,
+        "authentication.html",
+        authentication_context(db, identity, raw_token=None, oidc_page=True),
+    )
+
+
 def authentication_context(
     db: Session,
     identity: Identity,
@@ -17468,6 +17482,7 @@ def authentication_context(
     oidc_client_secret: str | None = None,
     oidc_client_id: str | None = None,
     oidc_error: str | None = None,
+    oidc_page: bool = False,
 ) -> dict[str, Any]:
     query = select(ApiToken).order_by(desc(ApiToken.created_at))
     if not identity.has_role(Role.ADMIN.value):
@@ -17477,12 +17492,13 @@ def authentication_context(
         "identity": identity,
         "tokens": tokens,
         "raw_token": raw_token,
+        "oidc_page": oidc_page,
         "oidc_admin": identity.has_role(Role.ADMIN.value),
         "oidc_client_secret": oidc_client_secret,
         "oidc_client_id": oidc_client_id,
         "oidc_error": oidc_error,
     }
-    if not context["oidc_admin"]:
+    if not oidc_page or not context["oidc_admin"]:
         return context
     provider = ensure_oidc_provider_settings(db)
     try:
@@ -17498,6 +17514,24 @@ def authentication_context(
             "end_session_endpoint": "",
         }
     oidc_client_rows = list_oidc_clients(db)
+    appliance_settings = get_appliance_settings_row(db)
+    dns_settings = get_dns_settings_row(db)
+    oidc_listener = appliance_settings_management_context(db)
+    issuer_fqdn = normalize_fqdn(appliance_settings.fqdn)
+    issuer_dns_records = db.execute(
+        select(DnsRecord)
+        .where(
+            DnsRecord.hostname == issuer_fqdn,
+            DnsRecord.record_type.in_(["A", "AAAA"]),
+            DnsRecord.enabled.is_(True),
+        )
+        .order_by(DnsRecord.record_type)
+    ).scalars().all()
+    managed_issuer_dns_records = [
+        row
+        for row in issuer_dns_records
+        if is_app_owned_appliance_dns_record(row.description)
+    ]
     oidc_ldap_group_rows = db.execute(
         select(LdapGroup)
         .options(selectinload(LdapGroup.organization))
@@ -17506,6 +17540,16 @@ def authentication_context(
     context.update(
         {
             "oidc_provider": provider,
+            "oidc_issuer_fqdn": issuer_fqdn,
+            "oidc_listener": oidc_listener,
+            "oidc_dns_enabled": dns_settings.enabled,
+            "oidc_dns_records": [
+                {
+                    "record_type": row.record_type,
+                    "address": row.address,
+                }
+                for row in managed_issuer_dns_records
+            ],
             "oidc_flow_available": OIDC_AUTHORIZATION_FLOW_AVAILABLE,
             "oidc_validation_errors": oidc_provider_validation_errors(db, provider),
             "oidc_urls": endpoint_urls,
@@ -17618,7 +17662,7 @@ def update_oidc_provider_from_ui(
     }
     if request.headers.get("X-Atlaso-Autosave") == "1":
         return JSONResponse(payload)
-    return RedirectResponse("/authentication#oidc-provider", status_code=303)
+    return RedirectResponse("/openid-connect#oidc-provider", status_code=303)
 
 
 @router.post("/authentication/oidc/clients", response_class=HTMLResponse, response_model=None)
@@ -17662,7 +17706,13 @@ def create_oidc_client_from_ui(
         return render(
             request,
             "authentication.html",
-            authentication_context(db, identity, raw_token=None, oidc_error=str(exc)),
+            authentication_context(
+                db,
+                identity,
+                raw_token=None,
+                oidc_error=str(exc),
+                oidc_page=True,
+            ),
             status_code=422,
         )
     record_audit(
@@ -17690,6 +17740,7 @@ def create_oidc_client_from_ui(
             raw_token=None,
             oidc_client_secret=raw_secret,
             oidc_client_id=row.client_id,
+            oidc_page=True,
         ),
     )
 
@@ -17750,7 +17801,7 @@ def update_oidc_client_from_ui(
     )
     if request.headers.get("X-Atlaso-Grid") == "1":
         return JSONResponse(jsonable_encoder(oidc_client_to_dict(row)))
-    return RedirectResponse("/authentication#oidc-clients", status_code=303)
+    return RedirectResponse("/openid-connect#oidc-clients", status_code=303)
 
 
 @router.get(
@@ -17823,6 +17874,7 @@ def create_oidc_group_mapping_from_ui(
                 identity,
                 raw_token=None,
                 oidc_error=detail,
+                oidc_page=True,
             ),
             status_code=409,
         )
@@ -17842,6 +17894,7 @@ def create_oidc_group_mapping_from_ui(
                 identity,
                 raw_token=None,
                 oidc_error=detail,
+                oidc_page=True,
             ),
             status_code=422,
         )
@@ -17861,7 +17914,7 @@ def create_oidc_group_mapping_from_ui(
             jsonable_encoder(oidc_group_mapping_to_dict(row)),
             status_code=201,
         )
-    return RedirectResponse("/authentication#oidc-group-mappings", status_code=303)
+    return RedirectResponse("/openid-connect#oidc-group-mappings", status_code=303)
 
 
 @router.post(
@@ -17959,6 +18012,7 @@ def delete_oidc_group_mapping_from_ui(
                 identity,
                 raw_token=None,
                 oidc_error=detail,
+                oidc_page=True,
             ),
             status_code=422,
         )
@@ -17975,7 +18029,7 @@ def delete_oidc_group_mapping_from_ui(
     )
     if request.headers.get("X-Atlaso-Grid") == "1":
         return Response(status_code=204)
-    return RedirectResponse("/authentication#oidc-group-mappings", status_code=303)
+    return RedirectResponse("/openid-connect#oidc-group-mappings", status_code=303)
 
 
 @router.post("/authentication/oidc/clients/{client_record_id}/rotate-secret", response_class=HTMLResponse, response_model=None)
@@ -18012,6 +18066,7 @@ def rotate_oidc_client_secret_from_ui(
             raw_token=None,
             oidc_client_secret=raw_secret,
             oidc_client_id=row.client_id,
+            oidc_page=True,
         ),
     )
 
@@ -18043,7 +18098,7 @@ def delete_oidc_client_from_ui(
     )
     if request.headers.get("X-Atlaso-Grid") == "1":
         return Response(status_code=204)
-    return RedirectResponse("/authentication#oidc-clients", status_code=303)
+    return RedirectResponse("/openid-connect#oidc-clients", status_code=303)
 
 
 @router.post("/authentication/oidc/signing-keys", response_model=None)
@@ -18080,7 +18135,7 @@ def create_oidc_signing_key_from_ui(
             ),
             status_code=201,
         )
-    return RedirectResponse("/authentication#oidc-keys", status_code=303)
+    return RedirectResponse("/openid-connect#oidc-keys", status_code=303)
 
 
 @router.post(
@@ -18119,7 +18174,7 @@ def delete_retired_oidc_signing_key_from_ui(
     )
     if request.headers.get("X-Atlaso-Grid") == "1":
         return Response(status_code=204)
-    return RedirectResponse("/authentication#oidc-keys", status_code=303)
+    return RedirectResponse("/openid-connect#oidc-keys", status_code=303)
 
 
 @router.post("/authentication/api-tokens", response_model=None)

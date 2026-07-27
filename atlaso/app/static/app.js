@@ -7054,7 +7054,18 @@ function initializeOidcClientsTable() {
   const form = document.querySelector("[data-oidc-client-form]");
   const dialog = document.getElementById("oidc-client-dialog");
   if (!(element instanceof HTMLElement) || !(form instanceof HTMLFormElement) || !(dialog instanceof HTMLDialogElement)) return;
-  const rows = JSON.parse(element.dataset.clients || "[]");
+  const rows = [
+    ...JSON.parse(element.dataset.clients || "[]"),
+    {
+      id: "oidc-client-new",
+      is_new: true,
+      name: "",
+      client_id: "",
+      organization_slug: "",
+      redirect_uris: [],
+      enabled: false,
+    },
+  ];
   const csrf = element.dataset.csrf || "";
   let table;
   let wizard;
@@ -7080,7 +7091,7 @@ function initializeOidcClientsTable() {
       const row = table.getRow(existingId);
       if (row) await row.update(payload);
     } else {
-      await table.addRow(payload);
+      await table.addRow(payload, false, "oidc-client-new");
     }
   };
   const rotateSecret = async (data) => {
@@ -7125,12 +7136,15 @@ function initializeOidcClientsTable() {
     status: "#oidc-clients-status",
     pattern: "wizard-backed",
     emptyMessage: "No confidential clients registered.",
-    onOpenRow: (data, row, event) => openClient(data, event?.currentTarget || row?.getElement?.()),
+    onOpenRow: (data, row, event) => openClient(
+      data.is_new ? null : data,
+      event?.currentTarget || row?.getElement?.(),
+    ),
     rowActions: [
-      { label: "Edit client", action: (event, row) => openClient(row.getData(), row.getElement()) },
-      { label: "Rotate secret", action: (event, row) => rotateSecret(row.getData()).catch((error) => grid.setError(error.message)) },
-      { label: "Download redacted integration", action: (event, row) => exportClient(row.getData()).catch((error) => grid.setError(error.message)) },
-      { label: "Delete client", action: (event, row) => deleteClient(row.getData()).catch((error) => grid.setError(error.message)) },
+      { label: "Edit client", disabled: (row) => row.getData().is_new, action: (event, row) => openClient(row.getData(), row.getElement()) },
+      { label: "Rotate secret", disabled: (row) => row.getData().is_new, action: (event, row) => rotateSecret(row.getData()).catch((error) => grid.setError(error.message)) },
+      { label: "Download redacted integration", disabled: (row) => row.getData().is_new, action: (event, row) => exportClient(row.getData()).catch((error) => grid.setError(error.message)) },
+      { label: "Delete client", disabled: (row) => row.getData().is_new, action: (event, row) => deleteClient(row.getData()).catch((error) => grid.setError(error.message)) },
     ],
     options: {
       data: rows,
@@ -7138,12 +7152,20 @@ function initializeOidcClientsTable() {
       height: "330px",
       placeholder: "No confidential clients registered.",
       columns: [
-        { title: "Name", field: "name", minWidth: 190 },
-        { title: "Client ID", field: "client_id", minWidth: 230, formatter: (cell) => `<code>${escapeHtml(cell.getValue())}</code>` },
-        { title: "Organization", field: "organization_slug", minWidth: 150, formatter: (cell) => escapeHtml(cell.getValue() || "Unbound") },
-        { title: "Redirects", field: "redirect_uris", minWidth: 260, formatter: (cell) => (cell.getValue() || []).map((value) => `<code>${escapeHtml(value)}</code>`).join("<br>") },
-        { title: "Status", field: "enabled", width: 105, formatter: (cell) => `<span class="status-pill ${cell.getValue() ? "good" : "muted"}">${cell.getValue() ? "enabled" : "disabled"}</span>` },
+        {
+          title: "Name",
+          field: "name",
+          minWidth: 190,
+          formatter: (cell) => cell.getRow().getData().is_new
+            ? '<button class="add-row-button" type="button" data-oidc-client-add>+ Add client here</button>'
+            : escapeHtml(cell.getValue()),
+        },
+        { title: "Client ID", field: "client_id", minWidth: 230, formatter: (cell) => cell.getRow().getData().is_new ? "" : `<code>${escapeHtml(cell.getValue())}</code>` },
+        { title: "Organization", field: "organization_slug", minWidth: 150, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || "Unbound") },
+        { title: "Redirects", field: "redirect_uris", minWidth: 260, formatter: (cell) => cell.getRow().getData().is_new ? "" : (cell.getValue() || []).map((value) => `<code>${escapeHtml(value)}</code>`).join("<br>") },
+        { title: "Status", field: "enabled", width: 105, formatter: (cell) => cell.getRow().getData().is_new ? "" : `<span class="status-pill ${cell.getValue() ? "good" : "muted"}">${cell.getValue() ? "enabled" : "disabled"}</span>` },
       ],
+      rowFormatter: (row) => markNewRecordRow(row, "name"),
     },
   });
   table = grid.table;
@@ -7189,7 +7211,10 @@ function initializeOidcClientsTable() {
       return { valid: true };
     },
   });
-  document.querySelector("[data-oidc-client-add]")?.addEventListener("click", (event) => openClient(null, event.currentTarget));
+  element.addEventListener("click", (event) => {
+    const launcher = event.target.closest("[data-oidc-client-add]");
+    if (launcher instanceof HTMLButtonElement) openClient(null, launcher);
+  });
 }
 
 function initializeOidcKeysTable() {
