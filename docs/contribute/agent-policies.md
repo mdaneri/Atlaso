@@ -300,6 +300,10 @@ status: current
   is labeled **Run latest revision**, opens a parameter modal before creating the task, and uses the same literal
   argument syntax as schedules: backslash continuation for Bash/Python and backtick continuation for PowerShell. Never
   evaluate arguments through a second shell and never accept secrets as parameters.
+- VCF/ESX password vaults are admin-only and encrypted with the appliance secrets key. A managed-script job may carry
+  only a vault ID; stage decrypted values under `/run`, pass them through systemd `LoadCredential`, remove them after
+  execution, and keep `atlaso-vault` fail-closed outside that credential context. PowerShell receives
+  `Get-AtlasoVault`; Bash/Python use `atlaso-vault`. Redact exact values from helper and worker output.
 - Packer is a Windows-host prerequisite for the Photon image path; Hyper-V and `qemu-img` may already be available
   locally but should still be checked in handoff notes.
 
@@ -823,6 +827,8 @@ status: current
   reset, only `eth0` should be desired admin up; other physical NICs should be desired admin down until an operator
   enables them. Disabled service settings should have blank listen interfaces and addresses until an operator selects a
   valid bind target.
+- Settings archives must not include vault entries or Kickstart-to-vault bindings. Restore and factory reset clear both;
+  operators reimport or recreate vault contents afterward.
 - Documentation updates are required for every major product, architecture, workflow, safety-boundary, or
   operator-experience change. In the same change, update `README.md`, `AGENTS.md`, and any topic-specific file under
   `docs/` whose behavior or operator guidance is affected; do not treat the work as complete while those documents

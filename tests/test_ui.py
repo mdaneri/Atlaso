@@ -828,13 +828,16 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     templates = Path("atlaso/app/templates")
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
-    for shell in (base, public_base):
+    for shell, app_asset in (
+        (base, "/static/app.js?v=atlaso-vaults-20260727-1"),
+        (public_base, "/static/app.js?v=atlaso-oidc-admin-20260727-6"),
+    ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4"
         )
         assert shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4"
-        ) < shell.index("/static/app.js?v=atlaso-oidc-admin-20260727-6")
+        ) < shell.index(app_asset)
 
     wizard_templates = [
         templates / "automation.html",
@@ -879,10 +882,10 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     app_js = client.get("/static/app.js").text
     create_grid = "window.AtlasoUiPatterns.createGrid({"
 
-    assert app_js.count(create_grid) == 38
+    assert app_js.count(create_grid) == 39
     assert app_js.count('pattern: "direct-edit"') == 25
     assert app_js.count('pattern: "read-only"') == 8
-    assert app_js.count('pattern: "wizard-backed"') == 5
+    assert app_js.count('pattern: "wizard-backed"') == 6
     assert "new Tabulator(" not in app_js
     assert "new window.Tabulator(" not in app_js
     assert "atlaso-legacy-tabulator: #117" not in app_js
@@ -1010,9 +1013,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=atlaso-ui-foundation-20260727-3" in page.text
+    assert "/static/app.css?v=atlaso-vaults-20260727-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in page.text
-    assert "/static/app.js?v=atlaso-oidc-admin-20260727-6" in page.text
+    assert "/static/app.js?v=atlaso-vaults-20260727-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -12473,7 +12476,8 @@ def test_vcf_helper_page_renders_domain_dropdown(client):
     visible_workspace = response.text.split('<section class="split-workspace vcf-helper-workspace"', 1)[1].split("</section>", 1)[0]
     assert "VCF Certificate Trust" in visible_workspace
     assert "Review DNS" not in visible_workspace
-    assert visible_workspace.count('class="info-band vcf-helper-action-band"') == 6
+    assert visible_workspace.count('class="info-band vcf-helper-action-band"') == 7
+    assert "Import passwords into a vault" in visible_workspace
     assert 'id="vcf-helper-platform-title">SDDC Manager / VCF Installer</h3>' in visible_workspace
     assert 'id="vcf-helper-ldap-title">LDAP</h3>' in visible_workspace
     assert visible_workspace.count('class="vcf-helper-action-bands"') == 2

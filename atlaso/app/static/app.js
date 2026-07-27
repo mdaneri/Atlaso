@@ -15609,6 +15609,7 @@ function initializeAutomationTables() {
         scheduleForm.querySelectorAll('input[name="selected_streams"]').forEach((input) => { input.checked = selectedStreams.has(input.value); });
         scheduleForm.elements.vcf_profile_id.value = String(rowData.task_config?.profile_id || "");
         scheduleForm.elements.revision_id.value = String(rowData.task_config?.revision_id || "");
+        scheduleForm.elements.vault_id.value = String(rowData.task_config?.vault_id || "");
         scheduleForm.elements.script_arguments.value = formatScriptArguments(rowData.task_config?.arguments, selectedScriptInterpreter());
       }
       updateScriptArgumentsGuidance();
@@ -16225,7 +16226,276 @@ function initializeEsxStorageVolumeSource() {
   update();
 }
 
+function initializeVaultsPage() {
+  const workspace = document.querySelector("[data-vaults-workspace]");
+  if (!(workspace instanceof HTMLElement) || !window.AtlasoUiPatterns) return;
+  const createModal = document.getElementById("vault-create-modal");
+  const createForm = document.querySelector("[data-vault-create-form]");
+  if (createModal instanceof HTMLDialogElement && createForm instanceof HTMLFormElement) {
+    const createWizard = window.AtlasoUiPatterns.createWizard({
+      dialog: createModal,
+      form: createForm,
+      steps: [
+        { id: "identity", title: "Name the vault", description: "Use a clear environment or workflow name." },
+        { id: "review", title: "Review the vault", description: "Confirm the identity and restricted password scope." },
+      ],
+      validateStep: ({ step }) => step.id !== "identity" || createForm.reportValidity(),
+      prepareReview: () => {
+        const name = createForm.querySelector("[data-vault-create-review-name]");
+        const description = createForm.querySelector("[data-vault-create-review-description]");
+        if (name) name.textContent = String(createForm.elements.name.value || "").trim();
+        if (description) description.textContent = String(createForm.elements.description.value || "").trim() || "No description";
+      },
+    });
+    document.querySelectorAll("[data-vault-create-open]").forEach((button) => button.addEventListener("click", () => createWizard.open({ launcher: button })));
+  }
+
+  const entryModal = document.getElementById("vault-entry-modal");
+  const entryForm = document.querySelector("[data-vault-entry-form]");
+  if (!(entryModal instanceof HTMLDialogElement) || !(entryForm instanceof HTMLFormElement)) return;
+  const entryWizard = window.AtlasoUiPatterns.createWizard({
+    dialog: entryModal,
+    form: entryForm,
+    steps: [
+      { id: "identity", title: "Identify the password", description: "Choose a stable dotted key and restricted password type." },
+      { id: "password", title: "Supply the password", description: "Atlaso encrypts this value before database storage." },
+      { id: "review", title: "Review the entry", description: "Confirm metadata without displaying the password." },
+    ],
+    validateStep: ({ step }) => {
+      if (step.id === "identity") return entryForm.reportValidity();
+      if (step.id === "password") {
+        const password = entryForm.elements.value;
+        if (password.required && !password.value) return { ok: false, message: "Enter a password.", field: password };
+      }
+      return true;
+    },
+    prepareReview: () => {
+      entryForm.querySelector("[data-vault-entry-review-key]").textContent = String(entryForm.elements.key.value || "");
+      entryForm.querySelector("[data-vault-entry-review-type]").textContent = entryForm.elements.secret_type.selectedOptions[0]?.textContent || "";
+      entryForm.querySelector("[data-vault-entry-review-username]").textContent = String(entryForm.elements.username.value || "") || "Not specified";
+      entryForm.querySelector("[data-vault-entry-review-password]").textContent = entryForm.elements.value.value ? "New encrypted value supplied" : "Existing encrypted value retained";
+    },
+    onOpen: ({ context }) => {
+      const row = context?.row || null;
+      const vaultId = context?.vaultId;
+      entryForm.reset();
+      entryForm.action = row
+        ? `/vaults/${vaultId}/entries/${row.id}/edit`
+        : `/vaults/${vaultId}/entries`;
+      entryForm.elements.key.value = row?.key || "";
+      entryForm.elements.secret_type.value = row?.secret_type || "vcf_password";
+      entryForm.elements.description.value = row?.description || "";
+      entryForm.elements.username.value = row?.username || "";
+      entryForm.elements.resource_name.value = row?.resource_name || "";
+      entryForm.elements.value.required = !row;
+      const title = entryForm.querySelector("[data-vault-entry-title]");
+      if (title) title.textContent = row ? "Edit or rotate password" : "Add password";
+      const help = entryForm.querySelector("[data-vault-entry-password-help]");
+      if (help) help.textContent = row ? "Leave blank to retain the existing encrypted value." : "The value is encrypted before it is stored.";
+    },
+  });
+
+  document.querySelectorAll("[data-vault-entries-table]").forEach((element) => {
+    if (!(element instanceof HTMLElement)) return;
+    const vaultId = Number(element.dataset.vaultId || 0);
+    const source = document.getElementById(`vault-entries-data-${vaultId}`);
+    const rows = JSON.parse(source?.textContent || "[]");
+    rows.push({ is_new: true, key: "" });
+    window.AtlasoUiPatterns.createGrid({
+      element,
+      pattern: "wizard-backed",
+      options: {
+        data: rows,
+        layout: "fitColumns",
+        placeholder: "No passwords are stored in this vault.",
+        rowFormatter: (row) => markNewRecordRow(row, "key"),
+        columns: [
+          {
+            title: "Key",
+            field: "key",
+            minWidth: 230,
+            formatter: (cell) => cell.getRow().getData().is_new
+              ? '<button class="add-row-button" type="button">+ Add password here</button>'
+              : `<code>${escapeHtml(cell.getValue())}</code>`,
+            cellClick: (_event, cell) => entryWizard.open({ context: { vaultId, row: cell.getRow().getData().is_new ? null : cell.getRow().getData() }, launcher: cell.getElement() }),
+          },
+          { title: "Description", field: "description", minWidth: 260, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || "—") },
+          {
+            title: "Password",
+            field: "has_value",
+            minWidth: 190,
+            headerSort: false,
+            formatter: (cell) => cell.getRow().getData().is_new ? "" : '<span class="vault-password-value" data-vault-password-value>••••••••</span> <button class="button secondary compact vault-password-eye" type="button" aria-label="Reveal password" title="Reveal password" data-vault-password-eye>&#128065;</button>',
+            cellClick: async (event, cell) => {
+              const eye = event.target.closest("[data-vault-password-eye]");
+              if (!(eye instanceof HTMLButtonElement)) return;
+              const value = cell.getElement().querySelector("[data-vault-password-value]");
+              if (!(value instanceof HTMLElement)) return;
+              if (eye.dataset.revealed === "true") {
+                value.textContent = "••••••••";
+                eye.dataset.revealed = "false";
+                eye.setAttribute("aria-label", "Reveal password");
+                return;
+              }
+              eye.disabled = true;
+              const body = new FormData();
+              body.set("csrf", String(entryForm.elements.csrf.value || ""));
+              try {
+                const row = cell.getRow().getData();
+                const response = await fetch(`/vaults/${vaultId}/entries/${row.id}/reveal`, {
+                  method: "POST",
+                  headers: { Accept: "application/json" },
+                  cache: "no-store",
+                  body,
+                });
+                if (!response.ok) throw new Error("Password reveal failed.");
+                const payload = await response.json();
+                value.textContent = String(payload.value || "");
+                eye.dataset.revealed = "true";
+                eye.setAttribute("aria-label", "Hide password");
+                window.setTimeout(() => {
+                  if (!value.isConnected) return;
+                  value.textContent = "••••••••";
+                  eye.dataset.revealed = "false";
+                  eye.setAttribute("aria-label", "Reveal password");
+                }, 15000);
+              } catch (_error) {
+                value.textContent = "Reveal failed";
+              } finally {
+                eye.disabled = false;
+              }
+            },
+          },
+          {
+            title: "",
+            width: 90,
+            headerSort: false,
+            formatter: (cell) => cell.getRow().getData().is_new ? "" : '<button class="button danger compact" type="button">Delete</button>',
+            cellClick: (_event, cell) => {
+              const row = cell.getRow().getData();
+              if (row.is_new || !window.confirm(`Delete vault key "${row.key}"?`)) return;
+              document.getElementById(`vault-entry-delete-${row.id}`)?.requestSubmit();
+            },
+          },
+        ],
+      },
+    });
+  });
+}
+
+function initializeVcfVaultImport() {
+  const modal = document.getElementById("vcf-vault-import-modal");
+  const form = document.querySelector("[data-vcf-vault-import-form]");
+  if (!(modal instanceof HTMLDialogElement) || !(form instanceof HTMLFormElement) || !window.AtlasoUiPatterns) return;
+  const candidatesElement = form.querySelector("[data-vcf-vault-candidates]");
+  const fingerprintHelp = form.querySelector("[data-vcf-vault-fingerprint]");
+  let candidates = [];
+  const requestPayload = () => ({
+    csrf: String(form.elements.csrf.value || ""),
+    source_type: String(form.elements.source_type.value || ""),
+    address: String(form.elements.address.value || ""),
+    port: Number(form.elements.port.value || 443),
+    confirmed_fingerprint: String(form.elements.confirmed_fingerprint.value || ""),
+    username: String(form.elements.username.value || ""),
+    password: String(form.elements.password.value || ""),
+  });
+  const renderCandidates = () => {
+    candidatesElement.replaceChildren();
+    candidates.forEach((candidate) => {
+      const label = document.createElement("label");
+      label.className = "info-band";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.name = "candidate_ids";
+      checkbox.value = candidate.candidate_id;
+      checkbox.checked = true;
+      const copy = document.createElement("span");
+      copy.className = "vcf-helper-action-copy";
+      copy.innerHTML = `<strong><code>${escapeHtml(candidate.key)}</code></strong><span class="muted">${escapeHtml(candidate.description || candidate.resource_name || "")}</span>`;
+      label.append(checkbox, copy);
+      candidatesElement.append(label);
+    });
+  };
+  const wizard = window.AtlasoUiPatterns.createWizard({
+    dialog: modal,
+    form,
+    steps: [
+      { id: "source", title: "Choose the VCF source", description: "Identify the appliance and confirm its TLS certificate fingerprint." },
+      { id: "credentials", title: "Authenticate to the source", description: "Credentials are used only for this discovery and reviewed import." },
+      { id: "selection", title: "Choose passwords", description: "Select supported VCF and ESX password metadata to import." },
+      { id: "review", title: "Review the import", description: "Choose the destination vault and confirm the selected count." },
+    ],
+    onOpen: () => {
+      form.reset();
+      form.elements.port.value = "443";
+      candidates = [];
+      candidatesElement?.replaceChildren();
+    },
+    onNext: async ({ controller, step }) => {
+      if (step.id !== "credentials") return true;
+      const response = await fetch("/vcf-helper/vault-import/inspect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        cache: "no-store",
+        body: JSON.stringify(requestPayload()),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (response.status === 409 && payload.fingerprint) {
+        form.elements.confirmed_fingerprint.value = payload.fingerprint;
+        if (fingerprintHelp) fingerprintHelp.textContent = `Observed fingerprint: ${payload.fingerprint}. Verify it out of band, then choose Continue again to confirm.`;
+        controller.setError("Verify the displayed TLS fingerprint, then choose Continue again to send credentials.");
+        return false;
+      }
+      if (!response.ok) {
+        controller.setError(payload.detail || "VCF password discovery failed.");
+        return false;
+      }
+      candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
+      if (!candidates.length) {
+        controller.setError("The source returned no supported passwords.");
+        return false;
+      }
+      renderCandidates();
+      return true;
+    },
+    validateStep: ({ step }) => {
+      if (step.id === "selection" && !form.querySelector('input[name="candidate_ids"]:checked')) {
+        return { ok: false, message: "Select at least one password." };
+      }
+      return true;
+    },
+    prepareReview: () => {
+      const source = form.querySelector("[data-vcf-vault-review-source]");
+      const count = form.querySelector("[data-vcf-vault-review-count]");
+      if (source) source.textContent = `${form.elements.source_type.selectedOptions[0]?.textContent || ""} · ${form.elements.address.value}`;
+      if (count) count.textContent = String(form.querySelectorAll('input[name="candidate_ids"]:checked').length);
+    },
+    onSubmit: async () => {
+      const payload = {
+        ...requestPayload(),
+        vault_id: Number(form.elements.vault_id.value || 0),
+        candidate_ids: [...form.querySelectorAll('input[name="candidate_ids"]:checked')].map((input) => input.value),
+      };
+      const response = await fetch("/vcf-helper/vault-import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        cache: "no-store",
+        body: JSON.stringify(payload),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) return { ok: false, message: result.detail || "The password import failed." };
+      wizard.markClean();
+      window.location.assign(`/vaults#vault-panel-${result.vault_id}`);
+      return { ok: true, close: false };
+    },
+    closeOnSubmit: false,
+  });
+  document.querySelectorAll("[data-vcf-vault-import-open]").forEach((button) => button.addEventListener("click", () => wizard.open({ launcher: button })));
+}
+
 document.addEventListener("DOMContentLoaded", initializeDashboard);
+document.addEventListener("DOMContentLoaded", initializeVaultsPage);
+document.addEventListener("DOMContentLoaded", initializeVcfVaultImport);
 document.addEventListener("DOMContentLoaded", initializeEsxStorageTables);
 document.addEventListener("DOMContentLoaded", initializeEsxStorageWizards);
 document.addEventListener("DOMContentLoaded", initializeEsxStorageFamilyDefaults);

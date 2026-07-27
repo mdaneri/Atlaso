@@ -150,8 +150,12 @@
                   <span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Short database note for operators. It is not written into the generated Kickstart unless it is also present in the source content.">i</button></span>
                   <input name="description" value="{{ esxi_selected_kickstart.description or '' }}">
                 </label>
+                <label>
+                  <span class="field-label"><span>Vault</span><button class="help-icon" type="button" data-help="Makes one vault available only while an assigned host dynamically retrieves this Kickstart.">i</button></span>
+                  <select name="vault_id"><option value="">No vault</option>{% for vault in esxi_vaults %}<option value="{{ vault.id }}" {{ "selected" if esxi_kickstart_vault_ids.get(esxi_selected_kickstart.id) == vault.id else "" }}>{{ vault.name }}</option>{% endfor %}</select>
+                </label>
                 <div class="form-field">
-                  <span class="field-label"><span>Source content</span><button class="help-icon" type="button" data-help="Editable database source of truth. Use &#123;&#123;host.*&#125;&#125;, &#123;&#123;dhcp.*&#125;&#125;, &#123;&#123;pxe.*&#125;&#125;, and &#123;&#123;custom.*&#125;&#125; markers for host-specific rendering; generated PXE files are overwritten later by global appliance apply.">i</button></span>
+                  <span class="field-label"><span>Source content</span><button class="help-icon" type="button" data-help="Editable database source of truth. Use host.*, dhcp.*, pxe.*, custom.*, and vault.* markers for dynamic host rendering.">i</button></span>
                   <textarea class="monospace-textarea kickstart-code-editor" name="content" rows="22" data-codemirror-editor data-codemirror-language="atlaso-kickstart" aria-label="Kickstart source content">{{ esxi_selected_kickstart.content }}</textarea>
                 </div>
                 <div class="editor-action-row">
@@ -175,6 +179,7 @@
                 <div><span>DHCP</span><strong><code>{{ "{{dhcp.gateway}}" }}</code> <code>{{ "{{dhcp.netmask}}" }}</code> <code>{{ "{{dhcp.prefix}}" }}</code> <code>{{ "{{dhcp.dns_servers}}" }}</code> <code>{{ "{{dhcp.ntp_servers}}" }}</code> <code>{{ "{{dhcp.domain}}" }}</code></strong></div>
                 <div><span>PXE</span><strong><code>{{ "{{pxe.http_base_url}}" }}</code></strong></div>
                 <div><span>Custom</span><strong><code>{{ "{{custom.install_disk}}" }}</code></strong></div>
+                <div><span>Vault</span><strong><code>{{ "{{vault.esx.root}}" }}</code></strong></div>
               </div>
               <p class="muted">Custom values come from Host References variables JSON, for example <code>{"install_disk":"mpx.vmhba0:C0:T0:L0"}</code>. Unresolved or invalid markers fail validation and the dynamic Kickstart request.</p>
             </details>
@@ -198,6 +203,7 @@
                     <span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Optional database note for operators.">i</button></span>
                     <input name="description" value="">
                   </label>
+                  <label><span class="field-label"><span>Vault</span><button class="help-icon" type="button" data-help="Optional vault available to dynamic vault.* markers.">i</button></span><select name="vault_id"><option value="">No vault</option>{% for vault in esxi_vaults %}<option value="{{ vault.id }}">{{ vault.name }}</option>{% endfor %}</select></label>
                   <div class="form-field">
                     <span class="field-label"><span>Source content</span><button class="help-icon" type="button" data-help="Initial Kickstart source saved in the database. It may include &#123;&#123;host.*&#125;&#125;, &#123;&#123;dhcp.*&#125;&#125;, &#123;&#123;pxe.*&#125;&#125;, and &#123;&#123;custom.*&#125;&#125; markers for host-specific rendering. Generated files are created later through global appliance apply.">i</button></span>
                     <textarea class="monospace-textarea" name="content" rows="10" data-codemirror-editor data-codemirror-language="atlaso-kickstart">{{ esxi_default_kickstart_content }}</textarea>

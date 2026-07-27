@@ -12,6 +12,8 @@ EnvironmentFile=/etc/atlaso/atlaso.env
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=ATLASO_HELPER_USE_SYSTEMD_RUN=1
 UMask=0027
+RuntimeDirectory=atlaso-automation-vaults
+RuntimeDirectoryMode=0700
 ExecStart=/opt/atlaso/.venv/bin/python -m atlaso.app.worker
 Restart=on-failure
 RestartSec=5

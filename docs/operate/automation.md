@@ -86,9 +86,11 @@ Interpreters are allowlisted to Bash, system Python, and PowerShell. The helper 
 - a read-only system filesystem except for `/var/lib/atlaso/automation/runs`;
 - the revision's configured timeout, capped at 24 hours.
 
-Scripts do not receive Atlaso credentials. Output is bounded in task history. Script definitions and schedules are
-included in settings archives, but restored revisions and schedules are always disabled and source credentials are never
-exported.
+Scripts receive no Atlaso credentials by default. A schedule or manual run may select one named VCF/ESX password vault.
+Atlaso stages that vault as a transient systemd credential and provides `atlaso-vault get --key <key>` to Bash/Python
+and `Get-AtlasoVault -Key <key>` to PowerShell. The helper fails outside the scoped process and exact injected values are
+redacted from captured output. Output is bounded in task history. Script definitions and schedules are included in
+settings archives, but restored revisions and schedules are always disabled and vault contents are never exported.
 
 ## Service operations
 

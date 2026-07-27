@@ -66,5 +66,7 @@ The following cross-cutting boundaries always apply:
   exports only public relying-party metadata.
 - Never expose credentials, authenticated URLs, private keys, raw secrets, or secret-bearing commands in UI, jobs,
   audits, logs, documentation, screenshots, or video.
+- Vault passwords are the narrow exception for an explicit administrator eye reveal: keep them masked by default,
+  CSRF-protect and audit reveals without values, disable caching, and automatically hide the value again.
 - Browser navigation to a globally disabled Web Terminal must render the authenticated Atlaso unavailable-state page;
   reserve JSON and protocol errors for ticket, API, and WebSocket consumers.

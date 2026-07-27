@@ -1,0 +1,24 @@
+<dialog id="vcf-vault-import-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="vcf-vault-import-title">
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" data-atlaso-wizard data-vcf-vault-import-form>
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <aside class="vcf-sddc-wizard-rail"><p class="kicker">VCF Helper</p><h2 id="vcf-vault-import-title">Import passwords</h2><ol class="vcf-sddc-step-list">
+      <li><button class="vcf-sddc-step-button active" type="button" data-atlaso-wizard-nav="source"><span>1</span><strong>Source</strong><small>Appliance and TLS</small></button></li>
+      <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="credentials" disabled><span>2</span><strong>Credentials</strong><small>Authenticate</small></button></li>
+      <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="selection" disabled><span>3</span><strong>Passwords</strong><small>Choose values</small></button></li>
+      <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="review" disabled><span>4</span><strong>Review</strong><small>Import destination</small></button></li>
+    </ol></aside>
+    <div class="vcf-sddc-wizard-main"><div class="confirm-modal-body vcf-sddc-wizard-body">
+      <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 4</p><h3 data-atlaso-wizard-title>Choose the VCF source</h3><p class="muted" data-atlaso-wizard-description>Identify the appliance and confirm its TLS certificate fingerprint.</p></div>
+      <div class="alert error hidden" data-atlaso-wizard-error></div>
+      <section class="vcf-sddc-step-page" data-atlaso-wizard-step="source"><div class="form-grid">
+        <label><span>Source type</span><select name="source_type"><option value="sddc_manager">SDDC Manager</option><option value="vcf_installer">VCF Installer</option></select></label>
+        <label><span>API address</span><input name="address" required placeholder="sddc-manager.example.internal" autocomplete="off"></label>
+        <label><span>API port</span><input name="port" type="number" min="1" max="65535" value="443" required></label>
+        <label class="full"><span>Confirmed SHA-256 fingerprint</span><input name="confirmed_fingerprint" autocomplete="off" placeholder="Connect once to obtain the fingerprint"><small class="muted" data-vcf-vault-fingerprint>Atlaso will show the current fingerprint before sending credentials.</small></label>
+      </div></section>
+      <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="credentials"><div class="form-grid"><label><span>API username</span><input name="username" required autocomplete="username"></label><label><span>API password</span><input name="password" type="password" required autocomplete="current-password"></label></div></section>
+      <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="selection"><div class="form-stack"><p class="muted">Only metadata is displayed here. Password values remain in the server request until the reviewed import.</p><div class="vcf-vault-candidate-list" data-vcf-vault-candidates></div></div></section>
+      <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review"><div class="form-stack"><label><span>Destination vault</span><select name="vault_id" required><option value="">Choose a vault</option>{% for vault in vcf_vaults %}<option value="{{ vault.id }}">{{ vault.name }}</option>{% endfor %}</select></label><div class="settings-list"><div><span>Source</span><strong data-vcf-vault-review-source></strong></div><div><span>Selected passwords</span><strong data-vcf-vault-review-count></strong></div><div><span>Existing keys</span><strong>Rotated with imported values</strong></div></div></div></section>
+    </div><div class="confirm-modal-actions"><button class="button secondary" type="button" data-atlaso-wizard-cancel>Cancel</button><button class="button secondary hidden" type="button" data-atlaso-wizard-back>Back</button><button class="button primary" type="button" data-atlaso-wizard-next>Continue</button><button class="button primary hidden" type="submit" data-atlaso-wizard-submit>Import passwords</button></div></div>
+  </form>
+</dialog>

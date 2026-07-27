@@ -50,6 +50,7 @@ from atlaso.app.models import (
     DnsRecord,
     DnsSettings,
     EsxiKickstart,
+    EsxiKickstartVaultBinding,
     EsxiPxeHost,
     EsxNfsShare,
     EsxStorageSettings,
@@ -89,9 +90,21 @@ from atlaso.app.models import (
     VcfPrivateRegistrySettings,
     VcfRegistryBundle,
     VcfTrustTarget,
+    Vault,
+    VaultEntry,
     VlanInterface,
     WanPolicy,
     utcnow,
+)
+from atlaso.app.services.vaults import (
+    VaultEntryInput,
+    create_vault,
+    decrypted_vault_values,
+    list_vaults,
+    redact_secret_values,
+    update_vault_entry,
+    upsert_vault_entry,
+    vault_entry_metadata,
 )
 from atlaso.app.operational_logging import (
     configure_operational_logging,
@@ -270,6 +283,7 @@ from atlaso.app.services.vcf_depot_target import (
     configure_target_depot,
     inspect_target_depot,
 )
+from atlaso.app.services.vcf_vault_import import discover_vcf_passwords
 from atlaso.app.secrets import decrypt_secret, encrypt_secret, secret_key_status
 from atlaso.app.services.networking import (
     INTERFACE_MODES,
@@ -6997,6 +7011,10 @@ def local_users_apply_context(db: Session, baseline: dict[str, Any] | None = Non
 
 def esxi_pxe_context(db: Session) -> dict[str, Any]:
     kickstarts = db.execute(select(EsxiKickstart).order_by(EsxiKickstart.name)).scalars().all()
+    kickstart_vault_ids = {
+        row.kickstart_id: row.vault_id
+        for row in db.execute(select(EsxiKickstartVaultBinding)).scalars().all()
+    }
     hosts = db.execute(select(EsxiPxeHost).options(selectinload(EsxiPxeHost.kickstart)).order_by(EsxiPxeHost.hostname)).scalars().all()
     dhcp_scopes = db.execute(select(DhcpScope).order_by(DhcpScope.name)).scalars().all()
     default_host = esxi_pxe_default_host_settings(db)
@@ -7059,9 +7077,28 @@ def esxi_pxe_context(db: Session) -> dict[str, Any]:
         if not esxi_pxe_host_artifacts(hosts, boot_settings, default_host):
             validation_warnings.append("ESXi PXE bootstrap is enabled, but no enabled host reference or default profile has an installer ISO selected.")
     validation_errors.extend(kickstart_template_validation_errors(kickstarts, hosts, boot_settings, default_host))
+    for kickstart in kickstarts:
+        marker_names = kickstart_template_variables(kickstart.content)[0]
+        vault_keys = sorted(name.removeprefix("vault.") for name in marker_names if name.startswith("vault."))
+        if not vault_keys:
+            continue
+        vault_id = kickstart_vault_ids.get(kickstart.id)
+        if not vault_id:
+            validation_errors.append(f"{kickstart.name}: select a vault before using vault markers.")
+            continue
+        try:
+            available_keys = decrypted_vault_values(db, vault_id)
+        except ValueError:
+            validation_errors.append(f"{kickstart.name}: the selected vault cannot be decrypted.")
+            continue
+        missing_keys = [key for key in vault_keys if key not in available_keys]
+        if missing_keys:
+            validation_errors.append(f"{kickstart.name}: vault key {missing_keys[0]} is not defined.")
     esxi_service_state = esxi_pxe_service_state_from_boot(boot_settings)
     return {
         "esxi_kickstarts": kickstarts,
+        "esxi_vaults": db.execute(select(Vault).order_by(Vault.name)).scalars().all(),
+        "esxi_kickstart_vault_ids": kickstart_vault_ids,
         "esxi_kickstart_rows": [kickstart_to_dict(row, include_content=True) for row in kickstarts],
         "esxi_pxe_hosts": hosts,
         "esxi_pxe_host_rows": [default_host_to_dict(default_host), *[host_to_dict(row) for row in hosts]],
@@ -7145,6 +7182,23 @@ def parse_optional_esxi_kickstart_id(db: Session, kickstart_id: str, *, label: s
     if db.get(EsxiKickstart, normalized_id) is None:
         raise HTTPException(status_code=404, detail=f"{label} not found")
     return normalized_id
+
+
+def set_esxi_kickstart_vault_binding(db: Session, kickstart_id: int, vault_id: str) -> None:
+    binding = db.get(EsxiKickstartVaultBinding, kickstart_id)
+    normalized = str(vault_id or "").strip()
+    if not normalized:
+        if binding is not None:
+            db.delete(binding)
+        return
+    if not normalized.isdigit() or db.get(Vault, int(normalized)) is None:
+        raise ValueError("Select an available vault.")
+    if binding is None:
+        binding = EsxiKickstartVaultBinding(kickstart_id=kickstart_id, vault_id=int(normalized))
+    else:
+        binding.vault_id = int(normalized)
+        binding.updated_at = utcnow()
+    db.add(binding)
 
 
 def esx_storage_context(db: Session, *, reconcile: bool = True) -> dict[str, Any]:
@@ -8062,6 +8116,291 @@ def appliance_update_context(db: Session) -> dict[str, Any]:
     }
 
 
+def vaults_context(db: Session) -> dict[str, Any]:
+    return {
+        "vaults": [
+            {
+                "id": vault.id,
+                "name": vault.name,
+                "description": vault.description,
+                "entry_rows": [vault_entry_metadata(entry) for entry in vault.entries],
+            }
+            for vault in list_vaults(db)
+        ]
+    }
+
+
+def _vaults_render_error(
+    request: Request,
+    identity: Identity,
+    db: Session,
+    message: str,
+    *,
+    status_code: int = 422,
+) -> HTMLResponse:
+    return render(
+        request,
+        "vaults.html",
+        {"identity": identity, **vaults_context(db), "vault_error": message},
+        status_code=status_code,
+    )
+
+
+@router.get("/vaults", response_class=HTMLResponse, response_model=None)
+def vaults_page(
+    request: Request,
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    require_admin_identity(identity)
+    return render(request, "vaults.html", {"identity": identity, **vaults_context(db)})
+
+
+@router.post("/vaults", response_model=None)
+def create_vault_from_ui(
+    request: Request,
+    name: str = Form(...),
+    description: str = Form(""),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> Response:
+    verify_csrf(request, csrf)
+    require_admin_identity(identity)
+    try:
+        vault = create_vault(db, name=name, description=description, actor=identity.username)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        return _vaults_render_error(request, identity, db, str(exc))
+    except IntegrityError:
+        db.rollback()
+        return _vaults_render_error(request, identity, db, "A vault with this name already exists.", status_code=409)
+    record_audit(
+        db,
+        actor=identity.username,
+        action="create_vault",
+        resource_type="vault",
+        resource_id=str(vault.id),
+    )
+    return RedirectResponse(f"/vaults#vault-panel-{vault.id}", status_code=303)
+
+
+@router.post("/vaults/{vault_id}/entries", response_model=None)
+def create_vault_entry_from_ui(
+    vault_id: int,
+    request: Request,
+    key: str = Form(...),
+    secret_type: str = Form(...),
+    value: str = Form(...),
+    description: str = Form(""),
+    username: str = Form(""),
+    resource_name: str = Form(""),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> Response:
+    verify_csrf(request, csrf)
+    require_admin_identity(identity)
+    vault = db.get(Vault, vault_id)
+    if vault is None:
+        raise HTTPException(status_code=404, detail="Vault not found.")
+    try:
+        _entry, created = upsert_vault_entry(
+            db,
+            vault=vault,
+            entry=VaultEntryInput(
+                key=key,
+                secret_type=secret_type,
+                value=value,
+                description=description,
+                username=username,
+                resource_name=resource_name,
+            ),
+            actor=identity.username,
+        )
+        if not created:
+            raise ValueError("That key already exists. Edit the existing entry to rotate its password.")
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        return _vaults_render_error(request, identity, db, str(exc), status_code=409)
+    except IntegrityError:
+        db.rollback()
+        return _vaults_render_error(request, identity, db, "That key already exists in this vault.", status_code=409)
+    record_audit(
+        db,
+        actor=identity.username,
+        action="create_vault_entry",
+        resource_type="vault_entry",
+        resource_id=str(_entry.id),
+        detail=f"vault_id={vault.id}; key={_entry.key}; type={_entry.secret_type}",
+    )
+    return RedirectResponse(f"/vaults#vault-panel-{vault.id}", status_code=303)
+
+
+@router.post("/vaults/{vault_id}/entries/{entry_id}/edit", response_model=None)
+def edit_vault_entry_from_ui(
+    vault_id: int,
+    entry_id: int,
+    request: Request,
+    key: str = Form(...),
+    secret_type: str = Form(...),
+    value: str = Form(""),
+    description: str = Form(""),
+    username: str = Form(""),
+    resource_name: str = Form(""),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> Response:
+    verify_csrf(request, csrf)
+    require_admin_identity(identity)
+    entry = db.get(VaultEntry, entry_id)
+    if entry is None or entry.vault_id != vault_id:
+        raise HTTPException(status_code=404, detail="Vault entry not found.")
+    try:
+        update_vault_entry(
+            entry,
+            key=key,
+            secret_type=secret_type,
+            value=value,
+            description=description,
+            username=username,
+            resource_name=resource_name,
+        )
+        db.add(entry)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        return _vaults_render_error(request, identity, db, str(exc))
+    except IntegrityError:
+        db.rollback()
+        return _vaults_render_error(request, identity, db, "That key already exists in this vault.", status_code=409)
+    record_audit(
+        db,
+        actor=identity.username,
+        action="update_vault_entry",
+        resource_type="vault_entry",
+        resource_id=str(entry.id),
+        detail=f"vault_id={vault_id}; key={entry.key}; type={entry.secret_type}",
+    )
+    return RedirectResponse(f"/vaults#vault-panel-{vault_id}", status_code=303)
+
+
+@router.post("/vaults/{vault_id}/entries/{entry_id}/reveal", response_class=JSONResponse, response_model=None)
+def reveal_vault_entry_from_ui(
+    vault_id: int,
+    entry_id: int,
+    request: Request,
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    verify_csrf(request, csrf)
+    require_admin_identity(identity)
+    entry = db.get(VaultEntry, entry_id)
+    if entry is None or entry.vault_id != vault_id:
+        raise HTTPException(status_code=404, detail="Vault entry not found.")
+    value = decrypt_secret(entry.encrypted_value)
+    record_audit(
+        db,
+        actor=identity.username,
+        action="reveal_vault_entry",
+        resource_type="vault_entry",
+        resource_id=str(entry.id),
+        detail=f"vault_id={vault_id}; key={entry.key}",
+    )
+    return JSONResponse(
+        {"value": value},
+        headers={
+            "Cache-Control": "no-store, private",
+            "Pragma": "no-cache",
+        },
+    )
+
+
+@router.post("/vaults/{vault_id}/entries/{entry_id}/delete", response_model=None)
+def delete_vault_entry_from_ui(
+    vault_id: int,
+    entry_id: int,
+    request: Request,
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> Response:
+    verify_csrf(request, csrf)
+    require_admin_identity(identity)
+    entry = db.get(VaultEntry, entry_id)
+    if entry is None or entry.vault_id != vault_id:
+        raise HTTPException(status_code=404, detail="Vault entry not found.")
+    key = entry.key
+    db.delete(entry)
+    db.commit()
+    record_audit(
+        db,
+        actor=identity.username,
+        action="delete_vault_entry",
+        resource_type="vault_entry",
+        resource_id=str(entry_id),
+        detail=f"vault_id={vault_id}; key={key}",
+    )
+    return RedirectResponse(f"/vaults#vault-panel-{vault_id}", status_code=303)
+
+
+@router.post("/vaults/{vault_id}/delete", response_model=None)
+def delete_vault_from_ui(
+    vault_id: int,
+    request: Request,
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> Response:
+    verify_csrf(request, csrf)
+    require_admin_identity(identity)
+    vault = db.get(Vault, vault_id)
+    if vault is None:
+        raise HTTPException(status_code=404, detail="Vault not found.")
+    binding = db.execute(
+        select(EsxiKickstartVaultBinding).where(EsxiKickstartVaultBinding.vault_id == vault.id)
+    ).scalar_one_or_none()
+    if binding is not None:
+        return _vaults_render_error(
+            request,
+            identity,
+            db,
+            "Remove this vault from its Kickstart before deleting it.",
+            status_code=409,
+        )
+    dependent_schedules: list[str] = []
+    for schedule in db.execute(select(Schedule).where(Schedule.task_type == "managed_script")).scalars():
+        try:
+            if int(json.loads(schedule.task_config_json or "{}").get("vault_id") or 0) == vault.id:
+                dependent_schedules.append(schedule.name)
+        except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+            continue
+    if dependent_schedules:
+        return _vaults_render_error(
+            request,
+            identity,
+            db,
+            f"Remove this vault from these schedules first: {', '.join(dependent_schedules)}.",
+            status_code=409,
+        )
+    name = vault.name
+    db.delete(vault)
+    db.commit()
+    record_audit(
+        db,
+        actor=identity.username,
+        action="delete_vault",
+        resource_type="vault",
+        resource_id=str(vault_id),
+        detail=f"name={name}",
+    )
+    return RedirectResponse("/vaults", status_code=303)
+
+
 def automation_context(db: Session) -> dict[str, Any]:
     schedules = db.execute(select(Schedule).order_by(Schedule.name)).scalars().all()
     scripts = db.execute(
@@ -8199,6 +8538,7 @@ def automation_context(db: Session) -> dict[str, Any]:
         "automation_task_types": sorted(SCHEDULE_TASK_TYPES),
         "automation_interpreters": sorted(SCRIPT_INTERPRETERS),
         "automation_vcf_profiles": profiles,
+        "automation_vaults": db.execute(select(Vault).order_by(Vault.name)).scalars().all(),
         "automation_update_streams": [{"id": stream, "label": UPDATE_STREAM_LABELS[stream]} for stream in UPDATE_STREAMS],
         "system_adapter_dry_run": get_settings().dry_run_system_adapters,
     }
@@ -10083,6 +10423,7 @@ def _automation_task_config(
     selected_streams: list[str],
     vcf_profile_id: int | None,
     revision_id: int | None,
+    vault_id: int | None,
     script_arguments: str,
 ) -> tuple[dict[str, Any], str]:
     if task_type in {"appliance_update_check", "appliance_update_install"}:
@@ -10100,7 +10441,14 @@ def _automation_task_config(
             arguments = parse_script_arguments(script_arguments, revision.interpreter)
         except ValueError as exc:
             return {}, str(exc)
-        return {"revision_id": revision.id, "arguments": arguments}, ""
+        selected_vault_id = int(vault_id or 0)
+        if selected_vault_id and db.get(Vault, selected_vault_id) is None:
+            return {}, "Choose an available vault or run without vault access."
+        return {
+            "revision_id": revision.id,
+            "arguments": arguments,
+            **({"vault_id": selected_vault_id} if selected_vault_id else {}),
+        }, ""
     return {}, ""
 
 
@@ -10112,6 +10460,7 @@ def create_automation_schedule(
     selected_streams: list[str] = Form(default=[]),
     vcf_profile_id: int | None = Form(None),
     revision_id: int | None = Form(None),
+    vault_id: int | None = Form(None),
     script_arguments: str = Form(""),
     schedule_kind: str = Form("cron"),
     cron_expression: str = Form("0 2 * * *"),
@@ -10139,6 +10488,7 @@ def create_automation_schedule(
         selected_streams=selected_streams,
         vcf_profile_id=vcf_profile_id,
         revision_id=revision_id,
+        vault_id=vault_id,
         script_arguments=script_arguments,
     )
     if config_error:
@@ -10193,6 +10543,7 @@ def edit_automation_schedule(
     selected_streams: list[str] = Form(default=[]),
     vcf_profile_id: int | None = Form(None),
     revision_id: int | None = Form(None),
+    vault_id: int | None = Form(None),
     script_arguments: str = Form(""),
     schedule_kind: str = Form("cron"),
     cron_expression: str = Form("0 2 * * *"),
@@ -10223,6 +10574,7 @@ def edit_automation_schedule(
         selected_streams=selected_streams,
         vcf_profile_id=vcf_profile_id,
         revision_id=revision_id,
+        vault_id=vault_id,
         script_arguments=script_arguments,
     )
     if config_error:
@@ -10521,6 +10873,7 @@ def run_automation_script_revision(
     request: Request,
     csrf: str = Form(...),
     script_arguments: str = Form(""),
+    vault_id: int | None = Form(None),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
@@ -10533,6 +10886,12 @@ def run_automation_script_revision(
         arguments = parse_script_arguments(script_arguments, revision.interpreter)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    selected_vault_id = int(vault_id or 0)
+    if selected_vault_id and db.get(Vault, selected_vault_id) is None:
+        raise HTTPException(status_code=400, detail="Choose an available vault or run without vault access.")
+    task_config = {"arguments": arguments, "revision_id": revision.id}
+    if selected_vault_id:
+        task_config["vault_id"] = selected_vault_id
     job = Job(
         id=f"job_{uuid4().hex[:12]}",
         type="managed-script",
@@ -10540,7 +10899,7 @@ def run_automation_script_revision(
         created_by=identity.username,
         progress_percent=0,
         trigger="manual",
-        task_config_json=json.dumps({"arguments": arguments, "revision_id": revision.id}, sort_keys=True),
+        task_config_json=json.dumps(task_config, sort_keys=True),
         result=json.dumps({"status": "pending", "revision_id": revision.id}, indent=2),
     )
     db.add(job)
@@ -15609,6 +15968,7 @@ def vcf_helper_page_context(
         **vcf_helper_context(db),
         **vcf_trust_context(db),
         **ldap_context_data,
+        "vcf_vaults": db.execute(select(Vault).order_by(Vault.name)).scalars().all(),
         "vcf_trust_auto_open": vcf_trust_auto_open,
         "ldap_vcf_auto_open": ldap_vcf_auto_open,
         "ldap_generate_auto_open": ldap_generate_auto_open,
@@ -15681,6 +16041,134 @@ def _split_vcf_endpoint_address_port(raw_address: Any, raw_port: Any = None) -> 
     if not 0 < port <= 65535:
         raise HTTPException(status_code=422, detail="Target endpoint port must be a number from 1 to 65535.")
     return address, port
+
+
+@router.post("/vcf-helper/vault-import/inspect", response_class=JSONResponse, response_model=None)
+async def inspect_vcf_vault_import(
+    request: Request,
+    identity: Identity = Depends(require_session_identity),
+) -> JSONResponse:
+    require_admin_identity(identity)
+    payload = await _vcf_helper_json(request)
+    address, port = _split_vcf_endpoint_address_port(payload.get("address"), payload.get("port"))
+    if not address:
+        raise HTTPException(status_code=422, detail="Enter the VCF appliance address.")
+    fingerprint, confirmation = _confirmed_tls_fingerprint(
+        address,
+        port,
+        str(payload.get("confirmed_fingerprint") or ""),
+    )
+    if confirmation is not None:
+        return confirmation
+    try:
+        source_password = str(payload.get("password") or "")
+        candidates = discover_vcf_passwords(
+            source_type=str(payload.get("source_type") or ""),
+            address=address,
+            port=port,
+            username=str(payload.get("username") or ""),
+            password=source_password,
+            expected_fingerprint=fingerprint,
+        )
+    except VcfDepotTargetError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=redact_secret_values(str(exc), [source_password]),
+        ) from exc
+    return JSONResponse(
+        {"candidates": [candidate.sanitized() for candidate in candidates]},
+        headers={"Cache-Control": "no-store, private", "Pragma": "no-cache"},
+    )
+
+
+@router.post("/vcf-helper/vault-import", response_class=JSONResponse, response_model=None)
+async def import_vcf_passwords_to_vault(
+    request: Request,
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    require_admin_identity(identity)
+    payload = await _vcf_helper_json(request)
+    try:
+        vault_id = int(payload.get("vault_id") or 0)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="Choose a destination vault.") from exc
+    vault = db.get(Vault, vault_id)
+    if vault is None:
+        raise HTTPException(status_code=422, detail="Choose a destination vault.")
+    selected = payload.get("candidate_ids")
+    if not isinstance(selected, list) or not selected or any(not isinstance(item, str) for item in selected):
+        raise HTTPException(status_code=422, detail="Select at least one password to import.")
+    address, port = _split_vcf_endpoint_address_port(payload.get("address"), payload.get("port"))
+    fingerprint, confirmation = _confirmed_tls_fingerprint(
+        address,
+        port,
+        str(payload.get("confirmed_fingerprint") or ""),
+    )
+    if confirmation is not None:
+        return confirmation
+    source_type = str(payload.get("source_type") or "")
+    source_password = str(payload.get("password") or "")
+    try:
+        candidates = discover_vcf_passwords(
+            source_type=source_type,
+            address=address,
+            port=port,
+            username=str(payload.get("username") or ""),
+            password=source_password,
+            expected_fingerprint=fingerprint,
+        )
+        by_id = {candidate.candidate_id: candidate for candidate in candidates}
+        missing = [candidate_id for candidate_id in selected if candidate_id not in by_id]
+        if missing:
+            raise VcfDepotTargetError("The selected VCF password set changed; inspect the source again.")
+        imported: list[str] = []
+        created_count = 0
+        for candidate_id in selected:
+            candidate = by_id[candidate_id]
+            entry, created = upsert_vault_entry(
+                db,
+                vault=vault,
+                entry=VaultEntryInput(
+                    key=candidate.key,
+                    description=candidate.description,
+                    secret_type=candidate.secret_type,
+                    value=candidate.value,
+                    username=candidate.username,
+                    resource_name=candidate.resource_name,
+                    source_type=source_type,
+                    source_endpoint=f"{address}:{port}",
+                    imported_at=utcnow(),
+                ),
+                actor=identity.username,
+            )
+            imported.append(entry.key)
+            created_count += int(created)
+        db.commit()
+    except (IntegrityError, VcfDepotTargetError, ValueError) as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=422,
+            detail=redact_secret_values(str(exc), [source_password]),
+        ) from exc
+    record_audit(
+        db,
+        actor=identity.username,
+        action="import_vcf_vault_entries",
+        resource_type="vault",
+        resource_id=str(vault.id),
+        detail=f"source_type={source_type}; imported={len(imported)}; created={created_count}; rotated={len(imported) - created_count}",
+    )
+    return JSONResponse(
+        {
+            "status": "imported",
+            "vault_id": vault.id,
+            "imported_keys": imported,
+            "created": created_count,
+            "rotated": len(imported) - created_count,
+        },
+        headers={"Cache-Control": "no-store, private", "Pragma": "no-cache"},
+    )
 
 
 def _validate_vcf_sddc_property_values(descriptor: Any, values: dict[str, str]) -> list[str]:
@@ -19154,10 +19642,25 @@ def serve_esxi_kickstart_file(kickstart_file: str, mac: str = "", db: Session = 
     if host.kickstart_id != kickstart.id:
         raise HTTPException(status_code=404, detail="Kickstart not assigned to host")
     try:
-        rendered = render_kickstart_for_host(kickstart.content, host, esxi_pxe_boot_settings(db))
+        vault_values: dict[str, str] = {}
+        if any(name.startswith("vault.") for name in names):
+            binding = db.get(EsxiKickstartVaultBinding, kickstart.id)
+            if binding is None:
+                raise ValueError("Kickstart vault markers require a selected vault.")
+            vault_values = decrypted_vault_values(db, binding.vault_id)
+        rendered = render_kickstart_for_host(
+            kickstart.content,
+            host,
+            esxi_pxe_boot_settings(db),
+            vault_values,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return Response(rendered, media_type="text/plain; charset=utf-8")
+    return Response(
+        rendered,
+        media_type="text/plain; charset=utf-8",
+        headers={"Cache-Control": "no-store, private", "Pragma": "no-cache"},
+    )
 
 
 @router.get("/pxe/esxi/boot.ipxe", response_model=None)
@@ -19283,6 +19786,7 @@ def create_esxi_kickstart_from_ui(
     description: str = Form(""),
     content: str = Form(...),
     enabled: bool = Form(False),
+    vault_id: str = Form(""),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
@@ -19294,6 +19798,7 @@ def create_esxi_kickstart_from_ui(
         db.add(kickstart)
         db.flush()
         assign_kickstart_content(kickstart, content, max_bytes=get_settings().esxi_kickstart_max_bytes)
+        set_esxi_kickstart_vault_binding(db, kickstart.id, vault_id)
         db.commit()
     except (ValueError, IntegrityError) as exc:
         db.rollback()
@@ -19319,6 +19824,7 @@ def update_esxi_kickstart_from_ui(
     description: str = Form(""),
     content: str = Form(...),
     enabled: bool = Form(False),
+    vault_id: str = Form(""),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
@@ -19333,6 +19839,7 @@ def update_esxi_kickstart_from_ui(
         kickstart.description = description or None
         kickstart.enabled = enabled
         assign_kickstart_content(kickstart, content, max_bytes=get_settings().esxi_kickstart_max_bytes)
+        set_esxi_kickstart_vault_binding(db, kickstart.id, vault_id)
         db.add(kickstart)
         db.commit()
     except (ValueError, IntegrityError) as exc:
@@ -19375,6 +19882,9 @@ def duplicate_esxi_kickstart_from_ui(
     db.add(duplicate)
     db.flush()
     duplicate.http_path = canonical_http_path(duplicate.id, duplicate.content_hash)
+    source_binding = db.get(EsxiKickstartVaultBinding, source.id)
+    if source_binding is not None:
+        db.add(EsxiKickstartVaultBinding(kickstart_id=duplicate.id, vault_id=source_binding.vault_id))
     db.commit()
     record_audit(db, actor=identity.username, action="duplicate_esxi_kickstart", resource_type="esxi_kickstart", resource_id=str(duplicate.id), detail=f"source_id={source.id} name={duplicate.name}", request_id=request.state.request_id)
     return RedirectResponse(f"/esxi-pxe?kickstart_id={duplicate.id}", status_code=303)
@@ -19397,6 +19907,9 @@ def delete_esxi_kickstart_from_ui(
         host.kickstart_id = None
         host.updated_at = utcnow()
         db.add(host)
+    binding = db.get(EsxiKickstartVaultBinding, kickstart.id)
+    if binding is not None:
+        db.delete(binding)
     db.delete(kickstart)
     db.commit()
     record_audit(db, actor=identity.username, action="delete_esxi_kickstart", resource_type="esxi_kickstart", resource_id=str(kickstart_id), request_id=request.state.request_id)

@@ -2142,9 +2142,12 @@ def test_automation_helper_gives_powershell_private_writable_xdg_home(monkeypatc
     script_path = script_root / "job.ps1"
     script_path.write_text("Write-Output 'ok'\n", encoding="utf-8")
     commands: list[list[str]] = []
+    wrapper_source = ""
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        nonlocal wrapper_source
         commands.append(command)
+        wrapper_source = Path(command[-3]).read_text(encoding="utf-8")
         return subprocess.CompletedProcess(command, 0, "ok\n", "")
 
     monkeypatch.setattr(helper, "AUTOMATION_SCRIPT_DIR", script_root)
@@ -2165,7 +2168,11 @@ def test_automation_helper_gives_powershell_private_writable_xdg_home(monkeypatc
     assert f"--setenv=XDG_DATA_HOME={run_home / '.local' / 'share'}" in command
     assert f"--property=ReadWritePaths={run_home}" in command
     assert f"--property=WorkingDirectory={run_home}" in command
-    assert command[-4:] == ["/usr/bin/pwsh", str(script_path), "-Mode", "check"]
+    assert command[-4] == "/usr/bin/pwsh"
+    assert Path(command[-3]).name == "atlaso-managed-script.ps1"
+    assert command[-2:] == ["-Mode", "check"]
+    assert "function global:Get-AtlasoVault" in wrapper_source
+    assert str(script_path).replace("\\", "\\") in wrapper_source
     assert not run_home.exists()
 
 

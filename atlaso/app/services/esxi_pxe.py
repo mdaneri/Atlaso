@@ -348,7 +348,11 @@ def _dhcp_scope_for_host(host: EsxiPxeHost, boot_settings: dict[str, Any]) -> di
     return scopes[0] if scopes else {}
 
 
-def kickstart_variable_values(host: EsxiPxeHost, boot_settings: dict[str, Any]) -> dict[str, str]:
+def kickstart_variable_values(
+    host: EsxiPxeHost,
+    boot_settings: dict[str, Any],
+    vault_values: dict[str, str] | None = None,
+) -> dict[str, str]:
     mac_key = normalize_pxe_mac(host.mac_address)
     scope = _dhcp_scope_for_host(host, boot_settings)
     network = _scope_network(scope)
@@ -368,14 +372,21 @@ def kickstart_variable_values(host: EsxiPxeHost, boot_settings: dict[str, Any]) 
     }
     for key, value in host_variables(host).items():
         values[f"custom.{key}"] = value
+    for key, value in (vault_values or {}).items():
+        values[f"vault.{key}"] = value
     return values
 
 
-def render_kickstart_for_host(content: str, host: EsxiPxeHost, boot_settings: dict[str, Any]) -> str:
+def render_kickstart_for_host(
+    content: str,
+    host: EsxiPxeHost,
+    boot_settings: dict[str, Any],
+    vault_values: dict[str, str] | None = None,
+) -> str:
     names, invalid = kickstart_template_variables(content)
     if invalid:
         raise ValueError(f"Kickstart contains invalid variable marker: {invalid[0]}")
-    values = kickstart_variable_values(host, boot_settings)
+    values = kickstart_variable_values(host, boot_settings, vault_values)
     missing = sorted(name for name in names if name not in values)
     if missing:
         raise ValueError(f"Kickstart variable {missing[0]} is not defined for host {host.hostname or host.mac_address}.")
@@ -398,9 +409,9 @@ def kickstart_template_validation_errors(
         names, invalid = kickstart_template_variables(row.content)
         for marker in invalid:
             errors.append(f"{row.name}: variable marker {{{{{marker}}}}} is invalid.")
-        if any(not name.startswith(("host.", "dhcp.", "pxe.", "custom.")) for name in names):
-            bad = sorted(name for name in names if not name.startswith(("host.", "dhcp.", "pxe.", "custom.")))[0]
-            errors.append(f"{row.name}: variable {bad} must use host., dhcp., pxe., or custom.")
+        if any(not name.startswith(("host.", "dhcp.", "pxe.", "custom.", "vault.")) for name in names):
+            bad = sorted(name for name in names if not name.startswith(("host.", "dhcp.", "pxe.", "custom.", "vault.")))[0]
+            errors.append(f"{row.name}: variable {bad} must use host., dhcp., pxe., custom., or vault.")
     default_kickstart_id = (default_host or {}).get("kickstart_id")
     default_kickstart = kickstart_by_id.get(int(default_kickstart_id)) if default_kickstart_id else None
     if default_host and default_host.get("enabled") and default_host.get("installer_iso_path") and default_kickstart:
@@ -413,7 +424,13 @@ def kickstart_template_validation_errors(
             continue
         try:
             normalize_host_variables(host.variables_json or "{}")
-            render_kickstart_for_host(kickstart.content, host, boot_settings)
+            marker_names = kickstart_template_variables(kickstart.content)[0]
+            validation_vault_values = {
+                name.removeprefix("vault."): "__atlaso_vault_value__"
+                for name in marker_names
+                if name.startswith("vault.")
+            }
+            render_kickstart_for_host(kickstart.content, host, boot_settings, validation_vault_values)
         except ValueError as exc:
             errors.append(str(exc))
     return list(dict.fromkeys(errors))

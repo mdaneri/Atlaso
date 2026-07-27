@@ -13,6 +13,7 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - [Getting started](docs/getting-started/index.md) — choose an appliance path and complete initial setup.
 - [Operations](docs/operate/index.md) — run the appliance and review desired-state changes.
 - [Services](docs/services/index.md) — configure DNS, identity, storage, network boot, and VCF integrations.
+- [Vaults](docs/services/vaults.md) — scope encrypted VCF and ESX passwords to managed scripts and Kickstarts.
 - [OpenID Connect provider](docs/services/oidc-provider.md) — use the dedicated tabbed administration page for
   confidential clients, exact redirects, key rotation, explicit identity sources, and privacy-safe scoped claims.
 - [Technical reference](docs/reference/index.md) — API, image building, lifecycle testing, and detailed behavior.

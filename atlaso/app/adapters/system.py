@@ -379,13 +379,22 @@ class SystemAdapter:
     def restart_appliance_after_update(self, config_path: str) -> AdapterResult:
         return self._helper_result("appliance-update", "restart-service", config_path, dry_run_message="dry-run: Atlaso service restart command recorded")
 
-    def run_automation_script(self, script_path: str, interpreter: str, timeout_seconds: int, arguments: list[str] | None = None) -> AdapterResult:
+    def run_automation_script(
+        self,
+        script_path: str,
+        interpreter: str,
+        timeout_seconds: int,
+        arguments: list[str] | None = None,
+        vault_path: str = "",
+    ) -> AdapterResult:
+        vault_args = ["--vault", vault_path] if vault_path else []
         return self._helper_result(
             "automation",
             "run",
             script_path,
             interpreter,
             str(timeout_seconds),
+            *vault_args,
             "--",
             *(arguments or []),
             dry_run_message="dry-run: managed automation script execution recorded",

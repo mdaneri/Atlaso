@@ -146,6 +146,7 @@ ROLE_PRIORITY = [
 ]
 
 UI_PATH_SCOPES = [
+    ("/vaults", "admin:all", "admin:all"),
     ("/appliance-apply", "admin:all", "admin:all"),
     ("/appliance-update", "admin:all", "admin:all"),
     ("/backup-restore", "admin:all", "admin:all"),

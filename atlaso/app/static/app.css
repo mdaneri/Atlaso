@@ -7687,3 +7687,27 @@ textarea {
     text-align: left;
   }
 }
+.vault-password-value {
+  display: inline-block;
+  min-width: 7rem;
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+  vertical-align: middle;
+}
+
+.vault-password-eye {
+  min-width: 1.9rem;
+  padding: 0.18rem 0.38rem;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+.vcf-vault-candidate-list {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.vcf-vault-candidate-list .info-band {
+  align-items: center;
+  grid-template-columns: auto 1fr;
+}

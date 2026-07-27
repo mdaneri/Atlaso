@@ -34,6 +34,9 @@
           <p class="muted">Deployment, naming, certificate trust, and software-depot helpers for the VCF platform appliances.</p>
         </div>
         <div class="vcf-helper-action-bands">
+          <button class="info-band vcf-helper-action-band" type="button" data-vcf-vault-import-open aria-haspopup="dialog" aria-controls="vcf-vault-import-modal" {% if not identity.has_role('admin') or not vcf_vaults %}disabled{% endif %}>
+            <span class="vcf-helper-action-copy"><span class="vcf-helper-action-title">Import passwords into a vault</span><span class="muted">Discover supported VCF or ESX passwords from SDDC Manager or VCF Installer and import selected values into an existing vault.</span></span>
+          </button>
           <button class="info-band vcf-helper-action-band" type="button" data-vcf-fqdn-modal-open aria-haspopup="dialog" aria-controls="vcf-fqdn-modal">
         <span class="vcf-helper-action-copy">
           <span class="vcf-helper-action-title">Generated VCF FQDNs</span>
@@ -98,6 +101,7 @@
 {% include "partials/vcf_sddc_deploy_modal.html" %}
 {% include "partials/vcf_target_depot_modal.html" %}
 {% include "partials/vcf_ldap_modal.html" %}
+{% include "partials/vcf_vault_import_modal.html" %}
 
 <dialog id="vcf-fqdn-modal" class="confirm-modal wide-modal vcf-fqdn-modal" aria-labelledby="vcf-fqdn-modal-title">
   <form class="confirm-modal-panel form-stack" action="/vcf-helper/generated-fqdns" method="post" data-vcf-fqdn-form>
