@@ -122,7 +122,11 @@ def test_dynamic_kickstart_resolves_assigned_vault_without_caching(client):
     from atlaso.app.services.esxi_pxe import content_hash
     from atlaso.app.services.vaults import VaultEntryInput, upsert_vault_entry
 
-    content = "vmaccepteula\nrootpw {{vault.esx.host.root}}\n"
+    content = (
+        "vmaccepteula\n"
+        "network --hostname={{vault.esx.esx.host.root.username}}\n"
+        "rootpw {{vault.esx.esx.host.root.password}}\n"
+    )
     with SessionLocal() as db:
         vault = Vault(name="ESX", description="", created_by="admin")
         db.add(vault)
@@ -134,6 +138,7 @@ def test_dynamic_kickstart_resolves_assigned_vault_without_caching(client):
                 key="esx.host.root",
                 description="ESX root",
                 secret_type="esx_password",
+                username="root",
                 value="VMware1!",
             ),
             actor="admin",
@@ -160,6 +165,7 @@ def test_dynamic_kickstart_resolves_assigned_vault_without_caching(client):
 
     response = client.get(path)
     assert response.status_code == 200
+    assert "network --hostname=root" in response.text
     assert "rootpw VMware1!" in response.text
     assert "{{vault." not in response.text
     assert "no-store" in response.headers["cache-control"]
@@ -173,6 +179,8 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert "AtlasoUiPatterns.createWizard" in source
     assert "data-vault-password-eye" in source
     assert "15000" in source
+    assert 'label: "Delete password"' in source
+    assert '<button class="button danger compact" type="button">Delete</button>' not in source
     tab_strip = template.split('<div class="tab-buttons zone-tabs"', 1)[1].split("</div>", 1)[0]
     panel_header = template.split('<div class="panel-head">', 1)[1].split(
         "{% if vault_error %}",
@@ -187,6 +195,9 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert "<span>Resource</span>" not in template
     assert 'name="resource_name"' not in template
     assert "entryForm.reportValidity()" not in source
+    assert "<h3>{{ vault.name }}</h3>" not in template
+    assert "vault-create-form-grid" in template
+    assert "vault-entry-form-grid" in template
 
 
 def test_vcf_import_discovers_sddc_manager_and_installer_passwords():

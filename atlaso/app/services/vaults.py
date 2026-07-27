@@ -40,6 +40,15 @@ def normalize_vault_key(value: str) -> str:
     return key
 
 
+def vault_marker_name(value: str) -> str:
+    marker = re.sub(r"[^a-z0-9_]+", "_", value.strip().lower()).strip("_")
+    if not marker:
+        raise ValueError("Vault names must contain at least one letter or number.")
+    if marker[0].isdigit():
+        marker = f"vault_{marker}"
+    return marker
+
+
 def validate_entry_input(entry: VaultEntryInput, *, require_value: bool = True) -> VaultEntryInput:
     key = normalize_vault_key(entry.key)
     secret_type = entry.secret_type.strip().lower()
@@ -77,6 +86,7 @@ def create_vault(db: Session, *, name: str, description: str, actor: str) -> Vau
     normalized_name = name.strip()
     if not normalized_name:
         raise ValueError("Enter a vault name.")
+    vault_marker_name(normalized_name)
     vault = Vault(
         name=normalized_name,
         description=description.strip(),
@@ -168,6 +178,21 @@ def decrypted_vault_values(db: Session, vault_id: int) -> dict[str, str]:
         select(VaultEntry).where(VaultEntry.vault_id == vault_id).order_by(VaultEntry.key)
     ).scalars()
     return {entry.key: decrypt_secret(entry.encrypted_value) for entry in entries}
+
+
+def kickstart_vault_values(db: Session, vault_id: int) -> dict[str, str]:
+    vault = db.get(Vault, vault_id)
+    if vault is None:
+        raise ValueError("The selected vault does not exist.")
+    prefix = vault_marker_name(vault.name)
+    entries = db.execute(
+        select(VaultEntry).where(VaultEntry.vault_id == vault_id).order_by(VaultEntry.key)
+    ).scalars()
+    values: dict[str, str] = {}
+    for entry in entries:
+        values[f"{prefix}.{entry.key}.username"] = entry.username or ""
+        values[f"{prefix}.{entry.key}.password"] = decrypt_secret(entry.encrypted_value)
+    return values
 
 
 def vault_entry_metadata(entry: VaultEntry) -> dict[str, object]:

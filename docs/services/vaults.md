@@ -34,14 +34,17 @@ stderr, but scripts must still treat passwords as secrets and must not transform
 
 ## ESXi Kickstarts
 
-Choose one vault in the Kickstart editor, then reference a value with a marker such as:
+Choose one vault in the Kickstart editor. The vault-name segment is the selected vault name normalized to lowercase,
+with spaces and punctuation replaced by underscores. Reference the entry username and password explicitly:
 
 ```text
-rootpw {{vault.esx.esx01.root}}
+network --hostname={{vault.management.esx.esx01.root.username}}
+rootpw {{vault.management.esx.esx01.root.password}}
 ```
 
 Atlaso resolves vault markers only for an enabled host assigned to that Kickstart. Source, preview, and download views
-retain the marker; the dynamic response is not persisted and is returned with `Cache-Control: no-store`.
+retain the marker; the dynamic response is not persisted and is returned with `Cache-Control: no-store`. A marker naming
+a vault other than the vault selected for the Kickstart fails validation.
 
 ## VCF Helper import
 

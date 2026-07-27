@@ -28,9 +28,10 @@ Atlaso note: ESXi PXE host-specific `boot.cfg` artifacts should pass Kickstart U
 `{{variable}}` Kickstart markers from the database source and the selected host's custom variable map. Atlaso
 intentionally does not infer the host MAC from request source IP or dnsmasq leases.
 
-A Kickstart may bind one VCF/ESX password vault and reference `{{vault.<key>}}`. Atlaso resolves those markers only in
+A Kickstart may bind one VCF/ESX password vault and reference
+`{{vault.<vaultname>.<key>.username}}` or `{{vault.<vaultname>.<key>.password}}`. Atlaso resolves those markers only in
 the dynamic response for an enabled host assigned to that Kickstart. Source downloads and previews retain the marker,
-and dynamic responses disable caching.
+markers cannot name a vault other than the bound vault, and dynamic responses disable caching.
 
 > Terminology note: Broadcom documentation uses **ESX** in these 9.x installation pages. Older VMware material often
 > used **ESXi**.

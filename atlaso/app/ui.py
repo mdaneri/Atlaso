@@ -99,7 +99,7 @@ from atlaso.app.models import (
 from atlaso.app.services.vaults import (
     VaultEntryInput,
     create_vault,
-    decrypted_vault_values,
+    kickstart_vault_values,
     list_vaults,
     redact_secret_values,
     update_vault_entry,
@@ -7087,7 +7087,7 @@ def esxi_pxe_context(db: Session) -> dict[str, Any]:
             validation_errors.append(f"{kickstart.name}: select a vault before using vault markers.")
             continue
         try:
-            available_keys = decrypted_vault_values(db, vault_id)
+            available_keys = kickstart_vault_values(db, vault_id)
         except ValueError:
             validation_errors.append(f"{kickstart.name}: the selected vault cannot be decrypted.")
             continue
@@ -19645,7 +19645,7 @@ def serve_esxi_kickstart_file(kickstart_file: str, mac: str = "", db: Session = 
             binding = db.get(EsxiKickstartVaultBinding, kickstart.id)
             if binding is None:
                 raise ValueError("Kickstart vault markers require a selected vault.")
-            vault_values = decrypted_vault_values(db, binding.vault_id)
+            vault_values = kickstart_vault_values(db, binding.vault_id)
         rendered = render_kickstart_for_host(
             kickstart.content,
             host,

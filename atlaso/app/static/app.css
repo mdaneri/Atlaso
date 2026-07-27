@@ -2008,6 +2008,41 @@ textarea {
   min-width: 0;
 }
 
+.vaults-workspace {
+  display: flex;
+  min-height: calc(100vh - 110px);
+  margin-bottom: 0;
+  flex-direction: column;
+}
+
+.vaults-workspace > .tab-panels {
+  flex: 1;
+  min-height: 0;
+}
+
+.vaults-workspace .tab-panel.active {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+}
+
+.vault-panel-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.vault-panel-toolbar > p {
+  margin: 0;
+}
+
+.vaults-workspace .tabulator-grid {
+  flex: 1;
+  min-height: 240px;
+}
+
 .info-band {
   display: grid;
   gap: 12px;
@@ -5803,6 +5838,32 @@ textarea {
 .vcf-sddc-wizard-modal.confirm-modal.wide-modal {
   width: min(1180px, calc(100vw - 48px));
   max-width: none;
+}
+
+.vault-create-wizard-modal.confirm-modal.wide-modal {
+  width: min(820px, calc(100vw - 48px));
+}
+
+.vault-create-wizard-modal .vcf-sddc-wizard-panel,
+.vault-entry-wizard-modal .vcf-sddc-wizard-panel {
+  grid-template-columns: 220px minmax(0, 1fr);
+}
+
+.vault-create-wizard-modal .vcf-sddc-wizard-panel {
+  height: min(480px, calc(100vh - 48px));
+}
+
+.vault-entry-wizard-modal.confirm-modal.wide-modal {
+  width: min(820px, calc(100vw - 48px));
+}
+
+.vault-entry-wizard-modal .vcf-sddc-wizard-panel {
+  height: min(560px, calc(100vh - 48px));
+}
+
+.vault-create-form-grid,
+.vault-entry-form-grid {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .vcf-sddc-wizard-panel {

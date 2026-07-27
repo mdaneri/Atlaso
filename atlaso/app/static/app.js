@@ -16303,8 +16303,20 @@ function initializeVaultsPage() {
       options: {
         data: rows,
         layout: "fitColumns",
+        height: "100%",
         placeholder: "No passwords are stored in this vault.",
         rowFormatter: (row) => markNewRecordRow(row, "key"),
+        rowContextMenu: [
+          {
+            label: "Delete password",
+            disabled: (component) => component.getData().is_new,
+            action: (_event, row) => {
+              const data = row.getData();
+              if (data.is_new || !window.confirm(`Delete vault key "${data.key}"?`)) return;
+              document.getElementById(`vault-entry-delete-${data.id}`)?.requestSubmit();
+            },
+          },
+        ],
         columns: [
           {
             title: "Key",
@@ -16360,17 +16372,6 @@ function initializeVaultsPage() {
               } finally {
                 eye.disabled = false;
               }
-            },
-          },
-          {
-            title: "",
-            width: 90,
-            headerSort: false,
-            formatter: (cell) => cell.getRow().getData().is_new ? "" : '<button class="button danger compact" type="button">Delete</button>',
-            cellClick: (_event, cell) => {
-              const row = cell.getRow().getData();
-              if (row.is_new || !window.confirm(`Delete vault key "${row.key}"?`)) return;
-              document.getElementById(`vault-entry-delete-${row.id}`)?.requestSubmit();
             },
           },
         ],
