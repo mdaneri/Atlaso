@@ -155,6 +155,16 @@ def ensure_provider_settings(db: Session) -> OidcProviderSettings:
     expected = expected_issuer_url(row)
     if row.issuer_url != expected:
         row.issuer_url = expected
+    if row.enabled and (
+        not split_interfaces(row.listen_interface)
+        or not split_addresses(row.listen_address)
+    ):
+        # Older provider rows shared Management HTTPS and have no dedicated
+        # service binding. Disable that incompatible desired state during the
+        # additive upgrade so the appliance can start and an administrator can
+        # select an explicit access or routed listener.
+        row.enabled = False
+        row.updated_at = utcnow()
     return row
 
 

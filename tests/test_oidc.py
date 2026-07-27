@@ -318,6 +318,29 @@ def test_oidc_public_documents_require_complete_protocol_readiness(client):
     assert client.get("https://testserver/identity/jwks").status_code == 200
 
 
+def test_oidc_legacy_management_bound_provider_is_safely_disabled(client):
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import OidcProviderSettings
+    from atlaso.app.services import oidc
+
+    with SessionLocal() as db:
+        provider = db.execute(select(OidcProviderSettings)).scalar_one_or_none()
+        if provider is None:
+            provider = OidcProviderSettings()
+            db.add(provider)
+            db.flush()
+        provider.enabled = True
+        provider.issuer_url = "https://core.atlaso.internal/identity"
+        provider.listen_interface = ""
+        provider.listen_address = ""
+        db.flush()
+
+        reconciled = oidc.ensure_provider_settings(db)
+        assert reconciled.enabled is False
+        assert reconciled.hostname == "oidc.atlaso.internal"
+        assert reconciled.issuer_url == "https://oidc.atlaso.internal/identity"
+
+
 def test_oidc_forwarded_https_rejects_management_listener(client):
     from starlette.requests import Request
 
