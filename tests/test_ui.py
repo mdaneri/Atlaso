@@ -617,7 +617,7 @@ def test_tasks_page_lists_redacts_logs_and_cancels(client):
     tasks_table_js = app_js.split("function initializeTasksPage", 1)[1].split("function updateVcfDepotSummary", 1)[0]
     assert 'paginationMode: "remote"' in tasks_table_js
     assert "paginationSizeSelector" not in tasks_table_js
-    assert 'atlasoTasksTable.on("rowDblClick", (_event, row) => openTaskDetail(row.getData()))' in app_js
+    assert 'atlasoTasksTable?.on("rowDblClick", (_event, row) => openTaskDetail(row.getData()))' in app_js
     assert "rowContextMenu" in tasks_table_js
     assert 'label: "Details"' in tasks_table_js
     assert 'label: "Log"' in tasks_table_js
@@ -795,7 +795,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v169" in service_worker.text
+    assert "atlaso-pwa-v170" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -809,7 +809,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/vendor/codemirror/atlaso-codemirror.min.js" in service_worker.text
     assert "/static/app.css?v=atlaso-ui-foundation-20260726-1" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-2" in service_worker.text
-    assert "/static/app.js?v=atlaso-ui-foundation-20260726-2" in service_worker.text
+    assert "/static/app.js?v=atlaso-grid-foundation-20260726-2" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -834,7 +834,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
         )
         assert shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-2"
-        ) < shell.index("/static/app.js?v=atlaso-ui-foundation-20260726-2")
+        ) < shell.index("/static/app.js?v=atlaso-grid-foundation-20260726-2")
 
     wizard_templates = [
         templates / "automation.html",
@@ -871,6 +871,80 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert "height: min(720px, calc(100vh - 48px));" in app_css.text
+
+
+def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
+    import re
+
+    app_js = client.get("/static/app.js").text
+    create_grid = "window.AtlasoUiPatterns.createGrid({"
+
+    assert app_js.count(create_grid) == 35
+    assert app_js.count('pattern: "direct-edit"') == 25
+    assert app_js.count('pattern: "read-only"') == 7
+    assert app_js.count('pattern: "wizard-backed"') == 3
+    assert "new Tabulator(" not in app_js
+    assert "new window.Tabulator(" not in app_js
+    assert "atlaso-legacy-tabulator: #117" not in app_js
+
+    def function_block(name):
+        start = app_js.index(f"function {name}(")
+        match = re.search(r"\n(?:async )?function ", app_js[start + 1:])
+        end = len(app_js) if match is None else start + 1 + match.start()
+        return app_js[start:end]
+
+    single_grid_patterns = {
+        "initializeDhcpLeasesTable": "read-only",
+        "initializeCaProfilesTable": "direct-edit",
+        "initializeCaCertificatesTable": "read-only",
+        "initializeFirewallRulesTable": "direct-edit",
+        "initializeManagedFirewallRulesTable": "direct-edit",
+        "initializeServicesTable": "direct-edit",
+        "initializeUsersTable": "direct-edit",
+        "initializeKmsClientsTable": "direct-edit",
+        "initializeKmsKeysTable": "direct-edit",
+        "initializeNTPsecUpstreamsTable": "direct-edit",
+        "initializeRoutesWanRoutingTable": "direct-edit",
+        "initializeRoutesWanNatTable": "direct-edit",
+        "initializeRoutesWanRoutesTable": "direct-edit",
+        "initializeRoutesWanPoliciesTable": "direct-edit",
+        "initializePhysicalInterfacesTable": "direct-edit",
+        "initializeOidcGroupMappingsTable": "direct-edit",
+        "initializeVlanInterfacesTable": "direct-edit",
+        "initializeDnsRecordsTableElement": "direct-edit",
+        "initializeDhcpScopesTable": "direct-edit",
+        "initializeDhcpOptionsTable": "direct-edit",
+        "initializeDhcpReservationsTable": "direct-edit",
+        "initializeEsxiPxeHostsTable": "direct-edit",
+        "initializeVcfRegistryBundlesTable": "direct-edit",
+        "initializeVcfDepotProfilesTable": "direct-edit",
+        "initializeVcfDepotTasksTable": "read-only",
+        "initializeTasksPage": "read-only",
+        "initializeAuditEventsTable": "read-only",
+        "renderApplianceApplyTask": "read-only",
+    }
+    for name, pattern in single_grid_patterns.items():
+        block = function_block(name)
+        assert block.count(create_grid) == 1, name
+        assert block.count(f'pattern: "{pattern}"') == 1, name
+
+    ldap_block = function_block("initializeLdapDirectoryTables")
+    assert ldap_block.count(create_grid) == 2
+    assert ldap_block.count('pattern: "direct-edit"') == 2
+
+    automation_block = function_block("initializeAutomationTables")
+    assert automation_block.count(create_grid) == 3
+    assert automation_block.count('pattern: "direct-edit"') == 1
+    assert automation_block.count('pattern: "read-only"') == 1
+    assert automation_block.count('pattern: "wizard-backed"') == 1
+
+    storage_block = function_block("initializeEsxStorageTables")
+    assert storage_block.count(create_grid) == 2
+    assert storage_block.count('pattern: "wizard-backed"') == 2
+
+    tasks_block = function_block("initializeTasksPage")
+    assert "atlasoTasksReopenSelected = shouldOpenSelected;" in tasks_block
+    assert "if (!atlasoTasksTable) {" in tasks_block
 
 
 def test_reported_template_accessibility_contracts():
@@ -938,7 +1012,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=atlaso-ui-foundation-20260726-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-2" in page.text
-    assert "/static/app.js?v=atlaso-ui-foundation-20260726-2" in page.text
+    assert "/static/app.js?v=atlaso-grid-foundation-20260726-2" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -4892,7 +4966,9 @@ def test_audit_log_renders(client):
     assert 'id="audit-events-fallback" class="audit-events-fallback-shell"' in response.text
     assert 'id="audit-events-fallback" class="audit-events-fallback-shell hidden"' not in response.text
     audit_js = client.get("/static/app.js").text.split("function initializeAuditEventsTable", 1)[1].split("function ", 1)[0]
-    assert 'tableElement.classList.remove("hidden")' in audit_js
+    assert "window.AtlasoUiPatterns.createGrid({" in audit_js
+    assert 'pattern: "read-only"' in audit_js
+    assert "if (!table) return" in audit_js
     assert 'tableElement.classList.add("hidden")' in audit_js
     assert 'renderVertical: "virtual"' in audit_js
     assert "pagination: true" in audit_js
@@ -5402,8 +5478,8 @@ def test_dns_and_dhcp_pages_render(client):
     assert 'elements.submit.classList.add("hidden")' in app_js.text
     assert 'elements.submit.classList.toggle("hidden", units.length === 0)' in app_js.text
     assert '{ title: "Status", field: "status", width: 150' in app_js.text
-    assert 'applianceApplyModalTable.on("rowClick"' in app_js.text
-    assert 'atlasoTasksTable.on("rowClick"' in app_js.text
+    assert 'applianceApplyModalTable?.on("rowClick"' in app_js.text
+    assert 'atlasoTasksTable?.on("rowClick"' in app_js.text
     assert "data-appliance-apply-modal" in app_js.text
     assert "data-appliance-apply-connection-warning" in dns.text
     assert 'class="button primary hidden" type="submit" data-appliance-apply-submit' in dns.text
@@ -6061,6 +6137,8 @@ def test_dns_listen_options_include_access_and_vlans_not_trunks(client):
 
 
 def test_certificate_authority_page_renders(client):
+    import re
+
     login(client)
     ca = client.get("/certificate-authority")
     assert ca.status_code == 200
@@ -6086,9 +6164,12 @@ def test_certificate_authority_page_renders(client):
     assert 'label: "Certificate chain"' in certificate_table_js
     assert 'label: "Private key"' in certificate_table_js
     assert 'title: "Exports"' not in certificate_table_js
-    assert 'title: "Status",\n          field: "status",\n          editable: false,\n          width: 80,' in certificate_table_js
+    assert re.search(
+        r'title: "Status",\s+field: "status",\s+editable: false,\s+width: 80,',
+        certificate_table_js,
+    )
     assert 'formatter: (cell) => escapeHtml(cell.getValue() || "")' in certificate_table_js
-    assert 'cssClass: "mono-text",\n          width: 480,' in certificate_table_js
+    assert re.search(r'cssClass: "mono-text",\s+width: 480,', certificate_table_js)
     assert "value.slice(0, 12)" not in certificate_table_js
     assert "+ Add profile here" in client.get("/static/app.js").text
     assert "Atlaso Internal Root CA" in ca.text

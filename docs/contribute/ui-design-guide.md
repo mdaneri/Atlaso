@@ -60,7 +60,7 @@ The classic browser asset `static/ui-patterns.js` exposes `window.AtlasoUiPatter
 shells. It loads after the vendored Tabulator asset and before page code. The service worker precaches the same
 versioned asset.
 
-- `AtlasoUiPatterns.createGrid(...)` is the only approved constructor entry point for a new direct-edit,
+- `AtlasoUiPatterns.createGrid(...)` is the only approved constructor entry point for every direct-edit,
   wizard-backed, or read-only Tabulator. It owns shared loading, ready, empty, error, permission, status, keyboard,
   context-menu, and server-rendered fallback behavior. The fallback remains visible until Tabulator emits
   `tableBuilt`, and it is retained or restored when initialization fails.
@@ -71,9 +71,9 @@ versioned asset.
   navigation, status, and actions. Page adapters keep only business-specific discovery, validation, conditional-field,
   review-population, and submission callbacks.
 
-Do not copy the legacy raw Tabulator initializers marked for issue #117. Issue #117 owns their migration to
-`createGrid`; issues #118 and #119 retain their resource-conversion scopes. The repository policy check rejects new raw
-constructors, wizard markup without the generic contract, and page-specific generic step-controller logic.
+All existing Tabulator initializers use `createGrid`. Raw constructors outside the shared foundation are forbidden;
+issues #118 and #119 retain their resource-conversion scopes. The repository policy check rejects raw constructors,
+wizard markup without the generic contract, and page-specific generic step-controller logic.
 
 ## Tabulator collection contract
 

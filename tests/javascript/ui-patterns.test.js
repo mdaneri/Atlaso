@@ -280,6 +280,7 @@ test("createGrid keeps fallback until Tabulator is ready and exposes ready state
   });
 
   assert.equal(controller.state, "loading");
+  assert.equal(controller.table, TabulatorStub.last);
   assert.equal(fallback.classList.contains("hidden"), false);
   TabulatorStub.last.emit("tableBuilt");
   assert.equal(controller.state, "ready");
@@ -328,12 +329,18 @@ test("createGrid applies permission state and keyboard context-menu behavior", a
     getElement: () => editableRowElement,
     getData: () => ({ id: 2 }),
   };
+  let openedRow = null;
   createGrid({
     element: new FakeElement(),
     pattern: "wizard-backed",
     rowActions: [{ label: "Edit" }],
+    onOpenRow: (rowData) => {
+      openedRow = rowData;
+    },
   });
   TabulatorStub.last.options.rowFormatter(editableRow);
+  await editableRowElement.emit("keydown", { key: "Enter" });
+  assert.deepEqual(openedRow, { id: 2 });
   await editableRowElement.emit("keydown", { key: "F10", shiftKey: true });
   assert.equal(editableRowElement.dispatched[0].type, "contextmenu");
 });

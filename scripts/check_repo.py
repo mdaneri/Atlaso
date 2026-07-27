@@ -68,9 +68,7 @@ HTML_FORM_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 UI_PATTERN_FOUNDATION = Path("atlaso/app/static/ui-patterns.js")
-LEGACY_TABULATOR_PATH = Path("atlaso/app/static/app.js")
 LEGACY_TABULATOR_MARKER = "atlaso-legacy-tabulator: #117"
-EXPECTED_LEGACY_TABULATOR_COUNT = 35
 WIZARD_REQUIRED_MARKERS = (
     "data-atlaso-wizard-step",
     "data-atlaso-wizard-nav",
@@ -419,33 +417,17 @@ def check_ui_pattern_foundation(root: Path) -> list[Finding]:
                     Finding(path, "shared UI-pattern foundation must contain exactly one Tabulator constructor")
                 )
         else:
-            if relative == LEGACY_TABULATOR_PATH:
-                marker_count = text.count(LEGACY_TABULATOR_MARKER)
-                if (
-                    len(constructors) != EXPECTED_LEGACY_TABULATOR_COUNT
-                    or marker_count != EXPECTED_LEGACY_TABULATOR_COUNT
-                ):
-                    findings.append(
-                        Finding(
-                            path,
-                            "app.js must retain exactly "
-                            f"{EXPECTED_LEGACY_TABULATOR_COUNT} marked #117 Tabulator migration sites",
-                        )
-                    )
             for match in constructors:
-                line_start = text.rfind("\n", 0, match.start()) + 1
-                prefix = text[line_start:match.start()]
-                if relative != LEGACY_TABULATOR_PATH or LEGACY_TABULATOR_MARKER not in prefix:
-                    findings.append(
-                        Finding(
-                            path,
-                            "raw Tabulator construction is forbidden; use AtlasoUiPatterns.createGrid",
-                            line_for_offset(text, match.start()),
-                        )
-                    )
-            if LEGACY_TABULATOR_MARKER in text and relative != LEGACY_TABULATOR_PATH:
                 findings.append(
-                    Finding(path, "the #117 legacy Tabulator marker is allowed only in app.js")
+                    Finding(
+                        path,
+                        "raw Tabulator construction is forbidden; use AtlasoUiPatterns.createGrid",
+                        line_for_offset(text, match.start()),
+                    )
+                )
+            if LEGACY_TABULATOR_MARKER in text:
+                findings.append(
+                    Finding(path, "the completed #117 legacy Tabulator marker is forbidden")
                 )
         if relative != UI_PATTERN_FOUNDATION:
             for marker in FORBIDDEN_PAGE_WIZARD_CONTROLLER_MARKERS:
