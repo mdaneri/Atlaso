@@ -361,6 +361,10 @@ URLs from each service's configured scheme and port. VCF Offline Depot and regis
 front doors. Firewall apply owns the generated HTTP/HTTPS allow rules, while management nginx remains separate on
 management-role IPs and redirects management HTTP/80 to HTTPS/443.
 
+OIDC adds a hostname-specific HTTPS server block on only its selected access or routed addresses and configured port.
+That block uses the CA-managed `oidc:https` certificate, proxies only `/identity/`, forwards the exact listener address
+to Atlaso for ingress enforcement, and returns 404 for unrelated management or application paths.
+
 ### VCF Backups apply
 
 The real VCF Backups apply path is OpenSSH-backed. The `vcf_backups` unit stages Atlaso's rendered `Match User` drop-in

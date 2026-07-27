@@ -56,7 +56,7 @@
       <div class="panel-head">
         <div>
           <h2>OpenID Connect Provider</h2>
-          <p class="muted">The issuer uses the applied appliance FQDN. Atlaso publishes identity endpoints only after Management HTTPS, signing-key, and protocol readiness checks pass.</p>
+          <p class="muted">The issuer uses its service-owned FQDN on selected access or routed interfaces. Atlaso publishes identity endpoints only after DNS, certificate, listener, signing-key, and protocol readiness checks pass.</p>
         </div>
         <span class="status-pill {{ 'good' if oidc_provider.enabled else 'muted' }}" data-oidc-provider-status>{{ 'enabled' if oidc_provider.enabled else 'disabled' }}</span>
       </div>
@@ -77,7 +77,7 @@
       {% if oidc_validation_errors %}
       <div class="error-list" role="list">{% for error in oidc_validation_errors %}<div role="listitem">{{ error }}</div>{% endfor %}</div>
       {% else %}
-      <p class="muted" data-oidc-provider-validation-message>The issuer, applied management certificate, signing-key state, and protocol settings pass Atlaso validation.</p>
+      <p class="muted" data-oidc-provider-validation-message>The issuer, service listener, managed certificate, signing-key state, and protocol settings pass Atlaso validation.</p>
       {% endif %}
     </div>
     <div class="panel">
@@ -91,28 +91,24 @@
         <span class="status-pill muted">external</span>
         {% endif %}
       </div>
-      <p class="muted"><code>{{ oidc_issuer_fqdn }}</code> is the appliance FQDN and the only supported issuer host.</p>
+      <p class="muted"><code>{{ oidc_issuer_fqdn }}</code> is the service-owned OIDC hostname and the only supported issuer host.</p>
       {% if oidc_dns_records %}
       <div class="settings-list">
-        {% for record in oidc_dns_records %}<div><span>{{ record.record_type }}</span><strong><code>{{ record.address }}</code></strong></div>{% endfor %}
+        {% for record in oidc_dns_records %}<div><span><code>{{ record.hostname }}</code> · {{ record.record_type }}</span><strong><code>{{ record.address }}</code></strong></div>{% endfor %}
       </div>
-      <p class="muted">The app-owned record is managed from <a class="text-link" href="/settings">Appliance Settings</a> and becomes active through global Appliance Apply.</p>
+      <p class="muted">The app-owned records follow the selected listener addresses and become active through global Appliance Apply.</p>
       {% elif oidc_dns_enabled %}
-      <div class="alert warning">Local DNS is enabled, but the app-owned appliance record is missing. Review <a class="text-link" href="/settings">Appliance Settings</a> and the management interface address.</div>
+      <div class="alert warning">Local DNS is enabled, but the OIDC records are missing. Select an addressed access or routed interface and review global Appliance Apply.</div>
       {% else %}
-      <p class="muted">Atlaso DNS is disabled. Register this FQDN in external DNS and keep it covered by the applied Management HTTPS certificate.</p>
+      <p class="muted">Atlaso DNS is disabled. Register this FQDN in external DNS and keep it covered by the applied OIDC service certificate.</p>
       {% endif %}
     </div>
     <div class="panel">
       <div class="panel-head"><h2>Published Identity URLs</h2></div>
       <div class="settings-list">
-        <div><span>Issuer</span><strong><code>{{ oidc_urls.issuer }}</code></strong></div>
-        <div><span>Discovery</span><strong><code>{{ oidc_urls.discovery_url }}</code></strong></div>
-        <div><span>JWKS</span><strong><code>{{ oidc_urls.jwks_uri }}</code></strong></div>
-        <div><span>Authorization</span><strong><code>{{ oidc_urls.authorization_endpoint }}</code></strong></div>
-        <div><span>Token</span><strong><code>{{ oidc_urls.token_endpoint }}</code></strong></div>
-        <div><span>UserInfo</span><strong><code>{{ oidc_urls.userinfo_endpoint }}</code></strong></div>
-        <div><span>Logout</span><strong><code>{{ oidc_urls.end_session_endpoint }}</code></strong></div>
+        {% for label, url in [("Issuer", oidc_urls.issuer), ("Discovery", oidc_urls.discovery_url), ("JWKS", oidc_urls.jwks_uri), ("Authorization", oidc_urls.authorization_endpoint), ("Token", oidc_urls.token_endpoint), ("UserInfo", oidc_urls.userinfo_endpoint), ("Logout", oidc_urls.end_session_endpoint)] %}
+        <div><span>{{ label }}</span><strong class="inline-copy-value"><code data-oidc-url="{{ label|lower }}">{{ url }}</code><button class="button secondary icon-button" type="button" data-copy-value="{{ url }}" data-oidc-url-copy="{{ label|lower }}" aria-label="Copy {{ label }} URL" title="Copy {{ label }} URL"><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></strong></div>
+        {% endfor %}
       </div>
     </div>
   </div>
@@ -124,24 +120,38 @@
     <form class="form-stack" action="/authentication/oidc/provider" method="post" data-autosave-form data-autosave-status-id="oidc-provider-autosave-status">
       <input type="hidden" name="csrf" value="{{ csrf_token }}">
       <label class="switch-field">
-        <span class="field-label"><span>Provider enabled</span><button class="help-icon" type="button" data-help="Publishes discovery, JWKS, and identity endpoints only after the issuer, applied management HTTPS configuration, active RS256 key, and protocol readiness all validate.">i</button></span>
+        <span class="field-label"><span>Provider enabled</span><button class="help-icon" type="button" data-help="Publishes discovery, JWKS, and identity endpoints only after the service listener, DNS, managed certificate, active RS256 key, and protocol readiness all validate.">i</button></span>
         <input class="switch-input" type="checkbox" name="enabled" {% if oidc_provider.enabled %}checked{% endif %}>
         <span class="switch-track" aria-hidden="true"></span>
       </label>
       <label>
-        <span class="field-label"><span>Issuer URL</span><button class="help-icon" type="button" data-help="Must exactly equal https:// plus the applied Appliance Settings FQDN plus /identity. The appliance FQDN is registered by Appliance Settings when local DNS is enabled.">i</button></span>
-        <input name="issuer_url" value="{{ oidc_provider.issuer_url }}" required>
+        <span class="field-label"><span>Hostname</span><button class="help-icon" type="button" data-help="Service-owned FQDN for OIDC DNS, certificate, discovery, and issuer URLs. The default is oidc.atlaso.internal.">i</button></span>
+        <input name="hostname" value="{{ oidc_provider.hostname }}" required>
       </label>
-      <div class="derived-field fixed-value-field">
-        <span class="field-label"><span>Listener interface</span><button class="help-icon" type="button" data-help="OIDC is constrained to Atlaso’s applied Management HTTPS ingress. Change the management role or address on Physical Interfaces; OIDC does not create a separate listener.">i</button></span>
-        <strong>{{ oidc_listener.name or "No addressed management interface" }}{% if oidc_listener.addresses %} · {{ oidc_listener.addresses|join(", ") }}{% endif %}</strong>
-        <a class="text-link" href="/physical-interfaces">Manage physical interfaces</a>
+      <input type="hidden" name="listen_interfaces_present" value="1">
+      <div class="service-bind-editor stacked-service-bind-editor" data-service-bind>
+      <div class="form-field">
+        <span class="field-label"><span>Listener interfaces</span><button class="help-icon" type="button" data-help="Addressed access or routed physical interfaces and enabled VLANs where OIDC should be reachable. Management, unused, down, missing, trunk-only, and addressless targets are rejected.">i</button></span>
+        <div class="tag-editor" data-tag-editor data-tag-name="listen_interfaces" data-service-bind-interface>
+          <div class="tag-editor-tags" data-tag-list>
+            {% for interface_name in oidc_selected_interfaces %}
+            <span class="tag-token" data-value="{{ interface_name }}"><span>{{ interface_name }}</span><button type="button" data-tag-remove aria-label="Remove {{ interface_name }}">×</button><input type="hidden" name="listen_interfaces" value="{{ interface_name }}"></span>
+            {% endfor %}
+          </div>
+          <input class="tag-editor-input" type="text" placeholder="Add interface..." list="oidc-interface-options" data-tag-entry autocomplete="off">
+          <button class="tag-add-button" type="button" data-tag-menu-toggle aria-label="Add existing interface">+</button>
+          <div class="tag-suggestions" data-tag-menu data-tag-empty-message="No addressed access or routed interfaces available." hidden>
+            {% for interface in oidc_available_interfaces %}<button type="button" data-tag-option="{{ interface.name }}" data-service-bind-address="{{ interface.address }}" data-service-bind-addresses="{{ interface.addresses|join(',') }}"><strong>{{ interface.name }}</strong><small>{{ interface.label }}</small></button>{% endfor %}
+          </div>
+        </div>
+        <datalist id="oidc-interface-options">{% for interface in oidc_available_interfaces %}<option value="{{ interface.name }}">{{ interface.label }}</option>{% endfor %}</datalist>
       </div>
-      <div class="derived-field fixed-value-field">
-        <span class="field-label"><span>HTTPS port</span><button class="help-icon" type="button" data-help="Fixed to standard HTTPS port 443. The canonical issuer rejects explicit ports and shares the applied Management HTTPS certificate and nginx listener.">i</button></span>
-        <strong>443 / TCP</strong>
-        <a class="text-link" href="/settings">Manage HTTPS ingress</a>
+      <div class="form-field"><div class="derived-field fixed-value-field">
+        <span class="field-label"><span>Derived listener addresses</span><button class="help-icon" type="button" data-help="Read-only IPv4 and IPv6 addresses derived from the selected non-management interfaces. DNS, certificate SANs, nginx listeners, and firewall rules use these targets after global apply.">i</button></span>
+        <strong data-derived-listen-addresses>{{ oidc_selected_addresses|join(", ") if oidc_selected_addresses else "No listener selected" }}</strong>
+      </div></div>
       </div>
+      <label><span class="field-label"><span>HTTPS port</span><button class="help-icon" type="button" data-help="TCP port for the restricted OIDC HTTPS front door. Non-standard ports are included in the issuer and published endpoint URLs.">i</button></span><input type="number" name="port" min="1" max="65535" value="{{ oidc_provider.port }}"></label>
       <label>
         <span class="field-label"><span>Authorization code lifetime</span><button class="help-icon" type="button" data-help="Lifetime in seconds for a single-use authorization code. The code remains bound to the client, redirect, PKCE challenge, browser session, identity source, and granted scopes.">i</button></span>
         <input type="number" name="authorization_code_lifetime_seconds" min="30" max="300" value="{{ oidc_provider.authorization_code_lifetime_seconds }}">
@@ -218,23 +228,27 @@
       <ol class="vcf-sddc-step-list">
         <li><button class="vcf-sddc-step-button active" type="button" data-atlaso-wizard-nav="identity"><span>1</span><strong>Client</strong><small>Identity and source</small></button></li>
         <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="redirects" disabled><span>2</span><strong>Redirects</strong><small>Exact registered URIs</small></button></li>
-        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="review" disabled><span>3</span><strong>Review</strong><small>Confirm application state</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="state" disabled><span>3</span><strong>State</strong><small>Client enablement</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="review" disabled><span>4</span><strong>Review</strong><small>Confirm application state</small></button></li>
       </ol>
     </aside>
     <div class="vcf-sddc-wizard-main">
       <div class="confirm-modal-body vcf-sddc-wizard-body">
-        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 3</p><h3 data-atlaso-wizard-title>Register confidential client</h3><p class="muted" data-atlaso-wizard-description>Set its identity and validated authentication source.</p></div>
+          <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 4</p><h3 data-atlaso-wizard-title>Register confidential client</h3><p class="muted" data-atlaso-wizard-description>Set its identity and validated authentication source.</p></div>
         <div class="alert error hidden" data-atlaso-wizard-error></div>
         <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity"><div class="form-grid">
           <label><span class="field-label"><span>Client name</span><button class="help-icon" type="button" data-help="Operator-facing label; it is not emitted as an identity claim.">i</button></span><input name="name" required maxlength="160"></label>
           <label><span class="field-label"><span>Bound organization</span><button class="help-icon" type="button" data-help="Bound clients authenticate only against this enabled managed LDAP organization. Unbound clients require explicit source selection.">i</button></span><select name="organization_id"><option value="">Unbound</option>{% for organization in oidc_organizations %}<option value="{{ organization.id }}">{{ organization.name }}</option>{% endfor %}</select></label>
           <fieldset><legend>Allowed scopes</legend>{% for scope in ["openid", "profile", "email", "groups"] %}<label class="checkbox-row"><input type="checkbox" name="allowed_scopes" value="{{ scope }}" {{ "checked" if scope == "openid" else "" }}> {{ scope }}</label>{% endfor %}</fieldset>
-          <label class="switch-field"><span class="field-label"><span>Client enabled</span><button class="help-icon" type="button" data-help="Disabled clients cannot begin or redeem new authorization requests.">i</button></span><input class="switch-input" type="checkbox" name="enabled" checked><span class="switch-track" aria-hidden="true"></span></label>
         </div></section>
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="redirects"><div class="form-stack">
           <label><span class="field-label"><span>Exact redirect URIs</span><button class="help-icon" type="button" data-help="One exact HTTPS URI per line. Wildcards, fragments, credentials, and guessed VCF paths are rejected.">i</button></span><textarea name="redirect_uris" rows="5" required></textarea></label>
           <label><span class="field-label"><span>Exact post-logout URIs</span><button class="help-icon" type="button" data-help="Optional exact RP-initiated logout return destinations, one per line.">i</button></span><textarea name="post_logout_redirect_uris" rows="3"></textarea></label>
           <label class="switch-field"><span class="field-label"><span>Loopback development redirects</span><button class="help-icon" type="button" data-help="Allows HTTP only for literal loopback addresses with explicit ports. Never use for VCF.">i</button></span><input class="switch-input" type="checkbox" name="allow_loopback_redirects"><span class="switch-track" aria-hidden="true"></span></label>
+        </div></section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="state"><div class="form-stack">
+          <label class="switch-field"><span class="field-label"><span>Client enabled</span><button class="help-icon" type="button" data-help="Disabled clients cannot begin or redeem new authorization requests.">i</button></span><input class="switch-input" type="checkbox" name="enabled" checked><span class="switch-track" aria-hidden="true"></span></label>
+          <p class="muted">Enable the client only after its exact redirects, identity source, and relying-party secret handling are ready.</p>
         </div></section>
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review">
           <div class="settings-list" data-oidc-client-review></div>

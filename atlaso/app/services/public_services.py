@@ -3,7 +3,7 @@ from __future__ import annotations
 from ipaddress import ip_address
 from typing import Any
 
-from atlaso.app.models import CaSettings, PhysicalInterface, VcfOfflineDepotSettings, VcfPrivateRegistrySettings, VlanInterface
+from atlaso.app.models import CaSettings, OidcProviderSettings, PhysicalInterface, VcfOfflineDepotSettings, VcfPrivateRegistrySettings, VlanInterface
 from atlaso.app.services.ca import CA_DEFAULT_PORTAL_HOSTNAME
 from atlaso.app.services.dnsmasq import split_addresses
 from atlaso.app.services.esxi_pxe import ESXI_PXE_DEFAULT_HOSTNAME
@@ -46,9 +46,30 @@ def public_services_for_address(
     esxi_pxe_boot: dict[str, Any] | None,
     vcf_depot_settings: VcfOfflineDepotSettings,
     vcf_registry_settings: VcfPrivateRegistrySettings,
+    oidc_settings: OidcProviderSettings | None = None,
 ) -> list[dict[str, Any]]:
     normalized = _normalize_address(address)
     services: list[dict[str, Any]] = []
+    if (
+        oidc_settings
+        and oidc_settings.enabled
+        and normalized in _normalized_addresses(oidc_settings.listen_address)
+    ):
+        services.append(
+            {
+                "id": "oidc",
+                "name": "OpenID Connect",
+                "summary": "Authorization Code identity provider",
+                "href": "/identity/.well-known/openid-configuration",
+                "secondary_href": "",
+                "secondary_label": "",
+                "status": "enabled",
+                "pill": "good",
+                "scheme": "https",
+                "port": int(oidc_settings.port or 443),
+                "dns_names": _service_dns_names(oidc_settings.hostname),
+            }
+        )
     if ca_settings.enabled and normalized in _normalized_addresses(ca_settings.listen_address):
         services.append(
             {
@@ -127,6 +148,7 @@ def public_service_entries(
     esxi_pxe_boot: dict[str, Any] | None,
     vcf_depot_settings: VcfOfflineDepotSettings,
     vcf_registry_settings: VcfPrivateRegistrySettings,
+    oidc_settings: OidcProviderSettings | None = None,
 ) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     for entry in public_service_interface_entries(interfaces, vlans):
@@ -141,6 +163,7 @@ def public_service_entries(
                     esxi_pxe_boot=esxi_pxe_boot,
                     vcf_depot_settings=vcf_depot_settings,
                     vcf_registry_settings=vcf_registry_settings,
+                    oidc_settings=oidc_settings,
                 ),
             }
         )
@@ -160,6 +183,8 @@ def render_public_services_nginx_config(
     esxi_http_base: str = ESXI_PXE_HTTP_BASE,
     terminal_certificate_path: str = "",
     terminal_key_path: str = "",
+    oidc_certificate_path: str = "",
+    oidc_key_path: str = "",
 ) -> str:
     lines = [
         "# Managed by Atlaso. Local changes may be overwritten.",
@@ -173,6 +198,20 @@ def render_public_services_nginx_config(
         if not address:
             continue
         ca_service = next((service for service in service_rows if str(service.get("id")) == "ca"), None)
+        oidc_service = next((service for service in service_rows if str(service.get("id")) == "oidc"), None)
+        if oidc_service:
+            hostnames = _service_dns_names(*(oidc_service.get("dns_names") or []))
+            lines.extend(
+                _oidc_https_server_lines(
+                    address,
+                    hostnames[0] if hostnames else "oidc.atlaso.internal",
+                    certificate_path=oidc_certificate_path,
+                    key_path=oidc_key_path,
+                    upstream_host=upstream_host,
+                    upstream_port=upstream_port,
+                    https_port=_service_port(oidc_service, https_port),
+                )
+            )
         if ca_service:
             hostname = _service_dns_names(*(ca_service.get("dns_names") or []))
             lines.extend(
@@ -217,6 +256,34 @@ def render_public_services_nginx_config(
         if "esxi_pxe" in services:
             lines.extend(_esxi_pxe_http_server_lines(address, upstream_host, upstream_port, http_port, esxi_http_base))
     return "\n".join(lines).strip() + "\n"
+
+
+def _oidc_https_server_lines(
+    address: str,
+    hostname: str,
+    *,
+    certificate_path: str,
+    key_path: str,
+    upstream_host: str,
+    upstream_port: int,
+    https_port: int,
+) -> list[str]:
+    return [
+        "",
+        "server {",
+        "  # OIDC HTTPS front door.",
+        f"  listen {format_nginx_listen(address, https_port)} ssl;",
+        f"  server_name {hostname};",
+        f"  ssl_certificate {certificate_path};",
+        f"  ssl_certificate_key {key_path};",
+        "",
+        *_proxy_location("^~ /identity/", upstream_host, upstream_port, forwarded_proto="https"),
+        "",
+        "  location / {",
+        "    return 404;",
+        "  }",
+        "}",
+    ]
 
 
 def _ca_https_server_lines(

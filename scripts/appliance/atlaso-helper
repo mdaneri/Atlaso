@@ -3681,6 +3681,20 @@ def _public_services_config_errors(path: Path) -> list[str]:
         for forbidden in ["location = /dashboard", "location ^~ /api", "location /api", "location = /settings"]:
             if forbidden in text:
                 errors.append(f"Public services web terminal config must not expose {forbidden}.")
+    if "OIDC HTTPS front door." in text:
+        for required in [
+            "location ^~ /identity/ {",
+            "proxy_set_header X-Forwarded-Proto https;",
+            "proxy_set_header X-Atlaso-Listener-Address $server_addr;",
+        ]:
+            if required not in text:
+                errors.append(
+                    f"Public services OIDC HTTPS config must include {required}."
+                )
+        if "location / { return 404; }" not in text and "location / {\n    return 404;" not in text:
+            errors.append(
+                "Public services OIDC HTTPS config must keep the catch-all route closed."
+            )
     if "/PROD/" in text or "location = /PROD" in text or "location ~ ^/PROD/" in text:
         if "IP-scoped HTTPS public services front door." not in text:
             errors.append("Public services nginx config may expose VCF Offline Depot paths only in the IP-scoped HTTPS front door.")

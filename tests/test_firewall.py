@@ -8,6 +8,7 @@ from atlaso.app.models import (
     KmsSettings,
     LdapSettings,
     NtpSettings,
+    OidcProviderSettings,
     PhysicalInterface,
     VcfBackupSettings,
     VcfOfflineDepotSettings,
@@ -199,6 +200,11 @@ def test_managed_service_firewall_rules_include_all_enabled_service_listeners():
             ldap_port=1389,
         ),
         ntp_settings=NtpSettings(enabled=True, listen_interface="eth2.50\neth3.60", port=123, nts_server_enabled=True),
+        oidc_settings=OidcProviderSettings(
+            enabled=True,
+            listen_interface="eth2.50",
+            port=8443,
+        ),
         vcf_backup_settings=VcfBackupSettings(enabled=True, listen_interface="eth2.50\neth3.60", port=22),
         vcf_depot_settings=VcfOfflineDepotSettings(enabled=True, listen_interface="eth2.50\neth3.60", port=8443),
         vcf_registry_settings=VcfPrivateRegistrySettings(enabled=True, listen_interface="eth2.50\neth3.60", port=9443),
@@ -228,6 +234,7 @@ def test_managed_service_firewall_rules_include_all_enabled_service_listeners():
     assert by_name["ntpd-eth3.60"].interface_name == "eth3.60"
     assert by_name["ntpd-nts-eth2.50"].protocol == "tcp"
     assert by_name["ntpd-nts-eth2.50"].destination_port == "4460"
+    assert by_name["oidc-eth2.50"].destination_port == "8443"
     assert by_name["vcf-backups-sftp-eth2.50"].destination_port == "22"
     assert by_name["vcf-backups-sftp-eth3.60"].interface_name == "eth3.60"
     assert by_name["public-services-eth2.50"].destination_port == "80"

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import base64
 from hashlib import sha256
-from ipaddress import ip_address
+from ipaddress import ip_address, ip_interface
 import json
 import re
 from secrets import token_urlsafe
@@ -23,6 +23,8 @@ from sqlalchemy.orm import Session, selectinload
 from atlaso.app.models import (
     ApplianceSettings,
     CaCertificate,
+    DnsRecord,
+    DnsSettings,
     LdapGroup,
     LdapGroupMembership,
     LdapOrganization,
@@ -36,9 +38,11 @@ from atlaso.app.models import (
     OidcProviderSettings,
     OidcSigningKey,
     OidcSubject,
+    PhysicalInterface,
     Role,
     Setting,
     User,
+    VlanInterface,
     utcnow,
 )
 from atlaso.app.security import user_roles
@@ -46,6 +50,8 @@ from atlaso.app.secrets import encrypt_secret
 from atlaso.app.secrets import decrypt_secret
 from atlaso.app.services.identity_credentials import VerifiedIdentity, ensure_oidc_subject
 from atlaso.app.services.appliance_settings import normalize_fqdn
+from atlaso.app.services.dnsmasq import split_addresses, split_interfaces
+from atlaso.app.services.networking import normalize_interface_mode, normalize_interface_role
 
 
 OIDC_ISSUER_PATH = "/identity"
@@ -54,6 +60,9 @@ OIDC_SIGNING_ALGORITHM = "RS256"
 OIDC_TOKEN_ENDPOINT_AUTH_METHOD = "client_secret_basic"
 OIDC_AUTHORIZATION_FLOW_AVAILABLE = True
 OIDC_TOKEN_LIFETIME_SECONDS = 300
+OIDC_DEFAULT_HOSTNAME = "oidc.atlaso.internal"
+OIDC_DEFAULT_PORT = 443
+OIDC_DNS_RECORD_DESCRIPTION = "Created from OpenID Connect provider endpoint."
 OIDC_PKCE_RE = re.compile(r"^[A-Za-z0-9._~-]{43,128}$")
 OIDC_CODE_CHALLENGE_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 OIDC_CLIENT_SECRET_HASHER = PasswordHasher(
@@ -88,11 +97,18 @@ def _appliance_settings(db: Session) -> ApplianceSettings:
     return row
 
 
-def expected_issuer_url(appliance: ApplianceSettings) -> str:
-    fqdn = normalize_fqdn(appliance.fqdn)
+def expected_issuer_url(
+    provider: OidcProviderSettings | None = None,
+    *,
+    hostname: str = OIDC_DEFAULT_HOSTNAME,
+    port: int = OIDC_DEFAULT_PORT,
+) -> str:
+    fqdn = normalize_fqdn(provider.hostname if provider is not None else hostname)
     if not fqdn:
         return ""
-    return f"https://{fqdn}{OIDC_ISSUER_PATH}"
+    listener_port = int(provider.port if provider is not None else port)
+    authority = fqdn if listener_port == 443 else f"{fqdn}:{listener_port}"
+    return f"https://{authority}{OIDC_ISSUER_PATH}"
 
 
 def normalize_issuer_url(value: str) -> str:
@@ -117,21 +133,28 @@ def normalize_issuer_url(value: str) -> str:
     hostname = normalize_fqdn(parsed.hostname)
     if not hostname or "." not in hostname:
         raise OidcConfigurationError("Issuer URL must contain a fully qualified DNS name.")
-    if port is not None:
-        raise OidcConfigurationError("Issuer URL must not contain an explicit port.")
+    if port is not None and not 1 <= port <= 65535:
+        raise OidcConfigurationError("Issuer URL port must be between 1 and 65535.")
     if parsed.path != OIDC_ISSUER_PATH:
         raise OidcConfigurationError(f"Issuer URL path must be exactly {OIDC_ISSUER_PATH}.")
     if parsed.query or parsed.fragment:
         raise OidcConfigurationError("Issuer URL must not contain a query string or fragment.")
-    return f"https://{hostname}{OIDC_ISSUER_PATH}"
+    authority = hostname if port in {None, 443} else f"{hostname}:{port}"
+    return f"https://{authority}{OIDC_ISSUER_PATH}"
 
 
 def ensure_provider_settings(db: Session) -> OidcProviderSettings:
     row = db.execute(select(OidcProviderSettings)).scalar_one_or_none()
     if row is None:
-        row = OidcProviderSettings(issuer_url=expected_issuer_url(_appliance_settings(db)))
+        row = OidcProviderSettings()
         db.add(row)
         db.flush()
+    normalized_hostname = normalize_fqdn(row.hostname or OIDC_DEFAULT_HOSTNAME)
+    if row.hostname != normalized_hostname:
+        row.hostname = normalized_hostname
+    expected = expected_issuer_url(row)
+    if row.issuer_url != expected:
+        row.issuer_url = expected
     return row
 
 
@@ -151,26 +174,89 @@ def provider_validation_errors(
     require_active_key: bool = True,
 ) -> list[str]:
     provider = provider or ensure_provider_settings(db)
-    appliance = _appliance_settings(db)
     errors: list[str] = []
     try:
         normalized = normalize_issuer_url(provider.issuer_url)
     except OidcConfigurationError as exc:
         errors.append(str(exc))
         normalized = ""
-    expected = expected_issuer_url(appliance)
+    expected = expected_issuer_url(provider)
     if normalized and normalized != expected:
+        errors.append("Issuer URL must exactly match the OIDC hostname, HTTPS port, and /identity path.")
+    if not provider.hostname or "." not in normalize_fqdn(provider.hostname):
+        errors.append("OIDC hostname must be a fully qualified DNS name.")
+    dns_settings = db.execute(select(DnsSettings)).scalar_one_or_none()
+    if dns_settings and dns_settings.enabled:
+        managed_dns_record = db.execute(
+            select(DnsRecord).where(
+                DnsRecord.hostname == normalize_fqdn(provider.hostname),
+                DnsRecord.description == OIDC_DNS_RECORD_DESCRIPTION,
+                DnsRecord.record_type.in_(["A", "AAAA", "CNAME"]),
+                DnsRecord.enabled.is_(True),
+            )
+        ).first()
+        if managed_dns_record is None:
+            errors.append(
+                "OIDC local DNS requires an app-owned record for the service hostname."
+            )
+    if not split_interfaces(provider.listen_interface):
+        errors.append("OIDC requires at least one access or routed listen interface.")
+    if not split_addresses(provider.listen_address):
+        errors.append("OIDC listen interfaces must have at least one configured IP address.")
+    selected_interfaces = split_interfaces(provider.listen_interface)
+    selected_addresses = split_addresses(provider.listen_address)
+    valid_targets = _valid_oidc_listener_targets(db)
+    if selected_interfaces and any(name not in valid_targets for name in selected_interfaces):
         errors.append(
-            "Issuer URL must exactly match the configured Appliance Settings FQDN and /identity path."
+            "OIDC listener interfaces must be addressed access or routed physical interfaces or enabled VLANs."
         )
-    if not appliance.management_https_enabled:
-        errors.append("Management HTTPS must be enabled before the OIDC provider can be enabled.")
-    elif not _management_https_is_applied(db, appliance):
-        errors.append("Management HTTPS and the issuer FQDN must be applied before the OIDC provider can be enabled.")
+    derived_addresses: list[str] = []
+    for name in selected_interfaces:
+        for address in valid_targets.get(name, []):
+            if address not in derived_addresses:
+                derived_addresses.append(address)
+    if selected_addresses and selected_addresses != derived_addresses:
+        errors.append(
+            "OIDC listener addresses must be derived from the selected interfaces."
+        )
+    if not 1 <= int(provider.port or 0) <= 65535:
+        errors.append("OIDC HTTPS port must be between 1 and 65535.")
+    certificate = db.execute(
+        select(CaCertificate).where(CaCertificate.managed_owner == "oidc:https")
+    ).scalar_one_or_none()
+    if not (
+        certificate
+        and certificate.status == "issued"
+        and certificate.certificate_pem
+        and certificate.private_key_encrypted
+    ):
+        errors.append("OIDC requires an applied managed certificate for its service hostname and listener addresses.")
     else:
-        certificate_error = _management_certificate_error(db, appliance)
-        if certificate_error:
-            errors.append(certificate_error)
+        try:
+            parsed_certificate = x509.load_pem_x509_certificate(
+                certificate.certificate_pem.encode("utf-8")
+            )
+            subject_alt_names = parsed_certificate.extensions.get_extension_for_class(
+                x509.SubjectAlternativeName
+            ).value
+            dns_names = {
+                normalize_fqdn(value)
+                for value in subject_alt_names.get_values_for_type(x509.DNSName)
+            }
+            ip_addresses = {
+                str(value)
+                for value in subject_alt_names.get_values_for_type(x509.IPAddress)
+            }
+            if normalize_fqdn(provider.hostname) not in dns_names:
+                errors.append(
+                    "The applied OIDC service certificate does not cover the exact issuer hostname."
+                )
+            if set(split_addresses(provider.listen_address)) - ip_addresses:
+                errors.append(
+                    "The applied OIDC service certificate does not cover every selected listener address."
+                )
+        except (ValueError, x509.ExtensionNotFound):
+            errors.append("The applied OIDC service certificate is not valid.")
     if require_active_key and active_signing_key(db) is None:
         errors.append("Generate an active OIDC signing key before enabling the provider.")
     elif require_active_key:
@@ -194,6 +280,59 @@ def provider_validation_errors(
     if AUTHLIB_VERSION != "1.7.2":
         errors.append("OIDC protocol readiness requires Authlib 1.7.2.")
     return errors
+
+
+def _valid_oidc_listener_targets(db: Session) -> dict[str, list[str]]:
+    physical = db.execute(
+        select(PhysicalInterface).order_by(PhysicalInterface.name)
+    ).scalars().all()
+    vlans = db.execute(
+        select(VlanInterface).where(VlanInterface.enabled.is_(True))
+    ).scalars().all()
+    physical_by_name = {row.name: row for row in physical}
+    targets: dict[str, list[str]] = {}
+
+    def addresses(*cidrs: str | None) -> list[str]:
+        values: list[str] = []
+        for cidr in cidrs:
+            if not cidr:
+                continue
+            try:
+                value = str(ip_interface(cidr).ip)
+            except ValueError:
+                continue
+            if value not in values:
+                values.append(value)
+        return values
+
+    for row in physical:
+        role = normalize_interface_role(row.role)
+        mode = normalize_interface_mode(row.mode)
+        row_addresses = addresses(
+            row.host_ip_cidr if row.ipv4_method == "dhcp" else row.ip_cidr,
+            row.ipv6_cidr or row.host_ipv6_cidr,
+        )
+        if (
+            row.oper_state == "missing"
+            or row.admin_state == "down"
+            or role in {"management", "unused"}
+            or mode == "trunk"
+            or not row_addresses
+        ):
+            continue
+        targets[row.name] = row_addresses
+    for row in vlans:
+        parent = physical_by_name.get(row.parent_interface)
+        role = normalize_interface_role(row.role)
+        row_addresses = addresses(row.ip_cidr, row.ipv6_cidr)
+        if (
+            (parent and (parent.oper_state == "missing" or parent.admin_state == "down"))
+            or role in {"management", "unused"}
+            or not row_addresses
+        ):
+            continue
+        targets[row.name] = row_addresses
+    return targets
 
 
 def _management_https_is_applied(db: Session, appliance: ApplianceSettings) -> bool:

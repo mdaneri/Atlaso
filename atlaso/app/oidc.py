@@ -25,6 +25,7 @@ from atlaso.app.models import (
     utcnow,
 )
 from atlaso.app.services.identity_credentials import verify_credentials
+from atlaso.app.services.appliance_settings import normalize_fqdn
 from atlaso.app.schemas import (
     OidcClientCreate,
     OidcClientCreated,
@@ -52,6 +53,7 @@ from atlaso.app.services.oidc import (
     delete_retired_signing_key,
     enabled_login_organizations,
     ensure_provider_settings,
+    expected_issuer_url,
     generate_signing_key,
     get_client,
     group_mapping_to_dict,
@@ -81,6 +83,7 @@ from atlaso.app.services.oidc import (
     rotate_client_secret,
     signing_key_to_dict,
 )
+from atlaso.app.services.dnsmasq import join_interfaces, split_addresses, split_interfaces
 
 
 public_router = APIRouter(prefix="/identity", tags=["OpenID Connect"])
@@ -106,7 +109,7 @@ def get_openid_configuration(
         document = discovery_document(db)
     except OidcConfigurationError as exc:
         raise _public_configuration_error(exc) from exc
-    if not _identity_https(request):
+    if not _identity_https(request, db):
         raise HTTPException(status_code=400, detail="HTTPS is required.")
     return JSONResponse(document, headers={"Cache-Control": "public, max-age=300"})
 
@@ -117,7 +120,7 @@ def get_oidc_jwks(request: Request, db: Session = Depends(get_db)) -> JSONRespon
         document = jwks_document(db)
     except OidcConfigurationError as exc:
         raise _public_configuration_error(exc) from exc
-    if not _identity_https(request):
+    if not _identity_https(request, db):
         raise HTTPException(status_code=400, detail="HTTPS is required.")
     return JSONResponse(document, headers={"Cache-Control": "public, max-age=300"})
 
@@ -130,13 +133,19 @@ OIDC_LOGIN_BUCKET_LIMIT = 4096
 _OIDC_LOGIN_BUCKETS: OrderedDict[str, deque[float]] = OrderedDict()
 
 
-def _identity_https(request: Request) -> bool:
-    """Trust forwarded HTTPS only from the loopback management proxy."""
+def _identity_https(request: Request, db: Session | None = None) -> bool:
+    """Trust HTTPS forwarded by loopback only on the configured OIDC listener."""
     if request.url.scheme == "https":
         return True
     forwarded = request.headers.get("x-forwarded-proto", "").lower() == "https"
     peer = request.client.host if request.client else ""
-    return forwarded and peer in {"127.0.0.1", "::1", "localhost"}
+    if not (forwarded and peer in {"127.0.0.1", "::1", "localhost"}):
+        return False
+    if db is None:
+        return True
+    provider = ensure_provider_settings(db)
+    listener = request.headers.get("x-atlaso-listener-address", "").strip()
+    return listener in set(split_addresses(provider.listen_address))
 
 
 def _no_store(response: Response) -> Response:
@@ -273,7 +282,7 @@ def _registered_error_target(
 def _authorize_request(
     request: Request, db: Session, params: dict[str, str]
 ) -> OidcAuthorizationTransaction | Response:
-    if not _identity_https(request):
+    if not _identity_https(request, db):
         return _oidc_error(None, "invalid_request")
     redirect_uri, _client = _registered_error_target(
         db, params.get("client_id", ""), params.get("redirect_uri", "")
@@ -425,7 +434,7 @@ async def authorize_get(request: Request, db: Session = Depends(get_db)) -> Resp
 
 @public_router.post("/authorize", response_model=None, operation_id="oidcAuthorizePost")
 async def authorize_post(request: Request, db: Session = Depends(get_db)) -> Response:
-    if not _identity_https(request):
+    if not _identity_https(request, db):
         return _oidc_error(None, "invalid_request")
     form = await request.form()
     transaction = db.execute(
@@ -553,7 +562,7 @@ def _basic_client(request: Request, db: Session) -> OidcClient | None:
 
 @public_router.post("/token", response_model=None, operation_id="oidcToken")
 async def token(request: Request, db: Session = Depends(get_db)) -> Response:
-    if not _identity_https(request):
+    if not _identity_https(request, db):
         return _oidc_error(None, "invalid_request")
     client = _basic_client(request, db)
     form = await request.form()
@@ -593,7 +602,7 @@ def _bearer_value(request: Request) -> str:
 
 
 async def _userinfo_response(request: Request, db: Session) -> Response:
-    if not _identity_https(request):
+    if not _identity_https(request, db):
         return _oidc_error(None, "invalid_request")
     try:
         claims = validate_bearer_token(db, _bearer_value(request), expected_typ="at+jwt")
@@ -629,7 +638,7 @@ async def userinfo_post(request: Request, db: Session = Depends(get_db)) -> Resp
 
 
 async def _logout_response(request: Request, db: Session) -> Response:
-    if not _identity_https(request):
+    if not _identity_https(request, db):
         return _oidc_error(None, "invalid_request")
     params = dict(request.query_params)
     if request.method == "POST":
@@ -696,6 +705,10 @@ def _provider_response(db: Session) -> OidcProviderSettingsResponse:
         }
     return OidcProviderSettingsResponse(
         enabled=provider.enabled,
+        hostname=provider.hostname,
+        listen_interfaces=split_interfaces(provider.listen_interface),
+        listen_addresses=split_addresses(provider.listen_address),
+        port=provider.port,
         issuer_url=provider.issuer_url,
         access_token_lifetime_seconds=provider.access_token_lifetime_seconds,
         id_token_lifetime_seconds=provider.id_token_lifetime_seconds,
@@ -740,7 +753,10 @@ def update_oidc_provider_settings(
     provider = ensure_provider_settings(db)
     previous_issuer = provider.issuer_url
     try:
-        provider.issuer_url = normalize_issuer_url(payload.issuer_url)
+        provider.hostname = normalize_fqdn(payload.hostname)
+        provider.listen_interface = join_interfaces(payload.listen_interfaces)
+        provider.port = payload.port
+        provider.issuer_url = normalize_issuer_url(expected_issuer_url(provider))
     except OidcConfigurationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     provider.enabled = payload.enabled

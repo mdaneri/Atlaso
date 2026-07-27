@@ -6691,6 +6691,23 @@ function updateOidcProviderValidation(payload = {}) {
     providerStatus.className = `status-pill ${enabled ? "good" : "muted"}`;
   }
   const errors = Array.isArray(payload.validation_errors) ? payload.validation_errors : [];
+  const urlFields = {
+    issuer: "issuer",
+    discovery: "discovery_url",
+    jwks: "jwks_uri",
+    authorization: "authorization_endpoint",
+    token: "token_endpoint",
+    userinfo: "userinfo_endpoint",
+    logout: "end_session_endpoint",
+  };
+  Object.entries(urlFields).forEach(([label, field]) => {
+    const value = payload.urls?.[field];
+    if (typeof value !== "string") return;
+    const code = document.querySelector(`[data-oidc-url="${label}"]`);
+    const copy = document.querySelector(`[data-oidc-url-copy="${label}"]`);
+    if (code instanceof HTMLElement) code.textContent = value;
+    if (copy instanceof HTMLButtonElement) copy.dataset.copyValue = value;
+  });
   validationStatus.textContent = errors.length ? "needs attention" : "valid";
   validationStatus.className = `status-pill ${errors.length ? "warn" : "good"}`;
   validationPanel.querySelector(".error-list")?.remove();
@@ -6711,7 +6728,7 @@ function updateOidcProviderValidation(payload = {}) {
     const message = document.createElement("p");
     message.className = "muted";
     message.setAttribute("data-oidc-provider-validation-message", "");
-    message.textContent = "The issuer, applied management certificate, signing-key state, and protocol settings pass Atlaso validation.";
+    message.textContent = "The issuer, service listener, managed certificate, signing-key state, and protocol settings pass Atlaso validation.";
     validationPanel.appendChild(message);
   }
 }
@@ -7182,8 +7199,9 @@ function initializeOidcClientsTable() {
     form,
     dialog,
     steps: [
-      { id: "identity", title: "Define the confidential client", description: "Set its operator label, identity source, scopes, and state." },
+      { id: "identity", title: "Define the confidential client", description: "Set its operator label, validated identity source, and allowed scopes." },
       { id: "redirects", title: "Register exact redirects", description: "Enter byte-for-byte redirect and post-logout destinations." },
+      { id: "state", title: "Choose client state", description: "Decide whether the reviewed client may begin and redeem authorization requests." },
       { id: "review", title: "Review client lifecycle", description: "Confirm the application-state change and secret handling." },
     ],
     onOpen: ({ context }) => populateForm(context),
@@ -7198,7 +7216,8 @@ function initializeOidcClientsTable() {
       const name = form.elements.namedItem("name").value.trim();
       const organization = form.elements.namedItem("organization_id").selectedOptions[0]?.textContent || "Unbound";
       const redirects = form.elements.namedItem("redirect_uris").value.split(/\r?\n/).filter(Boolean).length;
-      review.innerHTML = `<div><span>Client</span><strong>${escapeHtml(name)}</strong></div><div><span>Identity source</span><strong>${escapeHtml(organization)}</strong></div><div><span>Scopes</span><strong>${escapeHtml(checkedScopes().join(" "))}</strong></div><div><span>Exact redirects</span><strong>${redirects}</strong></div>`;
+      const enabled = form.elements.namedItem("enabled").checked;
+      review.innerHTML = `<div><span>Client</span><strong>${escapeHtml(name)}</strong></div><div><span>Identity source</span><strong>${escapeHtml(organization)}</strong></div><div><span>Scopes</span><strong>${escapeHtml(checkedScopes().join(" "))}</strong></div><div><span>Exact redirects</span><strong>${redirects}</strong></div><div><span>State</span><strong>${enabled ? "Enabled" : "Disabled"}</strong></div>`;
     },
     onSubmit: async () => {
       const body = new FormData(form);

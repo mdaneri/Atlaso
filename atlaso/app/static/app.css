@@ -3017,6 +3017,22 @@ textarea {
   gap: 8px;
 }
 
+.inline-copy-value {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.inline-copy-value code {
+  overflow-wrap: anywhere;
+}
+
+.inline-copy-value .icon-button {
+  flex: 0 0 auto;
+}
+
 .audit-row,
 .policy-row,
 .settings-list div {

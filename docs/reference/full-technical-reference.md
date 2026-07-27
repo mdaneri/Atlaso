@@ -664,14 +664,16 @@ reconciliation uses local `ldapi:///` with SASL EXTERNAL. VCF configuration incl
 
 The dedicated `/openid-connect` page contains Atlaso's constrained OIDC provider in Provider, Clients, Signing Keys,
 Group Mappings, and Stable Subjects tabs. Provider validation and published state remain in the main workspace while
-its editable settings use the standard right-hand service column. The derived listener is the addressed management
-interface on fixed HTTPS port 443; Appliance Settings owns the issuer FQDN and its app-owned local DNS record. The
+its editable settings use the standard right-hand service column. The service-owned hostname defaults to
+`oidc.atlaso.internal`; listeners are selectable addressed access or routed interfaces and enabled VLANs, with a
+configurable HTTPS port. Atlaso derives listener addresses and app-owned DNS records from those selections. The
 provider implements Authorization Code with
 confidential `client_secret_basic`, mandatory PKCE S256, exact redirects, required state and nonce, signed secure
 browser sessions, five-minute RS256 ID/access JWTs, UserInfo revalidation, and RP-initiated logout. Provider enablement
-requires the canonical issuer, an applied Management HTTPS certificate valid for the exact issuer FQDN, an active
-signing key, and protocol readiness. Readiness compares the live desired-state certificate fingerprint with the last
-successful Certificate Authority apply baseline. Shared grid/wizard administration supports client editing, exact redirect
+requires the canonical issuer, an applied `oidc:https` certificate covering the issuer and listener addresses, an active
+signing key, and protocol readiness. The restricted non-management nginx front door exposes only `/identity/`; DNS,
+certificate, listener, and firewall state is installed through global Appliance Apply. Shared grid/wizard administration
+supports client editing, exact redirect
 lifecycle, one-time secret rotation, retired-key overlap and cleanup, and a public-metadata-only integration export.
 Client policy edits invalidate pending authorization transactions before they can issue a code under stale redirects
 or scopes.

@@ -2,6 +2,7 @@ import base64
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 import hashlib
+from ipaddress import ip_address
 import json
 import re
 from urllib.parse import parse_qs, urlsplit
@@ -97,6 +98,90 @@ def _set_applied_management_https(db, fqdn: str = "atlaso.example.test") -> None
     db.flush()
 
 
+def _set_oidc_service_ready(
+    db,
+    hostname: str = "oidc.atlaso.internal",
+    *,
+    certificate_hostname: str | None = None,
+) -> None:
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    from atlaso.app.models import CaCertificate, DnsRecord
+    from atlaso.app.services import oidc
+
+    provider = oidc.ensure_provider_settings(db)
+    provider.hostname = hostname
+    provider.listen_interface = "eth2"
+    provider.listen_address = "192.168.50.1"
+    provider.port = 443
+    provider.issuer_url = f"https://{hostname}/identity"
+    certificate_name = certificate_hostname or hostname
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    subject = x509.Name(
+        [x509.NameAttribute(NameOID.COMMON_NAME, certificate_name)]
+    )
+    now = datetime.now(timezone.utc)
+    certificate_pem = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(subject)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_after(now + timedelta(days=30))
+        .add_extension(
+            x509.SubjectAlternativeName(
+                [
+                    x509.DNSName(certificate_name),
+                    x509.IPAddress(ip_address("192.168.50.1")),
+                ]
+            ),
+            critical=False,
+        )
+        .sign(key, hashes.SHA256())
+        .public_bytes(serialization.Encoding.PEM)
+        .decode("ascii")
+    )
+    certificate = db.execute(
+        select(CaCertificate).where(CaCertificate.managed_owner == "oidc:https")
+    ).scalar_one_or_none()
+    if certificate is None:
+        certificate = CaCertificate(
+            common_name=certificate_name,
+            managed_owner="oidc:https",
+            private_key_encrypted="test-only-encrypted-key",
+        )
+        db.add(certificate)
+    certificate.common_name = certificate_name
+    certificate.subject_alt_names = certificate_name
+    certificate.ip_addresses = "192.168.50.1"
+    certificate.status = "issued"
+    certificate.enabled = True
+    certificate.certificate_pem = certificate_pem
+    dns_record = db.execute(
+        select(DnsRecord).where(
+            DnsRecord.hostname == hostname,
+            DnsRecord.record_type == "CNAME",
+        )
+    ).scalar_one_or_none()
+    if dns_record is None:
+        dns_record = DnsRecord(
+            hostname=hostname,
+            record_type="CNAME",
+            address="oidc-eth2.atlaso.internal",
+            description=oidc.OIDC_DNS_RECORD_DESCRIPTION,
+            enabled=True,
+        )
+        db.add(dns_record)
+    else:
+        dns_record.description = oidc.OIDC_DNS_RECORD_DESCRIPTION
+        dns_record.enabled = True
+    db.flush()
+
+
 def _configure_protocol_client(
     *,
     organization_id: int | None = None,
@@ -107,9 +192,8 @@ def _configure_protocol_client(
     from atlaso.app.services import oidc
 
     with SessionLocal() as db:
-        _set_applied_management_https(db)
+        _set_oidc_service_ready(db)
         provider = oidc.ensure_provider_settings(db)
-        provider.issuer_url = "https://atlaso.example.test/identity"
         provider.enabled = True
         if oidc.active_signing_key(db) is None:
             oidc.generate_signing_key(db, rotate=False)
@@ -211,19 +295,19 @@ def test_oidc_public_documents_require_complete_protocol_readiness(client):
     payload["enabled"] = True
     enable = client.put("/api/v1/oidc/provider", headers=headers, json=payload)
     assert enable.status_code == 409
-    assert "Management HTTPS" in enable.text
+    assert "access or routed listen interface" in enable.text
 
     from atlaso.app.database import SessionLocal
     from atlaso.app.services import oidc
 
     with SessionLocal() as db:
-        _set_applied_management_https(db)
+        _set_oidc_service_ready(db)
         provider_row = oidc.ensure_provider_settings(db)
-        provider_row.issuer_url = "https://atlaso.example.test/identity"
         oidc.generate_signing_key(db, rotate=False)
         db.commit()
 
-    payload["issuer_url"] = "https://atlaso.example.test/identity"
+    payload = client.get("/api/v1/oidc/provider", headers=headers).json()
+    payload["enabled"] = True
     enabled = client.put("/api/v1/oidc/provider", headers=headers, json=payload)
     assert enabled.status_code == 200, enabled.text
     assert enabled.json()["enabled"] is True
@@ -234,50 +318,85 @@ def test_oidc_public_documents_require_complete_protocol_readiness(client):
     assert client.get("https://testserver/identity/jwks").status_code == 200
 
 
-def test_oidc_readiness_rejects_certificate_for_a_different_fqdn(client):
+def test_oidc_forwarded_https_rejects_management_listener(client):
+    from starlette.requests import Request
+
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import ApplianceSettings, Setting
+    from atlaso.app.oidc import _identity_https
     from atlaso.app.services import oidc
 
     with SessionLocal() as db:
-        _set_applied_management_https(db, "certificate.example.test")
-        appliance = db.execute(select(ApplianceSettings)).scalar_one()
-        appliance.fqdn = "issuer.example.test"
-        baseline = db.execute(
-            select(Setting).where(Setting.key == "appliance_apply.baselines.v1")
-        ).scalar_one()
-        payload = json.loads(baseline.value)
-        preview = json.loads(payload["appliance_settings"]["config_preview"])
-        preview["fqdn"] = appliance.fqdn
-        payload["appliance_settings"]["config_preview"] = json.dumps(preview)
-        baseline.value = json.dumps(payload)
+        _set_oidc_service_ready(db)
         provider = oidc.ensure_provider_settings(db)
-        provider.issuer_url = "https://issuer.example.test/identity"
+        provider.enabled = True
+        oidc.generate_signing_key(db, rotate=False)
+        db.commit()
+        base_scope = {
+            "type": "http",
+            "method": "GET",
+            "scheme": "http",
+            "path": "/identity/.well-known/openid-configuration",
+            "raw_path": b"/identity/.well-known/openid-configuration",
+            "query_string": b"",
+            "server": ("127.0.0.1", 8000),
+            "client": ("127.0.0.1", 12345),
+            "root_path": "",
+            "http_version": "1.1",
+        }
+        management = Request(
+            {
+                **base_scope,
+                "headers": [
+                    (b"x-forwarded-proto", b"https"),
+                    (b"x-atlaso-listener-address", b"192.168.49.1"),
+                ],
+            }
+        )
+        service = Request(
+            {
+                **base_scope,
+                "headers": [
+                    (b"x-forwarded-proto", b"https"),
+                    (b"x-atlaso-listener-address", b"192.168.50.1"),
+                ],
+            }
+        )
+        assert _identity_https(management, db) is False
+        assert _identity_https(service, db) is True
+
+
+def test_oidc_readiness_requires_oidc_service_certificate(client):
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate
+    from atlaso.app.services import oidc
+
+    with SessionLocal() as db:
+        _set_oidc_service_ready(db)
+        provider = oidc.ensure_provider_settings(db)
+        certificate = db.execute(
+            select(CaCertificate).where(
+                CaCertificate.managed_owner == "oidc:https"
+            )
+        ).scalar_one()
+        certificate.status = "planned"
         errors = oidc.provider_validation_errors(db, provider, require_active_key=False)
         assert errors == [
-            "The applied Management HTTPS certificate does not cover the exact OIDC issuer FQDN."
+            "OIDC requires an applied managed certificate for its service hostname and listener addresses."
         ]
 
 
-def test_oidc_readiness_rejects_certificate_changed_after_apply(client):
+def test_oidc_readiness_rejects_missing_listener(client):
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import Setting
     from atlaso.app.services import oidc
 
     with SessionLocal() as db:
-        _set_applied_management_https(db)
-        baseline = db.execute(
-            select(Setting).where(Setting.key == "appliance_apply.baselines.v1")
-        ).scalar_one()
-        payload = json.loads(baseline.value)
-        ca_preview = json.loads(payload["ca"]["config_preview"])
-        ca_preview["certificates"][0]["fingerprint"] = "previous-applied-certificate"
-        payload["ca"]["config_preview"] = json.dumps(ca_preview)
-        baseline.value = json.dumps(payload)
+        _set_oidc_service_ready(db)
         provider = oidc.ensure_provider_settings(db)
-        provider.issuer_url = "https://atlaso.example.test/identity"
+        provider.listen_interface = ""
+        provider.listen_address = ""
         errors = oidc.provider_validation_errors(db, provider, require_active_key=False)
-        assert errors == ["The current Management HTTPS certificate has not been applied."]
+        assert "OIDC requires at least one access or routed listen interface." in errors
+        assert "OIDC listen interfaces must have at least one configured IP address." in errors
 
 
 def test_oidc_confidential_client_secret_is_argon2_and_shown_only_once(client):
@@ -455,7 +574,7 @@ def test_oidc_rsa_key_is_encrypted_and_rotation_keeps_public_overlap(client, mon
         appliance = db.execute(select(ApplianceSettings)).scalar_one()
         appliance.fqdn = "atlaso.example.test"
         appliance.management_https_enabled = True
-        _set_applied_management_https(db)
+        _set_oidc_service_ready(db, "atlaso.example.test")
         provider = oidc.ensure_provider_settings(db)
         provider.issuer_url = "https://atlaso.example.test/identity"
         provider.clock_skew_seconds = 120
@@ -742,9 +861,15 @@ def test_openid_connect_page_exposes_authorization_code_oidc_ui(client):
     assert 'class="panel detail-panel service-settings-column"' in page.text
     assert "<h2>Issuer DNS</h2>" in page.text
     assert "the only supported issuer host" in page.text
-    assert "<span>Listener interface</span>" in page.text
+    assert "<span>Listener interfaces</span>" in page.text
+    assert 'name="hostname"' in page.text
+    assert "oidc.atlaso.internal" in page.text
+    assert 'data-tag-name="listen_interfaces"' in page.text
     assert "<span>HTTPS port</span>" in page.text
-    assert "443 / TCP" in page.text
+    assert 'name="port"' in page.text
+    assert page.text.count("data-copy-value=") >= 7
+    assert 'data-atlaso-wizard-nav="state"' in page.text
+    assert 'data-atlaso-wizard-step="state"' in page.text
     assert "<h2>Validation</h2>" in page.text
     assert "data-oidc-provider-validation-status" in page.text
     assert "<noscript>" in page.text

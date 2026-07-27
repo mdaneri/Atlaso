@@ -11,7 +11,8 @@ status: current
 
 Atlaso is delivering an in-process OpenID Connect provider for appliance integrations and VCF lab environments in five
 reviewable phases. Phase 4 completes its administration and lifecycle surfaces. Provider enablement requires the exact
-canonical issuer, applied management HTTPS certificate for that FQDN, active RS256 key, and protocol readiness.
+service-owned issuer, an addressed access or routed listener, its applied CA-managed certificate, an active RS256 key,
+and protocol readiness.
 
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
@@ -26,13 +27,12 @@ This verified appliance view provides visual orientation before you begin.
 
 ## Architecture and trust boundaries
 
-The canonical issuer is exactly `https://<applied-appliance-fqdn>/identity`. It is configured from Appliance Settings,
-never inferred from `Host`, `Forwarded`, or `X-Forwarded-*` request headers. IP issuers, explicit ports, query strings,
-fragments, user information, and path or trailing-slash variants are rejected. Readiness also parses the issued,
-CA-managed Management HTTPS certificate, checks its validity period, and requires its DNS names to cover that exact
-FQDN. Its SHA-256 fingerprint must also match the certificate recorded by the last successful Certificate Authority
-apply; reissuing or rotating desired-state certificate material therefore blocks provider readiness until global
-Appliance Apply installs it.
+The canonical issuer is derived as `https://<oidc-hostname>[:port]/identity`; the default hostname is
+`oidc.atlaso.internal` and port 443 is omitted. It is never inferred from `Host`, `Forwarded`, or `X-Forwarded-*`
+request headers. IP issuers, query strings, fragments, user information, and path or trailing-slash variants are
+rejected. Readiness parses the issued CA-managed `oidc:https` certificate and requires its DNS SAN to cover the exact
+hostname and its IP SANs to cover every selected listener address. Global Appliance Apply installs that certificate,
+the restricted nginx listener, DNS records, and firewall rules.
 
 One credential-verification service resolves only two persisted identity types:
 
@@ -103,7 +103,8 @@ Editing a client invalidates its pending authorization transactions, and code is
 client's current enabled state, organization, exact redirect, and granted scopes.
 
 `/identity/authorize`, `/identity/token`, `/identity/userinfo`, and `/identity/logout` require HTTPS. A forwarded HTTPS
-indication is trusted only from the loopback management proxy. Browser authentication rotates the OIDC session
+indication is trusted only from a loopback proxy whose listener-address header matches the configured OIDC service
+addresses. Requests received through the management listener are rejected. Browser authentication rotates the OIDC session
 identifier and CSRF value and never sets an operator UI user session.
 
 An organization-bound client permits only its configured enabled managed-LDAP organization. Its sign-in page names that
@@ -148,18 +149,19 @@ Subjects in page-level tabs. On the Provider tab, validation, issuer DNS state, 
 workspace while the editable Provider Settings panel remains in the standard right-hand service settings column.
 Provider state autosaves but rejects enablement until every readiness check passes.
 
-OIDC has no independent network listener. Its read-only listener fields show the addressed management interface and
-fixed HTTPS port 443 because the endpoints share Atlaso's applied Management HTTPS ingress, certificate, and nginx
-listener. The canonical issuer rejects an explicit port. The issuer host is the Appliance Settings FQDN: when local DNS
-is enabled, Appliance Settings owns its A or AAAA desired-state record; otherwise the operator must register the same
-name in external DNS. OIDC has no service-specific apply action: client, key, mapping, and provider lifecycle changes
-are application state, while Management HTTPS and app-owned DNS remain enforced through global Appliance Apply.
+Provider Settings owns the service hostname, one or more listener interfaces, and HTTPS port. Listener choices use the
+same service selector as LDAP: addressed access or routed physical interfaces and enabled VLANs are accepted, while
+management, unused, down, missing, trunk-only, and addressless targets are rejected. Addresses are derived rather than
+typed. When local DNS is enabled, Atlaso maintains app-owned A or AAAA records for the selected addresses; otherwise
+register the same hostname externally. The restricted public-services nginx front door proxies only `/identity/` and
+returns 404 for unrelated paths. Listener, DNS, certificate, and firewall desired state becomes active through global
+Appliance Apply. Client, key, mapping, and subject lifecycle remains immediate application state.
 
 Confidential clients are browsed in a Tabulator collection. The bottom **+ Add client here** row and existing client
 rows open the shared reviewed wizard for creation and editing.
 Editing can change the operator label, identity-source binding, granted scopes, exact redirect and post-logout URIs,
-loopback-development posture, and enabled state. It never changes the generated client ID or exposes the Argon2 secret
-hash. Creation and secret rotation show plaintext exactly once.
+loopback-development posture, and enabled state. Enablement has its own wizard step before review. It never changes the
+generated client ID or exposes the Argon2 secret hash. Creation and secret rotation show plaintext exactly once.
 
 Client row actions provide a redacted relying-party integration download. It contains only issuer and discovery
 metadata, public endpoints, client ID, authentication method, granted scopes, exact registered URIs, identity-source
@@ -197,8 +199,9 @@ includes plaintext client secrets or identity passwords. A restored signing key 
 `ATLASO_SECRETS_KEY`; preserve that key through the appliance recovery process.
 
 Factory reset deletes provider settings, clients, redirects, subjects, group mappings, and signing keys before reseeding
-disabled defaults. Normal database upgrades create the mapping table additively through the existing metadata startup
-path; older databases retain their records. Older binaries ignore the new table. Do not destructively drop OIDC tables
+disabled defaults. Normal database upgrades create the mapping table and add provider listener columns through the
+startup path; older databases retain their records. Older binaries ignore the new table. Do not destructively drop
+OIDC tables
 during ordinary downgrade. If complete rollback requires their removal, restore the pre-upgrade SQLite snapshot.
 
 ## Staged rollout and unsupported features
