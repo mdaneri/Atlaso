@@ -17578,6 +17578,7 @@ def authentication_context(
     oidc_client_rows = list_oidc_clients(db)
     dns_settings = get_dns_settings_row(db)
     oidc_available_interfaces = ldap_service_bind_options(db)
+    public_services = public_services_context(db, reconcile=False)
     issuer_fqdn = normalize_fqdn(provider.hostname or OIDC_DEFAULT_HOSTNAME)
     managed_issuer_dns_records = db.execute(
         select(DnsRecord)
@@ -17612,6 +17613,8 @@ def authentication_context(
             "oidc_flow_available": OIDC_AUTHORIZATION_FLOW_AVAILABLE,
             "oidc_validation_errors": oidc_provider_validation_errors(db, provider),
             "oidc_urls": endpoint_urls,
+            "oidc_config_preview": public_services["public_service_config_preview"],
+            "oidc_config_path": public_services["public_service_config_path"],
             "oidc_clients": jsonable_encoder(
                 [oidc_client_to_dict(row) for row in oidc_client_rows]
             ),

@@ -150,7 +150,8 @@ The dedicated **OpenID Connect** navigation page keeps Provider, Clients, Signin
 Subjects as tool tabs inside one framed OIDC Administration workspace. The selected tab occupies the main column while
 the editable Provider Settings and Validation cards remain available in the right-hand service settings column.
 Validation lists readiness errors only when attention is required. Provider state autosaves but rejects enablement until
-every readiness check passes.
+every readiness check passes. The Validation card also opens the redacted public-services nginx configuration at its
+truthful staged path so operators can review the OIDC listener before global Appliance Apply.
 
 Provider Settings owns the service hostname, one or more listener interfaces, and HTTPS port. Listener choices use the
 same service selector as LDAP: addressed access or routed physical interfaces and enabled VLANs are accepted, while

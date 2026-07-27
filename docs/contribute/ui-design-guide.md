@@ -172,6 +172,9 @@ The right rail keeps settings and validation separate. The settings card owns de
 compact preview actions. Do not duplicate validation state in a separate main-column frame or omit the Validation card
 when a configurable service has readiness requirements. OpenID Connect follows this composition: OIDC administration
 and its tool tabs occupy the main frame, while Provider Settings and Validation remain persistent in the right rail.
+When the service renders an appliance configuration, the Validation card must include the shared
+`partials/config_preview_action.html` row with the truthful staged path and a redacted preview; a valid status alone is
+not a substitute for making the reviewed configuration available.
 
 Treat routine forms as desired-state editors. Autosave safe changes with `data-autosave-form` and a nearby
 `.autosave-status`; do not add a visible Save button when the established endpoint safely supports autosave. Editing and

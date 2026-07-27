@@ -882,6 +882,10 @@ def test_openid_connect_page_exposes_authorization_code_oidc_ui(client):
     assert "<h2>Validation</h2>" in page.text
     assert "data-oidc-provider-validation" in page.text
     assert "data-oidc-provider-validation-status" in page.text
+    assert "Public services nginx config" in page.text
+    assert "/var/lib/atlaso/apply/public-services/atlaso-public-services.conf" in page.text
+    assert "data-oidc-config-preview" in page.text
+    assert "OIDC HTTPS front door." in page.text
     assert "Exact post-logout URIs (optional)" in page.text
     assert "<noscript>" in page.text
     assert "server-rendered client, signing-key, mapping, and subject tables remain readable" in page.text
