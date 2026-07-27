@@ -280,6 +280,7 @@ test("createGrid keeps fallback until Tabulator is ready and exposes ready state
   });
 
   assert.equal(controller.state, "loading");
+  assert.equal(controller.table, TabulatorStub.last);
   assert.equal(fallback.classList.contains("hidden"), false);
   TabulatorStub.last.emit("tableBuilt");
   assert.equal(controller.state, "ready");
@@ -299,6 +300,64 @@ test("createGrid restores fallback on construction failure", () => {
   assert.equal(controller.state, "error");
   assert.equal(fallback.classList.contains("hidden"), false);
   assert.equal(element.classList.contains("hidden"), true);
+});
+
+test("createGrid preserves initial remote-load errors after table creation", () => {
+  installBrowserGlobals();
+  global.Tabulator = TabulatorStub;
+  const element = new FakeElement();
+  const fallback = new FakeElement({ classes: ["hidden"] });
+  const controller = createGrid({ element, fallback, pattern: "read-only" });
+
+  TabulatorStub.last.emit("dataLoadError", new Error("Remote unavailable."));
+  TabulatorStub.last.emit("tableBuilt");
+
+  assert.equal(controller.state, "error");
+  assert.equal(fallback.classList.contains("hidden"), false);
+  assert.equal(element.classList.contains("hidden"), true);
+});
+
+test("createGrid restores a remote grid after a successful retry", () => {
+  installBrowserGlobals();
+  global.Tabulator = TabulatorStub;
+  const element = new FakeElement();
+  const fallback = new FakeElement({ classes: ["hidden"] });
+  const controller = createGrid({ element, fallback, pattern: "read-only" });
+
+  TabulatorStub.last.emit("tableBuilt");
+  TabulatorStub.last.emit("dataLoadError", new Error("Transient failure."));
+  assert.equal(controller.state, "error");
+
+  TabulatorStub.last.emit("dataLoaded", [{ id: 1 }]);
+
+  assert.equal(controller.state, "ready");
+  assert.equal(fallback.classList.contains("hidden"), true);
+  assert.equal(element.classList.contains("hidden"), false);
+});
+
+test("createGrid keeps synthetic add rows last for ascending and descending sorts", () => {
+  installBrowserGlobals();
+  global.Tabulator = TabulatorStub;
+  createGrid({
+    element: new FakeElement(),
+    pattern: "direct-edit",
+    options: {
+      columns: [
+        { title: "Name", field: "name" },
+        { title: "State", field: "enabled", headerSort: false },
+      ],
+    },
+  });
+
+  const sorter = TabulatorStub.last.options.columns[0].sorter;
+  const addRow = { getData: () => ({ is_new: true, name: "" }) };
+  const recordRow = { getData: () => ({ is_new: false, name: "alpha" }) };
+
+  assert.equal(sorter("", "alpha", addRow, recordRow, null, "asc"), 1);
+  assert.equal(sorter("alpha", "", recordRow, addRow, null, "desc"), 1);
+  assert.equal(sorter("", "alpha", addRow, recordRow, null, "desc"), -1);
+  assert.equal(sorter("item 2", "item 10", recordRow, recordRow, null, "asc"), -1);
+  assert.equal(TabulatorStub.last.options.columns[1].sorter, undefined);
 });
 
 test("createGrid applies permission state and keyboard context-menu behavior", async () => {
@@ -328,12 +387,18 @@ test("createGrid applies permission state and keyboard context-menu behavior", a
     getElement: () => editableRowElement,
     getData: () => ({ id: 2 }),
   };
+  let openedRow = null;
   createGrid({
     element: new FakeElement(),
     pattern: "wizard-backed",
     rowActions: [{ label: "Edit" }],
+    onOpenRow: (rowData) => {
+      openedRow = rowData;
+    },
   });
   TabulatorStub.last.options.rowFormatter(editableRow);
+  await editableRowElement.emit("keydown", { key: "Enter" });
+  assert.deepEqual(openedRow, { id: 2 });
   await editableRowElement.emit("keydown", { key: "F10", shiftKey: true });
   assert.equal(editableRowElement.dispatched[0].type, "contextmenu");
 });

@@ -1,7 +1,6 @@
 from pathlib import Path
 
 from scripts.check_repo import (
-    EXPECTED_LEGACY_TABULATOR_COUNT,
     LEGACY_TABULATOR_MARKER,
     REQUIRED_POLICY_MARKERS,
     check_agent_policy_gate,
@@ -98,11 +97,7 @@ def write_ui_foundation_fixture(root: Path) -> None:
         encoding="utf-8",
     )
     (static / "app.js").write_text(
-        "\n".join(
-            f"/* {LEGACY_TABULATOR_MARKER} */ new Tabulator('#legacy-{index}');"
-            for index in range(EXPECTED_LEGACY_TABULATOR_COUNT)
-        )
-        + "\n",
+        "globalThis.AtlasoUiPatterns.createGrid({ element: '#grid' });\n",
         encoding="utf-8",
     )
     (templates / "wizard.html").write_text(
@@ -121,7 +116,7 @@ def write_ui_foundation_fixture(root: Path) -> None:
     )
 
 
-def test_ui_pattern_foundation_accepts_shared_and_legacy_entry_points(tmp_path: Path) -> None:
+def test_ui_pattern_foundation_accepts_shared_entry_points(tmp_path: Path) -> None:
     write_ui_foundation_fixture(tmp_path)
 
     assert check_ui_pattern_foundation(tmp_path) == []
@@ -160,7 +155,7 @@ def test_ui_pattern_foundation_rejects_raw_tabulator_in_template(tmp_path: Path)
     )
 
 
-def test_ui_pattern_foundation_rejects_new_marked_legacy_tabulator(tmp_path: Path) -> None:
+def test_ui_pattern_foundation_rejects_completed_legacy_marker(tmp_path: Path) -> None:
     write_ui_foundation_fixture(tmp_path)
     path = tmp_path / "atlaso" / "app" / "static" / "app.js"
     with path.open("a", encoding="utf-8") as stream:
@@ -172,9 +167,7 @@ def test_ui_pattern_foundation_rejects_new_marked_legacy_tabulator(tmp_path: Pat
 
     assert any(
         finding.path == path
-        and finding.message
-        == "app.js must retain exactly "
-        f"{EXPECTED_LEGACY_TABULATOR_COUNT} marked #117 Tabulator migration sites"
+        and finding.message == "the completed #117 legacy Tabulator marker is forbidden"
         for finding in findings
     )
 

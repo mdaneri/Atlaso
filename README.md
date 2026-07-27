@@ -18,7 +18,7 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - [Technical reference](docs/reference/index.md) — API, image building, lifecycle testing, and detailed behavior.
 - [Contributing](CONTRIBUTING.md) — issue, version, validation, and pull-request requirements.
 - [UI Design Guide](docs/contribute/ui-design-guide.md) — approved Atlaso patterns and the shared
-  `AtlasoUiPatterns.createGrid(...)` / `createWizard(...)` browser foundation.
+  `AtlasoUiPatterns.createGrid(...)` / `createWizard(...)` foundation used by every grid and wizard.
 
 ## Supported appliance targets
 
