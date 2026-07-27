@@ -14,14 +14,14 @@ ATLASO_VERSION = "0.9.21"
 
 CAPTURE_OVERRIDES = {
     "authentication-clean-desktop": {
-        "source_commit": "3083851+working-tree",
-        "atlaso_version": "0.9.24",
-        "capture_method": "playwright-chromium",
+        "source_commit": "fd88ffe+working-tree",
+        "atlaso_version": "0.9.37",
+        "capture_method": "codex-in-app-browser",
     },
     "authentication-clean-responsive": {
-        "source_commit": "3083851+working-tree",
-        "atlaso_version": "0.9.24",
-        "capture_method": "playwright-chromium",
+        "source_commit": "fd88ffe+working-tree",
+        "atlaso_version": "0.9.37",
+        "capture_method": "codex-in-app-browser",
     },
     "authentication-group-mappings-desktop": {
         "source_commit": "3083851+working-tree",
