@@ -209,6 +209,7 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert "data-vault-password-eye" in source
     assert "15000" in source
     assert 'label: "Delete password"' in source
+    assert "window.confirm" not in source[source.index("function initializeVaultsPage"):source.index("function initializeVcfVaultImport")]
     assert '<button class="button danger compact" type="button">Delete</button>' not in source
     tab_strip = template.split('<div class="tab-buttons zone-tabs"', 1)[1].split("</div>", 1)[0]
     panel_header = template.split('<div class="panel-head">', 1)[1].split(
@@ -230,6 +231,10 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert 'data-atlaso-wizard-nav="uris"' in template
     assert "Step 1 of 4" in template
     assert "data-vault-uri-add" in template
+    assert "data-confirm-modal" in template
+    assert "data-confirm-title=\"Delete {{ vault.name }} vault?\"" in template
+    assert 'data-fallback-id="vault-entries-fallback-{{ vault.id }}"' in template
+    assert 'id="vault-entries-fallback-{{ vault.id }}"' in template
     assert "openVaultUri" in source
     assert "Connect\" : \"Open" in source
     assert "/terminal/remote-launches" in source
@@ -561,7 +566,7 @@ def test_worker_stages_selected_vault_and_redacts_captured_output(client, monkey
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AutomationScript, Job, Vault
     from atlaso.app.services.automation import create_script_revision
-    from atlaso.app.services.vaults import VaultEntryInput, upsert_vault_entry
+    from atlaso.app.services.vaults import VaultEntryInput, upsert_vault_entry, vault_scope_identity
     from atlaso.app.worker import _run_managed_script
 
     captured = {}
@@ -611,7 +616,12 @@ def test_worker_stages_selected_vault_and_redacts_captured_output(client, monkey
             status="running",
             created_by="admin",
             task_config_json=json.dumps(
-                {"revision_id": revision.id, "arguments": [], "vault_id": vault.id}
+                {
+                    "revision_id": revision.id,
+                    "arguments": [],
+                    "vault_id": vault.id,
+                    "vault_scope": vault_scope_identity(vault),
+                }
             ),
         )
         db.add(job)
@@ -622,6 +632,63 @@ def test_worker_stages_selected_vault_and_redacts_captured_output(client, monkey
         assert payload["stdout"] == "password=[redacted]\n"
         assert "WorkerSecret!" not in job.result
         assert not Path(captured["vault_path"]).exists()
+
+
+def test_worker_rejects_reused_vault_id_before_decrypting(client, monkeypatch):
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AutomationScript, Job, Vault
+    from atlaso.app.services.automation import create_script_revision
+    from atlaso.app.services.vaults import vault_scope_identity
+    from atlaso.app.worker import _run_managed_script
+
+    with SessionLocal() as db:
+        original = Vault(name="Original", description="", created_by="admin")
+        db.add(original)
+        db.flush()
+        original_id = original.id
+        original_scope = vault_scope_identity(original)
+        db.delete(original)
+        db.commit()
+
+        replacement = Vault(name="Replacement", description="", created_by="admin")
+        db.add(replacement)
+        script = AutomationScript(name="reused-vault-guard", description="", created_by="admin")
+        db.add(script)
+        db.flush()
+        assert replacement.id == original_id
+        revision = create_script_revision(
+            db,
+            script=script,
+            interpreter="bash",
+            content="atlaso-vault get --key vcf.admin",
+            timeout_seconds=60,
+            actor="admin",
+        )
+        revision.enabled = True
+        db.flush()
+        job = Job(
+            id="job_reused_vault_guard",
+            type="managed-script",
+            status="running",
+            created_by="admin",
+            task_config_json=json.dumps(
+                {
+                    "revision_id": revision.id,
+                    "arguments": [],
+                    "vault_id": replacement.id,
+                    "vault_scope": original_scope,
+                }
+            ),
+        )
+        db.add(job)
+        db.commit()
+        monkeypatch.setattr(
+            "atlaso.app.worker.decrypted_vault_values",
+            lambda *_args: pytest.fail("A replacement vault must not be decrypted."),
+        )
+
+        with pytest.raises(ValueError, match="no longer matches"):
+            _run_managed_script(db, job)
 
 
 def test_vcf_helper_inspection_returns_metadata_and_import_encrypts_value(client, monkeypatch):

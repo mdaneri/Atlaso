@@ -300,8 +300,9 @@ status: current
   is labeled **Run latest revision**, opens a parameter modal before creating the task, and uses the same literal
   argument syntax as schedules: backslash continuation for Bash/Python and backtick continuation for PowerShell. Never
   evaluate arguments through a second shell and never accept secrets as parameters.
-- VCF/ESX password vaults are admin-only and encrypted with the appliance secrets key. A managed-script job may carry
-  only a vault ID; stage decrypted values under `/run`, pass them through systemd `LoadCredential`, remove them after
+- VCF/ESX password vaults are admin-only and encrypted with the appliance secrets key. A managed-script job carries
+  the selected vault ID plus its non-reusable scope fingerprint; the worker must verify both before decryption. Stage
+  decrypted values under `/run`, pass them through systemd `LoadCredential`, remove them after
   execution, and keep `atlaso-vault` fail-closed outside that credential context. PowerShell receives
   `Get-AtlasoVault`; Bash/Python use `atlaso-vault`. Redact exact values from helper and worker output.
 - Vault entries may carry at most nine credential-free HTTP, HTTPS, SSH, or SFTP URIs. Kickstart markers address them

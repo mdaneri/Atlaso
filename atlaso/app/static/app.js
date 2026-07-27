@@ -16450,7 +16450,7 @@ function initializeVaultsPage() {
             disabled: (component) => component.getData().is_new,
             action: (_event, row) => {
               const data = row.getData();
-              if (data.is_new || !window.confirm(`Delete vault key "${data.key}"?`)) return;
+              if (data.is_new) return;
               document.getElementById(`vault-entry-delete-${data.id}`)?.requestSubmit();
             },
           },

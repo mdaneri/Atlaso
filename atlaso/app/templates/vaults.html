@@ -21,11 +21,23 @@
         <section id="vault-panel-{{ vault.id }}" class="tab-panel {{ 'active' if loop.first else '' }}" role="tabpanel" data-vault-panel data-vault-id="{{ vault.id }}" data-vault-name="{{ vault.name }}">
           <div class="vault-panel-toolbar">
             <p class="muted">{{ vault.description or "No description." }}</p>
-            <form action="/vaults/{{ vault.id }}/delete" method="post" data-confirm="Delete this vault and all of its encrypted entries?"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="button danger compact" type="submit">Delete vault</button></form>
+            <form
+              action="/vaults/{{ vault.id }}/delete"
+              method="post"
+              data-confirm-modal
+              data-confirm-title="Delete {{ vault.name }} vault?"
+              data-confirm-message="This permanently removes the {{ vault.name }} vault and its {{ vault.entry_rows|length }} encrypted password {{ 'entry' if vault.entry_rows|length == 1 else 'entries' }}. Vault values are not included in settings archives."
+              data-confirm-label="Delete vault"
+            ><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="button danger compact" type="submit">Delete vault</button></form>
           </div>
-          <div id="vault-entries-table-{{ vault.id }}" class="tabulator-grid compact-grid" data-vault-entries-table data-vault-id="{{ vault.id }}"></div>
+          <div id="vault-entries-table-{{ vault.id }}" class="tabulator-grid compact-grid" data-vault-entries-table data-vault-id="{{ vault.id }}" data-fallback-id="vault-entries-fallback-{{ vault.id }}"></div>
           <script type="application/json" id="vault-entries-data-{{ vault.id }}">{{ vault.entry_rows|tojson }}</script>
-          <noscript><table class="semantic-table"><thead><tr><th>Key</th><th>Description</th><th>Password</th></tr></thead><tbody>{% for entry in vault.entry_rows %}<tr><td>{{ entry.key }}</td><td>{{ entry.description or "—" }}</td><td>••••••••</td></tr>{% endfor %}</tbody></table></noscript>
+          <table id="vault-entries-fallback-{{ vault.id }}" class="data-table dns-fallback-table">
+            <thead><tr><th>Key</th><th>Description</th><th>Password</th></tr></thead>
+            <tbody>
+              {% for entry in vault.entry_rows %}<tr><td><code>{{ entry.key }}</code></td><td>{{ entry.description or "—" }}</td><td>••••••••</td></tr>{% else %}<tr><td colspan="3">No passwords are stored in this vault.</td></tr>{% endfor %}
+            </tbody>
+          </table>
         </section>
       {% endfor %}
     </div>
@@ -61,5 +73,5 @@
   </form>
 </dialog>
 
-{% for vault in vaults %}{% for entry in vault.entry_rows %}<form id="vault-entry-delete-{{ entry.id }}" action="/vaults/{{ vault.id }}/entries/{{ entry.id }}/delete" method="post" class="hidden"><input type="hidden" name="csrf" value="{{ csrf_token }}"></form>{% endfor %}{% endfor %}
+{% for vault in vaults %}{% for entry in vault.entry_rows %}<form id="vault-entry-delete-{{ entry.id }}" action="/vaults/{{ vault.id }}/entries/{{ entry.id }}/delete" method="post" class="hidden" data-confirm-modal data-confirm-title="Delete {{ entry.key }} password?" data-confirm-message="This permanently removes the encrypted password for {{ entry.key }} from the {{ vault.name }} vault." data-confirm-label="Delete password"><input type="hidden" name="csrf" value="{{ csrf_token }}"></form>{% endfor %}{% endfor %}
 {% endblock %}

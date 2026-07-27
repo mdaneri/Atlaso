@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
+from hashlib import sha256
 from urllib.parse import urlsplit, urlunsplit
 
 from sqlalchemy import select
@@ -32,6 +33,16 @@ class VaultEntryInput:
     source_endpoint: str = ""
     uris: tuple[str, ...] = ()
     imported_at: datetime | None = None
+
+
+def vault_scope_identity(vault: Vault) -> str:
+    """Return a stable identity that does not survive SQLite primary-key reuse."""
+    created_at = vault.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    normalized_created_at = created_at.astimezone(timezone.utc).isoformat(timespec="microseconds")
+    payload = f"{vault.id}\0{normalized_created_at}\0{vault.created_by}"
+    return sha256(payload.encode("utf-8")).hexdigest()
 
 
 def normalize_vault_key(value: str) -> str:

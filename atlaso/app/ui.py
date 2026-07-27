@@ -106,6 +106,7 @@ from atlaso.app.services.vaults import (
     update_vault_entry,
     upsert_vault_entry,
     vault_entry_metadata,
+    vault_scope_identity,
 )
 from atlaso.app.operational_logging import (
     configure_operational_logging,
@@ -8288,7 +8289,7 @@ def edit_vault_entry_from_ui(
         resource_id=str(entry.id),
         detail=f"vault_id={vault_id}; key={entry.key}; type={entry.secret_type}",
     )
-    return RedirectResponse(f"/vaults#vault-panel-{vault_id}", status_code=303)
+    return RedirectResponse("/vaults", status_code=303)
 
 
 @router.post("/vaults/{vault_id}/entries/{entry_id}/reveal", response_class=JSONResponse, response_model=None)
@@ -8348,7 +8349,7 @@ def delete_vault_entry_from_ui(
         resource_id=str(entry_id),
         detail=f"vault_id={vault_id}; key={key}",
     )
-    return RedirectResponse(f"/vaults#vault-panel-{vault_id}", status_code=303)
+    return RedirectResponse("/vaults", status_code=303)
 
 
 @router.post("/vaults/{vault_id}/delete", response_model=None)
@@ -10890,11 +10891,13 @@ def run_automation_script_revision(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     selected_vault_id = int(vault_id or 0)
-    if selected_vault_id and db.get(Vault, selected_vault_id) is None:
+    selected_vault = db.get(Vault, selected_vault_id) if selected_vault_id else None
+    if selected_vault_id and selected_vault is None:
         raise HTTPException(status_code=400, detail="Choose an available vault or run without vault access.")
     task_config = {"arguments": arguments, "revision_id": revision.id}
-    if selected_vault_id:
-        task_config["vault_id"] = selected_vault_id
+    if selected_vault is not None:
+        task_config["vault_id"] = selected_vault.id
+        task_config["vault_scope"] = vault_scope_identity(selected_vault)
     job = Job(
         id=f"job_{uuid4().hex[:12]}",
         type="managed-script",

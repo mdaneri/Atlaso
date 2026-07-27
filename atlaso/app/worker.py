@@ -5,6 +5,7 @@ import logging
 import signal
 import time
 from pathlib import Path
+from secrets import compare_digest
 from typing import Any
 
 from sqlalchemy import select
@@ -21,7 +22,7 @@ from atlaso.app.services.appliance_update import (
     ensure_appliance_update_job_steps,
 )
 from atlaso.app.services.automation import enqueue_due_schedules, json_object
-from atlaso.app.services.vaults import decrypted_vault_values, redact_secret_values
+from atlaso.app.services.vaults import decrypted_vault_values, redact_secret_values, vault_scope_identity
 
 
 LOGGER = logging.getLogger("atlaso.worker")
@@ -389,8 +390,12 @@ def _run_managed_script(db: Session, job: Job) -> None:
     try:
         vault_id = int(config.get("vault_id") or 0)
         if vault_id:
-            if db.get(Vault, vault_id) is None:
+            vault = db.get(Vault, vault_id)
+            if vault is None:
                 raise ValueError("The managed script vault is missing.")
+            expected_scope = str(config.get("vault_scope") or "")
+            if not expected_scope or not compare_digest(expected_scope, vault_scope_identity(vault)):
+                raise ValueError("The managed script vault no longer matches the vault selected when the job was queued.")
             vault_values = decrypted_vault_values(db, vault_id)
             vault_path = _automation_vault_stage_path(job.id)
             vault_path.parent.mkdir(parents=True, exist_ok=True)

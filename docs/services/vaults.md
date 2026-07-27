@@ -37,6 +37,10 @@ stderr, but scripts must still treat passwords as secrets and must not transform
 are installed in interactive appliance shells for discoverability; invoking them there fails closed because no scoped
 runtime credential is present.
 
+Each queued execution records a non-reusable fingerprint for the selected vault. Before decrypting anything, the worker
+verifies that fingerprint as well as the database ID, so deleting and recreating a vault cannot redirect an older queued
+job to different credentials.
+
 ## ESXi Kickstarts
 
 Choose one vault in the Kickstart editor. The vault-name segment is the selected vault name normalized to lowercase,
