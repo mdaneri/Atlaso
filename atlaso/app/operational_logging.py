@@ -38,6 +38,11 @@ PRIVATE_KEY_BEGIN_PATTERN = re.compile(r"-----BEGIN .*PRIVATE KEY-----")
 PRIVATE_KEY_END_PATTERN = re.compile(r"-----END .*PRIVATE KEY-----")
 JWT_PATH_SEGMENT_PATTERN = re.compile(r"(?<=/)[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}(?=/|$)")
 JSON_SECRET_FIELD_PATTERN = re.compile(r'^(\s*"[^"]+"\s*:\s*)(.*?)(,?)\s*$')
+URL_USERINFO_PATTERN = re.compile(r"(https?://)[^/\s@]+@", re.IGNORECASE)
+OIDC_QUERY_SECRET_PATTERN = re.compile(
+    r"([?&](?:code|client_secret|id_token_hint|access_token)=)[^&\s]+",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -274,7 +279,9 @@ def redact_operational_text(value: str | None) -> str:
             else:
                 lines.append("[redacted sensitive line]")
             continue
-        lines.append(JWT_PATH_SEGMENT_PATTERN.sub("[redacted-token]", line))
+        redacted = URL_USERINFO_PATTERN.sub(r"\1[redacted]@", line)
+        redacted = OIDC_QUERY_SECRET_PATTERN.sub(r"\1[redacted]", redacted)
+        lines.append(JWT_PATH_SEGMENT_PATTERN.sub("[redacted-token]", redacted))
     return "\n".join(lines)
 
 

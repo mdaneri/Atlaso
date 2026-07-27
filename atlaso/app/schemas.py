@@ -963,6 +963,13 @@ class OidcClientCreate(BaseModel):
     enabled: bool = True
 
 
+class OidcClientUpdate(OidcClientCreate):
+    """Mutable confidential-client settings.
+
+    The generated client identifier and secret are intentionally absent.
+    """
+
+
 class OidcClientResponse(BaseModel):
     id: int
     name: str
@@ -990,6 +997,23 @@ class OidcClientCreated(BaseModel):
 class OidcClientSecretRotated(BaseModel):
     client_id: str
     client_secret: str
+
+
+class OidcIntegrationExport(BaseModel):
+    issuer: str
+    discovery_url: str
+    authorization_endpoint: str
+    token_endpoint: str
+    userinfo_endpoint: str
+    jwks_uri: str
+    end_session_endpoint: str
+    client_id: str
+    token_endpoint_auth_method: str
+    allowed_scopes: list[str]
+    redirect_uris: list[str]
+    post_logout_redirect_uris: list[str]
+    organization: str
+    enabled: bool
 
 
 class OidcClientEnabledUpdate(BaseModel):

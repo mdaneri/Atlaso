@@ -70,7 +70,7 @@ HTML_FORM_RE = re.compile(
 UI_PATTERN_FOUNDATION = Path("atlaso/app/static/ui-patterns.js")
 LEGACY_TABULATOR_PATH = Path("atlaso/app/static/app.js")
 LEGACY_TABULATOR_MARKER = "atlaso-legacy-tabulator: #117"
-EXPECTED_LEGACY_TABULATOR_COUNT = 35
+EXPECTED_LEGACY_TABULATOR_COUNT = 34
 WIZARD_REQUIRED_MARKERS = (
     "data-atlaso-wizard-step",
     "data-atlaso-wizard-nav",

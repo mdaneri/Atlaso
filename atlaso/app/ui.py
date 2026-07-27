@@ -320,10 +320,12 @@ from atlaso.app.services.oidc import (
     OidcConflictError,
     create_client as create_oidc_client_record,
     create_group_mapping as create_oidc_group_mapping_record,
+    delete_retired_signing_key as delete_retired_oidc_signing_key_record,
     ensure_provider_settings as ensure_oidc_provider_settings,
     generate_signing_key as generate_oidc_signing_key,
     get_client as get_oidc_client,
     issuer_endpoint_urls as oidc_issuer_endpoint_urls,
+    integration_export as oidc_integration_export,
     list_clients as list_oidc_clients,
     list_group_mappings as list_oidc_group_mappings,
     list_subjects as list_oidc_subjects,
@@ -334,6 +336,7 @@ from atlaso.app.services.oidc import (
     rotate_client_secret as rotate_oidc_client_secret_value,
     signing_key_to_dict as oidc_signing_key_to_dict,
     update_group_mapping as update_oidc_group_mapping_record,
+    update_client as update_oidc_client_record,
     validate_all_mapping_contexts as validate_oidc_mapping_contexts,
 )
 from atlaso.app.services.local_users import (
@@ -17506,14 +17509,18 @@ def authentication_context(
             "oidc_flow_available": OIDC_AUTHORIZATION_FLOW_AVAILABLE,
             "oidc_validation_errors": oidc_provider_validation_errors(db, provider),
             "oidc_urls": endpoint_urls,
-            "oidc_clients": [oidc_client_to_dict(row) for row in oidc_client_rows],
-            "oidc_keys": [
-                oidc_signing_key_to_dict(row)
-                for row in db.execute(
-                    select(OidcSigningKey).order_by(OidcSigningKey.created_at.desc())
-                ).scalars().all()
-            ],
-            "oidc_subjects": list_oidc_subjects(db),
+            "oidc_clients": jsonable_encoder(
+                [oidc_client_to_dict(row) for row in oidc_client_rows]
+            ),
+            "oidc_keys": jsonable_encoder(
+                [
+                    oidc_signing_key_to_dict(row)
+                    for row in db.execute(
+                        select(OidcSigningKey).order_by(OidcSigningKey.created_at.desc())
+                    ).scalars().all()
+                ]
+            ),
+            "oidc_subjects": jsonable_encoder(list_oidc_subjects(db)),
             "oidc_group_mappings": jsonable_encoder(
                 [
                     oidc_group_mapping_to_dict(row)
@@ -17622,6 +17629,9 @@ def create_oidc_client_from_ui(
     redirect_uris: str = Form(...),
     post_logout_redirect_uris: str = Form(""),
     preset: str = Form("custom"),
+    allowed_scopes: list[str] = Form(default_factory=list),
+    allow_loopback_redirects: str | None = Form(None),
+    enabled: str | None = Form(None),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
@@ -17641,12 +17651,12 @@ def create_oidc_client_from_ui(
             post_logout_redirect_uris=[
                 value.strip() for value in post_logout_redirect_uris.splitlines() if value.strip()
             ],
-            allowed_scopes=["openid", "profile", "email", "groups"],
-            allow_loopback_redirects=False,
+            allowed_scopes=allowed_scopes or ["openid"],
+            allow_loopback_redirects=allow_loopback_redirects == "on",
             access_token_lifetime_seconds=300,
             id_token_lifetime_seconds=300,
             authorization_code_lifetime_seconds=60,
-            enabled=True,
+            enabled=enabled == "on",
         )
     except (OidcConfigurationError, ValueError) as exc:
         return render(
@@ -17663,6 +17673,14 @@ def create_oidc_client_from_ui(
         resource_id=str(row.id),
         detail=f"client_id={row.client_id}; preset={preset}",
     )
+    if request.headers.get("X-Atlaso-Grid") == "1":
+        return JSONResponse(
+            {
+                "client": jsonable_encoder(oidc_client_to_dict(row)),
+                "client_secret": raw_secret,
+            },
+            status_code=201,
+        )
     return render(
         request,
         "authentication.html",
@@ -17674,6 +17692,92 @@ def create_oidc_client_from_ui(
             oidc_client_id=row.client_id,
         ),
     )
+
+
+@router.post(
+    "/authentication/oidc/clients/{client_record_id}/edit",
+    response_model=None,
+)
+def update_oidc_client_from_ui(
+    request: Request,
+    client_record_id: int,
+    name: str = Form(...),
+    organization_id: str = Form(""),
+    redirect_uris: str = Form(...),
+    post_logout_redirect_uris: str = Form(""),
+    allowed_scopes: list[str] = Form(default_factory=list),
+    allow_loopback_redirects: str | None = Form(None),
+    enabled: str | None = Form(None),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> Response:
+    verify_csrf(request, csrf)
+    require_admin_identity(identity)
+    try:
+        row = get_oidc_client(db, client_record_id)
+        row = update_oidc_client_record(
+            db,
+            row=row,
+            name=name,
+            organization_id=int(organization_id) if organization_id.strip() else None,
+            redirect_uris=[value.strip() for value in redirect_uris.splitlines() if value.strip()],
+            post_logout_redirect_uris=[
+                value.strip() for value in post_logout_redirect_uris.splitlines() if value.strip()
+            ],
+            allowed_scopes=allowed_scopes or ["openid"],
+            allow_loopback_redirects=allow_loopback_redirects == "on",
+            access_token_lifetime_seconds=300,
+            id_token_lifetime_seconds=300,
+            authorization_code_lifetime_seconds=60,
+            enabled=enabled == "on",
+        )
+    except OidcConfigurationError as exc:
+        db.rollback()
+        if request.headers.get("X-Atlaso-Grid") == "1":
+            return JSONResponse({"detail": str(exc)}, status_code=422)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    record_audit(
+        db,
+        actor=identity.username,
+        action="update_oidc_client",
+        resource_type="oidc_client",
+        resource_id=str(row.id),
+        detail=f"client_id={row.client_id}; organization_id={row.organization_id or 'unbound'}",
+    )
+    if request.headers.get("X-Atlaso-Grid") == "1":
+        return JSONResponse(jsonable_encoder(oidc_client_to_dict(row)))
+    return RedirectResponse("/authentication#oidc-clients", status_code=303)
+
+
+@router.get(
+    "/authentication/oidc/clients/{client_record_id}/integration-export",
+    response_model=None,
+)
+def export_oidc_client_integration_from_ui(
+    request: Request,
+    client_record_id: int,
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    require_admin_identity(identity)
+    try:
+        row = get_oidc_client(db, client_record_id)
+    except OidcConfigurationError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    record_audit(
+        db,
+        actor=identity.username,
+        action="export_oidc_client_integration",
+        resource_type="oidc_client",
+        resource_id=str(row.id),
+        detail=f"client_id={row.client_id}",
+    )
+    response = JSONResponse(jsonable_encoder(oidc_integration_export(db, row)))
+    response.headers["Content-Disposition"] = (
+        f'attachment; filename="atlaso-oidc-{row.id}-integration.json"'
+    )
+    return response
 
 
 @router.post(
@@ -17894,6 +17998,8 @@ def rotate_oidc_client_secret_from_ui(
         resource_id=str(row.id),
         detail=f"client_id={row.client_id}",
     )
+    if request.headers.get("X-Atlaso-Grid") == "1":
+        return JSONResponse({"client_id": row.client_id, "client_secret": raw_secret})
     return render(
         request,
         "authentication.html",
@@ -17914,7 +18020,7 @@ def delete_oidc_client_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> Response:
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     try:
@@ -17932,6 +18038,8 @@ def delete_oidc_client_from_ui(
         resource_id=str(client_record_id),
         detail=f"client_id={public_client_id}",
     )
+    if request.headers.get("X-Atlaso-Grid") == "1":
+        return Response(status_code=204)
     return RedirectResponse("/authentication#oidc-clients", status_code=303)
 
 
@@ -17942,7 +18050,7 @@ def create_oidc_signing_key_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> Response:
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     try:
@@ -17957,6 +18065,54 @@ def create_oidc_signing_key_from_ui(
         resource_id=str(row.id),
         detail=f"kid={row.kid}; algorithm={row.algorithm}",
     )
+    if request.headers.get("X-Atlaso-Grid") == "1":
+        return JSONResponse(
+            jsonable_encoder(
+                {
+                    "key": oidc_signing_key_to_dict(row),
+                    "previous": (
+                        oidc_signing_key_to_dict(previous) if previous is not None else None
+                    ),
+                }
+            ),
+            status_code=201,
+        )
+    return RedirectResponse("/authentication#oidc-keys", status_code=303)
+
+
+@router.post(
+    "/authentication/oidc/signing-keys/{key_id}/delete",
+    response_model=None,
+)
+def delete_retired_oidc_signing_key_from_ui(
+    request: Request,
+    key_id: int,
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> Response:
+    verify_csrf(request, csrf)
+    require_admin_identity(identity)
+    row = db.get(OidcSigningKey, key_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="OIDC signing key not found.")
+    kid = row.kid
+    try:
+        delete_retired_oidc_signing_key_record(db, row)
+    except OidcConflictError as exc:
+        if request.headers.get("X-Atlaso-Grid") == "1":
+            return JSONResponse({"detail": str(exc)}, status_code=409)
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    record_audit(
+        db,
+        actor=identity.username,
+        action="delete_retired_oidc_signing_key",
+        resource_type="oidc_signing_key",
+        resource_id=str(key_id),
+        detail=f"kid={kid}",
+    )
+    if request.headers.get("X-Atlaso-Grid") == "1":
+        return Response(status_code=204)
     return RedirectResponse("/authentication#oidc-keys", status_code=303)
 
 

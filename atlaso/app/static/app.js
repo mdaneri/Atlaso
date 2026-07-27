@@ -6638,6 +6638,49 @@ async function postOidcGroupMappingAction(url, data, csrf, { expectJson = true }
   return expectJson ? response.json() : null;
 }
 
+function updateOidcProviderValidation(payload = {}) {
+  const form = document.querySelector('form[action="/authentication/oidc/provider"]');
+  const providerStatus = document.querySelector("[data-oidc-provider-status]");
+  const validationPanel = document.querySelector("[data-oidc-provider-validation]");
+  const validationStatus = document.querySelector("[data-oidc-provider-validation-status]");
+  if (!(form instanceof HTMLFormElement) || !(validationPanel instanceof HTMLElement) || !(validationStatus instanceof HTMLElement)) return;
+  const enabled = Boolean(payload.enabled);
+  if (providerStatus instanceof HTMLElement) {
+    providerStatus.textContent = enabled ? "enabled" : "disabled";
+    providerStatus.className = `status-pill ${enabled ? "good" : "muted"}`;
+  }
+  const errors = Array.isArray(payload.validation_errors) ? payload.validation_errors : [];
+  validationStatus.textContent = errors.length ? "needs attention" : "valid";
+  validationStatus.className = `status-pill ${errors.length ? "warn" : "good"}`;
+  validationPanel.querySelector(".error-list")?.remove();
+  validationPanel.querySelector("[data-oidc-provider-validation-message]")?.remove();
+  if (errors.length) {
+    const list = document.createElement("div");
+    list.className = "error-list";
+    list.setAttribute("role", "list");
+    list.setAttribute("data-oidc-provider-validation-errors", "");
+    errors.forEach((message) => {
+      const item = document.createElement("div");
+      item.setAttribute("role", "listitem");
+      item.textContent = String(message);
+      list.appendChild(item);
+    });
+    validationPanel.appendChild(list);
+  } else {
+    const message = document.createElement("p");
+    message.className = "muted";
+    message.setAttribute("data-oidc-provider-validation-message", "");
+    message.textContent = "The issuer, applied management certificate, signing-key state, and protocol settings pass Atlaso validation.";
+    validationPanel.appendChild(message);
+  }
+}
+
+function initializeOidcProviderSettings() {
+  const form = document.querySelector('form[action="/authentication/oidc/provider"]');
+  if (!(form instanceof HTMLFormElement)) return;
+  form.addEventListener("atlaso:autosave-success", (event) => updateOidcProviderValidation(event.detail || {}));
+}
+
 function initializeOidcGroupMappingsTable() {
   const tableElement = document.getElementById("oidc-group-mappings-table");
   if (!(tableElement instanceof HTMLElement)) {
@@ -6816,7 +6859,20 @@ function initializeOidcGroupMappingsTable() {
   };
 
   try {
-    table = /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
+    const grid = window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      fallback,
+      status: "#oidc-group-mapping-status",
+      pattern: "direct-edit",
+      emptyMessage: "No external group mappings configured.",
+      rowActions: [
+        {
+          label: "Delete mapping",
+          disabled: (component) => component.getData().is_new,
+          action: (event, row) => deleteMapping(row),
+        },
+      ],
+      options: {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -6825,13 +6881,6 @@ function initializeOidcGroupMappingsTable() {
       placeholder: "No external group mappings configured.",
       reactiveData: false,
       rowFormatter: (row) => markNewRecordRow(row, "source_selection"),
-      rowContextMenu: [
-        {
-          label: "Delete mapping",
-          disabled: (component) => component.getData().is_new,
-          action: (event, row) => deleteMapping(row),
-        },
-      ],
       columns: lockNewRecordColumns([
         {
           title: "Source",
@@ -6914,10 +6963,9 @@ function initializeOidcGroupMappingsTable() {
           cellEdited: saveCell,
         },
       ], "source_selection"),
+      },
     });
-    if (fallback instanceof HTMLElement) {
-      fallback.classList.add("hidden");
-    }
+    table = grid.table;
     setMappingCount(rows.filter((row) => !row.is_new).length);
     setOidcGroupMappingMessage("Edit a mapped external name or client scope to autosave.", "idle");
   } catch (error) {
@@ -6927,6 +6975,262 @@ function initializeOidcGroupMappingsTable() {
         : "The mapping grid could not render. Showing the read-only fallback table.",
     );
   }
+}
+
+async function oidcFormRequest(url, formData, { expectJson = true } = {}) {
+  const response = await fetch(url, {
+    method: "POST",
+    body: formData,
+    credentials: "same-origin",
+    headers: { "X-Atlaso-Grid": "1" },
+  });
+  if (!response.ok) {
+    let message = "";
+    try {
+      const payload = await response.json();
+      message = String(payload.detail || "");
+    } catch {
+      message = (await response.text()).trim().replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    }
+    throw new Error(message || "The OIDC administration request failed.");
+  }
+  return expectJson ? response.json() : null;
+}
+
+function setOidcSecretResult(clientId, secret) {
+  const result = document.getElementById("oidc-client-secret-result");
+  const textarea = result?.querySelector("textarea");
+  if (!(result instanceof HTMLElement) || !(textarea instanceof HTMLTextAreaElement)) return;
+  textarea.value = secret || "";
+  result.querySelector(".muted").textContent = `Client ID: ${clientId}. The plaintext value is not stored and cannot be shown again.`;
+  result.classList.remove("hidden");
+  textarea.focus();
+  textarea.select();
+}
+
+function initializeOidcClientsTable() {
+  const element = document.getElementById("oidc-clients-table");
+  const form = document.querySelector("[data-oidc-client-form]");
+  const dialog = document.getElementById("oidc-client-dialog");
+  if (!(element instanceof HTMLElement) || !(form instanceof HTMLFormElement) || !(dialog instanceof HTMLDialogElement)) return;
+  const rows = JSON.parse(element.dataset.clients || "[]");
+  const csrf = element.dataset.csrf || "";
+  let table;
+  let wizard;
+
+  const checkedScopes = () => [...form.querySelectorAll('input[name="allowed_scopes"]:checked')].map((input) => input.value);
+  const populateForm = (data = null) => {
+    form.elements.namedItem("client_record_id").value = data?.id || "";
+    form.elements.namedItem("name").value = data?.name || "";
+    form.elements.namedItem("organization_id").value = data?.organization_id || "";
+    form.elements.namedItem("redirect_uris").value = (data?.redirect_uris || []).join("\n");
+    form.elements.namedItem("post_logout_redirect_uris").value = (data?.post_logout_redirect_uris || []).join("\n");
+    form.elements.namedItem("allow_loopback_redirects").checked = Boolean(data?.allow_loopback_redirects);
+    form.elements.namedItem("enabled").checked = data ? Boolean(data.enabled) : true;
+    const scopes = new Set(data?.allowed_scopes || ["openid"]);
+    form.querySelectorAll('input[name="allowed_scopes"]').forEach((input) => {
+      input.checked = scopes.has(input.value);
+    });
+    form.querySelector("[data-atlaso-wizard-submit]").textContent = data ? "Update confidential client" : "Register confidential client";
+  };
+  const openClient = (data, launcher) => wizard.open({ launcher, context: data || null });
+  const refreshRow = async (payload, existingId = null) => {
+    if (existingId) {
+      const row = table.getRow(existingId);
+      if (row) await row.update(payload);
+    } else {
+      await table.addRow(payload);
+    }
+  };
+  const rotateSecret = async (data) => {
+    const confirmed = await requestConfirmation({
+      title: `Rotate secret for ${data.name}?`,
+      message: "The previous secret stops working immediately. The replacement is shown once and must be copied into the relying party.",
+      confirmLabel: "Rotate client secret",
+    });
+    if (!confirmed) return;
+    const body = new FormData();
+    body.set("csrf", csrf);
+    const payload = await oidcFormRequest(`/authentication/oidc/clients/${data.id}/rotate-secret`, body);
+    setOidcSecretResult(payload.client_id, payload.client_secret);
+  };
+  const deleteClient = async (data) => {
+    const confirmed = await requestConfirmation({
+      title: `Delete OIDC client ${data.name}?`,
+      message: "This permanently removes the client, secret hash, exact redirects, and client-specific mappings. No appliance service is changed.",
+      confirmLabel: "Delete OIDC client",
+      tone: "danger",
+    });
+    if (!confirmed) return;
+    const body = new FormData();
+    body.set("csrf", csrf);
+    await oidcFormRequest(`/authentication/oidc/clients/${data.id}/delete`, body, { expectJson: false });
+    await table.getRow(data.id)?.delete();
+  };
+  const exportClient = async (data) => {
+    const response = await fetch(`/authentication/oidc/clients/${data.id}/integration-export`, { credentials: "same-origin" });
+    if (!response.ok) throw new Error("The redacted integration export could not be generated.");
+    const blob = await response.blob();
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `atlaso-oidc-${data.id}-integration.json`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
+
+  const grid = window.AtlasoUiPatterns.createGrid({
+    element,
+    fallback: `#${element.dataset.fallbackId}`,
+    status: "#oidc-clients-status",
+    pattern: "wizard-backed",
+    emptyMessage: "No confidential clients registered.",
+    onOpenRow: (data, row, event) => openClient(data, event?.currentTarget || row?.getElement?.()),
+    rowActions: [
+      { label: "Edit client", action: (event, row) => openClient(row.getData(), row.getElement()) },
+      { label: "Rotate secret", action: (event, row) => rotateSecret(row.getData()).catch((error) => grid.setError(error.message)) },
+      { label: "Download redacted integration", action: (event, row) => exportClient(row.getData()).catch((error) => grid.setError(error.message)) },
+      { label: "Delete client", action: (event, row) => deleteClient(row.getData()).catch((error) => grid.setError(error.message)) },
+    ],
+    options: {
+      data: rows,
+      index: "id",
+      height: "330px",
+      placeholder: "No confidential clients registered.",
+      columns: [
+        { title: "Name", field: "name", minWidth: 190 },
+        { title: "Client ID", field: "client_id", minWidth: 230, formatter: (cell) => `<code>${escapeHtml(cell.getValue())}</code>` },
+        { title: "Organization", field: "organization_slug", minWidth: 150, formatter: (cell) => escapeHtml(cell.getValue() || "Unbound") },
+        { title: "Redirects", field: "redirect_uris", minWidth: 260, formatter: (cell) => (cell.getValue() || []).map((value) => `<code>${escapeHtml(value)}</code>`).join("<br>") },
+        { title: "Status", field: "enabled", width: 105, formatter: (cell) => `<span class="status-pill ${cell.getValue() ? "good" : "muted"}">${cell.getValue() ? "enabled" : "disabled"}</span>` },
+      ],
+    },
+  });
+  table = grid.table;
+  wizard = window.AtlasoUiPatterns.createWizard({
+    form,
+    dialog,
+    steps: [
+      { id: "identity", title: "Define the confidential client", description: "Set its operator label, identity source, scopes, and state." },
+      { id: "redirects", title: "Register exact redirects", description: "Enter byte-for-byte redirect and post-logout destinations." },
+      { id: "review", title: "Review client lifecycle", description: "Confirm the application-state change and secret handling." },
+    ],
+    onOpen: ({ context }) => populateForm(context),
+    validateStep: ({ step }) => {
+      if (step.id === "identity" && !checkedScopes().includes("openid")) {
+        return { valid: false, message: "The openid scope is required." };
+      }
+      return { valid: true };
+    },
+    prepareReview: () => {
+      const review = form.querySelector("[data-oidc-client-review]");
+      const name = form.elements.namedItem("name").value.trim();
+      const organization = form.elements.namedItem("organization_id").selectedOptions[0]?.textContent || "Unbound";
+      const redirects = form.elements.namedItem("redirect_uris").value.split(/\r?\n/).filter(Boolean).length;
+      review.innerHTML = `<div><span>Client</span><strong>${escapeHtml(name)}</strong></div><div><span>Identity source</span><strong>${escapeHtml(organization)}</strong></div><div><span>Scopes</span><strong>${escapeHtml(checkedScopes().join(" "))}</strong></div><div><span>Exact redirects</span><strong>${redirects}</strong></div>`;
+    },
+    onSubmit: async () => {
+      const body = new FormData(form);
+      const recordId = body.get("client_record_id");
+      const url = recordId ? `/authentication/oidc/clients/${recordId}/edit` : "/authentication/oidc/clients";
+      const payload = await oidcFormRequest(url, body);
+      const client = payload.client || payload;
+      await refreshRow(client, recordId ? Number(recordId) : null);
+      if (payload.client_secret) setOidcSecretResult(client.client_id, payload.client_secret);
+      return { valid: true };
+    },
+  });
+  document.querySelector("[data-oidc-client-add]")?.addEventListener("click", (event) => openClient(null, event.currentTarget));
+}
+
+function initializeOidcKeysTable() {
+  const element = document.getElementById("oidc-keys-table");
+  const form = document.querySelector("[data-oidc-key-form]");
+  const dialog = document.getElementById("oidc-key-dialog");
+  if (!(element instanceof HTMLElement) || !(form instanceof HTMLFormElement) || !(dialog instanceof HTMLDialogElement)) return;
+  const rows = JSON.parse(element.dataset.keys || "[]");
+  const csrf = element.dataset.csrf || "";
+  let table;
+  const deleteKey = async (data) => {
+    const confirmed = await requestConfirmation({
+      title: `Delete retired key ${data.kid}?`,
+      message: "Deletion is allowed only after its public overlap window ends. The encrypted private key and public JWK will be removed.",
+      confirmLabel: "Delete retired key",
+      tone: "danger",
+    });
+    if (!confirmed) return;
+    const body = new FormData();
+    body.set("csrf", csrf);
+    await oidcFormRequest(`/authentication/oidc/signing-keys/${data.id}/delete`, body, { expectJson: false });
+    await table.getRow(data.id)?.delete();
+  };
+  const grid = window.AtlasoUiPatterns.createGrid({
+    element,
+    fallback: `#${element.dataset.fallbackId}`,
+    status: "#oidc-keys-status",
+    pattern: "wizard-backed",
+    emptyMessage: "No signing key generated.",
+    rowActions: [
+      {
+        label: "Delete retired key",
+        disabled: (row) => row.getData().status !== "retired",
+        action: (event, row) => deleteKey(row.getData()).catch((error) => grid.setError(error.message)),
+      },
+    ],
+    options: {
+      data: rows,
+      index: "id",
+      height: "250px",
+      columns: [
+        { title: "Key ID", field: "kid", minWidth: 260, formatter: (cell) => `<code>${escapeHtml(cell.getValue())}</code>` },
+        { title: "Algorithm", field: "algorithm", width: 110 },
+        { title: "Status", field: "status", width: 110 },
+        { title: "Published until", field: "publish_until", minWidth: 190, formatter: (cell) => escapeHtml(cell.getValue() || "active") },
+      ],
+    },
+  });
+  table = grid.table;
+  const wizard = window.AtlasoUiPatterns.createWizard({
+    form,
+    dialog,
+    steps: [
+      { id: "operation", title: "Prepare signing key", description: "Review encrypted custody and public metadata." },
+      { id: "review", title: "Review key lifecycle", description: "Confirm generation and the enforced overlap." },
+    ],
+    onSubmit: async () => {
+      const payload = await oidcFormRequest("/authentication/oidc/signing-keys", new FormData(form));
+      if (payload.previous) await table.getRow(payload.previous.id)?.update(payload.previous);
+      await table.addRow(payload.key, true);
+      form.elements.namedItem("rotate").value = "true";
+      const launcher = document.querySelector("[data-oidc-key-launch]");
+      if (launcher) launcher.textContent = "Rotate signing key";
+      form.querySelector("[data-atlaso-wizard-submit]").textContent = "Rotate signing key";
+      return { valid: true };
+    },
+  });
+  document.querySelector("[data-oidc-key-launch]")?.addEventListener("click", (event) => wizard.open({ launcher: event.currentTarget }));
+}
+
+function initializeOidcSubjectsTable() {
+  const element = document.getElementById("oidc-subjects-table");
+  if (!(element instanceof HTMLElement)) return;
+  window.AtlasoUiPatterns.createGrid({
+    element,
+    fallback: `#${element.dataset.fallbackId}`,
+    status: "#oidc-subjects-status",
+    pattern: "read-only",
+    emptyMessage: "Subjects are created only after a credential is verified for OIDC.",
+    options: {
+      data: JSON.parse(element.dataset.subjects || "[]"),
+      index: "subject",
+      height: "280px",
+      columns: [
+        { title: "Subject", field: "subject", minWidth: 300, formatter: (cell) => `<code>${escapeHtml(cell.getValue())}</code>` },
+        { title: "Source", field: "source", width: 130 },
+        { title: "Username", field: "username", minWidth: 160 },
+        { title: "Organization", field: "organization_name", minWidth: 170 },
+      ],
+    },
+  });
 }
 
 function initializeVlanInterfacesTable() {
@@ -15739,7 +16043,11 @@ document.addEventListener("DOMContentLoaded", initializeRoutesWanRoutingTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanNatTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanPoliciesTable);
 document.addEventListener("DOMContentLoaded", initializePhysicalInterfacesTable);
+document.addEventListener("DOMContentLoaded", initializeOidcProviderSettings);
+document.addEventListener("DOMContentLoaded", initializeOidcClientsTable);
+document.addEventListener("DOMContentLoaded", initializeOidcKeysTable);
 document.addEventListener("DOMContentLoaded", initializeOidcGroupMappingsTable);
+document.addEventListener("DOMContentLoaded", initializeOidcSubjectsTable);
 document.addEventListener("DOMContentLoaded", initializeVlanInterfacesTable);
 document.addEventListener("DOMContentLoaded", initializeCodeMirrorEditors);
 document.addEventListener("DOMContentLoaded", initializeKickstartEditorDirtyState);

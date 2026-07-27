@@ -10,18 +10,17 @@ status: current
 # Constrained OpenID Connect provider
 
 Atlaso is delivering an in-process OpenID Connect provider for appliance integrations and VCF lab environments in five
-reviewable phases. Phase 3 adds explicit organization selection, current-state claims, and privacy-safe
-local-role/LDAP-group mappings to the constrained Authorization Code protocol surface. Provider enablement requires the
-applied management HTTPS setting, canonical issuer, active RS256 key, and protocol readiness.
+reviewable phases. Phase 4 completes its administration and lifecycle surfaces. Provider enablement requires the exact
+canonical issuer, applied management HTTPS certificate for that FQDN, active RS256 key, and protocol readiness.
 
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 
 This verified appliance view provides visual orientation before you begin.
 
-![Atlaso Authentication page in the clean-appliance desktop viewport.](../assets/screenshots/authentication-clean-desktop.webp)
+![Atlaso OIDC provider settings with a responsive validation and published identity URL rail.](../assets/screenshots/authentication-clean-desktop.webp)
 
-*Figure: Authentication in the verified clean-appliance desktop state.*
+*Figure: OIDC provider desired-state settings and validation rail in the desktop viewport.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
@@ -29,7 +28,9 @@ This verified appliance view provides visual orientation before you begin.
 
 The canonical issuer is exactly `https://<applied-appliance-fqdn>/identity`. It is configured from Appliance Settings,
 never inferred from `Host`, `Forwarded`, or `X-Forwarded-*` request headers. IP issuers, explicit ports, query strings,
-fragments, user information, and path or trailing-slash variants are rejected.
+fragments, user information, and path or trailing-slash variants are rejected. Readiness also parses the issued,
+CA-managed Management HTTPS certificate, checks its validity period, and requires its DNS names to cover that exact
+FQDN.
 
 One credential-verification service resolves only two persisted identity types:
 
@@ -136,6 +137,36 @@ longer exist stop contributing immediately. Only the configured external strings
 suffixes, bind identities, endpoints, server details, and unmapped names never enter ID tokens, access tokens, UserInfo,
 jobs, audits, or logs.
 
+## Administration and lifecycle
+
+The provider settings rail follows the DNS desired-state and validation pattern. It autosaves provider state but rejects
+enablement until every readiness check passes. OIDC has no service-specific apply action: client, key, mapping, and
+provider lifecycle changes are application state, while Management HTTPS remains enforced through global Appliance
+Apply.
+
+Confidential clients are browsed in a Tabulator collection and created or edited through the shared reviewed wizard.
+Editing can change the operator label, identity-source binding, granted scopes, exact redirect and post-logout URIs,
+loopback-development posture, and enabled state. It never changes the generated client ID or exposes the Argon2 secret
+hash. Creation and secret rotation show plaintext exactly once.
+
+Client row actions provide a redacted relying-party integration download. It contains only issuer and discovery
+metadata, public endpoints, client ID, authentication method, granted scopes, exact registered URIs, identity-source
+posture, and enabled state. It never includes a client secret, token, authorization code, private key, password,
+authenticated URL, or guessed VCF value.
+
+Signing keys use a wizard-backed collection. Rotation atomically activates a new 3072-bit RS256 key and retires the
+previous key. A retired key cannot be removed until its enforced publication overlap has elapsed. Stable subjects remain
+a read-only collection; mapping edits remain compact row-level autosave using the Physical Interfaces reference.
+
+Operational redaction covers secret-bearing fields, private-key blocks, JWT path values, authenticated URL user
+information, and OIDC query parameters such as authorization codes, client secrets, access tokens, and ID token hints.
+
+The rendered administration page is verified at desktop and narrow viewports with no page-level horizontal overflow.
+Keyboard activation opens the shared client wizard, focus moves to its first required field and returns to the launch
+control, step validation preserves entered values, and status/error regions announce updates. Shared modal focus
+containment, labels, fallback tables, and the explicit no-JavaScript read-only state preserve an accessible recovery
+path. Collection overflow remains inside its labeled grid region at narrow widths.
+
 ![OIDC external group mapping grid at the desktop viewport](../assets/screenshots/authentication-group-mappings-desktop.webp)
 
 The direct-edit collection keeps source, organization, optional client override, and external name in one compact
@@ -160,10 +191,9 @@ during ordinary downgrade. If complete rollback requires their removal, restore 
 
 1. Authentication foundation and disabled provider skeleton.
 2. Authorization Code flow, browser-session hardening, token issuance, UserInfo, and RP-initiated logout.
-3. Organization selection, scope-filtered current-state claims, and explicit local-role/LDAP-group mappings. **Delivered
-   in this phase.**
+3. Organization selection, scope-filtered current-state claims, and explicit local-role/LDAP-group mappings.
 4. Administration and lifecycle completion, issuer/applied-certificate validation, centralized redaction, and
-   integration export.
+   integration export. **Delivered in this phase.**
 5. VCF 9.1 interoperability and all acceptance scenarios.
 
 Until the final phase succeeds, Atlaso does not claim VCF OIDC compatibility. The constrained design excludes implicit,
@@ -175,12 +205,6 @@ LDAP sources; social/federated identity; SAML; SCIM; wildcard redirects; front-c
 
 These captures show responsive layouts and useful operational states referenced by this page.
 
-### Authentication
-
-![Atlaso Authentication page in the clean-appliance responsive viewport.](../assets/screenshots/authentication-clean-responsive.webp)
-
-*Figure: Authentication in the verified clean-appliance responsive state.*
-
 ### Authentication: Oidc Group Mappings
 
 ![Atlaso Authentication page showing the OIDC external group mapping grid at the desktop viewport.](../assets/screenshots/authentication-group-mappings-desktop.webp)
@@ -190,5 +214,11 @@ These captures show responsive layouts and useful operational states referenced 
 ![Atlaso Authentication page showing the OIDC external group mapping grid at the responsive viewport.](../assets/screenshots/authentication-group-mappings-responsive.webp)
 
 *Figure: OIDC external group mappings in the responsive direct-edit collection.*
+
+### Authentication: Oidc Provider
+
+![Atlaso OIDC provider settings stacked above validation and published identity URLs at a narrow viewport.](../assets/screenshots/authentication-clean-responsive.webp)
+
+*Figure: OIDC provider settings with validation and published identity URLs stacked at the responsive viewport.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->

@@ -60,7 +60,9 @@ The following cross-cutting boundaries always apply:
 - VMware Workstation is the default live appliance target; use Hyper-V lifecycle coverage for exact VLAN behavior.
 - Validate live appliance readiness through `/openapi.json`, not VMware Tools IP discovery or service color alone.
 - OIDC clients use explicit validated identity sources and emit only granted, explicitly mapped claims; see the detailed
-  agent policies and canonical OIDC service guide.
+  agent policies and canonical OIDC service guide. Administration keeps generated client IDs immutable, shows secrets
+  once, validates the issuer against the applied Management HTTPS certificate, preserves retired-key overlap, and
+  exports only public relying-party metadata.
 - Never expose credentials, authenticated URLs, private keys, raw secrets, or secret-bearing commands in UI, jobs,
   audits, logs, documentation, screenshots, or video.
 - Browser navigation to a globally disabled Web Terminal must render the authenticated Atlaso unavailable-state page;

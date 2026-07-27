@@ -12,6 +12,8 @@ from urllib.parse import urlsplit
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 from authlib import __version__ as AUTHLIB_VERSION
+from cryptography import x509
+from cryptography.x509.oid import NameOID
 from joserfc import jwt
 from joserfc.jwk import RSAKey
 from sqlalchemy import delete, select, update
@@ -19,6 +21,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from atlaso.app.models import (
     ApplianceSettings,
+    CaCertificate,
     LdapGroup,
     LdapGroupMembership,
     LdapOrganization,
@@ -163,6 +166,10 @@ def provider_validation_errors(
         errors.append("Management HTTPS must be enabled before the OIDC provider can be enabled.")
     elif not _management_https_is_applied(db, appliance):
         errors.append("Management HTTPS and the issuer FQDN must be applied before the OIDC provider can be enabled.")
+    else:
+        certificate_error = _management_certificate_error(db, appliance)
+        if certificate_error:
+            errors.append(certificate_error)
     if require_active_key and active_signing_key(db) is None:
         errors.append("Generate an active OIDC signing key before enabling the provider.")
     elif require_active_key:
@@ -205,6 +212,44 @@ def _management_https_is_applied(db: Session, appliance: ApplianceSettings) -> b
         and bool(preview.get("management_https_cert_path"))
         and bool(preview.get("management_https_key_path"))
     )
+
+
+def _management_certificate_error(db: Session, appliance: ApplianceSettings) -> str:
+    """Return a public-safe readiness error for the applied management certificate."""
+
+    fqdn = normalize_fqdn(appliance.fqdn)
+    certificate = db.execute(
+        select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https")
+    ).scalar_one_or_none()
+    if (
+        certificate is None
+        or certificate.status != "issued"
+        or not certificate.enabled
+        or not certificate.certificate_pem
+    ):
+        return "The applied Management HTTPS certificate is not available for OIDC issuer validation."
+    try:
+        parsed = x509.load_pem_x509_certificate(certificate.certificate_pem.encode("utf-8"))
+        now = datetime.now(timezone.utc)
+        if parsed.not_valid_before_utc > now or parsed.not_valid_after_utc <= now:
+            return "The applied Management HTTPS certificate is not currently valid."
+        try:
+            names = {
+                normalize_fqdn(value)
+                for value in parsed.extensions.get_extension_for_class(
+                    x509.SubjectAlternativeName
+                ).value.get_values_for_type(x509.DNSName)
+            }
+        except x509.ExtensionNotFound:
+            names = {
+                normalize_fqdn(attribute.value)
+                for attribute in parsed.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+            }
+    except (TypeError, ValueError, x509.InvalidVersion):
+        return "The applied Management HTTPS certificate cannot be validated."
+    if fqdn not in names:
+        return "The applied Management HTTPS certificate does not cover the exact OIDC issuer FQDN."
+    return ""
 
 
 def validate_enabled_provider_at_startup(db: Session) -> None:
@@ -358,6 +403,24 @@ def generate_signing_key(
     db.add(row)
     db.flush()
     return row, previous
+
+
+def delete_retired_signing_key(
+    db: Session,
+    row: OidcSigningKey,
+    *,
+    now: datetime | None = None,
+) -> None:
+    if row.status == "active" or row.active_slot is not None:
+        raise OidcConflictError("The active OIDC signing key cannot be deleted; rotate it first.")
+    if row.status != "retired" or row.publish_until is None:
+        raise OidcConflictError("Only a retired OIDC signing key can be deleted.")
+    if _aware(row.publish_until) > (now or utcnow()):
+        raise OidcConflictError(
+            "The retired OIDC signing key must remain published until its overlap window ends."
+        )
+    db.delete(row)
+    db.flush()
 
 
 def signing_key_to_dict(row: OidcSigningKey) -> dict[str, object]:
@@ -525,6 +588,63 @@ def create_client(
     return get_client(db, row.id), raw_secret
 
 
+def update_client(
+    db: Session,
+    *,
+    row: OidcClient,
+    name: str,
+    organization_id: int | None,
+    redirect_uris: list[str],
+    post_logout_redirect_uris: list[str],
+    allowed_scopes: list[str],
+    allow_loopback_redirects: bool,
+    access_token_lifetime_seconds: int,
+    id_token_lifetime_seconds: int,
+    authorization_code_lifetime_seconds: int,
+    enabled: bool,
+) -> OidcClient:
+    normalized_name = name.strip()
+    if not normalized_name:
+        raise OidcConfigurationError("OIDC client name is required.")
+    organization = None
+    if organization_id is not None:
+        organization = db.get(LdapOrganization, organization_id)
+        if organization is None or not organization.enabled:
+            raise OidcConfigurationError("Bound OIDC client organization must exist and be enabled.")
+    normalized_redirects = validate_redirect_uri_list(
+        redirect_uris,
+        allow_loopback=allow_loopback_redirects,
+        required=True,
+    )
+    normalized_logout_redirects = validate_redirect_uri_list(
+        post_logout_redirect_uris,
+        allow_loopback=allow_loopback_redirects,
+        required=False,
+    )
+    scopes = normalize_allowed_scopes(allowed_scopes)
+
+    row.name = normalized_name
+    row.organization_id = organization.id if organization else None
+    row.allowed_scopes = " ".join(scopes)
+    row.access_token_lifetime_seconds = access_token_lifetime_seconds
+    row.id_token_lifetime_seconds = id_token_lifetime_seconds
+    row.authorization_code_lifetime_seconds = authorization_code_lifetime_seconds
+    row.allow_loopback_redirects = allow_loopback_redirects
+    row.enabled = enabled
+    row.updated_at = utcnow()
+    for redirect in list(row.redirect_uris):
+        db.delete(redirect)
+    db.flush()
+    for uri in normalized_redirects:
+        db.add(OidcClientRedirectUri(oidc_client_id=row.id, kind="redirect", uri=uri))
+    for uri in normalized_logout_redirects:
+        db.add(OidcClientRedirectUri(oidc_client_id=row.id, kind="post_logout", uri=uri))
+    db.flush()
+    validate_all_mapping_contexts(db)
+    db.expire(row, ["redirect_uris", "organization"])
+    return get_client(db, row.id)
+
+
 def rotate_client_secret(db: Session, row: OidcClient) -> str:
     raw_secret = generate_client_secret()
     row.client_secret_hash = hash_client_secret(raw_secret)
@@ -565,6 +685,30 @@ def list_clients(db: Session) -> list[OidcClient]:
             .order_by(OidcClient.name, OidcClient.id)
         ).scalars()
     )
+
+
+def integration_export(db: Session, row: OidcClient) -> dict[str, object]:
+    """Build a public-metadata-only relying-party configuration document."""
+
+    provider = ensure_provider_settings(db)
+    urls = issuer_endpoint_urls(provider.issuer_url)
+    client = oidc_client_to_dict(row)
+    return {
+        "issuer": urls["issuer"],
+        "discovery_url": urls["discovery_url"],
+        "authorization_endpoint": urls["authorization_endpoint"],
+        "token_endpoint": urls["token_endpoint"],
+        "userinfo_endpoint": urls["userinfo_endpoint"],
+        "jwks_uri": urls["jwks_uri"],
+        "end_session_endpoint": urls["end_session_endpoint"],
+        "client_id": row.client_id,
+        "token_endpoint_auth_method": row.token_endpoint_auth_method,
+        "allowed_scopes": client["allowed_scopes"],
+        "redirect_uris": client["redirect_uris"],
+        "post_logout_redirect_uris": client["post_logout_redirect_uris"],
+        "organization": row.organization.slug if row.organization else "explicit-source-selection",
+        "enabled": row.enabled,
+    }
 
 
 def managed_ldap_source_enabled(db: Session) -> bool:

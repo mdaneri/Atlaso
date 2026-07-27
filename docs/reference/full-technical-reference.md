@@ -662,12 +662,14 @@ reconciliation uses local `ldapi:///` with SASL EXTERNAL. VCF configuration incl
 `employeeType` mapping, but Atlaso does not import groups or assign VCF roles. See
 [Managed LDAP for VCF Automation 9.1](../services/managed-ldap.md).
 
-The Authentication page contains Atlaso's constrained OIDC provider. Phase 2 implements Authorization Code with
+The Authentication page contains Atlaso's constrained OIDC provider. It implements Authorization Code with
 confidential `client_secret_basic`, mandatory PKCE S256, exact redirects, required state and nonce, signed secure
 browser sessions, five-minute RS256 ID/access JWTs, UserInfo revalidation, and RP-initiated logout. Provider enablement
-requires the canonical issuer, applied management HTTPS, an active signing key, and protocol readiness. Unbound clients
-authenticate Local identities; organization-bound clients authenticate only their fixed managed LDAP organization, and
-managed LDAP OIDC sessions never grant operator UI access. See
+requires the canonical issuer, an applied Management HTTPS certificate valid for the exact issuer FQDN, an active
+signing key, and protocol readiness. Shared grid/wizard administration supports client editing, exact redirect
+lifecycle, one-time secret rotation, retired-key overlap and cleanup, and a public-metadata-only integration export.
+Unbound clients authenticate Local identities; organization-bound clients authenticate only their fixed managed LDAP
+organization, and managed LDAP OIDC sessions never grant operator UI access. See
 [Constrained OpenID Connect provider](../services/oidc-provider.md).
 
 On the Photon appliance, real mutating helper actions re-enter through a transient `systemd-run` service when

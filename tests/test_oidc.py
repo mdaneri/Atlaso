@@ -1,6 +1,6 @@
 import base64
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import re
@@ -19,7 +19,12 @@ def _admin_headers(client) -> dict[str, str]:
 
 
 def _set_applied_management_https(db, fqdn: str = "atlaso.example.test") -> None:
-    from atlaso.app.models import ApplianceSettings, Setting
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    from atlaso.app.models import ApplianceSettings, CaCertificate, Setting
 
     appliance = db.execute(select(ApplianceSettings)).scalar_one()
     appliance.fqdn = fqdn
@@ -44,6 +49,36 @@ def _set_applied_management_https(db, fqdn: str = "atlaso.example.test") -> None
         db.add(row)
     else:
         row.value = json.dumps(payload)
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, fqdn)])
+    now = datetime.now(timezone.utc)
+    certificate_pem = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(subject)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_after(now + timedelta(days=30))
+        .add_extension(x509.SubjectAlternativeName([x509.DNSName(fqdn)]), critical=False)
+        .sign(key, hashes.SHA256())
+        .public_bytes(serialization.Encoding.PEM)
+        .decode("ascii")
+    )
+    certificate = db.execute(
+        select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https")
+    ).scalar_one_or_none()
+    if certificate is None:
+        certificate = CaCertificate(
+            common_name=fqdn,
+            managed_owner="appliance:https",
+            private_key_encrypted="test-only-encrypted-key",
+        )
+        db.add(certificate)
+    certificate.status = "issued"
+    certificate.enabled = True
+    certificate.certificate_pem = certificate_pem
+    certificate.subject_alt_names = fqdn
     db.flush()
 
 
@@ -184,6 +219,31 @@ def test_oidc_public_documents_require_complete_protocol_readiness(client):
     assert client.get("https://testserver/identity/jwks").status_code == 200
 
 
+def test_oidc_readiness_rejects_certificate_for_a_different_fqdn(client):
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, Setting
+    from atlaso.app.services import oidc
+
+    with SessionLocal() as db:
+        _set_applied_management_https(db, "certificate.example.test")
+        appliance = db.execute(select(ApplianceSettings)).scalar_one()
+        appliance.fqdn = "issuer.example.test"
+        baseline = db.execute(
+            select(Setting).where(Setting.key == "appliance_apply.baselines.v1")
+        ).scalar_one()
+        payload = json.loads(baseline.value)
+        preview = json.loads(payload["appliance_settings"]["config_preview"])
+        preview["fqdn"] = appliance.fqdn
+        payload["appliance_settings"]["config_preview"] = json.dumps(preview)
+        baseline.value = json.dumps(payload)
+        provider = oidc.ensure_provider_settings(db)
+        provider.issuer_url = "https://issuer.example.test/identity"
+        errors = oidc.provider_validation_errors(db, provider, require_active_key=False)
+        assert errors == [
+            "The applied Management HTTPS certificate does not cover the exact OIDC issuer FQDN."
+        ]
+
+
 def test_oidc_confidential_client_secret_is_argon2_and_shown_only_once(client):
     headers = _admin_headers(client)
     created = client.post(
@@ -233,6 +293,97 @@ def test_oidc_confidential_client_secret_is_argon2_and_shown_only_once(client):
         assert row.client_secret_hash != old_hash
         assert not verify_client_secret(row.client_secret_hash, plaintext)
         assert verify_client_secret(row.client_secret_hash, replacement)
+
+
+def test_oidc_client_update_preserves_generated_identity_and_export_is_redacted(client):
+    headers = _admin_headers(client)
+    created = client.post(
+        "/api/v1/oidc/clients",
+        headers=headers,
+        json={
+            "name": "Lifecycle client",
+            "redirect_uris": ["https://rp.example.test/callback"],
+            "allowed_scopes": ["openid", "profile"],
+        },
+    )
+    assert created.status_code == 201, created.text
+    created_payload = created.json()
+    row = created_payload["client"]
+    original_secret = created_payload["client_secret"]
+
+    updated = client.put(
+        f"/api/v1/oidc/clients/{row['id']}",
+        headers=headers,
+        json={
+            "name": "Lifecycle client updated",
+            "redirect_uris": ["https://rp.example.test/callback-2"],
+            "post_logout_redirect_uris": ["https://rp.example.test/signed-out"],
+            "allowed_scopes": ["openid", "email"],
+            "enabled": False,
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["client_id"] == row["client_id"]
+    assert updated.json()["redirect_uris"] == ["https://rp.example.test/callback-2"]
+    assert "client_secret_hash" not in updated.text
+    assert original_secret not in updated.text
+
+    exported = client.get(
+        f"/api/v1/oidc/clients/{row['id']}/integration-export",
+        headers=headers,
+    )
+    assert exported.status_code == 200, exported.text
+    assert exported.json()["client_id"] == row["client_id"]
+    assert exported.json()["redirect_uris"] == ["https://rp.example.test/callback-2"]
+    assert exported.json()["organization"] == "explicit-source-selection"
+    assert original_secret not in exported.text
+    assert "client_secret" not in exported.json()
+    assert "private" not in exported.text.lower()
+
+
+def test_oidc_operational_redaction_covers_authenticated_urls_and_protocol_values():
+    from atlaso.app.operational_logging import redact_operational_text
+
+    original = (
+        "callback=https://operator:credential@example.test/callback"
+        "?code=opaque-code&client_secret=opaque-secret"
+        "&id_token_hint=header.payload.signature "
+        "source=https://operator@example.test/private"
+    )
+    redacted = redact_operational_text(original)
+    assert "credential" not in redacted
+    assert "opaque-code" not in redacted
+    assert "opaque-secret" not in redacted
+    assert "header.payload.signature" not in redacted
+    assert "operator@" not in redacted
+
+
+def test_retired_signing_key_cannot_be_deleted_before_overlap(client):
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import OidcSigningKey
+
+    headers = _admin_headers(client)
+    created = client.post("/api/v1/oidc/signing-keys", headers=headers)
+    assert created.status_code == 201, created.text
+    rotated = client.post("/api/v1/oidc/signing-keys/rotate", headers=headers)
+    assert rotated.status_code == 200, rotated.text
+
+    with SessionLocal() as db:
+        retired = db.execute(
+            select(OidcSigningKey).where(OidcSigningKey.status == "retired")
+        ).scalar_one()
+        retired_id = retired.id
+
+    blocked = client.delete(f"/api/v1/oidc/signing-keys/{retired_id}", headers=headers)
+    assert blocked.status_code == 409
+    assert "overlap window" in blocked.json()["detail"]
+
+    with SessionLocal() as db:
+        retired = db.get(OidcSigningKey, retired_id)
+        retired.publish_until = datetime.now(timezone.utc) - timedelta(seconds=1)
+        db.commit()
+    deleted = client.delete(f"/api/v1/oidc/signing-keys/{retired_id}", headers=headers)
+    assert deleted.status_code == 204
 
 
 def test_oidc_redirect_validation_rejects_wildcards_fragments_and_nonliteral_loopback():
@@ -544,12 +695,20 @@ def test_authentication_page_exposes_authorization_code_oidc_ui(client):
     assert "Authorization Code, organization selection, and scoped claims" in page.text
     assert 'id="oidc-group-mappings-table"' in page.text
     assert 'data-fallback-id="oidc-group-mappings-fallback"' in page.text
-    assert "VCF 9.1 Identity Broker" in page.text
-    assert "Paste the exact VCF Identity Broker redirect URI" in page.text
+    assert 'class="split-workspace service-settings-workspace" id="oidc-provider"' in page.text
+    assert "<h2>Validation</h2>" in page.text
+    assert "data-oidc-provider-validation-status" in page.text
+    assert "<noscript>" in page.text
+    assert "server-rendered client, signing-key, mapping, and subject tables remain readable" in page.text
+    assert 'id="oidc-clients-table"' in page.text
+    assert 'id="oidc-keys-table"' in page.text
+    assert 'id="oidc-subjects-table"' in page.text
+    assert page.text.count("data-atlaso-wizard") >= 2
+    assert "Atlaso never guesses" in page.text
     assert 'name="enabled"' in page.text
     assert 'data-autosave-status-id="oidc-provider-autosave-status"' in page.text
     assert page.text.count('class="help-icon"') >= 10
-    assert "Rotate OIDC signing key?" in page.text or "Generate first signing key" in page.text
+    assert "Rotate signing key" in page.text or "Generate first signing key" in page.text
 
 
 def test_authentication_ui_deletes_bound_client_before_ldap_organization(client):
@@ -593,9 +752,8 @@ def test_authentication_ui_deletes_bound_client_before_ldap_organization(client)
     assert signed_in.status_code == 303
     page = client.get("/authentication")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    assert f'action="/authentication/oidc/clients/{client_record_id}/delete"' in page.text
-    assert "Delete OIDC client Bound VCF client?" in page.text
-    assert 'data-confirm-label="Delete OIDC client"' in page.text
+    assert '"name": "Bound VCF client"' in page.text
+    assert 'data-fallback-id="oidc-clients-fallback"' in page.text
 
     deleted = client.post(
         f"/authentication/oidc/clients/{client_record_id}/delete",

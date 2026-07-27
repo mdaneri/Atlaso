@@ -29,6 +29,7 @@ from atlaso.app.schemas import (
     OidcClientCreate,
     OidcClientCreated,
     OidcClientEnabledUpdate,
+    OidcClientUpdate,
     OidcClientResponse,
     OidcClientSecretRotated,
     OidcGroupMappingCreate,
@@ -36,6 +37,7 @@ from atlaso.app.schemas import (
     OidcGroupMappingUpdate,
     OidcProviderSettingsResponse,
     OidcProviderSettingsUpdate,
+    OidcIntegrationExport,
     OidcSigningKeyResponse,
     OidcSubjectResponse,
 )
@@ -47,12 +49,14 @@ from atlaso.app.services.oidc import (
     create_client,
     create_group_mapping,
     discovery_document,
+    delete_retired_signing_key,
     enabled_login_organizations,
     ensure_provider_settings,
     generate_signing_key,
     get_client,
     group_mapping_to_dict,
     issuer_endpoint_urls,
+    integration_export,
     jwks_document,
     list_clients,
     list_group_mappings,
@@ -72,6 +76,7 @@ from atlaso.app.services.oidc import (
     validate_userinfo_claims,
     validate_all_mapping_contexts,
     update_group_mapping,
+    update_client,
     verify_client_secret,
     rotate_client_secret,
     signing_key_to_dict,
@@ -834,6 +839,37 @@ def rotate_oidc_signing_key(
     return OidcSigningKeyResponse(**signing_key_to_dict(row))
 
 
+@admin_router.delete(
+    "/signing-keys/{key_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    operation_id="deleteRetiredOidcSigningKey",
+)
+def delete_oidc_signing_key(
+    key_id: int,
+    request: Request,
+    identity: Identity = Depends(require_scope("admin:all")),
+    db: Session = Depends(get_db),
+) -> Response:
+    row = db.get(OidcSigningKey, key_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="OIDC signing key not found.")
+    kid = row.kid
+    try:
+        delete_retired_signing_key(db, row)
+    except OidcConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    record_audit(
+        db,
+        actor=identity.username,
+        action="delete_retired_oidc_signing_key",
+        resource_type="oidc_signing_key",
+        resource_id=str(key_id),
+        detail=f"kid={kid}",
+        request_id=getattr(request.state, "request_id", None),
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @admin_router.get("/clients", response_model=list[OidcClientResponse])
 def get_oidc_clients(
     _identity: Identity = Depends(require_scope("admin:all")),
@@ -1044,6 +1080,81 @@ def create_oidc_client(
         client=OidcClientResponse(**oidc_client_to_dict(row)),
         client_secret=raw_secret,
     )
+
+
+@admin_router.put(
+    "/clients/{client_record_id}",
+    response_model=OidcClientResponse,
+    operation_id="updateOidcClient",
+)
+def update_oidc_client(
+    client_record_id: int,
+    payload: OidcClientUpdate,
+    request: Request,
+    identity: Identity = Depends(require_scope("admin:all")),
+    db: Session = Depends(get_db),
+) -> OidcClientResponse:
+    try:
+        row = get_client(db, client_record_id)
+        row = update_client(
+            db,
+            row=row,
+            name=payload.name,
+            organization_id=payload.organization_id,
+            redirect_uris=payload.redirect_uris,
+            post_logout_redirect_uris=payload.post_logout_redirect_uris,
+            allowed_scopes=payload.allowed_scopes,
+            allow_loopback_redirects=payload.allow_loopback_redirects,
+            access_token_lifetime_seconds=payload.access_token_lifetime_seconds,
+            id_token_lifetime_seconds=payload.id_token_lifetime_seconds,
+            authorization_code_lifetime_seconds=payload.authorization_code_lifetime_seconds,
+            enabled=payload.enabled,
+        )
+    except OidcConfigurationError as exc:
+        db.rollback()
+        status_code = (
+            status.HTTP_404_NOT_FOUND
+            if str(exc) == "OIDC client not found."
+            else status.HTTP_422_UNPROCESSABLE_CONTENT
+        )
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    record_audit(
+        db,
+        actor=identity.username,
+        action="update_oidc_client",
+        resource_type="oidc_client",
+        resource_id=str(row.id),
+        detail=f"client_id={row.client_id}; organization_id={row.organization_id or 'unbound'}",
+        request_id=getattr(request.state, "request_id", None),
+    )
+    return OidcClientResponse(**oidc_client_to_dict(row))
+
+
+@admin_router.get(
+    "/clients/{client_record_id}/integration-export",
+    response_model=OidcIntegrationExport,
+    operation_id="exportOidcClientIntegration",
+)
+def export_oidc_client_integration(
+    client_record_id: int,
+    request: Request,
+    identity: Identity = Depends(require_scope("admin:all")),
+    db: Session = Depends(get_db),
+) -> OidcIntegrationExport:
+    try:
+        row = get_client(db, client_record_id)
+    except OidcConfigurationError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    record_audit(
+        db,
+        actor=identity.username,
+        action="export_oidc_client_integration",
+        resource_type="oidc_client",
+        resource_id=str(row.id),
+        detail=f"client_id={row.client_id}",
+        request_id=getattr(request.state, "request_id", None),
+    )
+    return OidcIntegrationExport(**integration_export(db, row))
 
 
 @admin_router.post(
