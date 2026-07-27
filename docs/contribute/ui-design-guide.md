@@ -174,6 +174,43 @@ Use the established control for the value:
 - tabs for mutually exclusive modes that solve the same job; and
 - tag editor for one-or-more interfaces, addresses, networks, domains, or labels.
 
+### Multiple checkbox choices
+
+Use checkbox choice tiles when an operator may select several independent options and each option benefits from a short
+description. The **Allowed scopes** control in the OpenID Connect confidential-client wizard is the reference. Keep a
+plain checkbox list for compact, self-explanatory options, and use a select, radio group, or tabs when the choices are
+mutually exclusive.
+
+The tile treatment must:
+
+- use a semantic `fieldset` and `legend`, with one native checkbox wrapped by each full-width `label`;
+- place a concise option name and supporting description beside the checkbox;
+- use the selected border and background, the native checked state, and a visible `:focus-within` treatment so color is
+  never the only indication;
+- reserve a compact trailing badge for durable constraints such as **required**, not transient validation messages;
+- preserve server-side validation because a badge or default checked state does not enforce a requirement;
+- arrange a short set in a balanced grid and collapse to one column at narrow widths; and
+- keep the native checkbox visible and the complete tile clickable. Do not replace it with a scripted div or use the
+  visual card as a mutually exclusive radio control.
+
+Use the OIDC scope-choice structure for this pattern:
+
+```html
+<fieldset class="scope-choice-fieldset">
+  <legend>Allowed scopes</legend>
+  <div class="scope-choice-grid">
+    <label class="scope-choice">
+      <input type="checkbox" name="allowed_scopes" value="openid" checked>
+      <span class="scope-choice-copy">
+        <strong>OpenID</strong>
+        <small>Required identity subject and ID token</small>
+      </span>
+      <span class="scope-choice-badge">required</span>
+    </label>
+  </div>
+</fieldset>
+```
+
 Every configurable setting has an adjacent `i` help control using `.field-label` and `.help-icon`. The tooltip explains
 what changes, where it applies, and any safety boundary. Use explicit action labels such as **Review appliance changes**
 or **Submit appliance changes** instead of generic **Save** or **Apply**.
