@@ -270,14 +270,11 @@ def _user_can_access_terminal(user: User | None) -> bool:
     return bool(_user_has_terminal_permission(user) and (user.shell or "/sbin/nologin") != "/sbin/nologin")
 
 
-@router.get("/terminal", response_class=HTMLResponse, response_model=None)
-def terminal_page(
+def _terminal_page_context(
     request: Request,
-    identity=Depends(get_session_identity),
-    db: Session = Depends(get_db),
-) -> HTMLResponse | RedirectResponse:
-    if identity is None:
-        return RedirectResponse("/login?next=/terminal", status_code=303)
+    identity,
+    db: Session,
+) -> tuple[dict[str, object], bool]:
     user = db.get(User, int(identity.user_id))
     desired, selected, addresses, management_addresses = _terminal_network_state(db)
     if desired.web_terminal_enabled and not _user_has_terminal_permission(user):
@@ -318,6 +315,20 @@ def terminal_page(
         "terminal_addresses": addresses,
         "terminal_public": public_listener,
     }
+    return context, public_listener
+
+
+@router.get("/terminal", response_class=HTMLResponse, response_model=None)
+def terminal_page(
+    request: Request,
+    identity=Depends(get_session_identity),
+    db: Session = Depends(get_db),
+) -> HTMLResponse | RedirectResponse:
+    if identity is None:
+        return RedirectResponse("/login?next=/terminal", status_code=303)
+    context, public_listener = _terminal_page_context(request, identity, db)
+    from atlaso.app.ui import appliance_apply_status, public_portal_links_context, render
+
     if public_listener:
         context.update(
             {
@@ -334,6 +345,24 @@ def terminal_page(
         "public_terminal.html" if public_listener else "terminal.html",
         context,
     )
+
+
+@router.get("/terminal/remote", response_class=HTMLResponse, response_model=None)
+def remote_terminal_page(
+    request: Request,
+    identity=Depends(get_session_identity),
+    db: Session = Depends(get_db),
+) -> HTMLResponse | RedirectResponse:
+    if identity is None:
+        return RedirectResponse("/login?next=/terminal/remote", status_code=303)
+    if not identity.has_role("admin"):
+        raise HTTPException(status_code=403, detail="Administrator role required")
+    context, public_listener = _terminal_page_context(request, identity, db)
+    if public_listener:
+        raise HTTPException(status_code=404, detail="Not found")
+    from atlaso.app.ui import render
+
+    return render(request, "remote_terminal.html", context)
 
 
 @router.post("/terminal/remote-launches", response_model=None)
@@ -377,6 +406,7 @@ async def create_remote_terminal_launch(
             {
                 "error_code": "SSH_HOST_KEY_CONFIRMATION_REQUIRED",
                 "target": target,
+                "hostname": hostname,
                 "fingerprint": fingerprint,
             },
             status_code=409,
@@ -408,7 +438,10 @@ async def create_remote_terminal_launch(
         detail=f"uri_index={uri_index}",
     )
     return JSONResponse(
-        {"url": f"/terminal#remote-launch={raw}"},
+        {
+            "url": f"/terminal/remote#remote-launch={raw}",
+            "target": hostname,
+        },
         headers={"Cache-Control": "no-store"},
     )
 

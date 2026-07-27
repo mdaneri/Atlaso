@@ -241,7 +241,10 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert "openVaultUri" in source
     assert "Connect\" : \"Open" in source
     assert "/terminal/remote-launches" in source
-    assert "atlaso-vaults-20260727-6" in Path("atlaso/app/templates/base.html").read_text()
+    assert 'window.open("about:blank"' not in source
+    assert "/terminal/remote#target=" in source
+    assert "remoteWindow.location.replace" in source
+    assert "atlaso-vaults-20260727-7" in Path("atlaso/app/templates/base.html").read_text()
     pxe_template = Path("atlaso/app/templates/esxi_pxe.html").read_text()
     assert "{{vault.<vaultname>.<key>.uri1}}" in pxe_template
     assert "{{vault.<vaultname>.<key>.uri9}}" in pxe_template
@@ -322,6 +325,7 @@ def test_remote_vault_uri_launch_uses_one_use_server_side_ticket(client, monkeyp
     assert confirmation.json() == {
         "error_code": "SSH_HOST_KEY_CONFIRMATION_REQUIRED",
         "target": "vcf.example.internal:2222",
+        "hostname": "vcf.example.internal",
         "fingerprint": "SHA256:test-fingerprint",
     }
 
@@ -333,6 +337,8 @@ def test_remote_vault_uri_launch_uses_one_use_server_side_ticket(client, monkeyp
     launch_url = launched.json()["url"]
     assert "Not-In-The-Browser!" not in launched.text
     launch_token = parse_qs(urlsplit(launch_url).fragment)["remote-launch"][0]
+    assert urlsplit(launch_url).path == "/terminal/remote"
+    assert launched.json()["target"] == "vcf.example.internal"
 
     terminal_page = client.get("/terminal")
     assert terminal_page.status_code == 200
@@ -342,6 +348,19 @@ def test_remote_vault_uri_launch_uses_one_use_server_side_ticket(client, monkeyp
     assert 'fragment.get("remote-launch")' in terminal_js
     assert "history.replaceState" in terminal_js
     assert '"Vault Remote Terminal"' in terminal_js
+    assert 'panel.dataset.terminalRemoteOnly === "true"' in terminal_js
+    assert "document.title = remoteTarget" in terminal_js
+
+    remote_page = client.get("/terminal/remote")
+    assert remote_page.status_code == 200
+    assert 'data-terminal-remote-only="true"' in remote_page.text
+    assert 'data-terminal-heading>Remote terminal</h1>' in remote_page.text
+    assert 'aria-label="Interactive remote terminal"' in remote_page.text
+    assert "app-shell" not in remote_page.text
+    assert "sidebar" not in remote_page.text
+    assert "Primary" not in remote_page.text
+    assert "/static/terminal.js?v=atlaso-vault-uri-20260727-2" in remote_page.text
+    assert "/static/app.css?v=atlaso-vaults-20260727-4" in remote_page.text
 
     ticket_response = client.post(
         "/terminal/tickets",

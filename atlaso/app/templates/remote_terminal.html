@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Remote terminal</title>
+    <link rel="icon" href="/static/brand/atlaso-icon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/static/app.css?v=atlaso-vaults-20260727-4">
+    <link rel="stylesheet" href="/static/vendor/xterm/xterm.css?v=5.5.0">
+  </head>
+  <body class="remote-terminal-body">
+    <main class="remote-terminal-page">
+      <section
+        class="terminal-panel remote-terminal-panel"
+        data-web-terminal
+        data-terminal-remote-only="true"
+        data-terminal-available="{{ 'true' if terminal_available else 'false' }}"
+        data-csrf="{{ csrf_token }}"
+      >
+        <h1 class="remote-terminal-host" data-terminal-heading>Remote terminal</h1>
+        {% if not terminal_available %}
+          <div class="alert warning">{{ terminal_unavailable_reason }}</div>
+        {% else %}
+          <div class="terminal-screen-frame">
+            <div class="terminal-screen" data-terminal-screen aria-label="Interactive remote terminal"></div>
+            <div class="terminal-screen-actions" aria-label="Terminal session actions">
+              <button class="terminal-screen-action" type="button" data-terminal-copy aria-label="Copy terminal session" title="Copy terminal session">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              </button>
+              <button class="terminal-screen-action" type="button" data-terminal-download aria-label="Download terminal session" title="Download terminal session">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+              </button>
+            </div>
+            <div class="alert warning terminal-overlay-message hidden" data-terminal-notice></div>
+            <div class="alert error terminal-overlay-message hidden" data-terminal-error></div>
+            <button class="button secondary compact-button terminal-overlay-reconnect hidden" type="button" data-terminal-reconnect>Reconnect</button>
+          </div>
+        {% endif %}
+      </section>
+    </main>
+    <script src="/static/vendor/xterm/xterm.js?v=5.5.0"></script>
+    <script src="/static/terminal.js?v=atlaso-vault-uri-20260727-2"></script>
+  </body>
+</html>

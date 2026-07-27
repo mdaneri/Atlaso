@@ -19,7 +19,9 @@ Each entry may also store up to nine credential-free HTTP, HTTPS, SSH, or SFTP U
 entry wizard. Right-click an existing row, or focus it and press **Shift+F10**, to open its context menu. **Edit
 password** reopens the entry wizard, **Delete password** uses the shared destructive confirmation, and each configured
 URI has its own action. HTTP and HTTPS open in a separate browser tab; SSH and SFTP open the Atlaso Web Terminal and
-authenticate with the entry username and password.
+authenticate with the entry username and password. Atlaso opens the remote terminal window only after the administrator
+accepts the displayed host-key fingerprint. That window is a standalone terminal surface identified only by the remote
+hostname; it does not include the Atlaso administration shell.
 
 ## Managed scripts
 

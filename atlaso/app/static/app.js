@@ -16432,8 +16432,7 @@ function initializeVaultsPage() {
       window.open(uri, "_blank", "noopener");
       return;
     }
-    const remoteWindow = window.open("about:blank", "_blank");
-    if (remoteWindow) remoteWindow.opener = null;
+    let remoteWindow = null;
     const requestLaunch = async (confirmedFingerprint = "") => {
       const body = new FormData();
       body.set("csrf", String(entryForm.elements.csrf.value || ""));
@@ -16455,6 +16454,11 @@ function initializeVaultsPage() {
           label: "Connect",
         });
         if (!confirmed) return null;
+        remoteWindow = window.open(
+          `/terminal/remote#target=${encodeURIComponent(String(payload.hostname || "Remote host"))}`,
+          "_blank",
+        );
+        if (remoteWindow) remoteWindow.opener = null;
         return requestLaunch(payload.fingerprint);
       }
       if (!response.ok) throw new Error(payload.detail || "The remote terminal could not be prepared.");
@@ -16466,8 +16470,16 @@ function initializeVaultsPage() {
         remoteWindow?.close();
         return;
       }
-      if (remoteWindow) remoteWindow.location.assign(payload.url);
-      else window.location.assign(payload.url);
+      if (remoteWindow && !remoteWindow.closed) {
+        const launchUrl = new URL(payload.url, window.location.origin);
+        launchUrl.hash += `&target=${encodeURIComponent(String(payload.target || "Remote host"))}`;
+        remoteWindow.location.replace(launchUrl.toString());
+        return;
+      }
+      const launchUrl = new URL(payload.url, window.location.origin);
+      launchUrl.hash += `&target=${encodeURIComponent(String(payload.target || "Remote host"))}`;
+      const opened = window.open(launchUrl.toString(), "_blank", "noopener");
+      if (!opened) throw new Error("Allow pop-ups for Atlaso to open the approved remote terminal.");
     } catch (error) {
       remoteWindow?.close();
       showTransientGridStatus(error instanceof Error ? error.message : "The remote terminal could not be prepared.");

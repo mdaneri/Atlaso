@@ -4,15 +4,22 @@
 
   const fragment = new URLSearchParams(location.hash.slice(1));
   const remoteLaunch = fragment.get("remote-launch") || "";
+  const remoteTarget = fragment.get("target") || "";
+  const remoteOnly = panel.dataset.terminalRemoteOnly === "true";
+  const heading = panel.querySelector("[data-terminal-heading]");
+  if (remoteTarget && heading instanceof HTMLElement) {
+    heading.textContent = remoteTarget;
+    document.title = remoteTarget;
+  }
   if (remoteLaunch) {
     history.replaceState(history.state, "", `${location.pathname}${location.search}`);
-    const heading = panel.querySelector("[data-terminal-heading]");
     const description = panel.querySelector("[data-terminal-description]");
-    if (heading instanceof HTMLElement) heading.textContent = "Vault Remote Terminal";
+    if (!remoteTarget && heading instanceof HTMLElement) heading.textContent = "Vault Remote Terminal";
     if (description instanceof HTMLElement) {
       description.textContent = "Server-side SSH using the selected vault entry. The password is never sent to the browser.";
     }
   }
+  if (remoteOnly && !remoteLaunch) return;
 
   const screen = panel.querySelector("[data-terminal-screen]");
   const status = panel.querySelector("[data-terminal-status]");

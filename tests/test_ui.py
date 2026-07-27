@@ -153,7 +153,7 @@ def test_web_terminal_requires_login_and_renders_admin_only_unavailable_state(cl
     assert "Web terminal access is disabled in Appliance Settings." in response.text
     assert '"detail":' not in response.text
     assert "/static/vendor/xterm/xterm.js?v=5.5.0" in response.text
-    assert "/static/terminal.js?v=atlaso-vault-uri-20260727-1" in response.text
+    assert "/static/terminal.js?v=atlaso-vault-uri-20260727-2" in response.text
     assert "data-terminal-connect" not in response.text
     assert "data-terminal-disconnect" not in response.text
 
