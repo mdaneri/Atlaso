@@ -973,7 +973,7 @@ def test_reported_template_accessibility_contracts():
     assert '<label class="file-upload-control compact-file-upload">' in vcf_depot
     assert '<div class="dns-authority-records" role="list">' in dns
     assert '<dl class="dns-authority-records">' not in dns
-    assert '<div class="error-list" role="list">' in authentication
+    assert '<div class="error-list" role="list" data-oidc-provider-validation-errors>' in authentication
     assert '<ul class="error-list">' not in authentication
 
 
