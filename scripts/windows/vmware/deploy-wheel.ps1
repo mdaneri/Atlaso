@@ -598,6 +598,36 @@ for runtime_dependency_path in $runtime_dependency_paths; do
 done
 IFS="$old_ifs"
 "$python" -m pip install --force-reinstall --no-deps "$wheel"
+install -d -o root -g root -m 0755 /usr/local/bin
+ln -sfn "$venv/bin/atlaso-vault" /usr/local/bin/atlaso-vault
+ln -sfn "$venv/bin/atlaso-vault" /usr/bin/atlaso-vault
+pwsh_path="$(command -v pwsh || true)"
+if [ -n "$pwsh_path" ]; then
+    powershell_home="$(dirname "$(readlink -f "$pwsh_path")")"
+    cat >"/opt/atlaso/bin/atlaso-vault-profile.ps1" <<'ATLASO_POWERSHELL_PROFILE'
+function global:Get-AtlasoVault {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Key
+    )
+
+    $value = & '/opt/atlaso/.venv/bin/atlaso-vault' get --key $Key
+    if ($LASTEXITCODE -ne 0) {
+        throw "Atlaso vault lookup failed for key: $Key"
+    }
+    return ($value -join [Environment]::NewLine)
+}
+ATLASO_POWERSHELL_PROFILE
+    chown root:root /opt/atlaso/bin/atlaso-vault-profile.ps1
+    chmod 0644 /opt/atlaso/bin/atlaso-vault-profile.ps1
+    touch "$powershell_home/profile.ps1"
+    if ! grep -qxF ". '/opt/atlaso/bin/atlaso-vault-profile.ps1'" "$powershell_home/profile.ps1"; then
+        printf "\n. '/opt/atlaso/bin/atlaso-vault-profile.ps1'\n" >>"$powershell_home/profile.ps1"
+    fi
+    chown root:root "$powershell_home/profile.ps1"
+    chmod 0644 "$powershell_home/profile.ps1"
+fi
 if [ -n "$helper_path" ]; then
     install -o root -g root -m 0755 "$helper_path" /opt/atlaso/bin/atlaso-helper
     sed -i 's/\r$//' /opt/atlaso/bin/atlaso-helper

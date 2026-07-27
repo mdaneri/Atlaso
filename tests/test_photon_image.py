@@ -99,6 +99,12 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert '"$IPXE_BOOTLOADER_TARGET_DIR/undionly.kpxe"' in script
     assert '"$IPXE_BOOTLOADER_TARGET_DIR/snponly.efi"' in script
     assert 'BOOTSTRAP_SHELL="${ATLASO_BOOTSTRAP_ADMIN_SHELL:-/usr/bin/pwsh}"' in script
+    assert 'ln -sfn "$ATLASO_HOME/.venv/bin/atlaso-vault" /usr/local/bin/atlaso-vault' in script
+    assert 'ln -sfn "$ATLASO_HOME/.venv/bin/atlaso-vault" /usr/bin/atlaso-vault' in script
+    assert '"$ATLASO_HOME/image/common/powershell/atlaso-vault-profile.ps1"' in script
+    profile = Path("image/common/powershell/atlaso-vault-profile.ps1").read_text(encoding="utf-8")
+    assert "function global:Get-AtlasoVault" in profile
+    assert "/opt/atlaso/.venv/bin/atlaso-vault" in profile
     assert '--shell "$BOOTSTRAP_SHELL"' in script
     assert "touch /etc/shells" in script
     assert 'grep -qxF "$BOOTSTRAP_SHELL" /etc/shells' in script

@@ -30,7 +30,9 @@ password="$(atlaso-vault get --key esx.esx01.root)"
 ```
 
 The commands fail outside a scoped managed-script run. Atlaso redacts exact injected values from captured stdout and
-stderr, but scripts must still treat passwords as secrets and must not transform, print, or transmit them.
+stderr, but scripts must still treat passwords as secrets and must not transform, print, or transmit them. Both commands
+are installed in interactive appliance shells for discoverability; invoking them there fails closed because no scoped
+runtime credential is present.
 
 ## ESXi Kickstarts
 

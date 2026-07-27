@@ -200,6 +200,14 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert "vault-entry-form-grid" in template
 
 
+def test_vmware_wheel_deploy_exposes_fail_closed_vault_shell_commands():
+    deploy = Path("scripts/windows/vmware/deploy-wheel.ps1").read_text(encoding="utf-8")
+    assert 'ln -sfn "$venv/bin/atlaso-vault" /usr/local/bin/atlaso-vault' in deploy
+    assert 'ln -sfn "$venv/bin/atlaso-vault" /usr/bin/atlaso-vault' in deploy
+    assert "function global:Get-AtlasoVault" in deploy
+    assert "/opt/atlaso/.venv/bin/atlaso-vault" in deploy
+
+
 def test_vcf_import_discovers_sddc_manager_and_installer_passwords():
     import httpx
 
