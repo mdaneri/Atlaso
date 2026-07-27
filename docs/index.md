@@ -17,7 +17,7 @@ proof-of-concept, lab, and test environments.
 
 - [Getting started](getting-started/index.md) for installation and first configuration.
 - [Operate](operate/index.md) for daily appliance tasks, changes, updates, automation, and troubleshooting.
-- [Services](services/index.md) for DNS, identity, storage, network boot, and VCF integrations.
+- [Services](services/index.md) for DNS, identity, storage, network boot, VCF/ESX password vaults, and VCF integrations.
 - [Reference](reference/index.md) for APIs, image building, interoperability, and detailed technical behavior.
 - [Contribute](contribute/index.md) for repository workflow, documentation, design, and implementation policies.
 - [Project](project/index.md) for branding, roadmaps, and historical design records.

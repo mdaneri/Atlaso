@@ -32,7 +32,8 @@ A Kickstart may bind one VCF/ESX password vault and reference
 `{{vault.<vaultname>.<key>.username}}`, `{{vault.<vaultname>.<key>.password}}`, or a configured URI from
 `{{vault.<vaultname>.<key>.uri1}}` through `{{vault.<vaultname>.<key>.uri9}}`. Atlaso resolves those markers only in the
 dynamic response for an enabled host assigned to that Kickstart. Source downloads and previews retain the marker,
-markers cannot name a vault other than the bound vault, and dynamic responses disable caching.
+markers cannot name a vault other than the bound vault, and dynamic responses disable caching. See
+[Vaults](vaults.md) for marker examples, URI ordering, and secret-handling boundaries.
 
 > Terminology note: Broadcom documentation uses **ESX** in these 9.x installation pages. Older VMware material often
 > used **ESXi**.

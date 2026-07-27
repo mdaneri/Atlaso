@@ -90,7 +90,8 @@ Scripts receive no Atlaso credentials by default. A schedule or manual run may s
 Atlaso stages that vault as a transient systemd credential and provides `atlaso-vault get --key <key>` to Bash/Python
 and `Get-AtlasoVault -Key <key>` to PowerShell. The helper fails outside the scoped process and exact injected values are
 redacted from captured output. Output is bounded in task history. Script definitions and schedules are included in
-settings archives, but restored revisions and schedules are always disabled and vault contents are never exported.
+settings archives, but restored revisions and schedules are always disabled and vault contents are never exported. See
+[Vaults](../services/vaults.md) for the complete key, scope, and recovery contract.
 
 ## Service operations
 

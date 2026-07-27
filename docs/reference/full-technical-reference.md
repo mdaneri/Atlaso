@@ -356,6 +356,27 @@ status: disabled until VCF Backups is enabled and Local Users apply creates the 
 
 Set/reset this account from `Users`, then apply Local Users before exposing the SFTP endpoint beyond a development lab.
 
+## Vaults
+
+Vaults at `/vaults` store only VCF and ESX passwords. Entries contain a lowercase dotted key, description, optional
+username, encrypted password, and up to nine credential-free HTTP, HTTPS, SSH, or SFTP URIs. Passwords remain masked in
+the management UI until an administrator explicitly uses the audited, no-cache, 15-second reveal control.
+
+Managed-script jobs persist both the selected vault ID and a non-reusable scope fingerprint. The worker verifies both
+before decrypting, stages values as a transient systemd credential, and removes the staged file after execution.
+`Get-AtlasoVault -Key <key>` is the PowerShell interface; `atlaso-vault get --key <key>` is the Bash/Python interface.
+Both commands fail closed outside a scoped managed-script run.
+
+ESXi Kickstarts resolve only the vault explicitly bound to that Kickstart. Dynamic responses support
+`{{vault.<vaultname>.<key>.username}}`, `{{vault.<vaultname>.<key>.password}}`, and `uri1` through `uri9`; previews and
+source downloads retain markers, and resolved responses disable caching. VCF Helper can import supported passwords from
+VCF 9 SDDC Manager and VCF Installer after explicit TLS fingerprint confirmation.
+
+HTTP and HTTPS URI actions open a separate browser tab. SSH and SFTP actions use a short-lived one-use Web Terminal
+launch, require explicit host-key fingerprint confirmation, recheck the host key, and authenticate server-side without
+placing the password in browser state. Settings archives exclude vault entries and Kickstart bindings; restore clears
+them. See [Vaults](../services/vaults.md) for operator procedures and recovery guidance.
+
 ## VCF Helper
 
 VCF Helper at `/vcf-helper` generates DNS desired state, deploys SDDC Manager OVAs found under
