@@ -16262,7 +16262,6 @@ function initializeVaultsPage() {
       { id: "review", title: "Review the entry", description: "Confirm metadata without displaying the password." },
     ],
     validateStep: ({ step }) => {
-      if (step.id === "identity") return entryForm.reportValidity();
       if (step.id === "password") {
         const password = entryForm.elements.value;
         if (password.required && !password.value) return { ok: false, message: "Enter a password.", field: password };
@@ -16284,7 +16283,6 @@ function initializeVaultsPage() {
       entryForm.elements.key.value = row?.key || "";
       entryForm.elements.description.value = row?.description || "";
       entryForm.elements.username.value = row?.username || "";
-      entryForm.elements.resource_name.value = row?.resource_name || "";
       entryForm.elements.value.required = !row;
       const title = entryForm.querySelector("[data-vault-entry-title]");
       if (title) title.textContent = row ? "Edit or rotate password" : "Add password";

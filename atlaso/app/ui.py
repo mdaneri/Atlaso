@@ -8247,7 +8247,7 @@ def edit_vault_entry_from_ui(
     value: str = Form(""),
     description: str = Form(""),
     username: str = Form(""),
-    resource_name: str = Form(""),
+    resource_name: str | None = Form(None),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
@@ -8265,7 +8265,7 @@ def edit_vault_entry_from_ui(
             value=value,
             description=description,
             username=username,
-            resource_name=resource_name,
+            resource_name=entry.resource_name if resource_name is None else resource_name,
         )
         db.add(entry)
         db.commit()

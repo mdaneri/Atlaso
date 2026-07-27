@@ -184,6 +184,9 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert "Password type" not in template
     assert 'name="secret_type"' not in template
     assert "data-vault-entry-review-type" not in template
+    assert "<span>Resource</span>" not in template
+    assert 'name="resource_name"' not in template
+    assert "entryForm.reportValidity()" not in source
 
 
 def test_vcf_import_discovers_sddc_manager_and_installer_passwords():
