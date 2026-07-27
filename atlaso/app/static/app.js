@@ -1880,7 +1880,7 @@ function initializeDhcpLeasesTable() {
   const csrf = tableElement.dataset.csrf || "";
   const rows = JSON.parse(tableElement.dataset.leases || "[]");
   try {
-    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
+    const atlasoGridOptions1 = {
       data: rows,
       layout: "fitColumns",
       height: "300px",
@@ -1920,10 +1920,12 @@ function initializeDhcpLeasesTable() {
         { title: "Expires", field: "expires_at", minWidth: 210 },
         { title: "Client ID", field: "client_id", formatter: (cell) => escapeHtml(cell.getValue() || "-"), minWidth: 210 },
       ],
-    });
-    if (fallback) {
-      fallback.classList.add("hidden");
-    }
+    };
+    window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      pattern: "read-only",
+      options: atlasoGridOptions1,
+    }).table;
   } catch (error) {
     showDhcpReservationError(error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
   }
@@ -2510,7 +2512,7 @@ function initializeCaProfilesTable() {
   const csrf = tableElement.dataset.csrf || "";
   const rows = [...JSON.parse(tableElement.dataset.profiles || "[]"), newCaProfileRow()];
   try {
-    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
+    const atlasoGridOptions2 = {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -2602,10 +2604,12 @@ function initializeCaProfilesTable() {
       rowFormatter: (row) => {
         markNewRecordRow(row, "name");
       },
-    });
-    if (fallback) {
-      fallback.classList.add("hidden");
-    }
+    };
+    window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      pattern: "direct-edit",
+      options: atlasoGridOptions2,
+    }).table;
   } catch (error) {
     showCaMessage("ca-profile-error", error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
   }
@@ -2627,7 +2631,7 @@ function initializeCaCertificatesTable() {
   const defaultProfileId = profileOptions[0]?.id || "";
   const rows = [...JSON.parse(tableElement.dataset.certificates || "[]"), newCaCertificateRow(defaultProfileId)];
   try {
-    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
+    const atlasoGridOptions3 = {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -2759,10 +2763,12 @@ function initializeCaCertificatesTable() {
       rowFormatter: (row) => {
         markNewRecordRow(row, "common_name");
       },
-    });
-    if (fallback) {
-      fallback.classList.add("hidden");
-    }
+    };
+    window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      pattern: "read-only",
+      options: atlasoGridOptions3,
+    }).table;
   } catch (error) {
     showCaMessage("ca-certificate-error", error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
   }
@@ -2986,7 +2992,7 @@ function initializeFirewallRulesTable() {
   const rows = [...JSON.parse(tableElement.dataset.rules || "[]"), newFirewallRuleRow(interfaces[0] || "")];
   const tableHeight = `${Math.min(Math.max(rows.length * 28 + 34, 90), 240)}px`;
   try {
-    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
+    const atlasoGridOptions4 = {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -3073,10 +3079,12 @@ function initializeFirewallRulesTable() {
       rowFormatter: (row) => {
         markNewRecordRow(row, "name");
       },
-    });
-    if (fallback) {
-      fallback.classList.add("hidden");
-    }
+    };
+    window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      pattern: "direct-edit",
+      options: atlasoGridOptions4,
+    }).table;
   } catch (error) {
     showCaMessage("firewall-rule-error", error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
   }
@@ -3131,7 +3139,7 @@ function initializeManagedFirewallRulesTable() {
   const sourceGroups = JSON.parse(tableElement.dataset.sourceGroups || "[]");
   const sourceGroupOptions = Object.fromEntries(sourceGroups.map((group) => [group.id, group.name]));
   try {
-    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
+    const atlasoGridOptions5 = {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -3166,10 +3174,12 @@ function initializeManagedFirewallRulesTable() {
         row.getElement().classList.toggle("managed-rule-generated", data.managed_state === "generated");
         row.getElement().classList.toggle("managed-rule-replaced", data.managed_state === "replaced");
       },
-    });
-    if (fallback) {
-      fallback.classList.add("hidden");
-    }
+    };
+    window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      pattern: "direct-edit",
+      options: atlasoGridOptions5,
+    }).table;
   } catch (_error) {
     if (fallback) {
       fallback.classList.remove("hidden");
@@ -3222,7 +3232,7 @@ function initializeServicesTable() {
   const csrf = tableElement.dataset.csrf || "";
   const rows = JSON.parse(tableElement.dataset.services || "[]");
   try {
-    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
+    const atlasoGridOptions6 = {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -3295,10 +3305,12 @@ function initializeServicesTable() {
           minWidth: 260,
         },
       ],
-    });
-    if (fallback) {
-      fallback.classList.add("hidden");
-    }
+    };
+    window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      pattern: "direct-edit",
+      options: atlasoGridOptions6,
+    }).table;
   } catch (error) {
     showCaMessage("services-error", error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
   }
@@ -3552,7 +3564,7 @@ function initializeUsersTable() {
   const roleOptions = roleValues(roles);
   const rows = [...JSON.parse(tableElement.dataset.users || "[]"), newUserRow()];
   try {
-    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
+    const atlasoGridOptions7 = {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -3658,10 +3670,12 @@ function initializeUsersTable() {
       rowFormatter: (row) => {
         markNewRecordRow(row, "username");
       },
-    });
-    if (fallback) {
-      fallback.classList.add("hidden");
-    }
+    };
+    window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      pattern: "direct-edit",
+      options: atlasoGridOptions7,
+    }).table;
   } catch (error) {
     showCaMessage("users-error", error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
   }
@@ -3850,7 +3864,7 @@ function initializeKmsClientsTable() {
   const roleValuesMap = roleValues(JSON.parse(tableElement.dataset.roleOptions || "[]"));
   const rows = [...JSON.parse(tableElement.dataset.clients || "[]"), newKmsClientRow()];
   try {
-    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
+    const atlasoGridOptions8 = {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -3919,10 +3933,12 @@ function initializeKmsClientsTable() {
       rowFormatter: (row) => {
         markNewRecordRow(row, "name");
       },
-    });
-    if (fallback) {
-      fallback.classList.add("hidden");
-    }
+    };
+    window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      pattern: "direct-edit",
+      options: atlasoGridOptions8,
+    }).table;
   } catch (error) {
     showCaMessage("kms-client-error", error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
   }
@@ -3946,7 +3962,7 @@ function initializeKmsKeysTable() {
   const defaultClientId = clientOptions[0]?.id || "";
   const rows = [...JSON.parse(tableElement.dataset.keys || "[]"), newKmsKeyRow(defaultClientId)];
   try {
-    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
+    const atlasoGridOptions9 = {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -4041,10 +4057,12 @@ function initializeKmsKeysTable() {
       rowFormatter: (row) => {
         markNewRecordRow(row, "name");
       },
-    });
-    if (fallback) {
-      fallback.classList.add("hidden");
-    }
+    };
+    window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      pattern: "direct-edit",
+      options: atlasoGridOptions9,
+    }).table;
   } catch (error) {
     showCaMessage("kms-key-error", error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
   }
@@ -4540,7 +4558,7 @@ function initializeLdapDirectoryTables() {
     const organizationId = usersElement.dataset.organizationId || "0";
     try {
       const users = [...JSON.parse(usersElement.dataset.users || "[]"), newLdapUserRow(organizationId)];
-      const usersTable = /* atlaso-legacy-tabulator: #117 */ new Tabulator(usersElement, {
+      const atlasoGridOptions10 = {
         data: users, index: "id", layout: "fitColumns", height: "420px", rowHeight: 28, placeholder: "No directory users", reactiveData: false,
         rowContextMenu: [
           { label: "Reset password", action: (_event, row) => openLdapPasswordModal(row.getData()), disabled: (component) => component.getData().is_new },
@@ -4559,10 +4577,15 @@ function initializeLdapDirectoryTables() {
           { title: "DN", field: "dn", minWidth: 260, visible: false, editable: false },
         ], "uid"),
         rowFormatter: (row) => markNewRecordRow(row, "uid"),
-      });
-      attachLdapGridState(usersElement, usersTable, "users", organizationId);
-      const fallback = document.getElementById(usersElement.dataset.fallbackId || "");
-      if (fallback instanceof HTMLElement) fallback.hidden = true;
+      };
+      const usersTable = window.AtlasoUiPatterns.createGrid({
+        element: usersElement,
+        pattern: "direct-edit",
+        options: atlasoGridOptions10,
+      }).table;
+      if (usersTable) {
+        attachLdapGridState(usersElement, usersTable, "users", organizationId);
+      }
     } catch (error) { showCaMessage("ldap-user-error", error instanceof Error ? error.message : "LDAP users could not render."); }
   }
 
@@ -4573,7 +4596,7 @@ function initializeLdapDirectoryTables() {
     try {
       const groups = JSON.parse(groupsElement.dataset.groups || "[]").map((group) => ({ ...group, member_count: Array.isArray(group.members) ? group.members.length : 0, member_names: Array.isArray(group.members) ? group.members.map((member) => `${member.type}: ${member.name}`).join(", ") : "" }));
       groups.push(newLdapGroupRow(organizationId));
-      const groupsTable = /* atlaso-legacy-tabulator: #117 */ new Tabulator(groupsElement, {
+      const atlasoGridOptions11 = {
         data: groups, index: "id", layout: "fitColumns", height: "420px", rowHeight: 28, responsiveLayout: "collapse", placeholder: "No directory groups", reactiveData: false,
         rowContextMenu: [
           { label: "Edit membership", action: (_event, row) => openLdapGroupMembersModal(row.getData()), disabled: (component) => component.getData().is_new },
@@ -4587,10 +4610,15 @@ function initializeLdapDirectoryTables() {
           { title: "Enabled", field: "enabled", formatter: atlasoBooleanFormatter, editor: "tickCross", hozAlign: "center", width: 95, cellEdited: (cell) => autoSaveLdapGroup(cell, csrf, organizationId) },
         ], "name"),
         rowFormatter: (row) => markNewRecordRow(row, "name"),
-      });
-      attachLdapGridState(groupsElement, groupsTable, "groups", organizationId);
-      const fallback = document.getElementById(groupsElement.dataset.fallbackId || "");
-      if (fallback instanceof HTMLElement) fallback.hidden = true;
+      };
+      const groupsTable = window.AtlasoUiPatterns.createGrid({
+        element: groupsElement,
+        pattern: "direct-edit",
+        options: atlasoGridOptions11,
+      }).table;
+      if (groupsTable) {
+        attachLdapGridState(groupsElement, groupsTable, "groups", organizationId);
+      }
     } catch (error) { showCaMessage("ldap-group-error", error instanceof Error ? error.message : "LDAP groups could not render."); }
   }
 }
@@ -4819,7 +4847,7 @@ function initializeNTPsecUpstreamsTable() {
     const ntsSupported = tableElement.dataset.ntpNtsSupported !== "false";
     const rows = normalizeNTPsecUpstreamRows(parsedRows);
     rows.push(ntpBlankUpstreamRow());
-    const table = /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
+    const atlasoGridOptions12 = {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -4859,7 +4887,13 @@ function initializeNTPsecUpstreamsTable() {
       rowFormatter: (row) => {
         markNewRecordRow(row, "source");
       },
-    });
+    };
+    const table = window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      pattern: "direct-edit",
+      options: atlasoGridOptions12,
+    }).table;
+    if (!table) return;
     table.on("cellEdited", async (cell) => {
       const row = cell.getRow();
       const data = row.getData();
@@ -4876,9 +4910,6 @@ function initializeNTPsecUpstreamsTable() {
       submitNtpUpstreamTableChange(table, hiddenInput);
     });
     syncNTPsecUpstreamsHiddenInput(table);
-    if (fallback instanceof HTMLElement) {
-      fallback.classList.add("hidden");
-    }
   } catch (error) {
     if (fallback instanceof HTMLElement) {
       fallback.classList.remove("hidden");
@@ -5441,7 +5472,7 @@ function initializeRoutesWanRoutingTable() {
   const generatedWithKind = generatedRows.map((row) => ({ ...row, kind: "auto route-role rule" }));
   const rows = [...generatedWithKind, ...explicitRows, newWanRoutingRuleRow(defaultSource, defaultDestination)];
   try {
-    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
+    const atlasoGridOptions13 = {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -5535,10 +5566,12 @@ function initializeRoutesWanRoutingTable() {
         markNewRecordRow(row, "name");
         row.getElement().classList.toggle("readonly-row", Boolean(data.generated));
       },
-    });
-    if (fallback) {
-      fallback.classList.add("hidden");
-    }
+    };
+    window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      pattern: "direct-edit",
+      options: atlasoGridOptions13,
+    }).table;
   } catch (error) {
     showWanMessage("routes-wan-routing-error", error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
   }
@@ -5560,7 +5593,7 @@ function initializeRoutesWanNatTable() {
   const defaultTarget = targets[0]?.name || "";
   const rows = [...JSON.parse(tableElement.dataset.natRules || "[]"), newWanNatRuleRow(defaultTarget)];
   try {
-    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
+    const atlasoGridOptions14 = {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -5633,10 +5666,12 @@ function initializeRoutesWanNatTable() {
       rowFormatter: (row) => {
         markNewRecordRow(row, "name");
       },
-    });
-    if (fallback) {
-      fallback.classList.add("hidden");
-    }
+    };
+    window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      pattern: "direct-edit",
+      options: atlasoGridOptions14,
+    }).table;
   } catch (error) {
     showWanMessage("routes-wan-nat-error", error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
   }
@@ -5660,7 +5695,7 @@ function initializeRoutesWanRoutesTable() {
   const defaultTarget = targets[0]?.name || "";
   const rows = [...JSON.parse(tableElement.dataset.routes || "[]"), newWanRouteRow(defaultTarget)];
   try {
-    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
+    const atlasoGridOptions15 = {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -5731,10 +5766,12 @@ function initializeRoutesWanRoutesTable() {
       rowFormatter: (row) => {
         markNewRecordRow(row, "destination_cidr");
       },
-    });
-    if (fallback) {
-      fallback.classList.add("hidden");
-    }
+    };
+    window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      pattern: "direct-edit",
+      options: atlasoGridOptions15,
+    }).table;
   } catch (error) {
     showWanMessage("routes-wan-route-error", error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
   }
@@ -5753,7 +5790,7 @@ function initializeRoutesWanPoliciesTable() {
   const csrf = tableElement.dataset.csrf || "";
   const rows = [...JSON.parse(tableElement.dataset.policies || "[]"), newWanPolicyRow()];
   try {
-    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
+    const atlasoGridOptions16 = {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -5799,10 +5836,12 @@ function initializeRoutesWanPoliciesTable() {
       rowFormatter: (row) => {
         markNewRecordRow(row, "name");
       },
-    });
-    if (fallback) {
-      fallback.classList.add("hidden");
-    }
+    };
+    window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      pattern: "direct-edit",
+      options: atlasoGridOptions16,
+    }).table;
   } catch (error) {
     showWanMessage("routes-wan-policy-error", error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
   }
@@ -6353,7 +6392,7 @@ function initializePhysicalInterfacesTable() {
   });
   const rows = JSON.parse(tableElement.dataset.interfaces || "[]");
   try {
-    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
+    const atlasoGridOptions17 = {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -6588,10 +6627,12 @@ function initializePhysicalInterfacesTable() {
         { title: "Oper", field: "oper_state", formatter: operStateFormatter, width: 105, headerSort: false },
         { title: "Source", field: "inventory_source", width: 100, headerSort: false },
       ],
-    });
-    if (fallback) {
-      fallback.classList.add("hidden");
-    }
+    };
+    window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      pattern: "direct-edit",
+      options: atlasoGridOptions17,
+    }).table;
   } catch (error) {
     showNetworkMessage("physical-interface-error", error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
   }
@@ -7253,7 +7294,7 @@ function initializeVlanInterfacesTable() {
   const defaultMtu = parentMtus[defaultParent] || 1500;
   const rows = [...JSON.parse(tableElement.dataset.vlans || "[]"), newVlanInterfaceRow(defaultParent, defaultMtu)];
   try {
-    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
+    const atlasoGridOptions19 = {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -7362,10 +7403,12 @@ function initializeVlanInterfacesTable() {
         markNewRecordRow(row, "vlan_id", "add_vlan");
         row.getElement().classList.toggle("locked-record-row", Boolean(row.getData().parent_missing));
       },
-    });
-    if (fallback) {
-      fallback.classList.add("hidden");
-    }
+    };
+    window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      pattern: "direct-edit",
+      options: atlasoGridOptions19,
+    }).table;
   } catch (error) {
     showNetworkMessage("vlan-interface-error", error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
   }
@@ -7390,7 +7433,7 @@ function initializeDnsRecordsTableElement(tableElement) {
   const csrf = tableElement.dataset.csrf || "";
 
   try {
-    const table = /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
+    const atlasoGridOptions20 = {
       data: records,
       index: "id",
       layout: "fitColumns",
@@ -7466,12 +7509,16 @@ function initializeDnsRecordsTableElement(tableElement) {
       rowFormatter: (row) => {
         markNewRecordRow(row, "host_label");
       },
-    });
-    atlasoDnsRecordTables.set(tableElement, table);
-    if (fallback) {
-      fallback.classList.add("hidden");
+    };
+    const table = window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      pattern: "direct-edit",
+      options: atlasoGridOptions20,
+    }).table;
+    if (table) {
+      atlasoDnsRecordTables.set(tableElement, table);
+      redrawDnsRecordTables(tableElement);
     }
-    redrawDnsRecordTables(tableElement);
   } catch (error) {
     showTableError(error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
   }
@@ -7527,7 +7574,7 @@ function initializeDhcpScopesTable() {
     return autoSaveDhcpScope(cell, csrf);
   };
   try {
-    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
+    const atlasoGridOptions21 = {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -7661,10 +7708,12 @@ function initializeDhcpScopesTable() {
         row.getElement().classList.toggle("new-record-row", Boolean(data.is_new));
         row.getElement().classList.toggle("new-record-row-locked", Boolean(data.is_new && !isUniqueNewDhcpScopeName(data, existingScopeNames)));
       },
-    });
-    if (fallback) {
-      fallback.classList.add("hidden");
-    }
+    };
+    window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      pattern: "direct-edit",
+      options: atlasoGridOptions21,
+    }).table;
   } catch (error) {
     showDhcpScopeError(error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
   }
@@ -7685,7 +7734,7 @@ function initializeDhcpOptionsTable() {
   const scopeValues = Object.fromEntries(scopeOptions.map((item) => [item.id, item.label]));
   const rows = [...JSON.parse(tableElement.dataset.options || "[]"), newDhcpOptionRow()];
   try {
-    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
+    const atlasoGridOptions22 = {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -7747,10 +7796,12 @@ function initializeDhcpOptionsTable() {
       rowFormatter: (row) => {
         row.getElement().classList.toggle("new-record-row", Boolean(row.getData().is_new));
       },
-    });
-    if (fallback) {
-      fallback.classList.add("hidden");
-    }
+    };
+    window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      pattern: "direct-edit",
+      options: atlasoGridOptions22,
+    }).table;
   } catch (error) {
     showDhcpOptionError(error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
   }
@@ -7775,7 +7826,7 @@ function initializeDhcpReservationsTable() {
     return autoSaveDhcpReservation(cell, csrf);
   };
   try {
-    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
+    const atlasoGridOptions23 = {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -7847,10 +7898,12 @@ function initializeDhcpReservationsTable() {
       rowFormatter: (row) => {
         row.getElement().classList.toggle("new-record-row", Boolean(row.getData().is_new));
       },
-    });
-    if (fallback) {
-      fallback.classList.add("hidden");
-    }
+    };
+    window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      pattern: "direct-edit",
+      options: atlasoGridOptions23,
+    }).table;
   } catch (error) {
     showDhcpReservationError(error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
   }
@@ -7875,7 +7928,7 @@ function initializeEsxiPxeHostsTable() {
   const defaultIsoPath = isoOptions.find((item) => item.id)?.id || "";
   const rows = [...JSON.parse(tableElement.dataset.hosts || "[]"), newEsxiHostRow(defaultIsoPath)];
   try {
-    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
+    const atlasoGridOptions24 = {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -7981,10 +8034,16 @@ function initializeEsxiPxeHostsTable() {
         markNewRecordRow(row, "hostname");
         row.getElement().classList.toggle("managed-record-row", Boolean(data.is_default));
       },
-    });
-    if (fallback) {
-      fallback.classList.add("hidden");
-    }
+    };
+    window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      pattern: "direct-edit",
+      permission: {
+        allowed: canWrite,
+        message: "You have read-only access to ESXi PXE host references.",
+      },
+      options: atlasoGridOptions24,
+    }).table;
   } catch (error) {
     showEsxiHostError(error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
   }
@@ -9662,7 +9721,7 @@ function initializeVcfRegistryBundlesTable() {
   const csrf = tableElement.dataset.csrf || "";
   const rows = [...JSON.parse(tableElement.dataset.bundles || "[]"), newVcfRegistryBundleRow()];
   try {
-    /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
+    const atlasoGridOptions25 = {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -9731,10 +9790,12 @@ function initializeVcfRegistryBundlesTable() {
       rowFormatter: (row) => {
         markNewRecordRow(row, "name");
       },
-    });
-    if (fallback) {
-      fallback.classList.add("hidden");
-    }
+    };
+    window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      pattern: "direct-edit",
+      options: atlasoGridOptions25,
+    }).table;
   } catch (error) {
     showVcfRegistryMessage(error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
   }
@@ -10233,7 +10294,7 @@ function initializeVcfDepotProfilesTable() {
     newVcfDepotProfileRow(),
   ];
   try {
-    vcfDepotProfilesTable = /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
+    const atlasoGridOptions26 = {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -10393,10 +10454,12 @@ function initializeVcfDepotProfilesTable() {
       rowFormatter: (row) => {
         markNewRecordRow(row, "name");
       },
-    });
-    if (fallback) {
-      fallback.classList.add("hidden");
-    }
+    };
+    vcfDepotProfilesTable = window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      pattern: "direct-edit",
+      options: atlasoGridOptions26,
+    }).table;
   } catch (error) {
     showVcfDepotMessage(error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
   }
@@ -10428,7 +10491,7 @@ function initializeVcfDepotTasksTable() {
   const fallback = document.getElementById(tableElement.dataset.fallbackId || "");
   try {
     const tasks = JSON.parse(tableElement.dataset.tasks || "[]");
-    vcfDepotTasksTable = /* atlaso-legacy-tabulator: #117 */ new window.Tabulator(tableElement, {
+    const atlasoGridOptions27 = {
       data: tasks,
       ajaxURL: "/vcf-offline-depot/tasks/status",
       pagination: true,
@@ -10473,8 +10536,12 @@ function initializeVcfDepotTasksTable() {
         { title: "Started", field: "started_at", minWidth: 210, formatter: (cell) => escapeHtml(cell.getValue() || "—") },
         { title: "Finished", field: "finished_at", minWidth: 210, formatter: (cell) => escapeHtml(cell.getValue() || "—") },
       ],
-    });
-    fallback?.classList.add("hidden");
+    };
+    vcfDepotTasksTable = window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      pattern: "read-only",
+      options: atlasoGridOptions27,
+    }).table;
     if (vcfDepotTasksRefreshInterval) {
       window.clearInterval(vcfDepotTasksRefreshInterval);
     }
@@ -10844,12 +10911,14 @@ function initializeTasksPage() {
     atlasoTaskComponentOptions = [];
   }
   atlasoSelectedTaskId = page.dataset.selectedTaskId || new URLSearchParams(window.location.search).get("job_id") || "";
+  const shouldOpenSelected = Boolean(atlasoSelectedTaskId);
+  atlasoTasksReopenSelected = shouldOpenSelected;
   const tableElement = document.getElementById("tasks-table");
   const fallback = document.getElementById(tableElement?.dataset.fallbackId || "");
   if (tableElement instanceof HTMLElement && typeof window.Tabulator === "function") {
     const initialComponentFilter = page.dataset.taskInitialComponentFilter || "";
     const componentFilterLocked = page.dataset.taskLockComponentFilter === "true";
-    atlasoTasksTable = /* atlaso-legacy-tabulator: #117 */ new window.Tabulator(tableElement, {
+    const atlasoGridOptions28 = {
       ajaxURL: "/tasks/status",
       ajaxParams: () => ({ job_id: atlasoSelectedTaskId || page.dataset.selectedTaskId || "" }),
       ajaxRequestFunc: requestTasksTableData,
@@ -10944,8 +11013,14 @@ function initializeTasksPage() {
       rowFormatter: (row) => {
         row.getElement().classList.toggle("task-grid-new-task", row.getData().id === atlasoNewTaskId);
       },
-    });
-    atlasoTasksTable.on("dataLoaded", () => {
+    };
+    atlasoTasksTable = window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      pattern: "read-only",
+      onOpenRow: (rowData) => openTaskDetail(rowData),
+      options: atlasoGridOptions28,
+    }).table;
+    atlasoTasksTable?.on("dataLoaded", () => {
       updateApplianceUpdateActions();
       if (!atlasoNewTaskId) {
         return;
@@ -10956,12 +11031,11 @@ function initializeTasksPage() {
         row.scrollTo("top", false).catch(() => {});
       }
     });
-    atlasoTasksTable.on("rowClick", (_event, row) => {
+    atlasoTasksTable?.on("rowClick", (_event, row) => {
       atlasoSelectedTaskId = row.getData().id || "";
       row.select();
     });
-    atlasoTasksTable.on("rowDblClick", (_event, row) => openTaskDetail(row.getData()));
-    fallback?.classList.add("hidden");
+    atlasoTasksTable?.on("rowDblClick", (_event, row) => openTaskDetail(row.getData()));
   }
   document.querySelector("[data-task-detail-close]")?.addEventListener("click", () => document.getElementById("task-detail-modal")?.close());
   document.querySelector("[data-task-log-close]")?.addEventListener("click", () => document.getElementById("task-log-modal")?.close());
@@ -10975,12 +11049,13 @@ function initializeTasksPage() {
       cancelTask(atlasoSelectedTaskId).catch((error) => window.alert(error instanceof Error ? error.message : "Unable to cancel task."));
     }
   });
-  const shouldOpenSelected = Boolean(atlasoSelectedTaskId);
-  refreshTasksPage({ reopen: shouldOpenSelected }).catch(() => {
-    if (shouldOpenSelected) {
-      openTaskDetail(atlasoSelectedTaskId);
-    }
-  });
+  if (!atlasoTasksTable) {
+    refreshTasksPage({ reopen: shouldOpenSelected }).catch(() => {
+      if (shouldOpenSelected) {
+        openTaskDetail(atlasoSelectedTaskId);
+      }
+    });
+  }
 }
 
 function updateVcfDepotSummary(form, payload = {}) {
@@ -12606,13 +12681,12 @@ function initializeAuditEventsTable() {
   }
   const fallback = document.getElementById(tableElement.dataset.fallbackId || "");
   try {
-    tableElement.classList.remove("hidden");
     const rows = JSON.parse(tableElement.dataset.auditEvents || "[]");
     const rowHeight = 30;
     const rowPitch = rowHeight + 1;
     const gridChromeHeight = 88;
     const pageSizeForHeight = () => Math.max(5, Math.floor(Math.max(0, tableElement.clientHeight - gridChromeHeight) / rowPitch));
-    const table = /* atlaso-legacy-tabulator: #117 */ new Tabulator(tableElement, {
+    const atlasoGridOptions29 = {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -12631,7 +12705,13 @@ function initializeAuditEventsTable() {
         { title: "Success", field: "success", width: 100, hozAlign: "center", formatter: atlasoBooleanFormatter, headerFilter: "list", headerFilterParams: { values: { "": "All", true: "Yes", false: "No" } } },
         { title: "Detail", field: "detail", minWidth: 280, widthGrow: 2, formatter: "plaintext", tooltip: true, headerFilter: "input" },
       ],
-    });
+    };
+    const table = window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      pattern: "read-only",
+      options: atlasoGridOptions29,
+    }).table;
+    if (!table) return;
     const resizeObserver = new ResizeObserver(() => {
       const nextPageSize = pageSizeForHeight();
       if (table.getPageSize() !== nextPageSize) {
@@ -12639,7 +12719,6 @@ function initializeAuditEventsTable() {
       }
     });
     resizeObserver.observe(tableElement);
-    fallback?.classList.add("hidden");
   } catch (_error) {
     tableElement.classList.add("hidden");
     fallback?.classList.remove("hidden");
@@ -12991,7 +13070,7 @@ function renderApplianceApplyTask(task) {
       { title: "Duration", field: "duration", width: 105, formatter: (cell) => applianceApplyDuration(cell.getRow().getData()) },
     ];
     if (!applianceApplyModalTable) {
-      applianceApplyModalTable = /* atlaso-legacy-tabulator: #117 */ new window.Tabulator(grid, {
+      const atlasoGridOptions30 = {
         data: [task],
         index: "id",
         layout: "fitColumns",
@@ -12999,8 +13078,14 @@ function renderApplianceApplyTask(task) {
         dataTreeStartExpanded: true,
         selectableRows: 1,
         columns,
-      });
-      applianceApplyModalTable.on("rowClick", (_event, row) => renderApplianceApplyStepDetail(row.getData()));
+      };
+      applianceApplyModalTable = window.AtlasoUiPatterns.createGrid({
+        element: grid,
+        pattern: "read-only",
+        onOpenRow: (rowData) => renderApplianceApplyStepDetail(rowData),
+        options: atlasoGridOptions30,
+      }).table;
+      applianceApplyModalTable?.on("rowClick", (_event, row) => renderApplianceApplyStepDetail(row.getData()));
     } else {
       applianceApplyModalTable.replaceData([task]);
     }
@@ -15433,7 +15518,7 @@ function initializeAutomationTables() {
       control?.addEventListener("change", updateCronBuilder);
     });
     scheduleForm.elements.timezone_name?.addEventListener("input", updateCronBuilder);
-    schedulesElement.atlasoTabulator = /* atlaso-legacy-tabulator: #117 */ new Tabulator(schedulesElement, {
+    const atlasoGridOptions31 = {
       data: scheduleRows,
       layout: "fitColumns",
       placeholder: "No automation schedules have been created.",
@@ -15472,10 +15557,15 @@ function initializeAutomationTables() {
         { title: "Last task", field: "last_job_status", width: 110 },
         { title: "State", field: "enabled", width: 85, formatter: atlasoBooleanFormatter, editor: "tickCross", editable: (cell) => !cell.getRow().getData().is_new, hozAlign: "center", headerSort: false, cellEdited: (cell) => submitForm("automation-schedule-toggle", cell.getRow().getData().id) },
       ],
-    });
-    schedulesElement.atlasoTabulator.on("tableBuilt", () => {
-      schedulesElement.atlasoTabulatorReady = true;
-    });
+    };
+    schedulesElement.atlasoTabulator = window.AtlasoUiPatterns.createGrid({
+      element: schedulesElement,
+      pattern: "wizard-backed",
+      onReady: () => {
+        schedulesElement.atlasoTabulatorReady = true;
+      },
+      options: atlasoGridOptions31,
+    }).table;
   }
 
   const executionsElement = document.getElementById("automation-executions-table");
@@ -15484,7 +15574,7 @@ function initializeAutomationTables() {
     const openExecutionTask = (rowData) => {
       if (rowData?.task_url) window.location.assign(rowData.task_url);
     };
-    executionsElement.atlasoTabulator = /* atlaso-legacy-tabulator: #117 */ new Tabulator(executionsElement, {
+    const atlasoGridOptions32 = {
       data: executionRows,
       layout: "fitColumns",
       height: "100%",
@@ -15517,11 +15607,17 @@ function initializeAutomationTables() {
           },
         },
       ],
-    });
-    executionsElement.atlasoTabulator.on("tableBuilt", () => {
-      executionsElement.atlasoTabulatorReady = true;
-    });
-    executionsElement.atlasoTabulator.on("rowDblClick", (_event, row) => openExecutionTask(row.getData()));
+    };
+    executionsElement.atlasoTabulator = window.AtlasoUiPatterns.createGrid({
+      element: executionsElement,
+      pattern: "read-only",
+      onOpenRow: (rowData) => openExecutionTask(rowData),
+      onReady: () => {
+        executionsElement.atlasoTabulatorReady = true;
+      },
+      options: atlasoGridOptions32,
+    }).table;
+    executionsElement.atlasoTabulator?.on("rowDblClick", (_event, row) => openExecutionTask(row.getData()));
   }
 
   const scriptsElement = document.getElementById("automation-scripts-table");
@@ -15600,7 +15696,7 @@ function initializeAutomationTables() {
       showScriptGridStatus("Creating the first immutable disabled revision…");
       form.requestSubmit();
     };
-    scriptsElement.atlasoTabulator = /* atlaso-legacy-tabulator: #117 */ new Tabulator(scriptsElement, {
+    const atlasoGridOptions33 = {
       data: scriptRows,
       layout: "fitColumns",
       placeholder: "No managed scripts have been created.",
@@ -15688,10 +15784,15 @@ function initializeAutomationTables() {
         { title: "Schedules", field: "schedule_count", width: 95, formatter: (cell) => cell.getRow().getData().is_new ? "0" : cell.getValue() },
         { title: "Updated", field: "updated_at", minWidth: 165, formatter: (cell) => cell.getRow().getData().is_new ? "after creation" : cell.getValue() },
       ], "name"),
-    });
-    scriptsElement.atlasoTabulator.on("tableBuilt", () => {
-      scriptsElement.atlasoTabulatorReady = true;
-    });
+    };
+    scriptsElement.atlasoTabulator = window.AtlasoUiPatterns.createGrid({
+      element: scriptsElement,
+      pattern: "direct-edit",
+      onReady: () => {
+        scriptsElement.atlasoTabulatorReady = true;
+      },
+      options: atlasoGridOptions33,
+    }).table;
   }
 
 }
@@ -15727,7 +15828,7 @@ function initializeEsxStorageTables() {
     const canWrite = volumeElement.dataset.canWrite === "true";
     const tableRows = canWrite ? [...rows, { is_new: true, name: "" }] : rows;
     const volumeValue = (cell, formatter = (value) => value) => cell.getRow().getData().is_new ? "" : formatter(cell.getValue());
-    /* atlaso-legacy-tabulator: #117 */ new Tabulator(volumeElement, {
+    const atlasoGridOptions34 = {
       data: tableRows,
       layout: "fitColumns",
       placeholder: "No storage volumes are configured.",
@@ -15740,8 +15841,16 @@ function initializeEsxStorageTables() {
         { title: "Filesystem", field: "filesystem_uuid", formatter: (cell) => volumeValue(cell, (value) => value || "pending ext4 format") },
         { title: "State", field: "state", formatter: (cell) => volumeValue(cell) },
       ],
-    });
-    document.getElementById(volumeElement.dataset.fallbackId || "")?.classList.add("hidden");
+    };
+    window.AtlasoUiPatterns.createGrid({
+      element: volumeElement,
+      pattern: "wizard-backed",
+      permission: {
+        allowed: canWrite,
+        message: "You have read-only access to storage volumes.",
+      },
+      options: atlasoGridOptions34,
+    }).table;
   }
 
   if (shareElement instanceof HTMLElement) {
@@ -15787,7 +15896,7 @@ function initializeEsxStorageTables() {
       const form = document.querySelector('[data-esx-storage-wizard="share"]');
       form?.esxStorageOpenWizard?.(data);
     };
-    /* atlaso-legacy-tabulator: #117 */ new Tabulator(shareElement, {
+    const atlasoGridOptions35 = {
       data: tableRows,
       layout: "fitColumns",
       placeholder: "No NFS datastores are configured.",
@@ -15829,8 +15938,17 @@ function initializeEsxStorageTables() {
           cellEdited: saveEnabledState,
         },
       ],
-    });
-    document.getElementById(shareElement.dataset.fallbackId || "")?.classList.add("hidden");
+    };
+    window.AtlasoUiPatterns.createGrid({
+      element: shareElement,
+      pattern: "wizard-backed",
+      permission: {
+        allowed: canWrite,
+        message: "You have read-only access to NFS datastores.",
+      },
+      onOpenRow: canWrite ? (rowData) => editRow(rowData) : null,
+      options: atlasoGridOptions35,
+    }).table;
   }
 }
 

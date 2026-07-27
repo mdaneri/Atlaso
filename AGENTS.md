@@ -16,12 +16,13 @@ for maintainer direction if a policy is missing, conflicting, or unclear.
 
 Before planning or implementing any user-interface change, read the
 [Atlaso UI Design Guide](docs/contribute/ui-design-guide.md) completely, classify the interaction as
-`direct-edit Tabulator`, `wizard`, `read-only semantic table`, or `custom/other`, and name the reused Atlaso reference.
+`direct-edit Tabulator`, `wizard-backed Tabulator`, `read-only Tabulator`, `non-grid settings`, or `custom/other`, and
+name the reused Atlaso reference.
 `custom/other` work requires explicit maintainer approval. Confirm this gate in the first progress update.
 
-All new Tabulator collections must use `window.AtlasoUiPatterns.createGrid(...)`, and every new or changed wizard must
-use `window.AtlasoUiPatterns.createWizard(...)` with the generic `data-atlaso-wizard-*` DOM contract. Existing raw
-Tabulator constructors are temporary issue #117 migration sites; do not copy or extend them.
+All Tabulator collections must use `window.AtlasoUiPatterns.createGrid(...)`, and every new or changed wizard must use
+`window.AtlasoUiPatterns.createWizard(...)` with the generic `data-atlaso-wizard-*` DOM contract. Raw Tabulator
+constructors outside the shared foundation are forbidden.
 
 ## Repository Delivery Workflow
 
