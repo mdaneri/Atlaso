@@ -354,7 +354,8 @@ test("createGrid keeps synthetic add rows last for ascending and descending sort
   const recordRow = { getData: () => ({ is_new: false, name: "alpha" }) };
 
   assert.equal(sorter("", "alpha", addRow, recordRow, null, "asc"), 1);
-  assert.equal(sorter("alpha", "", recordRow, addRow, null, "desc"), -1);
+  assert.equal(sorter("alpha", "", recordRow, addRow, null, "desc"), 1);
+  assert.equal(sorter("", "alpha", addRow, recordRow, null, "desc"), -1);
   assert.equal(sorter("item 2", "item 10", recordRow, recordRow, null, "asc"), -1);
   assert.equal(TabulatorStub.last.options.columns[1].sorter, undefined);
 });

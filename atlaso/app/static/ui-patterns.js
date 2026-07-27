@@ -60,7 +60,10 @@
         sorter: (left, right, leftRow, rightRow, columnComponent, direction, sorterParams) => {
           const leftPinned = Boolean(predicate(leftRow?.getData?.(), leftRow));
           const rightPinned = Boolean(predicate(rightRow?.getData?.(), rightRow));
-          if (leftPinned !== rightPinned) return leftPinned ? 1 : -1;
+          if (leftPinned !== rightPinned) {
+            const pinnedOrder = leftPinned ? 1 : -1;
+            return direction === "desc" ? -pinnedOrder : pinnedOrder;
+          }
           if (typeof originalSorter === "function") {
             return originalSorter(left, right, leftRow, rightRow, columnComponent, direction, sorterParams);
           }

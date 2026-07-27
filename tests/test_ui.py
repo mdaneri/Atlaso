@@ -795,7 +795,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v171" in service_worker.text
+    assert "atlaso-pwa-v172" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -808,7 +808,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/codemirror/atlaso-codemirror.min.js" in service_worker.text
     assert "/static/app.css?v=atlaso-ui-foundation-20260726-1" in service_worker.text
-    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-3" in service_worker.text
+    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in service_worker.text
     assert "/static/app.js?v=atlaso-grid-foundation-20260726-2" in service_worker.text
 
     registration = client.get("/static/pwa.js")
@@ -830,10 +830,10 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell in (base, public_base):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
-            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-3"
+            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4"
         )
         assert shell.index(
-            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-3"
+            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4"
         ) < shell.index("/static/app.js?v=atlaso-grid-foundation-20260726-2")
 
     wizard_templates = [
@@ -1011,7 +1011,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=atlaso-ui-foundation-20260726-1" in page.text
-    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-3" in page.text
+    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in page.text
     assert "/static/app.js?v=atlaso-grid-foundation-20260726-2" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
