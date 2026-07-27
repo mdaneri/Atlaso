@@ -16,7 +16,14 @@
         <label><span>API port</span><input name="port" type="number" min="1" max="65535" value="443" required></label>
         <label class="full"><span>Confirmed SHA-256 fingerprint</span><input name="confirmed_fingerprint" autocomplete="off" placeholder="Connect once to obtain the fingerprint"><small class="muted" data-vcf-vault-fingerprint>Atlaso will show the current fingerprint before sending credentials.</small></label>
       </div></section>
-      <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="credentials"><div class="form-grid"><label><span>API username</span><input name="username" required autocomplete="username"></label><label><span>API password</span><input name="password" type="password" required autocomplete="current-password"></label></div></section>
+      <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="credentials">
+        {% set credential_address_field = "address" %}
+        {% set credential_username_field = "username" %}
+        {% set credential_password_field = "password" %}
+        {% set credential_port_field = "port" %}
+        {% include "partials/vcf_vault_credential_picker.html" %}
+        <div class="form-grid"><label><span>API username</span><input name="username" required autocomplete="username"></label><label><span>API password</span><input name="password" type="password" required autocomplete="current-password"></label></div>
+      </section>
       <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="selection"><div class="form-stack"><p class="muted">Only metadata is displayed here. Password values remain in the server request until the reviewed import.</p><div class="vcf-vault-candidate-list" data-vcf-vault-candidates></div></div></section>
       <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review"><div class="form-stack"><label><span>Destination vault</span><select name="vault_id" required><option value="">Choose a vault</option>{% for vault in vcf_vaults %}<option value="{{ vault.id }}">{{ vault.name }}</option>{% endfor %}</select></label><div class="settings-list"><div><span>Source</span><strong data-vcf-vault-review-source></strong></div><div><span>Selected passwords</span><strong data-vcf-vault-review-count></strong></div><div><span>Existing keys</span><strong>Rotated with imported values</strong></div></div></div></section>
     </div><div class="confirm-modal-actions"><button class="button secondary" type="button" data-atlaso-wizard-cancel>Cancel</button><button class="button secondary hidden" type="button" data-atlaso-wizard-back>Back</button><button class="button primary" type="button" data-atlaso-wizard-next>Continue</button><button class="button primary hidden" type="submit" data-atlaso-wizard-submit>Import passwords</button></div></div>

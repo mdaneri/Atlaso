@@ -34,6 +34,22 @@ local offline depot. DNS does not reload `dnsmasq` or change the appliance direc
 The `VCF Certificate Trust` button opens the separate remote certificate task in a modal without mixing CA details into
 the main DNS helper workspace. See [VCF Certificate Trust](vcf-trust.md).
 
+## Use a saved vault credential
+
+An administrator can select **Vault** and then **Key** anywhere VCF Helper requests a remote vCenter, ESXi, SDDC
+Manager, VCF Installer, or VCF Automation login. Atlaso fills the server from the first HTTP or HTTPS URI on the entry
+and fills its username. If the entry has no HTTP or HTTPS URI, enter the server manually.
+
+The selected password is not loaded into the page, copied into the password input, or returned by an API. The disabled
+password input indicates that the stored value will be used. Atlaso validates that the key belongs to the selected
+vault, decrypts the password on the server for that request only, and records the use without recording the value.
+Choose **Enter credentials manually** to return to request-local username and password entry. Service administrators
+can continue to use manual credentials but cannot select administrator-owned vault entries.
+
+The picker is available for SDDC Manager deployment inventory, VCF Offline Depot configuration, VCF Certificate Trust,
+VCF password import source authentication, and Managed LDAP for VCF Automation. The local offline-depot HTTP password
+and OVA appliance passwords remain separate fields and are never filled from this picker.
+
 ## Deploy SDDC Manager
 
 `Deploy SDDC Manager` becomes available when a valid OVA is present beneath
@@ -43,8 +59,9 @@ streams the disks through a vSphere NFC lease. It refuses duplicate VM names, po
 minutes for the VCF API.
 
 The form can optionally add managed DNS desired state, deploy Atlaso CA trust, and configure the local offline depot.
-Trust uses the VCF API only. New-VM trust does not require a snapshot because redeployment is the recovery path. All
-vSphere, OVF, VCF API, and depot passwords remain transient.
+Trust uses the VCF API only. New-VM trust does not require a snapshot because redeployment is the recovery path.
+Manually entered vSphere, OVF, VCF API, and depot passwords remain transient; a selected vault password remains
+encrypted at rest and is resolved only on the server for the request.
 
 ## Configure VCF Offline Depot
 

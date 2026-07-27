@@ -15279,14 +15279,29 @@ def inspect_ldap_vcf_from_ui(
     target_url: str = Form(...),
     vcf_organization_id: str = Form(...),
     vcf_organization_name: str = Form(""),
-    username: str = Form(...),
-    password: str = Form(...),
+    username: str = Form(""),
+    password: str = Form(""),
+    credential_vault_id: str = Form(""),
+    credential_entry_id: str = Form(""),
     confirmed_tls_fingerprint: str = Form(""),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
     verify_csrf(request, csrf)
+    username, password = _resolve_vcf_helper_credentials(
+        db,
+        identity,
+        {
+            "username": username,
+            "password": password,
+            "credential_vault_id": credential_vault_id,
+            "credential_entry_id": credential_entry_id,
+        },
+        username_field="username",
+        password_field="password",
+        purpose="ldap_inspect",
+    )
     organization = db.get(LdapOrganization, organization_id)
     if organization is None:
         raise HTTPException(status_code=404, detail="LDAP organization not found")
@@ -15315,7 +15330,10 @@ def inspect_ldap_vcf_from_ui(
                 defined["password"] = "[redacted]"
             result["current_settings"] = current
         except (ValueError, VcfLdapError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=400,
+                detail=redact_secret_values(str(exc), [password]),
+            ) from exc
     record_audit(db, actor=identity.username, action="inspect_vcf_organization_ldap", resource_type="ldap_organization", resource_id=str(organization.id), detail=f"target={normalized_target}; org_id={vcf_organization_id}")
     return render(
         request,
@@ -15337,8 +15355,10 @@ def configure_ldap_vcf_from_ui(
     target_url: str = Form(...),
     vcf_organization_id: str = Form(...),
     vcf_organization_name: str = Form(""),
-    username: str = Form(...),
-    password: str = Form(...),
+    username: str = Form(""),
+    password: str = Form(""),
+    credential_vault_id: str = Form(""),
+    credential_entry_id: str = Form(""),
     confirmed_tls_fingerprint: str = Form(...),
     replace_existing: str | None = Form(None),
     csrf: str = Form(...),
@@ -15346,6 +15366,19 @@ def configure_ldap_vcf_from_ui(
     db: Session = Depends(get_db),
 ) -> Response:
     verify_csrf(request, csrf)
+    username, password = _resolve_vcf_helper_credentials(
+        db,
+        identity,
+        {
+            "username": username,
+            "password": password,
+            "credential_vault_id": credential_vault_id,
+            "credential_entry_id": credential_entry_id,
+        },
+        username_field="username",
+        password_field="password",
+        purpose="ldap_configure",
+    )
     organization = db.get(LdapOrganization, organization_id)
     if organization is None:
         raise HTTPException(status_code=404, detail="LDAP organization not found")
@@ -15369,11 +15402,12 @@ def configure_ldap_vcf_from_ui(
             raise VcfLdapError("VCF LDAP verification must find at least one user and one group.")
         verified = client.get_settings()
     except (ValueError, VcfLdapError) as exc:
+        safe_error = redact_secret_values(str(exc), [password])
         organization.vcf_last_status = "failed"
-        organization.vcf_last_message = str(exc)
+        organization.vcf_last_message = safe_error
         organization.updated_at = utcnow()
         db.commit()
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=safe_error) from exc
     organization.vcf_target_url = normalize_vcf_target_url(target_url)
     organization.vcf_org_id = vcf_organization_id
     organization.vcf_org_name = vcf_organization_name
@@ -15956,6 +15990,20 @@ def vcf_helper_page_context(
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     dns_context = dnsmasq_context(db)
+    vcf_vaults = db.execute(
+        select(Vault).options(selectinload(Vault.entries)).order_by(Vault.name)
+    ).scalars().all()
+    credential_options = []
+    if identity.has_role("admin"):
+        credential_options = [
+            {
+                "id": vault.id,
+                "name": vault.name,
+                "entries": [vault_entry_metadata(entry) for entry in sorted(vault.entries, key=lambda item: item.key)],
+            }
+            for vault in vcf_vaults
+            if vault.entries
+        ]
     ldap_context_data: dict[str, Any] = {
         "vcf_ldap_authorized": False,
         "vcf_ldap_available": False,
@@ -15974,7 +16022,8 @@ def vcf_helper_page_context(
         **vcf_helper_context(db),
         **vcf_trust_context(db),
         **ldap_context_data,
-        "vcf_vaults": db.execute(select(Vault).order_by(Vault.name)).scalars().all(),
+        "vcf_vaults": vcf_vaults,
+        "vcf_vault_credential_options": credential_options,
         "vcf_trust_auto_open": vcf_trust_auto_open,
         "ldap_vcf_auto_open": ldap_vcf_auto_open,
         "ldap_generate_auto_open": ldap_generate_auto_open,
@@ -16049,10 +16098,50 @@ def _split_vcf_endpoint_address_port(raw_address: Any, raw_port: Any = None) -> 
     return address, port
 
 
+def _resolve_vcf_helper_credentials(
+    db: Session,
+    identity: Identity,
+    values: dict[str, Any],
+    *,
+    username_field: str,
+    password_field: str,
+    purpose: str,
+) -> tuple[str, str]:
+    raw_vault_id = values.get("credential_vault_id")
+    raw_entry_id = values.get("credential_entry_id")
+    if raw_vault_id in (None, "") and raw_entry_id in (None, ""):
+        return str(values.get(username_field) or "").strip(), str(values.get(password_field) or "")
+    require_admin_identity(identity)
+    try:
+        vault_id = int(raw_vault_id or 0)
+        entry_id = int(raw_entry_id or 0)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="Choose a valid vault and key.") from exc
+    entry = db.execute(
+        select(VaultEntry).where(VaultEntry.id == entry_id, VaultEntry.vault_id == vault_id)
+    ).scalar_one_or_none()
+    if entry is None:
+        raise HTTPException(status_code=422, detail="Choose a valid vault and key.")
+    username = str(entry.username or "").strip()
+    if not username:
+        raise HTTPException(status_code=422, detail="The selected vault key does not have a username.")
+    password = decrypt_secret(entry.encrypted_value)
+    record_audit(
+        db,
+        actor=identity.username,
+        action="use_vcf_helper_vault_credential",
+        resource_type="vault_entry",
+        resource_id=str(entry.id),
+        detail=f"purpose={purpose}; vault_id={vault_id}; key={entry.key}",
+    )
+    return username, password
+
+
 @router.post("/vcf-helper/vault-import/inspect", response_class=JSONResponse, response_model=None)
 async def inspect_vcf_vault_import(
     request: Request,
     identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
 ) -> JSONResponse:
     require_admin_identity(identity)
     payload = await _vcf_helper_json(request)
@@ -16067,12 +16156,19 @@ async def inspect_vcf_vault_import(
     if confirmation is not None:
         return confirmation
     try:
-        source_password = str(payload.get("password") or "")
+        source_username, source_password = _resolve_vcf_helper_credentials(
+            db,
+            identity,
+            payload,
+            username_field="username",
+            password_field="password",
+            purpose="vault_import_inspect",
+        )
         candidates = discover_vcf_passwords(
             source_type=str(payload.get("source_type") or ""),
             address=address,
             port=port,
-            username=str(payload.get("username") or ""),
+            username=source_username,
             password=source_password,
             expected_fingerprint=fingerprint,
         )
@@ -16114,13 +16210,20 @@ async def import_vcf_passwords_to_vault(
     if confirmation is not None:
         return confirmation
     source_type = str(payload.get("source_type") or "")
-    source_password = str(payload.get("password") or "")
+    source_username, source_password = _resolve_vcf_helper_credentials(
+        db,
+        identity,
+        payload,
+        username_field="username",
+        password_field="password",
+        purpose="vault_import",
+    )
     try:
         candidates = discover_vcf_passwords(
             source_type=source_type,
             address=address,
             port=port,
-            username=str(payload.get("username") or ""),
+            username=source_username,
             password=source_password,
             expected_fingerprint=fingerprint,
         )
@@ -16205,12 +16308,19 @@ def _validate_vcf_sddc_property_values(descriptor: Any, values: dict[str, str]) 
 async def vcf_sddc_manager_inventory(
     request: Request,
     identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
 ) -> JSONResponse:
     require_vcf_helper_write(identity)
     payload = await _vcf_helper_json(request)
     address, port = _split_vcf_endpoint_address_port(payload.get("address"), payload.get("port"))
-    username = str(payload.get("username") or "").strip()
-    password = str(payload.get("password") or "")
+    username, password = _resolve_vcf_helper_credentials(
+        db,
+        identity,
+        payload,
+        username_field="username",
+        password_field="password",
+        purpose="sddc_inventory",
+    )
     if not address or not username or not password:
         raise HTTPException(status_code=422, detail="Target address, username, and password are required.")
     fingerprint, confirmation = _confirmed_tls_fingerprint(address, port, str(payload.get("confirmed_tls_fingerprint") or ""))
@@ -16220,7 +16330,10 @@ async def vcf_sddc_manager_inventory(
         inventory = vsphere_inventory(address, username, password, port=port, expected_fingerprint=fingerprint)
         descriptor = inspect_ova(str(payload.get("ova_path") or ""))
     except VcfSddcDeploymentError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=422,
+            detail=redact_secret_values(str(exc), [password]),
+        ) from exc
     return JSONResponse({"status": "ready", "tls_fingerprint": fingerprint, "inventory": inventory, "ova": descriptor.public_dict()})
 
 
@@ -16233,8 +16346,14 @@ async def deploy_vcf_sddc_manager_from_ui(
     require_vcf_helper_write(identity)
     payload = await _vcf_helper_json(request)
     address, port = _split_vcf_endpoint_address_port(payload.get("address"), payload.get("port"))
-    username = str(payload.get("username") or "").strip()
-    password = str(payload.get("password") or "")
+    username, password = _resolve_vcf_helper_credentials(
+        db,
+        identity,
+        payload,
+        username_field="username",
+        password_field="password",
+        purpose="sddc_deploy",
+    )
     if not address or not username or not password:
         raise HTTPException(status_code=422, detail="Target address, username, and password are required.")
     _fingerprint, confirmation = _confirmed_tls_fingerprint(address, port, str(payload.get("confirmed_tls_fingerprint") or ""))
@@ -16357,15 +16476,24 @@ async def inspect_vcf_offline_depot_target_from_ui(
         address, port = _split_vcf_endpoint_address_port(payload.get("address"), payload.get("port"))
     except HTTPException as exc:
         raise exc
-    api_username = str(payload.get("api_username") or "").strip()
-    api_password = str(payload.get("api_password") or "")
+    api_username, api_password = _resolve_vcf_helper_credentials(
+        db,
+        identity,
+        payload,
+        username_field="api_username",
+        password_field="api_password",
+        purpose="offline_depot_inspect",
+    )
     fingerprint, confirmation = _confirmed_tls_fingerprint(address, port, str(payload.get("confirmed_tls_fingerprint") or ""))
     if confirmation:
         return confirmation
     try:
         target = inspect_target_depot(address, api_username, api_password, port=port, expected_fingerprint=fingerprint)
     except VcfDepotTargetError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=422,
+            detail=redact_secret_values(str(exc), [api_password]),
+        ) from exc
     current = target["depot"]
     replacement_required = bool(current.get("hostname") or current.get("url") or current.get("username")) and not (
         str(current.get("hostname") or "").lower() == str(local["hostname"]).lower()
@@ -16389,8 +16517,14 @@ async def configure_vcf_offline_depot_target_from_ui(
         address, port = _split_vcf_endpoint_address_port(payload.get("address"), payload.get("port"))
     except HTTPException as exc:
         raise exc
-    api_username = str(payload.get("api_username") or "").strip()
-    api_password = str(payload.get("api_password") or "")
+    api_username, api_password = _resolve_vcf_helper_credentials(
+        db,
+        identity,
+        payload,
+        username_field="api_username",
+        password_field="api_password",
+        purpose="offline_depot_configure",
+    )
     depot_password = str(payload.get("depot_password") or "")
     if not address or not api_username or not api_password or not depot_password:
         raise HTTPException(status_code=422, detail="Target API credentials and the one-time depot password are required.")
@@ -16401,7 +16535,10 @@ async def configure_vcf_offline_depot_target_from_ui(
     try:
         current = inspect_target_depot(address, api_username, api_password, port=port, expected_fingerprint=fingerprint)["depot"]
     except VcfDepotTargetError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=422,
+            detail=redact_secret_values(str(exc), [api_password, depot_password]),
+        ) from exc
     has_different = bool(current.get("hostname") or current.get("url") or current.get("username")) and not (
         str(current.get("hostname") or "").lower() == str(local["hostname"]).lower()
         and int(current.get("port") or 0) == int(local["port"])
@@ -16469,8 +16606,14 @@ async def inspect_vcf_trust_target_from_ui(
     normalized_address, errors = _normalize_vcf_trust_address(address)
     if errors:
         return JSONResponse({"status": "error", "errors": errors}, status_code=422)
-    api_username = str(payload.get("api_username") or "").strip()
-    api_password = str(payload.get("api_password") or "")
+    api_username, api_password = _resolve_vcf_helper_credentials(
+        db,
+        identity,
+        payload,
+        username_field="api_username",
+        password_field="api_password",
+        purpose="trust_inspect",
+    )
     if not api_username or not api_password:
         return JSONResponse({"status": "error", "errors": ["VCF API administrator credentials are required."]}, status_code=422)
     fingerprint, confirmation = _confirmed_tls_fingerprint(normalized_address, port, str(payload.get("confirmed_tls_fingerprint") or ""))
@@ -16484,7 +16627,10 @@ async def inspect_vcf_trust_target_from_ui(
             expected_fingerprint=fingerprint,
         )
     except VcfTrustError as exc:
-        return JSONResponse({"status": "error", "errors": [str(exc)]}, status_code=422)
+        return JSONResponse(
+            {"status": "error", "errors": [redact_secret_values(str(exc), [api_password])]},
+            status_code=422,
+        )
     return JSONResponse({"status": "ready", "address": normalized_address, "port": port, "tls_fingerprint": fingerprint, "appliance": appliance})
 
 
@@ -16493,8 +16639,10 @@ async def inspect_vcf_trust_target_from_ui(
 def trust_vcf_root_ca_from_ui(
     request: Request,
     address: str = Form(...),
-    api_username: str = Form(...),
-    api_password: str = Form(...),
+    api_username: str = Form(""),
+    api_password: str = Form(""),
+    credential_vault_id: str = Form(""),
+    credential_entry_id: str = Form(""),
     confirmed_tls_fingerprint: str = Form(""),
     snapshot_acknowledged: str | None = Form(None),
     awaiting_job_id: str = Form(""),
@@ -16504,6 +16652,19 @@ def trust_vcf_root_ca_from_ui(
 ) -> HTMLResponse | RedirectResponse | JSONResponse:
     require_vcf_helper_write(identity)
     verify_csrf(request, csrf)
+    api_username, api_password = _resolve_vcf_helper_credentials(
+        db,
+        identity,
+        {
+            "api_username": api_username,
+            "api_password": api_password,
+            "credential_vault_id": credential_vault_id,
+            "credential_entry_id": credential_entry_id,
+        },
+        username_field="api_username",
+        password_field="api_password",
+        purpose="trust_queue",
+    )
     try:
         endpoint_address, port = _split_vcf_endpoint_address_port(address, None)
     except HTTPException as exc:
@@ -16536,14 +16697,12 @@ def trust_vcf_root_ca_from_ui(
     if errors:
         if request.headers.get("X-Atlaso-VCF-Trust") == "1":
             return JSONResponse({"status": "error", "errors": errors}, status_code=422)
-        page_context = {
-            "identity": identity,
-            **vcf_helper_context(db),
-            **vcf_trust_context(db),
-            "vcf_trust_auto_open": True,
-            "appliance_apply_status": dnsmasq_apply_status(db, dnsmasq_context(db)),
-            "vcf_trust_errors": errors,
-        }
+        page_context = vcf_helper_page_context(
+            db,
+            identity,
+            vcf_trust_auto_open=True,
+            extra={"vcf_trust_errors": errors},
+        )
         return render(request, "vcf_helper.html", page_context, status_code=422)
 
     assert ca is not None
@@ -16618,12 +16777,7 @@ def generate_vcf_fqdns_from_ui(
             },
             status_code=422 if errors else 200,
         )
-    dns_context = dnsmasq_context(db)
-    page_context = {
-        "identity": identity,
-        **vcf_helper_context(db),
-        "appliance_apply_status": dnsmasq_apply_status(db, dns_context),
-    }
+    page_context = vcf_helper_page_context(db, identity)
     if errors:
         return render(request, "vcf_helper.html", {**page_context, "vcf_helper_errors": errors}, status_code=422)
     return render(request, "vcf_helper.html", {**page_context, "vcf_helper_result": {"created": created, "skipped": skipped}})
@@ -16659,12 +16813,7 @@ def delete_vcf_fqdns_from_ui(
             },
             status_code=422 if errors else 200,
         )
-    dns_context = dnsmasq_context(db)
-    page_context = {
-        "identity": identity,
-        **vcf_helper_context(db),
-        "appliance_apply_status": dnsmasq_apply_status(db, dns_context),
-    }
+    page_context = vcf_helper_page_context(db, identity)
     if errors:
         return render(request, "vcf_helper.html", {**page_context, "vcf_helper_errors": errors}, status_code=422)
     return render(request, "vcf_helper.html", {**page_context, "vcf_helper_delete_result": {"deleted": deleted, "preserved": preserved}})

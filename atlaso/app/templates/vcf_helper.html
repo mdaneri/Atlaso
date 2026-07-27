@@ -102,6 +102,7 @@
 {% include "partials/vcf_target_depot_modal.html" %}
 {% include "partials/vcf_ldap_modal.html" %}
 {% include "partials/vcf_vault_import_modal.html" %}
+<script id="vcf-vault-credential-options" type="application/json">{{ vcf_vault_credential_options | tojson }}</script>
 
 <dialog id="vcf-fqdn-modal" class="confirm-modal wide-modal vcf-fqdn-modal" aria-labelledby="vcf-fqdn-modal-title">
   <form class="confirm-modal-panel form-stack" action="/vcf-helper/generated-fqdns" method="post" data-vcf-fqdn-form>

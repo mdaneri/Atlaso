@@ -14080,6 +14080,96 @@ function initializeHistoryBackButtons() {
   });
 }
 
+function initializeVcfVaultCredentialPickers() {
+  const dataElement = document.getElementById("vcf-vault-credential-options");
+  let vaults = [];
+  try {
+    vaults = JSON.parse(dataElement?.textContent || "[]");
+  } catch (_error) {
+    vaults = [];
+  }
+  const byVaultId = new Map(vaults.map((vault) => [String(vault.id), vault]));
+  document.querySelectorAll("[data-vcf-vault-credential-picker]").forEach((picker) => {
+    const form = picker.closest("form");
+    const vaultSelect = picker.querySelector("[data-vcf-credential-vault]");
+    const entrySelect = picker.querySelector("[data-vcf-credential-entry]");
+    const status = picker.querySelector("[data-vcf-credential-status]");
+    if (!(form instanceof HTMLFormElement) || !(vaultSelect instanceof HTMLSelectElement) || !(entrySelect instanceof HTMLSelectElement)) return;
+    const addressControl = form.elements.namedItem(picker.dataset.addressField || "");
+    const usernameControl = form.elements.namedItem(picker.dataset.usernameField || "");
+    const passwordControl = form.elements.namedItem(picker.dataset.passwordField || "");
+    const portControl = form.elements.namedItem(picker.dataset.portField || "");
+    const passwordWasRequired = passwordControl instanceof HTMLInputElement && passwordControl.required;
+    const passwordPlaceholder = passwordControl instanceof HTMLInputElement ? passwordControl.placeholder : "";
+    const emitChange = (control) => {
+      control?.dispatchEvent(new Event("input", { bubbles: true }));
+      control?.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    const setManualMode = () => {
+      if (passwordControl instanceof HTMLInputElement) {
+        passwordControl.disabled = false;
+        passwordControl.required = passwordWasRequired;
+        passwordControl.placeholder = passwordPlaceholder;
+      }
+      if (status instanceof HTMLElement) status.textContent = vaults.length ? "Manual credentials are active." : "No vault keys are available to this account.";
+    };
+    const fillEntryOptions = () => {
+      const vault = byVaultId.get(vaultSelect.value);
+      entrySelect.replaceChildren(new Option(vault ? "Choose a key" : "Choose a vault first", ""));
+      (vault?.entries || []).forEach((entry) => {
+        const username = entry.username ? ` — ${entry.username}` : "";
+        entrySelect.append(new Option(`${entry.key}${username}`, String(entry.id)));
+      });
+      entrySelect.disabled = !vault;
+      setManualMode();
+    };
+    const applyEntry = () => {
+      const vault = byVaultId.get(vaultSelect.value);
+      const entry = (vault?.entries || []).find((candidate) => String(candidate.id) === entrySelect.value);
+      if (!entry) {
+        setManualMode();
+        return;
+      }
+      const endpoint = (entry.uris || []).find((uri) => /^https?:\/\//i.test(uri)) || "";
+      if (addressControl instanceof HTMLInputElement && endpoint) {
+        addressControl.value = endpoint;
+        emitChange(addressControl);
+      }
+      if (usernameControl instanceof HTMLInputElement) {
+        usernameControl.value = entry.username || "";
+        emitChange(usernameControl);
+      }
+      if (portControl instanceof HTMLInputElement && endpoint) {
+        try {
+          const parsed = new URL(endpoint);
+          portControl.value = parsed.port || (parsed.protocol === "http:" ? "80" : "443");
+          emitChange(portControl);
+        } catch (_error) {
+          // URI validation occurs when the vault entry is saved.
+        }
+      }
+      if (passwordControl instanceof HTMLInputElement) {
+        passwordControl.value = "";
+        passwordControl.required = false;
+        passwordControl.disabled = true;
+        passwordControl.placeholder = "Stored vault password will be used";
+      }
+      if (status instanceof HTMLElement) {
+        status.textContent = endpoint
+          ? `Using ${vault.name} / ${entry.key}. The stored password is never loaded into this page.`
+          : `Using ${vault.name} / ${entry.key}. Enter the server manually; this key has no HTTP or HTTPS URI.`;
+      }
+    };
+    vaultSelect.addEventListener("change", fillEntryOptions);
+    entrySelect.addEventListener("change", applyEntry);
+    form.addEventListener("reset", () => window.setTimeout(() => {
+      fillEntryOptions();
+      setManualMode();
+    }, 0));
+    fillEntryOptions();
+  });
+}
+
 function initializeVcfTrustForm() {
   const form = document.querySelector("[data-vcf-trust-form]");
   if (!(form instanceof HTMLFormElement)) {
@@ -14165,6 +14255,8 @@ function initializeVcfTrustForm() {
           address: form.elements.address.value,
           api_username: form.elements.api_username.value,
           api_password: form.elements.api_password.value,
+          credential_vault_id: form.elements.credential_vault_id.value,
+          credential_entry_id: form.elements.credential_entry_id.value,
           confirmed_tls_fingerprint: confirmedTls instanceof HTMLInputElement ? confirmedTls.value : "",
         }),
       });
@@ -14490,6 +14582,8 @@ function initializeVcfSddcDeployment() {
       port: endpoint.port,
       username: form.elements.username.value.trim(),
       password: form.elements.password.value,
+      credential_vault_id: form.elements.credential_vault_id.value,
+      credential_entry_id: form.elements.credential_entry_id.value,
       confirmed_tls_fingerprint: form.elements.confirmed_tls_fingerprint.value,
     };
   };
@@ -14635,7 +14729,7 @@ function initializeVcfTargetDepotHelper() {
     { id: "queue", title: "Queue configuration", description: "Start the background task and continue monitoring from Operations → Tasks." },
   ];
   const showError = (message) => { errors.textContent = message; errors.classList.toggle("hidden", !message); };
-  const payload = () => ({ csrf: form.elements.csrf.value, address: form.elements.address.value.trim(), api_username: form.elements.api_username.value.trim(), api_password: form.elements.api_password.value, depot_password: form.elements.depot_password.value, confirmed_tls_fingerprint: form.elements.confirmed_tls_fingerprint.value, replace_existing: form.elements.replace_existing.checked });
+  const payload = () => ({ csrf: form.elements.csrf.value, address: form.elements.address.value.trim(), api_username: form.elements.api_username.value.trim(), api_password: form.elements.api_password.value, credential_vault_id: form.elements.credential_vault_id.value, credential_entry_id: form.elements.credential_entry_id.value, depot_password: form.elements.depot_password.value, confirmed_tls_fingerprint: form.elements.confirmed_tls_fingerprint.value, replace_existing: form.elements.replace_existing.checked });
   const resetInspection = () => {
     if (tls instanceof HTMLInputElement) tls.value = "";
     inspected = null;
@@ -16534,6 +16628,8 @@ function initializeVcfVaultImport() {
     confirmed_fingerprint: String(form.elements.confirmed_fingerprint.value || ""),
     username: String(form.elements.username.value || ""),
     password: String(form.elements.password.value || ""),
+    credential_vault_id: String(form.elements.credential_vault_id.value || ""),
+    credential_entry_id: String(form.elements.credential_entry_id.value || ""),
   });
   const renderCandidates = () => {
     candidatesElement.replaceChildren();
@@ -16631,6 +16727,7 @@ function initializeVcfVaultImport() {
 
 document.addEventListener("DOMContentLoaded", initializeDashboard);
 document.addEventListener("DOMContentLoaded", initializeVaultsPage);
+document.addEventListener("DOMContentLoaded", initializeVcfVaultCredentialPickers);
 document.addEventListener("DOMContentLoaded", initializeVcfVaultImport);
 document.addEventListener("DOMContentLoaded", initializeEsxStorageTables);
 document.addEventListener("DOMContentLoaded", initializeEsxStorageWizards);

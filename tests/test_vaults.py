@@ -746,3 +746,115 @@ def test_vcf_helper_inspection_returns_metadata_and_import_encrypts_value(client
         entry = db.execute(select(VaultEntry).where(VaultEntry.vault_id == vault_id)).scalar_one()
         assert entry.encrypted_value != "ImportedSecret!"
         assert decrypt_secret(entry.encrypted_value) == "ImportedSecret!"
+
+
+def test_vcf_helper_vault_picker_resolves_password_only_on_server(client, monkeypatch):
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, Vault
+    from atlaso.app.services.vaults import VaultEntryInput, upsert_vault_entry
+    from atlaso.app.services.vcf_vault_import import VcfPasswordCandidate
+
+    login(client)
+    with SessionLocal() as db:
+        source_vault = Vault(name="VCF targets", description="", created_by="admin")
+        other_vault = Vault(name="Other targets", description="", created_by="admin")
+        db.add_all([source_vault, other_vault])
+        db.flush()
+        source_entry, _created = upsert_vault_entry(
+            db,
+            vault=source_vault,
+            entry=VaultEntryInput(
+                key="sddc.manager.admin",
+                secret_type="vcf_password",
+                value="ServerSideOnly!",
+                username="admin@local",
+                uris=("https://sddc.example.internal:8443",),
+            ),
+            actor="admin",
+        )
+        other_entry, _created = upsert_vault_entry(
+            db,
+            vault=other_vault,
+            entry=VaultEntryInput(
+                key="installer.admin",
+                secret_type="vcf_password",
+                value="OtherSecret!",
+                username="admin@local",
+            ),
+            actor="admin",
+        )
+        db.commit()
+        source_vault_id = source_vault.id
+        source_entry_id = source_entry.id
+        other_entry_id = other_entry.id
+
+    page = client.get("/vcf-helper")
+    assert page.status_code == 200
+    assert page.text.count("data-vcf-vault-credential-picker") == 4
+    assert 'credential_address_field = "target_url"' in Path(
+        "atlaso/app/templates/partials/vcf_ldap_modal.html"
+    ).read_text(encoding="utf-8")
+    assert "sddc.manager.admin" in page.text
+    assert "admin@local" in page.text
+    assert "https://sddc.example.internal:8443" in page.text
+    assert "ServerSideOnly!" not in page.text
+    csrf = csrf_from_page(page.text)
+
+    captured = {}
+
+    def discover(**kwargs):
+        captured.update(kwargs)
+        return [
+            VcfPasswordCandidate(
+                candidate_id="candidate",
+                key="vcf.test",
+                description="Test",
+                secret_type="vcf_password",
+                username="admin",
+                resource_name="sddc",
+                value="Imported!",
+            )
+        ]
+
+    monkeypatch.setattr(ui, "_confirmed_tls_fingerprint", lambda *_args: ("AA:BB", None))
+    monkeypatch.setattr(ui, "discover_vcf_passwords", discover)
+    payload = {
+        "csrf": csrf,
+        "source_type": "sddc_manager",
+        "address": "sddc.example.internal",
+        "port": 8443,
+        "confirmed_fingerprint": "AA:BB",
+        "credential_vault_id": source_vault_id,
+        "credential_entry_id": source_entry_id,
+    }
+    response = client.post("/vcf-helper/vault-import/inspect", json=payload)
+    assert response.status_code == 200
+    assert captured["username"] == "admin@local"
+    assert captured["password"] == "ServerSideOnly!"
+    assert "ServerSideOnly!" not in response.text
+    with SessionLocal() as db:
+        event = db.execute(
+            select(AuditEvent).where(AuditEvent.action == "use_vcf_helper_vault_credential")
+        ).scalar_one()
+        assert event.resource_id == str(source_entry_id)
+        assert "ServerSideOnly!" not in (event.detail or "")
+
+    mismatched = client.post(
+        "/vcf-helper/vault-import/inspect",
+        json={**payload, "credential_entry_id": other_entry_id},
+    )
+    assert mismatched.status_code == 422
+    assert mismatched.json()["detail"] == "Choose a valid vault and key."
+
+
+def test_vcf_helper_vault_picker_never_loads_password_into_browser_state():
+    source = Path("atlaso/app/static/app.js").read_text(encoding="utf-8")
+    picker = source.split("function initializeVcfVaultCredentialPickers()", 1)[1].split(
+        "function initializeVcfTrustForm()", 1
+    )[0]
+    assert "Stored vault password will be used" in picker
+    assert 'passwordControl.value = ""' in picker
+    assert "entry.password" not in picker
+    assert "credential_vault_id" in source
+    assert "credential_entry_id" in source

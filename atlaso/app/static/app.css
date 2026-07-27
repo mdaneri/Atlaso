@@ -6003,6 +6003,26 @@ textarea {
   gap: 16px;
 }
 
+.vcf-vault-credential-picker {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  padding: 12px;
+  background: #eff6ff;
+}
+
+.vcf-vault-credential-picker legend {
+  padding: 0 5px;
+  color: #1e3a8a;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.vcf-vault-credential-picker > p {
+  margin: 0;
+}
+
 .vcf-sddc-tls-check {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);

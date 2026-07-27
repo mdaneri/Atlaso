@@ -44,6 +44,10 @@
         </section>
 
         <section class="vcf-sddc-step-page hidden" data-vcf-trust-step="api" data-atlaso-wizard-step="api">
+          {% set credential_address_field = "address" %}
+          {% set credential_username_field = "api_username" %}
+          {% set credential_password_field = "api_password" %}
+          {% include "partials/vcf_vault_credential_picker.html" %}
           <div class="form-grid">
             <label><span class="field-label"><span>API administrator</span><button class="help-icon" type="button" data-help="VCF identity used only to obtain a temporary API token and call the trusted-certificate API. It is never stored.">i</button></span><input name="api_username" value="admin@local" autocomplete="username" required></label>
             <label><span class="field-label"><span>API password</span><button class="help-icon" type="button" data-help="One-time VCF API password. It is never written to jobs, logs, audits, or the database.">i</button></span><input name="api_password" type="password" autocomplete="new-password" required></label>

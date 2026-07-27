@@ -79,4 +79,15 @@ Installer. Confirm the TLS SHA-256 fingerprint out of band, authenticate, select
 vault. Atlaso re-reads the selected values during the reviewed import and encrypts them immediately. Existing keys are
 rotated.
 
+## VCF Helper autofill
+
+VCF Helper remote-connection forms provide an administrator-only **Vault** and **Key** picker. Selecting a key fills
+the server from its first HTTP or HTTPS URI and fills its username. The password remains encrypted at rest and is
+resolved only by the server when the operator inspects or submits the remote operation. It is never copied into the
+password input or included in the page metadata.
+
+The server rejects a key that does not belong to the selected vault and audits each use without the value. A vault
+entry intended for VCF Helper should therefore include a username and, when possible, an HTTP or HTTPS URI. Operators
+can still enter the server manually when a key has no suitable URI.
+
 Vault entries are intentionally excluded from settings archives. Reimport or recreate them after restore.
