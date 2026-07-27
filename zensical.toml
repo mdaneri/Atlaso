@@ -46,6 +46,7 @@ nav = [
     { "OpenID Connect provider" = "services/oidc-provider.md" },
     { "VCF backups" = "services/vcf-backups.md" },
     { "VCF Helper" = "services/vcf-helper.md" },
+    { "Vaults" = "services/vaults.md" },
     { "VCF Offline Depot" = "services/vcf-offline-depot.md" },
     { "VCF Private Registry" = "services/vcf-private-registry.md" },
     { "VCF certificate trust" = "services/vcf-trust.md" },
