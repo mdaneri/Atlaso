@@ -78,7 +78,22 @@ def _set_applied_management_https(db, fqdn: str = "atlaso.example.test") -> None
     certificate.status = "issued"
     certificate.enabled = True
     certificate.certificate_pem = certificate_pem
+    parsed_certificate = x509.load_pem_x509_certificate(certificate_pem.encode("ascii"))
+    certificate.fingerprint = parsed_certificate.fingerprint(hashes.SHA256()).hex()
     certificate.subject_alt_names = fqdn
+    payload["ca"] = {
+        "config_preview": json.dumps(
+            {
+                "certificates": [
+                    {
+                        "managed_owner": "appliance:https",
+                        "fingerprint": certificate.fingerprint,
+                    }
+                ]
+            }
+        )
+    }
+    row.value = json.dumps(payload)
     db.flush()
 
 
@@ -242,6 +257,27 @@ def test_oidc_readiness_rejects_certificate_for_a_different_fqdn(client):
         assert errors == [
             "The applied Management HTTPS certificate does not cover the exact OIDC issuer FQDN."
         ]
+
+
+def test_oidc_readiness_rejects_certificate_changed_after_apply(client):
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Setting
+    from atlaso.app.services import oidc
+
+    with SessionLocal() as db:
+        _set_applied_management_https(db)
+        baseline = db.execute(
+            select(Setting).where(Setting.key == "appliance_apply.baselines.v1")
+        ).scalar_one()
+        payload = json.loads(baseline.value)
+        ca_preview = json.loads(payload["ca"]["config_preview"])
+        ca_preview["certificates"][0]["fingerprint"] = "previous-applied-certificate"
+        payload["ca"]["config_preview"] = json.dumps(ca_preview)
+        baseline.value = json.dumps(payload)
+        provider = oidc.ensure_provider_settings(db)
+        provider.issuer_url = "https://atlaso.example.test/identity"
+        errors = oidc.provider_validation_errors(db, provider, require_active_key=False)
+        assert errors == ["The current Management HTTPS certificate has not been applied."]
 
 
 def test_oidc_confidential_client_secret_is_argon2_and_shown_only_once(client):
@@ -709,6 +745,10 @@ def test_authentication_page_exposes_authorization_code_oidc_ui(client):
     assert 'data-autosave-status-id="oidc-provider-autosave-status"' in page.text
     assert page.text.count('class="help-icon"') >= 10
     assert "Rotate signing key" in page.text or "Generate first signing key" in page.text
+    javascript = client.get("/static/app.js").text
+    assert "Client changes are unavailable because the interactive grid could not initialize." in javascript
+    assert "Signing-key changes are unavailable because the interactive grid could not initialize." in javascript
+    assert javascript.count('launcher.setAttribute("aria-disabled", "true")') >= 2
 
 
 def test_authentication_ui_deletes_bound_client_before_ldap_organization(client):
@@ -1346,6 +1386,38 @@ def test_authorization_code_local_flow_rotates_session_and_rejects_replay(client
     )
     assert replay.status_code == 400
     assert replay.json() == {"error": "invalid_grant"}
+
+
+def test_client_policy_edit_invalidates_pending_authorization(client):
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import OidcAuthorizationTransaction, OidcClient
+
+    client_id, _secret = _configure_protocol_client()
+    transaction, csrf, _cookie = _start_login(
+        client, _authorization_parameters(client_id, "e" * 64)
+    )
+    with SessionLocal() as db:
+        record_id = db.execute(
+            select(OidcClient.id).where(OidcClient.client_id == client_id)
+        ).scalar_one()
+
+    updated = client.put(
+        f"/api/v1/oidc/clients/{record_id}",
+        headers=_admin_headers(client),
+        json={
+            "name": "Edited while authorization is pending",
+            "redirect_uris": ["https://rp.example.test/new-callback"],
+            "allowed_scopes": ["openid"],
+        },
+    )
+    assert updated.status_code == 200, updated.text
+
+    login = _finish_local_login(client, transaction, csrf)
+    assert login.status_code == 400
+    assert login.json() == {"error": "invalid_request"}
+    assert "location" not in login.headers
+    with SessionLocal() as db:
+        assert db.execute(select(OidcAuthorizationTransaction)).scalar_one_or_none() is None
 
 
 def test_authorization_rejects_substitution_downgrade_and_inexact_redirect(client):

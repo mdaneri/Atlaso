@@ -7147,6 +7147,15 @@ function initializeOidcClientsTable() {
     },
   });
   table = grid.table;
+  if (!table) {
+    const launcher = document.querySelector("[data-oidc-client-add]");
+    if (launcher instanceof HTMLButtonElement) {
+      launcher.disabled = true;
+      launcher.setAttribute("aria-disabled", "true");
+    }
+    grid.setError("Client changes are unavailable because the interactive grid could not initialize.");
+    return;
+  }
   wizard = window.AtlasoUiPatterns.createWizard({
     form,
     dialog,
@@ -7230,6 +7239,15 @@ function initializeOidcKeysTable() {
     },
   });
   table = grid.table;
+  if (!table) {
+    const launcher = document.querySelector("[data-oidc-key-launch]");
+    if (launcher instanceof HTMLButtonElement) {
+      launcher.disabled = true;
+      launcher.setAttribute("aria-disabled", "true");
+    }
+    grid.setError("Signing-key changes are unavailable because the interactive grid could not initialize.");
+    return;
+  }
   const wizard = window.AtlasoUiPatterns.createWizard({
     form,
     dialog,

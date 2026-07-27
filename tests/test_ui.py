@@ -879,10 +879,10 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     app_js = client.get("/static/app.js").text
     create_grid = "window.AtlasoUiPatterns.createGrid({"
 
-    assert app_js.count(create_grid) == 35
+    assert app_js.count(create_grid) == 38
     assert app_js.count('pattern: "direct-edit"') == 25
-    assert app_js.count('pattern: "read-only"') == 7
-    assert app_js.count('pattern: "wizard-backed"') == 3
+    assert app_js.count('pattern: "read-only"') == 8
+    assert app_js.count('pattern: "wizard-backed"') == 5
     assert "new Tabulator(" not in app_js
     assert "new window.Tabulator(" not in app_js
     assert "atlaso-legacy-tabulator: #117" not in app_js

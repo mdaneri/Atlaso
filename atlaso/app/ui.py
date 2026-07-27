@@ -17734,9 +17734,12 @@ def update_oidc_client_from_ui(
         )
     except OidcConfigurationError as exc:
         db.rollback()
+        detail = exc.args[0] if len(exc.args) == 1 and isinstance(exc.args[0], str) else (
+            "The OIDC client update was rejected."
+        )
         if request.headers.get("X-Atlaso-Grid") == "1":
-            return JSONResponse({"detail": str(exc)}, status_code=422)
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+            return JSONResponse({"detail": detail}, status_code=422)
+        raise HTTPException(status_code=422, detail=detail) from None
     record_audit(
         db,
         actor=identity.username,
@@ -18100,9 +18103,12 @@ def delete_retired_oidc_signing_key_from_ui(
     try:
         delete_retired_oidc_signing_key_record(db, row)
     except OidcConflictError as exc:
+        detail = exc.args[0] if len(exc.args) == 1 and isinstance(exc.args[0], str) else (
+            "The OIDC signing key cannot be deleted."
+        )
         if request.headers.get("X-Atlaso-Grid") == "1":
-            return JSONResponse({"detail": str(exc)}, status_code=409)
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+            return JSONResponse({"detail": detail}, status_code=409)
+        raise HTTPException(status_code=409, detail=detail) from None
     record_audit(
         db,
         actor=identity.username,

@@ -30,7 +30,9 @@ The canonical issuer is exactly `https://<applied-appliance-fqdn>/identity`. It 
 never inferred from `Host`, `Forwarded`, or `X-Forwarded-*` request headers. IP issuers, explicit ports, query strings,
 fragments, user information, and path or trailing-slash variants are rejected. Readiness also parses the issued,
 CA-managed Management HTTPS certificate, checks its validity period, and requires its DNS names to cover that exact
-FQDN.
+FQDN. Its SHA-256 fingerprint must also match the certificate recorded by the last successful Certificate Authority
+apply; reissuing or rotating desired-state certificate material therefore blocks provider readiness until global
+Appliance Apply installs it.
 
 One credential-verification service resolves only two persisted identity types:
 
@@ -97,6 +99,8 @@ Only `response_type=code`, query response mode, confidential `client_secret_basi
 request has an exact stored redirect URI, `state`, `nonce`, and a server-side short-lived authorization transaction
 bound to the signed browser session. Codes are random opaque values whose SHA-256 digest is stored; redemption uses one
 conditional `UPDATE ... RETURNING` operation, so a code can succeed once even when two token requests race.
+Editing a client invalidates its pending authorization transactions, and code issuance independently rechecks the
+client's current enabled state, organization, exact redirect, and granted scopes.
 
 `/identity/authorize`, `/identity/token`, `/identity/userinfo`, and `/identity/logout` require HTTPS. A forwarded HTTPS
 indication is trusted only from the loopback management proxy. Browser authentication rotates the OIDC session
@@ -165,7 +169,9 @@ The rendered administration page is verified at desktop and narrow viewports wit
 Keyboard activation opens the shared client wizard, focus moves to its first required field and returns to the launch
 control, step validation preserves entered values, and status/error regions announce updates. Shared modal focus
 containment, labels, fallback tables, and the explicit no-JavaScript read-only state preserve an accessible recovery
-path. Collection overflow remains inside its labeled grid region at narrow widths.
+path. If an interactive grid cannot initialize, its mutation launcher remains disabled so a one-time client secret or
+key result cannot be lost after a server-side change. Collection overflow remains inside its labeled grid region at
+narrow widths.
 
 ![OIDC external group mapping grid at the desktop viewport](../assets/screenshots/authentication-group-mappings-desktop.webp)
 

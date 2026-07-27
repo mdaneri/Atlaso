@@ -13,6 +13,7 @@ from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 from authlib import __version__ as AUTHLIB_VERSION
 from cryptography import x509
+from cryptography.hazmat.primitives import hashes
 from cryptography.x509.oid import NameOID
 from joserfc import jwt
 from joserfc.jwk import RSAKey
@@ -230,6 +231,7 @@ def _management_certificate_error(db: Session, appliance: ApplianceSettings) -> 
         return "The applied Management HTTPS certificate is not available for OIDC issuer validation."
     try:
         parsed = x509.load_pem_x509_certificate(certificate.certificate_pem.encode("utf-8"))
+        current_fingerprint = parsed.fingerprint(hashes.SHA256()).hex()
         now = datetime.now(timezone.utc)
         if parsed.not_valid_before_utc > now or parsed.not_valid_after_utc <= now:
             return "The applied Management HTTPS certificate is not currently valid."
@@ -247,8 +249,31 @@ def _management_certificate_error(db: Session, appliance: ApplianceSettings) -> 
             }
     except (TypeError, ValueError, x509.InvalidVersion):
         return "The applied Management HTTPS certificate cannot be validated."
+    if current_fingerprint != _applied_management_certificate_fingerprint(db):
+        return "The current Management HTTPS certificate has not been applied."
     if fqdn not in names:
         return "The applied Management HTTPS certificate does not cover the exact OIDC issuer FQDN."
+    return ""
+
+
+def _applied_management_certificate_fingerprint(db: Session) -> str:
+    row = db.execute(
+        select(Setting).where(Setting.key == "appliance_apply.baselines.v1")
+    ).scalar_one_or_none()
+    if row is None:
+        return ""
+    try:
+        baselines = json.loads(row.value)
+        preview = json.loads(baselines["ca"]["config_preview"])
+        certificates = preview["certificates"]
+    except (KeyError, TypeError, json.JSONDecodeError):
+        return ""
+    for certificate in certificates:
+        if (
+            isinstance(certificate, dict)
+            and certificate.get("managed_owner") == "appliance:https"
+        ):
+            return str(certificate.get("fingerprint") or "").strip().lower()
     return ""
 
 
@@ -623,6 +648,14 @@ def update_client(
     )
     scopes = normalize_allowed_scopes(allowed_scopes)
 
+    # An administrator can remove a redirect, scope, source, or the client itself
+    # while a browser is waiting at the sign-in page.  Never let that request
+    # survive a client-policy edit with its older permissions.
+    db.execute(
+        delete(OidcAuthorizationTransaction).where(
+            OidcAuthorizationTransaction.oidc_client_id == row.id
+        )
+    )
     row.name = normalized_name
     row.organization_id = organization.id if organization else None
     row.allowed_scopes = " ".join(scopes)
@@ -1318,8 +1351,22 @@ def issue_authorization_code(
     ):
         raise OidcConfigurationError("Authorization request expired.")
     client = db.get(OidcClient, transaction.oidc_client_id)
-    if client is None:
+    if (
+        client is None
+        or not client.enabled
+        or (client.organization and not client.organization.enabled)
+    ):
         raise OidcConfigurationError("Unknown or disabled client.")
+    current_redirects = {
+        redirect.uri for redirect in client.redirect_uris if redirect.kind == "redirect"
+    }
+    transaction_scopes = set(transaction.scopes.split())
+    if (
+        transaction.redirect_uri not in current_redirects
+        or "openid" not in transaction_scopes
+        or not transaction_scopes.issubset(set(client.allowed_scopes.split()))
+    ):
+        raise OidcConfigurationError("Authorization request expired.")
     current_identity = identity_from_source(
         db,
         source=identity.source,

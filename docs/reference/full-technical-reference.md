@@ -666,8 +666,11 @@ The Authentication page contains Atlaso's constrained OIDC provider. It implemen
 confidential `client_secret_basic`, mandatory PKCE S256, exact redirects, required state and nonce, signed secure
 browser sessions, five-minute RS256 ID/access JWTs, UserInfo revalidation, and RP-initiated logout. Provider enablement
 requires the canonical issuer, an applied Management HTTPS certificate valid for the exact issuer FQDN, an active
-signing key, and protocol readiness. Shared grid/wizard administration supports client editing, exact redirect
+signing key, and protocol readiness. Readiness compares the live desired-state certificate fingerprint with the last
+successful Certificate Authority apply baseline. Shared grid/wizard administration supports client editing, exact redirect
 lifecycle, one-time secret rotation, retired-key overlap and cleanup, and a public-metadata-only integration export.
+Client policy edits invalidate pending authorization transactions before they can issue a code under stale redirects
+or scopes.
 Unbound clients authenticate Local identities; organization-bound clients authenticate only their fixed managed LDAP
 organization, and managed LDAP OIDC sessions never grant operator UI access. See
 [Constrained OpenID Connect provider](../services/oidc-provider.md).
