@@ -154,12 +154,24 @@ established workflow is an explicit task action. Appliance configuration enforce
 
 Use the existing application shell. Configurable service pages use the DNS page as the default layout reference:
 
-- keep the primary resource collection or workflow in the main column;
+- keep the primary resource collection or workflow in one framed `.panel.wide-panel` in the main column;
 - keep service settings in the right-side rail;
 - use the compact **Pending Appliance Changes** card for the current apply unit and the shared appliance-review modal;
 - keep service-specific validation, warnings, and compact preview actions in the **Validation** card;
 - keep full rendered configuration out of the rail and open it in the shared preview modal; and
 - collapse the rail below the main content at narrow widths without changing reading or keyboard order.
+
+ESXi PXE is the reference when one primary service frame has several views. Put the resource heading, concise purpose,
+summary status, `.tool-tabs` tablist, and associated tab panels inside the same outer frame. Do not place the tablist in
+a detached panel or wrap every tab panel in a competing outer card. Use `.zone-tabs` for switching between peer
+workspaces, organizations, domains, or repositories; use `.tool-tabs` for related views of the resource named by the
+containing frame.
+
+The right rail keeps settings and validation separate. The settings card owns desired-state controls. The
+**Validation** card truthfully summarizes current readiness, lists actionable errors or warnings, and contains only
+compact preview actions. Do not duplicate validation state in a separate main-column frame or omit the Validation card
+when a configurable service has readiness requirements. OpenID Connect follows this composition: OIDC administration
+and its tool tabs occupy the main frame, while Provider Settings and Validation remain persistent in the right rail.
 
 Treat routine forms as desired-state editors. Autosave safe changes with `data-autosave-form` and a nearby
 `.autosave-status`; do not add a visible Save button when the established endpoint safely supports autosave. Editing and

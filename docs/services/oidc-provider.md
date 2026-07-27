@@ -73,7 +73,9 @@ Redirect and post-logout records are stored individually. Matching in the protoc
 those stored values. Wildcards, fragments, credentials in the authority, control characters, and non-HTTPS redirects are
 rejected. An operator can explicitly create a development client using HTTP only on a literal loopback address with an
 exact port; the VCF preset never enables that exception. The VCF 9.1 form requires the operator to paste the exact
-redirect URI reported by its Identity Broker.
+redirect URI reported by its Identity Broker. The client wizard requires at least one redirect URI and validates every
+redirect and optional post-logout URI before advancing; the service repeats the same authoritative validation when the
+client is submitted.
 
 ## Signing keys and public metadata
 
@@ -145,10 +147,10 @@ jobs, audits, or logs.
 ## Administration and lifecycle
 
 The dedicated **OpenID Connect** navigation page keeps Provider, Clients, Signing Keys, Group Mappings, and Stable
-Subjects in tabs inside the standard service workspace. The selected tab occupies the main column while the editable
-Provider Settings panel remains available in the right-hand service settings column. The Provider overview presents
-readiness as an inline status and shows validation errors only when attention is required. Provider state autosaves but
-rejects enablement until every readiness check passes.
+Subjects as tool tabs inside one framed OIDC Administration workspace. The selected tab occupies the main column while
+the editable Provider Settings and Validation cards remain available in the right-hand service settings column.
+Validation lists readiness errors only when attention is required. Provider state autosaves but rejects enablement until
+every readiness check passes.
 
 Provider Settings owns the service hostname, one or more listener interfaces, and HTTPS port. Listener choices use the
 same service selector as LDAP: addressed access or routed physical interfaces and enabled VLANs are accepted, while

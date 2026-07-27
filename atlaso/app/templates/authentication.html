@@ -44,7 +44,15 @@
 {% if oidc_page and oidc_admin %}
 <section class="split-workspace service-settings-workspace oidc-service-workspace">
 <div class="left-stack">
-<div class="tab-buttons zone-tabs panel oidc-page-tabs" role="tablist" aria-label="OpenID Connect administration" data-tab-storage-key="atlaso:oidc:active-tab">
+<div class="panel wide-panel oidc-administration-panel">
+<div class="panel-head">
+  <div>
+    <h2>OIDC Administration</h2>
+    <p class="muted">Configure the provider and manage its clients, signing keys, explicit group mappings, and stable subjects.</p>
+  </div>
+  <span class="status-pill {{ 'warn' if oidc_validation_errors else 'good' }}">{{ 'needs attention' if oidc_validation_errors else 'valid' }}</span>
+</div>
+<div class="tab-buttons tool-tabs oidc-page-tabs" role="tablist" aria-label="OpenID Connect administration" data-tab-storage-key="atlaso:oidc:active-tab">
   <button class="tab-button active" type="button" role="tab" data-tab-target="oidc-provider" aria-controls="oidc-provider" aria-selected="true">Provider</button>
   <button class="tab-button" type="button" role="tab" data-tab-target="oidc-clients" aria-controls="oidc-clients" aria-selected="false">Clients</button>
   <button class="tab-button" type="button" role="tab" data-tab-target="oidc-keys" aria-controls="oidc-keys" aria-selected="false">Signing Keys</button>
@@ -54,21 +62,15 @@
 <div class="tab-panels oidc-page-panels">
 <section class="tab-panel active" id="oidc-provider" role="tabpanel">
   <div class="left-stack">
-    <div class="panel wide-panel" data-oidc-provider-validation>
+    <div class="panel wide-panel">
       <div class="panel-head">
         <div>
           <h2>OpenID Connect Provider</h2>
           <p class="muted">The issuer uses its service-owned FQDN on selected access or routed interfaces. Atlaso publishes identity endpoints only after DNS, certificate, listener, signing-key, and protocol readiness checks pass.</p>
         </div>
-        <div class="button-row">
-          <span class="status-pill {{ 'good' if oidc_provider.enabled else 'muted' }}" data-oidc-provider-status>{{ 'enabled' if oidc_provider.enabled else 'disabled' }}</span>
-          <span class="status-pill {{ 'warn' if oidc_validation_errors else 'good' }}" data-oidc-provider-validation-status>{{ 'needs attention' if oidc_validation_errors else 'valid' }}</span>
-        </div>
+        <span class="status-pill {{ 'good' if oidc_provider.enabled else 'muted' }}" data-oidc-provider-status>{{ 'enabled' if oidc_provider.enabled else 'disabled' }}</span>
       </div>
       {% if oidc_error %}<div class="alert error"><strong>OIDC configuration was not saved.</strong><p>{{ oidc_error }}</p></div>{% endif %}
-      {% if oidc_validation_errors %}
-      <div class="error-list" role="list" data-oidc-provider-validation-errors>{% for error in oidc_validation_errors %}<div role="listitem">{{ error }}</div>{% endfor %}</div>
-      {% endif %}
       {% if oidc_client_secret %}
         <div class="alert success">
           <strong>Copy the confidential client secret now.</strong>
@@ -176,7 +178,7 @@
   {% endmacro %}
 </section>
 
-<section id="oidc-clients" class="panel tab-panel" role="tabpanel" hidden>
+<section id="oidc-clients" class="tab-panel" role="tabpanel" hidden>
   <noscript>
     <style>[data-oidc-client-add], [data-oidc-key-launch] { display: none !important; }</style>
     <p class="alert warning">JavaScript is unavailable. The server-rendered client, signing-key, mapping, and subject tables remain readable; use the authenticated OIDC REST API for lifecycle changes.</p>
@@ -206,7 +208,7 @@
   </table>
 </section>
 
-<section id="oidc-keys" class="panel tab-panel" role="tabpanel" hidden>
+<section id="oidc-keys" class="tab-panel" role="tabpanel" hidden>
   <div class="panel-head">
     <div><h2>Signing Keys</h2><p class="muted">Only public JWK metadata is displayed. Rotation retires the old key through its enforced overlap window.</p></div>
     <button class="button {{ 'secondary' if oidc_keys else 'primary' }}" type="button" data-oidc-key-launch>{{ "Rotate signing key" if oidc_keys else "Generate first signing key" }}</button>
@@ -258,7 +260,7 @@
         </div></section>
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="redirects"><div class="form-stack">
           <label><span class="field-label"><span>Exact redirect URIs</span><button class="help-icon" type="button" data-help="One exact HTTPS URI per line. Wildcards, fragments, credentials, and guessed VCF paths are rejected.">i</button></span><textarea name="redirect_uris" rows="5" required></textarea></label>
-          <label><span class="field-label"><span>Exact post-logout URIs</span><button class="help-icon" type="button" data-help="Optional exact RP-initiated logout return destinations, one per line.">i</button></span><textarea name="post_logout_redirect_uris" rows="3"></textarea></label>
+          <label><span class="field-label"><span>Exact post-logout URIs (optional)</span><button class="help-icon" type="button" data-help="Optional exact RP-initiated logout return destinations, one valid URI per line. When supplied, each value is validated with the same exact-match security rules as redirect URIs.">i</button></span><textarea name="post_logout_redirect_uris" rows="3"></textarea></label>
           <label class="switch-field"><span class="field-label"><span>Loopback development redirects</span><button class="help-icon" type="button" data-help="Allows HTTP only for literal loopback addresses with explicit ports. Never use for VCF.">i</button></span><input class="switch-input" type="checkbox" name="allow_loopback_redirects"><span class="switch-track" aria-hidden="true"></span></label>
         </div></section>
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="state"><div class="form-stack">
@@ -297,7 +299,7 @@
   </form>
 </dialog>
 
-<section id="oidc-group-mappings" class="panel tab-panel" role="tabpanel" hidden>
+<section id="oidc-group-mappings" class="tab-panel" role="tabpanel" hidden>
   <div class="panel-head">
     <div>
       <h2>External Group Mappings</h2>
@@ -338,7 +340,7 @@
   </table>
 </section>
 
-<section id="oidc-subjects" class="panel tab-panel" role="tabpanel" hidden>
+<section id="oidc-subjects" class="tab-panel" role="tabpanel" hidden>
   <div class="panel-head"><h2>Stable Subjects</h2><span class="muted">{{ oidc_subjects|length }} linked principals</span></div>
   <p class="muted">Opaque subject UUIDs link to enabled local users or users in Atlaso’s integrated OpenLDAP organizations. Managed LDAP principals do not gain operator UI access.</p>
   <div id="oidc-subjects-table" class="tabulator-shell" data-subjects='{{ oidc_subjects | tojson }}' data-fallback-id="oidc-subjects-fallback"></div>
@@ -347,8 +349,20 @@
 </section>
 </div>
 </div>
+</div>
 <aside class="side-stack service-settings-column">
   {{ render_oidc_settings_panel() }}
+  <div class="panel" data-oidc-provider-validation>
+    <div class="panel-head">
+      <h2>Validation</h2>
+      <span class="status-pill {{ 'warn' if oidc_validation_errors else 'good' }}" data-oidc-provider-validation-status>{{ 'needs attention' if oidc_validation_errors else 'valid' }}</span>
+    </div>
+    {% if oidc_validation_errors %}
+    <div class="error-list" role="list" data-oidc-provider-validation-errors>{% for error in oidc_validation_errors %}<div role="listitem">{{ error }}</div>{% endfor %}</div>
+    {% else %}
+    <p class="muted">The listener, issuer DNS, managed certificate, active signing key, and protocol settings are ready.</p>
+    {% endif %}
+  </div>
 </aside>
 </section>
 {% endif %}

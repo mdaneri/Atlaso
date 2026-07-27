@@ -7059,6 +7059,56 @@ function setOidcSecretResult(clientId, secret) {
   textarea.select();
 }
 
+function validateOidcRedirectUriField(form, fieldName, { required = false } = {}) {
+  const field = form.elements.namedItem(fieldName);
+  if (!(field instanceof HTMLTextAreaElement)) return { valid: true };
+  const values = field.value.split(/\r?\n/).filter((value) => value.length > 0);
+  if (required && values.length === 0) {
+    return { valid: false, field: fieldName, message: "At least one exact redirect URI is required." };
+  }
+  const allowLoopback = Boolean(form.elements.namedItem("allow_loopback_redirects")?.checked);
+  const seen = new Set();
+  for (const value of values) {
+    if (value !== value.trim()) {
+      return { valid: false, field: fieldName, message: "Redirect URIs must not contain surrounding whitespace." };
+    }
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) {
+      return { valid: false, field: fieldName, message: `"${value}" is not a valid absolute URI.` };
+    }
+    if (value.includes("*") || value.includes("\\")) {
+      return { valid: false, field: fieldName, message: "Redirect URIs must not contain wildcards or backslashes." };
+    }
+    let parsed;
+    try {
+      parsed = new URL(value);
+    } catch {
+      return { valid: false, field: fieldName, message: `"${value}" is not a valid absolute URI.` };
+    }
+    if (parsed.username || parsed.password) {
+      return { valid: false, field: fieldName, message: "Redirect URIs must not contain user information." };
+    }
+    if (parsed.hash) {
+      return { valid: false, field: fieldName, message: "Redirect URIs must not contain fragments." };
+    }
+    const hostname = parsed.hostname.replace(/^\[|\]$/g, "");
+    const isLoopback = hostname === "::1" || /^127(?:\.\d{1,3}){3}$/.test(hostname);
+    const secure = parsed.protocol === "https:";
+    const allowedDevelopmentUri = parsed.protocol === "http:" && allowLoopback && isLoopback && Boolean(parsed.port);
+    if (!secure && !allowedDevelopmentUri) {
+      return {
+        valid: false,
+        field: fieldName,
+        message: "Redirect URIs must use HTTPS. Explicit HTTP loopback addresses also require development mode and a port.",
+      };
+    }
+    if (seen.has(value)) {
+      return { valid: false, field: fieldName, message: "Duplicate redirect URIs are not allowed." };
+    }
+    seen.add(value);
+  }
+  return { valid: true };
+}
+
 function initializeOidcClientsTable() {
   const element = document.getElementById("oidc-clients-table");
   const form = document.querySelector("[data-oidc-client-form]");
@@ -7201,6 +7251,11 @@ function initializeOidcClientsTable() {
     validateStep: ({ step }) => {
       if (step.id === "identity" && !checkedScopes().includes("openid")) {
         return { valid: false, message: "The openid scope is required." };
+      }
+      if (step.id === "redirects") {
+        const redirectResult = validateOidcRedirectUriField(form, "redirect_uris", { required: true });
+        if (!redirectResult.valid) return redirectResult;
+        return validateOidcRedirectUriField(form, "post_logout_redirect_uris");
       }
       return { valid: true };
     },

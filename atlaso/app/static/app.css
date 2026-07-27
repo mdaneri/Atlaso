@@ -1206,6 +1206,19 @@ textarea {
   margin-bottom: 0;
 }
 
+.oidc-service-workspace > .left-stack {
+  align-self: stretch;
+}
+
+.oidc-administration-panel {
+  height: 100%;
+  margin-bottom: 0;
+}
+
+.oidc-administration-panel > .tab-panels {
+  align-content: start;
+}
+
 .esxi-pxe-workspace .left-stack {
   display: contents;
 }

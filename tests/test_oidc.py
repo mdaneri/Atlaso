@@ -858,6 +858,8 @@ def test_openid_connect_page_exposes_authorization_code_oidc_ui(client):
     assert 'id="oidc-group-mappings-table"' in page.text
     assert 'data-fallback-id="oidc-group-mappings-fallback"' in page.text
     assert 'class="split-workspace service-settings-workspace oidc-service-workspace"' in page.text
+    assert 'class="panel wide-panel oidc-administration-panel"' in page.text
+    assert 'class="tab-buttons tool-tabs oidc-page-tabs"' in page.text
     assert 'class="tab-panel active" id="oidc-provider"' in page.text
     assert '<aside class="side-stack service-settings-column">' in page.text
     assert page.text.index('class="tab-panels oidc-page-panels"') < page.text.index(
@@ -877,9 +879,10 @@ def test_openid_connect_page_exposes_authorization_code_oidc_ui(client):
     assert '<span class="scope-choice-badge">required</span>' in page.text
     assert 'data-atlaso-wizard-nav="state"' in page.text
     assert 'data-atlaso-wizard-step="state"' in page.text
-    assert "<h2>Validation</h2>" not in page.text
+    assert "<h2>Validation</h2>" in page.text
     assert "data-oidc-provider-validation" in page.text
     assert "data-oidc-provider-validation-status" in page.text
+    assert "Exact post-logout URIs (optional)" in page.text
     assert "<noscript>" in page.text
     assert "server-rendered client, signing-key, mapping, and subject tables remain readable" in page.text
     assert 'id="oidc-clients-table"' in page.text
@@ -899,6 +902,8 @@ def test_openid_connect_page_exposes_authorization_code_oidc_ui(client):
     assert "Client changes are unavailable because the interactive grid could not initialize." in javascript
     assert "Signing-key changes are unavailable because the interactive grid could not initialize." in javascript
     assert javascript.count('launcher.setAttribute("aria-disabled", "true")') >= 2
+    assert "At least one exact redirect URI is required." in javascript
+    assert "is not a valid absolute URI." in javascript
 
 
 def test_authentication_ui_deletes_bound_client_before_ldap_organization(client):
