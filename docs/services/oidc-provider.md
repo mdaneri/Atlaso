@@ -19,9 +19,9 @@ and protocol readiness.
 
 This verified appliance view provides visual orientation before you begin.
 
-![Atlaso OIDC provider settings with a responsive validation and published identity URL rail.](../assets/screenshots/authentication-clean-desktop.webp)
+![Atlaso OpenID Connect provider status with right-column service settings.](../assets/screenshots/authentication-clean-desktop.webp)
 
-*Figure: OIDC provider desired-state settings and validation rail in the desktop viewport.*
+*Figure: OIDC provider status and issuer information with service settings in the right column.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
@@ -222,7 +222,7 @@ LDAP sources; social/federated identity; SAML; SCIM; wildcard redirects; front-c
 
 These captures show responsive layouts and useful operational states referenced by this page.
 
-### Authentication: Oidc Group Mappings
+### Openid Connect: Oidc Group Mappings
 
 ![Atlaso OpenID Connect page showing the external group mapping grid at the desktop viewport.](../assets/screenshots/authentication-group-mappings-desktop.webp)
 
@@ -232,10 +232,10 @@ These captures show responsive layouts and useful operational states referenced 
 
 *Figure: OIDC external group mappings in the responsive direct-edit collection.*
 
-### Authentication: Oidc Provider
+### Openid Connect: Oidc Provider
 
-![Atlaso OIDC provider settings stacked above validation and published identity URLs at a narrow viewport.](../assets/screenshots/authentication-clean-responsive.webp)
+![Atlaso OpenID Connect provider settings stacked with status and issuer information at a narrow viewport.](../assets/screenshots/authentication-clean-responsive.webp)
 
-*Figure: OIDC provider settings with validation and published identity URLs stacked at the responsive viewport.*
+*Figure: OIDC provider settings with status and issuer information stacked at the responsive viewport.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
