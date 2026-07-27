@@ -25,10 +25,12 @@ from atlaso.app.models import (
     utcnow,
 )
 from atlaso.app.services.identity_credentials import verify_credentials
+from atlaso.app.services.appliance_settings import normalize_fqdn
 from atlaso.app.schemas import (
     OidcClientCreate,
     OidcClientCreated,
     OidcClientEnabledUpdate,
+    OidcClientUpdate,
     OidcClientResponse,
     OidcClientSecretRotated,
     OidcGroupMappingCreate,
@@ -36,6 +38,7 @@ from atlaso.app.schemas import (
     OidcGroupMappingUpdate,
     OidcProviderSettingsResponse,
     OidcProviderSettingsUpdate,
+    OidcIntegrationExport,
     OidcSigningKeyResponse,
     OidcSubjectResponse,
 )
@@ -47,12 +50,15 @@ from atlaso.app.services.oidc import (
     create_client,
     create_group_mapping,
     discovery_document,
+    delete_retired_signing_key,
     enabled_login_organizations,
     ensure_provider_settings,
+    expected_issuer_url,
     generate_signing_key,
     get_client,
     group_mapping_to_dict,
     issuer_endpoint_urls,
+    integration_export,
     jwks_document,
     list_clients,
     list_group_mappings,
@@ -72,10 +78,12 @@ from atlaso.app.services.oidc import (
     validate_userinfo_claims,
     validate_all_mapping_contexts,
     update_group_mapping,
+    update_client,
     verify_client_secret,
     rotate_client_secret,
     signing_key_to_dict,
 )
+from atlaso.app.services.dnsmasq import join_interfaces, split_addresses, split_interfaces
 
 
 public_router = APIRouter(prefix="/identity", tags=["OpenID Connect"])
@@ -101,7 +109,7 @@ def get_openid_configuration(
         document = discovery_document(db)
     except OidcConfigurationError as exc:
         raise _public_configuration_error(exc) from exc
-    if not _identity_https(request):
+    if not _identity_https(request, db):
         raise HTTPException(status_code=400, detail="HTTPS is required.")
     return JSONResponse(document, headers={"Cache-Control": "public, max-age=300"})
 
@@ -112,7 +120,7 @@ def get_oidc_jwks(request: Request, db: Session = Depends(get_db)) -> JSONRespon
         document = jwks_document(db)
     except OidcConfigurationError as exc:
         raise _public_configuration_error(exc) from exc
-    if not _identity_https(request):
+    if not _identity_https(request, db):
         raise HTTPException(status_code=400, detail="HTTPS is required.")
     return JSONResponse(document, headers={"Cache-Control": "public, max-age=300"})
 
@@ -125,13 +133,19 @@ OIDC_LOGIN_BUCKET_LIMIT = 4096
 _OIDC_LOGIN_BUCKETS: OrderedDict[str, deque[float]] = OrderedDict()
 
 
-def _identity_https(request: Request) -> bool:
-    """Trust forwarded HTTPS only from the loopback management proxy."""
+def _identity_https(request: Request, db: Session | None = None) -> bool:
+    """Trust HTTPS forwarded by loopback only on the configured OIDC listener."""
     if request.url.scheme == "https":
         return True
     forwarded = request.headers.get("x-forwarded-proto", "").lower() == "https"
     peer = request.client.host if request.client else ""
-    return forwarded and peer in {"127.0.0.1", "::1", "localhost"}
+    if not (forwarded and peer in {"127.0.0.1", "::1", "localhost"}):
+        return False
+    if db is None:
+        return True
+    provider = ensure_provider_settings(db)
+    listener = request.headers.get("x-atlaso-listener-address", "").strip()
+    return listener in set(split_addresses(provider.listen_address))
 
 
 def _no_store(response: Response) -> Response:
@@ -268,7 +282,7 @@ def _registered_error_target(
 def _authorize_request(
     request: Request, db: Session, params: dict[str, str]
 ) -> OidcAuthorizationTransaction | Response:
-    if not _identity_https(request):
+    if not _identity_https(request, db):
         return _oidc_error(None, "invalid_request")
     redirect_uri, _client = _registered_error_target(
         db, params.get("client_id", ""), params.get("redirect_uri", "")
@@ -420,7 +434,7 @@ async def authorize_get(request: Request, db: Session = Depends(get_db)) -> Resp
 
 @public_router.post("/authorize", response_model=None, operation_id="oidcAuthorizePost")
 async def authorize_post(request: Request, db: Session = Depends(get_db)) -> Response:
-    if not _identity_https(request):
+    if not _identity_https(request, db):
         return _oidc_error(None, "invalid_request")
     form = await request.form()
     transaction = db.execute(
@@ -548,7 +562,7 @@ def _basic_client(request: Request, db: Session) -> OidcClient | None:
 
 @public_router.post("/token", response_model=None, operation_id="oidcToken")
 async def token(request: Request, db: Session = Depends(get_db)) -> Response:
-    if not _identity_https(request):
+    if not _identity_https(request, db):
         return _oidc_error(None, "invalid_request")
     client = _basic_client(request, db)
     form = await request.form()
@@ -588,7 +602,7 @@ def _bearer_value(request: Request) -> str:
 
 
 async def _userinfo_response(request: Request, db: Session) -> Response:
-    if not _identity_https(request):
+    if not _identity_https(request, db):
         return _oidc_error(None, "invalid_request")
     try:
         claims = validate_bearer_token(db, _bearer_value(request), expected_typ="at+jwt")
@@ -624,7 +638,7 @@ async def userinfo_post(request: Request, db: Session = Depends(get_db)) -> Resp
 
 
 async def _logout_response(request: Request, db: Session) -> Response:
-    if not _identity_https(request):
+    if not _identity_https(request, db):
         return _oidc_error(None, "invalid_request")
     params = dict(request.query_params)
     if request.method == "POST":
@@ -691,6 +705,10 @@ def _provider_response(db: Session) -> OidcProviderSettingsResponse:
         }
     return OidcProviderSettingsResponse(
         enabled=provider.enabled,
+        hostname=provider.hostname,
+        listen_interfaces=split_interfaces(provider.listen_interface),
+        listen_addresses=split_addresses(provider.listen_address),
+        port=provider.port,
         issuer_url=provider.issuer_url,
         access_token_lifetime_seconds=provider.access_token_lifetime_seconds,
         id_token_lifetime_seconds=provider.id_token_lifetime_seconds,
@@ -735,7 +753,10 @@ def update_oidc_provider_settings(
     provider = ensure_provider_settings(db)
     previous_issuer = provider.issuer_url
     try:
-        provider.issuer_url = normalize_issuer_url(payload.issuer_url)
+        provider.hostname = normalize_fqdn(payload.hostname)
+        provider.listen_interface = join_interfaces(payload.listen_interfaces)
+        provider.port = payload.port
+        provider.issuer_url = normalize_issuer_url(expected_issuer_url(provider))
     except OidcConfigurationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     provider.enabled = payload.enabled
@@ -832,6 +853,37 @@ def rotate_oidc_signing_key(
         request_id=getattr(request.state, "request_id", None),
     )
     return OidcSigningKeyResponse(**signing_key_to_dict(row))
+
+
+@admin_router.delete(
+    "/signing-keys/{key_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    operation_id="deleteRetiredOidcSigningKey",
+)
+def delete_oidc_signing_key(
+    key_id: int,
+    request: Request,
+    identity: Identity = Depends(require_scope("admin:all")),
+    db: Session = Depends(get_db),
+) -> Response:
+    row = db.get(OidcSigningKey, key_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="OIDC signing key not found.")
+    kid = row.kid
+    try:
+        delete_retired_signing_key(db, row)
+    except OidcConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    record_audit(
+        db,
+        actor=identity.username,
+        action="delete_retired_oidc_signing_key",
+        resource_type="oidc_signing_key",
+        resource_id=str(key_id),
+        detail=f"kid={kid}",
+        request_id=getattr(request.state, "request_id", None),
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @admin_router.get("/clients", response_model=list[OidcClientResponse])
@@ -1044,6 +1096,81 @@ def create_oidc_client(
         client=OidcClientResponse(**oidc_client_to_dict(row)),
         client_secret=raw_secret,
     )
+
+
+@admin_router.put(
+    "/clients/{client_record_id}",
+    response_model=OidcClientResponse,
+    operation_id="updateOidcClient",
+)
+def update_oidc_client(
+    client_record_id: int,
+    payload: OidcClientUpdate,
+    request: Request,
+    identity: Identity = Depends(require_scope("admin:all")),
+    db: Session = Depends(get_db),
+) -> OidcClientResponse:
+    try:
+        row = get_client(db, client_record_id)
+        row = update_client(
+            db,
+            row=row,
+            name=payload.name,
+            organization_id=payload.organization_id,
+            redirect_uris=payload.redirect_uris,
+            post_logout_redirect_uris=payload.post_logout_redirect_uris,
+            allowed_scopes=payload.allowed_scopes,
+            allow_loopback_redirects=payload.allow_loopback_redirects,
+            access_token_lifetime_seconds=payload.access_token_lifetime_seconds,
+            id_token_lifetime_seconds=payload.id_token_lifetime_seconds,
+            authorization_code_lifetime_seconds=payload.authorization_code_lifetime_seconds,
+            enabled=payload.enabled,
+        )
+    except OidcConfigurationError as exc:
+        db.rollback()
+        status_code = (
+            status.HTTP_404_NOT_FOUND
+            if str(exc) == "OIDC client not found."
+            else status.HTTP_422_UNPROCESSABLE_CONTENT
+        )
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    record_audit(
+        db,
+        actor=identity.username,
+        action="update_oidc_client",
+        resource_type="oidc_client",
+        resource_id=str(row.id),
+        detail=f"client_id={row.client_id}; organization_id={row.organization_id or 'unbound'}",
+        request_id=getattr(request.state, "request_id", None),
+    )
+    return OidcClientResponse(**oidc_client_to_dict(row))
+
+
+@admin_router.get(
+    "/clients/{client_record_id}/integration-export",
+    response_model=OidcIntegrationExport,
+    operation_id="exportOidcClientIntegration",
+)
+def export_oidc_client_integration(
+    client_record_id: int,
+    request: Request,
+    identity: Identity = Depends(require_scope("admin:all")),
+    db: Session = Depends(get_db),
+) -> OidcIntegrationExport:
+    try:
+        row = get_client(db, client_record_id)
+    except OidcConfigurationError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    record_audit(
+        db,
+        actor=identity.username,
+        action="export_oidc_client_integration",
+        resource_type="oidc_client",
+        resource_id=str(row.id),
+        detail=f"client_id={row.client_id}",
+        request_id=getattr(request.state, "request_id", None),
+    )
+    return OidcIntegrationExport(**integration_export(db, row))
 
 
 @admin_router.post(

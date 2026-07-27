@@ -6679,6 +6679,59 @@ async function postOidcGroupMappingAction(url, data, csrf, { expectJson = true }
   return expectJson ? response.json() : null;
 }
 
+function updateOidcProviderValidation(payload = {}) {
+  const form = document.querySelector('form[action="/authentication/oidc/provider"]');
+  const providerStatus = document.querySelector("[data-oidc-provider-status]");
+  const validationPanel = document.querySelector("[data-oidc-provider-validation]");
+  const validationStatus = document.querySelector("[data-oidc-provider-validation-status]");
+  if (!(form instanceof HTMLFormElement) || !(validationPanel instanceof HTMLElement) || !(validationStatus instanceof HTMLElement)) return;
+  const enabled = Boolean(payload.enabled);
+  if (providerStatus instanceof HTMLElement) {
+    providerStatus.textContent = enabled ? "enabled" : "disabled";
+    providerStatus.className = `status-pill ${enabled ? "good" : "muted"}`;
+  }
+  const errors = Array.isArray(payload.validation_errors) ? payload.validation_errors : [];
+  const urlFields = {
+    issuer: "issuer",
+    discovery: "discovery_url",
+    jwks: "jwks_uri",
+    authorization: "authorization_endpoint",
+    token: "token_endpoint",
+    userinfo: "userinfo_endpoint",
+    logout: "end_session_endpoint",
+  };
+  Object.entries(urlFields).forEach(([label, field]) => {
+    const value = payload.urls?.[field];
+    if (typeof value !== "string") return;
+    const code = document.querySelector(`[data-oidc-url="${label}"]`);
+    const copy = document.querySelector(`[data-oidc-url-copy="${label}"]`);
+    if (code instanceof HTMLElement) code.textContent = value;
+    if (copy instanceof HTMLButtonElement) copy.dataset.copyValue = value;
+  });
+  validationStatus.textContent = errors.length ? "needs attention" : "valid";
+  validationStatus.className = `status-pill ${errors.length ? "warn" : "good"}`;
+  validationPanel.querySelector(".error-list")?.remove();
+  if (errors.length) {
+    const list = document.createElement("div");
+    list.className = "error-list";
+    list.setAttribute("role", "list");
+    list.setAttribute("data-oidc-provider-validation-errors", "");
+    errors.forEach((message) => {
+      const item = document.createElement("div");
+      item.setAttribute("role", "listitem");
+      item.textContent = String(message);
+      list.appendChild(item);
+    });
+    validationPanel.appendChild(list);
+  }
+}
+
+function initializeOidcProviderSettings() {
+  const form = document.querySelector('form[action="/authentication/oidc/provider"]');
+  if (!(form instanceof HTMLFormElement)) return;
+  form.addEventListener("atlaso:autosave-success", (event) => updateOidcProviderValidation(event.detail || {}));
+}
+
 function initializeOidcGroupMappingsTable() {
   const tableElement = document.getElementById("oidc-group-mappings-table");
   if (!(tableElement instanceof HTMLElement)) {
@@ -6857,7 +6910,20 @@ function initializeOidcGroupMappingsTable() {
   };
 
   try {
-    const atlasoGridOptions18 = {
+    const grid = window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      fallback,
+      status: "#oidc-group-mapping-status",
+      pattern: "direct-edit",
+      emptyMessage: "No external group mappings configured.",
+      rowActions: [
+        {
+          label: "Delete mapping",
+          disabled: (component) => component.getData().is_new,
+          action: (event, row) => deleteMapping(row),
+        },
+      ],
+      options: {
       data: rows,
       index: "id",
       layout: "fitColumns",
@@ -6866,13 +6932,6 @@ function initializeOidcGroupMappingsTable() {
       placeholder: "No external group mappings configured.",
       reactiveData: false,
       rowFormatter: (row) => markNewRecordRow(row, "source_selection"),
-      rowContextMenu: [
-        {
-          label: "Delete mapping",
-          disabled: (component) => component.getData().is_new,
-          action: (event, row) => deleteMapping(row),
-        },
-      ],
       columns: lockNewRecordColumns([
         {
           title: "Source",
@@ -6955,12 +7014,9 @@ function initializeOidcGroupMappingsTable() {
           cellEdited: saveCell,
         },
       ], "source_selection"),
-    };
-    table = window.AtlasoUiPatterns.createGrid({
-      element: tableElement,
-      pattern: "direct-edit",
-      options: atlasoGridOptions18,
-    }).table;
+      },
+    });
+    table = grid.table;
     setMappingCount(rows.filter((row) => !row.is_new).length);
     setOidcGroupMappingMessage("Edit a mapped external name or client scope to autosave.", "idle");
   } catch (error) {
@@ -6970,6 +7026,362 @@ function initializeOidcGroupMappingsTable() {
         : "The mapping grid could not render. Showing the read-only fallback table.",
     );
   }
+}
+
+async function oidcFormRequest(url, formData, { expectJson = true } = {}) {
+  const response = await fetch(url, {
+    method: "POST",
+    body: formData,
+    credentials: "same-origin",
+    headers: { "X-Atlaso-Grid": "1" },
+  });
+  if (!response.ok) {
+    let message = "";
+    try {
+      const payload = await response.json();
+      message = String(payload.detail || "");
+    } catch {
+      message = (await response.text()).trim().replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    }
+    throw new Error(message || "The OIDC administration request failed.");
+  }
+  return expectJson ? response.json() : null;
+}
+
+function setOidcSecretResult(clientId, secret) {
+  const result = document.getElementById("oidc-client-secret-result");
+  const textarea = result?.querySelector("textarea");
+  if (!(result instanceof HTMLElement) || !(textarea instanceof HTMLTextAreaElement)) return;
+  textarea.value = secret || "";
+  result.querySelector(".muted").textContent = `Client ID: ${clientId}. The plaintext value is not stored and cannot be shown again.`;
+  result.classList.remove("hidden");
+  textarea.focus();
+  textarea.select();
+}
+
+function validateOidcRedirectUriField(form, fieldName, { required = false } = {}) {
+  const field = form.elements.namedItem(fieldName);
+  if (!(field instanceof HTMLTextAreaElement)) return { valid: true };
+  const values = field.value.split(/\r?\n/).filter((value) => value.length > 0);
+  if (required && values.length === 0) {
+    return { valid: false, field: fieldName, message: "At least one exact redirect URI is required." };
+  }
+  const allowLoopback = Boolean(form.elements.namedItem("allow_loopback_redirects")?.checked);
+  const seen = new Set();
+  for (const value of values) {
+    if (value !== value.trim()) {
+      return { valid: false, field: fieldName, message: "Redirect URIs must not contain surrounding whitespace." };
+    }
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) {
+      return { valid: false, field: fieldName, message: `"${value}" is not a valid absolute URI.` };
+    }
+    if (value.includes("*") || value.includes("\\")) {
+      return { valid: false, field: fieldName, message: "Redirect URIs must not contain wildcards or backslashes." };
+    }
+    let parsed;
+    try {
+      parsed = new URL(value);
+    } catch {
+      return { valid: false, field: fieldName, message: `"${value}" is not a valid absolute URI.` };
+    }
+    if (parsed.username || parsed.password) {
+      return { valid: false, field: fieldName, message: "Redirect URIs must not contain user information." };
+    }
+    if (parsed.hash) {
+      return { valid: false, field: fieldName, message: "Redirect URIs must not contain fragments." };
+    }
+    const hostname = parsed.hostname.replace(/^\[|\]$/g, "");
+    const isLoopback = hostname === "::1" || /^127(?:\.\d{1,3}){3}$/.test(hostname);
+    const secure = parsed.protocol === "https:";
+    const allowedDevelopmentUri = parsed.protocol === "http:" && allowLoopback && isLoopback && Boolean(parsed.port);
+    if (!secure && !allowedDevelopmentUri) {
+      return {
+        valid: false,
+        field: fieldName,
+        message: "Redirect URIs must use HTTPS. Explicit HTTP loopback addresses also require development mode and a port.",
+      };
+    }
+    if (seen.has(value)) {
+      return { valid: false, field: fieldName, message: "Duplicate redirect URIs are not allowed." };
+    }
+    seen.add(value);
+  }
+  return { valid: true };
+}
+
+function initializeOidcClientsTable() {
+  const element = document.getElementById("oidc-clients-table");
+  const form = document.querySelector("[data-oidc-client-form]");
+  const dialog = document.getElementById("oidc-client-dialog");
+  if (!(element instanceof HTMLElement) || !(form instanceof HTMLFormElement) || !(dialog instanceof HTMLDialogElement)) return;
+  const rows = [
+    ...JSON.parse(element.dataset.clients || "[]"),
+    {
+      id: "oidc-client-new",
+      is_new: true,
+      name: "",
+      client_id: "",
+      organization_slug: "",
+      redirect_uris: [],
+      enabled: false,
+    },
+  ];
+  const csrf = element.dataset.csrf || "";
+  let table;
+  let wizard;
+
+  const checkedScopes = () => [...form.querySelectorAll('input[name="allowed_scopes"]:checked')].map((input) => input.value);
+  const populateForm = (data = null) => {
+    form.elements.namedItem("client_record_id").value = data?.id || "";
+    form.elements.namedItem("name").value = data?.name || "";
+    form.elements.namedItem("organization_id").value = data?.organization_id || "";
+    form.elements.namedItem("redirect_uris").value = (data?.redirect_uris || []).join("\n");
+    form.elements.namedItem("post_logout_redirect_uris").value = (data?.post_logout_redirect_uris || []).join("\n");
+    form.elements.namedItem("allow_loopback_redirects").checked = Boolean(data?.allow_loopback_redirects);
+    form.elements.namedItem("enabled").checked = data ? Boolean(data.enabled) : true;
+    const scopes = new Set(data?.allowed_scopes || ["openid"]);
+    form.querySelectorAll('input[name="allowed_scopes"]').forEach((input) => {
+      input.checked = scopes.has(input.value);
+    });
+    form.querySelector("[data-atlaso-wizard-submit]").textContent = data ? "Update confidential client" : "Register confidential client";
+  };
+  const openClient = (data, launcher) => wizard.open({ launcher, context: data || null });
+  const refreshRow = async (payload, existingId = null) => {
+    if (existingId) {
+      const row = table.getRow(existingId);
+      if (row) await row.update(payload);
+    } else {
+      await table.addRow(payload, false, "oidc-client-new");
+    }
+  };
+  const rotateSecret = async (data) => {
+    const confirmed = await requestConfirmation({
+      title: `Rotate secret for ${data.name}?`,
+      message: "The previous secret stops working immediately. The replacement is shown once and must be copied into the relying party.",
+      confirmLabel: "Rotate client secret",
+    });
+    if (!confirmed) return;
+    const body = new FormData();
+    body.set("csrf", csrf);
+    const payload = await oidcFormRequest(`/authentication/oidc/clients/${data.id}/rotate-secret`, body);
+    setOidcSecretResult(payload.client_id, payload.client_secret);
+  };
+  const deleteClient = async (data) => {
+    const confirmed = await requestConfirmation({
+      title: `Delete OIDC client ${data.name}?`,
+      message: "This permanently removes the client, secret hash, exact redirects, and client-specific mappings. No appliance service is changed.",
+      confirmLabel: "Delete OIDC client",
+      tone: "danger",
+    });
+    if (!confirmed) return;
+    const body = new FormData();
+    body.set("csrf", csrf);
+    await oidcFormRequest(`/authentication/oidc/clients/${data.id}/delete`, body, { expectJson: false });
+    await table.getRow(data.id)?.delete();
+  };
+  const exportClient = async (data) => {
+    const response = await fetch(`/authentication/oidc/clients/${data.id}/integration-export`, { credentials: "same-origin" });
+    if (!response.ok) throw new Error("The redacted integration export could not be generated.");
+    const blob = await response.blob();
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `atlaso-oidc-${data.id}-integration.json`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
+
+  const grid = window.AtlasoUiPatterns.createGrid({
+    element,
+    fallback: `#${element.dataset.fallbackId}`,
+    status: "#oidc-clients-status",
+    pattern: "wizard-backed",
+    emptyMessage: "No confidential clients registered.",
+    onOpenRow: (data, row, event) => openClient(
+      data.is_new ? null : data,
+      event?.currentTarget || row?.getElement?.(),
+    ),
+    rowActions: [
+      { label: "Edit client", disabled: (row) => row.getData().is_new, action: (event, row) => openClient(row.getData(), row.getElement()) },
+      { label: "Rotate secret", disabled: (row) => row.getData().is_new, action: (event, row) => rotateSecret(row.getData()).catch((error) => grid.setError(error.message)) },
+      { label: "Download redacted integration", disabled: (row) => row.getData().is_new, action: (event, row) => exportClient(row.getData()).catch((error) => grid.setError(error.message)) },
+      { label: "Delete client", disabled: (row) => row.getData().is_new, action: (event, row) => deleteClient(row.getData()).catch((error) => grid.setError(error.message)) },
+    ],
+    options: {
+      data: rows,
+      index: "id",
+      height: "330px",
+      placeholder: "No confidential clients registered.",
+      columns: [
+        {
+          title: "Name",
+          field: "name",
+          minWidth: 190,
+          formatter: (cell) => cell.getRow().getData().is_new
+            ? '<button class="add-row-button" type="button" data-oidc-client-add>+ Add client here</button>'
+            : escapeHtml(cell.getValue()),
+        },
+        { title: "Client ID", field: "client_id", minWidth: 230, formatter: (cell) => cell.getRow().getData().is_new ? "" : `<code>${escapeHtml(cell.getValue())}</code>` },
+        { title: "Organization", field: "organization_slug", minWidth: 150, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || "Unbound") },
+        { title: "Redirects", field: "redirect_uris", minWidth: 260, formatter: (cell) => cell.getRow().getData().is_new ? "" : (cell.getValue() || []).map((value) => `<code>${escapeHtml(value)}</code>`).join("<br>") },
+        { title: "Status", field: "enabled", width: 105, formatter: (cell) => cell.getRow().getData().is_new ? "" : `<span class="status-pill ${cell.getValue() ? "good" : "muted"}">${cell.getValue() ? "enabled" : "disabled"}</span>` },
+      ],
+      rowFormatter: (row) => markNewRecordRow(row, "name"),
+    },
+  });
+  table = grid.table;
+  if (!table) {
+    const launcher = document.querySelector("[data-oidc-client-add]");
+    if (launcher instanceof HTMLButtonElement) {
+      launcher.disabled = true;
+      launcher.setAttribute("aria-disabled", "true");
+    }
+    grid.setError("Client changes are unavailable because the interactive grid could not initialize.");
+    return;
+  }
+  wizard = window.AtlasoUiPatterns.createWizard({
+    form,
+    dialog,
+    steps: [
+      { id: "identity", title: "Define the confidential client", description: "Set its operator label, validated identity source, and allowed scopes." },
+      { id: "redirects", title: "Register exact redirects", description: "Enter byte-for-byte redirect and post-logout destinations." },
+      { id: "state", title: "Choose client state", description: "Decide whether the reviewed client may begin and redeem authorization requests." },
+      { id: "review", title: "Review client lifecycle", description: "Confirm the application-state change and secret handling." },
+    ],
+    onOpen: ({ context }) => populateForm(context),
+    validateStep: ({ step }) => {
+      if (step.id === "identity" && !checkedScopes().includes("openid")) {
+        return { valid: false, message: "The openid scope is required." };
+      }
+      if (step.id === "redirects") {
+        const redirectResult = validateOidcRedirectUriField(form, "redirect_uris", { required: true });
+        if (!redirectResult.valid) return redirectResult;
+        return validateOidcRedirectUriField(form, "post_logout_redirect_uris");
+      }
+      return { valid: true };
+    },
+    prepareReview: () => {
+      const review = form.querySelector("[data-oidc-client-review]");
+      const name = form.elements.namedItem("name").value.trim();
+      const organization = form.elements.namedItem("organization_id").selectedOptions[0]?.textContent || "Unbound";
+      const redirects = form.elements.namedItem("redirect_uris").value.split(/\r?\n/).filter(Boolean).length;
+      const enabled = form.elements.namedItem("enabled").checked;
+      review.innerHTML = `<div><span>Client</span><strong>${escapeHtml(name)}</strong></div><div><span>Identity source</span><strong>${escapeHtml(organization)}</strong></div><div><span>Scopes</span><strong>${escapeHtml(checkedScopes().join(" "))}</strong></div><div><span>Exact redirects</span><strong>${redirects}</strong></div><div><span>State</span><strong>${enabled ? "Enabled" : "Disabled"}</strong></div>`;
+    },
+    onSubmit: async () => {
+      const body = new FormData(form);
+      const recordId = body.get("client_record_id");
+      const url = recordId ? `/authentication/oidc/clients/${recordId}/edit` : "/authentication/oidc/clients";
+      const payload = await oidcFormRequest(url, body);
+      const client = payload.client || payload;
+      await refreshRow(client, recordId ? Number(recordId) : null);
+      if (payload.client_secret) setOidcSecretResult(client.client_id, payload.client_secret);
+      return { valid: true };
+    },
+  });
+  element.addEventListener("click", (event) => {
+    const launcher = event.target.closest("[data-oidc-client-add]");
+    if (launcher instanceof HTMLButtonElement) openClient(null, launcher);
+  });
+}
+
+function initializeOidcKeysTable() {
+  const element = document.getElementById("oidc-keys-table");
+  const form = document.querySelector("[data-oidc-key-form]");
+  const dialog = document.getElementById("oidc-key-dialog");
+  if (!(element instanceof HTMLElement) || !(form instanceof HTMLFormElement) || !(dialog instanceof HTMLDialogElement)) return;
+  const rows = JSON.parse(element.dataset.keys || "[]");
+  const csrf = element.dataset.csrf || "";
+  let table;
+  const deleteKey = async (data) => {
+    const confirmed = await requestConfirmation({
+      title: `Delete retired key ${data.kid}?`,
+      message: "Deletion is allowed only after its public overlap window ends. The encrypted private key and public JWK will be removed.",
+      confirmLabel: "Delete retired key",
+      tone: "danger",
+    });
+    if (!confirmed) return;
+    const body = new FormData();
+    body.set("csrf", csrf);
+    await oidcFormRequest(`/authentication/oidc/signing-keys/${data.id}/delete`, body, { expectJson: false });
+    await table.getRow(data.id)?.delete();
+  };
+  const grid = window.AtlasoUiPatterns.createGrid({
+    element,
+    fallback: `#${element.dataset.fallbackId}`,
+    status: "#oidc-keys-status",
+    pattern: "wizard-backed",
+    emptyMessage: "No signing key generated.",
+    rowActions: [
+      {
+        label: "Delete retired key",
+        disabled: (row) => row.getData().status !== "retired",
+        action: (event, row) => deleteKey(row.getData()).catch((error) => grid.setError(error.message)),
+      },
+    ],
+    options: {
+      data: rows,
+      index: "id",
+      height: "250px",
+      columns: [
+        { title: "Key ID", field: "kid", minWidth: 260, formatter: (cell) => `<code>${escapeHtml(cell.getValue())}</code>` },
+        { title: "Algorithm", field: "algorithm", width: 110 },
+        { title: "Status", field: "status", width: 110 },
+        { title: "Published until", field: "publish_until", minWidth: 190, formatter: (cell) => escapeHtml(cell.getValue() || "active") },
+      ],
+    },
+  });
+  table = grid.table;
+  if (!table) {
+    const launcher = document.querySelector("[data-oidc-key-launch]");
+    if (launcher instanceof HTMLButtonElement) {
+      launcher.disabled = true;
+      launcher.setAttribute("aria-disabled", "true");
+    }
+    grid.setError("Signing-key changes are unavailable because the interactive grid could not initialize.");
+    return;
+  }
+  const wizard = window.AtlasoUiPatterns.createWizard({
+    form,
+    dialog,
+    steps: [
+      { id: "operation", title: "Prepare signing key", description: "Review encrypted custody and public metadata." },
+      { id: "review", title: "Review key lifecycle", description: "Confirm generation and the enforced overlap." },
+    ],
+    onSubmit: async () => {
+      const payload = await oidcFormRequest("/authentication/oidc/signing-keys", new FormData(form));
+      if (payload.previous) await table.getRow(payload.previous.id)?.update(payload.previous);
+      await table.addRow(payload.key, true);
+      form.elements.namedItem("rotate").value = "true";
+      const launcher = document.querySelector("[data-oidc-key-launch]");
+      if (launcher) launcher.textContent = "Rotate signing key";
+      form.querySelector("[data-atlaso-wizard-submit]").textContent = "Rotate signing key";
+      return { valid: true };
+    },
+  });
+  document.querySelector("[data-oidc-key-launch]")?.addEventListener("click", (event) => wizard.open({ launcher: event.currentTarget }));
+}
+
+function initializeOidcSubjectsTable() {
+  const element = document.getElementById("oidc-subjects-table");
+  if (!(element instanceof HTMLElement)) return;
+  window.AtlasoUiPatterns.createGrid({
+    element,
+    fallback: `#${element.dataset.fallbackId}`,
+    status: "#oidc-subjects-status",
+    pattern: "read-only",
+    emptyMessage: "Subjects are created only after a credential is verified for OIDC.",
+    options: {
+      data: JSON.parse(element.dataset.subjects || "[]"),
+      index: "subject",
+      height: "280px",
+      columns: [
+        { title: "Subject", field: "subject", minWidth: 300, formatter: (cell) => `<code>${escapeHtml(cell.getValue())}</code>` },
+        { title: "Source", field: "source", width: 130 },
+        { title: "Username", field: "username", minWidth: 160 },
+        { title: "Organization", field: "organization_name", minWidth: 170 },
+      ],
+    },
+  });
 }
 
 function initializeVlanInterfacesTable() {
@@ -15859,7 +16271,11 @@ document.addEventListener("DOMContentLoaded", initializeRoutesWanRoutingTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanNatTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanPoliciesTable);
 document.addEventListener("DOMContentLoaded", initializePhysicalInterfacesTable);
+document.addEventListener("DOMContentLoaded", initializeOidcProviderSettings);
+document.addEventListener("DOMContentLoaded", initializeOidcClientsTable);
+document.addEventListener("DOMContentLoaded", initializeOidcKeysTable);
 document.addEventListener("DOMContentLoaded", initializeOidcGroupMappingsTable);
+document.addEventListener("DOMContentLoaded", initializeOidcSubjectsTable);
 document.addEventListener("DOMContentLoaded", initializeVlanInterfacesTable);
 document.addEventListener("DOMContentLoaded", initializeCodeMirrorEditors);
 document.addEventListener("DOMContentLoaded", initializeKickstartEditorDirtyState);

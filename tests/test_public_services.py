@@ -1,4 +1,4 @@
-from atlaso.app.models import CaSettings, PhysicalInterface, VcfOfflineDepotSettings, VcfPrivateRegistrySettings
+from atlaso.app.models import CaSettings, OidcProviderSettings, PhysicalInterface, VcfOfflineDepotSettings, VcfPrivateRegistrySettings
 from atlaso.app.services.public_services import public_service_entries, render_public_services_nginx_config
 
 
@@ -88,6 +88,8 @@ def test_public_services_nginx_config_contains_per_ip_scoped_locations():
     assert "server_name ca.atlaso.internal;" in config
     assert "ssl_certificate /etc/atlaso/ca-portal/certs/ca.atlaso.internal.crt;" in config
     assert "ssl_certificate_key /etc/atlaso/ca-portal/certs/ca.atlaso.internal.key;" in config
+
+
     assert "IP-scoped HTTPS public services front door." in config
     assert "server_name _ 192.168.87.32;" in config
     assert "location = /ca {" in config
@@ -134,6 +136,55 @@ def test_public_services_nginx_config_contains_per_ip_scoped_locations():
     assert "alias /mnt/atlaso-vcf-offline-depot/PROD/$1;" in config
     assert "autoindex off;" in config
     assert "/registry" not in config
+
+
+def test_oidc_public_service_uses_dedicated_hostname_port_and_closed_routes():
+    entries = public_service_entries(
+        interfaces=[
+            PhysicalInterface(
+                name="eth0",
+                role="management",
+                mode="access",
+                ip_cidr="192.168.49.10/24",
+            ),
+            PhysicalInterface(
+                name="eth2",
+                role="routed",
+                mode="access",
+                ip_cidr="192.168.87.32/24",
+            ),
+        ],
+        vlans=[],
+        ca_settings=CaSettings(enabled=False),
+        esxi_pxe_boot=None,
+        vcf_depot_settings=VcfOfflineDepotSettings(enabled=False),
+        vcf_registry_settings=VcfPrivateRegistrySettings(enabled=False),
+        oidc_settings=OidcProviderSettings(
+            enabled=True,
+            hostname="oidc.atlaso.internal",
+            listen_interface="eth2",
+            listen_address="192.168.87.32",
+            port=8443,
+        ),
+    )
+    assert [entry["address"] for entry in entries] == ["192.168.87.32"]
+    oidc_service = entries[0]["services"][0]
+    assert oidc_service["id"] == "oidc"
+    assert oidc_service["dns_names"] == ["oidc.atlaso.internal"]
+    assert oidc_service["port"] == 8443
+
+    config = render_public_services_nginx_config(
+        entries,
+        oidc_certificate_path="/etc/atlaso/oidc/certs/oidc.atlaso.internal.crt",
+        oidc_key_path="/etc/atlaso/oidc/certs/oidc.atlaso.internal.key",
+    )
+    assert "OIDC HTTPS front door." in config
+    assert "listen 192.168.87.32:8443 ssl;" in config
+    assert "server_name oidc.atlaso.internal;" in config
+    assert "location ^~ /identity/ {" in config
+    assert "proxy_set_header X-Atlaso-Listener-Address $server_addr;" in config
+    assert "location / {\n    return 404;" in config
+    assert "location = /settings" not in config
 
 
 def test_public_services_nginx_config_brackets_ipv6_https_and_http_listeners():

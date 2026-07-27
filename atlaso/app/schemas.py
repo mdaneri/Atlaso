@@ -928,7 +928,10 @@ class SettingsUpdate(BaseModel):
 
 class OidcProviderSettingsUpdate(BaseModel):
     enabled: bool = False
-    issuer_url: str = Field(min_length=1, max_length=500)
+    hostname: str = Field(default="oidc.atlaso.internal", min_length=1, max_length=180)
+    listen_interfaces: list[str] = Field(default_factory=list)
+    port: int = Field(default=443, ge=1, le=65535)
+    issuer_url: str = Field(default="https://oidc.atlaso.internal/identity", min_length=1, max_length=500)
     access_token_lifetime_seconds: int = Field(default=300, ge=60, le=3600)
     id_token_lifetime_seconds: int = Field(default=300, ge=60, le=3600)
     authorization_code_lifetime_seconds: int = Field(default=60, ge=30, le=300)
@@ -937,6 +940,7 @@ class OidcProviderSettingsUpdate(BaseModel):
 
 
 class OidcProviderSettingsResponse(OidcProviderSettingsUpdate):
+    listen_addresses: list[str] = Field(default_factory=list)
     authorization_flow_available: bool
     valid: bool
     validation_errors: list[str] = Field(default_factory=list)
@@ -961,6 +965,13 @@ class OidcClientCreate(BaseModel):
     id_token_lifetime_seconds: int = Field(default=300, ge=60, le=3600)
     authorization_code_lifetime_seconds: int = Field(default=60, ge=30, le=300)
     enabled: bool = True
+
+
+class OidcClientUpdate(OidcClientCreate):
+    """Mutable confidential-client settings.
+
+    The generated client identifier and secret are intentionally absent.
+    """
 
 
 class OidcClientResponse(BaseModel):
@@ -990,6 +1001,23 @@ class OidcClientCreated(BaseModel):
 class OidcClientSecretRotated(BaseModel):
     client_id: str
     client_secret: str
+
+
+class OidcIntegrationExport(BaseModel):
+    issuer: str
+    discovery_url: str
+    authorization_endpoint: str
+    token_endpoint: str
+    userinfo_endpoint: str
+    jwks_uri: str
+    end_session_endpoint: str
+    client_id: str
+    token_endpoint_auth_method: str
+    allowed_scopes: list[str]
+    redirect_uris: list[str]
+    post_logout_redirect_uris: list[str]
+    organization: str
+    enabled: bool
 
 
 class OidcClientEnabledUpdate(BaseModel):

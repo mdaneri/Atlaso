@@ -72,6 +72,7 @@ from atlaso.app.models import (
     NatRule,
     NtpSettings,
     OidcGroupMapping,
+    OidcProviderSettings,
     OidcSigningKey,
     PhysicalInterface,
     Role,
@@ -316,24 +317,30 @@ from atlaso.app.services.settings_archive import (
 )
 from atlaso.app.services.oidc import (
     OIDC_AUTHORIZATION_FLOW_AVAILABLE,
+    OIDC_DEFAULT_HOSTNAME,
+    OIDC_DNS_RECORD_DESCRIPTION,
     OidcConfigurationError,
     OidcConflictError,
     create_client as create_oidc_client_record,
     create_group_mapping as create_oidc_group_mapping_record,
+    delete_retired_signing_key as delete_retired_oidc_signing_key_record,
     ensure_provider_settings as ensure_oidc_provider_settings,
     generate_signing_key as generate_oidc_signing_key,
     get_client as get_oidc_client,
     issuer_endpoint_urls as oidc_issuer_endpoint_urls,
+    integration_export as oidc_integration_export,
     list_clients as list_oidc_clients,
     list_group_mappings as list_oidc_group_mappings,
     list_subjects as list_oidc_subjects,
     normalize_issuer_url as normalize_oidc_issuer_url,
+    expected_issuer_url as expected_oidc_issuer_url,
     oidc_client_to_dict,
     group_mapping_to_dict as oidc_group_mapping_to_dict,
     provider_validation_errors as oidc_provider_validation_errors,
     rotate_client_secret as rotate_oidc_client_secret_value,
     signing_key_to_dict as oidc_signing_key_to_dict,
     update_group_mapping as update_oidc_group_mapping_record,
+    update_client as update_oidc_client_record,
     validate_all_mapping_contexts as validate_oidc_mapping_contexts,
 )
 from atlaso.app.services.local_users import (
@@ -905,6 +912,28 @@ def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
             chain_path=appliance_chain,
         )
     )
+
+    oidc_settings = ensure_oidc_provider_settings(db)
+    if oidc_settings.enabled:
+        oidc_hostname = normalize_dns_hostname(
+            oidc_settings.hostname or OIDC_DEFAULT_HOSTNAME
+        )
+        cert_path, key_path, chain_path = ca_service_cert_paths(
+            "oidc", oidc_hostname
+        )
+        specs.append(
+            ManagedCertificateSpec(
+                owner="oidc:https",
+                common_name=oidc_hostname,
+                dns_names=[oidc_hostname],
+                ip_addresses=split_addresses(oidc_settings.listen_address),
+                profile_name=CA_SERVER_PROFILE_NAME,
+                description="Managed OpenID Connect provider HTTPS certificate.",
+                cert_path=cert_path,
+                key_path=key_path,
+                chain_path=chain_path,
+            )
+        )
 
     ca_settings = get_ca_settings_row(db)
     if ca_settings.enabled:
@@ -3063,6 +3092,7 @@ def firewall_context(db: Session, *, reconcile: bool = True) -> dict:
         source_group_assignments=source_group_state["assignments"],
         web_terminal_interfaces=terminal_interfaces,
         ldap_settings=get_ldap_settings_row(db),
+        oidc_settings=ensure_oidc_provider_settings(db),
         esx_storage_rules=esx_storage_firewall_rule_specs(esx_storage_context(db, reconcile=False)["esx_storage_manifest"]),
     )
     generated_rules.extend(
@@ -3248,6 +3278,7 @@ def public_services_context(db: Session, *, reconcile: bool = True) -> dict[str,
         reconcile=reconcile,
     )
     registry_settings = get_vcf_private_registry_settings_row(db, reconcile=reconcile)
+    oidc_settings = ensure_oidc_provider_settings(db)
     esxi_boot = esxi_pxe_boot_settings(db)
     entries = public_service_entries(
         interfaces=interfaces,
@@ -3256,6 +3287,7 @@ def public_services_context(db: Session, *, reconcile: bool = True) -> dict[str,
         esxi_pxe_boot=esxi_boot,
         vcf_depot_settings=depot_settings,
         vcf_registry_settings=registry_settings,
+        oidc_settings=oidc_settings,
     )
     appliance_settings = get_appliance_settings_row(db)
     management = management_interface_context(interfaces)
@@ -3293,6 +3325,13 @@ def public_services_context(db: Session, *, reconcile: bool = True) -> dict[str,
         )
     ca_portal_hostname = normalize_dns_hostname(ca_settings.portal_hostname or CA_DEFAULT_PORTAL_HOSTNAME)
     ca_portal_cert_path, ca_portal_key_path, _ca_portal_chain_path = ca_service_cert_paths("ca-portal", ca_portal_hostname)
+    oidc_cert_path, oidc_key_path, _oidc_chain_path = ca_managed_certificate_paths(
+        db, "oidc:https"
+    )
+    if oidc_settings.enabled and (not oidc_cert_path or not oidc_key_path):
+        validation_errors.append(
+            "OIDC public listeners require an issued managed OIDC service certificate. Apply Certificate Authority first."
+        )
     config_preview = render_public_services_nginx_config(
         entries,
         depot_store_path=depot_settings.depot_store_path,
@@ -3301,6 +3340,8 @@ def public_services_context(db: Session, *, reconcile: bool = True) -> dict[str,
         ca_key_path=ca_portal_key_path,
         terminal_certificate_path=terminal_cert_path,
         terminal_key_path=terminal_key_path,
+        oidc_certificate_path=oidc_cert_path,
+        oidc_key_path=oidc_key_path,
     )
     return {
         "public_service_entries": entries,
@@ -3513,6 +3554,7 @@ def public_service_directory_context(db: Session, binding: dict[str, str]) -> di
         esxi_pxe_boot=esxi_boot,
         vcf_depot_settings=depot_settings,
         vcf_registry_settings=registry_settings,
+        oidc_settings=ensure_oidc_provider_settings(db),
     )
     appliance_settings = get_appliance_settings_row(db)
     physical_interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
@@ -4658,6 +4700,29 @@ def ensure_dns_for_ldap(db: Session, settings: LdapSettings, actor: str | None, 
         description=LDAP_DNS_RECORD_DESCRIPTION,
         actor=actor,
         audit_prefix="ldap",
+        previous_hostname=previous_hostname,
+        enabled=settings.enabled,
+        bind_options=ldap_service_bind_options(db),
+    )
+
+
+def ensure_dns_for_oidc(
+    db: Session,
+    settings: OidcProviderSettings,
+    actor: str | None,
+    *,
+    previous_hostname: str | None = None,
+) -> str | None:
+    hostname = normalize_dns_hostname(settings.hostname or OIDC_DEFAULT_HOSTNAME)
+    settings.hostname = hostname
+    return ensure_interface_dns_alias(
+        db,
+        hostname=hostname,
+        listen_interface=settings.listen_interface,
+        listen_address=settings.listen_address,
+        description=OIDC_DNS_RECORD_DESCRIPTION,
+        actor=actor,
+        audit_prefix="oidc",
         previous_hostname=previous_hostname,
         enabled=settings.enabled,
         bind_options=ldap_service_bind_options(db),
@@ -17457,6 +17522,20 @@ def authentication(
     )
 
 
+@router.get("/openid-connect", response_class=HTMLResponse, response_model=None)
+def openid_connect(
+    request: Request,
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    require_admin_identity(identity)
+    return render(
+        request,
+        "authentication.html",
+        authentication_context(db, identity, raw_token=None, oidc_page=True),
+    )
+
+
 def authentication_context(
     db: Session,
     identity: Identity,
@@ -17465,6 +17544,7 @@ def authentication_context(
     oidc_client_secret: str | None = None,
     oidc_client_id: str | None = None,
     oidc_error: str | None = None,
+    oidc_page: bool = False,
 ) -> dict[str, Any]:
     query = select(ApiToken).order_by(desc(ApiToken.created_at))
     if not identity.has_role(Role.ADMIN.value):
@@ -17474,12 +17554,13 @@ def authentication_context(
         "identity": identity,
         "tokens": tokens,
         "raw_token": raw_token,
+        "oidc_page": oidc_page,
         "oidc_admin": identity.has_role(Role.ADMIN.value),
         "oidc_client_secret": oidc_client_secret,
         "oidc_client_id": oidc_client_id,
         "oidc_error": oidc_error,
     }
-    if not context["oidc_admin"]:
+    if not oidc_page or not context["oidc_admin"]:
         return context
     provider = ensure_oidc_provider_settings(db)
     try:
@@ -17495,6 +17576,19 @@ def authentication_context(
             "end_session_endpoint": "",
         }
     oidc_client_rows = list_oidc_clients(db)
+    dns_settings = get_dns_settings_row(db)
+    oidc_available_interfaces = ldap_service_bind_options(db)
+    public_services = public_services_context(db, reconcile=False)
+    issuer_fqdn = normalize_fqdn(provider.hostname or OIDC_DEFAULT_HOSTNAME)
+    managed_issuer_dns_records = db.execute(
+        select(DnsRecord)
+        .where(
+            DnsRecord.description == OIDC_DNS_RECORD_DESCRIPTION,
+            DnsRecord.record_type.in_(["A", "AAAA", "CNAME"]),
+            DnsRecord.enabled.is_(True),
+        )
+        .order_by(DnsRecord.hostname, DnsRecord.record_type)
+    ).scalars().all()
     oidc_ldap_group_rows = db.execute(
         select(LdapGroup)
         .options(selectinload(LdapGroup.organization))
@@ -17503,17 +17597,36 @@ def authentication_context(
     context.update(
         {
             "oidc_provider": provider,
+            "oidc_issuer_fqdn": issuer_fqdn,
+            "oidc_available_interfaces": oidc_available_interfaces,
+            "oidc_selected_interfaces": split_interfaces(provider.listen_interface),
+            "oidc_selected_addresses": split_addresses(provider.listen_address),
+            "oidc_dns_enabled": dns_settings.enabled,
+            "oidc_dns_records": [
+                {
+                    "hostname": row.hostname,
+                    "record_type": row.record_type,
+                    "address": row.address,
+                }
+                for row in managed_issuer_dns_records
+            ],
             "oidc_flow_available": OIDC_AUTHORIZATION_FLOW_AVAILABLE,
             "oidc_validation_errors": oidc_provider_validation_errors(db, provider),
             "oidc_urls": endpoint_urls,
-            "oidc_clients": [oidc_client_to_dict(row) for row in oidc_client_rows],
-            "oidc_keys": [
-                oidc_signing_key_to_dict(row)
-                for row in db.execute(
-                    select(OidcSigningKey).order_by(OidcSigningKey.created_at.desc())
-                ).scalars().all()
-            ],
-            "oidc_subjects": list_oidc_subjects(db),
+            "oidc_config_preview": public_services["public_service_config_preview"],
+            "oidc_config_path": public_services["public_service_config_path"],
+            "oidc_clients": jsonable_encoder(
+                [oidc_client_to_dict(row) for row in oidc_client_rows]
+            ),
+            "oidc_keys": jsonable_encoder(
+                [
+                    oidc_signing_key_to_dict(row)
+                    for row in db.execute(
+                        select(OidcSigningKey).order_by(OidcSigningKey.created_at.desc())
+                    ).scalars().all()
+                ]
+            ),
+            "oidc_subjects": jsonable_encoder(list_oidc_subjects(db)),
             "oidc_group_mappings": jsonable_encoder(
                 [
                     oidc_group_mapping_to_dict(row)
@@ -17560,7 +17673,10 @@ def authentication_context(
 def update_oidc_provider_from_ui(
     request: Request,
     enabled: bool = Form(False),
-    issuer_url: str = Form(...),
+    hostname: str = Form(OIDC_DEFAULT_HOSTNAME),
+    listen_interfaces: list[str] = Form(default_factory=list),
+    listen_interfaces_present: str | None = Form(None),
+    port: int = Form(443),
     access_token_lifetime_seconds: int = Form(300),
     id_token_lifetime_seconds: int = Form(300),
     authorization_code_lifetime_seconds: int = Form(60),
@@ -17573,8 +17689,26 @@ def update_oidc_provider_from_ui(
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     provider = ensure_oidc_provider_settings(db)
+    previous_hostname = provider.hostname
     try:
-        provider.issuer_url = normalize_oidc_issuer_url(issuer_url)
+        normalized_hostname = normalize_dns_hostname(hostname)
+        if not normalized_hostname or "." not in normalized_hostname:
+            raise OidcConfigurationError(
+                "OIDC hostname must be a fully qualified DNS name."
+            )
+        selected_interfaces, selected_addresses = resolve_ldap_bind_targets(
+            db,
+            listen_interfaces,
+            current_interface=provider.listen_interface,
+            listen_interfaces_present=listen_interfaces_present,
+        )
+        provider.hostname = normalized_hostname
+        provider.listen_interface = selected_interfaces
+        provider.listen_address = selected_addresses
+        provider.port = max(1, min(port, 65535))
+        provider.issuer_url = normalize_oidc_issuer_url(
+            expected_oidc_issuer_url(provider)
+        )
     except OidcConfigurationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     provider.access_token_lifetime_seconds = max(60, min(access_token_lifetime_seconds, 3600))
@@ -17588,9 +17722,23 @@ def update_oidc_provider_from_ui(
     provider.updated_at = utcnow()
     db.add(provider)
     db.flush()
+    ensure_dns_for_oidc(
+        db,
+        provider,
+        identity.username,
+        previous_hostname=previous_hostname,
+    )
+    ensure_ca_state(db)
+    db.flush()
     validation_errors = oidc_provider_validation_errors(db, provider)
     if enabled and validation_errors:
         provider.enabled = False
+        ensure_dns_for_oidc(
+            db,
+            provider,
+            identity.username,
+            previous_hostname=provider.hostname,
+        )
         validation_errors = [
             "Provider enablement was rejected until every readiness check passes.",
             *validation_errors,
@@ -17607,11 +17755,17 @@ def update_oidc_provider_from_ui(
         "saved": True,
         "valid": not validation_errors,
         "enabled": provider.enabled,
+        "issuer_url": provider.issuer_url,
+        "hostname": provider.hostname,
+        "listen_interfaces": split_interfaces(provider.listen_interface),
+        "listen_addresses": split_addresses(provider.listen_address),
+        "port": provider.port,
         "validation_errors": validation_errors,
+        "urls": oidc_issuer_endpoint_urls(provider.issuer_url),
     }
     if request.headers.get("X-Atlaso-Autosave") == "1":
         return JSONResponse(payload)
-    return RedirectResponse("/authentication#oidc-provider", status_code=303)
+    return RedirectResponse("/openid-connect#oidc-provider", status_code=303)
 
 
 @router.post("/authentication/oidc/clients", response_class=HTMLResponse, response_model=None)
@@ -17622,6 +17776,9 @@ def create_oidc_client_from_ui(
     redirect_uris: str = Form(...),
     post_logout_redirect_uris: str = Form(""),
     preset: str = Form("custom"),
+    allowed_scopes: list[str] = Form(default_factory=list),
+    allow_loopback_redirects: str | None = Form(None),
+    enabled: str | None = Form(None),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
@@ -17641,18 +17798,24 @@ def create_oidc_client_from_ui(
             post_logout_redirect_uris=[
                 value.strip() for value in post_logout_redirect_uris.splitlines() if value.strip()
             ],
-            allowed_scopes=["openid", "profile", "email", "groups"],
-            allow_loopback_redirects=False,
+            allowed_scopes=allowed_scopes or ["openid"],
+            allow_loopback_redirects=allow_loopback_redirects == "on",
             access_token_lifetime_seconds=300,
             id_token_lifetime_seconds=300,
             authorization_code_lifetime_seconds=60,
-            enabled=True,
+            enabled=enabled == "on",
         )
     except (OidcConfigurationError, ValueError) as exc:
         return render(
             request,
             "authentication.html",
-            authentication_context(db, identity, raw_token=None, oidc_error=str(exc)),
+            authentication_context(
+                db,
+                identity,
+                raw_token=None,
+                oidc_error=str(exc),
+                oidc_page=True,
+            ),
             status_code=422,
         )
     record_audit(
@@ -17663,6 +17826,14 @@ def create_oidc_client_from_ui(
         resource_id=str(row.id),
         detail=f"client_id={row.client_id}; preset={preset}",
     )
+    if request.headers.get("X-Atlaso-Grid") == "1":
+        return JSONResponse(
+            {
+                "client": jsonable_encoder(oidc_client_to_dict(row)),
+                "client_secret": raw_secret,
+            },
+            status_code=201,
+        )
     return render(
         request,
         "authentication.html",
@@ -17672,8 +17843,98 @@ def create_oidc_client_from_ui(
             raw_token=None,
             oidc_client_secret=raw_secret,
             oidc_client_id=row.client_id,
+            oidc_page=True,
         ),
     )
+
+
+@router.post(
+    "/authentication/oidc/clients/{client_record_id}/edit",
+    response_model=None,
+)
+def update_oidc_client_from_ui(
+    request: Request,
+    client_record_id: int,
+    name: str = Form(...),
+    organization_id: str = Form(""),
+    redirect_uris: str = Form(...),
+    post_logout_redirect_uris: str = Form(""),
+    allowed_scopes: list[str] = Form(default_factory=list),
+    allow_loopback_redirects: str | None = Form(None),
+    enabled: str | None = Form(None),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> Response:
+    verify_csrf(request, csrf)
+    require_admin_identity(identity)
+    try:
+        row = get_oidc_client(db, client_record_id)
+        row = update_oidc_client_record(
+            db,
+            row=row,
+            name=name,
+            organization_id=int(organization_id) if organization_id.strip() else None,
+            redirect_uris=[value.strip() for value in redirect_uris.splitlines() if value.strip()],
+            post_logout_redirect_uris=[
+                value.strip() for value in post_logout_redirect_uris.splitlines() if value.strip()
+            ],
+            allowed_scopes=allowed_scopes or ["openid"],
+            allow_loopback_redirects=allow_loopback_redirects == "on",
+            access_token_lifetime_seconds=300,
+            id_token_lifetime_seconds=300,
+            authorization_code_lifetime_seconds=60,
+            enabled=enabled == "on",
+        )
+    except OidcConfigurationError as exc:
+        db.rollback()
+        detail = exc.args[0] if len(exc.args) == 1 and isinstance(exc.args[0], str) else (
+            "The OIDC client update was rejected."
+        )
+        if request.headers.get("X-Atlaso-Grid") == "1":
+            return JSONResponse({"detail": detail}, status_code=422)
+        raise HTTPException(status_code=422, detail=detail) from None
+    record_audit(
+        db,
+        actor=identity.username,
+        action="update_oidc_client",
+        resource_type="oidc_client",
+        resource_id=str(row.id),
+        detail=f"client_id={row.client_id}; organization_id={row.organization_id or 'unbound'}",
+    )
+    if request.headers.get("X-Atlaso-Grid") == "1":
+        return JSONResponse(jsonable_encoder(oidc_client_to_dict(row)))
+    return RedirectResponse("/openid-connect#oidc-clients", status_code=303)
+
+
+@router.get(
+    "/authentication/oidc/clients/{client_record_id}/integration-export",
+    response_model=None,
+)
+def export_oidc_client_integration_from_ui(
+    request: Request,
+    client_record_id: int,
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    require_admin_identity(identity)
+    try:
+        row = get_oidc_client(db, client_record_id)
+    except OidcConfigurationError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    record_audit(
+        db,
+        actor=identity.username,
+        action="export_oidc_client_integration",
+        resource_type="oidc_client",
+        resource_id=str(row.id),
+        detail=f"client_id={row.client_id}",
+    )
+    response = JSONResponse(jsonable_encoder(oidc_integration_export(db, row)))
+    response.headers["Content-Disposition"] = (
+        f'attachment; filename="atlaso-oidc-{row.id}-integration.json"'
+    )
+    return response
 
 
 @router.post(
@@ -17716,6 +17977,7 @@ def create_oidc_group_mapping_from_ui(
                 identity,
                 raw_token=None,
                 oidc_error=detail,
+                oidc_page=True,
             ),
             status_code=409,
         )
@@ -17735,6 +17997,7 @@ def create_oidc_group_mapping_from_ui(
                 identity,
                 raw_token=None,
                 oidc_error=detail,
+                oidc_page=True,
             ),
             status_code=422,
         )
@@ -17754,7 +18017,7 @@ def create_oidc_group_mapping_from_ui(
             jsonable_encoder(oidc_group_mapping_to_dict(row)),
             status_code=201,
         )
-    return RedirectResponse("/authentication#oidc-group-mappings", status_code=303)
+    return RedirectResponse("/openid-connect#oidc-group-mappings", status_code=303)
 
 
 @router.post(
@@ -17852,6 +18115,7 @@ def delete_oidc_group_mapping_from_ui(
                 identity,
                 raw_token=None,
                 oidc_error=detail,
+                oidc_page=True,
             ),
             status_code=422,
         )
@@ -17868,7 +18132,7 @@ def delete_oidc_group_mapping_from_ui(
     )
     if request.headers.get("X-Atlaso-Grid") == "1":
         return Response(status_code=204)
-    return RedirectResponse("/authentication#oidc-group-mappings", status_code=303)
+    return RedirectResponse("/openid-connect#oidc-group-mappings", status_code=303)
 
 
 @router.post("/authentication/oidc/clients/{client_record_id}/rotate-secret", response_class=HTMLResponse, response_model=None)
@@ -17894,6 +18158,8 @@ def rotate_oidc_client_secret_from_ui(
         resource_id=str(row.id),
         detail=f"client_id={row.client_id}",
     )
+    if request.headers.get("X-Atlaso-Grid") == "1":
+        return JSONResponse({"client_id": row.client_id, "client_secret": raw_secret})
     return render(
         request,
         "authentication.html",
@@ -17903,6 +18169,7 @@ def rotate_oidc_client_secret_from_ui(
             raw_token=None,
             oidc_client_secret=raw_secret,
             oidc_client_id=row.client_id,
+            oidc_page=True,
         ),
     )
 
@@ -17914,7 +18181,7 @@ def delete_oidc_client_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> Response:
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     try:
@@ -17932,7 +18199,9 @@ def delete_oidc_client_from_ui(
         resource_id=str(client_record_id),
         detail=f"client_id={public_client_id}",
     )
-    return RedirectResponse("/authentication#oidc-clients", status_code=303)
+    if request.headers.get("X-Atlaso-Grid") == "1":
+        return Response(status_code=204)
+    return RedirectResponse("/openid-connect#oidc-clients", status_code=303)
 
 
 @router.post("/authentication/oidc/signing-keys", response_model=None)
@@ -17942,7 +18211,7 @@ def create_oidc_signing_key_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> Response:
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     try:
@@ -17957,7 +18226,58 @@ def create_oidc_signing_key_from_ui(
         resource_id=str(row.id),
         detail=f"kid={row.kid}; algorithm={row.algorithm}",
     )
-    return RedirectResponse("/authentication#oidc-keys", status_code=303)
+    if request.headers.get("X-Atlaso-Grid") == "1":
+        return JSONResponse(
+            jsonable_encoder(
+                {
+                    "key": oidc_signing_key_to_dict(row),
+                    "previous": (
+                        oidc_signing_key_to_dict(previous) if previous is not None else None
+                    ),
+                }
+            ),
+            status_code=201,
+        )
+    return RedirectResponse("/openid-connect#oidc-keys", status_code=303)
+
+
+@router.post(
+    "/authentication/oidc/signing-keys/{key_id}/delete",
+    response_model=None,
+)
+def delete_retired_oidc_signing_key_from_ui(
+    request: Request,
+    key_id: int,
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> Response:
+    verify_csrf(request, csrf)
+    require_admin_identity(identity)
+    row = db.get(OidcSigningKey, key_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="OIDC signing key not found.")
+    kid = row.kid
+    try:
+        delete_retired_oidc_signing_key_record(db, row)
+    except OidcConflictError as exc:
+        detail = exc.args[0] if len(exc.args) == 1 and isinstance(exc.args[0], str) else (
+            "The OIDC signing key cannot be deleted."
+        )
+        if request.headers.get("X-Atlaso-Grid") == "1":
+            return JSONResponse({"detail": detail}, status_code=409)
+        raise HTTPException(status_code=409, detail=detail) from None
+    record_audit(
+        db,
+        actor=identity.username,
+        action="delete_retired_oidc_signing_key",
+        resource_type="oidc_signing_key",
+        resource_id=str(key_id),
+        detail=f"kid={kid}",
+    )
+    if request.headers.get("X-Atlaso-Grid") == "1":
+        return Response(status_code=204)
+    return RedirectResponse("/openid-connect#oidc-keys", status_code=303)
 
 
 @router.post("/authentication/api-tokens", response_model=None)

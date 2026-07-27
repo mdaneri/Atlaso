@@ -759,7 +759,11 @@ class OidcProviderSettings(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    issuer_url: Mapped[str] = mapped_column(String(500), default="")
+    hostname: Mapped[str] = mapped_column(String(180), default="oidc.atlaso.internal")
+    listen_interface: Mapped[str] = mapped_column(String(240), default="")
+    listen_address: Mapped[str] = mapped_column(String(240), default="")
+    port: Mapped[int] = mapped_column(Integer, default=443)
+    issuer_url: Mapped[str] = mapped_column(String(500), default="https://oidc.atlaso.internal/identity")
     access_token_lifetime_seconds: Mapped[int] = mapped_column(Integer, default=300)
     id_token_lifetime_seconds: Mapped[int] = mapped_column(Integer, default=300)
     authorization_code_lifetime_seconds: Mapped[int] = mapped_column(Integer, default=60)

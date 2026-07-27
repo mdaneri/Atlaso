@@ -56,6 +56,9 @@ def test_initial_api_resources_are_documented(client):
         "/api/v1/jobs",
         "/api/v1/settings",
         "/api/v1/oidc/group-mappings",
+        "/api/v1/oidc/clients/{client_record_id}",
+        "/api/v1/oidc/clients/{client_record_id}/integration-export",
+        "/api/v1/oidc/signing-keys/{key_id}",
     ]
     for path in expected:
         assert path in paths
@@ -68,6 +71,20 @@ def test_oidc_group_mapping_openapi_contract(client):
     assert path["post"]["operationId"] == "createOidcGroupMapping"
     assert "OidcGroupMappingCreate" in schema["components"]["schemas"]
     assert "OidcGroupMappingResponse" in schema["components"]["schemas"]
+
+
+def test_oidc_administration_lifecycle_openapi_contract(client):
+    schema = client.get("/openapi.json").json()
+    client_path = schema["paths"]["/api/v1/oidc/clients/{client_record_id}"]
+    assert client_path["put"]["operationId"] == "updateOidcClient"
+    export_path = schema["paths"][
+        "/api/v1/oidc/clients/{client_record_id}/integration-export"
+    ]
+    assert export_path["get"]["operationId"] == "exportOidcClientIntegration"
+    key_path = schema["paths"]["/api/v1/oidc/signing-keys/{key_id}"]
+    assert key_path["delete"]["operationId"] == "deleteRetiredOidcSigningKey"
+    assert "OidcClientUpdate" in schema["components"]["schemas"]
+    assert "OidcIntegrationExport" in schema["components"]["schemas"]
 
 
 def test_route_wan_mode_contract_is_interface_only(client):

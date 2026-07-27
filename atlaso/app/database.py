@@ -2,7 +2,7 @@ from collections.abc import Generator
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import create_engine, event, inspect, select
+from sqlalchemy import create_engine, event, inspect, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -91,6 +91,28 @@ def init_db() -> None:
     from atlaso.app import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            columns = {
+                row[1]
+                for row in connection.execute(
+                    text("PRAGMA table_info(oidc_provider_settings)")
+                ).all()
+            }
+            additions = {
+                "hostname": "VARCHAR(180) NOT NULL DEFAULT 'oidc.atlaso.internal'",
+                "listen_interface": "VARCHAR(240) NOT NULL DEFAULT ''",
+                "listen_address": "VARCHAR(240) NOT NULL DEFAULT ''",
+                "port": "INTEGER NOT NULL DEFAULT 443",
+            }
+            for name, definition in additions.items():
+                if name not in columns:
+                    connection.execute(
+                        text(
+                            f"ALTER TABLE oidc_provider_settings "
+                            f"ADD COLUMN {name} {definition}"
+                        )
+                    )
 
 
 def get_db() -> Generator[Session, None, None]:

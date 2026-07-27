@@ -795,7 +795,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v172" in service_worker.text
+    assert "atlaso-pwa-v178" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -807,9 +807,9 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/codemirror/atlaso-codemirror.min.js" in service_worker.text
-    assert "/static/app.css?v=atlaso-ui-foundation-20260726-1" in service_worker.text
+    assert "/static/app.css?v=atlaso-ui-foundation-20260727-3" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in service_worker.text
-    assert "/static/app.js?v=atlaso-grid-foundation-20260726-2" in service_worker.text
+    assert "/static/app.js?v=atlaso-oidc-admin-20260727-6" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -818,7 +818,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=atlaso-ui-foundation-20260726-1" in offline.text
+    assert "/static/app.css?v=atlaso-ui-foundation-20260727-3" in offline.text
 
 
 def test_shared_ui_pattern_shell_and_wizard_contracts(client):
@@ -834,7 +834,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
         )
         assert shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4"
-        ) < shell.index("/static/app.js?v=atlaso-grid-foundation-20260726-2")
+        ) < shell.index("/static/app.js?v=atlaso-oidc-admin-20260727-6")
 
     wizard_templates = [
         templates / "automation.html",
@@ -879,10 +879,10 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     app_js = client.get("/static/app.js").text
     create_grid = "window.AtlasoUiPatterns.createGrid({"
 
-    assert app_js.count(create_grid) == 35
+    assert app_js.count(create_grid) == 38
     assert app_js.count('pattern: "direct-edit"') == 25
-    assert app_js.count('pattern: "read-only"') == 7
-    assert app_js.count('pattern: "wizard-backed"') == 3
+    assert app_js.count('pattern: "read-only"') == 8
+    assert app_js.count('pattern: "wizard-backed"') == 5
     assert "new Tabulator(" not in app_js
     assert "new window.Tabulator(" not in app_js
     assert "atlaso-legacy-tabulator: #117" not in app_js
@@ -973,7 +973,7 @@ def test_reported_template_accessibility_contracts():
     assert '<label class="file-upload-control compact-file-upload">' in vcf_depot
     assert '<div class="dns-authority-records" role="list">' in dns
     assert '<dl class="dns-authority-records">' not in dns
-    assert '<div class="error-list" role="list">' in authentication
+    assert '<div class="error-list" role="list" data-oidc-provider-validation-errors>' in authentication
     assert '<ul class="error-list">' not in authentication
 
 
@@ -1010,9 +1010,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=atlaso-ui-foundation-20260726-1" in page.text
+    assert "/static/app.css?v=atlaso-ui-foundation-20260727-3" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in page.text
-    assert "/static/app.js?v=atlaso-grid-foundation-20260726-2" in page.text
+    assert "/static/app.js?v=atlaso-oidc-admin-20260727-6" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text

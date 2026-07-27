@@ -10,26 +10,29 @@ status: current
 # Constrained OpenID Connect provider
 
 Atlaso is delivering an in-process OpenID Connect provider for appliance integrations and VCF lab environments in five
-reviewable phases. Phase 3 adds explicit organization selection, current-state claims, and privacy-safe
-local-role/LDAP-group mappings to the constrained Authorization Code protocol surface. Provider enablement requires the
-applied management HTTPS setting, canonical issuer, active RS256 key, and protocol readiness.
+reviewable phases. Phase 4 completes its administration and lifecycle surfaces. Provider enablement requires the exact
+service-owned issuer, an addressed access or routed listener, its applied CA-managed certificate, an active RS256 key,
+and protocol readiness.
 
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 
 This verified appliance view provides visual orientation before you begin.
 
-![Atlaso Authentication page in the clean-appliance desktop viewport.](../assets/screenshots/authentication-clean-desktop.webp)
+![Atlaso OpenID Connect provider status with right-column service settings.](../assets/screenshots/authentication-clean-desktop.webp)
 
-*Figure: Authentication in the verified clean-appliance desktop state.*
+*Figure: OIDC provider status and issuer information with service settings in the right column.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
 ## Architecture and trust boundaries
 
-The canonical issuer is exactly `https://<applied-appliance-fqdn>/identity`. It is configured from Appliance Settings,
-never inferred from `Host`, `Forwarded`, or `X-Forwarded-*` request headers. IP issuers, explicit ports, query strings,
-fragments, user information, and path or trailing-slash variants are rejected.
+The canonical issuer is derived as `https://<oidc-hostname>[:port]/identity`; the default hostname is
+`oidc.atlaso.internal` and port 443 is omitted. It is never inferred from `Host`, `Forwarded`, or `X-Forwarded-*`
+request headers. IP issuers, query strings, fragments, user information, and path or trailing-slash variants are
+rejected. Readiness parses the issued CA-managed `oidc:https` certificate and requires its DNS SAN to cover the exact
+hostname and its IP SANs to cover every selected listener address. Global Appliance Apply installs that certificate,
+the restricted nginx listener, DNS records, and firewall rules.
 
 One credential-verification service resolves only two persisted identity types:
 
@@ -70,7 +73,9 @@ Redirect and post-logout records are stored individually. Matching in the protoc
 those stored values. Wildcards, fragments, credentials in the authority, control characters, and non-HTTPS redirects are
 rejected. An operator can explicitly create a development client using HTTP only on a literal loopback address with an
 exact port; the VCF preset never enables that exception. The VCF 9.1 form requires the operator to paste the exact
-redirect URI reported by its Identity Broker.
+redirect URI reported by its Identity Broker. The client wizard requires at least one redirect URI and validates every
+redirect and optional post-logout URI before advancing; the service repeats the same authoritative validation when the
+client is submitted.
 
 ## Signing keys and public metadata
 
@@ -96,9 +101,12 @@ Only `response_type=code`, query response mode, confidential `client_secret_basi
 request has an exact stored redirect URI, `state`, `nonce`, and a server-side short-lived authorization transaction
 bound to the signed browser session. Codes are random opaque values whose SHA-256 digest is stored; redemption uses one
 conditional `UPDATE ... RETURNING` operation, so a code can succeed once even when two token requests race.
+Editing a client invalidates its pending authorization transactions, and code issuance independently rechecks the
+client's current enabled state, organization, exact redirect, and granted scopes.
 
 `/identity/authorize`, `/identity/token`, `/identity/userinfo`, and `/identity/logout` require HTTPS. A forwarded HTTPS
-indication is trusted only from the loopback management proxy. Browser authentication rotates the OIDC session
+indication is trusted only from a loopback proxy whose listener-address header matches the configured OIDC service
+addresses. Requests received through the management listener are rejected. Browser authentication rotates the OIDC session
 identifier and CSRF value and never sets an operator UI user session.
 
 An organization-bound client permits only its configured enabled managed-LDAP organization. Its sign-in page names that
@@ -136,6 +144,49 @@ longer exist stop contributing immediately. Only the configured external strings
 suffixes, bind identities, endpoints, server details, and unmapped names never enter ID tokens, access tokens, UserInfo,
 jobs, audits, or logs.
 
+## Administration and lifecycle
+
+The dedicated **OpenID Connect** navigation page keeps Provider, Clients, Signing Keys, Group Mappings, and Stable
+Subjects as tool tabs inside one framed OIDC Administration workspace. The selected tab occupies the main column while
+the editable Provider Settings and Validation cards remain available in the right-hand service settings column.
+Validation lists readiness errors only when attention is required. Provider state autosaves but rejects enablement until
+every readiness check passes. The Validation card also opens the redacted public-services nginx configuration at its
+truthful staged path so operators can review the OIDC listener before global Appliance Apply.
+
+Provider Settings owns the service hostname, one or more listener interfaces, and HTTPS port. Listener choices use the
+same service selector as LDAP: addressed access or routed physical interfaces and enabled VLANs are accepted, while
+management, unused, down, missing, trunk-only, and addressless targets are rejected. Addresses are derived rather than
+typed. When local DNS is enabled, Atlaso maintains app-owned A or AAAA records for the selected addresses; otherwise
+register the same hostname externally. The restricted public-services nginx front door proxies only `/identity/` and
+returns 404 for unrelated paths. Listener, DNS, certificate, and firewall desired state becomes active through global
+Appliance Apply. Client, key, mapping, and subject lifecycle remains immediate application state.
+
+Confidential clients are browsed in a Tabulator collection. The bottom **+ Add client here** row and existing client
+rows open the shared reviewed wizard for creation and editing.
+Editing can change the operator label, identity-source binding, granted scopes, exact redirect and post-logout URIs,
+loopback-development posture, and enabled state. Enablement has its own wizard step before review. It never changes the
+generated client ID or exposes the Argon2 secret hash. Creation and secret rotation show plaintext exactly once.
+
+Client row actions provide a redacted relying-party integration download. It contains only issuer and discovery
+metadata, public endpoints, client ID, authentication method, granted scopes, exact registered URIs, identity-source
+posture, and enabled state. It never includes a client secret, token, authorization code, private key, password,
+authenticated URL, or guessed VCF value.
+
+Signing keys use a wizard-backed collection. Rotation atomically activates a new 3072-bit RS256 key and retires the
+previous key. A retired key cannot be removed until its enforced publication overlap has elapsed. Stable subjects remain
+a read-only collection; mapping edits remain compact row-level autosave using the Physical Interfaces reference.
+
+Operational redaction covers secret-bearing fields, private-key blocks, JWT path values, authenticated URL user
+information, and OIDC query parameters such as authorization codes, client secrets, access tokens, and ID token hints.
+
+The rendered administration page is verified at desktop and narrow viewports with no page-level horizontal overflow.
+Keyboard activation opens the shared client wizard, focus moves to its first required field and returns to the launch
+control, step validation preserves entered values, and status/error regions announce updates. Shared modal focus
+containment, labels, fallback tables, and the explicit no-JavaScript read-only state preserve an accessible recovery
+path. If an interactive grid cannot initialize, its mutation launcher remains disabled so a one-time client secret or
+key result cannot be lost after a server-side change. Collection overflow remains inside its labeled grid region at
+narrow widths.
+
 ![OIDC external group mapping grid at the desktop viewport](../assets/screenshots/authentication-group-mappings-desktop.webp)
 
 The direct-edit collection keeps source, organization, optional client override, and external name in one compact
@@ -152,18 +203,17 @@ includes plaintext client secrets or identity passwords. A restored signing key 
 `ATLASO_SECRETS_KEY`; preserve that key through the appliance recovery process.
 
 Factory reset deletes provider settings, clients, redirects, subjects, group mappings, and signing keys before reseeding
-disabled defaults. Normal database upgrades create the mapping table additively through the existing metadata startup
-path; older databases retain their records. Older binaries ignore the new table. Do not destructively drop OIDC tables
-during ordinary downgrade. If complete rollback requires their removal, restore the pre-upgrade SQLite snapshot.
+disabled defaults. OIDC records created by pre-release development builds have no data-migration contract; take a
+SQLite snapshot and reset the OIDC tables when moving those appliances to this lifecycle model. Normal startup still
+creates any missing schema before reseeding the disabled provider default.
 
 ## Staged rollout and unsupported features
 
 1. Authentication foundation and disabled provider skeleton.
 2. Authorization Code flow, browser-session hardening, token issuance, UserInfo, and RP-initiated logout.
-3. Organization selection, scope-filtered current-state claims, and explicit local-role/LDAP-group mappings. **Delivered
-   in this phase.**
+3. Organization selection, scope-filtered current-state claims, and explicit local-role/LDAP-group mappings.
 4. Administration and lifecycle completion, issuer/applied-certificate validation, centralized redaction, and
-   integration export.
+   integration export. **Delivered in this phase.**
 5. VCF 9.1 interoperability and all acceptance scenarios.
 
 Until the final phase succeeds, Atlaso does not claim VCF OIDC compatibility. The constrained design excludes implicit,
@@ -175,20 +225,20 @@ LDAP sources; social/federated identity; SAML; SCIM; wildcard redirects; front-c
 
 These captures show responsive layouts and useful operational states referenced by this page.
 
-### Authentication
+### Openid Connect: Oidc Group Mappings
 
-![Atlaso Authentication page in the clean-appliance responsive viewport.](../assets/screenshots/authentication-clean-responsive.webp)
-
-*Figure: Authentication in the verified clean-appliance responsive state.*
-
-### Authentication: Oidc Group Mappings
-
-![Atlaso Authentication page showing the OIDC external group mapping grid at the desktop viewport.](../assets/screenshots/authentication-group-mappings-desktop.webp)
+![Atlaso OpenID Connect page showing the external group mapping grid at the desktop viewport.](../assets/screenshots/authentication-group-mappings-desktop.webp)
 
 *Figure: OIDC external group mappings in the desktop direct-edit collection.*
 
-![Atlaso Authentication page showing the OIDC external group mapping grid at the responsive viewport.](../assets/screenshots/authentication-group-mappings-responsive.webp)
+![Atlaso OpenID Connect page showing the external group mapping grid at the responsive viewport.](../assets/screenshots/authentication-group-mappings-responsive.webp)
 
 *Figure: OIDC external group mappings in the responsive direct-edit collection.*
+
+### Openid Connect: Oidc Provider
+
+![Atlaso OpenID Connect provider settings stacked with status and issuer information at a narrow viewport.](../assets/screenshots/authentication-clean-responsive.webp)
+
+*Figure: OIDC provider settings with status and issuer information stacked at the responsive viewport.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->

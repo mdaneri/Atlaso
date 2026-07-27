@@ -662,12 +662,24 @@ reconciliation uses local `ldapi:///` with SASL EXTERNAL. VCF configuration incl
 `employeeType` mapping, but Atlaso does not import groups or assign VCF roles. See
 [Managed LDAP for VCF Automation 9.1](../services/managed-ldap.md).
 
-The Authentication page contains Atlaso's constrained OIDC provider. Phase 2 implements Authorization Code with
+The dedicated `/openid-connect` page contains Atlaso's constrained OIDC provider in Provider, Clients, Signing Keys,
+Group Mappings, and Stable Subjects tabs in the main column while its editable settings remain in the standard
+right-hand service column. Provider readiness appears inline rather than in a separate validation frame. The
+service-owned hostname defaults to
+`oidc.atlaso.internal`; listeners are selectable addressed access or routed interfaces and enabled VLANs, with a
+configurable HTTPS port. Atlaso derives listener addresses and app-owned DNS records from those selections. The
+provider implements Authorization Code with
 confidential `client_secret_basic`, mandatory PKCE S256, exact redirects, required state and nonce, signed secure
 browser sessions, five-minute RS256 ID/access JWTs, UserInfo revalidation, and RP-initiated logout. Provider enablement
-requires the canonical issuer, applied management HTTPS, an active signing key, and protocol readiness. Unbound clients
-authenticate Local identities; organization-bound clients authenticate only their fixed managed LDAP organization, and
-managed LDAP OIDC sessions never grant operator UI access. See
+requires the canonical issuer, an applied `oidc:https` certificate covering the issuer and listener addresses, an active
+signing key, and protocol readiness. The restricted non-management nginx front door exposes only `/identity/`; DNS,
+certificate, listener, and firewall state is installed through global Appliance Apply. Shared grid/wizard administration
+supports client editing, exact redirect
+lifecycle, one-time secret rotation, retired-key overlap and cleanup, and a public-metadata-only integration export.
+Client policy edits invalidate pending authorization transactions before they can issue a code under stale redirects
+or scopes.
+Unbound clients authenticate Local identities; organization-bound clients authenticate only their fixed managed LDAP
+organization, and managed LDAP OIDC sessions never grant operator UI access. See
 [Constrained OpenID Connect provider](../services/oidc-provider.md).
 
 On the Photon appliance, real mutating helper actions re-enter through a transient `systemd-run` service when

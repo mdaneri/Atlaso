@@ -154,12 +154,27 @@ established workflow is an explicit task action. Appliance configuration enforce
 
 Use the existing application shell. Configurable service pages use the DNS page as the default layout reference:
 
-- keep the primary resource collection or workflow in the main column;
+- keep the primary resource collection or workflow in one framed `.panel.wide-panel` in the main column;
 - keep service settings in the right-side rail;
 - use the compact **Pending Appliance Changes** card for the current apply unit and the shared appliance-review modal;
 - keep service-specific validation, warnings, and compact preview actions in the **Validation** card;
 - keep full rendered configuration out of the rail and open it in the shared preview modal; and
 - collapse the rail below the main content at narrow widths without changing reading or keyboard order.
+
+ESXi PXE is the reference when one primary service frame has several views. Put the resource heading, concise purpose,
+summary status, `.tool-tabs` tablist, and associated tab panels inside the same outer frame. Do not place the tablist in
+a detached panel or wrap every tab panel in a competing outer card. Use `.zone-tabs` for switching between peer
+workspaces, organizations, domains, or repositories; use `.tool-tabs` for related views of the resource named by the
+containing frame.
+
+The right rail keeps settings and validation separate. The settings card owns desired-state controls. The
+**Validation** card truthfully summarizes current readiness, lists actionable errors or warnings, and contains only
+compact preview actions. Do not duplicate validation state in a separate main-column frame or omit the Validation card
+when a configurable service has readiness requirements. OpenID Connect follows this composition: OIDC administration
+and its tool tabs occupy the main frame, while Provider Settings and Validation remain persistent in the right rail.
+When the service renders an appliance configuration, the Validation card must include the shared
+`partials/config_preview_action.html` row with the truthful staged path and a redacted preview; a valid status alone is
+not a substitute for making the reviewed configuration available.
 
 Treat routine forms as desired-state editors. Autosave safe changes with `data-autosave-form` and a nearby
 `.autosave-status`; do not add a visible Save button when the established endpoint safely supports autosave. Editing and
@@ -173,6 +188,43 @@ Use the established control for the value:
 - textarea for multiline configuration;
 - tabs for mutually exclusive modes that solve the same job; and
 - tag editor for one-or-more interfaces, addresses, networks, domains, or labels.
+
+### Multiple checkbox choices
+
+Use checkbox choice tiles when an operator may select several independent options and each option benefits from a short
+description. The **Allowed scopes** control in the OpenID Connect confidential-client wizard is the reference. Keep a
+plain checkbox list for compact, self-explanatory options, and use a select, radio group, or tabs when the choices are
+mutually exclusive.
+
+The tile treatment must:
+
+- use a semantic `fieldset` and `legend`, with one native checkbox wrapped by each full-width `label`;
+- place a concise option name and supporting description beside the checkbox;
+- use the selected border and background, the native checked state, and a visible `:focus-within` treatment so color is
+  never the only indication;
+- reserve a compact trailing badge for durable constraints such as **required**, not transient validation messages;
+- preserve server-side validation because a badge or default checked state does not enforce a requirement;
+- arrange a short set in a balanced grid and collapse to one column at narrow widths; and
+- keep the native checkbox visible and the complete tile clickable. Do not replace it with a scripted div or use the
+  visual card as a mutually exclusive radio control.
+
+Use the OIDC scope-choice structure for this pattern:
+
+```html
+<fieldset class="scope-choice-fieldset">
+  <legend>Allowed scopes</legend>
+  <div class="scope-choice-grid">
+    <label class="scope-choice">
+      <input type="checkbox" name="allowed_scopes" value="openid" checked>
+      <span class="scope-choice-copy">
+        <strong>OpenID</strong>
+        <small>Required identity subject and ID token</small>
+      </span>
+      <span class="scope-choice-badge">required</span>
+    </label>
+  </div>
+</fieldset>
+```
 
 Every configurable setting has an adjacent `i` help control using `.field-label` and `.help-icon`. The tooltip explains
 what changes, where it applies, and any safety boundary. Use explicit action labels such as **Review appliance changes**

@@ -13,8 +13,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - [Getting started](docs/getting-started/index.md) — choose an appliance path and complete initial setup.
 - [Operations](docs/operate/index.md) — run the appliance and review desired-state changes.
 - [Services](docs/services/index.md) — configure DNS, identity, storage, network boot, and VCF integrations.
-- [OpenID Connect provider](docs/services/oidc-provider.md) — configure explicit identity sources, scoped claims, and
-  privacy-safe external group mappings.
+- [OpenID Connect provider](docs/services/oidc-provider.md) — use the dedicated tabbed administration page for
+  confidential clients, exact redirects, key rotation, explicit identity sources, and privacy-safe scoped claims.
 - [Technical reference](docs/reference/index.md) — API, image building, lifecycle testing, and detailed behavior.
 - [Contributing](CONTRIBUTING.md) — issue, version, validation, and pull-request requirements.
 - [UI Design Guide](docs/contribute/ui-design-guide.md) — approved Atlaso patterns and the shared

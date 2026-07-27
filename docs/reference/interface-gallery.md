@@ -51,17 +51,29 @@ Figure: Audit Events in the verified clean-appliance desktop state.
 
 Figure: Audit Events in the verified clean-appliance responsive state.
 
-## Authentication
+## Authentication: Oidc Group Mappings
 
-Route: `/authentication`
+Route: `/openid-connect#oidc-group-mappings`
 
-![Atlaso Authentication page in the clean-appliance desktop viewport.](../assets/screenshots/authentication-clean-desktop.webp)
+![Atlaso OpenID Connect page showing the external group mapping grid at the desktop viewport.](../assets/screenshots/authentication-group-mappings-desktop.webp)
 
-Figure: Authentication in the verified clean-appliance desktop state.
+Figure: OIDC external group mappings in the desktop direct-edit collection.
 
-![Atlaso Authentication page in the clean-appliance responsive viewport.](../assets/screenshots/authentication-clean-responsive.webp)
+![Atlaso OpenID Connect page showing the external group mapping grid at the responsive viewport.](../assets/screenshots/authentication-group-mappings-responsive.webp)
 
-Figure: Authentication in the verified clean-appliance responsive state.
+Figure: OIDC external group mappings in the responsive direct-edit collection.
+
+## Authentication: Oidc Provider
+
+Route: `/openid-connect#oidc-provider`
+
+![Atlaso OpenID Connect provider status with right-column service settings.](../assets/screenshots/authentication-clean-desktop.webp)
+
+Figure: OIDC provider status and issuer information with service settings in the right column.
+
+![Atlaso OIDC provider settings stacked above validation and published identity URLs at a narrow viewport.](../assets/screenshots/authentication-clean-responsive.webp)
+
+Figure: OIDC provider settings with validation and published identity URLs stacked at the responsive viewport.
 
 ## Automation
 
