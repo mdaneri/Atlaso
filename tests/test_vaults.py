@@ -42,7 +42,6 @@ def test_vault_ui_encrypts_masks_and_explicitly_reveals_password(client):
             "csrf": csrf,
             "key": "vcf.sddc_manager.admin",
             "description": "SDDC Manager administrator",
-            "secret_type": "vcf_password",
             "value": "Correct-Horse-Battery-Staple!",
             "username": "administrator@vsphere.local",
             "resource_name": "sddc-manager.example.internal",
@@ -56,6 +55,7 @@ def test_vault_ui_encrypts_masks_and_explicitly_reveals_password(client):
         assert entry.encrypted_value.startswith("fernet:v1:")
         assert "Correct-Horse" not in entry.encrypted_value
         assert entry.description == "SDDC Manager administrator"
+        assert entry.secret_type == "vcf_password"
 
     page = client.get("/vaults")
     assert page.status_code == 200
@@ -181,6 +181,9 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert "data-vault-create-open" in tab_strip
     assert 'aria-haspopup="dialog"' in tab_strip
     assert "data-vault-create-open" not in panel_header
+    assert "Password type" not in template
+    assert 'name="secret_type"' not in template
+    assert "data-vault-entry-review-type" not in template
 
 
 def test_vcf_import_discovers_sddc_manager_and_installer_passwords():

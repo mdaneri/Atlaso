@@ -8191,7 +8191,6 @@ def create_vault_entry_from_ui(
     vault_id: int,
     request: Request,
     key: str = Form(...),
-    secret_type: str = Form(...),
     value: str = Form(...),
     description: str = Form(""),
     username: str = Form(""),
@@ -8211,7 +8210,7 @@ def create_vault_entry_from_ui(
             vault=vault,
             entry=VaultEntryInput(
                 key=key,
-                secret_type=secret_type,
+                secret_type="esx_password" if key.strip().lower().startswith("esx.") else "vcf_password",
                 value=value,
                 description=description,
                 username=username,
@@ -8245,7 +8244,6 @@ def edit_vault_entry_from_ui(
     entry_id: int,
     request: Request,
     key: str = Form(...),
-    secret_type: str = Form(...),
     value: str = Form(""),
     description: str = Form(""),
     username: str = Form(""),
@@ -8263,7 +8261,7 @@ def edit_vault_entry_from_ui(
         update_vault_entry(
             entry,
             key=key,
-            secret_type=secret_type,
+            secret_type=entry.secret_type,
             value=value,
             description=description,
             username=username,

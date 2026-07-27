@@ -16257,7 +16257,7 @@ function initializeVaultsPage() {
     dialog: entryModal,
     form: entryForm,
     steps: [
-      { id: "identity", title: "Identify the password", description: "Choose a stable dotted key and restricted password type." },
+      { id: "identity", title: "Identify the password", description: "Choose a stable dotted key and optional details." },
       { id: "password", title: "Supply the password", description: "Atlaso encrypts this value before database storage." },
       { id: "review", title: "Review the entry", description: "Confirm metadata without displaying the password." },
     ],
@@ -16271,7 +16271,6 @@ function initializeVaultsPage() {
     },
     prepareReview: () => {
       entryForm.querySelector("[data-vault-entry-review-key]").textContent = String(entryForm.elements.key.value || "");
-      entryForm.querySelector("[data-vault-entry-review-type]").textContent = entryForm.elements.secret_type.selectedOptions[0]?.textContent || "";
       entryForm.querySelector("[data-vault-entry-review-username]").textContent = String(entryForm.elements.username.value || "") || "Not specified";
       entryForm.querySelector("[data-vault-entry-review-password]").textContent = entryForm.elements.value.value ? "New encrypted value supplied" : "Existing encrypted value retained";
     },
@@ -16283,7 +16282,6 @@ function initializeVaultsPage() {
         ? `/vaults/${vaultId}/entries/${row.id}/edit`
         : `/vaults/${vaultId}/entries`;
       entryForm.elements.key.value = row?.key || "";
-      entryForm.elements.secret_type.value = row?.secret_type || "vcf_password";
       entryForm.elements.description.value = row?.description || "";
       entryForm.elements.username.value = row?.username || "";
       entryForm.elements.resource_name.value = row?.resource_name || "";
