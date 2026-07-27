@@ -1271,6 +1271,7 @@ class VaultEntry(Base):
     resource_name: Mapped[str] = mapped_column(String(240), default="")
     source_type: Mapped[str] = mapped_column(String(40), default="manual")
     source_endpoint: Mapped[str] = mapped_column(String(500), default="")
+    uris_json: Mapped[str] = mapped_column(Text, default="[]")
     encrypted_value: Mapped[str] = mapped_column(Text)
     created_by: Mapped[str] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

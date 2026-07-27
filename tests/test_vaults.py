@@ -45,6 +45,12 @@ def test_vault_ui_encrypts_masks_and_explicitly_reveals_password(client):
             "value": "Correct-Horse-Battery-Staple!",
             "username": "administrator@vsphere.local",
             "resource_name": "sddc-manager.example.internal",
+            "uris_json": json.dumps(
+                [
+                    "https://sddc-manager.example.internal",
+                    "ssh://sddc-manager.example.internal:22",
+                ]
+            ),
         },
         follow_redirects=False,
     )
@@ -56,6 +62,10 @@ def test_vault_ui_encrypts_masks_and_explicitly_reveals_password(client):
         assert "Correct-Horse" not in entry.encrypted_value
         assert entry.description == "SDDC Manager administrator"
         assert entry.secret_type == "vcf_password"
+        assert json.loads(entry.uris_json) == [
+            "https://sddc-manager.example.internal",
+            "ssh://sddc-manager.example.internal:22",
+        ]
 
     page = client.get("/vaults")
     assert page.status_code == 200
@@ -97,6 +107,22 @@ def test_vault_service_rejects_unsupported_types(client):
             )
 
 
+@pytest.mark.parametrize(
+    ("uris", "message"),
+    [
+        (("ftp://vcf.example.internal",), "http, https, ssh, or sftp"),
+        (("https://admin:secret@vcf.example.internal",), "must not contain credentials"),
+        (("ssh://vcf example.internal",), "contain no whitespace"),
+        (tuple(f"https://vcf-{index}.example.internal" for index in range(10)), "at most 9"),
+    ],
+)
+def test_vault_uri_validation_rejects_unsupported_or_unsafe_values(uris, message):
+    from atlaso.app.services.vaults import normalize_vault_uris
+
+    with pytest.raises(ValueError, match=message):
+        normalize_vault_uris(uris)
+
+
 def test_vault_cli_fails_closed_and_reads_only_scoped_credential(tmp_path, monkeypatch, capsys):
     from atlaso.app import vault_cli
 
@@ -126,6 +152,7 @@ def test_dynamic_kickstart_resolves_assigned_vault_without_caching(client):
         "vmaccepteula\n"
         "network --hostname={{vault.esx.esx.host.root.username}}\n"
         "rootpw {{vault.esx.esx.host.root.password}}\n"
+        "%include {{vault.esx.esx.host.root.uri1}}\n"
     )
     with SessionLocal() as db:
         vault = Vault(name="ESX", description="", created_by="admin")
@@ -140,6 +167,7 @@ def test_dynamic_kickstart_resolves_assigned_vault_without_caching(client):
                 secret_type="esx_password",
                 username="root",
                 value="VMware1!",
+                uris=("https://config.example.internal/esx01.cfg",),
             ),
             actor="admin",
         )
@@ -167,6 +195,7 @@ def test_dynamic_kickstart_resolves_assigned_vault_without_caching(client):
     assert response.status_code == 200
     assert "network --hostname=root" in response.text
     assert "rootpw VMware1!" in response.text
+    assert "%include https://config.example.internal/esx01.cfg" in response.text
     assert "{{vault." not in response.text
     assert "no-store" in response.headers["cache-control"]
 
@@ -198,6 +227,15 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert "<h3>{{ vault.name }}</h3>" not in template
     assert "vault-create-form-grid" in template
     assert "vault-entry-form-grid" in template
+    assert 'data-atlaso-wizard-nav="uris"' in template
+    assert "Step 1 of 4" in template
+    assert "data-vault-uri-add" in template
+    assert "openVaultUri" in source
+    assert "Connect\" : \"Open" in source
+    assert "/terminal/remote-launches" in source
+    pxe_template = Path("atlaso/app/templates/esxi_pxe.html").read_text()
+    assert "{{vault.<vaultname>.<key>.uri1}}" in pxe_template
+    assert "{{vault.<vaultname>.<key>.uri9}}" in pxe_template
 
 
 def test_vmware_wheel_deploy_exposes_fail_closed_vault_shell_commands():
@@ -206,6 +244,221 @@ def test_vmware_wheel_deploy_exposes_fail_closed_vault_shell_commands():
     assert 'ln -sfn "$venv/bin/atlaso-vault" /usr/bin/atlaso-vault' in deploy
     assert "function global:Get-AtlasoVault" in deploy
     assert "/opt/atlaso/.venv/bin/atlaso-vault" in deploy
+    assert "[switch]$ResetVaultEntries" in deploy
+    assert "DROP TABLE IF EXISTS vault_entries" in deploy
+
+
+def test_remote_vault_uri_launch_uses_one_use_server_side_ticket(client, monkeypatch):
+    from types import SimpleNamespace
+    from urllib.parse import parse_qs, urlsplit
+
+    from sqlalchemy import select
+
+    from atlaso.app import web_terminal
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, User, Vault
+    from atlaso.app.services.vaults import VaultEntryInput, upsert_vault_entry
+
+    login(client)
+    with SessionLocal() as db:
+        vault = Vault(name="Remote", description="", created_by="admin")
+        db.add(vault)
+        db.flush()
+        entry, _created = upsert_vault_entry(
+            db,
+            vault=vault,
+            entry=VaultEntryInput(
+                key="vcf.remote.admin",
+                secret_type="vcf_password",
+                value="Not-In-The-Browser!",
+                username="administrator",
+                uris=("ssh://vcf.example.internal:2222",),
+            ),
+            actor="admin",
+        )
+        settings = db.execute(select(ApplianceSettings)).scalar_one()
+        settings.management_https_enabled = True
+        settings.web_terminal_enabled = True
+        settings.web_terminal_interfaces_json = '["eth0"]'
+        admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
+        admin.web_terminal_access = True
+        admin.shell = "/bin/bash"
+        db.commit()
+        vault_id = vault.id
+        entry_id = entry.id
+        admin_id = admin.id
+
+    monkeypatch.setattr(web_terminal, "get_settings", lambda: SimpleNamespace(environment="appliance"))
+    monkeypatch.setattr(web_terminal, "_request_uses_selected_listener", lambda *_args: True)
+    monkeypatch.setattr(web_terminal, "_request_is_https", lambda *_args: True)
+    monkeypatch.setattr(web_terminal, "_helper_applied", lambda: True)
+    monkeypatch.setattr(web_terminal, "_probe_remote_ssh_host", lambda *_args: "SHA256:test-fingerprint")
+    monkeypatch.setattr(
+        web_terminal,
+        "decrypt_secret",
+        lambda *_args: pytest.fail("The launch and browser ticket path must not decrypt the password."),
+    )
+    web_terminal._remote_launches.clear()
+
+    page = client.get("/vaults")
+    csrf = csrf_from_page(page.text)
+    launch_data = {
+        "csrf": csrf,
+        "vault_id": vault_id,
+        "entry_id": entry_id,
+        "uri_index": 1,
+    }
+    confirmation = client.post("/terminal/remote-launches", data=launch_data)
+    assert confirmation.status_code == 409
+    assert confirmation.json() == {
+        "error_code": "SSH_HOST_KEY_CONFIRMATION_REQUIRED",
+        "target": "vcf.example.internal:2222",
+        "fingerprint": "SHA256:test-fingerprint",
+    }
+
+    launched = client.post(
+        "/terminal/remote-launches",
+        data={**launch_data, "confirmed_fingerprint": "SHA256:test-fingerprint"},
+    )
+    assert launched.status_code == 200
+    launch_url = launched.json()["url"]
+    assert "Not-In-The-Browser!" not in launched.text
+    launch_token = parse_qs(urlsplit(launch_url).fragment)["remote-launch"][0]
+
+    terminal_page = client.get("/terminal")
+    assert terminal_page.status_code == 200
+    assert launch_token not in terminal_page.text
+    assert "Not-In-The-Browser!" not in terminal_page.text
+    terminal_js = client.get("/static/terminal.js").text
+    assert 'fragment.get("remote-launch")' in terminal_js
+    assert "history.replaceState" in terminal_js
+    assert '"Vault Remote Terminal"' in terminal_js
+
+    ticket_response = client.post(
+        "/terminal/tickets",
+        data={
+            "csrf": csrf,
+            "browser_session_id": "remote_browser_1234",
+            "remote_launch": launch_token,
+        },
+    )
+    assert ticket_response.status_code == 200
+    assert "Not-In-The-Browser!" not in ticket_response.text
+    ticket = web_terminal._consume_ticket(
+        ticket_response.json()["ticket"],
+        admin_id,
+        "admin",
+        csrf,
+    )
+    assert ticket is not None
+    assert ticket.remote_entry_id == entry_id
+    assert ticket.remote_uri_index == 1
+    assert ticket.remote_fingerprint == "SHA256:test-fingerprint"
+
+    replay = client.post(
+        "/terminal/tickets",
+        data={
+            "csrf": csrf,
+            "browser_session_id": "remote_browser_5678",
+            "remote_launch": launch_token,
+        },
+    )
+    assert replay.status_code == 400
+
+
+def test_remote_vault_uri_authenticates_server_side_after_rechecking_host_key(client, monkeypatch):
+    from atlaso.app import web_terminal
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Vault
+    from atlaso.app.services.vaults import VaultEntryInput, upsert_vault_entry
+
+    with SessionLocal() as db:
+        vault = Vault(name="SSH auth", description="", created_by="admin")
+        db.add(vault)
+        db.flush()
+        entry, _created = upsert_vault_entry(
+            db,
+            vault=vault,
+            entry=VaultEntryInput(
+                key="esx.remote.root",
+                secret_type="esx_password",
+                value="Server-Side-Only!",
+                username="root",
+                uris=("sftp://esx.example.internal:2222/depot",),
+            ),
+            actor="admin",
+        )
+        db.commit()
+        entry_id = entry.id
+
+    class FakeHostKey:
+        @staticmethod
+        def asbytes():
+            return b"verified-host-key"
+
+    class FakeChannel:
+        def __init__(self):
+            self.pty = None
+            self.shell_invoked = False
+
+        def get_pty(self, **kwargs):
+            self.pty = kwargs
+
+        def invoke_shell(self):
+            self.shell_invoked = True
+
+    class FakeTransport:
+        def __init__(self, _socket):
+            self.channel = FakeChannel()
+            self.authentication = None
+            self.closed = False
+
+        def start_client(self, timeout):
+            assert timeout == 10
+
+        @staticmethod
+        def get_remote_server_key():
+            return FakeHostKey()
+
+        def auth_password(self, username, password):
+            self.authentication = (username, password)
+
+        def open_session(self, timeout):
+            assert timeout == 10
+            return self.channel
+
+        def close(self):
+            self.closed = True
+
+    transports = []
+
+    def fake_transport(sock):
+        transport = FakeTransport(sock)
+        transports.append(transport)
+        return transport
+
+    monkeypatch.setattr(web_terminal.socket, "create_connection", lambda target, timeout: (target, timeout))
+    monkeypatch.setattr(web_terminal.paramiko, "Transport", fake_transport)
+    fingerprint = web_terminal._ssh_fingerprint(FakeHostKey())
+
+    transport, channel, display_username = web_terminal._open_remote_ssh_channel(
+        entry_id,
+        1,
+        fingerprint,
+        132,
+        40,
+    )
+
+    assert transport is transports[0]
+    assert transport.authentication == ("root", "Server-Side-Only!")
+    assert channel.pty == {"term": "xterm-256color", "width": 132, "height": 40}
+    assert channel.shell_invoked is True
+    assert display_username == "root@esx.example.internal"
+
+    with pytest.raises(RuntimeError, match="host key changed"):
+        web_terminal._open_remote_ssh_channel(entry_id, 1, "SHA256:different", 120, 32)
+    assert transports[1].authentication is None
+    assert transports[1].closed is True
 
 
 def test_vcf_import_discovers_sddc_manager_and_installer_passwords():

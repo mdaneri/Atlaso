@@ -101,6 +101,7 @@ from atlaso.app.services.vaults import (
     create_vault,
     kickstart_vault_values,
     list_vaults,
+    parse_vault_uris_json,
     redact_secret_values,
     update_vault_entry,
     upsert_vault_entry,
@@ -8195,6 +8196,7 @@ def create_vault_entry_from_ui(
     description: str = Form(""),
     username: str = Form(""),
     resource_name: str = Form(""),
+    uris_json: str = Form("[]"),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
@@ -8215,6 +8217,7 @@ def create_vault_entry_from_ui(
                 description=description,
                 username=username,
                 resource_name=resource_name,
+                uris=parse_vault_uris_json(uris_json),
             ),
             actor=identity.username,
         )
@@ -8248,6 +8251,7 @@ def edit_vault_entry_from_ui(
     description: str = Form(""),
     username: str = Form(""),
     resource_name: str | None = Form(None),
+    uris_json: str = Form("[]"),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
@@ -8266,6 +8270,7 @@ def edit_vault_entry_from_ui(
             description=description,
             username=username,
             resource_name=entry.resource_name if resource_name is None else resource_name,
+            uris=parse_vault_uris_json(uris_json),
         )
         db.add(entry)
         db.commit()

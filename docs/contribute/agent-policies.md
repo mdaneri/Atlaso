@@ -304,6 +304,11 @@ status: current
   only a vault ID; stage decrypted values under `/run`, pass them through systemd `LoadCredential`, remove them after
   execution, and keep `atlaso-vault` fail-closed outside that credential context. PowerShell receives
   `Get-AtlasoVault`; Bash/Python use `atlaso-vault`. Redact exact values from helper and worker output.
+- Vault entries may carry at most nine credential-free HTTP, HTTPS, SSH, or SFTP URIs. Kickstart markers address them
+  by one-based position. HTTP and HTTPS row actions may open a new browser tab. SSH and SFTP row actions require an
+  applied Web Terminal, explicit SHA-256 host-key confirmation, a short-lived one-use launch, and a second host-key
+  check before server-side password authentication. Never place the password or an authenticated URI in browser launch
+  state, response, audit events, or logs.
 - Packer is a Windows-host prerequisite for the Photon image path; Hyper-V and `qemu-img` may already be available
   locally but should still be checked in handoff notes.
 

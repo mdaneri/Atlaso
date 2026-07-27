@@ -15,6 +15,9 @@ with browser caching disabled.
 
 Vault keys use lowercase dotted segments, for example `vcf.sddc_manager.admin` or `esx.esx01.root`. Values are encrypted
 with the appliance secrets key before database storage. Keep `ATLASO_SECRETS_KEY` with the appliance recovery material.
+Each entry may also store up to nine credential-free HTTP, HTTPS, SSH, or SFTP URIs. Add them on the third page of the
+entry wizard. The row context menu exposes one action per URI: HTTP and HTTPS open in a separate browser tab; SSH and
+SFTP open the Atlaso Web Terminal and authenticate with the entry username and password.
 
 ## Managed scripts
 
@@ -44,9 +47,26 @@ network --hostname={{vault.management.esx.esx01.root.username}}
 rootpw {{vault.management.esx.esx01.root.password}}
 ```
 
+URIs use their one-based position in the entry:
+
+```text
+%include {{vault.management.esx.esx01.root.uri1}}
+```
+
+Markers are available from `uri1` through `uri9` when that position is configured. Removing or reordering an entry URI
+changes its marker position.
+
 Atlaso resolves vault markers only for an enabled host assigned to that Kickstart. Source, preview, and download views
 retain the marker; the dynamic response is not persisted and is returned with `Cache-Control: no-store`. A marker naming
 a vault other than the vault selected for the Kickstart fails validation.
+
+## Remote URI security
+
+Do not place credentials in a URI. For SSH and SFTP targets, Atlaso probes the remote host key before decrypting the
+entry password and requires the administrator to confirm its SHA-256 fingerprint. Verify that fingerprint out of band.
+After confirmation, Atlaso creates a short-lived one-use launch token, rechecks the host key, and performs password
+authentication server-side. The password is not sent to the browser, included in the launch URL, or written to the
+audit event. An SFTP URI opens an interactive SSH terminal on the same endpoint; file-transfer browsing is not provided.
 
 ## VCF Helper import
 

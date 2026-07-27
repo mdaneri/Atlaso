@@ -15,6 +15,7 @@ param(
     [switch]$SkipBootBrandingSync,
     [string]$WheelPath = '',
     [string]$SshPassword = $env:ATLASO_DEPLOY_SSH_PASSWORD,
+    [switch]$ResetVaultEntries,
     [switch]$SkipHostCheck
 )
 
@@ -248,6 +249,7 @@ function Invoke-PasswordBackedDeploy {
         [Parameter(Mandatory = $true)][string[]]$RemoteTrustKeys,
         [Parameter(Mandatory = $true)][string]$RemoteWorkerService,
         [Parameter(Mandatory = $true)][string]$RemoteScript,
+        [Parameter(Mandatory = $true)][bool]$ResetVaultEntryTable,
         [Parameter(Mandatory = $true)][int]$TimeoutSeconds,
         [Parameter(Mandatory = $true)][int]$PollSeconds,
         [Parameter(Mandatory = $true)][string]$WorkingDirectory
@@ -307,6 +309,7 @@ parser.add_argument("--remote-boot-background", default="")
 parser.add_argument("--remote-trust-key", action="append", default=[])
 parser.add_argument("--remote-worker-service", required=True)
 parser.add_argument("--remote-script", required=True)
+parser.add_argument("--reset-vault-entries", action="store_true")
 parser.add_argument("--timeout", type=int, required=True)
 parser.add_argument("--poll", type=int, required=True)
 args = parser.parse_args()
@@ -391,7 +394,8 @@ try:
         f"{shell_quote(remote_boot_background_argument)} "
         f"{shell_quote(args.remote_worker_service)} "
         f"{shell_quote(remote_runtime_dependencies_argument)} "
-        f"{shell_quote(remote_trust_keys_argument)}"
+        f"{shell_quote(remote_trust_keys_argument)} "
+        f"{shell_quote('true' if args.reset_vault_entries else 'false')}"
     )
     stdin, stdout, stderr = client.exec_command(command, get_pty=True, timeout=args.timeout + 60)
     stdin.write(password + "\n")
@@ -447,6 +451,9 @@ finally:
             '--timeout', "$TimeoutSeconds",
             '--poll', "$PollSeconds"
         )
+        if ($ResetVaultEntryTable) {
+            $deployArguments += '--reset-vault-entries'
+        }
         foreach ($runtimeDependencyPath in $LocalRuntimeDependencyPaths) {
             $deployArguments += @('--local-runtime-dependency', $runtimeDependencyPath)
         }
@@ -583,6 +590,7 @@ boot_background_path="${8:-}"
 worker_service_path="${9:?worker service path required}"
 runtime_dependency_paths="${10:?runtime dependency wheel paths required}"
 trust_key_paths="${11:?release trust key paths required}"
+reset_vault_entries="${12:-false}"
 venv="/opt/atlaso/.venv"
 python="$venv/bin/python"
 
@@ -598,6 +606,11 @@ for runtime_dependency_path in $runtime_dependency_paths; do
 done
 IFS="$old_ifs"
 "$python" -m pip install --force-reinstall --no-deps "$wheel"
+if [ "$reset_vault_entries" = "true" ]; then
+    systemctl stop atlaso-worker.service atlaso.service
+    sqlite3 /var/lib/atlaso/atlaso.db 'DROP TABLE IF EXISTS vault_entries;'
+    echo "Reset vault_entries table; Atlaso will recreate it from the installed model."
+fi
 install -d -o root -g root -m 0755 /usr/local/bin
 ln -sfn "$venv/bin/atlaso-vault" /usr/local/bin/atlaso-vault
 ln -sfn "$venv/bin/atlaso-vault" /usr/bin/atlaso-vault
@@ -770,6 +783,7 @@ try {
             -RemoteTrustKeys $remoteTrustKeyPaths `
             -RemoteWorkerService $remoteWorkerServicePath `
             -RemoteScript $remoteScriptPath `
+            -ResetVaultEntryTable ([bool]$ResetVaultEntries) `
             -TimeoutSeconds $ReadinessTimeoutSeconds `
             -PollSeconds $ReadinessPollSeconds `
             -WorkingDirectory $resolvedRepoRoot
@@ -783,7 +797,8 @@ try {
 
         Write-Host "Installing wheel and restarting atlaso.service..."
         $remoteRuntimeDependenciesArgument = $remoteRuntimeDependencyPaths -join ':'
-        Invoke-CheckedCommand -FilePath 'ssh' -Arguments @($sshConnectionArguments + '-t', "${SshUser}@${IpAddress}", "sudo sh '$remoteScriptPath' '$remoteWheelPath' '$ReadinessTimeoutSeconds' '$ReadinessPollSeconds' '$remoteHelperArgument' '$remoteConsoleManagerArgument' '$remoteBootInstallerArgument' '$remoteBootThemeArgument' '$remoteBootBackgroundArgument' '$remoteWorkerServicePath' '$remoteRuntimeDependenciesArgument' '$remoteTrustKeysArgument'")
+        $resetVaultEntriesArgument = if ($ResetVaultEntries) { 'true' } else { 'false' }
+        Invoke-CheckedCommand -FilePath 'ssh' -Arguments @($sshConnectionArguments + '-t', "${SshUser}@${IpAddress}", "sudo sh '$remoteScriptPath' '$remoteWheelPath' '$ReadinessTimeoutSeconds' '$ReadinessPollSeconds' '$remoteHelperArgument' '$remoteConsoleManagerArgument' '$remoteBootInstallerArgument' '$remoteBootThemeArgument' '$remoteBootBackgroundArgument' '$remoteWorkerServicePath' '$remoteRuntimeDependenciesArgument' '$remoteTrustKeysArgument' '$resetVaultEntriesArgument'")
     }
 
     if (-not $SkipHostCheck) {

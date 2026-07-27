@@ -181,6 +181,7 @@
                 <div><span>Custom</span><strong><code>{{ "{{custom.install_disk}}" }}</code></strong></div>
                 <div><span>Vault username</span><strong><code>{{ "{{vault.<vaultname>.<key>.username}}" }}</code></strong></div>
                 <div><span>Vault password</span><strong><code>{{ "{{vault.<vaultname>.<key>.password}}" }}</code></strong></div>
+                <div><span>Vault URI 1-9</span><strong><code>{{ "{{vault.<vaultname>.<key>.uri1}}" }}</code> … <code>{{ "{{vault.<vaultname>.<key>.uri9}}" }}</code></strong></div>
               </div>
               <p class="muted">Custom values come from Host References variables JSON, for example <code>{"install_disk":"mpx.vmhba0:C0:T0:L0"}</code>. Unresolved or invalid markers fail validation and the dynamic Kickstart request.</p>
             </details>

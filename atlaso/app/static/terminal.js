@@ -2,6 +2,18 @@
   const panel = document.querySelector("[data-web-terminal]");
   if (!(panel instanceof HTMLElement) || panel.dataset.terminalAvailable !== "true") return;
 
+  const fragment = new URLSearchParams(location.hash.slice(1));
+  const remoteLaunch = fragment.get("remote-launch") || "";
+  if (remoteLaunch) {
+    history.replaceState(history.state, "", `${location.pathname}${location.search}`);
+    const heading = panel.querySelector("[data-terminal-heading]");
+    const description = panel.querySelector("[data-terminal-description]");
+    if (heading instanceof HTMLElement) heading.textContent = "Vault Remote Terminal";
+    if (description instanceof HTMLElement) {
+      description.textContent = "Server-side SSH using the selected vault entry. The password is never sent to the browser.";
+    }
+  }
+
   const screen = panel.querySelector("[data-terminal-screen]");
   const status = panel.querySelector("[data-terminal-status]");
   const copyButton = panel.querySelector("[data-terminal-copy]");
@@ -125,6 +137,7 @@
     const body = new FormData();
     body.set("csrf", panel.dataset.csrf || "");
     body.set("browser_session_id", browserSessionId);
+    if (remoteLaunch) body.set("remote_launch", remoteLaunch);
     if (takeover) body.set("takeover", "true");
     const response = await fetch("/terminal/tickets", { method: "POST", body, headers: { "X-Requested-With": "Atlaso" } });
     let payload = null;

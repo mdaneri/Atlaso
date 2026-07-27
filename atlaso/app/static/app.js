@@ -16253,12 +16253,139 @@ function initializeVaultsPage() {
   const entryModal = document.getElementById("vault-entry-modal");
   const entryForm = document.querySelector("[data-vault-entry-form]");
   if (!(entryModal instanceof HTMLDialogElement) || !(entryForm instanceof HTMLFormElement)) return;
+  const uriList = entryForm.querySelector("[data-vault-uri-list]");
+  const uriAddButton = entryForm.querySelector("[data-vault-uri-add]");
+  const uriValues = () => [...(uriList?.querySelectorAll("[data-vault-uri-input]") || [])]
+    .map((input) => String(input.value || "").trim())
+    .filter(Boolean);
+  const rawUriValues = () => [...(uriList?.querySelectorAll("[data-vault-uri-input]") || [])]
+    .map((input) => String(input.value || "").trim());
+  const syncUriValue = () => {
+    entryForm.elements.uris_json.value = JSON.stringify(uriValues());
+    if (uriAddButton instanceof HTMLButtonElement) uriAddButton.disabled = rawUriValues().length >= 9;
+  };
+  const renderUriRows = (values = []) => {
+    if (!(uriList instanceof HTMLElement)) return;
+    uriList.replaceChildren();
+    const rows = values.length ? values.slice(0, 9) : [""];
+    rows.forEach((value, index) => {
+      const row = document.createElement("div");
+      row.className = "vault-uri-row";
+      const label = document.createElement("label");
+      const caption = document.createElement("span");
+      caption.textContent = `URI ${index + 1}`;
+      const input = document.createElement("input");
+      input.type = "text";
+      input.inputMode = "url";
+      input.maxLength = 2048;
+      input.placeholder = "https://vcf.example.internal";
+      input.value = value;
+      input.dataset.vaultUriInput = "true";
+      input.setAttribute("aria-label", `URI ${index + 1}`);
+      input.addEventListener("input", syncUriValue);
+      label.append(caption, input);
+      const remove = document.createElement("button");
+      remove.className = "button secondary compact";
+      remove.type = "button";
+      remove.textContent = "Remove";
+      remove.setAttribute("aria-label", `Remove URI ${index + 1}`);
+      remove.disabled = rows.length === 1;
+      remove.addEventListener("click", () => {
+        const nextValues = rawUriValues();
+        nextValues.splice(index, 1);
+        renderUriRows(nextValues);
+      });
+      row.append(label, remove);
+      uriList.append(row);
+    });
+    syncUriValue();
+  };
+  uriAddButton?.addEventListener("click", () => {
+    const values = rawUriValues();
+    if (values.length < 9) renderUriRows([...values, ""]);
+  });
+  const validateUris = () => {
+    const inputs = [...(uriList?.querySelectorAll("[data-vault-uri-input]") || [])];
+    const seen = new Set();
+    for (const input of inputs) {
+      const value = String(input.value || "").trim();
+      if (!value) continue;
+      if (/\s/.test(value)) {
+        return { ok: false, message: "URIs cannot contain whitespace.", field: input };
+      }
+      try {
+        const parsed = new URL(value);
+        if (!["http:", "https:", "ssh:", "sftp:"].includes(parsed.protocol) || !parsed.hostname) throw new Error();
+        if (parsed.username || parsed.password) {
+          return { ok: false, message: "Do not place credentials in a URI; use the entry Username and Password.", field: input };
+        }
+        if (seen.has(parsed.href)) {
+          return { ok: false, message: "Each URI must be unique within the entry.", field: input };
+        }
+        seen.add(parsed.href);
+      } catch (_error) {
+        return { ok: false, message: "Enter an HTTP, HTTPS, SSH, or SFTP URI with a hostname.", field: input };
+      }
+    }
+    syncUriValue();
+    return true;
+  };
+  const openVaultUri = async (vaultId, row, index) => {
+    const uri = row.uris?.[index];
+    if (!uri) return;
+    const scheme = new URL(uri).protocol;
+    if (scheme === "http:" || scheme === "https:") {
+      window.open(uri, "_blank", "noopener");
+      return;
+    }
+    const remoteWindow = window.open("about:blank", "_blank");
+    if (remoteWindow) remoteWindow.opener = null;
+    const requestLaunch = async (confirmedFingerprint = "") => {
+      const body = new FormData();
+      body.set("csrf", String(entryForm.elements.csrf.value || ""));
+      body.set("vault_id", String(vaultId));
+      body.set("entry_id", String(row.id));
+      body.set("uri_index", String(index + 1));
+      if (confirmedFingerprint) body.set("confirmed_fingerprint", confirmedFingerprint);
+      const response = await fetch("/terminal/remote-launches", {
+        method: "POST",
+        headers: { Accept: "application/json", "X-Requested-With": "Atlaso" },
+        cache: "no-store",
+        body,
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (response.status === 409 && payload.error_code === "SSH_HOST_KEY_CONFIRMATION_REQUIRED") {
+        const confirmed = typeof window.requestConfirmation === "function" && await window.requestConfirmation({
+          title: `Trust ${payload.target}?`,
+          message: `Verify the SSH host key out of band before connecting.\n\n${payload.fingerprint}`,
+          label: "Connect",
+        });
+        if (!confirmed) return null;
+        return requestLaunch(payload.fingerprint);
+      }
+      if (!response.ok) throw new Error(payload.detail || "The remote terminal could not be prepared.");
+      return payload;
+    };
+    try {
+      const payload = await requestLaunch();
+      if (!payload) {
+        remoteWindow?.close();
+        return;
+      }
+      if (remoteWindow) remoteWindow.location.assign(payload.url);
+      else window.location.assign(payload.url);
+    } catch (error) {
+      remoteWindow?.close();
+      showTransientGridStatus(error instanceof Error ? error.message : "The remote terminal could not be prepared.");
+    }
+  };
   const entryWizard = window.AtlasoUiPatterns.createWizard({
     dialog: entryModal,
     form: entryForm,
     steps: [
       { id: "identity", title: "Identify the password", description: "Choose a stable dotted key and optional details." },
       { id: "password", title: "Supply the password", description: "Atlaso encrypts this value before database storage." },
+      { id: "uris", title: "Add connection URIs", description: "Add up to nine HTTP, HTTPS, SSH, or SFTP targets." },
       { id: "review", title: "Review the entry", description: "Confirm metadata without displaying the password." },
     ],
     validateStep: ({ step }) => {
@@ -16266,12 +16393,14 @@ function initializeVaultsPage() {
         const password = entryForm.elements.value;
         if (password.required && !password.value) return { ok: false, message: "Enter a password.", field: password };
       }
+      if (step.id === "uris") return validateUris();
       return true;
     },
     prepareReview: () => {
       entryForm.querySelector("[data-vault-entry-review-key]").textContent = String(entryForm.elements.key.value || "");
       entryForm.querySelector("[data-vault-entry-review-username]").textContent = String(entryForm.elements.username.value || "") || "Not specified";
       entryForm.querySelector("[data-vault-entry-review-password]").textContent = entryForm.elements.value.value ? "New encrypted value supplied" : "Existing encrypted value retained";
+      entryForm.querySelector("[data-vault-entry-review-uris]").textContent = uriValues().length ? `${uriValues().length} configured` : "None";
     },
     onOpen: ({ context }) => {
       const row = context?.row || null;
@@ -16283,6 +16412,7 @@ function initializeVaultsPage() {
       entryForm.elements.key.value = row?.key || "";
       entryForm.elements.description.value = row?.description || "";
       entryForm.elements.username.value = row?.username || "";
+      renderUriRows(row?.uris || []);
       entryForm.elements.value.required = !row;
       const title = entryForm.querySelector("[data-vault-entry-title]");
       if (title) title.textContent = row ? "Edit or rotate password" : "Add password";
@@ -16306,8 +16436,16 @@ function initializeVaultsPage() {
         height: "100%",
         placeholder: "No passwords are stored in this vault.",
         rowFormatter: (row) => markNewRecordRow(row, "key"),
-        rowContextMenu: [
-          {
+        rowContextMenu: (component) => {
+          const row = component.getData();
+          const uriActions = (row.uris || []).map((uri, index) => ({
+            label: `${["ssh:", "sftp:"].includes(new URL(uri).protocol) ? "Connect" : "Open"} URI ${index + 1} (${new URL(uri).protocol.slice(0, -1).toUpperCase()})`,
+            action: () => openVaultUri(vaultId, row, index),
+          }));
+          return [
+            ...uriActions,
+            ...(uriActions.length ? [{ separator: true }] : []),
+            {
             label: "Delete password",
             disabled: (component) => component.getData().is_new,
             action: (_event, row) => {
@@ -16316,7 +16454,8 @@ function initializeVaultsPage() {
               document.getElementById(`vault-entry-delete-${data.id}`)?.requestSubmit();
             },
           },
-        ],
+          ];
+        },
         columns: [
           {
             title: "Key",

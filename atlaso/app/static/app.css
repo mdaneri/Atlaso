@@ -5866,6 +5866,23 @@ textarea {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.vault-uri-list {
+  display: grid;
+  gap: 8px;
+}
+
+.vault-uri-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.vault-uri-row > label {
+  display: grid;
+  gap: 5px;
+}
+
 .vcf-sddc-wizard-panel {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);

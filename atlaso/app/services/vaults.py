@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from datetime import datetime
+from urllib.parse import urlsplit, urlunsplit
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -14,6 +16,8 @@ from atlaso.app.secrets import decrypt_secret, encrypt_secret
 VAULT_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*$")
 VAULT_SECRET_TYPES = {"vcf_password", "esx_password"}
 VAULT_SOURCE_TYPES = {"manual", "sddc_manager", "vcf_installer"}
+VAULT_URI_SCHEMES = {"http", "https", "ssh", "sftp"}
+VAULT_URI_LIMIT = 9
 
 
 @dataclass(frozen=True)
@@ -26,6 +30,7 @@ class VaultEntryInput:
     resource_name: str = ""
     source_type: str = "manual"
     source_endpoint: str = ""
+    uris: tuple[str, ...] = ()
     imported_at: datetime | None = None
 
 
@@ -49,6 +54,58 @@ def vault_marker_name(value: str) -> str:
     return marker
 
 
+def normalize_vault_uris(values: list[str] | tuple[str, ...]) -> tuple[str, ...]:
+    if len(values) > VAULT_URI_LIMIT:
+        raise ValueError("Vault entries support at most 9 URIs.")
+    normalized: list[str] = []
+    for raw_value in values:
+        value = str(raw_value or "").strip()
+        if not value:
+            continue
+        if len(value) > 2048 or any(character.isspace() for character in value):
+            raise ValueError("Vault URIs must be 2048 characters or fewer and contain no whitespace.")
+        parsed = urlsplit(value)
+        scheme = parsed.scheme.lower()
+        if scheme not in VAULT_URI_SCHEMES:
+            raise ValueError("Vault URIs must use http, https, ssh, or sftp.")
+        if not parsed.hostname:
+            raise ValueError("Vault URIs must include a hostname.")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("Vault URIs must not contain credentials; use the entry username and password.")
+        try:
+            parsed.port
+        except ValueError as exc:
+            raise ValueError("Vault URI ports must be valid numbers.") from exc
+        normalized_value = urlunsplit((scheme, parsed.netloc, parsed.path, parsed.query, parsed.fragment))
+        if normalized_value in normalized:
+            raise ValueError("Vault URIs must be unique within an entry.")
+        normalized.append(normalized_value)
+    return tuple(normalized)
+
+
+def vault_entry_uris(entry: VaultEntry) -> tuple[str, ...]:
+    try:
+        values = json.loads(entry.uris_json or "[]")
+    except json.JSONDecodeError:
+        return ()
+    if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+        return ()
+    try:
+        return normalize_vault_uris(values)
+    except ValueError:
+        return ()
+
+
+def parse_vault_uris_json(value: str) -> tuple[str, ...]:
+    try:
+        values = json.loads(value or "[]")
+    except json.JSONDecodeError as exc:
+        raise ValueError("Vault URIs must be a valid list.") from exc
+    if not isinstance(values, list) or any(not isinstance(item, str) for item in values):
+        raise ValueError("Vault URIs must be a list of strings.")
+    return normalize_vault_uris(values)
+
+
 def validate_entry_input(entry: VaultEntryInput, *, require_value: bool = True) -> VaultEntryInput:
     key = normalize_vault_key(entry.key)
     secret_type = entry.secret_type.strip().lower()
@@ -68,6 +125,7 @@ def validate_entry_input(entry: VaultEntryInput, *, require_value: bool = True) 
         resource_name=entry.resource_name.strip(),
         source_type=source_type,
         source_endpoint=entry.source_endpoint.strip(),
+        uris=normalize_vault_uris(entry.uris),
         imported_at=entry.imported_at,
     )
 
@@ -134,6 +192,7 @@ def upsert_vault_entry(
     current.resource_name = normalized.resource_name
     current.source_type = normalized.source_type
     current.source_endpoint = normalized.source_endpoint
+    current.uris_json = json.dumps(normalized.uris)
     current.imported_at = normalized.imported_at
     db.flush()
     return current, created
@@ -148,6 +207,7 @@ def update_vault_entry(
     username: str,
     resource_name: str,
     description: str,
+    uris: tuple[str, ...],
 ) -> None:
     normalized = validate_entry_input(
         VaultEntryInput(
@@ -159,6 +219,7 @@ def update_vault_entry(
             resource_name=resource_name,
             source_type=entry.source_type,
             source_endpoint=entry.source_endpoint,
+            uris=uris,
             imported_at=entry.imported_at,
         ),
         require_value=False,
@@ -168,6 +229,7 @@ def update_vault_entry(
     entry.secret_type = normalized.secret_type
     entry.username = normalized.username
     entry.resource_name = normalized.resource_name
+    entry.uris_json = json.dumps(normalized.uris)
     if normalized.value:
         entry.encrypted_value = encrypt_secret(normalized.value)
     entry.updated_at = utcnow()
@@ -192,6 +254,8 @@ def kickstart_vault_values(db: Session, vault_id: int) -> dict[str, str]:
     for entry in entries:
         values[f"{prefix}.{entry.key}.username"] = entry.username or ""
         values[f"{prefix}.{entry.key}.password"] = decrypt_secret(entry.encrypted_value)
+        for index, uri in enumerate(vault_entry_uris(entry), start=1):
+            values[f"{prefix}.{entry.key}.uri{index}"] = uri
     return values
 
 
@@ -206,6 +270,7 @@ def vault_entry_metadata(entry: VaultEntry) -> dict[str, object]:
         "resource_name": entry.resource_name,
         "source_type": entry.source_type,
         "source_endpoint": entry.source_endpoint,
+        "uris": list(vault_entry_uris(entry)),
         "has_value": bool(entry.encrypted_value),
         "updated_at": entry.updated_at.isoformat() if entry.updated_at else "",
     }

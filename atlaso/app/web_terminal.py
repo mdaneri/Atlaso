@@ -29,7 +29,8 @@ from atlaso.app.adapters.system import SystemAdapter
 from atlaso.app.audit import record_audit
 from atlaso.app.config import get_settings
 from atlaso.app.database import SessionLocal, get_db
-from atlaso.app.models import ApplianceSettings, PhysicalInterface, User, VlanInterface
+from atlaso.app.models import ApplianceSettings, PhysicalInterface, User, VaultEntry, VlanInterface
+from atlaso.app.secrets import decrypt_secret
 from atlaso.app.security import (
     SESSION_APPLIANCE_INSTANCE_SESSION_KEY,
     ensure_appliance_instance_id,
@@ -43,6 +44,7 @@ from atlaso.app.services.appliance_settings import (
     web_terminal_interface_options,
     web_terminal_listener_interfaces,
 )
+from atlaso.app.services.vaults import vault_entry_uris
 
 
 router = APIRouter()
@@ -67,12 +69,26 @@ class TerminalTicket:
     browser_session_id: str
     takeover: bool
     expires_at: datetime
+    remote_entry_id: int = 0
+    remote_uri_index: int = 0
+    remote_fingerprint: str = ""
+
+
+@dataclass
+class RemoteTerminalLaunch:
+    user_id: int
+    entry_id: int
+    uri_index: int
+    fingerprint: str
+    expires_at: datetime
 
 
 @dataclass
 class ActiveTerminalSession:
     user_id: int
     username: str
+    display_username: str
+    target_key: str
     browser_session_id: str
     session_id: str
     transport: paramiko.Transport
@@ -89,6 +105,7 @@ class ActiveTerminalSession:
 
 _ticket_lock = threading.Lock()
 _tickets: dict[str, TerminalTicket] = {}
+_remote_launches: dict[str, RemoteTerminalLaunch] = {}
 _session_lock = threading.Lock()
 _sessions: dict[tuple[int, str], ActiveTerminalSession] = {}
 _pending_sessions: set[tuple[int, str]] = set()
@@ -96,6 +113,33 @@ _pending_sessions: set[tuple[int, str]] = set()
 
 def _ticket_digest(raw: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _ssh_fingerprint(key: paramiko.PKey) -> str:
+    digest = hashlib.sha256(key.asbytes()).digest()
+    return f"SHA256:{base64.b64encode(digest).decode('ascii').rstrip('=')}"
+
+
+def _remote_entry_target(entry: VaultEntry, uri_index: int) -> tuple[str, int, str]:
+    uris = vault_entry_uris(entry)
+    if uri_index < 1 or uri_index > len(uris):
+        raise ValueError("The selected vault URI does not exist.")
+    parsed = urlparse(uris[uri_index - 1])
+    if parsed.scheme not in {"ssh", "sftp"} or not parsed.hostname:
+        raise ValueError("The selected vault URI is not an SSH or SFTP target.")
+    if not entry.username:
+        raise ValueError("Enter a username before opening an SSH or SFTP URI.")
+    return parsed.hostname, parsed.port or 22, entry.username
+
+
+def _probe_remote_ssh_host(hostname: str, port: int) -> str:
+    sock = socket.create_connection((hostname, port), timeout=10)
+    transport = paramiko.Transport(sock)
+    try:
+        transport.start_client(timeout=10)
+        return _ssh_fingerprint(transport.get_remote_server_key())
+    finally:
+        transport.close()
 
 
 def _terminal_replay_output(output: bytearray) -> bytes:
@@ -179,6 +223,9 @@ def revoke_user_terminal_sessions(user_id: int, reason: str = "Web SSH access re
         stale_tickets = [digest for digest, ticket in _tickets.items() if ticket.user_id == user_id]
         for digest in stale_tickets:
             _tickets.pop(digest, None)
+        stale_launches = [digest for digest, launch in _remote_launches.items() if launch.user_id == user_id]
+        for digest in stale_launches:
+            _remote_launches.pop(digest, None)
     with _session_lock:
         stale_keys = [key for key in _sessions if key[0] == user_id]
         sessions = [_sessions.pop(key) for key in stale_keys]
@@ -289,12 +336,90 @@ def terminal_page(
     )
 
 
+@router.post("/terminal/remote-launches", response_model=None)
+async def create_remote_terminal_launch(
+    request: Request,
+    vault_id: int = Form(...),
+    entry_id: int = Form(...),
+    uri_index: int = Form(...),
+    confirmed_fingerprint: str = Form(""),
+    csrf: str = Form(...),
+    identity=Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    if not identity.has_role("admin"):
+        raise HTTPException(status_code=403, detail="Administrator role required")
+    if not csrf or csrf != request.session.get("csrf_token"):
+        raise HTTPException(status_code=403, detail="Invalid CSRF token")
+    user = db.get(User, int(identity.user_id))
+    desired, _selected, addresses, _management_addresses = _terminal_network_state(db)
+    server_host = str((request.scope.get("server") or ("", 0))[0])
+    if (
+        not _user_can_access_terminal(user)
+        or not _request_uses_selected_listener(request.headers, server_host, addresses)
+        or get_settings().environment != "appliance"
+        or not desired.web_terminal_enabled
+        or not _request_is_https(request.headers, request.url.scheme)
+        or not _helper_applied()
+    ):
+        raise HTTPException(status_code=409, detail="Web terminal access is not applied and ready")
+    entry = db.get(VaultEntry, entry_id)
+    if entry is None or entry.vault_id != vault_id:
+        raise HTTPException(status_code=404, detail="Vault entry not found.")
+    try:
+        hostname, port, _username = _remote_entry_target(entry, uri_index)
+        fingerprint = await asyncio.to_thread(_probe_remote_ssh_host, hostname, port)
+    except (OSError, ValueError, paramiko.SSHException) as exc:
+        raise HTTPException(status_code=422, detail=str(exc) or "The SSH target is unavailable.") from exc
+    target = f"{hostname}:{port}"
+    if confirmed_fingerprint != fingerprint:
+        return JSONResponse(
+            {
+                "error_code": "SSH_HOST_KEY_CONFIRMATION_REQUIRED",
+                "target": target,
+                "fingerprint": fingerprint,
+            },
+            status_code=409,
+            headers={"Cache-Control": "no-store"},
+        )
+    raw = token_urlsafe(36)
+    now = datetime.now(timezone.utc)
+    with _ticket_lock:
+        stale_launches = [
+            digest
+            for digest, launch in _remote_launches.items()
+            if launch.expires_at <= now
+        ]
+        for digest in stale_launches:
+            _remote_launches.pop(digest, None)
+        _remote_launches[_ticket_digest(raw)] = RemoteTerminalLaunch(
+            user_id=int(identity.user_id),
+            entry_id=entry.id,
+            uri_index=uri_index,
+            fingerprint=fingerprint,
+            expires_at=now + timedelta(seconds=TICKET_TTL_SECONDS),
+        )
+    record_audit(
+        db,
+        actor=identity.username,
+        action="vault_remote_terminal_launch",
+        resource_type="vault_entry",
+        resource_id=str(entry.id),
+        detail=f"uri_index={uri_index}",
+    )
+    return JSONResponse(
+        {"url": f"/terminal#remote-launch={raw}"},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @router.post("/terminal/tickets", response_model=None)
 def create_terminal_ticket(
     request: Request,
     csrf: str = Form(...),
     browser_session_id: str = Form(...),
     takeover: bool = Form(False),
+    remote_launch: str = Form(""),
     identity=Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
@@ -318,6 +443,17 @@ def create_terminal_ticket(
     ):
         raise HTTPException(status_code=409, detail="Web terminal access is not applied and ready")
     active_session = _active_session_for_user(int(identity.user_id))
+    remote: RemoteTerminalLaunch | None = None
+    if remote_launch:
+        with _ticket_lock:
+            remote = _remote_launches.pop(_ticket_digest(remote_launch), None)
+        if (
+            remote is None
+            or remote.user_id != int(identity.user_id)
+            or remote.expires_at <= datetime.now(timezone.utc)
+        ):
+            raise HTTPException(status_code=400, detail="The remote terminal launch is invalid or expired.")
+        takeover = True
     if active_session is not None and active_session.browser_session_id != browser_session_id and not takeover:
         return JSONResponse(
             {
@@ -346,6 +482,9 @@ def create_terminal_ticket(
             browser_session_id=browser_session_id,
             takeover=bool(takeover),
             expires_at=now + timedelta(seconds=TICKET_TTL_SECONDS),
+            remote_entry_id=remote.entry_id if remote else 0,
+            remote_uri_index=remote.uri_index if remote else 0,
+            remote_fingerprint=remote.fingerprint if remote else "",
         )
     record_audit(db, actor=identity.username, action="web_terminal_ticket", resource_type="web_terminal")
     return JSONResponse(
@@ -405,6 +544,35 @@ def _open_ssh_channel(username: str, session_id: str, cols: int, rows: int) -> t
     channel.get_pty(term="xterm-256color", width=cols, height=rows)
     channel.invoke_shell()
     return transport, channel
+
+
+def _open_remote_ssh_channel(
+    entry_id: int,
+    uri_index: int,
+    expected_fingerprint: str,
+    cols: int,
+    rows: int,
+) -> tuple[paramiko.Transport, paramiko.Channel, str]:
+    with SessionLocal() as db:
+        entry = db.get(VaultEntry, entry_id)
+        if entry is None:
+            raise RuntimeError("The vault entry no longer exists.")
+        hostname, port, username = _remote_entry_target(entry, uri_index)
+        password = decrypt_secret(entry.encrypted_value)
+    sock = socket.create_connection((hostname, port), timeout=10)
+    transport = paramiko.Transport(sock)
+    try:
+        transport.start_client(timeout=10)
+        if _ssh_fingerprint(transport.get_remote_server_key()) != expected_fingerprint:
+            raise RuntimeError("The remote SSH host key changed after confirmation.")
+        transport.auth_password(username, password)
+        channel = transport.open_session(timeout=10)
+        channel.get_pty(term="xterm-256color", width=cols, height=rows)
+        channel.invoke_shell()
+        return transport, channel, f"{username}@{hostname}"
+    except Exception:
+        transport.close()
+        raise
 
 
 async def _detach_websocket(session: ActiveTerminalSession, websocket: WebSocket) -> None:
@@ -498,7 +666,7 @@ async def _attach_terminal_session(session: ActiveTerminalSession, websocket: We
         await websocket.send_json(
             {
                 "type": "ready",
-                "username": session.username,
+                "username": session.display_username,
                 "cols": 120,
                 "rows": 32,
                 "resumed": resumed,
@@ -554,33 +722,63 @@ async def terminal_websocket(websocket: WebSocket) -> None:
             await websocket.send_json({"type": "error", "message": "Terminal ticket is invalid or expired."})
             return
         key = (int(user_id), ticket.browser_session_id)
+        target_key = (
+            f"vault:{ticket.remote_entry_id}:{ticket.remote_uri_index}"
+            if ticket.remote_entry_id
+            else "appliance"
+        )
         with _session_lock:
             session = _sessions.get(key)
+            if session is not None and session.target_key != target_key:
+                _sessions.pop(key, None)
+        if session is not None and session.target_key != target_key:
+            await _terminate_terminal_session(session, "terminal target changed")
+            session = None
         resumed = session is not None
         active_session = _active_session_for_user(int(user_id))
         if active_session is not None and active_session is not session:
             if not ticket.takeover:
                 await websocket.send_json({"type": "error", "message": "Another browser has the active terminal session."})
                 return
-            old_key = (active_session.user_id, active_session.browser_session_id)
-            with _session_lock:
-                if _sessions.get(old_key) is active_session:
-                    _sessions.pop(old_key, None)
-                active_session.browser_session_id = ticket.browser_session_id
-                _sessions[key] = active_session
-            session = active_session
-            resumed = True
+            if active_session.target_key != target_key:
+                old_key = (active_session.user_id, active_session.browser_session_id)
+                with _session_lock:
+                    if _sessions.get(old_key) is active_session:
+                        _sessions.pop(old_key, None)
+                await _terminate_terminal_session(active_session, "terminal target changed")
+            else:
+                old_key = (active_session.user_id, active_session.browser_session_id)
+                with _session_lock:
+                    if _sessions.get(old_key) is active_session:
+                        _sessions.pop(old_key, None)
+                    active_session.browser_session_id = ticket.browser_session_id
+                    _sessions[key] = active_session
+                session = active_session
+                resumed = True
         if session is None:
             if not _reserve_new_session(key):
                 await websocket.send_json({"type": "error", "message": "The appliance terminal session limit has been reached."})
                 return
             try:
                 session_id = token_urlsafe(18).replace("-", "_")
-                transport, channel = await asyncio.to_thread(_open_ssh_channel, username, session_id, 120, 32)
+                display_username = username
+                if ticket.remote_entry_id:
+                    transport, channel, display_username = await asyncio.to_thread(
+                        _open_remote_ssh_channel,
+                        ticket.remote_entry_id,
+                        ticket.remote_uri_index,
+                        ticket.remote_fingerprint,
+                        120,
+                        32,
+                    )
+                else:
+                    transport, channel = await asyncio.to_thread(_open_ssh_channel, username, session_id, 120, 32)
                 now = monotonic()
                 session = ActiveTerminalSession(
                     user_id=int(user_id),
                     username=username,
+                    display_username=display_username,
+                    target_key=target_key,
                     browser_session_id=ticket.browser_session_id,
                     session_id=session_id,
                     transport=transport,

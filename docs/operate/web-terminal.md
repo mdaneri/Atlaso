@@ -76,6 +76,14 @@ normal OS policy. Root certificates and passwordless sudo are not permitted.
 The service enforces bounded idle time, total lifetime, input, output, and retained transcript size. CA private keys
 never reach the browser or the Atlaso service account.
 
+Administrators can also open an SSH or SFTP URI from a Vault entry's row context menu. This path requires Web Terminal
+to be applied and ready. Atlaso first displays the remote server's SHA-256 host-key fingerprint for explicit
+confirmation, issues a 30-second one-use launch token, rechecks the key, and then decrypts the selected vault password
+only for server-side SSH authentication. The launch token is carried in a browser-only URL fragment and removed before
+the terminal connects, so it is not sent in the terminal page request. The browser receives neither the password nor an
+authenticated URI. Audit events identify only the vault entry and URI position. An SFTP URI opens the endpoint's
+interactive SSH shell.
+
 ## Apply and troubleshooting
 
 Changing terminal interfaces should make these apply units pending:
