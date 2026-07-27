@@ -16,8 +16,10 @@ with browser caching disabled.
 Vault keys use lowercase dotted segments, for example `vcf.sddc_manager.admin` or `esx.esx01.root`. Values are encrypted
 with the appliance secrets key before database storage. Keep `ATLASO_SECRETS_KEY` with the appliance recovery material.
 Each entry may also store up to nine credential-free HTTP, HTTPS, SSH, or SFTP URIs. Add them on the third page of the
-entry wizard. The row context menu exposes one action per URI: HTTP and HTTPS open in a separate browser tab; SSH and
-SFTP open the Atlaso Web Terminal and authenticate with the entry username and password.
+entry wizard. Right-click an existing row, or focus it and press **Shift+F10**, to open its context menu. **Edit
+password** reopens the entry wizard, **Delete password** uses the shared destructive confirmation, and each configured
+URI has its own action. HTTP and HTTPS open in a separate browser tab; SSH and SFTP open the Atlaso Web Terminal and
+authenticate with the entry username and password.
 
 ## Managed scripts
 

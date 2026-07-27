@@ -16530,24 +16530,31 @@ function initializeVaultsPage() {
         height: "100%",
         placeholder: "No passwords are stored in this vault.",
         rowFormatter: (row) => markNewRecordRow(row, "key"),
-        rowContextMenu: (component) => {
+        rowContextMenu: (_event, component) => {
           const row = component.getData();
+          if (row.is_new) return [];
           const uriActions = (row.uris || []).map((uri, index) => ({
             label: `${["ssh:", "sftp:"].includes(new URL(uri).protocol) ? "Connect" : "Open"} URI ${index + 1} (${new URL(uri).protocol.slice(0, -1).toUpperCase()})`,
             action: () => openVaultUri(vaultId, row, index),
           }));
           return [
+            {
+              label: "Edit password",
+              action: (_menuEvent, rowComponent) => entryWizard.open({
+                context: { vaultId, row: rowComponent.getData() },
+                launcher: rowComponent.getElement(),
+              }),
+            },
+            { separator: true },
             ...uriActions,
             ...(uriActions.length ? [{ separator: true }] : []),
             {
-            label: "Delete password",
-            disabled: (component) => component.getData().is_new,
-            action: (_event, row) => {
-              const data = row.getData();
-              if (data.is_new) return;
-              document.getElementById(`vault-entry-delete-${data.id}`)?.requestSubmit();
+              label: "Delete password",
+              action: (_menuEvent, rowComponent) => {
+                const data = rowComponent.getData();
+                document.getElementById(`vault-entry-delete-${data.id}`)?.requestSubmit();
+              },
             },
-          },
           ];
         },
         columns: [

@@ -208,7 +208,10 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert "AtlasoUiPatterns.createWizard" in source
     assert "data-vault-password-eye" in source
     assert "15000" in source
+    assert 'rowContextMenu: (_event, component) =>' in source
+    assert 'label: "Edit password"' in source
     assert 'label: "Delete password"' in source
+    assert "if (row.is_new) return [];" in source
     assert "window.confirm" not in source[source.index("function initializeVaultsPage"):source.index("function initializeVcfVaultImport")]
     assert '<button class="button danger compact" type="button">Delete</button>' not in source
     tab_strip = template.split('<div class="tab-buttons zone-tabs"', 1)[1].split("</div>", 1)[0]
@@ -238,6 +241,7 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert "openVaultUri" in source
     assert "Connect\" : \"Open" in source
     assert "/terminal/remote-launches" in source
+    assert "atlaso-vaults-20260727-6" in Path("atlaso/app/templates/base.html").read_text()
     pxe_template = Path("atlaso/app/templates/esxi_pxe.html").read_text()
     assert "{{vault.<vaultname>.<key>.uri1}}" in pxe_template
     assert "{{vault.<vaultname>.<key>.uri9}}" in pxe_template
