@@ -3344,9 +3344,9 @@
   approval and name the closest related Atlaso reference.</li>
 <li>Tabulator is the only data-grid implementation. Custom data grids and interaction patterns not defined by the guide
   require explicit maintainer approval before implementation.</li>
-<li>Construct every new Tabulator through <code>window.AtlasoUiPatterns.createGrid(...)</code>. Build every new or changed wizard
-  through <code>window.AtlasoUiPatterns.createWizard(...)</code> and the generic <code>data-atlaso-wizard-*</code> DOM contract. The raw
-  constructors marked for issue #117 are migration sites and must not be copied.</li>
+<li>Construct every Tabulator through <code>window.AtlasoUiPatterns.createGrid(...)</code>. Build every new or changed wizard
+  through <code>window.AtlasoUiPatterns.createWizard(...)</code> and the generic <code>data-atlaso-wizard-*</code> DOM contract. Raw
+  Tabulator constructors outside the shared foundation are forbidden.</li>
 <li>A delegating agent must include this UI gate in every UI-related delegated prompt and verify that the delegated agent
   read the guide, classified the interaction, identified the reused or closest related reference, and cited maintainer
   approval for <code>custom/other</code> before accepting or using its work.</li>
