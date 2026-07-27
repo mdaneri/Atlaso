@@ -39,6 +39,37 @@
     return { valid: true };
   }
 
+  function compareGridValues(left, right) {
+    if (left === right) return 0;
+    if (left === null || left === undefined || left === "") return -1;
+    if (right === null || right === undefined || right === "") return 1;
+    if (typeof left === "number" && typeof right === "number") return left - right;
+    if (typeof left === "boolean" && typeof right === "boolean") return Number(left) - Number(right);
+    return String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: "base" });
+  }
+
+  function withPinnedLastSorters(columns, predicate) {
+    return (columns || []).map((column) => {
+      if (Array.isArray(column.columns)) {
+        return { ...column, columns: withPinnedLastSorters(column.columns, predicate) };
+      }
+      if (column.headerSort === false) return column;
+      const originalSorter = column.sorter;
+      return {
+        ...column,
+        sorter: (left, right, leftRow, rightRow, columnComponent, direction, sorterParams) => {
+          const leftPinned = Boolean(predicate(leftRow?.getData?.(), leftRow));
+          const rightPinned = Boolean(predicate(rightRow?.getData?.(), rightRow));
+          if (leftPinned !== rightPinned) return leftPinned ? 1 : -1;
+          if (typeof originalSorter === "function") {
+            return originalSorter(left, right, leftRow, rightRow, columnComponent, direction, sorterParams);
+          }
+          return compareGridValues(left, right);
+        },
+      };
+    });
+  }
+
   function createGrid(config = {}) {
     const element = resolveElement(config.element, global.document);
     const pattern = config.pattern || "read-only";
@@ -50,6 +81,8 @@
     const permission = config.permission || { allowed: true };
     let table = null;
     let currentState = "loading";
+    let tableBuilt = false;
+    let loadFailed = false;
 
     if (!element) throw new Error("Atlaso grid foundation requires an element.");
     if (!GRID_PATTERNS.has(pattern)) throw new Error(`Unsupported Atlaso grid pattern: ${pattern}`);
@@ -72,7 +105,22 @@
     };
 
     const setError = (message) => setState("error", message || "The grid could not be loaded.");
+    const showLoadedState = (rowCount) => {
+      fallback?.classList?.add?.("hidden");
+      element.classList?.remove?.("hidden");
+      if (permission.allowed === false) {
+        setState("permission-denied", permission.message || "You have read-only access.");
+      } else {
+        setState(rowCount ? "ready" : "empty", rowCount ? "" : (config.emptyMessage || options.placeholder || ""));
+      }
+    };
     const options = { layout: "fitColumns", ...(config.options || {}) };
+    const pinRowsLast = config.pinRowsLast === false
+      ? null
+      : (typeof config.pinRowsLast === "function" ? config.pinRowsLast : (data) => Boolean(data?.is_new));
+    if (pinRowsLast && Array.isArray(options.columns)) {
+      options.columns = withPinnedLastSorters(options.columns, pinRowsLast);
+    }
     const actions = config.rowActions || options.rowContextMenu || [];
     const enabledActions = permission.allowed === false ? [] : actions;
     const openRow = typeof config.onOpenRow === "function" ? config.onOpenRow : null;
@@ -110,18 +158,24 @@
       if (typeof global.Tabulator !== "function") throw new Error("Tabulator is unavailable.");
       table = new global.Tabulator(element, options);
       table.on?.("tableBuilt", () => {
-        fallback?.classList?.add?.("hidden");
-        element.classList?.remove?.("hidden");
-        const rowCount = table.getDataCount?.("active") ?? table.getData?.("active")?.length ?? 0;
-        if (permission.allowed === false) {
-          setState("permission-denied", permission.message || "You have read-only access.");
-        } else {
-          setState(rowCount ? "ready" : "empty", rowCount ? "" : (config.emptyMessage || options.placeholder || ""));
+        tableBuilt = true;
+        if (!loadFailed) {
+          const rowCount = table.getDataCount?.("active") ?? table.getData?.("active")?.length ?? 0;
+          showLoadedState(rowCount);
         }
         config.onReady?.(table);
       });
       table.on?.("dataLoadError", (error) => {
+        loadFailed = true;
         setError(config.errorMessage || error?.message || "The grid data could not be loaded.");
+      });
+      table.on?.("dataLoaded", (data) => {
+        loadFailed = false;
+        if (!tableBuilt) return;
+        const rowCount = Array.isArray(data)
+          ? data.length
+          : (table.getDataCount?.("active") ?? table.getData?.("active")?.length ?? 0);
+        showLoadedState(rowCount);
       });
     } catch (error) {
       setError(config.errorMessage || error?.message || "The grid could not be loaded.");

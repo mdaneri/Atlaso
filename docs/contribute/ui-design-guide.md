@@ -104,7 +104,7 @@ Physical Interfaces is the reference.
 - On failure, retain the attempted value and a useful error, or roll back to the last confirmed value when the current
   contract requires rollback.
 - Refresh affected validation and preview content in place.
-- Put the new-record row at the bottom and label it `+ Add record here`.
+- Put the new-record row at the bottom, keep it pinned there under every sort direction, and label it `+ Add record here`.
 - In a new-record placeholder, enable only the required identity field first. Keep generated or defaulted cells blank
   and locked until identity is valid.
 - Use the established editors for switches, enumerations, exact values, tags, and multiline content. Do not embed a form
