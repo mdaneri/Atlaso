@@ -10,11 +10,6 @@ status: current
 
 VCF Helper prepares deployment DNS desired state. It is available under `VCF Workflows` at `/vcf-helper`.
 
-Administrators can also use **Import passwords into a vault** for VCF 9 SDDC Manager and VCF Installer appliances.
-Atlaso confirms the target TLS fingerprint before sending credentials, displays only discovered metadata for selection,
-then re-fetches and encrypts the reviewed VCF/ESX passwords in the selected vault. Source credentials are request-local
-and password values are never included in the discovery response.
-
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 
@@ -25,6 +20,11 @@ This verified appliance view provides visual orientation before you begin.
 *Figure: VCF Helper in the verified clean-appliance desktop state.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
+
+Administrators can also use **Import passwords into a vault** for VCF 9 SDDC Manager and VCF Installer appliances.
+Atlaso confirms the target TLS fingerprint before sending credentials, displays only discovered metadata for selection,
+then re-fetches and encrypts the reviewed VCF/ESX passwords in the selected vault. Source credentials are request-local
+and password values are never included in the discovery response.
 
 The helper creates DNS records in Atlaso, deploys SDDC Manager OVAs, and configures VCF 9 appliances to use the applied
 local offline depot. DNS does not reload `dnsmasq` or change the appliance directly. Review and submit the changed
