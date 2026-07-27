@@ -3994,12 +3994,24 @@ listeners are limited to addressed non-management access or route interfaces and
 reconciliation uses local <code>ldapi:///</code> with SASL EXTERNAL. VCF configuration includes the mandatory <code>serviceAccount</code> to
 <code>employeeType</code> mapping, but Atlaso does not import groups or assign VCF roles. See
 <a href="../../services/managed-ldap/">Managed LDAP for VCF Automation 9.1</a>.</p>
-<p>The Authentication page contains Atlaso's constrained OIDC provider. Phase 2 implements Authorization Code with
+<p>The dedicated <code>/openid-connect</code> page contains Atlaso's constrained OIDC provider in Provider, Clients, Signing Keys,
+Group Mappings, and Stable Subjects tabs in the main column while its editable settings remain in the standard
+right-hand service column. Provider readiness appears inline rather than in a separate validation frame. The
+service-owned hostname defaults to
+<code>oidc.atlaso.internal</code>; listeners are selectable addressed access or routed interfaces and enabled VLANs, with a
+configurable HTTPS port. Atlaso derives listener addresses and app-owned DNS records from those selections. The
+provider implements Authorization Code with
 confidential <code>client_secret_basic</code>, mandatory PKCE S256, exact redirects, required state and nonce, signed secure
 browser sessions, five-minute RS256 ID/access JWTs, UserInfo revalidation, and RP-initiated logout. Provider enablement
-requires the canonical issuer, applied management HTTPS, an active signing key, and protocol readiness. Unbound clients
-authenticate Local identities; organization-bound clients authenticate only their fixed managed LDAP organization, and
-managed LDAP OIDC sessions never grant operator UI access. See
+requires the canonical issuer, an applied <code>oidc:https</code> certificate covering the issuer and listener addresses, an active
+signing key, and protocol readiness. The restricted non-management nginx front door exposes only <code>/identity/</code>; DNS,
+certificate, listener, and firewall state is installed through global Appliance Apply. Shared grid/wizard administration
+supports client editing, exact redirect
+lifecycle, one-time secret rotation, retired-key overlap and cleanup, and a public-metadata-only integration export.
+Client policy edits invalidate pending authorization transactions before they can issue a code under stale redirects
+or scopes.
+Unbound clients authenticate Local identities; organization-bound clients authenticate only their fixed managed LDAP
+organization, and managed LDAP OIDC sessions never grant operator UI access. See
 <a href="../../services/oidc-provider/">Constrained OpenID Connect provider</a>.</p>
 <p>On the Photon appliance, real mutating helper actions re-enter through a transient <code>systemd-run</code> service when
 <code>ATLASO_HELPER_USE_SYSTEMD_RUN=1</code> is set. This keeps the web control plane inside its restricted <code>atlaso.service</code>

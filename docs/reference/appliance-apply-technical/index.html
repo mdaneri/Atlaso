@@ -4185,6 +4185,9 @@ service cards to hostnames, offers a Name/IP toggle stored in the <code>atlaso_p
 URLs from each service's configured scheme and port. VCF Offline Depot and registry access use their service-owned HTTPS
 front doors. Firewall apply owns the generated HTTP/HTTPS allow rules, while management nginx remains separate on
 management-role IPs and redirects management HTTP/80 to HTTPS/443.</p>
+<p>OIDC adds a hostname-specific HTTPS server block on only its selected access or routed addresses and configured port.
+That block uses the CA-managed <code>oidc:https</code> certificate, proxies only <code>/identity/</code>, forwards the exact listener address
+to Atlaso for ingress enforcement, and returns 404 for unrelated management or application paths.</p>
 <h3 id="vcf-backups-apply">VCF Backups apply<a class="headerlink" href="#vcf-backups-apply" title="Permanent link">&para;</a></h3>
 <p>The real VCF Backups apply path is OpenSSH-backed. The <code>vcf_backups</code> unit stages Atlaso's rendered <code>Match User</code> drop-in
 at <code>/var/lib/atlaso/apply/vcf-backups/atlaso-vcf-backups-sshd.conf</code>, validates that it is Atlaso-rendered and scoped to

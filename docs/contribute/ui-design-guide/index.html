@@ -2450,6 +2450,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Page layout and settings">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#multiple-checkbox-choices" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Multiple checkbox choices
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3048,6 +3065,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Page layout and settings">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#multiple-checkbox-choices" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Multiple checkbox choices
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3383,13 +3417,26 @@ established workflow is an explicit task action. Appliance configuration enforce
 <h2 id="page-layout-and-settings">Page layout and settings<a class="headerlink" href="#page-layout-and-settings" title="Permanent link">&para;</a></h2>
 <p>Use the existing application shell. Configurable service pages use the DNS page as the default layout reference:</p>
 <ul>
-<li>keep the primary resource collection or workflow in the main column;</li>
+<li>keep the primary resource collection or workflow in one framed <code>.panel.wide-panel</code> in the main column;</li>
 <li>keep service settings in the right-side rail;</li>
 <li>use the compact <strong>Pending Appliance Changes</strong> card for the current apply unit and the shared appliance-review modal;</li>
 <li>keep service-specific validation, warnings, and compact preview actions in the <strong>Validation</strong> card;</li>
 <li>keep full rendered configuration out of the rail and open it in the shared preview modal; and</li>
 <li>collapse the rail below the main content at narrow widths without changing reading or keyboard order.</li>
 </ul>
+<p>ESXi PXE is the reference when one primary service frame has several views. Put the resource heading, concise purpose,
+summary status, <code>.tool-tabs</code> tablist, and associated tab panels inside the same outer frame. Do not place the tablist in
+a detached panel or wrap every tab panel in a competing outer card. Use <code>.zone-tabs</code> for switching between peer
+workspaces, organizations, domains, or repositories; use <code>.tool-tabs</code> for related views of the resource named by the
+containing frame.</p>
+<p>The right rail keeps settings and validation separate. The settings card owns desired-state controls. The
+<strong>Validation</strong> card truthfully summarizes current readiness, lists actionable errors or warnings, and contains only
+compact preview actions. Do not duplicate validation state in a separate main-column frame or omit the Validation card
+when a configurable service has readiness requirements. OpenID Connect follows this composition: OIDC administration
+and its tool tabs occupy the main frame, while Provider Settings and Validation remain persistent in the right rail.
+When the service renders an appliance configuration, the Validation card must include the shared
+<code>partials/config_preview_action.html</code> row with the truthful staged path and a redacted preview; a valid status alone is
+not a substitute for making the reviewed configuration available.</p>
 <p>Treat routine forms as desired-state editors. Autosave safe changes with <code>data-autosave-form</code> and a nearby
 <code>.autosave-status</code>; do not add a visible Save button when the established endpoint safely supports autosave. Editing and
 enforcement are separate. Never add a service-specific apply card, route, or job in place of global appliance apply.</p>
@@ -3402,6 +3449,38 @@ enforcement are separate. Never add a service-specific apply card, route, or job
 <li>tabs for mutually exclusive modes that solve the same job; and</li>
 <li>tag editor for one-or-more interfaces, addresses, networks, domains, or labels.</li>
 </ul>
+<h3 id="multiple-checkbox-choices">Multiple checkbox choices<a class="headerlink" href="#multiple-checkbox-choices" title="Permanent link">&para;</a></h3>
+<p>Use checkbox choice tiles when an operator may select several independent options and each option benefits from a short
+description. The <strong>Allowed scopes</strong> control in the OpenID Connect confidential-client wizard is the reference. Keep a
+plain checkbox list for compact, self-explanatory options, and use a select, radio group, or tabs when the choices are
+mutually exclusive.</p>
+<p>The tile treatment must:</p>
+<ul>
+<li>use a semantic <code>fieldset</code> and <code>legend</code>, with one native checkbox wrapped by each full-width <code>label</code>;</li>
+<li>place a concise option name and supporting description beside the checkbox;</li>
+<li>use the selected border and background, the native checked state, and a visible <code>:focus-within</code> treatment so color is
+  never the only indication;</li>
+<li>reserve a compact trailing badge for durable constraints such as <strong>required</strong>, not transient validation messages;</li>
+<li>preserve server-side validation because a badge or default checked state does not enforce a requirement;</li>
+<li>arrange a short set in a balanced grid and collapse to one column at narrow widths; and</li>
+<li>keep the native checkbox visible and the complete tile clickable. Do not replace it with a scripted div or use the
+  visual card as a mutually exclusive radio control.</li>
+</ul>
+<p>Use the OIDC scope-choice structure for this pattern:</p>
+<div class="language-html highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="p">&lt;</span><span class="nt">fieldset</span> <span class="na">class</span><span class="o">=</span><span class="s">&quot;scope-choice-fieldset&quot;</span><span class="p">&gt;</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>  <span class="p">&lt;</span><span class="nt">legend</span><span class="p">&gt;</span>Allowed scopes<span class="p">&lt;/</span><span class="nt">legend</span><span class="p">&gt;</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>  <span class="p">&lt;</span><span class="nt">div</span> <span class="na">class</span><span class="o">=</span><span class="s">&quot;scope-choice-grid&quot;</span><span class="p">&gt;</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="p">&lt;</span><span class="nt">label</span> <span class="na">class</span><span class="o">=</span><span class="s">&quot;scope-choice&quot;</span><span class="p">&gt;</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>      <span class="p">&lt;</span><span class="nt">input</span> <span class="na">type</span><span class="o">=</span><span class="s">&quot;checkbox&quot;</span> <span class="na">name</span><span class="o">=</span><span class="s">&quot;allowed_scopes&quot;</span> <span class="na">value</span><span class="o">=</span><span class="s">&quot;openid&quot;</span> <span class="na">checked</span><span class="p">&gt;</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>      <span class="p">&lt;</span><span class="nt">span</span> <span class="na">class</span><span class="o">=</span><span class="s">&quot;scope-choice-copy&quot;</span><span class="p">&gt;</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>        <span class="p">&lt;</span><span class="nt">strong</span><span class="p">&gt;</span>OpenID<span class="p">&lt;/</span><span class="nt">strong</span><span class="p">&gt;</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>        <span class="p">&lt;</span><span class="nt">small</span><span class="p">&gt;</span>Required identity subject and ID token<span class="p">&lt;/</span><span class="nt">small</span><span class="p">&gt;</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>      <span class="p">&lt;/</span><span class="nt">span</span><span class="p">&gt;</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>      <span class="p">&lt;</span><span class="nt">span</span> <span class="na">class</span><span class="o">=</span><span class="s">&quot;scope-choice-badge&quot;</span><span class="p">&gt;</span>required<span class="p">&lt;/</span><span class="nt">span</span><span class="p">&gt;</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    <span class="p">&lt;/</span><span class="nt">label</span><span class="p">&gt;</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>  <span class="p">&lt;/</span><span class="nt">div</span><span class="p">&gt;</span>
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="p">&lt;/</span><span class="nt">fieldset</span><span class="p">&gt;</span>
+</span></code></pre></div>
 <p>Every configurable setting has an adjacent <code>i</code> help control using <code>.field-label</code> and <code>.help-icon</code>. The tooltip explains
 what changes, where it applies, and any safety boundary. Use explicit action labels such as <strong>Review appliance changes</strong>
 or <strong>Submit appliance changes</strong> instead of generic <strong>Save</strong> or <strong>Apply</strong>.</p>
