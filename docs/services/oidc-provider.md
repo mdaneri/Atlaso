@@ -145,9 +145,10 @@ jobs, audits, or logs.
 ## Administration and lifecycle
 
 The dedicated **OpenID Connect** navigation page keeps Provider, Clients, Signing Keys, Group Mappings, and Stable
-Subjects in page-level tabs. On the Provider tab, validation, issuer DNS state, and published URLs occupy the main
-workspace while the editable Provider Settings panel remains in the standard right-hand service settings column.
-Provider state autosaves but rejects enablement until every readiness check passes.
+Subjects in tabs inside the standard service workspace. The selected tab occupies the main column while the editable
+Provider Settings panel remains available in the right-hand service settings column. The Provider overview presents
+readiness as an inline status and shows validation errors only when attention is required. Provider state autosaves but
+rejects enablement until every readiness check passes.
 
 Provider Settings owns the service hostname, one or more listener interfaces, and HTTPS port. Listener choices use the
 same service selector as LDAP: addressed access or routed physical interfaces and enabled VLANs are accepted, while
@@ -199,10 +200,9 @@ includes plaintext client secrets or identity passwords. A restored signing key 
 `ATLASO_SECRETS_KEY`; preserve that key through the appliance recovery process.
 
 Factory reset deletes provider settings, clients, redirects, subjects, group mappings, and signing keys before reseeding
-disabled defaults. Normal database upgrades create the mapping table and add provider listener columns through the
-startup path; older databases retain their records. Older binaries ignore the new table. Do not destructively drop
-OIDC tables
-during ordinary downgrade. If complete rollback requires their removal, restore the pre-upgrade SQLite snapshot.
+disabled defaults. OIDC records created by pre-release development builds have no data-migration contract; take a
+SQLite snapshot and reset the OIDC tables when moving those appliances to this lifecycle model. Normal startup still
+creates any missing schema before reseeding the disabled provider default.
 
 ## Staged rollout and unsupported features
 

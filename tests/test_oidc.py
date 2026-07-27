@@ -318,29 +318,6 @@ def test_oidc_public_documents_require_complete_protocol_readiness(client):
     assert client.get("https://testserver/identity/jwks").status_code == 200
 
 
-def test_oidc_legacy_management_bound_provider_is_safely_disabled(client):
-    from atlaso.app.database import SessionLocal
-    from atlaso.app.models import OidcProviderSettings
-    from atlaso.app.services import oidc
-
-    with SessionLocal() as db:
-        provider = db.execute(select(OidcProviderSettings)).scalar_one_or_none()
-        if provider is None:
-            provider = OidcProviderSettings()
-            db.add(provider)
-            db.flush()
-        provider.enabled = True
-        provider.issuer_url = "https://core.atlaso.internal/identity"
-        provider.listen_interface = ""
-        provider.listen_address = ""
-        db.flush()
-
-        reconciled = oidc.ensure_provider_settings(db)
-        assert reconciled.enabled is False
-        assert reconciled.hostname == "oidc.atlaso.internal"
-        assert reconciled.issuer_url == "https://oidc.atlaso.internal/identity"
-
-
 def test_oidc_forwarded_https_rejects_management_listener(client):
     from starlette.requests import Request
 
@@ -880,8 +857,12 @@ def test_openid_connect_page_exposes_authorization_code_oidc_ui(client):
     assert page.text.count('class="tab-button') >= 5
     assert 'id="oidc-group-mappings-table"' in page.text
     assert 'data-fallback-id="oidc-group-mappings-fallback"' in page.text
-    assert 'class="split-workspace service-settings-workspace tab-panel active" id="oidc-provider"' in page.text
-    assert 'class="panel detail-panel service-settings-column"' in page.text
+    assert 'class="split-workspace service-settings-workspace oidc-service-workspace"' in page.text
+    assert 'class="tab-panel active" id="oidc-provider"' in page.text
+    assert '<aside class="side-stack service-settings-column">' in page.text
+    assert page.text.index('class="tab-panels oidc-page-panels"') < page.text.index(
+        '<aside class="side-stack service-settings-column">'
+    )
     assert "<h2>Issuer DNS</h2>" in page.text
     assert "the only supported issuer host" in page.text
     assert "<span>Listener interfaces</span>" in page.text
@@ -891,9 +872,13 @@ def test_openid_connect_page_exposes_authorization_code_oidc_ui(client):
     assert "<span>HTTPS port</span>" in page.text
     assert 'name="port"' in page.text
     assert page.text.count("data-copy-value=") >= 7
+    assert 'class="scope-choice-grid"' in page.text
+    assert page.text.count('class="scope-choice"') == 4
+    assert '<span class="scope-choice-badge">required</span>' in page.text
     assert 'data-atlaso-wizard-nav="state"' in page.text
     assert 'data-atlaso-wizard-step="state"' in page.text
-    assert "<h2>Validation</h2>" in page.text
+    assert "<h2>Validation</h2>" not in page.text
+    assert "data-oidc-provider-validation" in page.text
     assert "data-oidc-provider-validation-status" in page.text
     assert "<noscript>" in page.text
     assert "server-rendered client, signing-key, mapping, and subject tables remain readable" in page.text

@@ -6711,7 +6711,6 @@ function updateOidcProviderValidation(payload = {}) {
   validationStatus.textContent = errors.length ? "needs attention" : "valid";
   validationStatus.className = `status-pill ${errors.length ? "warn" : "good"}`;
   validationPanel.querySelector(".error-list")?.remove();
-  validationPanel.querySelector("[data-oidc-provider-validation-message]")?.remove();
   if (errors.length) {
     const list = document.createElement("div");
     list.className = "error-list";
@@ -6724,12 +6723,6 @@ function updateOidcProviderValidation(payload = {}) {
       list.appendChild(item);
     });
     validationPanel.appendChild(list);
-  } else {
-    const message = document.createElement("p");
-    message.className = "muted";
-    message.setAttribute("data-oidc-provider-validation-message", "");
-    message.textContent = "The issuer, service listener, managed certificate, signing-key state, and protocol settings pass Atlaso validation.";
-    validationPanel.appendChild(message);
   }
 }
 

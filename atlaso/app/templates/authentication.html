@@ -42,6 +42,8 @@
 {% endif %}
 
 {% if oidc_page and oidc_admin %}
+<section class="split-workspace service-settings-workspace oidc-service-workspace">
+<div class="left-stack">
 <div class="tab-buttons zone-tabs panel oidc-page-tabs" role="tablist" aria-label="OpenID Connect administration" data-tab-storage-key="atlaso:oidc:active-tab">
   <button class="tab-button active" type="button" role="tab" data-tab-target="oidc-provider" aria-controls="oidc-provider" aria-selected="true">Provider</button>
   <button class="tab-button" type="button" role="tab" data-tab-target="oidc-clients" aria-controls="oidc-clients" aria-selected="false">Clients</button>
@@ -50,34 +52,29 @@
   <button class="tab-button" type="button" role="tab" data-tab-target="oidc-subjects" aria-controls="oidc-subjects" aria-selected="false">Stable Subjects</button>
 </div>
 <div class="tab-panels oidc-page-panels">
-<section class="split-workspace service-settings-workspace tab-panel active" id="oidc-provider" role="tabpanel">
+<section class="tab-panel active" id="oidc-provider" role="tabpanel">
   <div class="left-stack">
-    <div class="panel wide-panel">
+    <div class="panel wide-panel" data-oidc-provider-validation>
       <div class="panel-head">
         <div>
           <h2>OpenID Connect Provider</h2>
           <p class="muted">The issuer uses its service-owned FQDN on selected access or routed interfaces. Atlaso publishes identity endpoints only after DNS, certificate, listener, signing-key, and protocol readiness checks pass.</p>
         </div>
-        <span class="status-pill {{ 'good' if oidc_provider.enabled else 'muted' }}" data-oidc-provider-status>{{ 'enabled' if oidc_provider.enabled else 'disabled' }}</span>
+        <div class="button-row">
+          <span class="status-pill {{ 'good' if oidc_provider.enabled else 'muted' }}" data-oidc-provider-status>{{ 'enabled' if oidc_provider.enabled else 'disabled' }}</span>
+          <span class="status-pill {{ 'warn' if oidc_validation_errors else 'good' }}" data-oidc-provider-validation-status>{{ 'needs attention' if oidc_validation_errors else 'valid' }}</span>
+        </div>
       </div>
       {% if oidc_error %}<div class="alert error"><strong>OIDC configuration was not saved.</strong><p>{{ oidc_error }}</p></div>{% endif %}
+      {% if oidc_validation_errors %}
+      <div class="error-list" role="list" data-oidc-provider-validation-errors>{% for error in oidc_validation_errors %}<div role="listitem">{{ error }}</div>{% endfor %}</div>
+      {% endif %}
       {% if oidc_client_secret %}
         <div class="alert success">
           <strong>Copy the confidential client secret now.</strong>
           <p class="muted">Client ID: <code>{{ oidc_client_id }}</code>. This plaintext secret is not stored and cannot be shown again.</p>
           <textarea readonly rows="4" aria-label="Generated OIDC client secret">{{ oidc_client_secret }}</textarea>
         </div>
-      {% endif %}
-    </div>
-    <div class="panel" data-oidc-provider-validation>
-      <div class="panel-head">
-        <h2>Validation</h2>
-        <span class="status-pill {{ 'warn' if oidc_validation_errors else 'good' }}" data-oidc-provider-validation-status>{{ 'needs attention' if oidc_validation_errors else 'valid' }}</span>
-      </div>
-      {% if oidc_validation_errors %}
-      <div class="error-list" role="list">{% for error in oidc_validation_errors %}<div role="listitem">{{ error }}</div>{% endfor %}</div>
-      {% else %}
-      <p class="muted" data-oidc-provider-validation-message>The issuer, service listener, managed certificate, signing-key state, and protocol settings pass Atlaso validation.</p>
       {% endif %}
     </div>
     <div class="panel">
@@ -112,7 +109,8 @@
       </div>
     </div>
   </div>
-  <div class="panel detail-panel service-settings-column">
+  {% macro render_oidc_settings_panel() %}
+  <div class="panel detail-panel">
     <div class="panel-head">
       <h2>Provider Settings</h2>
       <span class="status-pill {{ 'good' if oidc_provider.enabled else 'muted' }}">{{ 'enabled' if oidc_provider.enabled else 'disabled' }}</span>
@@ -175,6 +173,7 @@
       <span class="autosave-status" id="oidc-provider-autosave-status" aria-live="polite">Changes autosave.</span>
     </form>
   </div>
+  {% endmacro %}
 </section>
 
 <section id="oidc-clients" class="panel tab-panel" role="tabpanel" hidden>
@@ -239,7 +238,23 @@
         <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity"><div class="form-grid">
           <label><span class="field-label"><span>Client name</span><button class="help-icon" type="button" data-help="Operator-facing label; it is not emitted as an identity claim.">i</button></span><input name="name" required maxlength="160"></label>
           <label><span class="field-label"><span>Bound organization</span><button class="help-icon" type="button" data-help="Bound clients authenticate only against this enabled managed LDAP organization. Unbound clients require explicit source selection.">i</button></span><select name="organization_id"><option value="">Unbound</option>{% for organization in oidc_organizations %}<option value="{{ organization.id }}">{{ organization.name }}</option>{% endfor %}</select></label>
-          <fieldset><legend>Allowed scopes</legend>{% for scope in ["openid", "profile", "email", "groups"] %}<label class="checkbox-row"><input type="checkbox" name="allowed_scopes" value="{{ scope }}" {{ "checked" if scope == "openid" else "" }}> {{ scope }}</label>{% endfor %}</fieldset>
+          <fieldset class="scope-choice-fieldset">
+            <legend>Allowed scopes</legend>
+            <div class="scope-choice-grid">
+              {% for scope, label, description in [
+                ("openid", "OpenID", "Required identity subject and ID token"),
+                ("profile", "Profile", "Display name and preferred username"),
+                ("email", "Email", "Verified current email address"),
+                ("groups", "Groups", "Only explicitly mapped external groups")
+              ] %}
+              <label class="scope-choice">
+                <input type="checkbox" name="allowed_scopes" value="{{ scope }}" {{ "checked" if scope == "openid" else "" }}>
+                <span class="scope-choice-copy"><strong>{{ label }}</strong><small>{{ description }}</small></span>
+                {% if scope == "openid" %}<span class="scope-choice-badge">required</span>{% endif %}
+              </label>
+              {% endfor %}
+            </div>
+          </fieldset>
         </div></section>
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="redirects"><div class="form-stack">
           <label><span class="field-label"><span>Exact redirect URIs</span><button class="help-icon" type="button" data-help="One exact HTTPS URI per line. Wildcards, fragments, credentials, and guessed VCF paths are rejected.">i</button></span><textarea name="redirect_uris" rows="5" required></textarea></label>
@@ -331,6 +346,11 @@
   <table id="oidc-subjects-fallback" class="data-table"><thead><tr><th>Subject</th><th>Source</th><th>Username</th><th>Organization</th></tr></thead><tbody>{% for subject in oidc_subjects %}<tr><td><code>{{ subject.subject }}</code></td><td>{{ subject.source }}</td><td>{{ subject.username }}</td><td>{{ subject.organization_name }}</td></tr>{% else %}<tr><td colspan="4" class="muted">Subjects are created only after a credential is verified for OIDC.</td></tr>{% endfor %}</tbody></table>
 </section>
 </div>
+</div>
+<aside class="side-stack service-settings-column">
+  {{ render_oidc_settings_panel() }}
+</aside>
+</section>
 {% endif %}
 
 {% if not oidc_page %}

@@ -663,8 +663,9 @@ reconciliation uses local `ldapi:///` with SASL EXTERNAL. VCF configuration incl
 [Managed LDAP for VCF Automation 9.1](../services/managed-ldap.md).
 
 The dedicated `/openid-connect` page contains Atlaso's constrained OIDC provider in Provider, Clients, Signing Keys,
-Group Mappings, and Stable Subjects tabs. Provider validation and published state remain in the main workspace while
-its editable settings use the standard right-hand service column. The service-owned hostname defaults to
+Group Mappings, and Stable Subjects tabs in the main column while its editable settings remain in the standard
+right-hand service column. Provider readiness appears inline rather than in a separate validation frame. The
+service-owned hostname defaults to
 `oidc.atlaso.internal`; listeners are selectable addressed access or routed interfaces and enabled VLANs, with a
 configurable HTTPS port. Atlaso derives listener addresses and app-owned DNS records from those selections. The
 provider implements Authorization Code with
