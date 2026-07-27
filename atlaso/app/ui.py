@@ -16626,9 +16626,14 @@ async def inspect_vcf_trust_target_from_ui(
             VcfTrustCredentials(api_username=api_username, api_password=api_password),
             expected_fingerprint=fingerprint,
         )
-    except VcfTrustError as exc:
+    except VcfTrustError:
         return JSONResponse(
-            {"status": "error", "errors": [redact_secret_values(str(exc), [api_password])]},
+            {
+                "status": "error",
+                "errors": [
+                    "Could not inspect the target VCF API. Verify the endpoint, credentials, and TLS fingerprint."
+                ],
+            },
             status_code=422,
         )
     return JSONResponse({"status": "ready", "address": normalized_address, "port": port, "tls_fingerprint": fingerprint, "appliance": appliance})

@@ -795,9 +795,16 @@ def test_vcf_helper_vault_picker_resolves_password_only_on_server(client, monkey
     assert 'credential_address_field = "target_url"' in Path(
         "atlaso/app/templates/partials/vcf_ldap_modal.html"
     ).read_text(encoding="utf-8")
-    assert "sddc.manager.admin" in page.text
-    assert "admin@local" in page.text
-    assert "https://sddc.example.internal:8443" in page.text
+    options_json = page.text.split(
+        '<script id="vcf-vault-credential-options" type="application/json">',
+        1,
+    )[1].split("</script>", 1)[0]
+    options = json.loads(options_json)
+    source_metadata = next(item for item in options if item["id"] == source_vault_id)
+    source_entry_metadata = source_metadata["entries"][0]
+    assert source_entry_metadata["key"] == "sddc.manager.admin"
+    assert source_entry_metadata["username"] == "admin@local"
+    assert source_entry_metadata["uris"] == ["https://sddc.example.internal:8443"]
     assert "ServerSideOnly!" not in page.text
     csrf = csrf_from_page(page.text)
 
