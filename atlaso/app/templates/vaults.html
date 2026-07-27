@@ -7,15 +7,15 @@
       <h2>VCF and ESX password vaults</h2>
       <p class="muted">Passwords remain encrypted at rest and are released only to an explicitly scoped managed script or dynamic Kickstart.</p>
     </div>
-    <button class="button primary compact" type="button" data-vault-create-open>+ Add vault</button>
   </div>
   {% if vault_error %}<div class="alert error">{{ vault_error }}</div>{% endif %}
+  <div class="tab-buttons zone-tabs" role="tablist" aria-label="Password vaults" data-tab-storage-key="atlaso:vaults:active-tab">
+    {% for vault in vaults %}
+      <button class="tab-button {{ 'active' if loop.first else '' }}" type="button" role="tab" data-tab-target="vault-panel-{{ vault.id }}" aria-controls="vault-panel-{{ vault.id }}" aria-selected="{{ 'true' if loop.first else 'false' }}">{{ vault.name }}</button>
+    {% endfor %}
+    <button class="tab-button" type="button" aria-haspopup="dialog" aria-controls="vault-create-modal" data-vault-create-open>+ Add vault</button>
+  </div>
   {% if vaults %}
-    <div class="tab-buttons zone-tabs" role="tablist" aria-label="Password vaults" data-tab-storage-key="atlaso:vaults:active-tab">
-      {% for vault in vaults %}
-        <button class="tab-button {{ 'active' if loop.first else '' }}" type="button" role="tab" data-tab-target="vault-panel-{{ vault.id }}" aria-controls="vault-panel-{{ vault.id }}" aria-selected="{{ 'true' if loop.first else 'false' }}">{{ vault.name }}</button>
-      {% endfor %}
-    </div>
     <div class="tab-panels">
       {% for vault in vaults %}
         <section id="vault-panel-{{ vault.id }}" class="tab-panel {{ 'active' if loop.first else '' }}" role="tabpanel" data-vault-panel data-vault-id="{{ vault.id }}" data-vault-name="{{ vault.name }}">

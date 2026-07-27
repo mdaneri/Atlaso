@@ -167,11 +167,20 @@ def test_dynamic_kickstart_resolves_assigned_vault_without_caching(client):
 
 def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     source = Path("atlaso/app/static/app.js").read_text()
+    template = Path("atlaso/app/templates/vaults.html").read_text()
     assert "initializeVaultsPage" in source
     assert "AtlasoUiPatterns.createGrid" in source
     assert "AtlasoUiPatterns.createWizard" in source
     assert "data-vault-password-eye" in source
     assert "15000" in source
+    tab_strip = template.split('<div class="tab-buttons zone-tabs"', 1)[1].split("</div>", 1)[0]
+    panel_header = template.split('<div class="panel-head">', 1)[1].split(
+        "{% if vault_error %}",
+        1,
+    )[0]
+    assert "data-vault-create-open" in tab_strip
+    assert 'aria-haspopup="dialog"' in tab_strip
+    assert "data-vault-create-open" not in panel_header
 
 
 def test_vcf_import_discovers_sddc_manager_and_installer_passwords():
