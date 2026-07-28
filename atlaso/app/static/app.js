@@ -14116,7 +14116,7 @@ function initializeVcfVaultCredentialPickers() {
       control?.dispatchEvent(new Event("input", { bubbles: true }));
       control?.dispatchEvent(new Event("change", { bubbles: true }));
     };
-    const setManualMode = () => {
+    const setManualMode = (message = "") => {
       if (addressControl instanceof HTMLInputElement) {
         addressControl.readOnly = false;
       }
@@ -14125,20 +14125,28 @@ function initializeVcfVaultCredentialPickers() {
         passwordControl.required = passwordWasRequired;
         passwordControl.placeholder = passwordPlaceholder;
       }
-      if (status instanceof HTMLElement) status.textContent = vaults.length ? "Manual credentials are active." : "No vault keys are available to this account.";
+      if (status instanceof HTMLElement) {
+        status.textContent = message || (vaults.length ? "Manual credentials are active." : "No vault keys are available to this account.");
+      }
     };
     const fillEntryOptions = () => {
       const vault = byVaultId.get(vaultSelect.value);
-      entrySelect.replaceChildren(new Option(vault ? "Choose a key" : "Choose a vault first", ""));
+      entrySelect.replaceChildren(new Option(vault ? "Choose a key and HTTP/HTTPS URI" : "Choose a vault first", ""));
+      let endpointCount = 0;
       (vault?.entries || []).forEach((entry) => {
-        const endpoint = (entry.uris || []).find((uri) => /^https?:\/\//i.test(uri)) || "";
         const username = entry.username ? ` — ${entry.username}` : "";
-        const option = new Option(`${entry.key}${username}${endpoint ? "" : " — no HTTP URI"}`, String(entry.id));
-        option.disabled = !endpoint;
-        entrySelect.append(option);
+        (entry.uris || []).filter((uri) => /^https?:\/\//i.test(uri)).forEach((endpoint) => {
+          const option = new Option(`${entry.key}${username} — ${endpoint}`, String(entry.id));
+          option.dataset.endpoint = endpoint;
+          entrySelect.append(option);
+          endpointCount += 1;
+        });
       });
-      entrySelect.disabled = !vault;
-      setManualMode();
+      if (vault && endpointCount === 0) {
+        entrySelect.replaceChildren(new Option("No HTTP/HTTPS credentials available", ""));
+      }
+      entrySelect.disabled = !vault || endpointCount === 0;
+      setManualMode(vault && endpointCount === 0 ? "This vault has no keys with an HTTP or HTTPS URI. Continue with manual credentials." : "");
     };
     const applyEntry = () => {
       const vault = byVaultId.get(vaultSelect.value);
@@ -14147,7 +14155,7 @@ function initializeVcfVaultCredentialPickers() {
         setManualMode();
         return;
       }
-      const endpoint = (entry.uris || []).find((uri) => /^https?:\/\//i.test(uri)) || "";
+      const endpoint = entrySelect.selectedOptions[0]?.dataset.endpoint || "";
       if (addressControl instanceof HTMLInputElement && endpoint) {
         addressControl.value = endpoint;
         addressControl.readOnly = true;

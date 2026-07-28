@@ -39,9 +39,10 @@ the main DNS helper workspace. See [VCF Certificate Trust](vcf-trust.md).
 ## Use a saved vault credential
 
 An administrator can select **Vault** and then **Key** anywhere VCF Helper requests a remote vCenter, ESXi, SDDC
-Manager, VCF Installer, or VCF Automation login. Atlaso fills the server from the first HTTP or HTTPS URI on the entry
-and fills its username. The server control is read-only, the manual-login controls are disabled, and the login page is
-skipped. If the entry has no HTTP or HTTPS URI, enter the server manually.
+Manager, VCF Installer, or VCF Automation login. Atlaso fills the server from the HTTP or HTTPS URI selected for the
+entry and fills its username. The server control is read-only, the manual-login controls are disabled, and the login
+page is skipped. The picker omits keys without an HTTP or HTTPS URI and shows one choice per valid URI when a key has several.
+If the selected vault has no usable keys, it shows **No HTTP/HTTPS credentials available** and keeps manual mode active.
 
 The selected password is not loaded into the page, copied into the password input, or returned by an API. The disabled
 password input indicates that the stored value will be used. Atlaso validates that the key belongs to the selected

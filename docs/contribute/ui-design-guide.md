@@ -155,8 +155,8 @@ established workflow is an explicit task action. Appliance configuration enforce
 Every VCF Helper wizard that connects to a remote VCF component uses the same first four steps:
 
 1. **Credential** — choose a saved vault and key, or continue with manual credentials.
-2. **Server** — show the remote server address. A saved vault key fills this value from its first HTTP or HTTPS URI and
-   makes the control read-only; manual mode keeps it editable.
+2. **Server** — show the remote server address. A saved vault key fills this value from the HTTP or HTTPS URI selected
+   in the credential picker and makes the control read-only; manual mode keeps it editable.
 3. **TLS fingerprint** — probe without resolving or sending credentials, display the observed SHA-256 fingerprint, and
    require explicit out-of-band confirmation before authentication.
 4. **Login** — collect request-local username and password only in manual mode. Disable the controls and skip this step
@@ -165,6 +165,11 @@ Every VCF Helper wizard that connects to a remote VCF component uses the same fi
 Place workflow-specific steps, such as inventory selection, password selection, review, or task queueing, after this
 shared sequence. Never load a vault password into page state or a password input. If the server or fingerprint changes,
 clear the confirmation and repeat the TLS step before any credential is resolved or sent.
+
+The credential picker lists only keys with HTTP or HTTPS URIs. Render one option per valid URI so an operator can choose
+the exact endpoint when a key has several. Do not render unusable SSH-only or URI-less keys as disabled options. If the
+selected vault has no valid remote API credentials, show **No HTTP/HTTPS credentials available** and keep manual mode
+active.
 
 ## Page layout and settings
 

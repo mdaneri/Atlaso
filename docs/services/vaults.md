@@ -88,10 +88,11 @@ Existing keys are rotated.
 ## VCF Helper autofill
 
 VCF Helper remote-connection wizards start with an administrator-only **Vault** and **Key** choice. Selecting a key
-fills and locks the server address from its first HTTP or HTTPS URI, fills its username, and skips the manual API-login
-page. Keys without an HTTP or HTTPS URI are unavailable in this picker. The password remains encrypted at rest and is
-resolved only after the dedicated TLS page confirms the observed server fingerprint. It is never copied into the
-password input or included in the page metadata.
+fills and locks the server address from the chosen HTTP or HTTPS URI, fills its username, and skips the manual API-login
+page. The picker hides keys without an HTTP or HTTPS URI and creates one choice per valid URI when a key has several.
+A vault with no usable keys shows **No HTTP/HTTPS credentials available** and leaves manual entry active. The password
+remains encrypted at rest and is resolved only after the dedicated TLS page confirms the observed server fingerprint.
+It is never copied into the password input or included in the page metadata.
 
 The server rejects a key that does not belong to the selected vault and audits each use without the value. A vault
 entry intended for VCF Helper must therefore include a username and an HTTP or HTTPS URI. Operators can instead choose

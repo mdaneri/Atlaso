@@ -258,7 +258,7 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert 'id="confirm-modal-detail"' in base_template
     assert ".confirm-modal.has-confirm-detail" in css
     assert "overflow-wrap: anywhere;" in css[css.index(".confirm-modal-detail-group"):css.index(".confirm-modal.wide-modal")]
-    assert "atlaso-vaults-20260727-10" in base_template
+    assert "atlaso-vaults-20260727-11" in base_template
     trust_template = Path("atlaso/app/templates/partials/vcf_trust_modal.html").read_text()
     import_template = Path("atlaso/app/templates/partials/vcf_vault_import_modal.html").read_text()
     depot_template = Path("atlaso/app/templates/partials/vcf_target_depot_modal.html").read_text()
@@ -279,7 +279,9 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert 'data-atlaso-wizard-nav="credential"' in depot_template
     assert "Step 1 of 6" in depot_template
     assert "addressControl.readOnly = true;" in source
-    assert "option.disabled = !endpoint;" in source
+    assert 'filter((uri) => /^https?:\\/\\//i.test(uri)).forEach((endpoint) =>' in source
+    assert "option.dataset.endpoint = endpoint;" in source
+    assert 'new Option("No HTTP/HTTPS credentials available", "")' in source
     assert "hasSelectedVcfVaultCredential(form)" in source
     assert 'inspectTarget({ probeOnly: true })' in source
     assert 'return state === "ready" ? "review" : state === "tls" ? "tls" : false;' in source
