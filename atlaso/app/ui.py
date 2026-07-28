@@ -7810,6 +7810,12 @@ def dashboard_snapshot(db: Session) -> dict[str, Any]:
     valid_changed_units = [unit for unit in changed_units if unit["valid"]]
 
     jobs = db.execute(select(Job).order_by(desc(Job.created_at)).limit(50)).scalars().all()
+    successful_apply = db.execute(
+        select(Job)
+        .where(Job.type == "appliance-apply", Job.status == JobStatus.SUCCEEDED.value)
+        .order_by(desc(Job.created_at))
+        .limit(1)
+    ).scalar_one_or_none()
     recent_failure_cutoff = generated_at - timedelta(hours=24)
     failed_jobs = (
         db.execute(
@@ -7820,6 +7826,12 @@ def dashboard_snapshot(db: Session) -> dict[str, Any]:
         .scalars()
         .all()
     )
+    if successful_apply is not None:
+        failed_jobs = [
+            job
+            for job in failed_jobs
+            if job.type != "appliance-apply" or job.created_at > successful_apply.created_at
+        ]
     active_jobs = (
         db.execute(select(Job).where(Job.status.in_(ACTIVE_JOB_STATUSES)).order_by(desc(Job.created_at)))
         .scalars()
@@ -7864,12 +7876,6 @@ def dashboard_snapshot(db: Session) -> dict[str, Any]:
         and str(management.oper_state or "").lower() == "up"
     )
 
-    successful_apply = db.execute(
-        select(Job)
-        .where(Job.type == "appliance-apply", Job.status == JobStatus.SUCCEEDED.value)
-        .order_by(desc(Job.created_at))
-        .limit(1)
-    ).scalar_one_or_none()
     settings_unit = next((unit for unit in units if unit["id"] == "appliance_settings"), None)
     all_desired_state_valid = all(unit["valid"] for unit in units)
     readiness_items = [

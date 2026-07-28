@@ -148,9 +148,10 @@ status: current
   mutating work to existing workflows instead of adding dashboard-side apply, restart, or service actions.
 - Build the initial HTML and `/dashboard/data` response from the same private snapshot builder. Keep `/api/v1/dashboard`
   and its public schema independent and backward compatible.
-- Prioritize dashboard attention items as invalid changed apply units, failed tasks from the last 24 hours, unhealthy
-  enabled services, then missing or unexpectedly down configured physical interfaces. Disabled optional services and
-  unused interfaces are not exceptions.
+- Prioritize dashboard attention items as invalid changed apply units, unresolved failed tasks from the last 24 hours,
+  unhealthy enabled services, then missing or unexpectedly down configured physical interfaces. A later successful
+  appliance apply resolves earlier appliance-apply failures for dashboard attention only; preserve the failed tasks and
+  audit events as history. Disabled optional services and unused interfaces are not exceptions.
 - Keep valid pending changes separate from invalid changed units. Open changes in the shared appliance-review modal, and
   link tasks to `/tasks`, service exceptions to `/services`, and interface exceptions to `/physical-interfaces`.
 - Fresh appliances remain in setup readiness until management networking is healthy and one global appliance-apply task

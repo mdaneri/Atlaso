@@ -44,12 +44,14 @@ path is healthy and a global appliance-apply task has succeeded.
 Actionable exceptions use this fixed priority:
 
 1. changed appliance-apply units that fail validation;
-2. failed tasks created during the last 24 hours;
+2. failed tasks created during the last 24 hours, except an appliance-apply failure resolved by a later successful
+   appliance apply;
 3. enabled services that are stopped or unhealthy;
 4. configured physical interfaces that are missing or unexpectedly down.
 
 Valid changed units stay in the separate Changes & Tasks summary. Disabled optional services and interfaces whose
-desired role and mode are both `unused` do not create attention items.
+desired role and mode are both `unused` do not create attention items. A resolved appliance-apply failure remains in
+Tasks, Audit Events, and Recent activity as history; only its actionable dashboard warning is cleared.
 
 ## Private snapshot and refresh
 
