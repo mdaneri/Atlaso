@@ -44,6 +44,9 @@ entry and fills its username. The server control is read-only, the manual-login 
 page is skipped. The picker omits keys without an HTTP or HTTPS URI and shows one choice per valid URI when a key has several.
 If the selected vault has no usable keys, it shows **No HTTP/HTTPS credentials available** and keeps manual mode active.
 
+Address fields display only the selected hostname, IP, and non-default port; they do not display `http://` or
+`https://`. Fields explicitly labeled as a URL, such as **VCF Automation URL**, retain the complete URL.
+
 The selected password is not loaded into the page, copied into the password input, or returned by an API. The disabled
 password input indicates that the stored value will be used. Atlaso validates that the key belongs to the selected
 vault, decrypts the password on the server for that request only, and records the use without recording the value.

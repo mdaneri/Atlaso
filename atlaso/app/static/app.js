@@ -14156,8 +14156,19 @@ function initializeVcfVaultCredentialPickers() {
         return;
       }
       const endpoint = entrySelect.selectedOptions[0]?.dataset.endpoint || "";
-      if (addressControl instanceof HTMLInputElement && endpoint) {
-        addressControl.value = endpoint;
+      let parsedEndpoint = null;
+      try {
+        parsedEndpoint = endpoint ? new URL(endpoint) : null;
+      } catch (_error) {
+        // URI validation occurs when the vault entry is saved.
+      }
+      if (addressControl instanceof HTMLInputElement && parsedEndpoint) {
+        const useFullUrl = picker.dataset.addressMode === "url";
+        addressControl.value = useFullUrl
+          ? endpoint
+          : portControl instanceof HTMLInputElement
+            ? parsedEndpoint.hostname
+            : parsedEndpoint.host;
         addressControl.readOnly = true;
         emitChange(addressControl);
       }
@@ -14165,14 +14176,9 @@ function initializeVcfVaultCredentialPickers() {
         usernameControl.value = entry.username || "";
         emitChange(usernameControl);
       }
-      if (portControl instanceof HTMLInputElement && endpoint) {
-        try {
-          const parsed = new URL(endpoint);
-          portControl.value = parsed.port || (parsed.protocol === "http:" ? "80" : "443");
-          emitChange(portControl);
-        } catch (_error) {
-          // URI validation occurs when the vault entry is saved.
-        }
+      if (portControl instanceof HTMLInputElement && parsedEndpoint) {
+        portControl.value = parsedEndpoint.port || (parsedEndpoint.protocol === "http:" ? "80" : "443");
+        emitChange(portControl);
       }
       if (passwordControl instanceof HTMLInputElement) {
         passwordControl.value = "";

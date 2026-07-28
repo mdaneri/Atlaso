@@ -156,7 +156,9 @@ Every VCF Helper wizard that connects to a remote VCF component uses the same fi
 
 1. **Credential** — choose a saved vault and key, or continue with manual credentials.
 2. **Server** — show the remote server address. A saved vault key fills this value from the HTTP or HTTPS URI selected
-   in the credential picker and makes the control read-only; manual mode keeps it editable.
+   in the credential picker and makes the control read-only; manual mode keeps it editable. Server-address controls
+   show only `host`, IP, or `host:port`, never the URI scheme. A control explicitly labeled as a URL retains the full
+   HTTP or HTTPS URL.
 3. **TLS fingerprint** — probe without resolving or sending credentials, display the observed SHA-256 fingerprint, and
    require explicit out-of-band confirmation before authentication.
 4. **Login** — collect request-local username and password only in manual mode. Disable the controls and skip this step
