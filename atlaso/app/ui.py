@@ -7801,6 +7801,40 @@ def _dashboard_activity_outcome(status_value: str) -> tuple[str, str]:
     return normalized.title() or "Recorded", "muted"
 
 
+def _appliance_apply_selected_unit_ids(job: Job) -> set[str]:
+    payload = _job_payload(job)
+    selected = {str(unit_id) for unit_id in payload.get("selected_units", []) if str(unit_id)}
+    if selected:
+        return selected
+    return {
+        str(unit.get("unit_id"))
+        for unit in payload.get("units", [])
+        if isinstance(unit, dict) and unit.get("unit_id")
+    }
+
+
+def _appliance_apply_unresolved_unit_ids(job: Job) -> set[str]:
+    payload = _job_payload(job)
+    selected = _appliance_apply_selected_unit_ids(job)
+    succeeded = {
+        str(unit.get("unit_id"))
+        for unit in payload.get("units", [])
+        if isinstance(unit, dict) and unit.get("unit_id") and unit.get("success") is True
+    }
+    return selected - succeeded
+
+
+def _appliance_apply_failure_is_resolved(job: Job, successful_applies: list[Job]) -> bool:
+    unresolved_units = _appliance_apply_unresolved_unit_ids(job)
+    if not unresolved_units:
+        return False
+    retried_units: set[str] = set()
+    for successful_job in successful_applies:
+        if successful_job.created_at > job.created_at:
+            retried_units.update(_appliance_apply_selected_unit_ids(successful_job))
+    return unresolved_units <= retried_units
+
+
 def dashboard_snapshot(db: Session) -> dict[str, Any]:
     """Build the private operator dashboard without exposing task or audit details."""
     generated_at = utcnow()
@@ -7810,7 +7844,26 @@ def dashboard_snapshot(db: Session) -> dict[str, Any]:
     valid_changed_units = [unit for unit in changed_units if unit["valid"]]
 
     jobs = db.execute(select(Job).order_by(desc(Job.created_at)).limit(50)).scalars().all()
+    successful_apply = db.execute(
+        select(Job)
+        .where(Job.type == "appliance-apply", Job.status == JobStatus.SUCCEEDED.value)
+        .order_by(desc(Job.created_at))
+        .limit(1)
+    ).scalar_one_or_none()
     recent_failure_cutoff = generated_at - timedelta(hours=24)
+    recent_successful_applies = (
+        db.execute(
+            select(Job)
+            .where(
+                Job.type == "appliance-apply",
+                Job.status == JobStatus.SUCCEEDED.value,
+                Job.created_at >= recent_failure_cutoff,
+            )
+            .order_by(desc(Job.created_at))
+        )
+        .scalars()
+        .all()
+    )
     failed_jobs = (
         db.execute(
             select(Job)
@@ -7820,6 +7873,11 @@ def dashboard_snapshot(db: Session) -> dict[str, Any]:
         .scalars()
         .all()
     )
+    failed_jobs = [
+        job
+        for job in failed_jobs
+        if job.type != "appliance-apply" or not _appliance_apply_failure_is_resolved(job, recent_successful_applies)
+    ]
     active_jobs = (
         db.execute(select(Job).where(Job.status.in_(ACTIVE_JOB_STATUSES)).order_by(desc(Job.created_at)))
         .scalars()
@@ -7864,12 +7922,6 @@ def dashboard_snapshot(db: Session) -> dict[str, Any]:
         and str(management.oper_state or "").lower() == "up"
     )
 
-    successful_apply = db.execute(
-        select(Job)
-        .where(Job.type == "appliance-apply", Job.status == JobStatus.SUCCEEDED.value)
-        .order_by(desc(Job.created_at))
-        .limit(1)
-    ).scalar_one_or_none()
     settings_unit = next((unit for unit in units if unit["id"] == "appliance_settings"), None)
     all_desired_state_valid = all(unit["valid"] for unit in units)
     readiness_items = [
