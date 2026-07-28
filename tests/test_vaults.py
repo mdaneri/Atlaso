@@ -322,6 +322,8 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert "Remote target unavailable" in source
     assert "data-vault-entry-password-eye" in template
     assert "copy_entry_id" in template
+    assert 'entryPassword.placeholder = copying ? "••••••••" : "";' in source
+    assert "The encrypted value will be copied." in source
     assert "/terminal/remote-launches" in source
     assert 'window.open("about:blank"' not in source
     assert "/terminal/remote#target=" in source
@@ -333,7 +335,7 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert 'id="confirm-modal-detail"' in base_template
     assert ".confirm-modal.has-confirm-detail" in css
     assert "overflow-wrap: anywhere;" in css[css.index(".confirm-modal-detail-group"):css.index(".confirm-modal.wide-modal")]
-    assert "atlaso-vaults-20260727-15" in base_template
+    assert "atlaso-vaults-20260727-16" in base_template
     trust_template = Path("atlaso/app/templates/partials/vcf_trust_modal.html").read_text()
     import_template = Path("atlaso/app/templates/partials/vcf_vault_import_modal.html").read_text()
     depot_template = Path("atlaso/app/templates/partials/vcf_target_depot_modal.html").read_text()

@@ -16582,6 +16582,7 @@ function initializeVaultsPage() {
         ? `/vaults/${vaultId}/entries/${row.id}/edit`
         : `/vaults/${vaultId}/entries`;
       entryForm.elements.copy_entry_id.value = copying ? String(row.id) : "";
+      entryForm.dataset.vaultId = String(vaultId || "");
       entryForm.elements.key.value = copying ? String(context.copyKey || "") : row?.key || "";
       entryForm.elements.description.value = row?.description || "";
       entryForm.elements.username.value = row?.username || "";
@@ -16590,13 +16591,16 @@ function initializeVaultsPage() {
       const title = entryForm.querySelector("[data-vault-entry-title]");
       if (title) title.textContent = copying ? "Copy entry" : row ? "Edit entry" : "Add password";
       const help = entryForm.querySelector("[data-vault-entry-password-help]");
+      if (entryPassword instanceof HTMLInputElement) {
+        entryPassword.placeholder = copying ? "••••••••" : "";
+      }
       if (help) help.textContent = copying
-        ? "Leave blank to copy the existing encrypted value without loading it into this page."
+        ? "The encrypted value will be copied. Use the eye to inspect it or enter a replacement."
         : row
           ? "Leave blank to retain the existing encrypted value."
           : "The value is encrypted before it is stored.";
       if (entrySubmit instanceof HTMLButtonElement) entrySubmit.textContent = copying ? "Copy entry" : row ? "Save entry" : "Save password";
-      entryPasswordEye?.classList.toggle("hidden", !row || copying);
+      entryPasswordEye?.classList.toggle("hidden", !row);
       if (entryPasswordEye instanceof HTMLButtonElement) {
         entryPasswordEye.dataset.revealed = "false";
         entryPasswordEye.setAttribute("aria-label", "Reveal password");
@@ -16614,12 +16618,14 @@ function initializeVaultsPage() {
       return;
     }
     const match = entryForm.action.match(/\/vaults\/(\d+)\/entries\/(\d+)\/edit$/);
-    if (!match) return;
+    const vaultId = match?.[1] || entryForm.dataset.vaultId;
+    const entryId = match?.[2] || String(entryForm.elements.copy_entry_id.value || "");
+    if (!vaultId || !entryId) return;
     entryPasswordEye.disabled = true;
     const body = new FormData();
     body.set("csrf", String(entryForm.elements.csrf.value || ""));
     try {
-      const response = await fetch(`/vaults/${match[1]}/entries/${match[2]}/reveal`, {
+      const response = await fetch(`/vaults/${vaultId}/entries/${entryId}/reveal`, {
         method: "POST",
         headers: { Accept: "application/json" },
         cache: "no-store",
