@@ -16606,6 +16606,9 @@ async def inspect_vcf_trust_target_from_ui(
     normalized_address, errors = _normalize_vcf_trust_address(address)
     if errors:
         return JSONResponse({"status": "error", "errors": errors}, status_code=422)
+    fingerprint, confirmation = _confirmed_tls_fingerprint(normalized_address, port, str(payload.get("confirmed_tls_fingerprint") or ""))
+    if confirmation:
+        return confirmation
     api_username, api_password = _resolve_vcf_helper_credentials(
         db,
         identity,
@@ -16616,9 +16619,6 @@ async def inspect_vcf_trust_target_from_ui(
     )
     if not api_username or not api_password:
         return JSONResponse({"status": "error", "errors": ["VCF API administrator credentials are required."]}, status_code=422)
-    fingerprint, confirmation = _confirmed_tls_fingerprint(normalized_address, port, str(payload.get("confirmed_tls_fingerprint") or ""))
-    if confirmation:
-        return confirmation
     try:
         appliance = inspect_vcf_trust_target(
             normalized_address,
@@ -16656,19 +16656,6 @@ def trust_vcf_root_ca_from_ui(
 ) -> HTMLResponse | RedirectResponse | JSONResponse:
     require_vcf_helper_write(identity)
     verify_csrf(request, csrf)
-    api_username, api_password = _resolve_vcf_helper_credentials(
-        db,
-        identity,
-        {
-            "api_username": api_username,
-            "api_password": api_password,
-            "credential_vault_id": credential_vault_id,
-            "credential_entry_id": credential_entry_id,
-        },
-        username_field="api_username",
-        password_field="api_password",
-        purpose="trust_queue",
-    )
     try:
         endpoint_address, port = _split_vcf_endpoint_address_port(address, None)
     except HTTPException as exc:
@@ -16677,8 +16664,6 @@ def trust_vcf_root_ca_from_ui(
         errors = [str(exc.detail)]
     else:
         normalized_address, errors = _normalize_vcf_trust_address(endpoint_address)
-    if not api_username.strip() or not api_password:
-        errors.append("VCF API administrator credentials are required.")
     try:
         ca = root_ca_info(get_ca_settings_row(db))
     except VcfTrustError as exc:
@@ -16695,6 +16680,22 @@ def trust_vcf_root_ca_from_ui(
             if request.headers.get("X-Atlaso-VCF-Trust") == "1":
                 return confirmation
             errors.append("Confirm the VCF appliance HTTPS TLS fingerprint before queueing the task.")
+    if not errors:
+        api_username, api_password = _resolve_vcf_helper_credentials(
+            db,
+            identity,
+            {
+                "api_username": api_username,
+                "api_password": api_password,
+                "credential_vault_id": credential_vault_id,
+                "credential_entry_id": credential_entry_id,
+            },
+            username_field="api_username",
+            password_field="api_password",
+            purpose="trust_queue",
+        )
+        if not api_username.strip() or not api_password:
+            errors.append("VCF API administrator credentials are required.")
 
     if errors:
         if request.headers.get("X-Atlaso-VCF-Trust") == "1":

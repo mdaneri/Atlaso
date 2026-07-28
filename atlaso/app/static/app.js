@@ -14218,8 +14218,9 @@ function initializeVcfTrustForm() {
   const steps = [
     { id: "credential", title: "Choose a credential source", description: "Use a saved vault key or continue with a one-time manual login." },
     { id: "target", title: "Target and root CA", description: "Confirm the VCF server address and review the active Atlaso root CA." },
+    { id: "tls", title: "Verify the TLS fingerprint", description: "Confirm the observed SHA-256 fingerprint before Atlaso uses credentials." },
     { id: "api", title: "API credentials", description: "Enter the one-time VCF API administrator credentials used to inspect and import the root CA." },
-    { id: "review", title: "Review and queue", description: "Confirm the target HTTPS TLS fingerprint, then queue the certificate trust task." },
+    { id: "review", title: "Review and queue", description: "Review the verified target, then queue the certificate trust task." },
   ];
   const showError = (message) => {
     if (errors instanceof HTMLElement) {
@@ -14265,8 +14266,9 @@ function initializeVcfTrustForm() {
       confirmedTls.value = isConfirmedTls ? inspectedTls : "";
     }
   };
-  const inspectTarget = async () => {
-    if (!(await wizard.validate("target")) || !(await wizard.validate("api"))) return false;
+  const inspectTarget = async ({ probeOnly = false } = {}) => {
+    if (!(await wizard.validate("target"))) return false;
+    if (!probeOnly && !(await wizard.validate("api"))) return false;
     showError("");
     if (next instanceof HTMLButtonElement) {
       next.disabled = true;
@@ -14290,8 +14292,8 @@ function initializeVcfTrustForm() {
       const payload = await response.json();
       if (response.status === 409 || payload.status === "tls-confirmation-required") {
         applyTargetInspection(payload);
-        wizard.showStep("review", { unlock: true });
-        return false;
+        wizard.showStep("tls", { unlock: true });
+        return "tls";
       }
       if (!response.ok) {
         const messages = Array.isArray(payload.errors) ? payload.errors : [payload.detail || payload.error || "Could not inspect the target VCF API."];
@@ -14300,7 +14302,7 @@ function initializeVcfTrustForm() {
       }
       applyTargetInspection(payload);
       wizard.setHighestStep("review");
-      return true;
+      return "ready";
     } catch (_error) {
       showError("Could not inspect the target VCF API. Check connectivity and try again.");
       return false;
@@ -14316,13 +14318,21 @@ function initializeVcfTrustForm() {
     dialog,
     steps,
     onNext: async ({ step }) => {
-      if (step.id === "target" && hasSelectedVcfVaultCredential(form)) {
-        const ready = await inspectTarget();
-        return ready ? "review" : false;
+      if (step.id === "target") {
+        if (confirmedTls instanceof HTMLInputElement) confirmedTls.value = "";
+        const state = await inspectTarget({ probeOnly: true });
+        return state === "tls" ? "tls" : false;
+      }
+      if (step.id === "tls") {
+        if (hasSelectedVcfVaultCredential(form)) {
+          const state = await inspectTarget();
+          return state === "ready" ? "review" : state === "tls" ? "tls" : false;
+        }
+        return "api";
       }
       if (step.id === "api") {
-        const ready = await inspectTarget();
-        return ready ? "review" : false;
+        const state = await inspectTarget();
+        return state === "ready" ? "review" : state === "tls" ? "tls" : false;
       }
       return true;
     },
@@ -14339,7 +14349,7 @@ function initializeVcfTrustForm() {
         const payload = await response.json();
         if (response.status === 409 && payload.status === "tls-confirmation-required") {
           applyTargetInspection(payload);
-          wizard.showStep("review", { unlock: true });
+          wizard.showStep("tls", { unlock: true });
           if (submit instanceof HTMLButtonElement) submit.textContent = "Run trust task";
           return { ok: false };
         }
@@ -14363,23 +14373,9 @@ function initializeVcfTrustForm() {
       resetConfirmation();
     },
   });
-  tlsCheckbox?.addEventListener("change", async () => {
+  tlsCheckbox?.addEventListener("change", () => {
     if (!(confirmedTls instanceof HTMLInputElement) || !(tlsCheckbox instanceof HTMLInputElement)) return;
     confirmedTls.value = tlsCheckbox.checked ? inspectedTls : "";
-    if (!tlsCheckbox.checked || !inspectedTls) {
-      if (reviewRole instanceof HTMLElement) reviewRole.textContent = inspectedTls ? "After TLS confirmation" : "Not inspected yet";
-      if (reviewVersion instanceof HTMLElement) reviewVersion.textContent = inspectedTls ? "After TLS confirmation" : "Not inspected yet";
-      return;
-    }
-    if (reviewRole instanceof HTMLElement) reviewRole.textContent = "Inspecting…";
-    if (reviewVersion instanceof HTMLElement) reviewVersion.textContent = "Inspecting…";
-    const ready = await inspectTarget();
-    if (!ready) {
-      confirmedTls.value = "";
-      tlsCheckbox.checked = false;
-      if (reviewRole instanceof HTMLElement) reviewRole.textContent = "After TLS confirmation";
-      if (reviewVersion instanceof HTMLElement) reviewVersion.textContent = "After TLS confirmation";
-    }
   });
   if (dialog instanceof HTMLDialogElement && dialog.hasAttribute("data-vcf-trust-auto-open") && !dialog.open) {
     wizard.open({ reset: false });
@@ -16689,7 +16685,9 @@ function initializeVcfVaultImport() {
   if (!(modal instanceof HTMLDialogElement) || !(form instanceof HTMLFormElement) || !window.AtlasoUiPatterns) return;
   const candidatesElement = form.querySelector("[data-vcf-vault-candidates]");
   const fingerprintHelp = form.querySelector("[data-vcf-vault-fingerprint]");
+  const fingerprintConfirm = form.querySelector("[data-vcf-vault-fingerprint-confirm]");
   let candidates = [];
+  let observedFingerprint = "";
   const requestPayload = () => ({
     csrf: String(form.elements.csrf.value || ""),
     source_type: String(form.elements.source_type.value || ""),
@@ -16727,29 +16725,32 @@ function initializeVcfVaultImport() {
     });
     const payload = await response.json().catch(() => ({}));
     if (response.status === 409 && payload.fingerprint) {
-      form.elements.confirmed_fingerprint.value = payload.fingerprint;
-      if (fingerprintHelp) fingerprintHelp.textContent = `Observed fingerprint: ${payload.fingerprint}. Verify it out of band, then choose Continue again to confirm.`;
-      controller.setError("Verify the displayed TLS fingerprint, then choose Continue again to send credentials.");
-      return false;
+      observedFingerprint = payload.fingerprint;
+      form.elements.confirmed_fingerprint.value = "";
+      if (fingerprintHelp) fingerprintHelp.textContent = observedFingerprint;
+      if (fingerprintConfirm instanceof HTMLInputElement) fingerprintConfirm.checked = false;
+      controller.setError("");
+      return "tls";
     }
     if (!response.ok) {
       controller.setError(payload.detail || "VCF password discovery failed.");
-      return false;
+      return "error";
     }
     candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
     if (!candidates.length) {
       controller.setError("The source returned no supported passwords.");
-      return false;
+      return "error";
     }
     renderCandidates();
-    return true;
+    return "ready";
   };
   const wizard = window.AtlasoUiPatterns.createWizard({
     dialog: modal,
     form,
     steps: [
       { id: "credential", title: "Choose a credential source", description: "Use a saved vault key or continue with a one-time manual login." },
-      { id: "source", title: "Choose the VCF source", description: "Identify the appliance and confirm its TLS certificate fingerprint." },
+      { id: "source", title: "Choose the VCF source", description: "Identify the appliance without sending or resolving credentials." },
+      { id: "tls", title: "Verify the TLS fingerprint", description: "Confirm the observed SHA-256 fingerprint before Atlaso uses credentials." },
       { id: "credentials", title: "Authenticate to the source", description: "Credentials are used only for this discovery and reviewed import." },
       { id: "selection", title: "Choose passwords", description: "Select supported VCF and ESX password metadata to import." },
       { id: "review", title: "Review the import", description: "Choose the destination vault and confirm the selected count." },
@@ -16757,15 +16758,29 @@ function initializeVcfVaultImport() {
     onOpen: () => {
       form.reset();
       form.elements.port.value = "443";
+      form.elements.confirmed_fingerprint.value = "";
+      observedFingerprint = "";
+      if (fingerprintHelp) fingerprintHelp.textContent = "Not inspected yet";
+      if (fingerprintConfirm instanceof HTMLInputElement) fingerprintConfirm.checked = false;
       candidates = [];
       candidatesElement?.replaceChildren();
     },
     onNext: async ({ controller, step }) => {
-      if (step.id === "source" && hasSelectedVcfVaultCredential(form)) {
-        return await inspectSource(controller) ? "selection" : false;
+      if (step.id === "source") {
+        form.elements.confirmed_fingerprint.value = "";
+        const state = await inspectSource(controller);
+        return state === "tls" ? "tls" : false;
+      }
+      if (step.id === "tls") {
+        if (hasSelectedVcfVaultCredential(form)) {
+          const state = await inspectSource(controller);
+          return state === "ready" ? "selection" : state === "tls" ? "tls" : false;
+        }
+        return "credentials";
       }
       if (step.id === "credentials") {
-        return inspectSource(controller);
+        const state = await inspectSource(controller);
+        return state === "ready" ? true : state === "tls" ? "tls" : false;
       }
       return true;
     },
@@ -16800,6 +16815,10 @@ function initializeVcfVaultImport() {
       return { ok: true, close: false };
     },
     closeOnSubmit: false,
+  });
+  fingerprintConfirm?.addEventListener("change", () => {
+    if (!(fingerprintConfirm instanceof HTMLInputElement)) return;
+    form.elements.confirmed_fingerprint.value = fingerprintConfirm.checked ? observedFingerprint : "";
   });
   document.querySelectorAll("[data-vcf-vault-import-open]").forEach((button) => button.addEventListener("click", () => wizard.open({ launcher: button })));
 }

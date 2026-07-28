@@ -829,7 +829,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=atlaso-vaults-20260727-9"),
+        (base, "/static/app.js?v=atlaso-vaults-20260727-10"),
         (public_base, "/static/app.js?v=atlaso-oidc-admin-20260727-6"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1015,7 +1015,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=atlaso-vaults-20260727-5" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in page.text
-    assert "/static/app.js?v=atlaso-vaults-20260727-9" in page.text
+    assert "/static/app.js?v=atlaso-vaults-20260727-10" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -12673,6 +12673,28 @@ def test_vcf_trust_inspects_target_tls_without_persisting_target(client, monkeyp
     csrf = client.get("/vcf-helper").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     monkeypatch.setattr(ui, "tls_sha256_fingerprint", lambda _address, _port: "AA:BB")
     monkeypatch.setattr(ui, "inspect_vcf_trust_target", lambda *_args, **_kwargs: {"role": "VcfInstaller", "version": "9.1.0.0"})
+    resolved_credentials = []
+    original_resolver = ui._resolve_vcf_helper_credentials
+
+    def track_resolver(*args, **kwargs):
+        resolved_credentials.append(True)
+        return original_resolver(*args, **kwargs)
+
+    monkeypatch.setattr(ui, "_resolve_vcf_helper_credentials", track_resolver)
+
+    awaiting = client.post(
+        "/vcf-helper/trust-root-ca/inspect-target",
+        json={
+            "csrf": csrf,
+            "address": "https://vcf-installer.example.test:8443",
+            "api_username": "administrator@vsphere.local",
+            "api_password": "api-secret",
+        },
+    )
+
+    assert awaiting.status_code == 409
+    assert awaiting.json()["fingerprint"] == "AA:BB"
+    assert resolved_credentials == []
 
     response = client.post(
         "/vcf-helper/trust-root-ca/inspect-target",
@@ -12686,6 +12708,7 @@ def test_vcf_trust_inspects_target_tls_without_persisting_target(client, monkeyp
     )
 
     assert response.status_code == 200
+    assert resolved_credentials == [True]
     assert response.json() == {
         "status": "ready",
         "address": "vcf-installer.example.test",
@@ -12715,6 +12738,14 @@ def test_vcf_trust_requires_tls_confirmation_then_queues_without_persisting_cred
     monkeypatch.setattr(ui, "tls_sha256_fingerprint", lambda _address, _port: "AA:BB")
     queued = []
     monkeypatch.setattr(ui, "queue_vcf_trust_job", lambda job_id, target_id, credentials, ca: queued.append((job_id, target_id, credentials, ca)))
+    resolved_credentials = []
+    original_resolver = ui._resolve_vcf_helper_credentials
+
+    def track_resolver(*args, **kwargs):
+        resolved_credentials.append(True)
+        return original_resolver(*args, **kwargs)
+
+    monkeypatch.setattr(ui, "_resolve_vcf_helper_credentials", track_resolver)
     csrf = client.get("/vcf-helper").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     credentials = {
         "address": "vcf-installer.example.test",
@@ -12732,6 +12763,7 @@ def test_vcf_trust_requires_tls_confirmation_then_queues_without_persisting_cred
     assert awaiting.status_code == 409
     assert awaiting.json()["status"] == "tls-confirmation-required"
     assert awaiting.json()["fingerprint"] == "AA:BB"
+    assert resolved_credentials == []
     with SessionLocal() as db:
         assert db.execute(select(Job).where(Job.type == "vcf-ca-trust")).scalars().all() == []
         assert db.execute(select(VcfTrustTarget)).scalars().all() == []
@@ -12746,6 +12778,7 @@ def test_vcf_trust_requires_tls_confirmation_then_queues_without_persisting_cred
     )
 
     assert confirmed.status_code == 202
+    assert resolved_credentials == [True]
     assert confirmed.json()["status"] == "queued"
     assert confirmed.json()["redirect"] == f"/tasks?job_id={confirmed.json()['job_id']}"
     assert len(queued) == 1

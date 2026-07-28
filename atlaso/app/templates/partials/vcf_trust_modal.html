@@ -10,15 +10,16 @@
       <ol class="vcf-sddc-step-list">
         <li><button class="vcf-sddc-step-button active" type="button" data-vcf-trust-step-nav data-atlaso-wizard-nav="credential"><span>1</span><strong>Credential</strong><small>Vault or manual</small></button></li>
         <li><button class="vcf-sddc-step-button" type="button" data-vcf-trust-step-nav data-atlaso-wizard-nav="target" disabled><span>2</span><strong>Target</strong><small>Server and CA</small></button></li>
-        <li><button class="vcf-sddc-step-button" type="button" data-vcf-trust-step-nav data-atlaso-wizard-nav="api" disabled><span>3</span><strong>Login</strong><small>Manual only</small></button></li>
-        <li><button class="vcf-sddc-step-button" type="button" data-vcf-trust-step-nav data-atlaso-wizard-nav="review" disabled><span>4</span><strong>Review</strong><small>TLS and queue</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-vcf-trust-step-nav data-atlaso-wizard-nav="tls" disabled><span>3</span><strong>TLS</strong><small>Verify fingerprint</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-vcf-trust-step-nav data-atlaso-wizard-nav="api" disabled><span>4</span><strong>Login</strong><small>Manual only</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-vcf-trust-step-nav data-atlaso-wizard-nav="review" disabled><span>5</span><strong>Review</strong><small>Queue trust</small></button></li>
       </ol>
     </aside>
 
     <div class="vcf-sddc-wizard-main">
       <div class="confirm-modal-body vcf-sddc-wizard-body">
         <div class="vcf-sddc-wizard-heading">
-          <p class="kicker" data-vcf-trust-step-kicker data-atlaso-wizard-kicker>Step 1 of 4</p>
+          <p class="kicker" data-vcf-trust-step-kicker data-atlaso-wizard-kicker>Step 1 of 5</p>
           <h3 data-vcf-trust-step-title data-atlaso-wizard-title>Choose a credential source</h3>
           <p class="muted" data-vcf-trust-step-description data-atlaso-wizard-description>Use a saved vault key or continue with a one-time manual login.</p>
         </div>
@@ -50,6 +51,17 @@
           {% endif %}
         </section>
 
+        <section class="vcf-sddc-step-page hidden" data-vcf-trust-step="tls" data-atlaso-wizard-step="tls">
+          <label class="vcf-sddc-tls-check hidden" data-vcf-trust-tls-confirmation>
+            <input type="checkbox" data-vcf-trust-tls-confirm required>
+            <span>
+              <strong>Confirm VCF server TLS fingerprint</strong>
+              <small>Verify this SHA-256 fingerprint out of band before continuing: <code data-vcf-trust-tls-fingerprint></code></small>
+            </span>
+          </label>
+          <p class="muted">Atlaso has not sent or resolved the selected credential. Credentials are used only after this fingerprint is confirmed.</p>
+        </section>
+
         <section class="vcf-sddc-step-page hidden" data-vcf-trust-step="api" data-atlaso-wizard-step="api">
           <div class="form-grid">
             <label><span class="field-label"><span>API administrator</span><button class="help-icon" type="button" data-help="VCF identity used only to obtain a temporary API token and call the trusted-certificate API. It is never stored.">i</button></span><input name="api_username" value="admin@local" autocomplete="username" required></label>
@@ -64,13 +76,6 @@
             <div><span>Role</span><strong data-vcf-trust-review-role>Inspect target to verify</strong></div>
             <div><span>Version</span><strong data-vcf-trust-review-version>Inspect target to verify</strong></div>
           </div>
-          <label class="vcf-sddc-tls-check hidden" data-vcf-trust-tls-confirmation>
-            <input type="checkbox" data-vcf-trust-tls-confirm required>
-            <span>
-              <strong>Confirm VCF API TLS fingerprint</strong>
-              <small>Verify this SHA-256 fingerprint before queueing: <code data-vcf-trust-tls-fingerprint></code></small>
-            </span>
-          </label>
           <p class="muted">VCF 9.x only. Atlaso imports and verifies the active root CA through the VCF API.</p>
         </section>
       </div>

@@ -22,7 +22,9 @@ This verified appliance view provides visual orientation before you begin.
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
 Administrators can also use **Import passwords into a vault** for VCF 9 SDDC Manager and VCF Installer appliances.
-Atlaso confirms the target TLS fingerprint before sending credentials, displays only discovered metadata for selection,
+The wizard chooses vault or manual credentials first, confirms the server second, and then opens a dedicated TLS page.
+Atlaso probes the server without resolving or sending credentials and requires the operator to confirm the observed
+fingerprint before vault or manual authentication can continue. It displays only discovered metadata for selection,
 then re-fetches and encrypts the reviewed VCF/ESX passwords in the selected vault. Source credentials are request-local
 and password values are never included in the discovery response. See [Vaults](vaults.md) for supported entries,
 managed-script and Kickstart access, URI targets, and restore behavior.
@@ -38,13 +40,17 @@ the main DNS helper workspace. See [VCF Certificate Trust](vcf-trust.md).
 
 An administrator can select **Vault** and then **Key** anywhere VCF Helper requests a remote vCenter, ESXi, SDDC
 Manager, VCF Installer, or VCF Automation login. Atlaso fills the server from the first HTTP or HTTPS URI on the entry
-and fills its username. If the entry has no HTTP or HTTPS URI, enter the server manually.
+and fills its username. The server control is read-only, the manual-login controls are disabled, and the login page is
+skipped. If the entry has no HTTP or HTTPS URI, enter the server manually.
 
 The selected password is not loaded into the page, copied into the password input, or returned by an API. The disabled
 password input indicates that the stored value will be used. Atlaso validates that the key belongs to the selected
 vault, decrypts the password on the server for that request only, and records the use without recording the value.
 Choose **Enter credentials manually** to return to request-local username and password entry. Service administrators
 can continue to use manual credentials but cannot select administrator-owned vault entries.
+
+Remote VCF wizards consistently use **Credential**, **Server**, **TLS fingerprint**, and **Login** as their first four
+steps. The TLS step is always pre-authentication. Workflow-specific selection and review pages follow it.
 
 The picker is available for SDDC Manager deployment inventory, VCF Offline Depot configuration, VCF Certificate Trust,
 VCF password import source authentication, and Managed LDAP for VCF Automation. The local offline-depot HTTP password

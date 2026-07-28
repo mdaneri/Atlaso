@@ -150,6 +150,22 @@ Do not perform host mutation as a side effect of moving between steps. Wizard su
 established workflow is an explicit task action. Appliance configuration enforcement remains owned by the global
 `/appliance-apply` workflow.
 
+### VCF Helper remote-credential wizard contract
+
+Every VCF Helper wizard that connects to a remote VCF component uses the same first four steps:
+
+1. **Credential** — choose a saved vault and key, or continue with manual credentials.
+2. **Server** — show the remote server address. A saved vault key fills this value from its first HTTP or HTTPS URI and
+   makes the control read-only; manual mode keeps it editable.
+3. **TLS fingerprint** — probe without resolving or sending credentials, display the observed SHA-256 fingerprint, and
+   require explicit out-of-band confirmation before authentication.
+4. **Login** — collect request-local username and password only in manual mode. Disable the controls and skip this step
+   when a saved vault credential is selected.
+
+Place workflow-specific steps, such as inventory selection, password selection, review, or task queueing, after this
+shared sequence. Never load a vault password into page state or a password input. If the server or fingerprint changes,
+clear the confirmation and repeat the TLS step before any credential is resolved or sent.
+
 ## Page layout and settings
 
 Use the existing application shell. Configurable service pages use the DNS page as the default layout reference:

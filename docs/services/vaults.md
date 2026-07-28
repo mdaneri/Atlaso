@@ -80,16 +80,17 @@ audit event. An SFTP URI opens an interactive SSH terminal on the same endpoint;
 ## VCF Helper import
 
 **VCF Helper > Import passwords into a vault** discovers supported password metadata from a VCF 9 SDDC Manager or VCF
-Installer. Confirm the TLS SHA-256 fingerprint out of band, authenticate, select the passwords, and choose a destination
-vault. Atlaso re-reads the selected values during the reviewed import and encrypts them immediately. Existing keys are
-rotated.
+Installer. After the server page, Atlaso probes without resolving or sending credentials and opens a dedicated TLS
+page. Confirm the observed SHA-256 fingerprint out of band before authentication, select the passwords, and choose a
+destination vault. Atlaso re-reads the selected values during the reviewed import and encrypts them immediately.
+Existing keys are rotated.
 
 ## VCF Helper autofill
 
 VCF Helper remote-connection wizards start with an administrator-only **Vault** and **Key** choice. Selecting a key
 fills and locks the server address from its first HTTP or HTTPS URI, fills its username, and skips the manual API-login
 page. Keys without an HTTP or HTTPS URI are unavailable in this picker. The password remains encrypted at rest and is
-resolved only by the server when the operator inspects or submits the remote operation. It is never copied into the
+resolved only after the dedicated TLS page confirms the observed server fingerprint. It is never copied into the
 password input or included in the page metadata.
 
 The server rejects a key that does not belong to the selected vault and audits each use without the value. A vault

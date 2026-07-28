@@ -29,6 +29,10 @@ The wizard collects only:
 - a saved vault credential or one-time VCF API administrator credentials;
 - target HTTPS TLS fingerprint confirmation.
 
+The wizard probes the target and presents the observed SHA-256 fingerprint on a dedicated pre-authentication page.
+Atlaso does not resolve a selected vault password or use manual API credentials until the operator confirms that
+fingerprint out of band. Selecting a vault locks the server address and skips the manual-login page.
+
 Atlaso never persists the API password. It stores only sanitized target, port, role/version, confirmed TLS fingerprint,
 deployed CA fingerprint, and task result metadata.
 
