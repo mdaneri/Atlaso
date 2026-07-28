@@ -96,13 +96,13 @@
           <div><h2>Organizations</h2><p class="muted">Each organization receives an isolated suffix, database, users OU, groups OU, and read-only VCF bind identity.</p></div>
           <div class="button-row">
             <span class="status-pill muted">{{ ldap_organizations|length }} organizations</span>
-            <button class="button secondary compact" type="button" data-ldap-organization-open>+ Organization</button>
           </div>
         </div>
         <div class="tab-buttons zone-tabs" role="tablist" aria-label="LDAP organizations" data-ldap-organization-tabs>
           {% for organization in ldap_organizations %}
             <a class="tab-button {{ 'active' if ldap_selected_organization and organization.id == ldap_selected_organization.id else '' }}" role="tab" {% if ldap_selected_organization and organization.id == ldap_selected_organization.id %}aria-selected="true"{% else %}aria-selected="false"{% endif %} href="/ldap?organization_id={{ organization.id }}#ldap-directory-panel" data-ldap-organization-id="{{ organization.id }}">{{ organization.name }}</a>
           {% endfor %}
+          <button class="tab-button" type="button" role="tab" aria-selected="false" data-ldap-organization-open>+ Organization</button>
         </div>
         <div class="tab-panels">
           <div id="ldap-organization-current" class="tab-panel active" role="tabpanel">

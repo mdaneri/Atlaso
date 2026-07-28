@@ -1262,7 +1262,8 @@ function initializeAtlasoResourceWizard(config) {
     body.set("csrf", csrf);
     await atlasoGridWizardRequest(config.deleteUrl(data.id), body, { expectJson: false });
     await row.delete();
-    config.onDeleted?.({ data, table });
+    await Promise.resolve(config.onDeleted?.({ data, table }));
+    await refreshNetworkSideStack();
     showTransientGridStatus("Deleted");
   };
   const rowActions = [];
@@ -1341,9 +1342,10 @@ function initializeAtlasoResourceWizard(config) {
         const existingRow = table.getRow(recordId) || table.getRow(Number(recordId));
         await existingRow?.update(resource);
       } else {
-        await table.addRow(resource, false, config.newRow.id);
+        await table.addRow(resource, true, config.newRow.id);
       }
-      config.onSaved?.({ payload, resource, form, table });
+      await Promise.resolve(config.onSaved?.({ payload, resource, form, table }));
+      await refreshNetworkSideStack();
       showTransientGridStatus(recordId ? "Updated" : "Created");
       return { valid: true };
     },

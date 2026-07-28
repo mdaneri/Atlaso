@@ -795,7 +795,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v181" in service_worker.text
+    assert "atlaso-pwa-v182" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -809,7 +809,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/vendor/codemirror/atlaso-codemirror.min.js" in service_worker.text
     assert "/static/app.css?v=atlaso-ui-foundation-20260727-3" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in service_worker.text
-    assert "/static/app.js?v=atlaso-complex-wizards-20260727-4" in service_worker.text
+    assert "/static/app.js?v=atlaso-complex-wizards-20260728-5" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -829,8 +829,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=atlaso-complex-wizards-20260727-4"),
-        (public_base, "/static/app.js?v=atlaso-complex-wizards-20260727-4"),
+        (base, "/static/app.js?v=atlaso-complex-wizards-20260728-5"),
+        (public_base, "/static/app.js?v=atlaso-complex-wizards-20260728-5"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4"
@@ -926,6 +926,10 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     assert adapter_block.count(create_grid) == 1
     assert adapter_block.count('pattern: "wizard-backed"') == 1
     assert "window.AtlasoUiPatterns.createWizard({" in adapter_block
+    assert "await table.addRow(resource, true, config.newRow.id)" in adapter_block
+    assert "await Promise.resolve(config.onSaved?.({ payload, resource, form, table }))" in adapter_block
+    assert "await Promise.resolve(config.onDeleted?.({ data, table }))" in adapter_block
+    assert adapter_block.count("await refreshNetworkSideStack();") == 2
     for name in (
         "initializeApiTokensTable",
         "initializeCaProfilesTable",
@@ -1241,7 +1245,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=atlaso-vaults-20260727-7" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in page.text
-    assert "/static/app.js?v=atlaso-complex-wizards-20260727-4" in page.text
+    assert "/static/app.js?v=atlaso-complex-wizards-20260728-5" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -4681,6 +4685,9 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     assert "ldap-groups-table" in created.text
     assert "data-ldap-organization-tabs" in created.text
     assert ">+ Organization</button>" in created.text
+    organization_tabs = created.text.split('data-ldap-organization-tabs>', 1)[1].split("</div>", 1)[0]
+    assert 'role="tab"' in organization_tabs
+    assert "data-ldap-organization-open" in organization_tabs
     assert 'id="ldap-organization-dialog"' in created.text
     assert "data-ldap-organization-form" in created.text
     assert "data-ldap-organization-open" in created.text
