@@ -66,6 +66,10 @@ The following cross-cutting boundaries always apply:
   exports only public relying-party metadata.
 - Never expose credentials, authenticated URLs, private keys, raw secrets, or secret-bearing commands in UI, jobs,
   audits, logs, documentation, screenshots, or video.
+- The appliance-native vSphere Key Provider targets only VCF 9.1 and implements the checked-in bounded KMIP contract.
+  Keep it experimental until the live acceptance and recovery gate promotes that contract to observed. Provider UUIDs
+  are isolated key namespaces, client access uses exact certificate fingerprints, and LDAP organizations never select
+  a provider. Do not restore a general-purpose KMIP backend or migrate keys from a nonempty PyKMIP store.
 - Vault passwords are the narrow exception for an explicit administrator eye reveal: keep them masked by default,
   CSRF-protect and audit reveals without values, disable caching, and automatically hide the value again.
 - Browser navigation to a globally disabled Web Terminal must render the authenticated Atlaso unavailable-state page;
