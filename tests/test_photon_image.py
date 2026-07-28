@@ -249,7 +249,7 @@ def test_bundled_ipxe_bootloaders_have_provenance_and_expected_hashes():
     assert "GNU GENERAL PUBLIC LICENSE" in gpl
 
 
-def test_packer_templates_stage_shared_boot_branding_assets():
+def test_packer_templates_stage_shared_appliance_assets():
     for template_path in (
         Path("image/hyperv/atlaso-photon.pkr.hcl"),
         Path("image/vmware-workstation/atlaso-photon.pkr.hcl"),
@@ -258,6 +258,8 @@ def test_packer_templates_stage_shared_boot_branding_assets():
 
         assert 'source      = "../common/boot"' in template
         assert 'destination = "/tmp/atlaso-src/image/common/boot"' in template
+        assert 'source      = "../common/powershell"' in template
+        assert 'destination = "/tmp/atlaso-src/image/common/powershell"' in template
 
 
 def test_photon_kickstart_uses_deterministic_build_time_sshd_service():

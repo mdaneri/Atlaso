@@ -249,6 +249,11 @@ build {
   }
 
   provisioner "file" {
+    source      = "../common/powershell"
+    destination = "/tmp/atlaso-src/image/common/powershell"
+  }
+
+  provisioner "file" {
     source      = "sudoers.d"
     destination = "/tmp/atlaso-src/image/hyperv/sudoers.d"
   }

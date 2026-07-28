@@ -44,11 +44,12 @@ password-authenticated SSH for Packer after the installed-system boot. The Photo
 from the Atlaso web bootstrap administrator password. The template also stages `requirements-appliance.lock` with the
 application source so bootstrap dependency installation retains hash verification instead of falling back to unpinned
 packages. It stages the third-party notice generator and vendored-component inventory as mandatory build inputs rather
-than skipping notice generation when either is missing. Notice lock verification inventories only top-level
-virtual-environment distributions and ignores package-internal vendored metadata. Long TDNF operations emit compact
-30-second heartbeats with elapsed time and cache size instead of streaming terminal progress redraws through Packer.
-Successful operations report their duration, while failures retain the TDNF exit status and replay a normalized, bounded
-output tail.
+than skipping notice generation when either is missing. The shared PowerShell profile is staged with the other common
+image assets so provisioning can install the interactive `Get-AtlasoVault` helper. Notice lock verification inventories
+only top-level virtual-environment distributions and ignores package-internal vendored metadata. Long TDNF operations
+emit compact 30-second heartbeats with elapsed time and cache size instead of streaming terminal progress redraws
+through Packer. Successful operations report their duration, while failures retain the TDNF exit status and replay a
+normalized, bounded output tail.
 
 ```powershell
 powershell.exe -ExecutionPolicy Bypass `
