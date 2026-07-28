@@ -78,6 +78,38 @@ def test_managed_script_rejects_content_larger_than_one_mibibyte(client):
             )
 
 
+def test_managed_script_wizard_does_not_expose_unexpected_validation_errors(client, monkeypatch):
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AutomationScript
+
+    login(client)
+    csrf = csrf_from_page(client.get("/automation").text)
+
+    def fail_revision(*_args, **_kwargs):
+        raise ValueError("private implementation detail")
+
+    monkeypatch.setattr("atlaso.app.ui.create_script_revision", fail_revision)
+    response = client.post(
+        "/automation/scripts",
+        data={
+            "csrf": csrf,
+            "name": "validation-failure",
+            "interpreter": "bash",
+            "timeout_seconds": "120",
+            "content": "#!/bin/bash\ndate",
+        },
+        headers={"X-Atlaso-Wizard": "1", "Accept": "application/json"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Managed script validation failed."
+    assert "private implementation detail" not in response.text
+    with SessionLocal() as db:
+        assert db.execute(
+            select(AutomationScript).where(AutomationScript.name == "validation-failure")
+        ).scalar_one_or_none() is None
+
+
 def test_managed_script_revision_is_immutable_enabled_and_run_by_worker(client):
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AutomationScript, AutomationScriptRevision, Job

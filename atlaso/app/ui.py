@@ -156,6 +156,8 @@ from atlaso.app.services.appliance_update import (
     validate_update_settings,
 )
 from atlaso.app.services.automation import (
+    MAX_SCRIPT_CONTENT_BYTES,
+    MAX_SCRIPT_TIMEOUT_SECONDS,
     SCHEDULE_TASK_TYPES,
     SCRIPT_INTERPRETERS,
     create_script_revision,
@@ -10552,6 +10554,18 @@ def _automation_render_error(request: Request, identity: Identity, db: Session, 
     )
 
 
+def _automation_script_validation_message(interpreter: str, content: str, timeout_seconds: int) -> str | None:
+    if interpreter not in SCRIPT_INTERPRETERS:
+        return "Interpreter must be bash, python, or powershell."
+    if not content.strip():
+        return "Script content is required."
+    if len(content.encode("utf-8")) > MAX_SCRIPT_CONTENT_BYTES:
+        return "Script content must be 1 MiB or smaller."
+    if timeout_seconds < 1 or timeout_seconds > MAX_SCRIPT_TIMEOUT_SECONDS:
+        return "Script timeout must be between 1 second and 24 hours."
+    return None
+
+
 def _automation_task_config(
     db: Session,
     *,
@@ -10857,21 +10871,32 @@ def create_automation_script_from_ui(
         if wizard_request:
             return JSONResponse({"status": "error", "detail": "Script name is required.", "errors": ["Script name is required."]}, status_code=422)
         return _automation_render_error(request, identity, db, "Script name is required.")
+    validation_message = _automation_script_validation_message(interpreter, content, timeout_seconds)
+    if validation_message:
+        if wizard_request:
+            return JSONResponse({"status": "error", "detail": validation_message, "errors": [validation_message]}, status_code=422)
+        return _automation_render_error(request, identity, db, validation_message)
     script = AutomationScript(name=name.strip(), description=description.strip(), created_by=identity.username)
     db.add(script)
     try:
         db.flush()
         create_script_revision(db, script=script, interpreter=interpreter, content=content, timeout_seconds=timeout_seconds, actor=identity.username)
         db.commit()
-    except (IntegrityError, ValueError) as exc:
+    except IntegrityError:
         db.rollback()
-        message = "A script with this name already exists." if isinstance(exc, IntegrityError) else str(exc)
+        message = "A script with this name already exists."
         if wizard_request:
             return JSONResponse(
                 {"status": "error", "detail": message, "errors": [message]},
-                status_code=409 if isinstance(exc, IntegrityError) else 422,
+                status_code=409,
             )
-        return _automation_render_error(request, identity, db, message, status_code=409 if isinstance(exc, IntegrityError) else 422)
+        return _automation_render_error(request, identity, db, message, status_code=409)
+    except ValueError:
+        db.rollback()
+        message = "Managed script validation failed."
+        if wizard_request:
+            return JSONResponse({"status": "error", "detail": message, "errors": [message]}, status_code=422)
+        return _automation_render_error(request, identity, db, message)
     record_audit(db, actor=identity.username, action="create_automation_script", resource_type="automation_script", resource_id=str(script.id))
     if wizard_request:
         return JSONResponse({"status": "saved", "script_id": script.id})
@@ -10894,14 +10919,17 @@ def create_automation_script_revision_from_ui(
     script = db.get(AutomationScript, script_id)
     if script is None:
         raise HTTPException(status_code=404, detail="Managed script not found.")
+    validation_message = _automation_script_validation_message(interpreter, content, timeout_seconds)
+    if validation_message:
+        return _automation_render_error(request, identity, db, validation_message)
     try:
         revision = create_script_revision(db, script=script, interpreter=interpreter, content=content, timeout_seconds=timeout_seconds, actor=identity.username)
         script.updated_at = utcnow()
         db.add(script)
         db.commit()
-    except ValueError as exc:
+    except ValueError:
         db.rollback()
-        return _automation_render_error(request, identity, db, str(exc))
+        return _automation_render_error(request, identity, db, "Managed script validation failed.")
     record_audit(db, actor=identity.username, action="create_automation_script_revision", resource_type="automation_script_revision", resource_id=str(revision.id), detail=f"script={script.name}; revision={revision.revision}")
     return RedirectResponse("/automation#scripts", status_code=303)
 
