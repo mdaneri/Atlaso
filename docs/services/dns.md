@@ -23,6 +23,10 @@ This verified appliance view provides visual orientation before you begin.
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+Select **+ Domain** to create a forward domain through the guided identity, enablement, and review steps. Each domain
+tab exposes a direct enablement switch. Disabling a domain retains the domain and all scoped records in Atlaso's
+database while excluding that zone from rendered dnsmasq desired state; at least one domain must remain enabled.
+
 ## Local and authoritative modes
 
 With **Authoritative** off, each managed domain renders as `local=/domain/`. Atlaso answers known local records and

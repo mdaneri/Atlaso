@@ -376,6 +376,7 @@ class DnsSettings(Base):
     listen_interface: Mapped[str] = mapped_column(String(80), default="")
     listen_address: Mapped[str | None] = mapped_column(String(240), nullable=True)
     domain: Mapped[str] = mapped_column(String(500), default="atlaso.internal")
+    disabled_domains: Mapped[str] = mapped_column(String(500), default="")
     upstream_servers: Mapped[str] = mapped_column(Text, default="1.1.1.1\n9.9.9.9")
     cache_size: Mapped[int] = mapped_column(Integer, default=1000)
     expand_hosts: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -648,6 +649,7 @@ class LdapOrganization(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str] = mapped_column(Text, default="")
     slug: Mapped[str] = mapped_column(String(80), index=True)
     suffix_dn: Mapped[str] = mapped_column(String(500), index=True)
     bind_dn: Mapped[str] = mapped_column(String(500), default="")

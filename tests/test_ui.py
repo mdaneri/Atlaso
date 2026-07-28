@@ -795,7 +795,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v178" in service_worker.text
+    assert "atlaso-pwa-v187" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -806,10 +806,10 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert 'url.pathname.startsWith("/api/")' in service_worker.text
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
-    assert "/static/vendor/codemirror/atlaso-codemirror.min.js" in service_worker.text
-    assert "/static/app.css?v=atlaso-ui-foundation-20260727-3" in service_worker.text
+    assert "/static/vendor/codemirror/atlaso-codemirror.min.js?v=atlaso-codemirror-20260728-1" in service_worker.text
+    assert "/static/app.css?v=atlaso-ui-foundation-20260728-5" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in service_worker.text
-    assert "/static/app.js?v=atlaso-oidc-admin-20260727-6" in service_worker.text
+    assert "/static/app.js?v=atlaso-complex-wizards-20260728-10" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -818,7 +818,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=atlaso-ui-foundation-20260727-3" in offline.text
+    assert "/static/app.css?v=atlaso-ui-foundation-20260728-5" in offline.text
 
 
 def test_shared_ui_pattern_shell_and_wizard_contracts(client):
@@ -829,8 +829,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=atlaso-vaults-20260727-17"),
-        (public_base, "/static/app.js?v=atlaso-oidc-admin-20260727-6"),
+        (base, "/static/app.js?v=atlaso-complex-wizards-20260728-10"),
+        (public_base, "/static/app.js?v=atlaso-complex-wizards-20260728-10"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4"
@@ -882,10 +882,10 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     app_js = client.get("/static/app.js").text
     create_grid = "window.AtlasoUiPatterns.createGrid({"
 
-    assert app_js.count(create_grid) == 39
-    assert app_js.count('pattern: "direct-edit"') == 25
-    assert app_js.count('pattern: "read-only"') == 8
-    assert app_js.count('pattern: "wizard-backed"') == 6
+    assert app_js.count(create_grid) == 28
+    assert app_js.count('pattern: "direct-edit"') == 13
+    assert app_js.count('pattern: "read-only"') == 7
+    assert app_js.count('pattern: "wizard-backed"') == 8
     assert "new Tabulator(" not in app_js
     assert "new window.Tabulator(" not in app_js
     assert "atlaso-legacy-tabulator: #117" not in app_js
@@ -898,14 +898,8 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
 
     single_grid_patterns = {
         "initializeDhcpLeasesTable": "read-only",
-        "initializeCaProfilesTable": "direct-edit",
-        "initializeCaCertificatesTable": "read-only",
-        "initializeFirewallRulesTable": "direct-edit",
         "initializeManagedFirewallRulesTable": "direct-edit",
         "initializeServicesTable": "direct-edit",
-        "initializeUsersTable": "direct-edit",
-        "initializeKmsClientsTable": "direct-edit",
-        "initializeKmsKeysTable": "direct-edit",
         "initializeNTPsecUpstreamsTable": "direct-edit",
         "initializeRoutesWanRoutingTable": "direct-edit",
         "initializeRoutesWanNatTable": "direct-edit",
@@ -915,12 +909,8 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
         "initializeOidcGroupMappingsTable": "direct-edit",
         "initializeVlanInterfacesTable": "direct-edit",
         "initializeDnsRecordsTableElement": "direct-edit",
-        "initializeDhcpScopesTable": "direct-edit",
-        "initializeDhcpOptionsTable": "direct-edit",
         "initializeDhcpReservationsTable": "direct-edit",
         "initializeEsxiPxeHostsTable": "direct-edit",
-        "initializeVcfRegistryBundlesTable": "direct-edit",
-        "initializeVcfDepotProfilesTable": "direct-edit",
         "initializeVcfDepotTasksTable": "read-only",
         "initializeTasksPage": "read-only",
         "initializeAuditEventsTable": "read-only",
@@ -931,15 +921,44 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
         assert block.count(create_grid) == 1, name
         assert block.count(f'pattern: "{pattern}"') == 1, name
 
+    adapter_block = function_block("initializeAtlasoResourceWizard")
+    assert adapter_block.count(create_grid) == 1
+    assert adapter_block.count('pattern: "wizard-backed"') == 1
+    assert "window.AtlasoUiPatterns.createWizard({" in adapter_block
+    assert "await table.addRow(resource, true, config.newRow.id)" in adapter_block
+    assert "await Promise.resolve(config.onSaved?.({ payload, resource, form, table }))" in adapter_block
+    assert "await Promise.resolve(config.onDeleted?.({ data, table }))" in adapter_block
+    assert adapter_block.count("await refreshNetworkSideStack();") == 3
+    for name in (
+        "initializeApiTokensTable",
+        "initializeCaProfilesTable",
+        "initializeCaCertificatesTable",
+        "initializeFirewallRulesTable",
+        "initializeKmsClientsTable",
+        "initializeKmsKeysTable",
+        "initializeDhcpScopesTable",
+        "initializeDhcpOptionsTable",
+        "initializeUsersTable",
+        "initializeVcfRegistryBundlesTable",
+        "initializeVcfDepotProfilesTable",
+    ):
+        block = function_block(name)
+        assert "initializeAtlasoResourceWizard({" in block, name
+        assert 'editor:' not in block, name
+        assert "cellEdited:" not in block, name
+
     ldap_block = function_block("initializeLdapDirectoryTables")
-    assert ldap_block.count(create_grid) == 2
-    assert ldap_block.count('pattern: "direct-edit"') == 2
+    assert ldap_block.count(create_grid) == 0
+    assert ldap_block.count("initializeAtlasoResourceWizard({") == 2
+    assert ldap_block.count("inlineEnabled: false") == 1
+    assert ldap_block.count('editor: "tickCross"') == 1
+    assert ldap_block.count("autoSaveLdapGroup(cell, csrf, organizationId)") == 1
 
     automation_block = function_block("initializeAutomationTables")
     assert automation_block.count(create_grid) == 3
-    assert automation_block.count('pattern: "direct-edit"') == 1
+    assert automation_block.count('pattern: "direct-edit"') == 0
     assert automation_block.count('pattern: "read-only"') == 1
-    assert automation_block.count('pattern: "wizard-backed"') == 1
+    assert automation_block.count('pattern: "wizard-backed"') == 2
 
     storage_block = function_block("initializeEsxStorageTables")
     assert storage_block.count(create_grid) == 2
@@ -948,6 +967,195 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     tasks_block = function_block("initializeTasksPage")
     assert "atlasoTasksReopenSelected = shouldOpenSelected;" in tasks_block
     assert "if (!atlasoTasksTable) {" in tasks_block
+
+
+def test_complex_resource_wizard_grid_contracts_return_saved_rows_and_delete_without_reload(client):
+    login(client)
+    page = client.get("/authentication")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    headers = {"X-Atlaso-Grid": "1"}
+
+    token_response = client.post(
+        "/authentication/api-tokens",
+        data={"name": "wizard-token", "description": "issue 118", "scopes": "read:dashboard", "csrf": csrf},
+        headers=headers,
+    )
+    assert token_response.status_code == 200
+    token_payload = token_response.json()
+    assert token_payload["token"]["name"] == "wizard-token"
+    assert token_payload["raw_token"]
+
+    profile_data = {
+        "name": "Wizard server profile",
+        "certificate_type": "server",
+        "validity_days": "365",
+        "key_algorithm": "RSA",
+        "key_size": "2048",
+        "key_usage": "digitalSignature,keyEncipherment",
+        "extended_key_usage": "serverAuth",
+        "san_required": "on",
+        "description": "issue 118",
+        "enabled": "on",
+        "csrf": csrf,
+    }
+    profile_response = client.post("/certificate-authority/profiles", data=profile_data, headers=headers)
+    assert profile_response.status_code == 200
+    profile = profile_response.json()["profile"]
+    assert profile["name"] == "Wizard server profile"
+
+    certificate_data = {
+        "common_name": "wizard.atlaso.internal",
+        "profile_id": str(profile["id"]),
+        "subject_alt_names": "wizard.atlaso.internal",
+        "ip_addresses": "",
+        "description": "issue 118",
+        "enabled": "on",
+        "csrf": csrf,
+    }
+    certificate_response = client.post(
+        "/certificate-authority/certificates",
+        data=certificate_data,
+        headers=headers,
+    )
+    assert certificate_response.status_code == 200
+    certificate = certificate_response.json()["certificate"]
+    assert certificate["common_name"] == "wizard.atlaso.internal"
+
+    firewall_data = {
+        "name": "wizard-firewall",
+        "direction": "input",
+        "action": "accept",
+        "protocol": "tcp",
+        "source": "any",
+        "destination": "any",
+        "destination_port": "9443",
+        "interface_name": "eth2",
+        "priority": "118",
+        "enabled": "on",
+        "description": "issue 118",
+        "csrf": csrf,
+    }
+    firewall_response = client.post("/firewall/rules", data=firewall_data, headers=headers)
+    assert firewall_response.status_code == 200
+    firewall_rule = firewall_response.json()["rule"]
+    assert firewall_rule["name"] == "wizard-firewall"
+
+    client_data = {
+        "name": "wizard-kmip-client",
+        "certificate_subject": "CN=wizard-kmip-client,O=Atlaso",
+        "role": "service",
+        "allowed_operations": "locate,get",
+        "description": "issue 118",
+        "enabled": "on",
+        "csrf": csrf,
+    }
+    kms_client_response = client.post("/kms/clients", data=client_data, headers=headers)
+    assert kms_client_response.status_code == 200
+    kms_client = kms_client_response.json()["client"]
+    assert kms_client["name"] == "wizard-kmip-client"
+    duplicate_client = client.post("/kms/clients", data=client_data, headers=headers)
+    assert duplicate_client.status_code == 409
+    assert duplicate_client.json()["detail"] == "KMS client wizard-kmip-client already exists."
+
+    key_data = {
+        "name": "wizard-kms-key",
+        "algorithm": "AES",
+        "length": "256",
+        "usage": "encrypt,decrypt",
+        "state": "active",
+        "owner_client_id": str(kms_client["id"]),
+        "exportable": "on",
+        "description": "issue 118",
+        "enabled": "on",
+        "csrf": csrf,
+    }
+    kms_key_response = client.post("/kms/keys", data=key_data, headers=headers)
+    assert kms_key_response.status_code == 200
+    kms_key = kms_key_response.json()["key"]
+    assert kms_key["owner_client_id"] == kms_client["id"]
+
+    scope_data = {
+        "name": "WizardZone",
+        "address_family": "ipv4",
+        "interface_name": "eth2",
+        "site_address": "192.168.50.1",
+        "prefix_length": "24",
+        "range_expression": "192.168.50.150-192.168.50.175",
+        "lease_time": "8h",
+        "domain_name": "atlaso.internal",
+        "dns_server": "192.168.50.1",
+        "ntp_server": "192.168.50.1",
+        "description": "issue 118",
+        "enabled": "on",
+        "csrf": csrf,
+    }
+    scope_response = client.post("/dhcp/scopes", data=scope_data, headers=headers)
+    assert scope_response.status_code == 200
+    scope = scope_response.json()["scope"]
+    assert scope["name"] == "WizardZone"
+
+    bundle_data = {
+        "name": "wizard-supervisor-service",
+        "source_reference": "docker.io/example/service:1.0",
+        "target_reference": "",
+        "status": "planned",
+        "notes": "issue 118",
+        "enabled": "on",
+        "csrf": csrf,
+    }
+    bundle_response = client.post("/vcf-private-registry/bundles", data=bundle_data, headers=headers)
+    assert bundle_response.status_code == 200
+    bundle = bundle_response.json()["bundle"]
+    assert bundle["target_reference"].endswith("/vcf-supervisor-services/service")
+
+    depot_data = {
+        "name": "wizard-vcfdt-profile",
+        "profile_type": "binaries",
+        "sku": "VCF",
+        "vcf_version": "9.1.0",
+        "binary_type": "INSTALL",
+        "automated_install": "on",
+        "component": "",
+        "component_version": "",
+        "disabled_platforms": "",
+        "status": "planned",
+        "notes": "issue 118",
+        "csrf": csrf,
+    }
+    depot_response = client.post("/vcf-offline-depot/profiles", data=depot_data, headers=headers)
+    assert depot_response.status_code == 200
+    depot_profile = depot_response.json()["profile"]
+    assert depot_profile["name"] == "wizard-vcfdt-profile"
+    assert depot_profile["enabled"] is False
+
+    edit_scope = client.post(
+        f"/dhcp/scopes/{scope['id']}/edit",
+        data={**scope_data, "description": "edited in the open wizard"},
+        headers=headers,
+    )
+    assert edit_scope.status_code == 200
+    assert edit_scope.json()["scope"]["description"] == "edited in the open wizard"
+
+    for url in (
+        f"/vcf-offline-depot/profiles/{depot_profile['id']}/delete",
+        f"/vcf-private-registry/bundles/{bundle['id']}/delete",
+        f"/dhcp/scopes/{scope['id']}/delete",
+        f"/kms/keys/{kms_key['id']}/delete",
+        f"/kms/clients/{kms_client['id']}/delete",
+        f"/firewall/rules/{firewall_rule['id']}/delete",
+        f"/certificate-authority/certificates/{certificate['id']}/delete",
+        f"/certificate-authority/profiles/{profile['id']}/delete",
+    ):
+        deleted = client.post(url, data={"csrf": csrf}, headers=headers)
+        assert deleted.status_code == 204, url
+
+    revoked = client.post(
+        f"/authentication/api-tokens/{token_payload['token']['id']}/revoke",
+        data={"csrf": csrf},
+        headers=headers,
+    )
+    assert revoked.status_code == 200
+    assert revoked.json()["token"]["status"] == "revoked"
 
 
 def test_reported_template_accessibility_contracts():
@@ -961,6 +1169,8 @@ def test_reported_template_accessibility_contracts():
     vcf_depot = (templates / "vcf_offline_depot.html").read_text(encoding="utf-8")
     dns = (templates / "dns.html").read_text(encoding="utf-8")
     authentication = (templates / "authentication.html").read_text(encoding="utf-8")
+    firewall = (templates / "firewall.html").read_text(encoding="utf-8")
+    resource_wizard = (templates / "partials" / "resource_wizard.html").read_text(encoding="utf-8")
 
     assert 'aria-selected="{{' not in appliance_update
     assert "Recorded release, compatibility, and recovery evidence" in appliance_update
@@ -978,6 +1188,50 @@ def test_reported_template_accessibility_contracts():
     assert '<dl class="dns-authority-records">' not in dns
     assert '<div class="error-list" role="list" data-oidc-provider-validation-errors>' in authentication
     assert '<ul class="error-list">' not in authentication
+    state_step = firewall[
+        firewall.index('data-atlaso-wizard-step="state"'):
+        firewall.index('data-atlaso-wizard-step="enablement"')
+    ]
+    enablement_step = firewall[
+        firewall.index('data-atlaso-wizard-step="enablement"'):
+        firewall.index('data-atlaso-wizard-step="review"')
+    ]
+    assert 'name="priority"' in state_step
+    assert 'name="description"' in state_step
+    assert 'name="enabled"' not in state_step
+    assert 'name="enabled"' in enablement_step
+    assert "Enforcement waits for the global Firewall appliance-apply unit." in enablement_step
+    assert 'aria-describedby="{{ dialog_id }}-description"' in resource_wizard
+    assert "data-atlaso-wizard-error" in resource_wizard
+    assert "data-atlaso-wizard-submit" in resource_wizard
+    assert 'class="confirm-modal wide-modal vcf-sddc-wizard-modal resource-wizard-dialog"' in resource_wizard
+    assert '<div class="vcf-sddc-wizard-main">' in resource_wizard
+    assert '<div class="confirm-modal-body vcf-sddc-wizard-body">' in resource_wizard
+    assert "vcf-sddc-wizard-layout" not in resource_wizard
+    assert "vcf-sddc-wizard-content" not in resource_wizard
+    assert '"dhcp-option-form"' in (templates / "dhcp.html").read_text(encoding="utf-8")
+    assert 'data-atlaso-wizard-step="enablement"' in (templates / "dhcp.html").read_text(encoding="utf-8")
+    assert 'name="scope_choices"' in authentication
+    assert "<textarea name=\"scopes\"" not in authentication
+    assert 'data-atlaso-wizard-step="password"' in (templates / "users.html").read_text(encoding="utf-8")
+    assert 'data-atlaso-wizard-step="enablement"' in (templates / "users.html").read_text(encoding="utf-8")
+    for template_name, form_marker in {
+        "authentication.html": '"api-token-form"',
+        "certificate_authority.html": '"ca-certificate-form"',
+        "firewall.html": '"firewall-rule-form"',
+        "kms.html": '"kms-key-form"',
+        "dhcp.html": '"dhcp-scope-form"',
+        "users.html": '"user-account-form"',
+        "ldap.html": '"ldap-organization-form"',
+        "vcf_offline_depot.html": '"vcf-depot-profile-form"',
+        "vcf_private_registry.html": '"vcf-registry-bundle-form"',
+        "appliance_update.html": '"appliance-update-source-form"',
+        "automation.html": '"automation-script-create-form"',
+        "dns.html": '"dns-domain-form"',
+    }.items():
+        source = (templates / template_name).read_text(encoding="utf-8")
+        assert "resource_wizard(" in source
+        assert form_marker in source
 
 
 def test_monitor_page_renders_and_data_endpoint(client):
@@ -1013,9 +1267,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=atlaso-vaults-20260727-7" in page.text
+    assert "/static/app.css?v=atlaso-vaults-20260728-9" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in page.text
-    assert "/static/app.js?v=atlaso-vaults-20260727-17" in page.text
+    assert "/static/app.js?v=atlaso-complex-wizards-20260728-10" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -3656,7 +3910,7 @@ def test_esxi_pxe_multi_zone_host_reservations_and_grid_menu(client):
     assert 'data-tag-name="dhcp_scope_ids"' in refreshed.text
     assert "SiteB - eth3 / 10.1.1.1/24" in refreshed.text
     app_js = client.get("/static/app.js").text
-    host_grid_js = app_js.split("function initializeEsxiPxeHostsTable()", 1)[1].split("function initializeVcfBackupSettings()", 1)[0]
+    host_grid_js = app_js.split("function initializeEsxiPxeHostsTable()", 1)[1].split("function initializeVcfBackupSettings(", 1)[0]
     assert "rowContextMenu" in host_grid_js
     assert "Delete host reference" in host_grid_js
     assert 'field: "ip_address"' in host_grid_js
@@ -4293,6 +4547,9 @@ def test_local_users_page_separates_ldap_authentication(client):
     assert "Local Users" in users.text
     assert "Managed VCF directory users remain isolated" in users.text
     assert "users-table" in users.text
+    assert 'id="user-account-dialog"' in users.text
+    assert "data-user-account-form" in users.text
+    assert "data-atlaso-resource-review" in users.text
     assert "user-password-modal" in users.text
     assert "data-password-toggle" in users.text
     assert "Password Reset" not in users.text
@@ -4326,6 +4583,21 @@ def test_local_users_page_separates_ldap_authentication(client):
         follow_redirects=False,
     )
     assert multi_role_created.status_code == 303
+    wizard_created = client.post(
+        "/users",
+        data={"username": "wizard-user", "roles": ["viewer"], "shell": "/bin/bash", "csrf": csrf},
+        headers={"X-Atlaso-Grid": "1"},
+    )
+    assert wizard_created.status_code == 200
+    assert wizard_created.json()["user"]["username"] == "wizard-user"
+    assert wizard_created.json()["user"]["roles"] == ["viewer"]
+    wizard_user_id = wizard_created.json()["user"]["id"]
+    wizard_deleted = client.post(
+        f"/users/{wizard_user_id}/delete",
+        data={"csrf": csrf},
+        headers={"X-Atlaso-Grid": "1"},
+    )
+    assert wizard_deleted.status_code == 204
     stale_role_created = client.post(
         "/users",
         data={"username": "demote-me", "role": "viewer", "roles": "admin", "shell": "/sbin/nologin", "csrf": csrf},
@@ -4366,16 +4638,18 @@ def test_local_users_page_separates_ldap_authentication(client):
     assert "userActionsFormatter" not in app_js.text
     assert "formatter: userActionsFormatter" not in app_js.text
     assert "openUserPasswordModal" in app_js.text
-    assert "deleteUserFromMenu" in app_js.text
+    assert "deleteUserFromMenu" not in app_js.text
     assert "Unlock OS account" in app_js.text
     assert "disableUserFromMenu" in app_js.text
     assert "Disable user" in app_js.text
     users_table_js = app_js.text.split("function initializeUsersTable()", 1)[1].split("function initializeUserPasswordForm()", 1)[0]
-    roles_column_js = users_table_js.split('title: "Roles"', 1)[1].split('title: "Shell"', 1)[0]
-    assert 'field: "roles"' in roles_column_js
-    assert 'editor: "list"' in roles_column_js
-    assert "multiselect: true" in roles_column_js
-    assert "syncUserRoleFields" in roles_column_js
+    assert "initializeAtlasoResourceWizard({" in users_table_js
+    assert 'dialogId: "user-account-dialog"' in users_table_js
+    assert 'resourceName: "user"' in users_table_js
+    assert 'editor:' not in users_table_js
+    assert "cellEdited:" not in users_table_js
+    assert "Select at least one Atlaso role." in users_table_js
+    assert "Web SSH access requires an interactive Photon shell." in users_table_js
     enabled_column_js = users_table_js.split('title: "Enabled"', 1)[1].split('title: "OS account"', 1)[0]
     assert "editor:" not in enabled_column_js
     assert "validatePasswordMatch" in app_js.text
@@ -4421,7 +4695,14 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
 
     created = client.post(
         "/ldap/organizations",
-        data={"name": "Org A", "slug": "org-a", "suffix_dn": "", "enabled": "on", "csrf": csrf},
+        data={
+            "name": "Org A",
+            "description": "Primary VCF lab organization",
+            "slug": "org-a",
+            "suffix_dn": "",
+            "enabled": "on",
+            "csrf": csrf,
+        },
     )
     assert created.status_code == 201, created.text
     assert "Copy this credential now" in created.text
@@ -4433,9 +4714,24 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     assert 'data-download-filename="vcf-bind-credential-org-a.txt"' in created.text
     assert "ldap-users-table" in created.text
     assert "ldap-groups-table" in created.text
+    assert "Primary VCF lab organization" in created.text
     assert "data-ldap-organization-tabs" in created.text
     assert ">+ Organization</button>" in created.text
-    assert 'id="ldap-organization-new"' in created.text
+    organization_tabs = created.text.split('data-ldap-organization-tabs>', 1)[1].split("</div>", 1)[0]
+    assert 'role="tab"' in organization_tabs
+    assert "data-ldap-organization-open" in organization_tabs
+    assert 'id="ldap-organization-dialog"' in created.text
+    assert "data-ldap-organization-form" in created.text
+    assert 'data-atlaso-wizard-step="enablement"' in created.text
+    assert 'name="description"' in created.text
+    assert 'id="ldap-user-dialog"' in created.text
+    assert "data-ldap-user-form" in created.text
+    assert 'id="ldap-group-dialog"' in created.text
+    assert "data-ldap-group-form" in created.text
+    assert 'name="password_confirmation_present" value="1"' in created.text
+    assert 'name="members_present" value="1"' in created.text
+    assert "data-ldap-organization-open" in created.text
+    assert 'id="ldap-organization-new"' not in created.text
     assert "<summary>Create organization</summary>" not in created.text
     assert "<summary>Add user</summary>" not in created.text
     assert "<summary>Add group</summary>" not in created.text
@@ -4459,6 +4755,11 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     assert 'document.addEventListener("DOMContentLoaded", () => initializeDownloadValueButtons())' in app_js
     assert 'const LDAP_ORGANIZATION_SELECTION_KEY = "atlaso:ldap:organization"' in app_js
     assert "function initializeLdapPageState()" in app_js
+    assert "function initializeLdapOrganizationWizard()" in app_js
+    ldap_organization_wizard_js = app_js.split("function initializeLdapOrganizationWizard()", 1)[1].split("function initializeLdapPageState()", 1)[0]
+    assert "window.AtlasoUiPatterns.createWizard({" in ldap_organization_wizard_js
+    assert "data-ldap-organization-open" in ldap_organization_wizard_js
+    assert '{ id: "enablement", title: "Choose organization state"' in ldap_organization_wizard_js
     ldap_page_state_js = app_js.split("function initializeLdapPageState()", 1)[1].split("function attachLdapGridState(", 1)[0]
     assert 'await fetch(link.href' in ldap_page_state_js
     assert 'currentPanel.replaceWith(document.importNode(nextCurrentPanel, true))' in ldap_page_state_js
@@ -4466,7 +4767,7 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     assert 'window.addEventListener("popstate"' in ldap_page_state_js
     assert 'window.location.replace(validStoredLink.href)' not in ldap_page_state_js
     assert 'tabList.querySelectorAll(".tab-button")' in ldap_page_state_js
-    assert 'newOrganizationPanel.setAttribute("hidden", "")' in ldap_page_state_js
+    assert "newOrganizationPanel" not in ldap_page_state_js
     assert "initializeLdapDirectoryTables()" in ldap_page_state_js
     assert "initializeTabs()" in ldap_page_state_js
     assert "function attachLdapGridState(" in app_js
@@ -4498,8 +4799,12 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     assert f'/ldap/organizations/{organization_id}/vcf/configure' in vcf_helper.text
     assert "serviceAccount → employeeType" in vcf_helper.text
     assert "Load organization" not in vcf_helper.text
-    assert "data-vcf-ldap-organization-form" in vcf_helper.text
+    assert "data-vcf-ldap-wizard-form" in vcf_helper.text
     assert "data-vcf-ldap-organization-select" in vcf_helper.text
+    assert 'data-atlaso-wizard-step="organization"' in vcf_helper.text
+    assert 'data-atlaso-wizard-step="connection"' in vcf_helper.text
+    assert 'data-atlaso-wizard-step="trust"' in vcf_helper.text
+    assert 'data-atlaso-wizard-step="review"' in vcf_helper.text
     vcf_ldap_modal = vcf_helper.text.split('<dialog id="vcf-ldap-modal"', 1)[1].split("</dialog>", 1)[0]
     assert vcf_ldap_modal.count('name="target_url"') == 1
     assert vcf_ldap_modal.count('name="vcf_organization_id"') == 1
@@ -4508,6 +4813,12 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     assert "Generate LDAP Test Directory" in vcf_helper.text
     assert "data-ldap-generate-open" in vcf_helper.text
     assert "Generate test directory" not in vcf_ldap_modal
+    assert "data-ldap-generate-form" in vcf_helper.text
+    assert "data-ldap-generate-review" in vcf_helper.text
+    vcf_ldap_helper_js = client.get("/static/app.js").text.split(
+        "function initializeVcfLdapHelper()", 1
+    )[1].split("function initializeLdapBindSecretModal()", 1)[0]
+    assert vcf_ldap_helper_js.count("window.AtlasoUiPatterns.createWizard({") == 2
 
     page = client.get("/ldap")
     assert "Copy this credential now" not in page.text
@@ -4561,15 +4872,52 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     )
     assert grid_group.status_code == 201
     assert grid_group.json()["enabled"] is False
+    group_id = grid_group.json()["id"]
+    group_with_members = client.post(
+        f"/ldap/groups/{group_id}/edit",
+        data={
+            "name": "Operators",
+            "description": "Reviewed VCF operators",
+            "members": [f"user:{operator_id}"],
+            "members_present": "1",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Grid": "1"},
+    )
+    assert group_with_members.status_code == 200
+    assert group_with_members.json()["enabled"] is True
+    assert [
+        {key: member[key] for key in ("type", "id", "name")}
+        for member in group_with_members.json()["members"]
+    ] == [{"type": "user", "id": operator_id, "name": "operator"}]
+    direct_group_toggle = client.post(
+        f"/ldap/groups/{group_id}/edit",
+        data={
+            "name": "Operators",
+            "description": "Reviewed VCF operators",
+            "enabled": "false",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Grid": "1"},
+    )
+    assert direct_group_toggle.status_code == 200
+    assert direct_group_toggle.json()["enabled"] is False
+    assert [
+        {key: member[key] for key in ("type", "id", "name")}
+        for member in direct_group_toggle.json()["members"]
+    ] == [{"type": "user", "id": operator_id, "name": "operator"}]
 
     app_js = client.get("/static/app.js").text
     ldap_grid_js = app_js.split("function initializeLdapDirectoryTables()", 1)[1].split("function initializeLdapPasswordModal()", 1)[0]
     assert "+ Add user here" in ldap_grid_js
     assert "+ Add group here" in ldap_grid_js
-    assert "rowContextMenu" in ldap_grid_js
+    assert 'formSelector: "[data-ldap-user-form]"' in ldap_grid_js
+    assert 'formSelector: "[data-ldap-group-form]"' in ldap_grid_js
+    assert ldap_grid_js.count("initializeAtlasoResourceWizard({") == 2
     assert 'label: "Reset password"' in ldap_grid_js
-    assert 'label: "Delete user"' in ldap_grid_js
-    assert 'label: "Edit membership"' in ldap_grid_js
+    assert 'deleteLabel: "Delete user"' in ldap_grid_js
+    assert 'inlineEnabled: false' in ldap_grid_js
     assert "function ldapGroupMembershipFormatter(cell)" in app_js
     assert "formatter: ldapGroupMembershipFormatter" in ldap_grid_js
     assert '<th>Type</th><th>Member</th>' in app_js
@@ -4632,7 +4980,6 @@ def test_managed_ldap_generates_complete_synthetic_directory_once(client):
     assert "uid,password,display_name,email,telephone" not in managed_ldap_modal
     app_js = client.get("/static/app.js").text
     assert 'generateDialog.addEventListener("close", clearGeneratedResult)' in app_js
-    assert 'querySelectorAll("[data-ldap-generate-close]")' in app_js
     assert 'generateDialog.querySelectorAll("[data-ldap-generated-result]")' in app_js
     assert 'window.history.replaceState(window.history.state, "", "/vcf-helper")' in app_js
     assert 'generateDialog.querySelector("[data-ldap-generate-user-count]")' in app_js
@@ -4754,6 +5101,53 @@ def test_local_user_reset_modal_endpoint_and_remove(client):
     assert deleted.status_code == 303
     refreshed = client.get("/users")
     assert "remove-me" not in refreshed.text
+
+
+def test_local_user_wizard_can_stage_password_and_enable_account(client):
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import User
+    from atlaso.app.services.local_users import has_pending_os_password
+
+    login(client)
+    users = client.get("/users")
+    csrf = users.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    created = client.post(
+        "/users",
+        data={
+            "username": "wizard-enabled",
+            "roles": ["viewer"],
+            "shell": "/bin/bash",
+            "password": "Strong-wizard1!",
+            "confirm_password": "Strong-wizard1!",
+            "enabled": "on",
+            "enabled_present": "1",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Grid": "1"},
+    )
+    assert created.status_code == 200, created.text
+    assert created.json()["user"]["enabled"] is True
+    with SessionLocal() as db:
+        user = db.execute(select(User).where(User.username == "wizard-enabled")).scalar_one()
+        assert user.enabled is True
+        assert has_pending_os_password(user)
+
+    rejected = client.post(
+        "/users",
+        data={
+            "username": "wizard-no-password",
+            "roles": ["viewer"],
+            "shell": "/sbin/nologin",
+            "enabled": "on",
+            "enabled_present": "1",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Grid": "1"},
+    )
+    assert rejected.status_code == 400
+    assert "Set a Photon password" in rejected.text
 
 
 def test_local_users_password_policy_staging_and_apply_redaction(client):
@@ -5356,7 +5750,9 @@ def test_dns_and_dhcp_pages_render(client):
     assert "core.atlaso.internal" in dns.text
     assert "<strong>Avoid .local for VCF.</strong>" not in dns.text
     assert "+ Domain" in dns.text
-    assert "New Domain" in dns.text
+    assert "Define the DNS domain" in dns.text
+    assert "data-dns-domain-wizard-add" in dns.text
+    assert "data-dns-domain-enabled-form" in dns.text
     assert "Import Hosts" in dns.text
     assert "Import Zone File" in dns.text
     assert "Reverse Zones" in dns.text
@@ -5404,6 +5800,9 @@ def test_dns_and_dhcp_pages_render(client):
 
     app_js = client.get("/static/app.js")
     assert app_js.status_code == 200
+    assert 'menu.querySelectorAll("[data-tag-option]")' in app_js.text
+    assert "candidate.dataset.tagOption === value" in app_js.text
+    assert 'value.replace(/"/g' not in app_js.text
     assert "cellEdited" in app_js.text
     assert "rowContextMenu" in app_js.text
     assert "newDnsRecordRow" in app_js.text
@@ -5489,29 +5888,19 @@ def test_dns_and_dhcp_pages_render(client):
     assert "data-apply-submit-tracker" not in app_js.text
     assert "index === 0 ? \"Applying\"" not in app_js.text
     assert "initializeDhcpScopesTable" in app_js.text
-    assert "autoSaveDhcpScope" in app_js.text
     assert "+ Add IP zone here" in app_js.text
-    assert "isUniqueNewDhcpScopeName" in app_js.text
-    assert "dhcpScopeCellEditable" in app_js.text
     assert "dhcpRangeFormatter" in app_js.text
-    assert "dhcpRangeTooltipRows" in app_js.text
-    assert "if (!String(data.name ?? \"\").trim())" in app_js.text
-    assert 'if (data.address_family === "ipv6")' in app_js.text
     assert 'address_family: ""' in app_js.text
     assert 'interface_name: ""' in app_js.text
     assert 'lease_time: ""' in app_js.text
-    assert 'if (!data.interface_name)' in app_js.text
-    assert "isUniqueNewDhcpScopeName(data, existingScopeNames)" in app_js.text
-    assert "cellMouseEnter" in app_js.text
-    assert "dhcpScopeFamilyEditable" in app_js.text
-    assert "if (!data.is_new)" in app_js.text
-    assert "dhcpDefaultFamilyForInterface(scopeDefaults, data.interface_name || defaultInterface)" in app_js.text
     assert "applyDhcpScopeInterfaceDefaults" in app_js.text
+    assert 'formSelector: "[data-dhcp-scope-form]"' in app_js.text
+    assert 'dialogId: "dhcp-scope-dialog"' in app_js.text
+    assert 'resourceName: "scope"' in app_js.text
+    assert 'prepareFormData: ({ body, form }) => body.set("address_family"' in app_js.text
     assert 'title: "Family"' in app_js.text
     assert "address_family" in app_js.text
     assert 'title: "NTP"' in app_js.text
-    assert "domainOptions" in app_js.text
-    assert "domainValues" in app_js.text
     assert "initializeDhcpOptionsTable" in app_js.text
     assert "autoSaveDhcpOption" in app_js.text
     assert "+ Add DHCP option here" in app_js.text
@@ -5628,7 +6017,16 @@ def test_new_record_rows_lock_defaults_until_required_field(client):
         app_js.text.index("function managedFirewallStatusFormatter")
     ]
     assert 'field: "enabled"' in firewall_block
-    assert 'editor: "tickCross"' in firewall_block
+    assert 'editor: "tickCross"' not in firewall_block
+    assert "initializeAtlasoResourceWizard({" in firewall_block
+    assert "supportsInlineEnabled" in app_js.text
+    assert 'editor: "tickCross"' in app_js.text[
+        app_js.text.index("const configuredColumns"):
+        app_js.text.index("const options =", app_js.text.index("const configuredColumns"))
+    ]
+    assert firewall_block.index('{ id: "state"') < firewall_block.index('{ id: "enablement"')
+    assert firewall_block.index('{ id: "enablement"') < firewall_block.index('{ id: "review"')
+    assert 'title: "Choose rule enablement"' in firewall_block
     assert ".new-record-row-pending" in app_css.text
     assert ".new-record-primary-cell" in app_css.text
 
@@ -5638,11 +6036,7 @@ def test_new_record_rows_lock_defaults_until_required_field(client):
         return app_js.text[start:end]
 
     expected_blocks = [
-        ("initializeFirewallRulesTable", "managedFirewallStatusFormatter", "name"),
-        ("initializeKmsKeysTable", "initializeCaSettings", "name"),
         ("initializeEsxiPxeHostsTable", "initializeHostsFileEditor", "hostname"),
-        ("initializeVcfDepotProfilesTable", "initializeVcfDepotSettings", "name"),
-        ("initializeVcfRegistryBundlesTable", "initializeVcfRegistrySettings", "name"),
         ("initializeRoutesWanRoutesTable", "initializeRoutesWanPoliciesTable", "destination_cidr"),
         ("initializeRoutesWanRoutingTable", "initializeRoutesWanNatTable", "name"),
         ("initializeRoutesWanNatTable", "initializeRoutesWanRoutesTable", "name"),
@@ -5657,7 +6051,8 @@ def test_new_record_rows_lock_defaults_until_required_field(client):
     ca_certificates_block = function_block("initializeCaCertificatesTable", "initializeFirewallRulesTable")
     assert "columns: lockNewRecordColumns([" not in ca_certificates_block
     assert "+ Add certificate here" in ca_certificates_block
-    assert "openCaCertificateModal" in ca_certificates_block
+    assert "initializeAtlasoResourceWizard({" in ca_certificates_block
+    assert 'editor:' not in ca_certificates_block
 
     dns_block = app_js.text[
         app_js.text.index("function initializeDnsRecordsTableElement"):
@@ -5719,7 +6114,8 @@ def test_dhcp_zone_defaults_follow_vlan_dns_and_interface_ntp_bindings(client):
     assert 'rowData.ntp_server = ntpDefault || "";' in app_js.text
     assert 'rowData.site_address = gateway || "";' in app_js.text
     assert 'rowData.prefix_length = Number.isInteger(prefix) ? prefix : "";' in app_js.text
-    assert 'if ((data.is_new && field === "name") || ["interface_name", "address_family"].includes(field)) {' in app_js.text
+    assert 'form?.elements.interface_name?.addEventListener("change", refreshNetworkDefaults);' in app_js.text
+    assert 'form?.elements.address_family?.addEventListener("change", refreshNetworkDefaults);' in app_js.text
 
 
 def test_dns_new_record_row_suggests_next_available_ipv4(client):
@@ -6152,13 +6548,35 @@ def test_certificate_authority_page_renders(client):
     assert "ca-certificates-table" in ca.text
     assert "ca-profiles-table" in ca.text
     assert "+ Add certificate here" in client.get("/static/app.js").text
-    assert 'id="ca-certificate-modal"' in ca.text
-    assert 'data-ca-certificate-modal-form' in ca.text
-    assert "Complete certificate details before creating a request." in ca.text
+    assert 'id="ca-certificate-dialog"' in ca.text
+    assert 'data-ca-certificate-form' in ca.text
+    assert "Define the certificate request" in ca.text
+    assert 'id="ca-csr-dialog"' in ca.text
+    assert "data-ca-csr-form" in ca.text
+    assert "data-ca-csr-open" in ca.text
+    assert 'data-atlaso-wizard-step="csr"' in ca.text
+    assert 'name="csr_text"' in ca.text
+    assert "function initializeCaCsrWizard()" in client.get("/static/app.js").text
+    certificate_wizard = ca.text.split('id="ca-certificate-dialog"', 1)[1].split("</dialog>", 1)[0]
+    identity_step = certificate_wizard.split('data-atlaso-wizard-step="identity"', 1)[1].split("</section>", 1)[0]
+    names_step = certificate_wizard.split('data-atlaso-wizard-step="names"', 1)[1].split("</section>", 1)[0]
+    assert 'class="form-stack"' in identity_step
+    assert 'class="form-grid"' not in identity_step
+    assert 'class="form-stack"' in names_step
+    assert 'class="form-grid"' not in names_step
+    assert 'data-atlaso-wizard-step="enablement"' in certificate_wizard
+    certificate_identity = certificate_wizard.split('data-atlaso-wizard-step="identity"', 1)[1].split("</section>", 1)[0]
+    assert 'name="description"' in certificate_identity
+    certificate_enablement = certificate_wizard.split('data-atlaso-wizard-step="enablement"', 1)[1].split("</section>", 1)[0]
+    assert 'name="description"' not in certificate_enablement
+    profile_wizard = ca.text.split('id="ca-profile-dialog"', 1)[1].split("</dialog>", 1)[0]
+    assert 'data-atlaso-wizard-step="enablement"' in profile_wizard
+    profile_identity = profile_wizard.split('data-atlaso-wizard-step="identity"', 1)[1].split("</section>", 1)[0]
+    assert 'name="description"' in profile_identity
     assert "Issued, CSR-based, and service-owned certificates are read-only." in ca.text
     assert "<th>Exports</th>" not in ca.text
     certificate_table_js = client.get("/static/app.js").text.split("function initializeCaCertificatesTable()", 1)[1].split("async function postKmsAction", 1)[0]
-    assert 'label: "Edit request"' in certificate_table_js
+    assert 'editLabel: "Edit request"' in certificate_table_js
     assert 'label: "Copy fingerprint"' in certificate_table_js
     assert 'action: (_event, row) => copyCaCertificateFingerprint(row)' in certificate_table_js
     assert 'label: "Export",' in certificate_table_js
@@ -6167,10 +6585,7 @@ def test_certificate_authority_page_renders(client):
     assert 'label: "Certificate chain"' in certificate_table_js
     assert 'label: "Private key"' in certificate_table_js
     assert 'title: "Exports"' not in certificate_table_js
-    assert re.search(
-        r'title: "Status",\s+field: "status",\s+editable: false,\s+width: 80,',
-        certificate_table_js,
-    )
+    assert re.search(r'title: "Status",\s+field: "status",\s+width: 100', certificate_table_js)
     assert 'formatter: (cell) => escapeHtml(cell.getValue() || "")' in certificate_table_js
     assert re.search(r'cssClass: "mono-text",\s+width: 480,', certificate_table_js)
     assert "value.slice(0, 12)" not in certificate_table_js
@@ -7654,6 +8069,11 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "HTTPS Repository" not in page.text
     assert "Download profiles" in page.text
     assert "VCFDT tasks" in page.text
+    depot_profile_wizard = page.text.split('id="vcf-depot-profile-dialog"', 1)[1].split("</dialog>", 1)[0]
+    assert 'data-atlaso-wizard-step="state"' not in depot_profile_wizard
+    assert 'name="status"' not in depot_profile_wizard
+    assert depot_profile_wizard.index('name="notes"') < depot_profile_wizard.index('data-atlaso-wizard-step="release"')
+    assert 'data-atlaso-wizard-step="enablement"' in depot_profile_wizard
     assert 'id="vcf-depot-tasks-table" class="tabulator-shell"' in page.text
     assert 'id="vcf-depot-task-log-modal"' in page.text
     assert 'class="terminal-note vcfdt-task-log-preview"' in page.text
@@ -8715,6 +9135,27 @@ def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path):
         assert "manual-secret-token" not in (job.result or "")
         assert profile and profile.status == "ready"
 
+    identity_edit = client.post(
+        f"/vcf-offline-depot/profiles/{profile_id}/edit",
+        data={
+            "csrf": csrf,
+            "name": "vcf-install",
+            "profile_type": "binaries",
+            "sku": "VCF",
+            "vcf_version": "9.1.0",
+            "binary_type": "INSTALL",
+            "automated_install": "on",
+            "enabled": "on",
+            "notes": "Status remains task-owned",
+        },
+        follow_redirects=False,
+    )
+    assert identity_edit.status_code == 303
+    with SessionLocal() as db:
+        profile = db.get(VcfDepotDownloadProfile, profile_id)
+        assert profile and profile.status == "ready"
+        assert profile.notes == "Status remains task-owned"
+
     task_log_page = client.get(f"/vcf-offline-depot/tasks/{payload['job_id']}/log")
     assert task_log_page.status_code == 200
     assert "VCFDT task log" in task_log_page.text
@@ -9458,6 +9899,17 @@ def test_physical_and_vlan_pages_render(client):
     assert "data-parent-options" in vlans.text
     assert "deleteVlanInterfaceFromMenu" in app_js
     assert "refreshNetworkSideStack" in app_js
+    refreshed_side_stack_js = app_js.split("function initializeRefreshedSideStack(sideStack)", 1)[1].split(
+        "async function refreshNetworkSideStack()", 1
+    )[0]
+    assert "initializeAutosaveForms(sideStack)" in refreshed_side_stack_js
+    assert "initializeSwitchFields(sideStack)" in refreshed_side_stack_js
+    assert "initializeServiceBindEditors(sideStack)" in refreshed_side_stack_js
+    assert "initializeDnsSettings(sideStack)" in refreshed_side_stack_js
+    refresh_network_side_stack_js = app_js.split("async function refreshNetworkSideStack()", 1)[1].split(
+        "async function autoSavePhysicalInterface", 1
+    )[0]
+    assert "initializeRefreshedSideStack(nextSideStack)" in refresh_network_side_stack_js
     assert "highlightConfigPreviews(nextSideStack)" in app_js
     assert "networkStateIcon" in app_js
     assert "operStateFormatter" in app_js
@@ -12191,6 +12643,12 @@ def test_dhcp_vlan_scope_can_be_created_without_dns_server(client):
     assert "data.lease_time" in required_block
     assert "data.domain_name" in required_block
     assert "data.dns_server" not in required_block
+    derived_range_block = app_js.split("function deriveDhcpLeaseRange", 1)[1].split(
+        "function isUniqueNewDhcpScopeName", 1
+    )[0]
+    assert "address >= start && address <= end" in derived_range_block
+    assert "addressesBeforeGateway" in derived_range_block
+    assert "addressesAfterGateway" in derived_range_block
 
 
 def test_dhcp_scope_family_cannot_change_after_create(client):
@@ -12360,6 +12818,97 @@ def test_dns_zone_create_adds_domain_tab(client):
     refreshed = client.get("/dns")
     assert "sitea.internal" in refreshed.text
     assert 'data-domain="sitea.internal"' in refreshed.text
+
+
+def test_dhcp_option_wizard_create_and_direct_enablement_edit(client):
+    login(client)
+    page = client.get("/dhcp")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    created = client.post(
+        "/dhcp/options",
+        data={
+            "scope_id": "__global__",
+            "option_code": "option:ntp-server",
+            "value": "192.168.50.1",
+            "description": "wizard option",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Grid": "1"},
+    )
+    assert created.status_code == 200, created.text
+    option = created.json()["option"]
+    assert option["enabled"] is True
+    edited = client.post(
+        f"/dhcp/options/{option['id']}/edit",
+        data={
+            "scope_id": "__global__",
+            "option_code": option["option_code"],
+            "value": option["value"],
+            "description": option["description"],
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Grid": "1"},
+    )
+    assert edited.status_code == 200
+    assert edited.json()["option"]["enabled"] is False
+
+
+def test_dns_zone_disable_keeps_database_records_but_excludes_rendered_state(client):
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord, DnsSettings
+
+    login(client)
+    page = client.get("/dns")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    created = client.post(
+        "/dns/zones",
+        data={"domain": "stored.internal", "enabled": "on", "enabled_present": "1", "csrf": csrf},
+        headers={"X-Atlaso-Grid": "1"},
+    )
+    assert created.status_code == 200
+    assert created.json()["domain"] == {"name": "stored.internal", "enabled": True}
+    record = client.post(
+        "/dns/records",
+        data={
+            "hostname": "app",
+            "domain": "stored.internal",
+            "record_type": "A",
+            "address": "192.168.50.210",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+        follow_redirects=False,
+    )
+    assert record.status_code == 303
+
+    disabled = client.post(
+        "/dns/zones/enabled",
+        data={"domain": "stored.internal", "csrf": csrf},
+        headers={"X-Atlaso-Grid": "1"},
+    )
+    assert disabled.status_code == 200
+    assert disabled.json()["domain"]["enabled"] is False
+
+    refreshed = client.get("/dns")
+    assert "stored.internal · disabled" in refreshed.text
+    assert "app.stored.internal" in refreshed.text
+    assert "domain=stored.internal" not in refreshed.text
+    with SessionLocal() as db:
+        settings = db.execute(select(DnsSettings)).scalar_one()
+        assert "stored.internal" in settings.disabled_domains
+        assert db.execute(select(DnsRecord).where(DnsRecord.hostname == "app.stored.internal")).scalar_one()
+
+    enabled = client.post(
+        "/dns/zones/enabled",
+        data={"domain": "stored.internal", "enabled": "on", "csrf": csrf},
+        headers={"X-Atlaso-Grid": "1"},
+    )
+    assert enabled.status_code == 200
+    assert enabled.json()["domain"]["enabled"] is True
+    assert "domain=stored.internal" in client.get("/dns").text
 
 
 def test_dns_reverse_zones_are_closed_native_disclosures_with_authority_summary(client):

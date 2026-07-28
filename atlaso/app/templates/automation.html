@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "partials/resource_wizard.html" import resource_wizard %}
 {% block page_title %}Automation{% endblock %}
 {% block content %}
 <section class="panel" id="automation-workspace">
@@ -125,10 +126,69 @@
   <div id="automation-scripts-table" class="tabulator-grid compact-grid"></div>
   <p id="automation-script-grid-status" class="muted automation-grid-status hidden" role="status"></p>
   <script type="application/json" id="automation-scripts-data">{{ automation_script_rows|tojson }}</script>
-  <form id="automation-script-create-form" class="hidden" action="/automation/scripts" method="post">
+  {% set automation_script_steps = [
+    {"id": "identity", "label": "Script", "summary": "Name and purpose"},
+    {"id": "runtime", "label": "Runtime", "summary": "Interpreter and timeout"},
+    {"id": "source", "label": "Source", "summary": "First immutable revision"},
+    {"id": "review", "label": "Review", "summary": "Confirm disabled revision"}
+  ] %}
+  {% call resource_wizard(
+    "automation-script-create-dialog",
+    "automation-script-create-form",
+    "/automation/scripts",
+    automation_script_steps,
+    "Add managed script",
+    "Define the script and its first immutable revision.",
+    "Create managed script"
+  ) %}
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
-    <input type="hidden" name="name"><input type="hidden" name="description"><input type="hidden" name="interpreter"><input type="hidden" name="timeout_seconds"><textarea name="content"></textarea>
-  </form>
+    <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity">
+      <div class="form-grid">
+        <label><span class="field-label"><span>Script name</span><button class="help-icon" type="button" data-help="Unique operator-visible name for the managed script and its immutable revision history.">i</button></span><input name="name" required maxlength="160" autocomplete="off"></label>
+        <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Optional purpose or operational note shown in the Managed Scripts grid.">i</button></span><input name="description" maxlength="500" autocomplete="off"></label>
+      </div>
+    </section>
+    <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="runtime">
+      <div class="form-grid">
+        <label><span class="field-label"><span>Interpreter</span><button class="help-icon" type="button" data-help="Selects the allowlisted unprivileged runtime for this immutable revision.">i</button></span><select name="interpreter" data-automation-script-create-interpreter><option value="bash">Bash</option><option value="powershell">PowerShell</option><option value="python">Python</option></select></label>
+        <label><span class="field-label"><span>Timeout seconds</span><button class="help-icon" type="button" data-help="Maximum runtime from 1 second through 24 hours before Atlaso stops the transient unit.">i</button></span><input type="number" name="timeout_seconds" min="1" max="86400" value="3600" required></label>
+      </div>
+      <div class="alert warning">Managed scripts run as the unprivileged <code>atlaso-automation</code> account without sudo or Atlaso secrets.</div>
+    </section>
+    <section class="vcf-sddc-step-page automation-script-source-step hidden" data-atlaso-wizard-step="source">
+      <div class="automation-script-editor">
+        <div class="automation-script-editor-head">
+          <span class="field-label"><span>Script content</span><button class="help-icon" type="button" data-help="Enter code or load a local script file. Atlaso stores this content as immutable revision 1.">i</button></span>
+          <span class="automation-script-editor-actions">
+            <span class="status-pill" data-automation-script-create-language>bash</span>
+            <button class="button secondary icon-button" type="button" data-automation-script-create-fullscreen aria-label="Open full-screen script editor" title="Open full-screen editor">⛶</button>
+            <label class="file-upload-control compact-file-upload automation-script-import-control">
+              <input class="file-upload-input" type="file" accept=".sh,.bash,.py,.ps1,.txt,text/plain" data-automation-script-create-file>
+              <span class="file-upload-surface"><span class="file-upload-copy"><strong>Import script file</strong></span></span>
+            </label>
+          </span>
+        </div>
+        <textarea id="automation-script-create-content" name="content" class="code-editor-textarea" rows="20" spellcheck="false" data-codemirror-editor data-codemirror-language="shell" aria-label="Bash managed script source code"></textarea>
+        <p class="muted automation-script-import-status" data-automation-script-create-import-status>Paste code or import a .sh, .bash, .py, .ps1, or .txt file (maximum 1 MiB).</p>
+      </div>
+    </section>
+    <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review">
+      <div class="settings-list" data-atlaso-resource-review></div>
+      <div class="alert warning">Creation stores immutable revision 1 in the disabled state. Review it before enabling or scheduling it.</div>
+    </section>
+  {% endcall %}
+  <dialog id="automation-script-create-fullscreen-dialog" class="confirm-modal wide-modal automation-script-fullscreen-dialog" aria-labelledby="automation-script-create-fullscreen-title">
+    <div class="confirm-modal-panel">
+      <div class="automation-script-fullscreen-toolbar">
+        <h2 id="automation-script-create-fullscreen-title">Script editor</h2>
+        <span class="status-pill" data-automation-script-fullscreen-language>bash</span>
+        <button class="button secondary icon-button" type="button" data-automation-script-fullscreen-close aria-label="Close full-screen script editor" title="Return to wizard">✕</button>
+      </div>
+      <div class="automation-script-editor automation-script-fullscreen-editor">
+        <textarea id="automation-script-create-fullscreen-content" class="code-editor-textarea" rows="30" spellcheck="false" data-codemirror-editor data-codemirror-language="shell" aria-label="Full-screen Bash managed script source code"></textarea>
+      </div>
+    </div>
+  </dialog>
   <dialog id="automation-script-modal" class="confirm-modal wide-modal" aria-labelledby="automation-script-modal-title">
     <div class="confirm-modal-panel">
       <div class="confirm-modal-body">

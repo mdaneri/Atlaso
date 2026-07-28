@@ -23,6 +23,11 @@ This verified appliance view provides visual orientation before you begin.
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+Select **Add rule here** or open an existing operator rule to use the five-step guided workflow. Rule identity, traffic
+matching, priority and notes, enablement, and final review are separate decisions. The dedicated **Enablement** step
+makes clear that enabling a rule changes rendered desired state only; enforcement still waits for the global Firewall
+appliance-apply unit.
+
 ## Review safely
 
 1. Confirm management access remains allowed from the intended source.

@@ -1033,6 +1033,11 @@ def render_dnsmasq_config(
 ) -> str:
     ensure_dns_authoritative_defaults(dns_settings)
     domains = split_domains(dns_settings.domain) or ["atlaso.internal"]
+    disabled_domains = [
+        domain
+        for domain in split_domains(dns_settings.disabled_domains)
+        if domain not in domains
+    ]
     scopes = dhcp_scopes if dhcp_scopes else [_legacy_scope(dhcp_settings)]
     lines = [
         "# Managed by Atlaso. Local changes may be overwritten.",
@@ -1092,6 +1097,9 @@ def render_dnsmasq_config(
         lines.append(f"server=/{forwarder['domain']}/{forwarder['server']}")
     for record in dns_records:
         if record.enabled is False:
+            continue
+        hostname = record.hostname.strip().strip(".").lower()
+        if any(hostname == domain or hostname.endswith(f".{domain}") for domain in disabled_domains):
             continue
         record_type = record.record_type.upper()
         if dns_settings.authoritative and record_type in {"A", "AAAA"} and record.hostname.strip().strip(".").lower() == authoritative_server_name(dns_settings):

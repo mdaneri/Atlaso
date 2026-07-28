@@ -294,14 +294,15 @@ status: current
   standard enable/disable control, while Run now, Edit, and Delete belong in the row context menu. Executions must link
   every scheduled job to `/tasks`.
 - Managed scripts are immutable revisions executed as the unprivileged `atlaso-automation` account through the
-  constrained helper and transient systemd units. Grid edits to revision-owned fields create a new disabled revision.
-  Source editing uses the large CodeMirror modal with local-file import. The revision cell opens a near-full-window,
-  two-column comparison when at least two revisions exist; use the light Atlaso modal style, list every revision with
-  its creation date and state in base/comparison selectors, keep corresponding rows and line numbers aligned, collapse
-  long unchanged runs, color additions/removals, and use a Prism grammar selected from the interpreter. Manual execution
-  is labeled **Run latest revision**, opens a parameter modal before creating the task, and uses the same literal
-  argument syntax as schedules: backslash continuation for Bash/Python and backtick continuation for PowerShell. Never
-  evaluate arguments through a second shell and never accept secrets as parameters.
+  constrained helper and transient systemd units. Creation uses the shared four-step wizard for identity, runtime,
+  initial source, and review, and stores revision 1 disabled. Grid edits to revision-owned fields create a new disabled
+  revision. Existing-script source editing uses the large CodeMirror modal with local-file import. The revision cell
+  opens a near-full-window, two-column comparison when at least two revisions exist; use the light Atlaso modal style,
+  list every revision with its creation date and state in base/comparison selectors, keep corresponding rows and line
+  numbers aligned, collapse long unchanged runs, color additions/removals, and use a Prism grammar selected from the
+  interpreter. Manual execution is labeled **Run latest revision**, opens a parameter modal before creating the task,
+  and uses the same literal argument syntax as schedules: backslash continuation for Bash/Python and backtick
+  continuation for PowerShell. Never evaluate arguments through a second shell and never accept secrets as parameters.
 - VCF/ESX password vaults are admin-only and encrypted with the appliance secrets key. A managed-script job carries
   the selected vault ID plus its non-reusable scope fingerprint; the worker must verify both before decryption. Stage
   decrypted values under `/run`, pass them through systemd `LoadCredential`, remove them after

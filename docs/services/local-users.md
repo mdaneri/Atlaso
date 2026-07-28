@@ -25,10 +25,13 @@ This verified appliance view provides visual orientation before you begin.
 
 ## Manage an account
 
-1. Create a unique username and assign the least-privileged suitable role.
-2. Set or rotate the password through the protected form.
-3. Disable an account when access should be suspended without deleting its history.
-4. Use the shared confirmation dialog before permanent deletion.
+1. Select **Add user here**, create a unique username, and choose the least-privileged suitable roles.
+2. Choose Photon shell and Web SSH access as separate decisions.
+3. Set a policy-compliant Photon password in the guided workflow, or leave both password fields blank to postpone and
+   keep the new account disabled.
+4. Choose account enablement explicitly. Existing accounts can also be enabled or disabled directly from the grid;
+   enabling still requires a staged or previously applied Photon password.
+5. Use the shared confirmation dialog before permanent deletion.
 
 Passwords are never displayed again or stored in audit details. Do not reuse the Photon build password or publish test
 credentials in screenshots.

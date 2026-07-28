@@ -30,6 +30,9 @@ This verified appliance view provides visual orientation before you begin.
    [Appliance Apply](../operate/appliance-apply.md).
 5. Run downloads as tasks and follow their terminal result on [Tasks](../operate/tasks.md).
 
+Download-profile creation uses a reviewed wizard. Notes stay with profile identity, task execution owns lifecycle
+status, and profile enablement has its own step so availability is an explicit decision before review.
+
 Do not place depot credentials or authenticated URLs in task notes, manifests, logs, or screenshots.
 
 ## Verify

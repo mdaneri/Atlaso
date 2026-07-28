@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "partials/resource_wizard.html" import resource_wizard %}
 {% block page_title %}VCF Offline Depot{% endblock %}
 {% block content %}
 <section class="split-workspace vcf-offline-depot-workspace">
@@ -43,7 +44,7 @@
         <div class="panel-head table-head">
           <div>
             <h2>Download profiles</h2>
-            <p class="muted">Each row can be started manually. Development appliances record the VCFDT command intent as a dry-run job.</p>
+            <p class="muted">Open a profile to configure its release and content filters. Start and preview actions remain available from the row menu.</p>
           </div>
           <div class="inline-action-row">
             <span class="status-pill muted">{{ vcf_depot_profiles|length }} rows</span>
@@ -322,6 +323,45 @@
     </div>
   </aside>
 </section>
+{% set vcf_depot_profile_steps = [
+  {"id": "identity", "label": "Profile", "summary": "Name, type, and notes"},
+  {"id": "release", "label": "Release", "summary": "SKU, release, and mode"},
+  {"id": "filter", "label": "Content", "summary": "Component and platform filters"},
+  {"id": "enablement", "label": "Enablement", "summary": "Profile availability"},
+  {"id": "review", "label": "Review", "summary": "Confirm desired state"}
+] %}
+{% call resource_wizard(
+  "vcf-depot-profile-dialog",
+  "vcf-depot-profile-form",
+  "/vcf-offline-depot/profiles",
+  vcf_depot_profile_steps,
+  "Define the VCFDT download profile",
+  "Name the profile and select the VCF Download Tool content workflow.",
+  "Create download profile"
+) %}
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="record_id" value="">
+  <section data-atlaso-wizard-step="identity"><div class="form-grid">
+    <label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Stable operator-visible name for this VCFDT command profile.">i</button></span><input name="name" required></label>
+    <label><span class="field-label"><span>Profile type</span><button class="help-icon" type="button" data-help="Choose binaries, metadata, or ESX content. ESX requires an activation code.">i</button></span><select name="profile_type"><option value="binaries">Binaries</option><option value="metadata">Metadata</option><option value="esx">ESX</option></select></label>
+  </div>
+  <label><span class="field-label"><span>Notes</span><button class="help-icon" type="button" data-help="Optional operator context for the profile.">i</button></span><input name="notes"></label>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="release"><div class="form-grid">
+    <label><span class="field-label"><span>SKU</span><button class="help-icon" type="button" data-help="VCF or VVF product entitlement.">i</button></span><select name="sku"><option value="VCF">VCF</option><option value="VVF">VVF</option></select></label>
+    <label><span class="field-label"><span>VCF version</span><button class="help-icon" type="button" data-help="Release selector passed to VCFDT.">i</button></span><input name="vcf_version" required></label>
+    <label><span class="field-label"><span>Binary type</span><button class="help-icon" type="button" data-help="Install or upgrade binary catalog.">i</button></span><select name="binary_type"><option value="INSTALL">INSTALL</option><option value="UPGRADE">UPGRADE</option></select></label>
+    <label><span class="field-label"><span>Download mode</span><button class="help-icon" type="button" data-help="Mutually exclusive VCFDT selection for automated install, upgrades, or patches.">i</button></span><select name="download_mode"><option value="automated_install">Automated install</option><option value="upgrades_only">Upgrades only</option><option value="patches_only">Patches only</option></select></label>
+  </div></section>
+  <section class="hidden" data-atlaso-wizard-step="filter"><div class="form-grid">
+    <label><span class="field-label"><span>Component</span><button class="help-icon" type="button" data-help="Optional VCF component filter. Leave blank for all components.">i</button></span><select name="component"><option value="">All components</option>{% for component in vcf_depot_components %}<option value="{{ component.value }}">{{ component.label }}</option>{% endfor %}</select></label>
+    <label><span class="field-label"><span>Component version</span><button class="help-icon" type="button" data-help="Optional exact component release filter.">i</button></span><input name="component_version"></label>
+  </div>
+  <label><span class="field-label"><span>Disabled ESX platforms</span><button class="help-icon" type="button" data-help="One platform identifier per line, excluded from ESX downloads.">i</button></span><textarea name="disabled_platforms" rows="4" placeholder="One platform identifier per line"></textarea></label>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="enablement"><label class="switch-field"><span class="field-label"><span>Profile enabled</span><button class="help-icon" type="button" data-help="Requires a staged VCFDT package and valid credential before a task can start.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label></section>
+  <section class="hidden" data-atlaso-wizard-step="review"><div class="settings-list" data-atlaso-resource-review></div><div class="alert warning">Saving stages the VCFDT profile only. Downloads are explicit row actions and appliance mutation remains separately controlled.</div></section>
+{% endcall %}
 <dialog id="vcf-depot-task-log-modal" class="confirm-modal" aria-labelledby="vcf-depot-task-log-modal-title">
   <div class="confirm-modal-panel form-stack">
     <div class="confirm-modal-body">

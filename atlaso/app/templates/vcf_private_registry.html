@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "partials/resource_wizard.html" import resource_wizard %}
 {% block page_title %}VCF Private Registry{% endblock %}
 {% block content %}
 <section class="split-workspace">
@@ -38,7 +39,7 @@
       <div class="panel-head table-head">
         <div>
           <h2>Supervisor Service bundles</h2>
-          <p class="muted">Each row records a source bundle and the target Harbor reference used by the relocation task preview.</p>
+          <p class="muted">Browse bundles in the grid. Open a row to configure its source, Harbor target, and relocation state.</p>
         </div>
         <span class="status-pill muted">{{ vcf_registry_bundles|length }} rows</span>
       </div>
@@ -241,4 +242,34 @@
     </div>
   </aside>
 </section>
+{% set vcf_registry_bundle_steps = [
+  {"id": "source", "label": "Source", "summary": "Name and upstream reference"},
+  {"id": "target", "label": "Target", "summary": "Internal Harbor reference"},
+  {"id": "state", "label": "State", "summary": "Lifecycle and enablement"},
+  {"id": "review", "label": "Review", "summary": "Confirm desired state"}
+] %}
+{% call resource_wizard(
+  "vcf-registry-bundle-dialog",
+  "vcf-registry-bundle-form",
+  "/vcf-private-registry/bundles",
+  vcf_registry_bundle_steps,
+  "Define the Supervisor Service bundle",
+  "Name the bundle and identify the upstream source that Atlaso should relocate.",
+  "Create bundle"
+) %}
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="record_id" value="">
+  <section data-atlaso-wizard-step="source"><div class="form-grid">
+    <label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Stable operator-visible name for this Supervisor Service relocation bundle.">i</button></span><input name="name" required></label>
+    <label><span class="field-label"><span>Source reference</span><button class="help-icon" type="button" data-help="Upstream bundle or image reference used by the relocation preview.">i</button></span><input name="source_reference" required></label>
+  </div></section>
+  <section class="hidden" data-atlaso-wizard-step="target">
+    <label><span class="field-label"><span>Target reference</span><button class="help-icon" type="button" data-help="Internal Harbor reference. Leave blank to derive it from the registry project and source name.">i</button></span><input name="target_reference" placeholder="Derived when blank"></label>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="state"><div class="form-grid">
+    <label><span class="field-label"><span>Status</span><button class="help-icon" type="button" data-help="Desired relocation lifecycle used in operator previews.">i</button></span><select name="status"><option value="planned">Planned</option><option value="ready">Ready</option><option value="relocated">Relocated</option><option value="blocked">Blocked</option></select></label>
+    <label class="switch-field"><span class="field-label"><span>Bundle enabled</span><button class="help-icon" type="button" data-help="Enabled bundles enter the Harbor relocation desired-state preview.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
+  </div><label><span class="field-label"><span>Notes</span><button class="help-icon" type="button" data-help="Optional operator context for the relocation bundle.">i</button></span><input name="notes"></label></section>
+  <section class="hidden" data-atlaso-wizard-step="review"><div class="settings-list" data-atlaso-resource-review></div><div class="alert warning">Saving changes registry desired state only. Harbor relocation remains controlled by the applicable appliance workflow.</div></section>
+{% endcall %}
 {% endblock %}
