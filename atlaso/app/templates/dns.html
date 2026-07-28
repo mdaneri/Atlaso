@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "partials/resource_wizard.html" import resource_wizard %}
 {% block page_title %}DNS{% endblock %}
 {% block content %}
 <section class="split-workspace">
@@ -18,13 +19,13 @@
     <div class="tab-buttons zone-tabs" role="tablist" aria-label="DNS domains">
       {% for group in dns_record_groups %}
         {% if loop.first %}
-          <button class="tab-button active" type="button" role="tab" data-tab-target="dns-zone-{{ loop.index }}" data-domain="{{ group.domain }}" aria-selected="true">{{ group.domain }}</button>
+          <button class="tab-button active" type="button" role="tab" data-tab-target="dns-zone-{{ loop.index }}" data-domain="{{ group.domain }}" aria-selected="true">{{ group.domain }}{% if not group.enabled %} · disabled{% endif %}</button>
         {% else %}
-          <button class="tab-button" type="button" role="tab" data-tab-target="dns-zone-{{ loop.index }}" data-domain="{{ group.domain }}" aria-selected="false">{{ group.domain }}</button>
+          <button class="tab-button" type="button" role="tab" data-tab-target="dns-zone-{{ loop.index }}" data-domain="{{ group.domain }}" aria-selected="false">{{ group.domain }}{% if not group.enabled %} · disabled{% endif %}</button>
         {% endif %}
       {% endfor %}
       <button class="tab-button" type="button" role="tab" data-tab-target="dns-reverse-zones" aria-controls="dns-reverse-zones" aria-selected="false">Reverse Zones</button>
-      <button class="tab-button" type="button" role="tab" data-tab-target="dns-zone-new" aria-controls="dns-zone-new" aria-selected="false">+ Domain</button>
+      <button class="tab-button" type="button" data-dns-domain-wizard-add aria-label="Add DNS domain">+ Domain</button>
     </div>
 
     <div class="tab-panels">
@@ -36,6 +37,14 @@
               <span class="muted">relative hostnames are saved inside this domain</span>
             </div>
             <div class="zone-actions">
+              <form action="/dns/zones/enabled" method="post" data-dns-domain-enabled-form>
+                <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                <input type="hidden" name="domain" value="{{ group.domain }}">
+                <label class="switch-field inline-switch">
+                  <span class="field-label"><span>Domain enabled</span><button class="help-icon" type="button" data-help="Disabled domains and their records remain in Atlaso's database but are excluded from rendered dnsmasq desired state.">i</button></span>
+                  <input class="switch-input" type="checkbox" name="enabled" {{ "checked" if group.enabled else "" }}><span class="switch-track" aria-hidden="true"></span>
+                </label>
+              </form>
               <span class="status-pill muted">{{ group.records | length }} records</span>
               <form
                 action="/dns/zones/delete"
@@ -252,22 +261,6 @@
         {% endif %}
       </div>
 
-      <div id="dns-zone-new" class="tab-panel" role="tabpanel" hidden>
-        <div class="empty-state zone-create">
-          <div>
-            <h2>New Domain</h2>
-            <p class="muted">Create a managed DNS domain. A tab will be added for records, hosts import, and zone file editing.</p>
-          </div>
-          <form class="form-stack" action="/dns/zones" method="post">
-            <input type="hidden" name="csrf" value="{{ csrf_token }}">
-            <label>
-              <span class="field-label"><span>Domain name</span><button class="help-icon" type="button" data-help="Use an internal DNS suffix such as atlaso.internal or sitea.internal. Avoid .local for VCF labs.">i</button></span>
-              <input name="domain" placeholder="sitea.internal">
-            </label>
-            <button class="button primary" type="submit">Create domain</button>
-          </form>
-        </div>
-      </div>
     </div>
   </div>
 
@@ -395,4 +388,36 @@
     </div>
   </aside>
 </section>
+
+{% set dns_domain_steps = [
+  {"id": "identity", "label": "Domain", "summary": "Managed DNS suffix"},
+  {"id": "enablement", "label": "Enablement", "summary": "Desired zone state"},
+  {"id": "review", "label": "Review", "summary": "Confirm desired state"}
+] %}
+{% call resource_wizard(
+  "dns-domain-dialog",
+  "dns-domain-form",
+  "/dns/zones",
+  dns_domain_steps,
+  "Define the DNS domain",
+  "Choose the managed DNS suffix that will own its records and zone-file tools.",
+  "Create DNS domain"
+) %}
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="enabled_present" value="1">
+  <section data-atlaso-wizard-step="identity">
+    <label>
+      <span class="field-label"><span>Domain name</span><button class="help-icon" type="button" data-help="Use an internal DNS suffix such as atlaso.internal or sitea.internal. Avoid .local for VCF labs.">i</button></span>
+      <input name="domain" placeholder="sitea.internal" required>
+    </label>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="enablement">
+    <label class="switch-field"><span class="field-label"><span>Domain enabled</span><button class="help-icon" type="button" data-help="Enabled domains enter rendered dnsmasq desired state after validation.">i</button></span><input class="switch-input" type="checkbox" name="enabled" checked><span class="switch-track" aria-hidden="true"></span></label>
+    <div class="alert warning">Disabled domains and records remain stored in Atlaso but are excluded from rendered dnsmasq desired state.</div>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="review">
+    <div class="settings-list" data-atlaso-resource-review></div>
+    <div class="alert warning">Creation saves DNS desired state only. dnsmasq enforcement waits for global appliance apply.</div>
+  </section>
+{% endcall %}
 {% endblock %}

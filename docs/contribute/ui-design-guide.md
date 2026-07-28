@@ -134,6 +134,12 @@ workflow.
 The Tabulator collection remains visible when the wizard is closed. Launch add from the bottom add row. Launch edit from
 row double-click or the row context menu when both are appropriate and discoverable.
 
+Keep an ordinary desired-state **Enabled** boolean directly editable in its collection even when the rest of the record
+uses a wizard. Use the standard tick/cross formatter and `tickCross` editor, save the complete validated record through
+its existing edit route, restore the previous value on failure, and never invoke appliance enforcement. A security or
+lifecycle boundary that requires credentials, confirmation, or an irreversible action is not an ordinary Enabled
+boolean and keeps its established guarded workflow.
+
 Every wizard must:
 
 - use the shared Atlaso wizard panel, step rail, controls, spacing, and status presentation;

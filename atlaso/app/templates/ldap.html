@@ -122,6 +122,7 @@
             </div>
           </div>
           <div class="settings-list compact-list">
+            {% if ldap_selected_organization.description %}<div><span>Description</span><strong>{{ ldap_selected_organization.description }}</strong></div>{% endif %}
             <div><span>Suffix</span><strong>{{ ldap_selected_organization.suffix_dn }}</strong></div>
             <div><span>Users base</span><strong>ou=users,{{ ldap_selected_organization.suffix_dn }}</strong></div>
             <div><span>Groups base</span><strong>ou=groups,{{ ldap_selected_organization.suffix_dn }}</strong></div>
@@ -208,8 +209,9 @@
 </section>
 
 {% set ldap_organization_steps = [
-  {"id": "identity", "label": "Organization", "summary": "Name and desired state"},
+  {"id": "identity", "label": "Organization", "summary": "Name and description"},
   {"id": "directory", "label": "Directory", "summary": "Slug and isolated suffix"},
+  {"id": "enablement", "label": "Enablement", "summary": "Desired lifecycle state"},
   {"id": "review", "label": "Review", "summary": "Confirm bind identity creation"}
 ] %}
 {% call resource_wizard(
@@ -223,9 +225,9 @@
 ) %}
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
   <section data-atlaso-wizard-step="identity">
-    <div class="form-grid">
+    <div class="form-stack">
       <label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Operator-facing VCF organization label stored in Atlaso.">i</button></span><input name="name" required maxlength="160" autocomplete="off"></label>
-      <label class="switch-field"><span class="field-label"><span>Enabled</span><button class="help-icon" type="button" data-help="Includes this organization database in the next global LDAP apply.">i</button></span><input class="switch-input" type="checkbox" name="enabled" checked><span class="switch-track" aria-hidden="true"></span></label>
+      <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Operator note describing the VCF organization or directory purpose.">i</button></span><textarea name="description" rows="3" maxlength="1000"></textarea></label>
     </div>
   </section>
   <section class="hidden" data-atlaso-wizard-step="directory">
@@ -235,11 +237,106 @@
     </div>
     <div class="alert warning">Atlaso creates a separate LDAP database plus a one-time read-only VCF bind credential for this suffix.</div>
   </section>
+  <section class="hidden" data-atlaso-wizard-step="enablement">
+    <label class="switch-field"><span class="field-label"><span>Organization enabled</span><button class="help-icon" type="button" data-help="Includes this organization database in the next global LDAP apply. Disabled organizations remain in Atlaso desired-state storage.">i</button></span><input class="switch-input" type="checkbox" name="enabled" checked><span class="switch-track" aria-hidden="true"></span></label>
+  </section>
   <section class="hidden" data-atlaso-wizard-step="review">
     <div class="settings-list" data-atlaso-resource-review></div>
     <div class="alert warning">The bind password is shown once after creation. LDAP host mutation remains part of global Appliance Apply.</div>
   </section>
 {% endcall %}
+
+{% if ldap_selected_organization %}
+{% set ldap_user_steps = [
+  {"id": "identity", "label": "Identity", "summary": "UID and display name"},
+  {"id": "contact", "label": "Contact", "summary": "Name and contact attributes"},
+  {"id": "password", "label": "Password", "summary": "Optional staged credential"},
+  {"id": "enablement", "label": "Enablement", "summary": "Desired account state"},
+  {"id": "review", "label": "Review", "summary": "Confirm directory account"}
+] %}
+{% call resource_wizard(
+  "ldap-user-dialog",
+  "ldap-user-form",
+  "/ldap/organizations/" ~ ldap_selected_organization.id ~ "/users",
+  ldap_user_steps,
+  "Define the LDAP user",
+  "Create or update an account in " ~ ldap_selected_organization.name ~ ".",
+  "Create LDAP user"
+) %}
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="record_id" value="">
+  <input type="hidden" name="password_confirmation_present" value="1">
+  <section data-atlaso-wizard-step="identity">
+    <div class="form-stack">
+      <label><span class="field-label"><span>UID</span><button class="help-icon" type="button" data-help="Stable lowercase LDAP login identifier within this organization.">i</button></span><input name="uid" required maxlength="100" autocomplete="off"></label>
+      <label><span class="field-label"><span>Display name</span><button class="help-icon" type="button" data-help="Human-readable name shown to operators and directory clients. Leave blank to derive it from the name fields.">i</button></span><input name="display_name" maxlength="180" autocomplete="off"></label>
+    </div>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="contact">
+    <div class="form-stack">
+      <label><span class="field-label"><span>Given name</span><button class="help-icon" type="button" data-help="Directory givenName attribute.">i</button></span><input name="given_name" maxlength="120" autocomplete="off"></label>
+      <label><span class="field-label"><span>Surname</span><button class="help-icon" type="button" data-help="Directory sn attribute. Leave blank to use the UID.">i</button></span><input name="surname" maxlength="120" autocomplete="off"></label>
+      <label><span class="field-label"><span>Email</span><button class="help-icon" type="button" data-help="Optional directory mail attribute.">i</button></span><input type="email" name="email" maxlength="240" autocomplete="off"></label>
+      <label><span class="field-label"><span>Telephone</span><button class="help-icon" type="button" data-help="Optional directory telephoneNumber attribute.">i</button></span><input name="telephone" maxlength="80" autocomplete="off"></label>
+    </div>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="password">
+    <div class="form-stack">
+      <label><span class="field-label"><span>Password</span><button class="help-icon" type="button" data-help="Optional credential staged only until global LDAP apply. Leave blank to postpone password setup.">i</button></span><input type="password" name="password" autocomplete="new-password"></label>
+      <label><span class="field-label"><span>Confirm password</span><button class="help-icon" type="button" data-help="Repeat the staged password exactly.">i</button></span><input type="password" name="confirm_password" autocomplete="new-password"></label>
+    </div>
+    <div class="alert warning">Leave both fields blank to postpone password setup. An enabled user without an applied or staged password will block LDAP apply validation.</div>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="enablement">
+    <label class="switch-field"><span class="field-label"><span>User enabled</span><button class="help-icon" type="button" data-help="Includes this account in the next global LDAP apply. The record remains in Atlaso when disabled.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="review">
+    <div class="settings-list" data-atlaso-resource-review></div>
+    <div class="alert warning">Saving updates LDAP desired state. Host mutation remains part of global Appliance Apply.</div>
+  </section>
+{% endcall %}
+
+{% set ldap_group_steps = [
+  {"id": "identity", "label": "Group", "summary": "Name and description"},
+  {"id": "membership", "label": "Members", "summary": "Users and nested groups"},
+  {"id": "enablement", "label": "Enablement", "summary": "Desired group state"},
+  {"id": "review", "label": "Review", "summary": "Confirm directory group"}
+] %}
+{% call resource_wizard(
+  "ldap-group-dialog",
+  "ldap-group-form",
+  "/ldap/organizations/" ~ ldap_selected_organization.id ~ "/groups",
+  ldap_group_steps,
+  "Define the LDAP group",
+  "Create or update a group in " ~ ldap_selected_organization.name ~ ".",
+  "Create LDAP group"
+) %}
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="record_id" value="">
+  <input type="hidden" name="members_present" value="1">
+  <section data-atlaso-wizard-step="identity">
+    <div class="form-stack">
+      <label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Unique LDAP common name within this organization.">i</button></span><input name="name" required maxlength="120" autocomplete="off"></label>
+      <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Operator and directory description of the group purpose.">i</button></span><textarea name="description" rows="3"></textarea></label>
+    </div>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="membership">
+    <label><span class="field-label"><span>Members</span><button class="help-icon" type="button" data-help="Select users or nested groups from this organization. Atlaso rejects membership cycles.">i</button></span>
+      <select name="members" multiple size="10">
+        {% for user in ldap_users %}<option value="user:{{ user.id }}">User: {{ user.uid }}</option>{% endfor %}
+        {% for group in ldap_groups %}<option value="group:{{ group.id }}" data-member-group-id="{{ group.id }}">Group: {{ group.name }}</option>{% endfor %}
+      </select>
+    </label>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="enablement">
+    <label class="switch-field"><span class="field-label"><span>Group enabled</span><button class="help-icon" type="button" data-help="Includes this group in the next global LDAP apply. Membership remains stored while disabled.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="review">
+    <div class="settings-list" data-atlaso-resource-review></div>
+    <div class="alert warning">Saving updates LDAP desired state. Host mutation remains part of global Appliance Apply.</div>
+  </section>
+{% endcall %}
+{% endif %}
 
 {% if ldap_one_time_bind_secret %}
 <dialog id="ldap-bind-secret-modal" class="confirm-modal" aria-labelledby="ldap-bind-secret-modal-title" data-ldap-bind-secret-auto-open>

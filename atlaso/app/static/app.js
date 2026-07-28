@@ -1249,6 +1249,38 @@ function initializeAtlasoResourceWizard(config) {
   const canEdit = (data) => !data.is_new && (typeof config.canEdit !== "function" || config.canEdit(data));
   const canDelete = (data) => !data.is_new && Boolean(config.deleteResource)
     && (typeof config.canDelete !== "function" || config.canDelete(data));
+  const supportsInlineEnabled = config.inlineEnabled !== false
+    && form.elements.namedItem("enabled") instanceof HTMLInputElement;
+  const saveInlineEnabled = async (cell) => {
+    const data = cell.getRow().getData();
+    if (!canEdit(data)) {
+      cell.restoreOldValue?.();
+      return;
+    }
+    try {
+      populateAtlasoWizardForm(form, data, {
+        recordField: config.recordField || "record_id",
+        defaults: config.defaults || {},
+      });
+      const enabledControl = form.elements.namedItem("enabled");
+      if (!(enabledControl instanceof HTMLInputElement)) {
+        throw new Error("This resource does not expose direct enablement.");
+      }
+      enabledControl.checked = Boolean(cell.getValue());
+      const body = new FormData(form);
+      config.prepareFormData?.({ body, form });
+      const payload = await atlasoGridWizardRequest(config.editUrl(data.id), body);
+      const resource = config.normalizeResource?.(payload[config.resourceName], payload) || payload[config.resourceName];
+      if (!resource) throw new Error("The server did not return the saved resource.");
+      await cell.getRow().update(resource);
+      await Promise.resolve(config.onSaved?.({ payload, resource, form, table }));
+      await refreshNetworkSideStack();
+      showTransientGridStatus(resource.enabled ? "Enabled" : "Disabled");
+    } catch (error) {
+      cell.restoreOldValue?.();
+      reportActionError(error);
+    }
+  };
   const openResource = (data, launcher) => {
     if (!data?.is_new && !canEdit(data)) return;
     wizard?.open({ launcher, context: data?.is_new ? null : data });
@@ -1282,8 +1314,20 @@ function initializeAtlasoResourceWizard(config) {
       action: (_event, row) => deleteResource(row).catch(reportActionError),
     });
   }
+  const configuredColumns = (config.options.columns || []).map((column) => (
+    supportsInlineEnabled && column.field === "enabled"
+      ? {
+        ...column,
+        editor: "tickCross",
+        editable: (cell) => canEdit(cell.getRow().getData()),
+        cellEdited: saveInlineEnabled,
+        headerSort: false,
+      }
+      : column
+  ));
   const options = {
     ...config.options,
+    columns: configuredColumns,
     data: rows,
     index: "id",
     rowDblClick: (_event, row) => openResource(row.getData(), row.getElement()),
@@ -1688,6 +1732,76 @@ function applyDhcpScopeInterfaceDefaults(rowData, defaults, options = {}) {
     rowData.domain_name = defaults.default_domain;
   }
   return rowData;
+}
+
+function ipv4AddressToInteger(value) {
+  const octets = String(value || "").trim().split(".");
+  if (octets.length !== 4 || octets.some((part) => !/^\d+$/.test(part) || Number(part) > 255)) return null;
+  return octets.reduce((result, part) => (result << 8n) + BigInt(part), 0n);
+}
+
+function integerToIpv4Address(value) {
+  return [24n, 16n, 8n, 0n].map((shift) => Number((value >> shift) & 255n)).join(".");
+}
+
+function ipv6AddressToInteger(value) {
+  const normalized = String(value || "").trim().toLowerCase().split("%", 1)[0];
+  if (!normalized || (normalized.match(/::/g) || []).length > 1) return null;
+  const [leftRaw, rightRaw = ""] = normalized.split("::");
+  const left = leftRaw ? leftRaw.split(":") : [];
+  const right = rightRaw ? rightRaw.split(":") : [];
+  if (!normalized.includes("::") && left.length !== 8) return null;
+  const missing = 8 - left.length - right.length;
+  if (missing < (normalized.includes("::") ? 1 : 0)) return null;
+  const groups = [...left, ...Array(missing).fill("0"), ...right];
+  if (groups.length !== 8 || groups.some((part) => !/^[0-9a-f]{1,4}$/.test(part))) return null;
+  return groups.reduce((result, part) => (result << 16n) + BigInt(`0x${part}`), 0n);
+}
+
+function integerToIpv6Address(value) {
+  const groups = Array.from({ length: 8 }, (_unused, index) => (
+    Number((value >> BigInt((7 - index) * 16)) & 0xffffn).toString(16)
+  ));
+  let bestStart = -1;
+  let bestLength = 0;
+  for (let index = 0; index < groups.length;) {
+    if (groups[index] !== "0") {
+      index += 1;
+      continue;
+    }
+    let end = index;
+    while (end < groups.length && groups[end] === "0") end += 1;
+    if (end - index > bestLength) {
+      bestStart = index;
+      bestLength = end - index;
+    }
+    index = end;
+  }
+  if (bestLength < 2) return groups.join(":");
+  const before = groups.slice(0, bestStart).join(":");
+  const after = groups.slice(bestStart + bestLength).join(":");
+  return `${before}::${after}`;
+}
+
+function deriveDhcpLeaseRange(gateway, prefixValue, family = "ipv4") {
+  const bits = family === "ipv6" ? 128 : 32;
+  const prefix = Number(prefixValue);
+  const address = family === "ipv6" ? ipv6AddressToInteger(gateway) : ipv4AddressToInteger(gateway);
+  if (address === null || !Number.isInteger(prefix) || prefix < 0 || prefix > bits) return "";
+  const hostBits = BigInt(bits - prefix);
+  const allBits = (1n << BigInt(bits)) - 1n;
+  const hostMask = hostBits ? (1n << hostBits) - 1n : 0n;
+  const network = address & (allBits ^ hostMask);
+  const firstUsable = network + 1n;
+  const lastUsable = network + hostMask - (family === "ipv4" ? 1n : 0n);
+  if (lastUsable < firstUsable) return "";
+  let start = network + 100n <= lastUsable ? network + 100n : firstUsable;
+  let end = network + 200n <= lastUsable ? network + 200n : lastUsable;
+  if (start === address && start < end) start += 1n;
+  if (end === address && end > start) end -= 1n;
+  if (end < start) return "";
+  const format = family === "ipv6" ? integerToIpv6Address : integerToIpv4Address;
+  return `${format(start)}-${format(end)}`;
 }
 
 function isUniqueNewDhcpScopeName(data, existingNames) {
@@ -2784,7 +2898,7 @@ function initializeCaProfilesTable() {
     steps: [
       { id: "identity", title: "Define the certificate profile", description: "Name the reusable certificate policy and choose its certificate type." },
       { id: "policy", title: "Set certificate policy", description: "Choose validity, key generation, usages, and SAN requirements." },
-      { id: "state", title: "Choose profile state", description: "Make the profile available to requests and record its operator purpose." },
+      { id: "enablement", title: "Choose profile availability", description: "Control whether new certificate requests may select this profile." },
       { id: "review", title: "Review CA desired state", description: "Confirm the profile and global appliance-apply boundary." },
     ],
     reviewItems: [
@@ -2877,7 +2991,7 @@ function initializeCaCertificatesTable() {
     steps: [
       { id: "identity", title: "Define the certificate request", description: "Choose the common name and enabled certificate profile." },
       { id: "names", title: "Register certificate names", description: "Enter every DNS name and IP address clients will use." },
-      { id: "state", title: "Choose request state", description: "Enable the request and record its operator purpose." },
+      { id: "enablement", title: "Choose request availability", description: "Control whether the request participates in rendered CA desired state." },
       { id: "review", title: "Review certificate desired state", description: "Confirm the request and global appliance-apply boundary." },
     ],
     validateStep: ({ form, step }) => {
@@ -3177,7 +3291,8 @@ function initializeFirewallRulesTable() {
     steps: [
       { id: "policy", title: "Define the firewall rule", description: "Name the operator rule and choose its nftables direction and action." },
       { id: "match", title: "Match network traffic", description: "Choose protocol, source, destination, ports, and optional interface." },
-      { id: "state", title: "Choose rule state", description: "Set evaluation priority, enablement, and its operator purpose." },
+      { id: "state", title: "Set rule priority and notes", description: "Choose evaluation priority and record the rule's operator purpose." },
+      { id: "enablement", title: "Choose rule enablement", description: "Choose whether the rule enters rendered desired state." },
       { id: "review", title: "Review firewall desired state", description: "Confirm the rule and global appliance-apply boundary." },
     ],
     reviewItems: [
@@ -3631,6 +3746,8 @@ function initializeUsersTable() {
     steps: [
       { id: "identity", title: "Define the local identity", description: "Choose the username and Atlaso authorization roles." },
       { id: "access", title: "Choose Photon access", description: "Set the desired login shell and optional Web SSH access." },
+      { id: "password", title: "Set or postpone the Photon password", description: "Stage a policy-compliant password now or leave both fields blank to postpone." },
+      { id: "enablement", title: "Choose user enablement", description: "Choose whether the account enters enabled Atlaso and Photon desired state." },
       { id: "review", title: "Review local-user desired state", description: "Confirm the account and global appliance-apply boundary." },
     ],
     reviewItems: [
@@ -3641,8 +3758,13 @@ function initializeUsersTable() {
       },
       { label: "Photon shell", field: "shell" },
       { label: "Web SSH", field: "web_terminal_access" },
-      { label: "Photon password", value: () => "Set separately after save" },
+      { label: "Photon password", value: (form) => form.elements.password.value ? "Staged securely" : "Postponed" },
+      { label: "Enabled", field: "enabled" },
     ],
+    onOpen: ({ form }) => {
+      form.elements.password.value = "";
+      form.elements.confirm_password.value = "";
+    },
     validateStep: ({ form, step }) => {
       if (step.id === "identity" && !form.querySelector('input[name="roles"]:checked')) {
         return {
@@ -3657,6 +3779,21 @@ function initializeUsersTable() {
         && form.elements.shell.value === "/sbin/nologin"
       ) {
         return { valid: false, message: "Web SSH access requires an interactive Photon shell.", field: "shell" };
+      }
+      if (
+        step.id === "password"
+        && (form.elements.password.value || form.elements.confirm_password.value)
+        && form.elements.password.value !== form.elements.confirm_password.value
+      ) {
+        return { valid: false, message: "Password confirmation does not match.", field: "confirm_password" };
+      }
+      if (
+        step.id === "enablement"
+        && !form.elements.record_id.value
+        && form.elements.enabled.checked
+        && !form.elements.password.value
+      ) {
+        return { valid: false, message: "Set a Photon password before enabling a new user, or leave the user disabled.", field: "enabled" };
       }
       return { valid: true };
     },
@@ -4108,6 +4245,39 @@ function initializeCaSettings() {
   });
 }
 
+function initializeCaCsrWizard() {
+  const dialog = document.getElementById("ca-csr-dialog");
+  const form = document.querySelector("[data-ca-csr-form]");
+  const launcher = document.querySelector("[data-ca-csr-open]");
+  if (
+    !(dialog instanceof HTMLDialogElement)
+    || !(form instanceof HTMLFormElement)
+    || !(launcher instanceof HTMLButtonElement)
+    || !window.AtlasoUiPatterns
+  ) return;
+  const wizard = window.AtlasoUiPatterns.createWizard({
+    form,
+    dialog,
+    steps: [
+      { id: "identity", title: "Define the CSR request", description: "Choose its common name, certificate profile, and operator purpose." },
+      { id: "names", title: "Register certificate names", description: "Enter the DNS names and IP addresses encoded by the client request." },
+      { id: "csr", title: "Paste the CSR", description: "Provide the complete PEM certificate signing request." },
+      { id: "review", title: "Review CSR intake", description: "Confirm the staged request and global appliance-apply boundary." },
+    ],
+    discardTitle: "Discard CSR intake?",
+    discardMessage: "The request metadata and CSR entered in this wizard will be lost.",
+    prepareReview: () => renderAtlasoWizardReview(form, [
+      { label: "Common name", field: "common_name" },
+      { label: "Profile", field: "profile_id" },
+      { label: "Description", field: "description" },
+      { label: "DNS SANs", field: "subject_alt_names" },
+      { label: "IP SANs", field: "ip_addresses" },
+      { label: "CSR", value: () => form.elements.csr_text.value.trim() ? "PEM supplied" : "Missing" },
+    ]),
+  });
+  launcher.addEventListener("click", () => wizard.open({ launcher }));
+}
+
 function serviceBindSelection(form, payload = {}) {
   const interfaceEditor = form.querySelector(".tag-editor[data-service-bind-interface]");
   const addressEditor = form.querySelector(".tag-editor[data-service-bind-address]");
@@ -4240,7 +4410,7 @@ function initializeKmsSettings() {
 }
 
 function newLdapUserRow(organizationId) {
-  return { id: "__new_ldap_user__", organization_id: organizationId, uid: "", given_name: "", surname: "", display_name: "", email: "", telephone: "", enabled: true, password_status: "", is_new: true };
+  return { id: "__new_ldap_user__", organization_id: organizationId, uid: "", given_name: "", surname: "", display_name: "", email: "", telephone: "", enabled: false, password_status: "", is_new: true };
 }
 
 function newLdapGroupRow(organizationId) {
@@ -4280,12 +4450,14 @@ function initializeLdapOrganizationWizard() {
     steps: [
       { id: "identity", title: "Name the organization", description: "Choose its operator-visible name and desired state." },
       { id: "directory", title: "Choose the naming context", description: "Accept derived values or set a stable slug and isolated LDAP suffix." },
+      { id: "enablement", title: "Choose organization state", description: "Control whether the isolated database enters rendered LDAP desired state." },
       { id: "review", title: "Review organization creation", description: "Confirm the new database and one-time VCF bind credential." },
     ],
     discardTitle: "Discard LDAP organization?",
     discardMessage: "The organization values entered in this wizard will be lost.",
     prepareReview: () => renderAtlasoWizardReview(form, [
       { label: "Organization", field: "name" },
+      { label: "Description", field: "description" },
       { label: "Slug", value: () => form.elements.slug.value.trim() || "Derived from name" },
       { label: "Suffix DN", value: () => form.elements.suffix_dn.value.trim() || "Derived from slug" },
       { label: "Desired state", field: "enabled" },
@@ -4608,34 +4780,98 @@ function initializeLdapDirectoryTables() {
     const csrf = usersElement.dataset.csrf || "";
     const organizationId = usersElement.dataset.organizationId || "0";
     try {
-      const users = [...JSON.parse(usersElement.dataset.users || "[]"), newLdapUserRow(organizationId)];
-      const atlasoGridOptions10 = {
-        data: users, index: "id", layout: "fitColumns", height: "420px", rowHeight: 28, placeholder: "No directory users", reactiveData: false,
-        rowContextMenu: [
+      const adapter = initializeAtlasoResourceWizard({
+        elementId: "ldap-users-table",
+        formSelector: "[data-ldap-user-form]",
+        dialogId: "ldap-user-dialog",
+        rows: JSON.parse(usersElement.dataset.users || "[]"),
+        newRow: newLdapUserRow(organizationId),
+        resourceName: "user",
+        normalizeResource: (_resource, payload) => payload,
+        createUrl: `/ldap/organizations/${organizationId}/users`,
+        editUrl: (id) => `/ldap/users/${id}/edit`,
+        deleteResource: true,
+        deleteUrl: (id) => `/ldap/users/${id}/delete`,
+        editLabel: "Edit user",
+        deleteLabel: "Delete user",
+        createLabel: "Create LDAP user",
+        updateLabel: "Update LDAP user",
+        emptyMessage: "No directory users.",
+        actionErrorSelector: "#ldap-user-error",
+        defaults: newLdapUserRow(organizationId),
+        steps: [
+          { id: "identity", title: "Define the LDAP identity", description: "Choose the stable UID and operator-visible display name." },
+          { id: "contact", title: "Set directory attributes", description: "Add name and optional contact attributes." },
+          { id: "password", title: "Stage an optional password", description: "Set a credential now or leave both fields blank to postpone it." },
+          { id: "enablement", title: "Choose account state", description: "Control whether the account enters rendered LDAP desired state." },
+          { id: "review", title: "Review the LDAP user", description: "Confirm the account and global appliance-apply boundary." },
+        ],
+        reviewItems: [
+          { label: "UID", field: "uid" },
+          { label: "Display name", value: (form) => form.elements.display_name.value.trim() || "Derived from name" },
+          { label: "Email", field: "email" },
+          { label: "Password", value: (form) => form.elements.password.value ? "Staged until apply" : "Unchanged or postponed" },
+          { label: "State", field: "enabled" },
+        ],
+        validateStep: ({ form, step }) => {
+          if (step.id !== "password") return { valid: true };
+          if (form.elements.password.value === form.elements.confirm_password.value) return { valid: true };
+          return { valid: false, field: "confirm_password", message: "Password confirmation does not match." };
+        },
+        onOpen: ({ form }) => {
+          form.elements.password.value = "";
+          form.elements.confirm_password.value = "";
+        },
+        onSaved: ({ resource }) => {
+          const select = document.querySelector("[data-ldap-group-form] select[name='members']");
+          if (!(select instanceof HTMLSelectElement)) return;
+          const value = `user:${resource.id}`;
+          let option = [...select.options].find((item) => item.value === value);
+          if (!option) {
+            option = document.createElement("option");
+            option.value = value;
+            select.append(option);
+          }
+          option.textContent = `User: ${resource.uid}`;
+        },
+        onDeleted: ({ data }) => {
+          const select = document.querySelector("[data-ldap-group-form] select[name='members']");
+          if (select instanceof HTMLSelectElement) {
+            [...select.options].find((option) => option.value === `user:${data.id}`)?.remove();
+          }
+        },
+        extraActions: [
           { label: "Reset password", action: (_event, row) => openLdapPasswordModal(row.getData()), disabled: (component) => component.getData().is_new },
           { label: "Administrative unlock", action: (_event, row) => unlockLdapUserFromMenu(row, csrf), disabled: (component) => component.getData().is_new },
-          { label: "Delete user", action: (_event, row) => deleteLdapUserFromMenu(row, csrf), disabled: (component) => component.getData().is_new },
         ],
-        columns: lockNewRecordColumns([
-          { title: "UID", field: "uid", editor: "input", formatter: (cell) => dnsAddRowHintFormatter(cell, "+ Add user here"), minWidth: 145, cellEdited: (cell) => autoSaveLdapUser(cell, csrf, organizationId) },
-          { title: "Given name", field: "given_name", editor: "input", minWidth: 130, cellEdited: (cell) => autoSaveLdapUser(cell, csrf, organizationId) },
-          { title: "Surname", field: "surname", editor: "input", minWidth: 130, cellEdited: (cell) => autoSaveLdapUser(cell, csrf, organizationId) },
-          { title: "Display name", field: "display_name", editor: "input", minWidth: 175, cellEdited: (cell) => autoSaveLdapUser(cell, csrf, organizationId) },
-          { title: "Email", field: "email", editor: "input", minWidth: 195, cellEdited: (cell) => autoSaveLdapUser(cell, csrf, organizationId) },
-          { title: "Telephone", field: "telephone", editor: "input", minWidth: 145, cellEdited: (cell) => autoSaveLdapUser(cell, csrf, organizationId) },
-          { title: "Password", field: "password_status", minWidth: 125, editable: false },
-          { title: "Enabled", field: "enabled", formatter: atlasoBooleanFormatter, editor: "tickCross", hozAlign: "center", width: 95, cellEdited: (cell) => autoSaveLdapUser(cell, csrf, organizationId) },
-          { title: "DN", field: "dn", minWidth: 260, visible: false, editable: false },
-        ], "uid"),
-        rowFormatter: (row) => markNewRecordRow(row, "uid"),
-      };
-      const usersTable = window.AtlasoUiPatterns.createGrid({
-        element: usersElement,
-        pattern: "direct-edit",
-        options: atlasoGridOptions10,
-      }).table;
-      if (usersTable) {
-        attachLdapGridState(usersElement, usersTable, "users", organizationId);
+        deleteConfirmation: (data) => ({
+          title: `Delete ${data.uid}?`,
+          message: "This permanently removes the user from desired state and from OpenLDAP on the next global appliance apply.",
+          confirmLabel: "Delete user",
+          tone: "danger",
+        }),
+        options: {
+          layout: "fitColumns",
+          height: "420px",
+          rowHeight: 28,
+          placeholder: "No directory users",
+          reactiveData: false,
+          columns: [
+            { title: "UID", field: "uid", formatter: (cell) => cell.getRow().getData().is_new ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add user here</button>' : escapeHtml(cell.getValue()), minWidth: 145 },
+            { title: "Given name", field: "given_name", minWidth: 130 },
+            { title: "Surname", field: "surname", minWidth: 130 },
+            { title: "Display name", field: "display_name", minWidth: 175 },
+            { title: "Email", field: "email", minWidth: 195 },
+            { title: "Telephone", field: "telephone", minWidth: 145 },
+            { title: "Password", field: "password_status", minWidth: 125 },
+            { title: "Enabled", field: "enabled", formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell), hozAlign: "center", width: 95 },
+            { title: "DN", field: "dn", minWidth: 260, visible: false },
+          ],
+          rowFormatter: (row) => markNewRecordRow(row, "uid"),
+        },
+      });
+      if (adapter?.table) {
+        attachLdapGridState(usersElement, adapter.table, "users", organizationId);
       }
     } catch (error) { showCaMessage("ldap-user-error", error instanceof Error ? error.message : "LDAP users could not render."); }
   }
@@ -4645,30 +4881,98 @@ function initializeLdapDirectoryTables() {
     const csrf = groupsElement.dataset.csrf || "";
     const organizationId = groupsElement.dataset.organizationId || "0";
     try {
-      const groups = JSON.parse(groupsElement.dataset.groups || "[]").map((group) => ({ ...group, member_count: Array.isArray(group.members) ? group.members.length : 0, member_names: Array.isArray(group.members) ? group.members.map((member) => `${member.type}: ${member.name}`).join(", ") : "" }));
-      groups.push(newLdapGroupRow(organizationId));
-      const atlasoGridOptions11 = {
-        data: groups, index: "id", layout: "fitColumns", height: "420px", rowHeight: 28, responsiveLayout: "collapse", placeholder: "No directory groups", reactiveData: false,
-        rowContextMenu: [
-          { label: "Edit membership", action: (_event, row) => openLdapGroupMembersModal(row.getData()), disabled: (component) => component.getData().is_new },
-          { label: "Delete group", action: (_event, row) => deleteLdapGroupFromMenu(row, csrf), disabled: (component) => component.getData().is_new },
+      const normalizeGroup = (group) => ({
+        ...group,
+        member_count: Array.isArray(group.members) ? group.members.length : 0,
+        member_names: Array.isArray(group.members) ? group.members.map((member) => `${member.type}: ${member.name}`).join(", ") : "",
+      });
+      const adapter = initializeAtlasoResourceWizard({
+        elementId: "ldap-groups-table",
+        formSelector: "[data-ldap-group-form]",
+        dialogId: "ldap-group-dialog",
+        rows: JSON.parse(groupsElement.dataset.groups || "[]").map(normalizeGroup),
+        newRow: newLdapGroupRow(organizationId),
+        resourceName: "group",
+        normalizeResource: (_resource, payload) => normalizeGroup(payload),
+        createUrl: `/ldap/organizations/${organizationId}/groups`,
+        editUrl: (id) => `/ldap/groups/${id}/edit`,
+        deleteResource: true,
+        deleteUrl: (id) => `/ldap/groups/${id}/delete`,
+        editLabel: "Edit group",
+        deleteLabel: "Delete group",
+        createLabel: "Create LDAP group",
+        updateLabel: "Update LDAP group",
+        emptyMessage: "No directory groups.",
+        actionErrorSelector: "#ldap-group-error",
+        defaults: newLdapGroupRow(organizationId),
+        inlineEnabled: false,
+        steps: [
+          { id: "identity", title: "Define the LDAP group", description: "Choose its unique name and operator-visible purpose." },
+          { id: "membership", title: "Choose group members", description: "Select users and nested groups from this organization." },
+          { id: "enablement", title: "Choose group state", description: "Control whether the group enters rendered LDAP desired state." },
+          { id: "review", title: "Review the LDAP group", description: "Confirm membership and the global appliance-apply boundary." },
         ],
-        columns: lockNewRecordColumns([
-          { title: "Name", field: "name", editor: "input", formatter: (cell) => dnsAddRowHintFormatter(cell, "+ Add group here"), minWidth: 170, cellEdited: (cell) => autoSaveLdapGroup(cell, csrf, organizationId) },
-          { title: "Description", field: "description", editor: "input", minWidth: 240, cellEdited: (cell) => autoSaveLdapGroup(cell, csrf, organizationId) },
-          { title: "Members", field: "member_count", width: 105, hozAlign: "right", editable: false },
-          { title: "Membership", field: "member_names", formatter: ldapGroupMembershipFormatter, minWidth: 260, editable: false },
-          { title: "Enabled", field: "enabled", formatter: atlasoBooleanFormatter, editor: "tickCross", hozAlign: "center", width: 95, cellEdited: (cell) => autoSaveLdapGroup(cell, csrf, organizationId) },
-        ], "name"),
-        rowFormatter: (row) => markNewRecordRow(row, "name"),
-      };
-      const groupsTable = window.AtlasoUiPatterns.createGrid({
-        element: groupsElement,
-        pattern: "direct-edit",
-        options: atlasoGridOptions11,
-      }).table;
-      if (groupsTable) {
-        attachLdapGridState(groupsElement, groupsTable, "groups", organizationId);
+        reviewItems: [
+          { label: "Group", field: "name" },
+          { label: "Description", field: "description" },
+          { label: "Members", value: (form) => `${form.elements.members.selectedOptions.length} selected` },
+          { label: "State", field: "enabled" },
+        ],
+        onOpen: ({ form, context }) => {
+          const selected = new Set((context?.members || []).map((member) => `${member.type}:${member.id}`));
+          const memberSelect = form.elements.members;
+          if (!(memberSelect instanceof HTMLSelectElement)) return;
+          [...memberSelect.options].forEach((option) => {
+            const isCurrentGroup = option.dataset.memberGroupId === String(context?.id || "");
+            option.hidden = isCurrentGroup;
+            option.disabled = isCurrentGroup;
+            option.selected = !isCurrentGroup && selected.has(option.value);
+          });
+        },
+        onSaved: ({ resource }) => {
+          const select = document.querySelector("[data-ldap-group-form] select[name='members']");
+          if (!(select instanceof HTMLSelectElement)) return;
+          const value = `group:${resource.id}`;
+          let option = [...select.options].find((item) => item.value === value);
+          if (!option) {
+            option = document.createElement("option");
+            option.value = value;
+            option.dataset.memberGroupId = String(resource.id);
+            select.append(option);
+          }
+          option.textContent = `Group: ${resource.name}`;
+        },
+        onDeleted: ({ data }) => {
+          const select = document.querySelector("[data-ldap-group-form] select[name='members']");
+          if (select instanceof HTMLSelectElement) {
+            [...select.options].find((option) => option.value === `group:${data.id}`)?.remove();
+          }
+        },
+        deleteConfirmation: (data) => ({
+          title: `Delete ${data.name}?`,
+          message: "This removes the group and its nested memberships from desired state and OpenLDAP on the next global appliance apply.",
+          confirmLabel: "Delete group",
+          tone: "danger",
+        }),
+        options: {
+          layout: "fitColumns",
+          height: "420px",
+          rowHeight: 28,
+          responsiveLayout: "collapse",
+          placeholder: "No directory groups",
+          reactiveData: false,
+          columns: [
+            { title: "Name", field: "name", formatter: (cell) => cell.getRow().getData().is_new ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add group here</button>' : escapeHtml(cell.getValue()), minWidth: 170 },
+            { title: "Description", field: "description", minWidth: 240 },
+            { title: "Members", field: "member_count", width: 105, hozAlign: "right" },
+            { title: "Membership", field: "member_names", formatter: ldapGroupMembershipFormatter, minWidth: 260 },
+            { title: "Enabled", field: "enabled", formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell), editor: "tickCross", hozAlign: "center", width: 95, cellEdited: (cell) => autoSaveLdapGroup(cell, csrf, organizationId) },
+          ],
+          rowFormatter: (row) => markNewRecordRow(row, "name"),
+        },
+      });
+      if (adapter?.table) {
+        attachLdapGridState(groupsElement, adapter.table, "groups", organizationId);
       }
     } catch (error) { showCaMessage("ldap-group-error", error instanceof Error ? error.message : "LDAP groups could not render."); }
   }
@@ -7215,10 +7519,27 @@ function initializeApiTokensTable() {
       { id: "scopes", title: "Grant least-privilege scopes", description: "Request only the Atlaso permissions this integration requires." },
       { id: "review", title: "Review immediate issuance", description: "Confirm the token scope and one-time secret handling." },
     ],
+    onOpen: ({ form }) => {
+      const selected = new Set(String(form.elements.scopes.value || "read:dashboard").split(/\s+/).filter(Boolean));
+      form.querySelectorAll('input[name="scope_choices"]').forEach((input) => {
+        input.checked = selected.has(input.value);
+      });
+    },
+    validateStep: ({ form, step }) => {
+      if (step.id === "scopes" && !form.querySelector('input[name="scope_choices"]:checked')) {
+        return { valid: false, message: "Select at least one API scope.", field: form.querySelector('input[name="scope_choices"]') };
+      }
+      return { valid: true };
+    },
+    prepareFormData: ({ body, form }) => {
+      const scopes = [...form.querySelectorAll('input[name="scope_choices"]:checked')].map((input) => input.value);
+      body.set("scopes", scopes.join(" "));
+      body.delete("scope_choices");
+    },
     reviewItems: [
       { label: "Token", field: "name" },
       { label: "Purpose", field: "description" },
-      { label: "Scopes", field: "scopes" },
+      { label: "Scopes", value: (form) => [...form.querySelectorAll('input[name="scope_choices"]:checked')].map((input) => input.value).join(" ") },
       { label: "Enforcement", value: () => "Immediate application state" },
     ],
     extraActions: [
@@ -7698,6 +8019,55 @@ function initializeDnsRecordsTable() {
   tableElements.forEach((tableElement) => initializeDnsRecordsTableElement(tableElement));
 }
 
+function initializeDnsDomainWizard() {
+  const form = document.querySelector("[data-dns-domain-form]");
+  const dialog = document.getElementById("dns-domain-dialog");
+  if (!(form instanceof HTMLFormElement) || !(dialog instanceof HTMLDialogElement)) return;
+  const wizard = window.AtlasoUiPatterns.createWizard({
+    form,
+    dialog,
+    steps: [
+      { id: "identity", title: "Define the DNS domain", description: "Choose the managed DNS suffix that will own its records and zone-file tools." },
+      { id: "enablement", title: "Choose domain enablement", description: "Choose whether the domain enters rendered dnsmasq desired state." },
+      { id: "review", title: "Review DNS desired state", description: "Confirm the domain and global appliance-apply boundary." },
+    ],
+    onOpen: () => populateAtlasoWizardForm(form, { domain: "", enabled: true }),
+    validateStep: validateAtlasoWizardStep,
+    prepareReview: () => renderAtlasoWizardReview(form, [
+      { label: "Domain", field: "domain" },
+      { label: "Enabled", field: "enabled" },
+    ]),
+    onSubmit: async () => {
+      await atlasoGridWizardRequest("/dns/zones", new FormData(form));
+      window.location.reload();
+      return { valid: true };
+    },
+  });
+  document.querySelectorAll("[data-dns-domain-wizard-add]").forEach((launcher) => {
+    launcher.addEventListener("click", () => wizard.open({ launcher }));
+  });
+  document.querySelectorAll("[data-dns-domain-enabled-form]").forEach((toggleForm) => {
+    if (!(toggleForm instanceof HTMLFormElement)) return;
+    const toggle = toggleForm.elements.namedItem("enabled");
+    if (!(toggle instanceof HTMLInputElement)) return;
+    toggle.addEventListener("change", async () => {
+      const previous = !toggle.checked;
+      try {
+        await atlasoGridWizardRequest("/dns/zones/enabled", new FormData(toggleForm));
+        showTransientGridStatus(toggle.checked ? "Enabled" : "Disabled");
+        window.location.reload();
+      } catch (error) {
+        toggle.checked = previous;
+        const status = document.getElementById("dns-record-error");
+        if (status instanceof HTMLElement) {
+          status.textContent = error instanceof Error ? error.message : "The DNS domain state could not be saved.";
+          status.classList.remove("hidden");
+        }
+      }
+    });
+  });
+}
+
 function initializeDnsRecordsTableElement(tableElement) {
   const fallback = document.getElementById(tableElement.dataset.fallbackId || "");
   const domain = tableElement.dataset.domain || "";
@@ -7813,6 +8183,21 @@ function initializeDhcpScopesTable() {
     { overwrite: true },
   );
   const form = document.querySelector("[data-dhcp-scope-form]");
+  const refreshDerivedRange = (force = false) => {
+    if (!(form instanceof HTMLFormElement)) return;
+    const range = form.elements.range_expression;
+    if (!(range instanceof HTMLInputElement)) return;
+    const derived = deriveDhcpLeaseRange(
+      form.elements.site_address.value,
+      form.elements.prefix_length.value,
+      form.elements.address_family.value,
+    );
+    const previousDerived = range.dataset.atlasoDerivedRange || "";
+    if (derived && (force || !range.value.trim() || range.value === previousDerived)) {
+      range.value = derived;
+      range.dataset.atlasoDerivedRange = derived;
+    }
+  };
   const refreshNetworkDefaults = () => {
     if (!(form instanceof HTMLFormElement)) return;
     const interfaceName = form.elements.interface_name.value;
@@ -7833,9 +8218,12 @@ function initializeDhcpScopesTable() {
     ["site_address", "prefix_length", "dns_server", "ntp_server", "domain_name"].forEach((name) => {
       if (form.elements[name]) form.elements[name].value = updated[name] ?? "";
     });
+    refreshDerivedRange(true);
   };
   form?.elements.interface_name?.addEventListener("change", refreshNetworkDefaults);
   form?.elements.address_family?.addEventListener("change", refreshNetworkDefaults);
+  form?.elements.site_address?.addEventListener("input", () => refreshDerivedRange());
+  form?.elements.prefix_length?.addEventListener("input", () => refreshDerivedRange());
   initializeAtlasoResourceWizard({
     elementId: "dhcp-scopes-table",
     formSelector: "[data-dhcp-scope-form]",
@@ -7858,6 +8246,7 @@ function initializeDhcpScopesTable() {
       { id: "identity", title: "Choose zone identity", description: "Name the IP zone and bind its address family and interface." },
       { id: "network", title: "Define the address pool", description: "Set the gateway, prefix, and lease range." },
       { id: "services", title: "Set lease services", description: "Configure lease duration, DNS, NTP, and domain values." },
+      { id: "enablement", title: "Choose zone enablement", description: "Choose whether the zone enters rendered dnsmasq desired state." },
       { id: "review", title: "Review DHCP desired state", description: "Confirm the IP zone and global appliance-apply boundary." },
     ],
     reviewItems: [
@@ -7873,6 +8262,7 @@ function initializeDhcpScopesTable() {
     onOpen: ({ form, context }) => {
       const family = form.elements.address_family;
       if (family instanceof HTMLSelectElement) family.disabled = Boolean(context);
+      if (!context) refreshDerivedRange(true);
     },
     prepareFormData: ({ body, form }) => body.set("address_family", form.elements.address_family.value),
     deleteConfirmation: (data) => ({
@@ -7904,91 +8294,67 @@ function initializeDhcpScopesTable() {
 }
 
 function initializeDhcpOptionsTable() {
-  const tableElement = document.getElementById("dhcp-options-table");
-  if (!(tableElement instanceof HTMLElement)) {
-    return;
-  }
-  const fallback = document.getElementById(tableElement.dataset.fallbackId || "");
-  if (typeof Tabulator === "undefined") {
-    showDhcpOptionError("Tabulator did not load. Showing the fallback table.");
-    return;
-  }
-  const csrf = tableElement.dataset.csrf || "";
-  const scopeOptions = JSON.parse(tableElement.dataset.scopeOptions || "[]");
+  const element = document.getElementById("dhcp-options-table");
+  if (!(element instanceof HTMLElement)) return;
+  const scopeOptions = JSON.parse(element.dataset.scopeOptions || "[]");
   const scopeValues = Object.fromEntries(scopeOptions.map((item) => [item.id, item.label]));
-  const rows = [...JSON.parse(tableElement.dataset.options || "[]"), newDhcpOptionRow()];
-  try {
-    const atlasoGridOptions22 = {
-      data: rows,
-      index: "id",
-      layout: "fitColumns",
+  initializeAtlasoResourceWizard({
+    elementId: "dhcp-options-table",
+    formSelector: "[data-dhcp-option-form]",
+    dialogId: "dhcp-option-dialog",
+    rows: JSON.parse(element.dataset.options || "[]"),
+    newRow: newDhcpOptionRow(),
+    resourceName: "option",
+    createUrl: "/dhcp/options",
+    editUrl: (id) => `/dhcp/options/${id}/edit`,
+    deleteResource: true,
+    deleteUrl: (id) => `/dhcp/options/${id}/delete`,
+    editLabel: "Edit option",
+    deleteLabel: "Delete option",
+    createLabel: "Create DHCP option",
+    updateLabel: "Update DHCP option",
+    emptyMessage: "No DHCP options configured.",
+    actionErrorSelector: "#dhcp-option-error",
+    defaults: newDhcpOptionRow(),
+    steps: [
+      { id: "target", title: "Choose option target", description: "Apply this option globally or to one managed IP zone." },
+      { id: "value", title: "Define the DHCP option", description: "Set the dnsmasq option code, value, and operator notes." },
+      { id: "enablement", title: "Choose option enablement", description: "Choose whether the option enters rendered dnsmasq desired state." },
+      { id: "review", title: "Review DHCP desired state", description: "Confirm the option and global appliance-apply boundary." },
+    ],
+    reviewItems: [
+      { label: "Applies to", value: (form) => scopeValues[form.elements.scope_id.value] || "Global defaults" },
+      { label: "Option", field: "option_code" },
+      { label: "Value", field: "value" },
+      { label: "Enabled", field: "enabled" },
+    ],
+    deleteConfirmation: (data) => ({
+      title: `Delete DHCP option ${data.option_code}?`,
+      message: "This removes the DHCP option from Atlaso desired state. It will not touch the appliance until global appliance apply runs.",
+      confirmLabel: "Delete option",
+      tone: "danger",
+    }),
+    options: {
       height: "260px",
       rowHeight: 28,
       placeholder: "No DHCP options configured.",
-      reactiveData: false,
-      rowContextMenu: [
-        {
-          label: "Delete option",
-          action: (event, row) => deleteDhcpOptionFromMenu(row, csrf),
-        },
-      ],
       columns: [
         {
           title: "Applies to",
           field: "scope_id",
-          editor: "list",
-          editorParams: { values: scopeValues },
-          formatter: (cell) => scopeValues[cell.getValue()] || "Global defaults",
+          formatter: (cell) => cell.getRow().getData().is_new
+            ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add DHCP option here</button>'
+            : escapeHtml(scopeValues[cell.getValue()] || "Global defaults"),
           minWidth: 150,
-          cellEdited: (cell) => autoSaveDhcpOption(cell, csrf),
         },
-        {
-          title: "Option",
-          field: "option_code",
-          editor: "input",
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "+ Add DHCP option here"),
-          minWidth: 150,
-          cellEdited: (cell) => autoSaveDhcpOption(cell, csrf),
-        },
-        {
-          title: "Value",
-          field: "value",
-          editor: "input",
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "option value..."),
-          minWidth: 220,
-          cellEdited: (cell) => autoSaveDhcpOption(cell, csrf),
-        },
-        {
-          title: "Enabled",
-          field: "enabled",
-          formatter: atlasoBooleanFormatter,
-          editor: "tickCross",
-          hozAlign: "center",
-          width: 100,
-          headerSort: false,
-          cellEdited: (cell) => autoSaveDhcpOption(cell, csrf),
-        },
-        {
-          title: "Description",
-          field: "description",
-          editor: "input",
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "optional note..."),
-          minWidth: 220,
-          cellEdited: (cell) => autoSaveDhcpOption(cell, csrf),
-        },
+        { title: "Option", field: "option_code", minWidth: 150 },
+        { title: "Value", field: "value", minWidth: 220 },
+        { title: "Enabled", field: "enabled", formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell), hozAlign: "center", width: 100, headerSort: false },
+        { title: "Description", field: "description", minWidth: 220 },
       ],
-      rowFormatter: (row) => {
-        row.getElement().classList.toggle("new-record-row", Boolean(row.getData().is_new));
-      },
-    };
-    window.AtlasoUiPatterns.createGrid({
-      element: tableElement,
-      pattern: "direct-edit",
-      options: atlasoGridOptions22,
-    }).table;
-  } catch (error) {
-    showDhcpOptionError(error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
-  }
+      rowFormatter: (row) => markNewRecordRow(row, "scope_id"),
+    },
+  });
 }
 
 function initializeDhcpReservationsTable() {
@@ -10463,10 +10829,10 @@ function initializeVcfDepotProfilesTable() {
     actionErrorSelector: "#vcf-depot-profile-error",
     defaults: newVcfDepotProfileRow(),
     steps: [
-      { id: "identity", title: "Choose profile identity", description: "Name the VCFDT profile and select its download type." },
+      { id: "identity", title: "Choose profile identity", description: "Name the VCFDT profile, select its download type, and record optional notes." },
       { id: "release", title: "Choose release content", description: "Set SKU, VCF release, binary type, and download mode." },
       { id: "filter", title: "Filter components", description: "Limit component and ESX platform content when required." },
-      { id: "state", title: "Choose profile state", description: "Set enablement, lifecycle status, and notes." },
+      { id: "enablement", title: "Choose profile availability", description: "Control whether the VCFDT profile may be started." },
       { id: "review", title: "Review depot desired state", description: "Confirm the VCFDT profile and execution boundary." },
     ],
     reviewItems: [
@@ -15051,20 +15417,56 @@ function initializeVcfLdapHelper() {
   const dialog = document.getElementById("vcf-ldap-modal");
   if (!(dialog instanceof HTMLDialogElement)) return;
   const openButton = document.querySelector("[data-vcf-ldap-open]");
-  const closeButton = dialog.querySelector("[data-vcf-ldap-close]");
-  const organizationForm = dialog.querySelector("[data-vcf-ldap-organization-form]");
+  const form = dialog.querySelector("[data-vcf-ldap-wizard-form]");
   const organizationSelect = dialog.querySelector("[data-vcf-ldap-organization-select]");
   const generateDialog = document.getElementById("ldap-generate-modal");
   const generateOpen = document.querySelector("[data-ldap-generate-open]");
-  const generateCloseButtons = generateDialog?.querySelectorAll("[data-ldap-generate-close]");
   const generateForm = generateDialog?.querySelector("[data-ldap-generate-form]");
   const generateOrganization = generateDialog?.querySelector("[data-ldap-generate-organization]");
-  openButton?.addEventListener("click", () => dialog.showModal());
-  closeButton?.addEventListener("click", () => dialog.close());
-  if (organizationForm instanceof HTMLFormElement && organizationSelect instanceof HTMLSelectElement) {
-    organizationSelect.addEventListener("change", () => organizationForm.requestSubmit());
+  let ldapWizard = null;
+  if (form instanceof HTMLFormElement && window.AtlasoUiPatterns) {
+    const setVcfAction = () => {
+      const action = form.elements.namedItem("vcf_ldap_action");
+      const value = action instanceof RadioNodeList ? action.value : "inspect";
+      form.action = value === "configure"
+        ? form.dataset.vcfLdapConfigureUrl
+        : form.dataset.vcfLdapInspectUrl;
+    };
+    ldapWizard = window.AtlasoUiPatterns.createWizard({
+      form,
+      dialog,
+      steps: [
+        { id: "organization", title: "Choose the LDAP organization", description: "Review the isolated suffix and mandatory VCF mapping." },
+        { id: "connection", title: "Identify the VCF tenant", description: "Set the VCF Automation endpoint and organization identity." },
+        { id: "trust", title: "Provide transient trust details", description: "Enter the administrator credential and confirm the presented TLS identity." },
+        { id: "review", title: "Choose the VCF action", description: "Inspect current state or configure and verify the reviewed LDAP settings." },
+      ],
+      discardTitle: "Discard VCF LDAP setup?",
+      discardMessage: "The transient connection details entered in this wizard will be lost.",
+      prepareReview: () => {
+        renderAtlasoWizardReview(form, [
+          { label: "LDAP organization", field: "ldap_organization_id" },
+          { label: "VCF URL", field: "target_url" },
+          { label: "VCF organization ID", field: "vcf_organization_id" },
+          { label: "VCF organization name", field: "vcf_organization_name" },
+          { label: "TLS fingerprint", value: () => form.elements.confirmed_tls_fingerprint?.value.trim() || "Inspect before configuration" },
+          { label: "Replace existing", field: "replace_existing" },
+        ]);
+        setVcfAction();
+      },
+    });
+    form.querySelectorAll('input[name="vcf_ldap_action"]').forEach((control) => control.addEventListener("change", setVcfAction));
+    setVcfAction();
+    openButton?.addEventListener("click", () => ldapWizard.open({ launcher: openButton }));
+  }
+  if (organizationSelect instanceof HTMLSelectElement) {
+    organizationSelect.addEventListener("change", () => {
+      const query = new URLSearchParams({ ldap_vcf: "1", ldap_organization_id: organizationSelect.value });
+      window.location.assign(`/vcf-helper?${query.toString()}`);
+    });
   }
   if (generateDialog instanceof HTMLDialogElement) {
+    let generateWizard = null;
     const focusGenerateDialog = () => {
       window.requestAnimationFrame(() => {
         const target = generateDialog.querySelector('[aria-label="Save generated credentials"]')
@@ -15076,7 +15478,8 @@ function initializeVcfLdapHelper() {
       });
     };
     const openGenerateDialog = () => {
-      generateDialog.showModal();
+      if (generateWizard) generateWizard.open({ launcher: generateOpen });
+      else generateDialog.showModal();
       focusGenerateDialog();
     };
     const clearGeneratedResult = () => {
@@ -15084,22 +15487,54 @@ function initializeVcfLdapHelper() {
       generateDialog.removeAttribute("data-ldap-generate-auto-open");
     };
     generateOpen?.addEventListener("click", openGenerateDialog);
-    generateCloseButtons?.forEach((button) => button.addEventListener("click", () => generateDialog.close()));
     generateDialog.addEventListener("close", clearGeneratedResult);
     if (generateForm instanceof HTMLFormElement && generateOrganization instanceof HTMLSelectElement) {
+      const recoverButton = generateForm.querySelector("[data-ldap-recover-missing]");
+      const actionInput = generateForm.querySelector("[data-ldap-generate-action]");
       const updateGenerateAction = () => {
         generateForm.action = `/ldap/organizations/${encodeURIComponent(generateOrganization.value)}/generate-directory`;
       };
       generateOrganization.addEventListener("change", updateGenerateAction);
       updateGenerateAction();
+      if (window.AtlasoUiPatterns) {
+        generateWizard = window.AtlasoUiPatterns.createWizard({
+          form: generateForm,
+          dialog: generateDialog,
+          steps: [
+            { id: "organization", title: "Choose the LDAP organization", description: "Select the isolated suffix that receives synthetic directory entries." },
+            { id: "size", title: "Size the test directory", description: "Choose how many complete users and groups Atlaso should generate." },
+            { id: "review", title: "Review directory generation", description: "Confirm the counts and one-time credential boundary." },
+          ],
+          discardTitle: "Discard directory generation?",
+          discardMessage: "The selected organization and directory sizes will be reset.",
+          prepareReview: () => renderAtlasoWizardReview(generateForm, [
+            { label: "LDAP organization", value: () => generateOrganization.selectedOptions[0]?.textContent?.trim() || "" },
+            { label: "Users", field: "user_count" },
+            { label: "Groups", field: "group_count" },
+            { label: "Passwords", value: () => "Shown once after generation" },
+          ]),
+          onStepChange: ({ step }) => {
+            recoverButton?.classList.toggle("hidden", step.id !== "review");
+          },
+        });
+      }
+      recoverButton?.addEventListener("click", () => {
+        if (actionInput instanceof HTMLInputElement) actionInput.value = "stage_missing";
+        generateForm.requestSubmit();
+      });
     }
     if (generateDialog.hasAttribute("data-ldap-generate-auto-open") && !generateDialog.open) {
       window.history.replaceState(window.history.state, "", "/vcf-helper");
-      openGenerateDialog();
+      if (generateWizard) generateWizard.open({ reset: false, step: "review", highestStep: "review" });
+      else openGenerateDialog();
+      focusGenerateDialog();
     }
   }
   if (dialog.hasAttribute("data-vcf-ldap-auto-open") && !dialog.open) {
-    dialog.showModal();
+    if (ldapWizard) {
+      const hasResult = Boolean(dialog.querySelector("[data-vcf-ldap-review] + .alert, section[data-atlaso-wizard-step='review'] .config-preview"));
+      ldapWizard.open({ reset: false, step: hasResult ? "review" : "organization", highestStep: hasResult ? "review" : "organization" });
+    } else dialog.showModal();
   }
 }
 
@@ -15256,6 +15691,11 @@ function initializeAutomationTables() {
     const scriptCreateInterpreter = scriptCreateForm.querySelector("[data-automation-script-create-interpreter]");
     const scriptCreateLanguage = scriptCreateForm.querySelector("[data-automation-script-create-language]");
     const scriptCreateImportStatus = scriptCreateForm.querySelector("[data-automation-script-create-import-status]");
+    const scriptCreateFullscreenButton = scriptCreateForm.querySelector("[data-automation-script-create-fullscreen]");
+    const scriptCreateFullscreenDialog = document.getElementById("automation-script-create-fullscreen-dialog");
+    const scriptCreateFullscreenContent = document.getElementById("automation-script-create-fullscreen-content");
+    const scriptCreateFullscreenLanguage = document.querySelector("[data-automation-script-fullscreen-language]");
+    const scriptCreateFullscreenClose = document.querySelector("[data-automation-script-fullscreen-close]");
     const normalizedScriptInterpreter = (value) => (
       ["bash", "powershell", "python"].includes(value) ? value : "bash"
     );
@@ -15274,11 +15714,25 @@ function initializeAutomationTables() {
     };
     const updateScriptCreateLanguage = (value) => {
       const interpreter = normalizedScriptInterpreter(value);
+      const editorLanguage = { bash: "shell", powershell: "powershell", python: "python" }[interpreter];
       if (scriptCreateInterpreter instanceof HTMLSelectElement) scriptCreateInterpreter.value = interpreter;
       if (scriptCreateLanguage instanceof HTMLElement) scriptCreateLanguage.textContent = interpreter;
+      if (scriptCreateFullscreenLanguage instanceof HTMLElement) scriptCreateFullscreenLanguage.textContent = interpreter;
       if (scriptCreateContent instanceof HTMLTextAreaElement) {
         scriptCreateContent.dataset.scriptInterpreter = interpreter;
+        scriptCreateContent.dataset.codemirrorLanguage = editorLanguage;
         scriptCreateContent.setAttribute("aria-label", `${interpreter} managed script source code`);
+        if (typeof window.AtlasoCodeMirror?.setLanguage === "function") {
+          window.AtlasoCodeMirror.setLanguage(scriptCreateContent, editorLanguage);
+        }
+      }
+      if (scriptCreateFullscreenContent instanceof HTMLTextAreaElement) {
+        scriptCreateFullscreenContent.dataset.scriptInterpreter = interpreter;
+        scriptCreateFullscreenContent.dataset.codemirrorLanguage = editorLanguage;
+        scriptCreateFullscreenContent.setAttribute("aria-label", `Full-screen ${interpreter} managed script source code`);
+        if (typeof window.AtlasoCodeMirror?.setLanguage === "function") {
+          window.AtlasoCodeMirror.setLanguage(scriptCreateFullscreenContent, editorLanguage);
+        }
       }
     };
     const resetScriptCreateImportStatus = () => {
@@ -15309,6 +15763,50 @@ function initializeAutomationTables() {
           scriptCreateImportStatus.classList.remove("error-text");
         }
       });
+    }
+    if (
+      scriptCreateFullscreenButton instanceof HTMLButtonElement
+      && scriptCreateFullscreenDialog instanceof HTMLDialogElement
+      && scriptCreateFullscreenContent instanceof HTMLTextAreaElement
+    ) {
+      let fullscreenCommitted = true;
+      const fullScreenEditorValue = () => (
+        scriptCreateFullscreenContent.atlasoCodeMirrorView?.state?.doc?.toString()
+        ?? scriptCreateFullscreenContent.value
+      );
+      const commitFullscreenValue = () => {
+        if (fullscreenCommitted) return;
+        setScriptCreateEditorValue(fullScreenEditorValue());
+        fullscreenCommitted = true;
+      };
+      scriptCreateFullscreenButton.addEventListener("click", () => {
+        setScriptCreateEditorValue(scriptCreateEditorValue());
+        if (window.AtlasoCodeMirror && typeof window.AtlasoCodeMirror.setValue === "function") {
+          window.AtlasoCodeMirror.setValue(scriptCreateFullscreenContent, scriptCreateEditorValue());
+        } else {
+          scriptCreateFullscreenContent.value = scriptCreateEditorValue();
+        }
+        updateScriptCreateLanguage(scriptCreateInterpreter?.value || "bash");
+        fullscreenCommitted = false;
+        scriptCreateFullscreenDialog.showModal();
+        window.requestAnimationFrame(() => {
+          if (typeof window.AtlasoCodeMirror?.focus === "function") {
+            window.AtlasoCodeMirror.focus(scriptCreateFullscreenContent);
+          } else {
+            scriptCreateFullscreenContent.focus();
+          }
+        });
+      });
+      scriptCreateFullscreenClose?.addEventListener("click", () => {
+        commitFullscreenValue();
+        scriptCreateFullscreenDialog.close();
+        window.requestAnimationFrame(() => {
+          if (typeof window.AtlasoCodeMirror?.focus === "function") {
+            window.AtlasoCodeMirror.focus(scriptCreateContent);
+          }
+        });
+      });
+      scriptCreateFullscreenDialog.addEventListener("close", commitFullscreenValue);
     }
     scriptCreateInterpreter?.addEventListener("change", () => updateScriptCreateLanguage(scriptCreateInterpreter.value));
     scriptCreateWizard = window.AtlasoUiPatterns.createWizard({
@@ -16271,6 +16769,61 @@ function initializeApplianceUpdateSourceWizard() {
   });
 }
 
+function initializeManagedPackageWizard() {
+  const form = document.querySelector("[data-managed-package-create-form]");
+  const dialog = document.getElementById("managed-package-dialog");
+  const launcher = document.querySelector("[data-managed-package-wizard-open]");
+  if (
+    !(form instanceof HTMLFormElement)
+    || !(dialog instanceof HTMLDialogElement)
+    || !(launcher instanceof HTMLButtonElement)
+    || !window.AtlasoUiPatterns
+  ) {
+    return;
+  }
+  const policy = form.querySelector("[data-managed-package-create-policy]");
+  const target = form.querySelector("[data-managed-package-create-target]");
+  const targetLabel = form.querySelector("[data-managed-package-create-target-label]");
+  const updateTargetState = () => {
+    if (!(policy instanceof HTMLSelectElement) || !(target instanceof HTMLInputElement)) return;
+    const usesLatest = policy.value === "latest";
+    if (usesLatest) target.value = "";
+    target.disabled = usesLatest;
+    target.required = !usesLatest;
+    target.placeholder = usesLatest ? "Resolved from repository" : "Required for pinned policy";
+    target.setAttribute("aria-disabled", usesLatest ? "true" : "false");
+    targetLabel?.classList.toggle("muted", usesLatest);
+  };
+  policy?.addEventListener("change", updateTargetState);
+  const wizard = window.AtlasoUiPatterns.createWizard({
+    form,
+    dialog,
+    steps: [
+      { id: "identity", title: "Choose the managed module", description: "Enter the exact module name and select its registered PowerShell repository." },
+      { id: "policy", title: "Choose version resolution", description: "Pin an exact version or follow the latest version published by the repository." },
+      { id: "enablement", title: "Choose desired availability", description: "Decide whether update checks and installation runs include this module." },
+      { id: "review", title: "Review module creation", description: "Confirm the desired update state before saving it." },
+    ],
+    discardTitle: "Discard managed module?",
+    discardMessage: "The module identity and version policy entered in this wizard will be lost.",
+    onOpen: () => {
+      form.reset();
+      updateTargetState();
+    },
+    validateStep: (state) => validateAtlasoWizardStep(state),
+    prepareReview: () => {
+      renderAtlasoWizardReview(form, [
+        { label: "Module", field: "name" },
+        { label: "Repository", field: "source_id" },
+        { label: "Version policy", field: "policy" },
+        { label: "Target version", value: () => policy?.value === "latest" ? "Latest available" : target?.value || "Not set" },
+        { label: "Desired state", field: "enabled" },
+      ]);
+    },
+  });
+  launcher.addEventListener("click", () => wizard.open({ launcher }));
+}
+
 function initializeEsxStorageTables() {
   const volumeElement = document.getElementById("esx-storage-volumes-table");
   const shareElement = document.getElementById("esx-storage-shares-table");
@@ -17154,6 +17707,7 @@ document.addEventListener("DOMContentLoaded", initializeEsxStorageWizards);
 document.addEventListener("DOMContentLoaded", initializeEsxStorageFamilyDefaults);
 document.addEventListener("DOMContentLoaded", initializeEsxStorageVolumeSource);
 document.addEventListener("DOMContentLoaded", initializeDnsRecordsTable);
+document.addEventListener("DOMContentLoaded", initializeDnsDomainWizard);
 document.addEventListener("DOMContentLoaded", initializeDhcpScopesTable);
 document.addEventListener("DOMContentLoaded", initializeDhcpOptionsTable);
 document.addEventListener("DOMContentLoaded", initializeDhcpReservationsTable);
@@ -17163,6 +17717,7 @@ document.addEventListener("DOMContentLoaded", initializeEsxiPxeHostsTable);
 document.addEventListener("DOMContentLoaded", initializeCaProfilesTable);
 document.addEventListener("DOMContentLoaded", initializeCaCertificatesTable);
 document.addEventListener("DOMContentLoaded", initializeCaSettings);
+document.addEventListener("DOMContentLoaded", initializeCaCsrWizard);
 document.addEventListener("DOMContentLoaded", initializeKmsClientsTable);
 document.addEventListener("DOMContentLoaded", initializeKmsKeysTable);
 document.addEventListener("DOMContentLoaded", initializeKmsSettings);
@@ -17174,6 +17729,7 @@ document.addEventListener("DOMContentLoaded", initializeLdapBindSecretModal);
 document.addEventListener("DOMContentLoaded", initializeAutomationTables);
 document.addEventListener("DOMContentLoaded", initializeManagedPackagePolicies);
 document.addEventListener("DOMContentLoaded", initializeApplianceUpdateSourceWizard);
+document.addEventListener("DOMContentLoaded", initializeManagedPackageWizard);
 document.addEventListener("DOMContentLoaded", initializeNtpSettings);
 document.addEventListener("DOMContentLoaded", initializeNTPsecUpstreamsTable);
 document.addEventListener("DOMContentLoaded", initializeNTPsecSourceHealthModal);

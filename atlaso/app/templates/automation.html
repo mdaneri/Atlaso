@@ -155,17 +155,20 @@
       </div>
       <div class="alert warning">Managed scripts run as the unprivileged <code>atlaso-automation</code> account without sudo or Atlaso secrets.</div>
     </section>
-    <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="source">
+    <section class="vcf-sddc-step-page automation-script-source-step hidden" data-atlaso-wizard-step="source">
       <div class="automation-script-editor">
         <div class="automation-script-editor-head">
           <span class="field-label"><span>Script content</span><button class="help-icon" type="button" data-help="Enter code or load a local script file. Atlaso stores this content as immutable revision 1.">i</button></span>
-          <span class="status-pill" data-automation-script-create-language>bash</span>
-          <label class="file-upload-control compact-file-upload automation-script-import-control">
-            <input class="file-upload-input" type="file" accept=".sh,.bash,.py,.ps1,.txt,text/plain" data-automation-script-create-file>
-            <span class="file-upload-surface"><span class="file-upload-copy"><strong>Import script file</strong></span></span>
-          </label>
+          <span class="automation-script-editor-actions">
+            <span class="status-pill" data-automation-script-create-language>bash</span>
+            <button class="button secondary icon-button" type="button" data-automation-script-create-fullscreen aria-label="Open full-screen script editor" title="Open full-screen editor">⛶</button>
+            <label class="file-upload-control compact-file-upload automation-script-import-control">
+              <input class="file-upload-input" type="file" accept=".sh,.bash,.py,.ps1,.txt,text/plain" data-automation-script-create-file>
+              <span class="file-upload-surface"><span class="file-upload-copy"><strong>Import script file</strong></span></span>
+            </label>
+          </span>
         </div>
-        <textarea id="automation-script-create-content" name="content" class="code-editor-textarea" rows="14" spellcheck="false" data-codemirror-editor data-codemirror-language="atlaso-hosts" aria-label="Managed script source code"></textarea>
+        <textarea id="automation-script-create-content" name="content" class="code-editor-textarea" rows="20" spellcheck="false" data-codemirror-editor data-codemirror-language="shell" aria-label="Bash managed script source code"></textarea>
         <p class="muted automation-script-import-status" data-automation-script-create-import-status>Paste code or import a .sh, .bash, .py, .ps1, or .txt file (maximum 1 MiB).</p>
       </div>
     </section>
@@ -174,6 +177,18 @@
       <div class="alert warning">Creation stores immutable revision 1 in the disabled state. Review it before enabling or scheduling it.</div>
     </section>
   {% endcall %}
+  <dialog id="automation-script-create-fullscreen-dialog" class="confirm-modal wide-modal automation-script-fullscreen-dialog" aria-labelledby="automation-script-create-fullscreen-title">
+    <div class="confirm-modal-panel">
+      <div class="automation-script-fullscreen-toolbar">
+        <h2 id="automation-script-create-fullscreen-title">Script editor</h2>
+        <span class="status-pill" data-automation-script-fullscreen-language>bash</span>
+        <button class="button secondary icon-button" type="button" data-automation-script-fullscreen-close aria-label="Close full-screen script editor" title="Return to wizard">✕</button>
+      </div>
+      <div class="automation-script-editor automation-script-fullscreen-editor">
+        <textarea id="automation-script-create-fullscreen-content" class="code-editor-textarea" rows="30" spellcheck="false" data-codemirror-editor data-codemirror-language="shell" aria-label="Full-screen Bash managed script source code"></textarea>
+      </div>
+    </div>
+  </dialog>
   <dialog id="automation-script-modal" class="confirm-modal wide-modal" aria-labelledby="automation-script-modal-title">
     <div class="confirm-modal-panel">
       <div class="confirm-modal-body">

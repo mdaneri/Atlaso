@@ -376,9 +376,10 @@
 </section>
 
 {% set dhcp_scope_steps = [
-  {"id": "identity", "label": "Zone", "summary": "Name, family, and interface"},
+  {"id": "identity", "label": "Zone", "summary": "Name, family, interface, and notes"},
   {"id": "network", "label": "Network", "summary": "Gateway, prefix, and range"},
   {"id": "services", "label": "Services", "summary": "Lease, DNS, NTP, and domain"},
+  {"id": "enablement", "label": "Enablement", "summary": "Desired zone state"},
   {"id": "review", "label": "Review", "summary": "Confirm desired state"}
 ] %}
 {% call resource_wizard(
@@ -398,6 +399,7 @@
       <label><span class="field-label"><span>Address family</span><button class="help-icon" type="button" data-help="IPv4 or IPv6 cannot be changed after the IP zone is created.">i</button></span><select name="address_family"><option value="ipv4">IPv4</option><option value="ipv6">IPv6</option></select></label>
       <label><span class="field-label"><span>Interface</span><button class="help-icon" type="button" data-help="Access-mode physical interface or VLAN that serves this lease pool.">i</button></span><select name="interface_name">{% for interface in available_interfaces %}<option value="{{ interface.name }}">{{ interface.name }}</option>{% endfor %}</select></label>
     </div>
+    <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Optional operator note describing this lease pool.">i</button></span><input name="description"></label>
   </section>
   <section class="hidden" data-atlaso-wizard-step="network">
     <div class="form-grid">
@@ -414,12 +416,53 @@
       <label><span class="field-label"><span>NTP server</span><button class="help-icon" type="button" data-help="Optional time-server address advertised to clients.">i</button></span><input name="ntp_server"></label>
     </div>
     <datalist id="dhcp-zone-domain-options">{% for domain in dns_domain_options %}<option value="{{ domain }}"></option>{% endfor %}</datalist>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="enablement">
     <label class="switch-field"><span class="field-label"><span>Zone enabled</span><button class="help-icon" type="button" data-help="Enabled zones enter rendered dnsmasq desired state after validation.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
-    <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Optional operator note describing this lease pool.">i</button></span><input name="description"></label>
+    <div class="alert warning">Enablement changes desired state only. dnsmasq enforcement waits for the global DNS/DHCP appliance-apply unit.</div>
   </section>
   <section class="hidden" data-atlaso-wizard-step="review">
     <div class="settings-list" data-atlaso-resource-review></div>
     <div class="alert warning">Saving changes DHCP desired state only. dnsmasq changes remain controlled by global appliance apply.</div>
+  </section>
+{% endcall %}
+
+{% set dhcp_option_steps = [
+  {"id": "target", "label": "Target", "summary": "Global defaults or one IP zone"},
+  {"id": "value", "label": "Option", "summary": "Code, value, and notes"},
+  {"id": "enablement", "label": "Enablement", "summary": "Desired option state"},
+  {"id": "review", "label": "Review", "summary": "Confirm desired state"}
+] %}
+{% call resource_wizard(
+  "dhcp-option-dialog",
+  "dhcp-option-form",
+  "/dhcp/options",
+  dhcp_option_steps,
+  "Define the DHCP option",
+  "Choose whether this option applies globally or to one managed IP zone.",
+  "Create DHCP option"
+) %}
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="record_id" value="">
+  <section data-atlaso-wizard-step="target">
+    <label>
+      <span class="field-label"><span>Applies to</span><button class="help-icon" type="button" data-help="Use Global defaults for every zone or select one managed IP zone.">i</button></span>
+      <select name="scope_id"><option value="__global__">Global defaults</option>{% for scope in dhcp_scopes %}<option value="{{ scope.id }}">{{ scope.name }}</option>{% endfor %}</select>
+    </label>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="value">
+    <div class="form-grid">
+      <label><span class="field-label"><span>Option</span><button class="help-icon" type="button" data-help="dnsmasq DHCP option name or number.">i</button></span><input name="option_code" required></label>
+      <label><span class="field-label"><span>Value</span><button class="help-icon" type="button" data-help="Value rendered for the selected DHCP option.">i</button></span><input name="value" required></label>
+    </div>
+    <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Optional operator note explaining the option.">i</button></span><input name="description"></label>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="enablement">
+    <label class="switch-field"><span class="field-label"><span>Option enabled</span><button class="help-icon" type="button" data-help="Enabled options enter rendered dnsmasq desired state.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="review">
+    <div class="settings-list" data-atlaso-resource-review></div>
+    <div class="alert warning">Saving changes DHCP desired state only. dnsmasq enforcement waits for global appliance apply.</div>
   </section>
 {% endcall %}
 {% endblock %}

@@ -41,6 +41,7 @@ def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
 
 DNS_AUTHORITY_SERIAL_FIELDS = {
     "domain",
+    "disabled_domains",
     "authoritative",
     "authoritative_server",
     "authoritative_contact",
@@ -113,6 +114,32 @@ def init_db() -> None:
                             f"ADD COLUMN {name} {definition}"
                         )
                     )
+            dns_columns = {
+                row[1]
+                for row in connection.execute(
+                    text("PRAGMA table_info(dns_settings)")
+                ).all()
+            }
+            if "disabled_domains" not in dns_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE dns_settings "
+                        "ADD COLUMN disabled_domains VARCHAR(500) NOT NULL DEFAULT ''"
+                    )
+                )
+            ldap_organization_columns = {
+                row[1]
+                for row in connection.execute(
+                    text("PRAGMA table_info(ldap_organizations)")
+                ).all()
+            }
+            if "description" not in ldap_organization_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE ldap_organizations "
+                        "ADD COLUMN description TEXT NOT NULL DEFAULT ''"
+                    )
+                )
 
 
 def get_db() -> Generator[Session, None, None]:

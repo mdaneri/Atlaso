@@ -324,10 +324,10 @@
   </aside>
 </section>
 {% set vcf_depot_profile_steps = [
-  {"id": "identity", "label": "Profile", "summary": "Name and download type"},
+  {"id": "identity", "label": "Profile", "summary": "Name, type, and notes"},
   {"id": "release", "label": "Release", "summary": "SKU, release, and mode"},
   {"id": "filter", "label": "Content", "summary": "Component and platform filters"},
-  {"id": "state", "label": "State", "summary": "Enablement and lifecycle"},
+  {"id": "enablement", "label": "Enablement", "summary": "Profile availability"},
   {"id": "review", "label": "Review", "summary": "Confirm desired state"}
 ] %}
 {% call resource_wizard(
@@ -344,7 +344,9 @@
   <section data-atlaso-wizard-step="identity"><div class="form-grid">
     <label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Stable operator-visible name for this VCFDT command profile.">i</button></span><input name="name" required></label>
     <label><span class="field-label"><span>Profile type</span><button class="help-icon" type="button" data-help="Choose binaries, metadata, or ESX content. ESX requires an activation code.">i</button></span><select name="profile_type"><option value="binaries">Binaries</option><option value="metadata">Metadata</option><option value="esx">ESX</option></select></label>
-  </div></section>
+  </div>
+  <label><span class="field-label"><span>Notes</span><button class="help-icon" type="button" data-help="Optional operator context for the profile.">i</button></span><input name="notes"></label>
+  </section>
   <section class="hidden" data-atlaso-wizard-step="release"><div class="form-grid">
     <label><span class="field-label"><span>SKU</span><button class="help-icon" type="button" data-help="VCF or VVF product entitlement.">i</button></span><select name="sku"><option value="VCF">VCF</option><option value="VVF">VVF</option></select></label>
     <label><span class="field-label"><span>VCF version</span><button class="help-icon" type="button" data-help="Release selector passed to VCFDT.">i</button></span><input name="vcf_version" required></label>
@@ -357,10 +359,7 @@
   </div>
   <label><span class="field-label"><span>Disabled ESX platforms</span><button class="help-icon" type="button" data-help="One platform identifier per line, excluded from ESX downloads.">i</button></span><textarea name="disabled_platforms" rows="4" placeholder="One platform identifier per line"></textarea></label>
   </section>
-  <section class="hidden" data-atlaso-wizard-step="state"><div class="form-grid">
-    <label><span class="field-label"><span>Status</span><button class="help-icon" type="button" data-help="Operator-visible last-run state; task execution updates this value.">i</button></span><select name="status"><option value="planned">Never run</option><option value="ready">Running</option><option value="synced">Succeeded</option><option value="blocked">Failed</option></select></label>
-    <label class="switch-field"><span class="field-label"><span>Profile enabled</span><button class="help-icon" type="button" data-help="Requires a staged VCFDT package and valid credential before a task can start.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
-  </div><label><span class="field-label"><span>Notes</span><button class="help-icon" type="button" data-help="Optional operator context for the profile.">i</button></span><input name="notes"></label></section>
+  <section class="hidden" data-atlaso-wizard-step="enablement"><label class="switch-field"><span class="field-label"><span>Profile enabled</span><button class="help-icon" type="button" data-help="Requires a staged VCFDT package and valid credential before a task can start.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label></section>
   <section class="hidden" data-atlaso-wizard-step="review"><div class="settings-list" data-atlaso-resource-review></div><div class="alert warning">Saving stages the VCFDT profile only. Downloads are explicit row actions and appliance mutation remains separately controlled.</div></section>
 {% endcall %}
 <dialog id="vcf-depot-task-log-modal" class="confirm-modal" aria-labelledby="vcf-depot-task-log-modal-title">

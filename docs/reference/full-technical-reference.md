@@ -706,7 +706,8 @@ Unbound clients authenticate Local identities; organization-bound clients authen
 organization, and managed LDAP OIDC sessions never grant operator UI access. See
 [Constrained OpenID Connect provider](../services/oidc-provider.md).
 
-Complex resource collections use the shared wizard-backed Tabulator pattern. Authentication API tokens and OIDC
+Complex resource collections use the shared wizard-backed Tabulator pattern. Authentication API tokens use a
+role-constrained scope checklist instead of free-form permission text. Authentication API tokens and OIDC
 clients, CA profiles and certificate requests, operator firewall rules, KMS clients and keys, DHCP IP zones, VCF
 Offline Depot download profiles, and VCF Private Registry bundles remain visible as browsable grids. The pinned bottom
 row launches add; row double-click and the context menu launch edit where permissions allow. Guided steps validate

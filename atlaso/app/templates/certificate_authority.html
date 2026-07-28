@@ -148,43 +148,11 @@
           </div>
           <span class="status-pill warn">dry-run</span>
         </div>
-        <form class="form-stack zone-editor-form" action="/certificate-authority/certificates" method="post">
-          <input type="hidden" name="csrf" value="{{ csrf_token }}">
-          <input class="zone-file-input" type="hidden" name="csr_text" value="">
-          <input type="hidden" name="enabled" value="on">
-          <div class="form-grid">
-            <label>
-              <span class="field-label"><span>Common name</span><button class="help-icon" type="button" data-help="Primary subject name for the certificate request. Use the service FQDN for server certificates.">i</button></span>
-              <input name="common_name" placeholder="vcsa.atlaso.internal" required>
-            </label>
-            <label>
-              <span class="field-label"><span>Profile</span><button class="help-icon" type="button" data-help="Select the CA profile that controls key usage, EKU, validity, and SAN requirements.">i</button></span>
-              <select name="profile_id">
-                {% for profile in ca_profiles if profile.enabled %}
-                  <option value="{{ profile.id }}">{{ profile.name }}</option>
-                {% endfor %}
-              </select>
-            </label>
-            <label>
-              <span class="field-label"><span>DNS SANs</span><button class="help-icon" type="button" data-help="One DNS name per line. Server certificates should include every hostname clients will use.">i</button></span>
-              <textarea name="subject_alt_names" rows="3" placeholder="vcsa.atlaso.internal"></textarea>
-            </label>
-            <label>
-              <span class="field-label"><span>IP SANs</span><button class="help-icon" type="button" data-help="Optional IP subject alternative names, one per line, for clients that connect by IP address.">i</button></span>
-              <textarea name="ip_addresses" rows="3" placeholder="192.168.50.20"></textarea>
-            </label>
-          </div>
-          <label>
-            <span class="field-label"><span>CSR</span><button class="help-icon" type="button" data-help="Paste a PEM certificate signing request. Atlaso stores it in desired state and global appliance apply handles validation/signing later.">i</button></span>
-            <div class="zone-code-editor" contenteditable="true" spellcheck="false" aria-label="Certificate signing request">-----BEGIN CERTIFICATE REQUEST-----
------END CERTIFICATE REQUEST-----</div>
-          </label>
-          <label>
-            <span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Optional operator note for why this certificate is needed.">i</button></span>
-            <input name="description" placeholder="VCF management appliance certificate">
-          </label>
-          <button class="button primary" type="submit">Stage CSR request</button>
-        </form>
+        <div class="empty-state compact-empty-state">
+          <h3>Stage a certificate signing request</h3>
+          <p>Use the guided flow to review identity, SANs, and PEM content before saving desired state.</p>
+          <button class="button primary" type="button" data-ca-csr-open aria-haspopup="dialog" aria-controls="ca-csr-dialog">Start CSR intake</button>
+        </div>
       </div>
     </div>
   </div>
@@ -359,10 +327,49 @@
   </aside>
 </section>
 
+{% set ca_csr_steps = [
+  {"id": "identity", "label": "Request", "summary": "Name, profile, and description"},
+  {"id": "names", "label": "Names", "summary": "DNS and IP SANs"},
+  {"id": "csr", "label": "CSR", "summary": "PEM request content"},
+  {"id": "review", "label": "Review", "summary": "Confirm staged request"}
+] %}
+{% call resource_wizard(
+  "ca-csr-dialog",
+  "ca-csr-form",
+  "/certificate-authority/certificates",
+  ca_csr_steps,
+  "Stage a certificate signing request",
+  "Define the request metadata and paste the client-generated CSR.",
+  "Stage CSR request"
+) %}
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="enabled" value="on">
+  <section data-atlaso-wizard-step="identity">
+    <div class="form-stack">
+      <label><span class="field-label"><span>Common name</span><button class="help-icon" type="button" data-help="Primary subject name for the certificate request. Use the service FQDN for server certificates.">i</button></span><input name="common_name" placeholder="vcsa.atlaso.internal" required></label>
+      <label><span class="field-label"><span>Profile</span><button class="help-icon" type="button" data-help="Select the CA profile that controls key usage, EKU, validity, and SAN requirements.">i</button></span><select name="profile_id" required>{% for profile in ca_profiles if profile.enabled %}<option value="{{ profile.id }}">{{ profile.name }}</option>{% endfor %}</select></label>
+      <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Optional operator note for why this certificate is needed.">i</button></span><input name="description" placeholder="VCF management appliance certificate"></label>
+    </div>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="names">
+    <div class="form-stack">
+      <label><span class="field-label"><span>DNS SANs</span><button class="help-icon" type="button" data-help="One DNS name per line. Server certificates should include every hostname clients will use.">i</button></span><textarea name="subject_alt_names" rows="4" placeholder="vcsa.atlaso.internal"></textarea></label>
+      <label><span class="field-label"><span>IP SANs</span><button class="help-icon" type="button" data-help="Optional IP subject alternative names, one per line, for clients that connect by IP address.">i</button></span><textarea name="ip_addresses" rows="4" placeholder="192.168.50.20"></textarea></label>
+    </div>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="csr">
+    <label><span class="field-label"><span>CSR PEM</span><button class="help-icon" type="button" data-help="Paste a PEM certificate signing request. Atlaso stores it in desired state and global appliance apply handles validation and signing later.">i</button></span><textarea class="config-preview" name="csr_text" rows="14" required spellcheck="false" placeholder="-----BEGIN CERTIFICATE REQUEST-----"></textarea></label>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="review">
+    <div class="settings-list" data-atlaso-resource-review></div>
+    <div class="alert warning">Saving stages the CSR and metadata only. Signing remains controlled by global Appliance Apply.</div>
+  </section>
+{% endcall %}
+
 {% set ca_profile_steps = [
-  {"id": "identity", "label": "Profile", "summary": "Name and certificate type"},
+  {"id": "identity", "label": "Profile", "summary": "Name, type, and description"},
   {"id": "policy", "label": "Policy", "summary": "Validity and key usage"},
-  {"id": "state", "label": "State", "summary": "Availability and notes"},
+  {"id": "enablement", "label": "Enablement", "summary": "Profile availability"},
   {"id": "review", "label": "Review", "summary": "Confirm desired state"}
 ] %}
 {% call resource_wizard(
@@ -381,6 +388,7 @@
       <label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Stable operator-visible profile name used by certificate requests.">i</button></span><input name="name" required></label>
       <label><span class="field-label"><span>Certificate type</span><button class="help-icon" type="button" data-help="Selects the intended server, client, user, or intermediate certificate role.">i</button></span><select name="certificate_type"><option value="server">server</option><option value="client">client</option><option value="user">user</option><option value="intermediate">intermediate</option></select></label>
     </div>
+    <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Operator note describing where this profile should be used.">i</button></span><input name="description"></label>
   </section>
   <section class="hidden" data-atlaso-wizard-step="policy">
     <div class="form-grid">
@@ -392,9 +400,8 @@
       <label class="switch-field"><span class="field-label"><span>Require SAN</span><button class="help-icon" type="button" data-help="Requires each request to contain at least one DNS or IP subject alternative name.">i</button></span><input class="switch-input" type="checkbox" name="san_required"><span class="switch-track" aria-hidden="true"></span></label>
     </div>
   </section>
-  <section class="hidden" data-atlaso-wizard-step="state">
+  <section class="hidden" data-atlaso-wizard-step="enablement">
     <label class="switch-field"><span class="field-label"><span>Profile enabled</span><button class="help-icon" type="button" data-help="Enabled profiles may be selected by new certificate requests.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
-    <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Operator note describing where this profile should be used.">i</button></span><input name="description"></label>
   </section>
   <section class="hidden" data-atlaso-wizard-step="review">
     <div class="settings-list" data-atlaso-resource-review></div>
@@ -403,9 +410,9 @@
 {% endcall %}
 
 {% set ca_certificate_steps = [
-  {"id": "identity", "label": "Request", "summary": "Name and certificate profile"},
+  {"id": "identity", "label": "Request", "summary": "Name, profile, and description"},
   {"id": "names", "label": "Names", "summary": "DNS and IP SANs"},
-  {"id": "state", "label": "State", "summary": "Availability and notes"},
+  {"id": "enablement", "label": "Enablement", "summary": "Request availability"},
   {"id": "review", "label": "Review", "summary": "Confirm desired state"}
 ] %}
 {% call resource_wizard(
@@ -420,20 +427,20 @@
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
   <input type="hidden" name="record_id" value="">
   <section data-atlaso-wizard-step="identity">
-    <div class="form-grid">
+    <div class="form-stack">
       <label><span class="field-label"><span>Common name</span><button class="help-icon" type="button" data-help="Primary subject name. Use the service FQDN for server certificates.">i</button></span><input name="common_name" placeholder="vcsa.atlaso.internal" required></label>
       <label><span class="field-label"><span>Profile</span><button class="help-icon" type="button" data-help="Controls certificate type, validity, key policy, and SAN requirements.">i</button></span><select name="profile_id" required>{% for profile in ca_profiles if profile.enabled %}<option value="{{ profile.id }}" data-san-required="{{ 'true' if profile.san_required else 'false' }}">{{ profile.name }}</option>{% endfor %}</select></label>
+      <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Operator note describing the certificate purpose. It is not written into the certificate.">i</button></span><input name="description"></label>
     </div>
   </section>
   <section class="hidden" data-atlaso-wizard-step="names">
-    <div class="form-grid">
+    <div class="form-stack">
       <label><span class="field-label"><span>DNS SANs</span><button class="help-icon" type="button" data-help="One DNS name per line. Include every hostname clients will use.">i</button></span><textarea name="subject_alt_names" rows="5"></textarea></label>
       <label><span class="field-label"><span>IP SANs</span><button class="help-icon" type="button" data-help="Optional IP subject alternative names, one per line.">i</button></span><textarea name="ip_addresses" rows="5"></textarea></label>
     </div>
   </section>
-  <section class="hidden" data-atlaso-wizard-step="state">
+  <section class="hidden" data-atlaso-wizard-step="enablement">
     <label class="switch-field"><span class="field-label"><span>Request enabled</span><button class="help-icon" type="button" data-help="Enabled requests participate in CA desired-state validation and issuance.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
-    <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Operator note describing the certificate purpose. It is not written into the certificate.">i</button></span><input name="description"></label>
   </section>
   <section class="hidden" data-atlaso-wizard-step="review">
     <div class="settings-list" data-atlaso-resource-review></div>

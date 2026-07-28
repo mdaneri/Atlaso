@@ -12,6 +12,11 @@ status: current
 Open **Firewall** to manage Atlaso-owned nftables desired state. The page combines generated service-listener rules,
 routing permissions, and operator-defined access groups.
 
+Select **Add rule here** or open an existing operator rule to use the five-step guided workflow. Rule identity, traffic
+matching, priority and notes, enablement, and final review are separate decisions. The dedicated **Enablement** step
+makes clear that enabling a rule changes rendered desired state only; enforcement still waits for the global Firewall
+appliance-apply unit.
+
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 

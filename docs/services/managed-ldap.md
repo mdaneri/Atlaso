@@ -60,14 +60,18 @@ checks. Five failures lock a user for 15 minutes, and five previous passwords ar
 default because v1 has no end-user password-change portal. Administrators can stage password resets, enable or disable
 users, and request an unlock; enforcement occurs only through global LDAP apply.
 
-The Directory UI treats organizations like DNS zones: each organization is a tab and `+ Organization` opens an
-in-context creation panel. Users and groups use editable Tabulator grids with bottom add rows and row menus for
-password, membership, unlock, and deletion actions. **Generate test directory** asks for user and group counts, invents
-complete synthetic identities and memberships, and shows generated passwords once; those passwords follow the same
-in-memory-only staging boundary as manually entered passwords. The result changes the primary action to **Done**, which
-closes the modal and clears the one-time CSV from the page. If Atlaso restarts before those passwords are applied, VCF
-Helper summarizes the affected users per organization and **Recover missing passwords** generates replacement
-credentials in one operation with a new one-time CSV.
+The Directory UI treats organizations like DNS zones: each organization is a tab and `+ Organization` opens a guided
+wizard for its name, operator description, isolated naming context, and enablement. Users and groups use
+wizard-backed Tabulator grids with bottom add rows. Opening a saved row returns to the same reviewed flow, while the
+Enabled column remains a direct edit for quick desired-state changes. Row menus retain password reset, unlock,
+membership, and deletion actions. User creation can stage a password or postpone it; enabling an account without an
+applied or staged password causes LDAP apply validation to stop before host mutation.
+
+**Generate test directory** asks for user and group counts, invents complete synthetic identities and memberships, and
+shows generated passwords once; those passwords follow the same in-memory-only staging boundary as manually entered
+passwords. The result changes the primary action to **Done**, which closes the modal and clears the one-time CSV from the
+page. If Atlaso restarts before those passwords are applied, VCF Helper summarizes the affected users per organization
+and **Recover missing passwords** generates replacement credentials in one operation with a new one-time CSV.
 
 ## VCF Automation integration
 
@@ -75,6 +79,10 @@ Open the **Managed LDAP for VCF** tile on the VCF Helper page for both manual bu
 configuration, and verification workflow. The Managed LDAP page remains focused on directory service settings,
 organizations, accounts, and groups. Encrypted LDAP recovery is integrated into Backup / Restore as a separate
 LDAP-specific archive.
+
+The VCF Helper presents organization selection, tenant connection, transient trust details, and the inspect-or-configure
+choice as separate reviewed wizard steps. Synthetic directory generation similarly separates organization selection,
+directory sizing, and the one-time credential warning before creation.
 
 Every organization can download a manual ZIP bundle containing the selected VCF LDAP endpoint, root CA PEM when LDAPS is
 used, search bases, bind DN, VCF Automation 9.1 JSON, and operator instructions. The bind password is intentionally

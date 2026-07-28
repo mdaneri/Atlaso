@@ -12,6 +12,10 @@ Atlaso manages DNS desired state through dnsmasq. Editing settings, zones, or re
 and the global DNS/DHCP preview; it does not mutate the appliance until an operator submits the `DNS/DHCP (dnsmasq)`
 unit through Appliance Apply.
 
+Select **+ Domain** to create a forward domain through the guided identity, enablement, and review steps. Each domain
+tab exposes a direct enablement switch. Disabling a domain retains the domain and all scoped records in Atlaso's
+database while excluding that zone from rendered dnsmasq desired state; at least one domain must remain enabled.
+
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 

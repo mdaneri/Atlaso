@@ -31,13 +31,12 @@
           <div class="managed-package-content">
             <div class="panel-head compact">
               <p class="muted">Open a configured repository to edit it, or use guided setup to add another source.</p>
-              <button class="button secondary compact" type="button" data-update-source-wizard-open data-update-source-kind="{{ group.kind }}">+ Repository</button>
             </div>
-            {% if group.sources %}
             <div class="tab-buttons zone-tabs" role="tablist" aria-label="{{ group.kind }} repositories" data-tab-storage-key="atlaso:appliance-update:{{ group.kind }}-repository-tab">
               {% for source in group.sources %}<button class="tab-button {{ 'active' if loop.first else '' }}" type="button" role="tab" data-tab-target="update-source-{{ source.id }}" aria-controls="update-source-{{ source.id }}" {% if loop.first %}aria-selected="true"{% else %}aria-selected="false"{% endif %}>{{ source.name }}</button>{% endfor %}
+              <button class="tab-button" type="button" data-update-source-wizard-open data-update-source-kind="{{ group.kind }}">+ Repository</button>
             </div>
-            {% else %}
+            {% if not group.sources %}
               <p class="muted">No {{ group.kind }} repositories are configured.</p>
             {% endif %}
             <div class="tab-panels">
@@ -101,7 +100,7 @@
           {% for package in powershell_packages %}
             <button class="tab-button {{ 'active' if loop.first else '' }}" type="button" role="tab" data-tab-target="powershell-module-{{ package.id }}" aria-controls="powershell-module-{{ package.id }}" {% if loop.first %}aria-selected="true"{% else %}aria-selected="false"{% endif %}>{{ package.name }}</button>
           {% endfor %}
-          <button class="tab-button {{ 'active' if not powershell_packages else '' }}" type="button" role="tab" data-tab-target="powershell-module-new" aria-controls="powershell-module-new" {% if not powershell_packages %}aria-selected="true"{% else %}aria-selected="false"{% endif %}>+ Module</button>
+          <button class="tab-button" type="button" data-managed-package-wizard-open {{ 'disabled' if not powershell_sources else '' }}>+ Module</button>
         </div>
         <div class="tab-panels">
           {% for package in powershell_packages %}
@@ -128,26 +127,6 @@
               <form id="delete-managed-package-{{ package.id }}" class="hidden" action="/appliance-update/packages/{{ package.id }}/delete" method="post" data-confirm-modal data-confirm-title="Stop managing {{ package.name }}?" data-confirm-message="This removes the module from future update checks and runs. It does not uninstall an already installed module from the appliance." data-confirm-label="Delete managed module"><input type="hidden" name="csrf" value="{{ csrf_token }}"></form>
             </div>
           {% endfor %}
-          <div id="powershell-module-new" class="tab-panel {{ 'active' if not powershell_packages else '' }}" role="tabpanel" {{ 'hidden' if powershell_packages else '' }}>
-            {% if powershell_sources %}
-              <form class="source-editor-form managed-package-editor" action="/appliance-update/packages" method="post" data-managed-package-form>
-                <input type="hidden" name="csrf" value="{{ csrf_token }}">
-                <div class="source-editor-grid">
-                  <label><span class="field-label"><span>Module name</span><button class="help-icon" type="button" data-help="Exact module name published by the selected repository.">i</button></span><input name="name" required autocomplete="off"></label>
-                  <label><span class="field-label"><span>Repository</span><button class="help-icon" type="button" data-help="Registered PowerShell repository that owns this managed module. Configure repositories in the PowerShell source tabs above.">i</button></span><select name="source_id">{% for source in powershell_sources %}<option value="{{ source.id }}">{{ source.name }}{{ '' if source.enabled else ' (disabled)' }}</option>{% endfor %}</select></label>
-                  <label><span class="field-label"><span>Version policy</span><button class="help-icon" type="button" data-help="Use pinned for reproducible appliance state or latest to follow repository releases.">i</button></span><select name="policy" data-managed-package-policy><option value="pinned">Pinned</option><option value="latest">Latest</option></select></label>
-                  <label data-managed-package-target-label><span class="field-label"><span>Target version</span><button class="help-icon" type="button" data-help="Exact module version required when policy is pinned. Latest disables this field.">i</button></span><input name="target_version" autocomplete="off" data-managed-package-target></label>
-                </div>
-                <fieldset class="source-editor-options">
-                  <legend>Module behavior</legend>
-                  <div class="source-option-grid managed-package-option-grid">
-                    <label class="switch-field source-option"><span class="field-label"><span>Module enabled</span><button class="help-icon" type="button" data-help="An enabled module participates in update checks and installation runs after its repository is synchronized.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
-                  </div>
-                </fieldset>
-                <div class="source-editor-footer source-editor-footer-submit"><span class="muted">The module becomes part of desired update state after creation.</span><button class="button primary" type="submit">Add managed module</button></div>
-              </form>
-            {% else %}<p class="muted">Create a PowerShell source before adding modules.</p>{% endif %}
-          </div>
         </div>
       </div>
     </details>
@@ -330,6 +309,46 @@
   <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review">
     <div class="settings-list" data-atlaso-resource-review></div>
     <div class="alert warning">No package is installed and no runtime repository configuration is changed by this step.</div>
+  </section>
+{% endcall %}
+{% set managed_package_steps = [
+  {"id": "identity", "label": "Module", "summary": "Name and repository"},
+  {"id": "policy", "label": "Version", "summary": "Resolution policy"},
+  {"id": "enablement", "label": "Enablement", "summary": "Desired availability"},
+  {"id": "review", "label": "Review", "summary": "Confirm module creation"}
+] %}
+{% call resource_wizard(
+  "managed-package-dialog",
+  "managed-package-create-form",
+  "/appliance-update/packages",
+  managed_package_steps,
+  "Add managed PowerShell module",
+  "Choose the repository and version policy for the module desired state.",
+  "Create managed module"
+) %}
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity">
+    {% if powershell_sources %}
+    <div class="form-stack">
+      <label><span class="field-label"><span>Module name</span><button class="help-icon" type="button" data-help="Exact module name published by the selected repository.">i</button></span><input name="name" required autocomplete="off"></label>
+      <label><span class="field-label"><span>Repository</span><button class="help-icon" type="button" data-help="Registered PowerShell repository that owns this managed module.">i</button></span><select name="source_id">{% for source in powershell_sources %}<option value="{{ source.id }}">{{ source.name }}{{ '' if source.enabled else ' (disabled)' }}</option>{% endfor %}</select></label>
+    </div>
+    {% else %}
+    <div class="alert warning">Create a PowerShell repository before adding a managed module.</div>
+    {% endif %}
+  </section>
+  <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="policy">
+    <div class="form-stack">
+      <label><span class="field-label"><span>Version policy</span><button class="help-icon" type="button" data-help="Use pinned for reproducible appliance state or latest to follow repository releases.">i</button></span><select name="policy" data-managed-package-create-policy><option value="pinned">Pinned</option><option value="latest">Latest</option></select></label>
+      <label data-managed-package-create-target-label><span class="field-label"><span>Target version</span><button class="help-icon" type="button" data-help="Exact module version required when policy is pinned. Latest disables this field.">i</button></span><input name="target_version" autocomplete="off" data-managed-package-create-target></label>
+    </div>
+  </section>
+  <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="enablement">
+    <label class="switch-field"><span class="field-label"><span>Module enabled</span><button class="help-icon" type="button" data-help="Includes this module in update checks and installation runs after its repository is synchronized.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
+  </section>
+  <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review">
+    <div class="settings-list" data-atlaso-resource-review></div>
+    <div class="alert warning">Saving creates desired update state only. It does not install the module.</div>
   </section>
 {% endcall %}
 {% endblock %}

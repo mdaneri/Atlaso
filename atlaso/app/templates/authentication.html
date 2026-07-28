@@ -443,11 +443,19 @@
     </div>
   </section>
   <section class="hidden" data-atlaso-wizard-step="scopes">
-    <label>
-      <span class="field-label"><span>Scopes</span><button class="help-icon" type="button" data-help="Space-separated permissions constrained by your Atlaso roles. Request only the access the integration needs.">i</button></span>
-      <textarea name="scopes" rows="7" required>read:dashboard</textarea>
-    </label>
-    <p class="muted">Allowed for your roles: <code>{{ api_token_scope_options|join(" ") }}</code></p>
+    <input type="hidden" name="scopes" value="read:dashboard">
+    <fieldset class="scope-choice-fieldset api-token-scope-fieldset">
+      <legend>Allowed scopes</legend>
+      <p class="muted">Select only the permissions this integration needs. Choices are constrained by your Atlaso roles.</p>
+      <div class="scope-choice-grid api-token-scope-grid">
+        {% for scope in api_token_scope_options %}
+          <label class="scope-choice">
+            <input type="checkbox" name="scope_choices" value="{{ scope }}" {{ "checked" if scope == "read:dashboard" else "" }}>
+            <span class="scope-choice-copy"><strong>{{ scope|replace(":", " · ")|replace("-", " ")|title }}</strong><small><code>{{ scope }}</code></small></span>
+          </label>
+        {% endfor %}
+      </div>
+    </fieldset>
   </section>
   <section class="hidden" data-atlaso-wizard-step="review">
     <div class="settings-list" data-atlaso-resource-review></div>

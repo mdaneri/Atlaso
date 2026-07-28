@@ -525,7 +525,12 @@ def test_software_source_and_managed_module_lifecycle(client):
     source_list = grouped_page.text.index('class="apply-unit-list"', source_actions)
     assert source_actions < source_list
     assert 'aria-label="Managed PowerShell modules"' in grouped_page.text
-    assert 'data-tab-target="powershell-module-new"' in grouped_page.text
+    assert 'data-tab-target="powershell-module-new"' not in grouped_page.text
+    assert 'data-managed-package-wizard-open' in grouped_page.text
+    assert 'id="managed-package-dialog"' in grouped_page.text
+    assert 'data-managed-package-create-form' in grouped_page.text
+    managed_module_tabs = grouped_page.text.split('aria-label="Managed PowerShell modules"', 1)[1].split("</div>", 1)[0]
+    assert "data-managed-package-wizard-open" in managed_module_tabs
     assert "VCF.PowerCLI" in grouped_page.text
     assert "Private.PowerCLI.Tools" in grouped_page.text
     assert "one tab per module" in grouped_page.text
@@ -534,6 +539,8 @@ def test_software_source_and_managed_module_lifecycle(client):
     assert 'aria-label="powershell repositories"' in grouped_page.text
     assert grouped_page.text.count("data-update-source-wizard-open") == 3
     assert 'data-update-source-kind="powershell"' in grouped_page.text
+    powershell_tabs = grouped_page.text.split('aria-label="powershell repositories"', 1)[1].split("</div>", 1)[0]
+    assert "data-update-source-wizard-open" in powershell_tabs
     assert 'id="appliance-update-source-dialog"' in grouped_page.text
     assert "data-appliance-update-source-form" in grouped_page.text
     assert "data-powershell-source-new-tab" not in grouped_page.text
@@ -542,6 +549,7 @@ def test_software_source_and_managed_module_lifecycle(client):
     assert "PrivateGallery" in grouped_page.text
     app_js = Path("atlaso/app/static/app.js").read_text(encoding="utf-8")
     assert "function initializeApplianceUpdateSourceWizard()" in app_js
+    assert "function initializeManagedPackageWizard()" in app_js
     assert "window.AtlasoUiPatterns.createWizard({" in app_js
     app_css = Path("atlaso/app/static/app.css").read_text(encoding="utf-8")
     assert ".detail-rail .detail-panel {\n  position: static;" in app_css

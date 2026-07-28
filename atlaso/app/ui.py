@@ -4089,10 +4089,14 @@ def dnsmasq_context(db: Session, *, reconcile: bool = True) -> dict:
     )
     if esxi_boot.get("enabled") and not dhcp_settings.enabled:
         validation_errors.append("ESXi PXE boot services require DHCP to be enabled so clients receive boot files.")
-    dns_domains = split_domains(dns_settings.domain) or ["atlaso.internal"]
+    active_dns_domains = split_domains(dns_settings.domain) or ["atlaso.internal"]
+    dns_domains = dns_domains_for_settings(dns_settings)
     dns_warnings = dns_domain_warnings(dns_domains)
     dns_record_groups = dns_records_by_domain(dns_records, dns_domains, dns_settings)
     for group in dns_record_groups:
+        group["enabled"] = group["domain"] in active_dns_domains
+        if not group["enabled"]:
+            group["authority"] = None
         group["suggested_ipv4"] = dns_record_suggested_ipv4(dns_records, group["domain"], dhcp_scopes, dhcp_reservations)
     reverse_zone_groups = reverse_records_by_zone(dns_reverse_records(dns_records))
     lease_result = SystemAdapter().read_dhcp_leases()
@@ -5315,11 +5319,16 @@ def normalize_dns_hostname(hostname: str, domain: str | None = None) -> str:
 
 
 def dns_domains_for_settings(settings: DnsSettings) -> list[str]:
-    return split_domains(settings.domain) or ["atlaso.internal"]
+    active = split_domains(settings.domain) or ["atlaso.internal"]
+    return split_domains("\n".join([*active, *split_domains(settings.disabled_domains)]))
 
 
 def save_dns_domains(settings: DnsSettings, domains: list[str]) -> None:
     settings.domain = join_domains(domains) or "atlaso.internal"
+
+
+def save_disabled_dns_domains(settings: DnsSettings, domains: list[str]) -> None:
+    settings.disabled_domains = join_domains(domains)
 
 
 def records_for_domain(db: Session, domain: str) -> list[DnsRecord]:
@@ -9872,7 +9881,7 @@ def appliance_power_action(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> RedirectResponse | JSONResponse:
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     if action not in {"reboot", "shutdown"}:
@@ -13069,6 +13078,8 @@ def update_dns_from_ui(
 def create_dns_zone_from_ui(
     request: Request,
     domain: str = Form(...),
+    enabled: str | None = Form(None),
+    enabled_present: str | None = Form(None),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
@@ -13092,10 +13103,63 @@ def create_dns_zone_from_ui(
             {"identity": identity, **dnsmasq_context(db), "form_error": f"DNS domain {new_domain} already exists."},
             status_code=409,
         )
-    save_dns_domains(settings, [*existing_domains, new_domain])
+    active_domains = split_domains(settings.domain) or ["atlaso.internal"]
+    disabled_domains = split_domains(settings.disabled_domains)
+    next_enabled = enabled == "on" if enabled_present is not None else True
+    if next_enabled:
+        save_dns_domains(settings, [*active_domains, new_domain])
+        save_disabled_dns_domains(settings, [item for item in disabled_domains if item != new_domain])
+    else:
+        save_disabled_dns_domains(settings, [*disabled_domains, new_domain])
     settings.updated_at = utcnow()
     db.commit()
     record_audit(db, actor=identity.username, action="create_dns_zone", resource_type="dns_zone", resource_id=new_domain)
+    return grid_saved_response(
+        request,
+        redirect_url="/dns",
+        resource_name="domain",
+        resource={"name": new_domain, "enabled": next_enabled},
+    )
+
+
+@router.post("/dns/zones/enabled", response_model=None)
+def set_dns_zone_enabled_from_ui(
+    request: Request,
+    domain: str = Form(...),
+    enabled: str | None = Form(None),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> RedirectResponse | JSONResponse:
+    verify_csrf(request, csrf)
+    settings = get_dns_settings_row(db)
+    normalized_domain = split_domains(domain)
+    existing_domains = dns_domains_for_settings(settings)
+    if len(normalized_domain) != 1 or normalized_domain[0] not in existing_domains:
+        raise HTTPException(status_code=404, detail="DNS domain was not found.")
+    selected_domain = normalized_domain[0]
+    active_domains = split_domains(settings.domain) or ["atlaso.internal"]
+    disabled_domains = split_domains(settings.disabled_domains)
+    next_enabled = enabled == "on"
+    if not next_enabled and selected_domain in active_domains and len(active_domains) == 1:
+        raise HTTPException(status_code=422, detail="At least one DNS domain must remain enabled.")
+    if next_enabled:
+        save_dns_domains(settings, [*active_domains, selected_domain])
+        save_disabled_dns_domains(settings, [item for item in disabled_domains if item != selected_domain])
+    else:
+        save_dns_domains(settings, [item for item in active_domains if item != selected_domain])
+        save_disabled_dns_domains(settings, [*disabled_domains, selected_domain])
+    settings.updated_at = utcnow()
+    db.commit()
+    record_audit(
+        db,
+        actor=identity.username,
+        action="enable_dns_zone" if next_enabled else "disable_dns_zone",
+        resource_type="dns_zone",
+        resource_id=selected_domain,
+    )
+    if grid_request(request):
+        return JSONResponse({"domain": {"name": selected_domain, "enabled": next_enabled}})
     return RedirectResponse("/dns", status_code=303)
 
 
@@ -13129,7 +13193,8 @@ def delete_dns_zone_from_ui(
     deleted_records = records_for_domain(db, deleted_domain)
     for record in deleted_records:
         db.delete(record)
-    save_dns_domains(settings, [item for item in existing_domains if item != deleted_domain])
+    save_dns_domains(settings, [item for item in split_domains(settings.domain) if item != deleted_domain])
+    save_disabled_dns_domains(settings, [item for item in split_domains(settings.disabled_domains) if item != deleted_domain])
     settings.updated_at = utcnow()
     db.commit()
     record_audit(
@@ -13726,8 +13791,14 @@ def create_dhcp_option_from_ui(
     )
     db.add(option)
     db.commit()
+    db.refresh(option)
     record_audit(db, actor=identity.username, action="create_dhcp_option", resource_type="dhcp_option", resource_id=str(option.id))
-    return RedirectResponse("/dhcp", status_code=303)
+    return grid_saved_response(
+        request,
+        redirect_url="/dhcp",
+        resource_name="option",
+        resource=dhcp_option_to_dict(option),
+    )
 
 
 @router.post("/dhcp/options/{option_id}/edit", response_model=None)
@@ -13742,7 +13813,7 @@ def edit_dhcp_option_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> RedirectResponse | JSONResponse:
     verify_csrf(request, csrf)
     option = db.get(DhcpOption, option_id)
     if not option:
@@ -13754,8 +13825,14 @@ def edit_dhcp_option_from_ui(
     option.enabled = enabled == "on"
     option.updated_at = utcnow()
     db.commit()
+    db.refresh(option)
     record_audit(db, actor=identity.username, action="update_dhcp_option", resource_type="dhcp_option", resource_id=str(option.id))
-    return RedirectResponse("/dhcp", status_code=303)
+    return grid_saved_response(
+        request,
+        redirect_url="/dhcp",
+        resource_name="option",
+        resource=dhcp_option_to_dict(option),
+    )
 
 
 @router.post("/dhcp/options/{option_id}/delete", response_model=None)
@@ -13765,7 +13842,7 @@ def delete_dhcp_option_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> RedirectResponse | Response:
     verify_csrf(request, csrf)
     option = db.get(DhcpOption, option_id)
     if not option:
@@ -13773,6 +13850,8 @@ def delete_dhcp_option_from_ui(
     db.delete(option)
     db.commit()
     record_audit(db, actor=identity.username, action="delete_dhcp_option", resource_type="dhcp_option", resource_id=str(option_id))
+    if grid_request(request):
+        return Response(status_code=204)
     return RedirectResponse("/dhcp", status_code=303)
 
 
@@ -14851,6 +14930,7 @@ def update_ldap_settings_from_ui(
 def create_ldap_organization_from_ui(
     request: Request,
     name: str = Form(...),
+    description: str = Form(""),
     slug: str = Form(""),
     suffix_dn: str = Form(""),
     enabled: str | None = Form(None),
@@ -14871,7 +14951,13 @@ def create_ldap_organization_from_ui(
             {"identity": identity, **ldap_context(db), "form_error": str(exc), "appliance_apply_status": appliance_apply_status(db, "ldap")},
             status_code=400,
         )
-    organization = LdapOrganization(name=name.strip(), slug=normalized_slug, suffix_dn=normalized_suffix, enabled=enabled is not None)
+    organization = LdapOrganization(
+        name=name.strip(),
+        description=description.strip(),
+        slug=normalized_slug,
+        suffix_dn=normalized_suffix,
+        enabled=enabled is not None,
+    )
     raw_secret = ensure_organization_bind_secret(organization)
     db.add(organization)
     try:
@@ -15159,6 +15245,8 @@ def create_ldap_user_from_ui(
     email: str = Form(""),
     telephone: str = Form(""),
     password: str = Form(""),
+    confirm_password: str = Form(""),
+    password_confirmation_present: str | None = Form(None),
     enabled: str | None = Form(None),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
@@ -15171,6 +15259,8 @@ def create_ldap_user_from_ui(
     normalized_uid = uid.strip().lower()
     if not LDAP_UID_PATTERN.fullmatch(normalized_uid):
         raise HTTPException(status_code=400, detail="LDAP uid contains unsupported characters.")
+    if password_confirmation_present is not None and password != confirm_password:
+        raise HTTPException(status_code=400, detail="LDAP password confirmation does not match.")
     user = LdapUser(
         organization_id=organization_id,
         uid=normalized_uid,
@@ -15191,7 +15281,7 @@ def create_ldap_user_from_ui(
         db.rollback()
         raise HTTPException(status_code=409 if isinstance(exc, IntegrityError) else 400, detail="LDAP uid already exists in this organization." if isinstance(exc, IntegrityError) else str(exc)) from exc
     record_audit(db, actor=identity.username, action="create_ldap_user", resource_type="ldap_user", resource_id=str(user.id), detail=f"organization_id={organization_id}")
-    if "application/json" in request.headers.get("accept", ""):
+    if request.headers.get("x-atlaso-grid") == "1" or "application/json" in request.headers.get("accept", ""):
         return JSONResponse(ldap_user_to_dict(user), status_code=201)
     return RedirectResponse(f"/ldap?organization_id={organization_id}", status_code=303)
 
@@ -15206,6 +15296,9 @@ def edit_ldap_user_from_ui(
     display_name: str = Form(""),
     email: str = Form(""),
     telephone: str = Form(""),
+    password: str = Form(""),
+    confirm_password: str = Form(""),
+    password_confirmation_present: str | None = Form(None),
     enabled: str = Form("false"),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
@@ -15218,6 +15311,8 @@ def edit_ldap_user_from_ui(
     normalized_uid = uid.strip().lower()
     if not LDAP_UID_PATTERN.fullmatch(normalized_uid):
         raise HTTPException(status_code=400, detail="LDAP uid contains unsupported characters.")
+    if password_confirmation_present is not None and password != confirm_password:
+        raise HTTPException(status_code=400, detail="LDAP password confirmation does not match.")
     invalidate_ldap_user_password_for_uid_change(user, normalized_uid)
     user.uid = normalized_uid
     user.given_name = given_name.strip()
@@ -15225,13 +15320,18 @@ def edit_ldap_user_from_ui(
     user.display_name = display_name.strip() or " ".join(part for part in [given_name.strip(), surname.strip()] if part).strip() or normalized_uid
     user.email = email.strip().lower()
     user.telephone = telephone.strip()
-    user.enabled = enabled.lower() == "true"
+    user.enabled = enabled.lower() not in {"false", "0", "off"}
     user.updated_at = utcnow()
     try:
+        if password:
+            stage_ldap_user_password(user, password, get_ldap_settings_row(db))
         db.commit()
-    except IntegrityError as exc:
+    except (IntegrityError, ValueError) as exc:
         db.rollback()
-        raise HTTPException(status_code=409, detail="LDAP uid already exists in this organization.") from exc
+        raise HTTPException(
+            status_code=409 if isinstance(exc, IntegrityError) else 400,
+            detail="LDAP uid already exists in this organization." if isinstance(exc, IntegrityError) else str(exc),
+        ) from exc
     record_audit(db, actor=identity.username, action="update_ldap_user", resource_type="ldap_user", resource_id=str(user.id))
     return JSONResponse(ldap_user_to_dict(user))
 
@@ -15371,7 +15471,7 @@ def create_ldap_group_from_ui(
         db.rollback()
         raise HTTPException(status_code=409 if isinstance(exc, IntegrityError) else 400, detail="LDAP group already exists in this organization." if isinstance(exc, IntegrityError) else str(exc)) from exc
     record_audit(db, actor=identity.username, action="create_ldap_group", resource_type="ldap_group", resource_id=str(group.id))
-    if "application/json" in request.headers.get("accept", ""):
+    if request.headers.get("x-atlaso-grid") == "1" or "application/json" in request.headers.get("accept", ""):
         return JSONResponse(ldap_group_to_dict(group), status_code=201)
     return RedirectResponse(f"/ldap?organization_id={organization_id}", status_code=303)
 
@@ -15382,6 +15482,8 @@ def edit_ldap_group_from_ui(
     group_id: int,
     name: str = Form(...),
     description: str = Form(""),
+    members: list[str] = Form(default_factory=list),
+    members_present: str | None = Form(None),
     enabled: str = Form("false"),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
@@ -15396,13 +15498,26 @@ def edit_ldap_group_from_ui(
         raise HTTPException(status_code=400, detail="LDAP group name contains unsupported characters.")
     group.name = normalized_name
     group.description = description.strip()
-    group.enabled = enabled.lower() == "true"
+    group.enabled = enabled.lower() not in {"false", "0", "off"}
     group.updated_at = utcnow()
     try:
+        if members_present is not None:
+            group.members = ldap_group_members_from_form(db, group.organization_id, members)
+            db.flush()
+            cycle_errors = validate_group_cycles(
+                db.execute(
+                    select(LdapGroup).where(LdapGroup.organization_id == group.organization_id)
+                ).scalars().all()
+            )
+            if cycle_errors:
+                raise ValueError(cycle_errors[0])
         db.commit()
-    except IntegrityError as exc:
+    except (IntegrityError, ValueError) as exc:
         db.rollback()
-        raise HTTPException(status_code=409, detail="LDAP group already exists in this organization.") from exc
+        raise HTTPException(
+            status_code=409 if isinstance(exc, IntegrityError) else 400,
+            detail="LDAP group already exists in this organization." if isinstance(exc, IntegrityError) else str(exc),
+        ) from exc
     record_audit(db, actor=identity.username, action="update_ldap_group", resource_type="ldap_group", resource_id=str(group.id))
     return JSONResponse(ldap_group_to_dict(group))
 
@@ -17737,7 +17852,7 @@ def edit_vcf_depot_profile_from_ui(
     component_version: str = Form(""),
     disabled_platforms: str = Form(""),
     enabled: str | None = Form(None),
-    status: str = Form("planned"),
+    status: str | None = Form(None),
     notes: str = Form(""),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
@@ -17763,7 +17878,8 @@ def edit_vcf_depot_profile_from_ui(
     profile.component_version = component_version.strip()
     profile.disabled_platforms = disabled_platforms.strip()
     profile.enabled = enabled == "on" and vcf_depot_tool_installed(settings)
-    profile.status = status.strip() or "planned"
+    if status is not None:
+        profile.status = status.strip() or profile.status
     profile.notes = notes.strip() or None
     profile.updated_at = utcnow()
     try:
@@ -19399,6 +19515,10 @@ def create_user_from_ui(
     roles_text: str = Form(""),
     shell: str = Form(DEFAULT_LOCAL_USER_SHELL),
     web_terminal_access: bool = Form(False),
+    password: str = Form(""),
+    confirm_password: str = Form(""),
+    enabled: str | None = Form(None),
+    enabled_present: str | None = Form(None),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
@@ -19416,14 +19536,25 @@ def create_user_from_ui(
         raise HTTPException(status_code=409, detail=f"User {username} already exists.")
     if web_terminal_access and shell == DEFAULT_LOCAL_USER_SHELL:
         raise HTTPException(status_code=400, detail="Web SSH access requires an interactive shell.")
+    if password or confirm_password:
+        if password != confirm_password:
+            raise HTTPException(status_code=400, detail="Password confirmation does not match.")
+        policy_errors = validate_password(password, username, local_users_password_policy(db))
+        if policy_errors:
+            raise HTTPException(status_code=400, detail=" ".join(policy_errors))
+    next_enabled = enabled == "on" if enabled_present is not None else False
+    if next_enabled and not password:
+        raise HTTPException(status_code=400, detail="Set a Photon password before enabling a new local user.")
     user = User(
         username=username,
         role=primary_role(next_roles),
         roles_json=roles_to_json(next_roles),
         shell=shell,
         web_terminal_access=bool(web_terminal_access),
-        enabled=False,
+        enabled=next_enabled,
     )
+    if password:
+        stage_user_os_password(user, password)
     db.add(user)
     db.commit()
     record_audit(db, actor=identity.username, action="create_local_user", resource_type="user", resource_id=str(user.id))
@@ -19446,6 +19577,10 @@ def update_user_from_ui(
     roles_text: str = Form(""),
     shell: str = Form(DEFAULT_LOCAL_USER_SHELL),
     web_terminal_access: bool = Form(False),
+    password: str = Form(""),
+    confirm_password: str = Form(""),
+    enabled: str | None = Form(None),
+    enabled_present: str | None = Form(None),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
@@ -19464,7 +19599,17 @@ def update_user_from_ui(
     shell = normalize_user_shell(shell)
     if web_terminal_access and shell == DEFAULT_LOCAL_USER_SHELL:
         raise HTTPException(status_code=400, detail="Web SSH access requires an interactive shell.")
-    next_enabled = user.enabled
+    if password or confirm_password:
+        if password != confirm_password:
+            raise HTTPException(status_code=400, detail="Password confirmation does not match.")
+        policy_errors = validate_password(password, username, local_users_password_policy(db))
+        if policy_errors:
+            raise HTTPException(status_code=400, detail=" ".join(policy_errors))
+    next_enabled = enabled == "on" if enabled_present is not None else user.enabled
+    if user.id == identity.user_id and not next_enabled:
+        raise HTTPException(status_code=400, detail="You cannot disable your own active session account.")
+    if next_enabled and not (password or has_pending_os_password(user) or user.os_password_applied_at):
+        raise HTTPException(status_code=400, detail="Set a Photon password before enabling this local user.")
     protect_last_admin(db, user, next_roles=next_roles, next_enabled=next_enabled)
     existing = db.execute(select(User).where(User.username == username, User.id != user.id)).scalar_one_or_none()
     if existing:
@@ -19477,9 +19622,22 @@ def update_user_from_ui(
     user.web_terminal_access = bool(web_terminal_access)
     shell_changed = user.shell != shell
     user.shell = shell
+    was_enabled = bool(user.enabled)
     if old_username != username:
         rename_pending_os_password(old_username, username)
         user.os_password_applied_at = None
+    if password:
+        stage_user_os_password(user, password)
+        revoke_user_tokens(db, user, identity.username)
+    if was_enabled and not next_enabled:
+        user.os_sync_status = "pending"
+        user.os_unlock_requested_at = None
+        clear_pending_os_password(user)
+        revoke_user_tokens(db, user, identity.username)
+    elif not was_enabled and next_enabled:
+        user.os_sync_status = "pending"
+    user.enabled = next_enabled
+    if old_username != username:
         user.os_sync_status = "pending" if has_pending_os_password(user) else "password_not_staged"
     elif shell_changed and next_enabled:
         user.os_sync_status = "pending"
@@ -19490,10 +19648,10 @@ def update_user_from_ui(
             db.add(token)
     db.add(user)
     db.commit()
-    if old_username != username or (had_web_terminal_access and not user.web_terminal_access):
+    if old_username != username or (had_web_terminal_access and not user.web_terminal_access) or (was_enabled and not next_enabled):
         from atlaso.app.web_terminal import revoke_user_terminal_sessions
 
-        revoke_user_terminal_sessions(user.id)
+        revoke_user_terminal_sessions(user.id, "Local user disabled" if was_enabled and not next_enabled else "Local user access changed")
     record_audit(db, actor=identity.username, action="update_local_user", resource_type="user", resource_id=str(user.id))
     db.refresh(user)
     return JSONResponse({"user": user_to_dict(user, identity.user_id)})

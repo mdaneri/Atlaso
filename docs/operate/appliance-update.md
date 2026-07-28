@@ -85,7 +85,8 @@ signatures, and bundles without re-signing them. Every source must satisfy the s
 remain encrypted in the database and move to the privileged helper only in the existing mode-0600 transient file. They
 are not written to manifests, tasks, audits, URLs, or helper output.
 
-Create a Photon, PowerShell, or Atlaso source from the **+ Repository** button in its ecosystem group. The guided
+Create a Photon, PowerShell, or Atlaso source from the **+ Repository** launcher in that ecosystem's repository tab
+strip. The guided
 workflow collects repository identity, its endpoint and ecosystem-specific trust policy, desired availability, and a
 final review. Saving the wizard creates desired state only: it does not install packages or change a running package
 client.
@@ -100,7 +101,9 @@ grouped **Repository behavior** row. Autosave and synchronization state remain t
 repository deletion isolated as the destructive action.
 
 Managed PowerShell module editors follow the same hierarchy: module identity and version policy first, then a grouped
-**Module behavior** switch and a separated autosave/delete footer. The Update Streams workspace keeps the shared Tasks
+**Module behavior** switch and a separated autosave/delete footer. The **+ Module** launcher opens a reviewed wizard for
+module identity, version resolution, enablement, and final confirmation; saving it does not install the module. The
+Update Streams workspace keeps the shared Tasks
 grid, server-scoped to Appliance Update tasks. It preserves the standard sorting, filtering, component tree, progress,
 row menu, and detail behavior. Because the embedded endpoint is already scoped to Appliance Update, the Task / Component
 column is fixed there; the full Tasks page retains its editable component filter. The grid expands through the remaining

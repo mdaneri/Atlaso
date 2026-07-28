@@ -58,8 +58,10 @@ a particular revision before it can be run manually or selected by a schedule. S
 revision; disabling it makes execution fail closed.
 
 Selecting **+ Add managed script here** opens a four-step wizard for identity, runtime, the first source revision, and
-review. The source step accepts direct CodeMirror input or imports `.sh`, `.bash`, `.py`, `.ps1`, or `.txt` files up to
-1 MiB. Creation always stores immutable revision 1 in the disabled state.
+review. The source editor expands through the available wizard workspace and accepts direct CodeMirror input or imports
+`.sh`, `.bash`, `.py`, `.ps1`, or `.txt` files up to 1 MiB. Bash, PowerShell, and Python selections load matching syntax
+highlighting. An accessible full-screen control opens the same source buffer in a focused editor-only dialog. Creation
+always stores immutable revision 1 in the disabled state.
 
 Existing managed-script rows edit name, description, interpreter, timeout, and state in the grid. Their compact source
 action opens a nearly full-window CodeMirror modal for creating another disabled immutable revision. An edit that

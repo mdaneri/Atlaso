@@ -263,7 +263,8 @@
 {% set firewall_rule_steps = [
   {"id": "policy", "label": "Rule", "summary": "Name, direction, and action"},
   {"id": "match", "label": "Traffic", "summary": "Protocol, endpoints, and ports"},
-  {"id": "state", "label": "State", "summary": "Priority, enablement, and notes"},
+  {"id": "state", "label": "State", "summary": "Priority and operator notes"},
+  {"id": "enablement", "label": "Enablement", "summary": "Desired rule state"},
   {"id": "review", "label": "Review", "summary": "Confirm desired state"}
 ] %}
 {% call resource_wizard(
@@ -296,9 +297,14 @@
   <section class="hidden" data-atlaso-wizard-step="state">
     <div class="form-grid">
       <label><span class="field-label"><span>Priority</span><button class="help-icon" type="button" data-help="Lower values are evaluated before higher values within Atlaso's generated ruleset.">i</button></span><input type="number" name="priority" required></label>
-      <label class="switch-field"><span class="field-label"><span>Rule enabled</span><button class="help-icon" type="button" data-help="Enabled rules enter rendered desired state; enforcement waits for global appliance apply.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
     </div>
     <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Operator note describing the traffic and reason for the rule.">i</button></span><input name="description"></label>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="enablement">
+    <div class="form-grid">
+      <label class="switch-field"><span class="field-label"><span>Rule enabled</span><button class="help-icon" type="button" data-help="Enabled rules enter rendered desired state; enforcement waits for global appliance apply.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
+    </div>
+    <div class="alert warning">Enablement changes desired state only. Enforcement waits for the global Firewall appliance-apply unit.</div>
   </section>
   <section class="hidden" data-atlaso-wizard-step="review">
     <div class="settings-list" data-atlaso-resource-review></div>

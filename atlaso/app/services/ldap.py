@@ -282,6 +282,7 @@ def ldap_organization_to_dict(organization: LdapOrganization, *, reveal_bind_sec
     data = {
         "id": organization.id,
         "name": organization.name,
+        "description": organization.description,
         "slug": organization.slug,
         "suffix_dn": organization.suffix_dn,
         "users_base_dn": users_base_dn(organization),

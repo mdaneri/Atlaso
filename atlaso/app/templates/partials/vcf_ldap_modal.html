@@ -1,139 +1,153 @@
-<dialog id="vcf-ldap-modal" class="confirm-modal wide-modal" aria-labelledby="vcf-ldap-modal-title" {% if ldap_vcf_auto_open %}data-vcf-ldap-auto-open{% endif %}>
-  <div class="confirm-modal-panel form-stack">
-    <div class="confirm-modal-body">
+<dialog id="vcf-ldap-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal resource-wizard-dialog" aria-labelledby="vcf-ldap-modal-title" aria-describedby="vcf-ldap-modal-description" {% if ldap_vcf_auto_open %}data-vcf-ldap-auto-open{% endif %}>
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="{% if vcf_ldap_selected_organization %}/ldap/organizations/{{ vcf_ldap_selected_organization.id }}/vcf/inspect{% else %}/vcf-helper{% endif %}" method="post" data-vcf-ldap-wizard-form data-vcf-ldap-inspect-url="{% if vcf_ldap_selected_organization %}/ldap/organizations/{{ vcf_ldap_selected_organization.id }}/vcf/inspect{% endif %}" data-vcf-ldap-configure-url="{% if vcf_ldap_selected_organization %}/ldap/organizations/{{ vcf_ldap_selected_organization.id }}/vcf/configure{% endif %}" data-atlaso-wizard>
+    <aside class="vcf-sddc-wizard-rail" aria-label="Managed LDAP for VCF steps">
       <p class="kicker">VCF Helper</p>
-      <div class="panel-head">
-        <div>
-          <h2 id="vcf-ldap-modal-title">Managed LDAP for VCF Automation 9.1</h2>
-          <p class="muted">Inspect, configure, and verify organization-specific LDAP settings. VCF remains responsible for group imports and role assignments.</p>
+      <h2 id="vcf-ldap-modal-title">Managed LDAP for VCF Automation 9.1</h2>
+      <ol class="vcf-sddc-step-list">
+        {% for step in [
+          {"id": "organization", "label": "Organization", "summary": "LDAP suffix and mapping"},
+          {"id": "connection", "label": "Connection", "summary": "VCF endpoint and tenant"},
+          {"id": "trust", "label": "Trust", "summary": "Credential and TLS approval"},
+          {"id": "review", "label": "Review", "summary": "Inspect or configure"}
+        ] %}
+        <li><button class="vcf-sddc-step-button {{ 'active' if loop.first else '' }}" type="button" data-atlaso-wizard-nav="{{ step.id }}" {{ 'disabled' if not loop.first else '' }}><span>{{ loop.index }}</span><strong>{{ step.label }}</strong><small>{{ step.summary }}</small></button></li>
+        {% endfor %}
+      </ol>
+    </aside>
+    <div class="vcf-sddc-wizard-main">
+      <div class="confirm-modal-body vcf-sddc-wizard-body">
+        <div class="vcf-sddc-wizard-heading">
+          <p class="kicker" data-atlaso-wizard-kicker>Step 1 of 4</p>
+          <h3 data-atlaso-wizard-title>Choose the LDAP organization</h3>
+          <p id="vcf-ldap-modal-description" class="muted" data-atlaso-wizard-description>Review the isolated suffix and VCF mapping.</p>
         </div>
-        {% if vcf_ldap_selected_organization %}
-          <span class="status-pill {{ 'good' if vcf_ldap_selected_organization.vcf_last_status == 'verified' else 'muted' }}">{{ vcf_ldap_selected_organization.vcf_last_status or "not configured" }}</span>
-        {% endif %}
-      </div>
+        <div class="alert error hidden" data-atlaso-wizard-error></div>
 
-      {% if not vcf_ldap_authorized %}
-        <div class="alert warning">Managed LDAP VCF configuration is available only to Atlaso administrators.</div>
-      {% elif not vcf_ldap_available %}
-        <div class="empty-state"><h3>Enable Managed LDAP first</h3><p>Enable the LDAP service and at least one organization before generating test accounts or configuring VCF.</p><a class="button primary" href="/ldap">Open Managed LDAP</a></div>
-      {% elif not vcf_ldap_organizations %}
-        <div class="empty-state"><h3>Create an LDAP organization first</h3><p>Organizations, directory accounts, and groups are managed on the Managed LDAP page.</p><a class="button primary" href="/ldap">Open Managed LDAP</a></div>
-      {% else %}
-        <form class="form-stack" action="/vcf-helper" method="get" data-vcf-ldap-organization-form>
-          <input type="hidden" name="ldap_vcf" value="1">
-          <label>
-            <span class="field-label"><span>LDAP organization</span><button class="help-icon" type="button" data-help="Selects the Atlaso LDAP suffix and bind identity whose settings will be configured in the target VCF organization.">i</button></span>
-            <select name="ldap_organization_id" data-vcf-ldap-organization-select>
-              {% for organization in vcf_ldap_organizations %}
-                <option value="{{ organization.id }}" {{ "selected" if vcf_ldap_selected_organization and organization.id == vcf_ldap_selected_organization.id else "" }}>{{ organization.name }} — {{ organization.suffix_dn }}</option>
-              {% endfor %}
-            </select>
-          </label>
-        </form>
+        {% if not vcf_ldap_authorized %}
+          <section data-atlaso-wizard-step="organization"><div class="alert warning">Managed LDAP VCF configuration is available only to Atlaso administrators.</div></section>
+        {% elif not vcf_ldap_available or not vcf_ldap_organizations %}
+          <section data-atlaso-wizard-step="organization"><div class="empty-state"><h3>Enable Managed LDAP first</h3><p>Enable the LDAP service and create at least one organization before configuring VCF.</p><a class="button primary" href="/ldap">Open Managed LDAP</a></div></section>
+        {% else %}
+          <input type="hidden" name="csrf" value="{{ csrf_token }}">
+          <section data-atlaso-wizard-step="organization">
+            <div class="form-stack">
+              <label><span class="field-label"><span>LDAP organization</span><button class="help-icon" type="button" data-help="Selects the Atlaso LDAP suffix and bind identity whose settings will be configured in the target VCF organization.">i</button></span>
+                <select name="ldap_organization_id" data-vcf-ldap-organization-select>
+                  {% for organization in vcf_ldap_organizations %}<option value="{{ organization.id }}" {{ "selected" if vcf_ldap_selected_organization and organization.id == vcf_ldap_selected_organization.id else "" }}>{{ organization.name }} — {{ organization.suffix_dn }}</option>{% endfor %}
+                </select>
+              </label>
+              {% if vcf_ldap_selected_organization %}
+                <div class="button-row"><a class="button secondary" href="/ldap/organizations/{{ vcf_ldap_selected_organization.id }}/vcf-bundle.zip">Download manual bundle</a></div>
+                <div class="settings-list compact-list">
+                  <div><span>Mandatory VCF mapping</span><strong>serviceAccount → employeeType</strong></div>
+                  <div><span>User search base</span><strong>ou=users,{{ vcf_ldap_selected_organization.suffix_dn }}</strong></div>
+                  <div><span>Group search base</span><strong>ou=groups,{{ vcf_ldap_selected_organization.suffix_dn }}</strong></div>
+                  <div><span>Group role assignment</span><strong>performed in VCF</strong></div>
+                </div>
+              {% endif %}
+            </div>
+          </section>
 
-        {% if vcf_ldap_selected_organization %}
-          <div class="button-row">
-            <a class="button secondary" href="/ldap/organizations/{{ vcf_ldap_selected_organization.id }}/vcf-bundle.zip">Download manual bundle</a>
-          </div>
-          <div class="settings-list compact-list">
-            <div><span>Mandatory VCF mapping</span><strong>serviceAccount → employeeType</strong></div>
-            <div><span>User search base</span><strong>ou=users,{{ vcf_ldap_selected_organization.suffix_dn }}</strong></div>
-            <div><span>Group search base</span><strong>ou=groups,{{ vcf_ldap_selected_organization.suffix_dn }}</strong></div>
-            <div><span>Group role assignment</span><strong>performed in VCF</strong></div>
-          </div>
-          {% if ldap_vcf_inspection %}
-            <div class="alert warning"><strong>Confirm this TLS fingerprint before configuration:</strong><br>{{ ldap_vcf_inspection.tls_fingerprint }}</div>
-            <pre class="config-preview">{{ ldap_vcf_inspection|tojson(indent=2) }}</pre>
-          {% endif %}
-          {% if ldap_vcf_configuration_result %}
-            <div class="alert success">VCF verified {{ ldap_vcf_configuration_result.user_count }} users and {{ ldap_vcf_configuration_result.group_count }} groups. Import the desired groups and grant organization roles in VCF.</div>
-          {% endif %}
-          <form class="form-stack" action="/ldap/organizations/{{ vcf_ldap_selected_organization.id }}/vcf/inspect" method="post">
-              <input type="hidden" name="csrf" value="{{ csrf_token }}">
-              <h3>VCF connection</h3>
-              <p class="muted">Use these connection details to inspect the current settings or configure and verify this organization.</p>
+          <section class="hidden" data-atlaso-wizard-step="connection">
+            {% if vcf_ldap_selected_organization %}
               {% set credential_address_field = "target_url" %}
               {% set credential_username_field = "username" %}
               {% set credential_password_field = "password" %}
               {% set credential_address_mode = "url" %}
               {% include "partials/vcf_vault_credential_picker.html" %}
-              <div class="form-grid two">
-              <label><span class="field-label"><span>VCF Automation URL</span><button class="help-icon" type="button" data-help="HTTPS address of the VCF Automation endpoint. Atlaso reads the presented TLS fingerprint before sending credentials.">i</button></span><input name="target_url" value="{{ vcf_ldap_selected_organization.vcf_target_url }}" required></label>
-              <label><span class="field-label"><span>VCF organization ID</span><button class="help-icon" type="button" data-help="All Apps or VM Apps organization identity used as the VCF tenant context header.">i</button></span><input name="vcf_organization_id" value="{{ vcf_ldap_selected_organization.vcf_org_id }}" required></label>
-              <label><span class="field-label"><span>VCF organization name</span><button class="help-icon" type="button" data-help="Human-readable organization name retained only as connection metadata.">i</button></span><input name="vcf_organization_name" value="{{ vcf_ldap_selected_organization.vcf_org_name }}"></label>
-              <label><span class="field-label"><span>Administrator username</span><button class="help-icon" type="button" data-help="Transient VCF Automation administrator identity used only for this inspection request. It is never stored.">i</button></span><input name="username" autocomplete="username" required></label>
-              <label><span class="field-label"><span>Administrator password</span><button class="help-icon" type="button" data-help="Transient VCF Automation administrator password used only for this request. It is never stored or audited.">i</button></span><input type="password" name="password" autocomplete="current-password" required></label>
-              <label><span class="field-label"><span>Confirmed TLS fingerprint</span><button class="help-icon" type="button" data-help="Leave blank to read the presented fingerprint. Configuration requires the exact confirmed SHA-256 fingerprint and fails closed if the certificate changes.">i</button></span><input name="confirmed_tls_fingerprint" value="{{ vcf_ldap_selected_organization.vcf_tls_fingerprint }}"></label>
-              <label class="switch-field"><span class="field-label"><span>Replace existing LDAP settings</span><button class="help-icon" type="button" data-help="Explicit approval required when the VCF organization already has LDAP enabled.">i</button></span><input class="switch-input" type="checkbox" name="replace_existing"><span class="switch-track" aria-hidden="true"></span></label>
+              <div class="form-stack">
+                <label><span class="field-label"><span>VCF Automation URL</span><button class="help-icon" type="button" data-help="HTTPS address of the VCF Automation endpoint. Atlaso reads the presented TLS fingerprint before sending credentials.">i</button></span><input name="target_url" value="{{ vcf_ldap_selected_organization.vcf_target_url }}" required></label>
+                <label><span class="field-label"><span>VCF organization ID</span><button class="help-icon" type="button" data-help="All Apps or VM Apps organization identity used as the VCF tenant context header.">i</button></span><input name="vcf_organization_id" value="{{ vcf_ldap_selected_organization.vcf_org_id }}" required></label>
+                <label><span class="field-label"><span>VCF organization name</span><button class="help-icon" type="button" data-help="Human-readable organization name retained only as connection metadata.">i</button></span><input name="vcf_organization_name" value="{{ vcf_ldap_selected_organization.vcf_org_name }}"></label>
               </div>
-              <div class="button-row">
-                <button class="button secondary" type="submit">Inspect VCF LDAP settings</button>
-                <button class="button primary" type="submit" formaction="/ldap/organizations/{{ vcf_ldap_selected_organization.id }}/vcf/configure">Configure and verify VCF</button>
+            {% endif %}
+          </section>
+
+          <section class="hidden" data-atlaso-wizard-step="trust">
+            {% if vcf_ldap_selected_organization %}
+              <div class="form-stack">
+                <label><span class="field-label"><span>Administrator username</span><button class="help-icon" type="button" data-help="Transient VCF Automation administrator identity used only for this request. It is never stored.">i</button></span><input name="username" autocomplete="username" required></label>
+                <label><span class="field-label"><span>Administrator password</span><button class="help-icon" type="button" data-help="Transient VCF Automation administrator password used only for this request. It is never stored or audited.">i</button></span><input type="password" name="password" autocomplete="current-password" required></label>
+                <label><span class="field-label"><span>Confirmed TLS fingerprint</span><button class="help-icon" type="button" data-help="Leave blank to inspect the presented fingerprint. Configuration requires the exact confirmed SHA-256 fingerprint and fails closed if the certificate changes.">i</button></span><input name="confirmed_tls_fingerprint" value="{{ vcf_ldap_selected_organization.vcf_tls_fingerprint }}"></label>
+                <label class="switch-field"><span class="field-label"><span>Replace existing LDAP settings</span><button class="help-icon" type="button" data-help="Explicit approval required when the VCF organization already has LDAP enabled.">i</button></span><input class="switch-input" type="checkbox" name="replace_existing"><span class="switch-track" aria-hidden="true"></span></label>
               </div>
-          </form>
+            {% endif %}
+          </section>
+
+          <section class="hidden" data-atlaso-wizard-step="review">
+            <fieldset class="scope-choice-fieldset">
+              <legend>VCF action</legend>
+              <label class="scope-choice-card"><input type="radio" name="vcf_ldap_action" value="inspect" checked><span><strong>Inspect settings</strong><small>Read the presented fingerprint and existing LDAP state without changing VCF.</small></span></label>
+              <label class="scope-choice-card"><input type="radio" name="vcf_ldap_action" value="configure"><span><strong>Configure and verify</strong><small>Apply the reviewed LDAP settings, then verify users and groups.</small></span></label>
+            </fieldset>
+            <div class="settings-list" data-vcf-ldap-review></div>
+            {% if ldap_vcf_inspection %}<div class="alert warning"><strong>Confirm this TLS fingerprint before configuration:</strong><br>{{ ldap_vcf_inspection.tls_fingerprint }}</div><pre class="config-preview">{{ ldap_vcf_inspection|tojson(indent=2) }}</pre>{% endif %}
+            {% if ldap_vcf_configuration_result %}<div class="alert success">VCF verified {{ ldap_vcf_configuration_result.user_count }} users and {{ ldap_vcf_configuration_result.group_count }} groups. Import the desired groups and grant organization roles in VCF.</div>{% endif %}
+          </section>
         {% endif %}
-      {% endif %}
+      </div>
+      <div class="confirm-modal-actions vcf-sddc-wizard-actions">
+        <button class="button ghost" type="button" data-atlaso-wizard-cancel>Cancel</button>
+        {% if vcf_ldap_authorized and vcf_ldap_available and vcf_ldap_organizations %}
+          <button class="button secondary hidden" type="button" data-atlaso-wizard-back>Back</button>
+          <button class="button primary" type="button" data-atlaso-wizard-next>Next</button>
+          <button class="button primary hidden" type="submit" data-atlaso-wizard-submit>Run selected action</button>
+        {% endif %}
+      </div>
     </div>
-    <div class="confirm-modal-actions"><button class="button ghost" type="button" data-vcf-ldap-close>Close</button></div>
-  </div>
+  </form>
 </dialog>
 
 {% if vcf_ldap_selected_organization %}
-<dialog id="ldap-generate-modal" class="confirm-modal" aria-labelledby="ldap-generate-modal-title" {% if ldap_generate_auto_open %}data-ldap-generate-auto-open{% endif %}>
-  <form class="confirm-modal-panel form-stack" action="/ldap/organizations/{{ vcf_ldap_selected_organization.id }}/generate-directory" method="post" data-ldap-generate-form>
+<dialog id="ldap-generate-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal resource-wizard-dialog" aria-labelledby="ldap-generate-modal-title" aria-describedby="ldap-generate-modal-description" {% if ldap_generate_auto_open %}data-ldap-generate-auto-open{% endif %}>
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="/ldap/organizations/{{ vcf_ldap_selected_organization.id }}/generate-directory" method="post" data-ldap-generate-form data-atlaso-wizard>
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
-    <div class="confirm-modal-body">
-      <p class="kicker">VCF Helper</p>
-      <h2 id="ldap-generate-modal-title">Generate test directory</h2>
-      <p class="muted">Invents complete users, compliant passwords, groups, and memberships for VCF lab validation.</p>
-      <label>
-        <span class="field-label"><span>LDAP organization</span><button class="help-icon" type="button" data-help="Selects the isolated LDAP suffix that receives the generated users, groups, and memberships.">i</button></span>
-        <select data-ldap-generate-organization>
-          {% for organization in vcf_ldap_organizations %}
-            <option value="{{ organization.id }}" {{ "selected" if organization.id == vcf_ldap_selected_organization.id else "" }}>{{ organization.name }} — {{ organization.suffix_dn }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <div class="form-grid two">
-        <label><span class="field-label"><span>Users to create</span><button class="help-icon" type="button" data-help="Creates unique enabled directory users with complete synthetic profile data and one-time staged passwords.">i</button></span><input type="number" name="user_count" min="0" max="500" value="10" required data-ldap-generate-user-count></label>
-        <label><span class="field-label"><span>Groups to create</span><button class="help-icon" type="button" data-help="Creates enabled groups and distributes organization users across memberships without cycles.">i</button></span><input type="number" name="group_count" min="0" max="100" value="3" required></label>
+    <input type="hidden" name="action" value="generate" data-ldap-generate-action>
+    <aside class="vcf-sddc-wizard-rail" aria-label="Generate test directory steps">
+      <p class="kicker">VCF Helper</p><h2 id="ldap-generate-modal-title">Generate test directory</h2>
+      <ol class="vcf-sddc-step-list">
+        {% for step in [
+          {"id": "organization", "label": "Organization", "summary": "Isolated LDAP suffix"},
+          {"id": "size", "label": "Directory", "summary": "User and group counts"},
+          {"id": "review", "label": "Review", "summary": "Confirm one-time credentials"}
+        ] %}
+        <li><button class="vcf-sddc-step-button {{ 'active' if loop.first else '' }}" type="button" data-atlaso-wizard-nav="{{ step.id }}" {{ 'disabled' if not loop.first else '' }}><span>{{ loop.index }}</span><strong>{{ step.label }}</strong><small>{{ step.summary }}</small></button></li>
+        {% endfor %}
+      </ol>
+    </aside>
+    <div class="vcf-sddc-wizard-main">
+      <div class="confirm-modal-body vcf-sddc-wizard-body">
+        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 3</p><h3 data-atlaso-wizard-title>Choose the LDAP organization</h3><p id="ldap-generate-modal-description" class="muted" data-atlaso-wizard-description>Select the isolated suffix that receives synthetic entries.</p></div>
+        <div class="alert error hidden" data-atlaso-wizard-error></div>
+        <section data-atlaso-wizard-step="organization">
+          <label><span class="field-label"><span>LDAP organization</span><button class="help-icon" type="button" data-help="Selects the isolated LDAP suffix that receives the generated users, groups, and memberships.">i</button></span><select data-ldap-generate-organization>{% for organization in vcf_ldap_organizations %}<option value="{{ organization.id }}" {{ "selected" if organization.id == vcf_ldap_selected_organization.id else "" }}>{{ organization.name }} — {{ organization.suffix_dn }}</option>{% endfor %}</select></label>
+        </section>
+        <section class="hidden" data-atlaso-wizard-step="size">
+          <div class="form-stack">
+            <label><span class="field-label"><span>Users to create</span><button class="help-icon" type="button" data-help="Creates unique enabled directory users with complete synthetic profile data and one-time staged passwords.">i</button></span><input type="number" name="user_count" min="0" max="500" value="10" required data-ldap-generate-user-count></label>
+            <label><span class="field-label"><span>Groups to create</span><button class="help-icon" type="button" data-help="Creates enabled groups and distributes organization users across memberships without cycles.">i</button></span><input type="number" name="group_count" min="0" max="100" value="3" required></label>
+          </div>
+        </section>
+        <section class="hidden" data-atlaso-wizard-step="review">
+          <div class="settings-list" data-ldap-generate-review></div>
+          <div class="alert warning">Generated passwords are displayed once. Copy them before leaving the result page.</div>
+          {% if vcf_ldap_missing_password_count %}<p class="muted">Generates replacement passwords for enabled users whose one-time passwords are no longer staged.</p>{% endif %}
+          {% if ldap_generated_user_count is defined and ldap_generated_group_count is defined %}<div class="alert success" data-ldap-generated-result>Created {{ ldap_generated_user_count }} {{ "user" if ldap_generated_user_count == 1 else "users" }} and {{ ldap_generated_group_count }} {{ "group" if ldap_generated_group_count == 1 else "groups" }}. Save the one-time CSV, then submit the Managed LDAP appliance change.</div>{% endif %}
+          {% if ldap_staged_missing_password_count %}<div class="alert success">Staged replacement passwords for {{ ldap_staged_missing_password_count }} existing enabled {{ "user" if ldap_staged_missing_password_count == 1 else "users" }}.</div>{% elif vcf_ldap_missing_password_count %}<div class="alert error">{{ vcf_ldap_missing_password_count }} enabled {{ "user needs" if vcf_ldap_missing_password_count == 1 else "users need" }} a staged password.</div>{% endif %}
+          {% if ldap_generated_credentials_text %}
+            <label data-ldap-generated-result><span class="field-label"><span>Generated credentials</span><button class="help-icon" type="button" data-help="CSV-formatted one-time credentials. Copy or save them before closing.">i</button></span><span class="secret-value-field secret-value-field-multiline"><pre class="config-preview ldap-credential-preview" aria-label="One-time generated LDAP credentials"><code class="language-csv" data-ldap-generated-credentials>{{ ldap_generated_credentials_text }}</code></pre><span class="secret-value-actions"><button class="button secondary icon-button" type="button" data-copy-value="{{ ldap_generated_credentials_text }}" aria-label="Copy generated credentials" title="Copy generated credentials"><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button><button class="button secondary icon-button" type="button" data-download-value="{{ ldap_generated_credentials_text }}" data-download-filename="ldap-test-directory-{{ vcf_ldap_selected_organization.slug }}.csv" data-download-mime="text/csv;charset=utf-8" aria-label="Save generated credentials" title="Save generated credentials"><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg></button></span></span></label>
+          {% endif %}
+        </section>
       </div>
-      <div class="alert warning">Generated passwords are displayed once. Copy them before leaving the result page.</div>
-      {% if ldap_generated_user_count is defined and ldap_generated_group_count is defined %}
-        <div class="alert success" data-ldap-generated-result>
-          Created {{ ldap_generated_user_count }} {{ "user" if ldap_generated_user_count == 1 else "users" }} and {{ ldap_generated_group_count }} {{ "group" if ldap_generated_group_count == 1 else "groups" }}. Save the one-time CSV, then submit the Managed LDAP appliance change.
-        </div>
-      {% endif %}
-      {% if ldap_staged_missing_password_count %}
-        <div class="alert success">Staged replacement passwords for {{ ldap_staged_missing_password_count }} existing enabled {{ "user" if ldap_staged_missing_password_count == 1 else "users" }}. Submit the Managed LDAP appliance change before restarting Atlaso.</div>
-      {% elif vcf_ldap_missing_password_count %}
-        <div class="alert error">{{ vcf_ldap_missing_password_count }} enabled {{ "user needs" if vcf_ldap_missing_password_count == 1 else "users need" }} a staged password. Recover them in one operation and save the one-time CSV.</div>
-      {% endif %}
-      {% if ldap_generated_credentials_text %}
-        <label data-ldap-generated-result>
-          <span class="field-label"><span>Generated credentials</span><button class="help-icon" type="button" data-help="CSV-formatted one-time credentials. Copy or save them before closing; passwords remain only in process memory until global LDAP apply.">i</button></span>
-          <span class="secret-value-field secret-value-field-multiline">
-            <pre class="config-preview ldap-credential-preview" aria-label="One-time generated LDAP credentials"><code class="language-csv" data-ldap-generated-credentials>{{ ldap_generated_credentials_text }}</code></pre>
-            <span class="secret-value-actions">
-              <button class="button secondary icon-button" type="button" data-copy-value="{{ ldap_generated_credentials_text }}" aria-label="Copy generated credentials" title="Copy generated credentials"><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
-              <button class="button secondary icon-button" type="button" data-download-value="{{ ldap_generated_credentials_text }}" data-download-filename="ldap-test-directory-{{ vcf_ldap_selected_organization.slug }}.csv" data-download-mime="text/csv;charset=utf-8" aria-label="Save generated credentials" title="Save generated credentials"><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg></button>
-            </span>
-          </span>
-        </label>
-      {% endif %}
-    </div>
-    <div class="confirm-modal-actions">
-      {% if not ldap_generated_credentials_text %}
-        <button class="button secondary" type="button" data-ldap-generate-close>Cancel</button>
-      {% endif %}
-      {% if ldap_generated_credentials_text %}
-        <button class="button primary" type="button" data-ldap-generate-close>Done</button>
-      {% else %}
-        <button class="button secondary" type="submit" name="action" value="stage_missing" title="Generates replacement passwords for enabled users whose one-time passwords are no longer staged, such as after restarting Atlaso before appliance apply." {% if not vcf_ldap_missing_password_count %}disabled{% endif %}>
-          Recover missing passwords{% if vcf_ldap_missing_password_count %} ({{ vcf_ldap_missing_password_count }}){% endif %}
-        </button>
-        <button class="button primary" type="submit" name="action" value="generate">Generate directory entries</button>
-      {% endif %}
+      <div class="confirm-modal-actions vcf-sddc-wizard-actions">
+        <button class="button ghost" type="button" data-atlaso-wizard-cancel data-ldap-generate-close>{{ "Done" if ldap_generated_credentials_text else "Cancel" }}</button>
+        {% if not ldap_generated_credentials_text %}
+          <button class="button secondary hidden" type="button" data-atlaso-wizard-back>Back</button>
+          <button class="button primary" type="button" data-atlaso-wizard-next>Next</button>
+          <button class="button secondary hidden" type="button" data-ldap-recover-missing {% if not vcf_ldap_missing_password_count %}disabled{% endif %}>Recover missing passwords{% if vcf_ldap_missing_password_count %} ({{ vcf_ldap_missing_password_count }}){% endif %}</button>
+          <button class="button primary hidden" type="submit" data-atlaso-wizard-submit>Generate directory entries</button>
+        {% endif %}
+      </div>
     </div>
   </form>
 </dialog>
