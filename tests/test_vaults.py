@@ -281,6 +281,8 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert 'class="vault-uri-cell"' in source
     assert '<button class="vault-password-eye"' in source
     assert "border: 0;" in css[css.index(".vault-password-eye {"):css.index(".vcf-vault-candidate-list")]
+    assert '.vault-password-eye[data-revealed="true"]::after' in css
+    assert 'entryPasswordEye.title = "Hide password";' in source
     assert "15000" in source
     assert 'rowContextMenu: (_event, component) =>' in source
     assert 'label: "Edit"' in source
@@ -331,7 +333,7 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert 'id="confirm-modal-detail"' in base_template
     assert ".confirm-modal.has-confirm-detail" in css
     assert "overflow-wrap: anywhere;" in css[css.index(".confirm-modal-detail-group"):css.index(".confirm-modal.wide-modal")]
-    assert "atlaso-vaults-20260727-14" in base_template
+    assert "atlaso-vaults-20260727-15" in base_template
     trust_template = Path("atlaso/app/templates/partials/vcf_trust_modal.html").read_text()
     import_template = Path("atlaso/app/templates/partials/vcf_vault_import_modal.html").read_text()
     depot_template = Path("atlaso/app/templates/partials/vcf_target_depot_modal.html").read_text()
@@ -484,7 +486,7 @@ def test_remote_vault_uri_launch_uses_one_use_server_side_ticket(client, monkeyp
     assert "sidebar" not in remote_page.text
     assert "Primary" not in remote_page.text
     assert "/static/terminal.js?v=atlaso-vault-uri-20260727-2" in remote_page.text
-    assert "/static/app.css?v=atlaso-vaults-20260727-6" in remote_page.text
+    assert "/static/app.css?v=atlaso-vaults-20260727-7" in remote_page.text
 
     ticket_response = client.post(
         "/terminal/tickets",

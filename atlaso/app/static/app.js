@@ -16600,6 +16600,7 @@ function initializeVaultsPage() {
       if (entryPasswordEye instanceof HTMLButtonElement) {
         entryPasswordEye.dataset.revealed = "false";
         entryPasswordEye.setAttribute("aria-label", "Reveal password");
+        entryPasswordEye.title = "Reveal password";
       }
     },
   });
@@ -16609,6 +16610,7 @@ function initializeVaultsPage() {
       entryPassword.type = "password";
       entryPasswordEye.dataset.revealed = "false";
       entryPasswordEye.setAttribute("aria-label", "Reveal password");
+      entryPasswordEye.title = "Reveal password";
       return;
     }
     const match = entryForm.action.match(/\/vaults\/(\d+)\/entries\/(\d+)\/edit$/);
@@ -16629,11 +16631,13 @@ function initializeVaultsPage() {
       entryPassword.type = "text";
       entryPasswordEye.dataset.revealed = "true";
       entryPasswordEye.setAttribute("aria-label", "Hide password");
+      entryPasswordEye.title = "Hide password";
       entryPasswordRevealTimer = window.setTimeout(() => {
         if (!entryPassword.isConnected) return;
         entryPassword.type = "password";
         entryPasswordEye.dataset.revealed = "false";
         entryPasswordEye.setAttribute("aria-label", "Reveal password");
+        entryPasswordEye.title = "Reveal password";
         entryPasswordRevealTimer = 0;
       }, 15000);
     } catch (_error) {
@@ -16747,6 +16751,7 @@ function initializeVaultsPage() {
                 value.textContent = "••••••••";
                 eye.dataset.revealed = "false";
                 eye.setAttribute("aria-label", "Reveal password");
+                eye.title = "Reveal password";
                 return;
               }
               eye.disabled = true;
@@ -16765,11 +16770,13 @@ function initializeVaultsPage() {
                 value.textContent = String(payload.value || "");
                 eye.dataset.revealed = "true";
                 eye.setAttribute("aria-label", "Hide password");
+                eye.title = "Hide password";
                 window.setTimeout(() => {
                   if (!value.isConnected) return;
                   value.textContent = "••••••••";
                   eye.dataset.revealed = "false";
                   eye.setAttribute("aria-label", "Reveal password");
+                  eye.title = "Reveal password";
                 }, 15000);
               } catch (_error) {
                 value.textContent = "Reveal failed";

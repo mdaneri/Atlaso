@@ -121,6 +121,10 @@ Tasks and Audit Events are the references for operational collections.
 - Provide explicit detail actions or row navigation with keyboard equivalents.
 - Keep sensitive output, secrets, and raw error payloads out of collection cells unless an existing permission-checked
   detail flow intentionally exposes them.
+- Mask password values by default. A permission-checked reveal uses the small borderless eye control: show the plain eye
+  while masked, draw a slash through it while the value is visible, and change its accessible label and title between
+  **Reveal password** and **Hide password**. Automatically return to the masked state after 15 seconds. Reveals must
+  disable browser caching and produce an audit event without the value.
 
 ## Grid-launched wizard contract
 

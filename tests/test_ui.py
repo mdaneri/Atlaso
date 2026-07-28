@@ -829,7 +829,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=atlaso-vaults-20260727-14"),
+        (base, "/static/app.js?v=atlaso-vaults-20260727-15"),
         (public_base, "/static/app.js?v=atlaso-oidc-admin-20260727-6"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1013,9 +1013,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=atlaso-vaults-20260727-6" in page.text
+    assert "/static/app.css?v=atlaso-vaults-20260727-7" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in page.text
-    assert "/static/app.js?v=atlaso-vaults-20260727-14" in page.text
+    assert "/static/app.js?v=atlaso-vaults-20260727-15" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text

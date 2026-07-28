@@ -7833,6 +7833,7 @@ textarea {
 }
 
 .vault-password-eye {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -7847,6 +7848,16 @@ textarea {
   font-size: 0.78rem;
   line-height: 1;
   vertical-align: middle;
+}
+
+.vault-password-eye[data-revealed="true"]::after {
+  position: absolute;
+  width: 1rem;
+  height: 2px;
+  border-radius: 1px;
+  background: currentcolor;
+  content: "";
+  transform: rotate(-45deg);
 }
 
 .vault-password-eye:hover {
