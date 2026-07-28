@@ -338,6 +338,8 @@
       
         
       
+        
+      
     
     
     
@@ -1189,6 +1191,8 @@
       
         
           
+        
+      
         
       
         
@@ -2566,6 +2570,40 @@
     
   
   VCF Helper
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vaults/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Vaults
 
     
   </span>
@@ -4467,6 +4505,8 @@
       
         
       
+        
+      
     
     
     
@@ -4523,6 +4563,12 @@ native UEFI HTTP boot.</p>
 <code>/pxe/esxi/ks/&lt;file&gt;.cfg?mac=&lt;normalized-mac&gt;</code>. The MAC query parameter is required so Atlaso can render restricted
 <code>{{variable}}</code> Kickstart markers from the database source and the selected host's custom variable map. Atlaso
 intentionally does not infer the host MAC from request source IP or dnsmasq leases.</p>
+<p>A Kickstart may bind one VCF/ESX password vault and reference
+<code>{{vault.&lt;vaultname&gt;.&lt;key&gt;.username}}</code>, <code>{{vault.&lt;vaultname&gt;.&lt;key&gt;.password}}</code>, or a configured URI from
+<code>{{vault.&lt;vaultname&gt;.&lt;key&gt;.uri1}}</code> through <code>{{vault.&lt;vaultname&gt;.&lt;key&gt;.uri9}}</code>. Atlaso resolves those markers only in the
+dynamic response for an enabled host assigned to that Kickstart. Source downloads and previews retain the marker,
+markers cannot name a vault other than the bound vault, and dynamic responses disable caching. See
+<a href="../vaults/">Vaults</a> for marker examples, URI ordering, and secret-handling boundaries.</p>
 <blockquote>
 <p>Terminology note: Broadcom documentation uses <strong>ESX</strong> in these 9.x installation pages. Older VMware material often
 used <strong>ESXi</strong>.</p>

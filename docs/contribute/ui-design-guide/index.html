@@ -336,6 +336,8 @@
       
         
       
+        
+      
     
     
     
@@ -1221,6 +1223,8 @@
       
         
       
+        
+      
     
     
     
@@ -1703,6 +1707,40 @@
     
   
   VCF Helper
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/vaults/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Vaults
 
     
   </span>
@@ -2439,6 +2477,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Grid-launched wizard contract">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#vcf-helper-remote-credential-wizard-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        VCF Helper remote-credential wizard contract
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3054,6 +3109,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Grid-launched wizard contract">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#vcf-helper-remote-credential-wizard-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        VCF Helper remote-credential wizard contract
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3389,6 +3461,10 @@ Physical Interfaces is the reference.</p>
 <li>Provide explicit detail actions or row navigation with keyboard equivalents.</li>
 <li>Keep sensitive output, secrets, and raw error payloads out of collection cells unless an existing permission-checked
   detail flow intentionally exposes them.</li>
+<li>Mask password values by default. A permission-checked reveal uses the small borderless eye control: show the plain eye
+  while masked, draw a slash through it while the value is visible, and change its accessible label and title between
+  <strong>Reveal password</strong> and <strong>Hide password</strong>. Automatically return to the masked state after 15 seconds. Reveals must
+  disable browser caching and produce an audit event without the value.</li>
 </ul>
 <h2 id="grid-launched-wizard-contract">Grid-launched wizard contract<a class="headerlink" href="#grid-launched-wizard-contract" title="Permanent link">&para;</a></h2>
 <p>ESX Storage is the primary add/edit reference. Automation Schedules is the reference for a longer, type-dependent
@@ -3414,6 +3490,26 @@ row double-click or the row context menu when both are appropriate and discovera
 <p>Do not perform host mutation as a side effect of moving between steps. Wizard submission saves desired state unless the
 established workflow is an explicit task action. Appliance configuration enforcement remains owned by the global
 <code>/appliance-apply</code> workflow.</p>
+<h3 id="vcf-helper-remote-credential-wizard-contract">VCF Helper remote-credential wizard contract<a class="headerlink" href="#vcf-helper-remote-credential-wizard-contract" title="Permanent link">&para;</a></h3>
+<p>Every VCF Helper wizard that connects to a remote VCF component uses the same first four steps:</p>
+<ol>
+<li><strong>Credential</strong> — choose a saved vault and key, or continue with manual credentials.</li>
+<li><strong>Server</strong> — show the remote server address. A saved vault key fills this value from the HTTP or HTTPS URI selected
+   in the credential picker and makes the control read-only; manual mode keeps it editable. Server-address controls
+   show only <code>host</code>, IP, or <code>host:port</code>, never the URI scheme. A control explicitly labeled as a URL retains the full
+   HTTP or HTTPS URL.</li>
+<li><strong>TLS fingerprint</strong> — probe without resolving or sending credentials, display the observed SHA-256 fingerprint, and
+   require explicit out-of-band confirmation before authentication.</li>
+<li><strong>Login</strong> — collect request-local username and password only in manual mode. Disable the controls and skip this step
+   when a saved vault credential is selected.</li>
+</ol>
+<p>Place workflow-specific steps, such as inventory selection, password selection, review, or task queueing, after this
+shared sequence. Never load a vault password into page state or a password input. If the server or fingerprint changes,
+clear the confirmation and repeat the TLS step before any credential is resolved or sent.</p>
+<p>The credential picker lists only keys with HTTP or HTTPS URIs. Render one option per valid URI so an operator can choose
+the exact endpoint when a key has several. Do not render unusable SSH-only or URI-less keys as disabled options. If the
+selected vault has no valid remote API credentials, show <strong>No HTTP/HTTPS credentials available</strong> and keep manual mode
+active.</p>
 <h2 id="page-layout-and-settings">Page layout and settings<a class="headerlink" href="#page-layout-and-settings" title="Permanent link">&para;</a></h2>
 <p>Use the existing application shell. Configurable service pages use the DNS page as the default layout reference:</p>
 <ul>

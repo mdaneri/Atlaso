@@ -6,19 +6,19 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Use the local Photon appliance console for status, recovery, and administrative access.">
+        <meta name="description" content="Store and scope VCF and ESX passwords for Atlaso-managed scripts and ESXi Kickstarts.">
       
       
         <meta name="author" content="Atlaso contributors">
       
       
-        <link rel="canonical" href="https://mdaneri.github.io/Atlaso/docs/operate/appliance-console/">
+        <link rel="canonical" href="https://mdaneri.github.io/Atlaso/docs/services/vaults/">
       
       
-        <link rel="prev" href="../networking/">
+        <link rel="prev" href="../vcf-helper/">
       
       
-        <link rel="next" href="../appliance-update/">
+        <link rel="next" href="../vcf-offline-depot/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>Local appliance console - Atlaso Documentation</title>
+        <title>Vaults - Atlaso Documentation</title>
       
     
     
@@ -87,7 +87,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#local-appliance-console" class="md-skip">
+        <a href="#vaults" class="md-skip">
           Skip to content
         </a>
       
@@ -122,7 +122,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Local appliance console
+              Vaults
             
           </span>
         </div>
@@ -242,6 +242,60 @@
   
   
   
+  
+    
+      
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../operate/" class="md-tabs__link">
+          
+  
+  Operate
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
     
   
   
@@ -250,6 +304,14 @@
       
         
           
+        
+      
+        
+      
+        
+      
+        
+      
         
       
         
@@ -284,68 +346,6 @@
     
       <li class="md-tabs__item md-tabs__item--active">
         <a href="../" class="md-tabs__link">
-          
-  
-  Operate
-
-        </a>
-      </li>
-    
-  
-
-      
-        
-  
-  
-  
-  
-    
-      
-      
-        
-          
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-    
-    
-    
-    
-      <li class="md-tabs__item">
-        <a href="../../services/" class="md-tabs__link">
           
   
   Services
@@ -635,6 +635,553 @@
       
   
   
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../operate/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Operate
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Operate
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/dashboard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Dashboard
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/monitor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Monitor
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/logs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Operational logs
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/audit-log/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Audit log
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Tasks
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/appliance-apply/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Appliance Apply
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/appliance-settings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Appliance settings
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/networking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Network configuration
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/appliance-console/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Local appliance console
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/appliance-update/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Appliance Update
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/backup-restore/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Backup and restore
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/automation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Automation
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/web-terminal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Web Terminal
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
     
   
   
@@ -644,6 +1191,14 @@
       
         
           
+        
+      
+        
+      
+        
+      
+        
+      
         
       
         
@@ -688,7 +1243,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
         
           
           <div class="md-nav__link md-nav__container">
@@ -699,7 +1254,7 @@
   <span class="md-ellipsis">
     
   
-  Operate
+  Services
 
     
   </span>
@@ -716,18 +1271,18 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_3">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
             <span class="md-nav__icon md-icon"></span>
             
   
-  Operate
+  Services
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
@@ -741,14 +1296,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../dashboard/" class="md-nav__link">
+      <a href="../dns/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  Dashboard
+  DNS
 
     
   </span>
@@ -775,14 +1330,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../monitor/" class="md-nav__link">
+      <a href="../dhcp/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  Monitor
+  DHCP
 
     
   </span>
@@ -809,14 +1364,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../logs/" class="md-nav__link">
+      <a href="../firewall/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  Operational logs
+  Firewall
 
     
   </span>
@@ -843,14 +1398,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../audit-log/" class="md-nav__link">
+      <a href="../ntp/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  Audit log
+  NTP and NTS
 
     
   </span>
@@ -877,14 +1432,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../tasks/" class="md-nav__link">
+      <a href="../certificate-authority/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  Tasks
+  Certificate Authority
 
     
   </span>
@@ -911,14 +1466,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../appliance-apply/" class="md-nav__link">
+      <a href="../esx-storage/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  Appliance Apply
+  ESX storage
 
     
   </span>
@@ -945,14 +1500,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../appliance-settings/" class="md-nav__link">
+      <a href="../ipxe/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  Appliance settings
+  Network boot
 
     
   </span>
@@ -979,14 +1534,184 @@
   
   
     <li class="md-nav__item">
-      <a href="../networking/" class="md-nav__link">
+      <a href="../kms/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  Network configuration
+  KMS and KMIP
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../local-users/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Local users
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../managed-ldap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Managed LDAP
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../oidc-provider/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  OpenID Connect provider
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vcf-backups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  VCF backups
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vcf-helper/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  VCF Helper
 
     
   </span>
@@ -1029,7 +1754,7 @@
   <span class="md-ellipsis">
     
   
-  Local appliance console
+  Vaults
 
     
   </span>
@@ -1053,7 +1778,7 @@
   <span class="md-ellipsis">
     
   
-  Local appliance console
+  Vaults
 
     
   </span>
@@ -1086,10 +1811,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#interface-overview" class="md-nav__link">
+  <a href="#managed-scripts" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Interface overview
+        Managed scripts
       </span>
     </span>
   </a>
@@ -1097,10 +1822,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#before-you-begin" class="md-nav__link">
+  <a href="#esxi-kickstarts" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Before you begin
+        ESXi Kickstarts
       </span>
     </span>
   </a>
@@ -1108,10 +1833,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#read-the-main-screen" class="md-nav__link">
+  <a href="#remote-uri-security" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Read the main screen
+        Remote URI security
       </span>
     </span>
   </a>
@@ -1119,10 +1844,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#choose-an-action" class="md-nav__link">
+  <a href="#vcf-helper-import" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Choose an action
+        VCF Helper import
       </span>
     </span>
   </a>
@@ -1130,54 +1855,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#recover-management-networking" class="md-nav__link">
+  <a href="#vcf-helper-autofill" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Recover management networking
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#isolate-or-restore-appliance-services" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Isolate or restore appliance services
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#open-a-process-monitor-or-root-shell" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Open a process monitor or root shell
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#restart-or-shut-down" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Restart or shut down
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#verify-recovery" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Verify recovery
+        VCF Helper autofill
       </span>
     </span>
   </a>
@@ -1200,732 +1881,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../appliance-update/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Appliance Update
-
-    
-  </span>
-  
-  
-    
-  
-  
-    <span class="md-status md-status--current"></span>
-  
-
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../backup-restore/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Backup and restore
-
-    
-  </span>
-  
-  
-    
-  
-  
-    <span class="md-status md-status--current"></span>
-  
-
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../automation/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Automation
-
-    
-  </span>
-  
-  
-    
-  
-  
-    <span class="md-status md-status--current"></span>
-  
-
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../web-terminal/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Web Terminal
-
-    
-  </span>
-  
-  
-    
-  
-  
-    <span class="md-status md-status--current"></span>
-  
-
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    
-    
-      
-        
-          
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-    
-    
-    
-      
-      
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
-        
-          
-          <div class="md-nav__link md-nav__container">
-            <a href="../../services/" class="md-nav__link ">
-              
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Services
-
-    
-  </span>
-  
-  
-    
-  
-  
-    <span class="md-status md-status--current"></span>
-  
-
-  
-
-            </a>
-            
-              
-              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
-                <span class="md-nav__icon md-icon"></span>
-              </label>
-            
-          </div>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4">
-            <span class="md-nav__icon md-icon"></span>
-            
-  
-  Services
-
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../services/dns/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  DNS
-
-    
-  </span>
-  
-  
-    
-  
-  
-    <span class="md-status md-status--current"></span>
-  
-
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../services/dhcp/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  DHCP
-
-    
-  </span>
-  
-  
-    
-  
-  
-    <span class="md-status md-status--current"></span>
-  
-
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../services/firewall/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Firewall
-
-    
-  </span>
-  
-  
-    
-  
-  
-    <span class="md-status md-status--current"></span>
-  
-
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../services/ntp/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  NTP and NTS
-
-    
-  </span>
-  
-  
-    
-  
-  
-    <span class="md-status md-status--current"></span>
-  
-
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../services/certificate-authority/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Certificate Authority
-
-    
-  </span>
-  
-  
-    
-  
-  
-    <span class="md-status md-status--current"></span>
-  
-
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../services/esx-storage/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  ESX storage
-
-    
-  </span>
-  
-  
-    
-  
-  
-    <span class="md-status md-status--current"></span>
-  
-
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../services/ipxe/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Network boot
-
-    
-  </span>
-  
-  
-    
-  
-  
-    <span class="md-status md-status--current"></span>
-  
-
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../services/kms/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  KMS and KMIP
-
-    
-  </span>
-  
-  
-    
-  
-  
-    <span class="md-status md-status--current"></span>
-  
-
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../services/local-users/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Local users
-
-    
-  </span>
-  
-  
-    
-  
-  
-    <span class="md-status md-status--current"></span>
-  
-
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../services/managed-ldap/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Managed LDAP
-
-    
-  </span>
-  
-  
-    
-  
-  
-    <span class="md-status md-status--current"></span>
-  
-
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../services/oidc-provider/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  OpenID Connect provider
-
-    
-  </span>
-  
-  
-    
-  
-  
-    <span class="md-status md-status--current"></span>
-  
-
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../services/vcf-backups/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  VCF backups
-
-    
-  </span>
-  
-  
-    
-  
-  
-    <span class="md-status md-status--current"></span>
-  
-
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../services/vcf-helper/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  VCF Helper
-
-    
-  </span>
-  
-  
-    
-  
-  
-    <span class="md-status md-status--current"></span>
-  
-
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../services/vaults/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Vaults
-
-    
-  </span>
-  
-  
-    
-  
-  
-    <span class="md-status md-status--current"></span>
-  
-
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../services/vcf-offline-depot/" class="md-nav__link">
+      <a href="../vcf-offline-depot/" class="md-nav__link">
         
   
   
@@ -1959,7 +1915,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../services/vcf-private-registry/" class="md-nav__link">
+      <a href="../vcf-private-registry/" class="md-nav__link">
         
   
   
@@ -1993,7 +1949,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../services/vcf-trust/" class="md-nav__link">
+      <a href="../vcf-trust/" class="md-nav__link">
         
   
   
@@ -2917,10 +2873,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#interface-overview" class="md-nav__link">
+  <a href="#managed-scripts" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Interface overview
+        Managed scripts
       </span>
     </span>
   </a>
@@ -2928,10 +2884,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#before-you-begin" class="md-nav__link">
+  <a href="#esxi-kickstarts" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Before you begin
+        ESXi Kickstarts
       </span>
     </span>
   </a>
@@ -2939,10 +2895,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#read-the-main-screen" class="md-nav__link">
+  <a href="#remote-uri-security" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Read the main screen
+        Remote URI security
       </span>
     </span>
   </a>
@@ -2950,10 +2906,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#choose-an-action" class="md-nav__link">
+  <a href="#vcf-helper-import" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Choose an action
+        VCF Helper import
       </span>
     </span>
   </a>
@@ -2961,54 +2917,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#recover-management-networking" class="md-nav__link">
+  <a href="#vcf-helper-autofill" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Recover management networking
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#isolate-or-restore-appliance-services" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Isolate or restore appliance services
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#open-a-process-monitor-or-root-shell" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Open a process monitor or root shell
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#restart-or-shut-down" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Restart or shut down
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#verify-recovery" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Verify recovery
+        VCF Helper autofill
       </span>
     </span>
   </a>
@@ -3089,6 +3001,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3098,7 +3018,7 @@
           
   
   <span class="md-ellipsis">
-    Operate
+    Services
   </span>
 
         </a>
@@ -3115,7 +3035,7 @@
                 
                   
   
-    <a href="https://github.com/mdaneri/Atlaso/edit/main/docs/operate/appliance-console.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/mdaneri/Atlaso/edit/main/docs/services/vaults.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-pen" viewBox="0 0 24 24"><path d="M12.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v9.34"/><path d="M14 2v5a1 1 0 0 0 1 1h5M10.378 12.622a1 1 0 0 1 3 3.003L8.36 20.637a2 2 0 0 1-.854.506l-2.867.837a.5.5 0 0 1-.62-.62l.836-2.869a2 2 0 0 1 .506-.853z"/></svg>
     </a>
@@ -3124,159 +3044,81 @@
     
       
     
-    <a href="https://github.com/mdaneri/Atlaso/raw/main/docs/operate/appliance-console.md" title="View source of this page" class="md-content__button md-icon">
+    <a href="https://github.com/mdaneri/Atlaso/raw/main/docs/services/vaults.md" title="View source of this page" class="md-content__button md-icon">
       
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-code-2" viewBox="0 0 24 24"><path d="M4 12.15V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-3.35"/><path d="M14 2v5a1 1 0 0 0 1 1h5M5 16l-3 3 3 3M9 22l3-3-3-3"/></svg>
     </a>
   
 
 
-<h1 id="local-appliance-console">Local appliance console<a class="headerlink" href="#local-appliance-console" title="Permanent link">&para;</a></h1>
-<p>Use the local console when the management UI is unavailable or when you need direct status and recovery controls.
-Atlaso owns only the first virtual terminal (<code>tty1</code>); <code>Alt+F2</code>, <code>Alt+F3</code>, and later terminals keep the normal Photon
-login prompt.</p>
-<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
-<h2 id="interface-overview">Interface overview<a class="headerlink" href="#interface-overview" title="Permanent link">&para;</a></h2>
-<p>This verified appliance view provides visual orientation before you begin.</p>
-<p><img alt="Atlaso Photon appliance console showing management networking and service status." src="../../assets/screenshots/appliance-console-applied.webp" /></p>
-<p><em>Figure: VMware console after a successful appliance apply.</em></p>
-<!-- END GENERATED INTERFACE OVERVIEW -->
-
-<h2 id="before-you-begin">Before you begin<a class="headerlink" href="#before-you-begin" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Open the VM console in VMware Workstation or Hyper-V.</li>
-<li>Use the Photon <code>root</code> password for authenticated recovery actions.</li>
-<li>Treat console networking and service changes as real appliance mutations.</li>
-<li>Prefer the web UI for routine desired-state editing when it is reachable.</li>
-</ul>
-<h2 id="read-the-main-screen">Read the main screen<a class="headerlink" href="#read-the-main-screen" title="Permanent link">&para;</a></h2>
-<p>The main screen refreshes every five seconds and shows:</p>
-<ul>
-<li>the Atlaso and Photon versions, architecture, kernel, CPU, memory, and load;</li>
-<li>management interfaces, addresses, gateways, address modes, DNS servers, and management URLs;</li>
-<li>desired and runtime state for Atlaso-managed services; and</li>
-<li>the available function-key actions.</li>
-</ul>
-<p>During the first 30 seconds after startup, a missing interface inventory is shown as
-<strong>Initializing appliance networking...</strong>. If the interface remains missing after that period, the console reports the
-normal actionable error.</p>
-<p>Service state uses compact labels:</p>
-<table>
-<thead>
-<tr>
-<th>Label</th>
-<th>Meaning</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>▶ on/off</code></td>
-<td>The runtime is running.</td>
-</tr>
-<tr>
-<td><code>■ on/off</code></td>
-<td>The runtime is stopped.</td>
-</tr>
-<tr>
-<td><code>! crashed</code></td>
-<td>A backing unit failed.</td>
-</tr>
-<tr>
-<td><code>? on</code></td>
-<td>The service is enabled but runtime is unavailable.</td>
-</tr>
-</tbody>
-</table>
-<h2 id="choose-an-action">Choose an action<a class="headerlink" href="#choose-an-action" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>Key</th>
-<th>Action</th>
-<th>Authentication</th>
-<th>Use it for</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>F1</code></td>
-<td>Help</td>
-<td>None</td>
-<td>Screen regions, state legend, navigation, and safety notes.</td>
-</tr>
-<tr>
-<td><code>F2</code></td>
-<td>Customize</td>
-<td>Root password</td>
-<td>Management networking, DNS, Firewall, and service isolation.</td>
-</tr>
-<tr>
-<td><code>F3</code></td>
-<td>Process monitor</td>
-<td>Root password</td>
-<td>A temporary interactive <code>top</code> session.</td>
-</tr>
-<tr>
-<td><code>F4</code></td>
-<td>Root shell</td>
-<td>Root password</td>
-<td>Advanced diagnosis when bounded recovery is insufficient.</td>
-</tr>
-<tr>
-<td><code>F12</code></td>
-<td>Restart or shut down</td>
-<td>Root password</td>
-<td>Audited appliance power actions with confirmation.</td>
-</tr>
-</tbody>
-</table>
-<p>Authentication is required again every time an authenticated action opens. Atlaso does not reuse a password or an
-authorization result between menus.</p>
-<h2 id="recover-management-networking">Recover management networking<a class="headerlink" href="#recover-management-networking" title="Permanent link">&para;</a></h2>
-<ol>
-<li>Press <code>F2</code> and authenticate as Photon <code>root</code>.</li>
-<li>Open the management network editor.</li>
-<li>Choose the IPv4 and IPv6 modes.</li>
-<li>Enter static addresses and gateways only when the corresponding mode is <strong>Static</strong>.</li>
-<li>Enter external DNS servers.</li>
-<li>Review the values and submit the change.</li>
-<li>Wait for the global appliance-apply task to complete.</li>
-<li>Confirm that the console shows the expected management address and URL.</li>
-<li>Verify <code>https://&lt;management-address&gt;/openapi.json</code> from another machine.</li>
-</ol>
-<p>The editor supports IPv4 DHCP or static configuration. IPv6 can be disabled, automatic through RA/SLAAC, or static. A
-static IPv6 gateway must be on-link or link-local and cannot equal the interface address.</p>
-<p>The recovery action updates Atlaso desired state and submits one synchronous global appliance-apply task. It never
-falls back to unvalidated host commands. A validation or apply failure leaves the new desired state pending for review
-in the web UI.</p>
-<h2 id="isolate-or-restore-appliance-services">Isolate or restore appliance services<a class="headerlink" href="#isolate-or-restore-appliance-services" title="Permanent link">&para;</a></h2>
-<p>Use <strong>Disable all appliance services</strong> when troubleshooting requires maintenance isolation. Atlaso records the current
-enabled and active state, stops the application services, and preserves the console, management networking, resolver,
-and firewall persistence services.</p>
-<p>While isolation is active, the action changes to <strong>Restore appliance services</strong>. Restore uses the saved state and does
-not enable units that were previously disabled.</p>
-<h2 id="open-a-process-monitor-or-root-shell">Open a process monitor or root shell<a class="headerlink" href="#open-a-process-monitor-or-root-shell" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Press <code>F3</code>, authenticate, and use <code>top</code>. Press <code>q</code> to return to the Atlaso screen.</li>
-<li>Press <code>F4</code>, authenticate, and use the root Bash session only for necessary diagnosis. Run <code>exit</code> or press <code>Ctrl+D</code> to
-  return.</li>
-</ul>
-<p>Root-shell open and close events are audited as <code>console:root</code>. The screen is cleared before the status interface is
-redrawn.</p>
-<h2 id="restart-or-shut-down">Restart or shut down<a class="headerlink" href="#restart-or-shut-down" title="Permanent link">&para;</a></h2>
-<p>Press <code>F12</code>, authenticate, choose the power action, and confirm it. Restart and shutdown use the delayed, audited,
-constrained power helper. <code>Ctrl+Alt+Del</code> is disabled so it cannot bypass this workflow.</p>
-<h2 id="verify-recovery">Verify recovery<a class="headerlink" href="#verify-recovery" title="Permanent link">&para;</a></h2>
-<p>After any console change:</p>
-<ol>
-<li>Check the displayed management addressing and service exceptions.</li>
-<li>Open the management URL from another machine.</li>
-<li>Verify <code>/openapi.json</code>.</li>
-<li>Review the resulting task and audit event in the web UI.</li>
-<li>Resolve or roll back any desired state left pending by a failed action.</li>
-</ol>
-<p>For systemd ownership, redraw behavior, GRUB branding, service-isolation boundaries, and configuration paths, see the
-<a href="../../reference/appliance-console-technical/">local console technical reference</a>.</p>
+<h1 id="vaults">Vaults<a class="headerlink" href="#vaults" title="Permanent link">&para;</a></h1>
+<p>Open <strong>VCF Workflows &gt; Vaults</strong> to manage encrypted VCF and ESX passwords. Each named vault appears as a tab containing
+a table with <strong>Key</strong>, <strong>Description</strong>, <strong>Username</strong>, <strong>URI(s)</strong>, and <strong>Password</strong> columns. Multiple URIs are displayed
+on separate lines. Passwords are masked by default. Administrators can use the compact eye control to reveal one value
+for 15 seconds; Atlaso audits the reveal without recording the value and returns it with browser caching disabled.</p>
+<p>Vault keys use lowercase dotted segments, for example <code>vcf.sddc_manager.admin</code> or <code>esx.esx01.root</code>. Values are encrypted
+with the appliance secrets key before database storage. Keep <code>ATLASO_SECRETS_KEY</code> with the appliance recovery material.
+Each entry may also store up to nine credential-free HTTP, HTTPS, SSH, or SFTP URIs. Add them on the third page of the
+entry wizard. Right-click an existing row, or focus it and press <strong>Shift+F10</strong>, to open its context menu. <strong>Edit</strong>
+reopens the entry wizard, <strong>Copy</strong> creates a new entry without loading the encrypted value into the page, <strong>Open</strong>
+contains a submenu with every configured URI, and <strong>Remove</strong> uses the shared destructive confirmation. HTTP and HTTPS
+open in a separate browser tab; SSH and SFTP open the Atlaso Web Terminal and authenticate with the entry username and
+password. Atlaso opens the remote terminal window only after the administrator accepts the displayed host-key
+fingerprint. If the target cannot be reached, the Vaults page displays a visible error naming the URI and safe
+troubleshooting guidance. The confirmation displays the SHA-256 fingerprint in a dedicated wrapping field so it
+remains readable without horizontal scrolling. That window is a standalone terminal surface identified only by the
+remote hostname; it does not include the Atlaso administration shell.</p>
+<h2 id="managed-scripts">Managed scripts<a class="headerlink" href="#managed-scripts" title="Permanent link">&para;</a></h2>
+<p>Choose one <strong>Scoped vault</strong> when scheduling or manually starting a managed script. The worker supplies that vault through
+a transient systemd credential available only to the script process.</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nv">$password</span> <span class="p">=</span> <span class="nb">Get-AtlasoVault</span> <span class="n">-Key</span> <span class="s2">&quot;vcf.sddc_manager.admin&quot;</span>
+</span></code></pre></div>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nv">password</span><span class="o">=</span><span class="s2">&quot;</span><span class="k">$(</span>atlaso-vault<span class="w"> </span>get<span class="w"> </span>--key<span class="w"> </span>esx.esx01.root<span class="k">)</span><span class="s2">&quot;</span>
+</span></code></pre></div>
+<p>The commands fail outside a scoped managed-script run. Atlaso redacts exact injected values from captured stdout and
+stderr, but scripts must still treat passwords as secrets and must not transform, print, or transmit them. Both commands
+are installed in interactive appliance shells for discoverability; invoking them there fails closed because no scoped
+runtime credential is present.</p>
+<p>Each queued execution records a non-reusable fingerprint for the selected vault. Before decrypting anything, the worker
+verifies that fingerprint as well as the database ID, so deleting and recreating a vault cannot redirect an older queued
+job to different credentials.</p>
+<h2 id="esxi-kickstarts">ESXi Kickstarts<a class="headerlink" href="#esxi-kickstarts" title="Permanent link">&para;</a></h2>
+<p>Choose one vault in the Kickstart editor. The vault-name segment is the selected vault name normalized to lowercase,
+with spaces and punctuation replaced by underscores. Reference the entry username and password explicitly:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>network --hostname={{vault.management.esx.esx01.root.username}}
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>rootpw {{vault.management.esx.esx01.root.password}}
+</span></code></pre></div>
+<p>URIs use their one-based position in the entry:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>%include {{vault.management.esx.esx01.root.uri1}}
+</span></code></pre></div>
+<p>Markers are available from <code>uri1</code> through <code>uri9</code> when that position is configured. Removing or reordering an entry URI
+changes its marker position.</p>
+<p>Atlaso resolves vault markers only for an enabled host assigned to that Kickstart. Source, preview, and download views
+retain the marker; the dynamic response is not persisted and is returned with <code>Cache-Control: no-store</code>. A marker naming
+a vault other than the vault selected for the Kickstart fails validation.</p>
+<h2 id="remote-uri-security">Remote URI security<a class="headerlink" href="#remote-uri-security" title="Permanent link">&para;</a></h2>
+<p>Do not place credentials in a URI. For SSH and SFTP targets, Atlaso probes the remote host key before decrypting the
+entry password and requires the administrator to confirm its SHA-256 fingerprint. Verify that fingerprint out of band.
+After confirmation, Atlaso creates a short-lived one-use launch token, rechecks the host key, and performs password
+authentication server-side. The password is not sent to the browser, included in the launch URL, or written to the
+audit event. An SFTP URI opens an interactive SSH terminal on the same endpoint; file-transfer browsing is not provided.</p>
+<h2 id="vcf-helper-import">VCF Helper import<a class="headerlink" href="#vcf-helper-import" title="Permanent link">&para;</a></h2>
+<p><strong>VCF Helper &gt; Import passwords into a vault</strong> discovers supported password metadata from a VCF 9 SDDC Manager or VCF
+Installer. After the server page, Atlaso probes without resolving or sending credentials and opens a dedicated TLS
+page. Confirm the observed SHA-256 fingerprint out of band before authentication, select the passwords, and choose a
+destination vault. Atlaso re-reads the selected values during the reviewed import and encrypts them immediately.
+Existing keys are rotated.</p>
+<h2 id="vcf-helper-autofill">VCF Helper autofill<a class="headerlink" href="#vcf-helper-autofill" title="Permanent link">&para;</a></h2>
+<p>VCF Helper remote-connection wizards start with an administrator-only <strong>Vault</strong> and <strong>Key</strong> choice. Selecting a key
+fills and locks the server address from the chosen HTTP or HTTPS URI, fills its username, and skips the manual API-login
+page. The picker hides keys without an HTTP or HTTPS URI and creates one choice per valid URI when a key has several.
+A vault with no usable keys shows <strong>No HTTP/HTTPS credentials available</strong> and leaves manual entry active. The password
+remains encrypted at rest and is resolved only after the dedicated TLS page confirms the observed server fingerprint.
+It is never copied into the password input or included in the page metadata.</p>
+<p>The server rejects a key that does not belong to the selected vault and audits each use without the value. A vault
+entry intended for VCF Helper must therefore include a username and an HTTP or HTTPS URI. Operators can instead choose
+manual credentials and enter the server themselves.</p>
+<p>Vault entries are intentionally excluded from settings archives. Reimport or recreate them after restore.</p>
 
 
 
@@ -3317,7 +3159,7 @@ constrained power helper. <code>Ctrl+Alt+Del</code> is disabled so it cannot byp
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../networking/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Network configuration">
+          <a href="../vcf-helper/" class="md-footer__link md-footer__link--prev" aria-label="Previous: VCF Helper">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -3327,20 +3169,20 @@ constrained power helper. <code>Ctrl+Alt+Del</code> is disabled so it cannot byp
                 Previous
               </span>
               <div class="md-ellipsis">
-                Network configuration
+                VCF Helper
               </div>
             </div>
           </a>
         
         
           
-          <a href="../appliance-update/" class="md-footer__link md-footer__link--next" aria-label="Next: Appliance Update">
+          <a href="../vcf-offline-depot/" class="md-footer__link md-footer__link--next" aria-label="Next: VCF Offline Depot">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Appliance Update
+                VCF Offline Depot
               </div>
             </div>
             <div class="md-footer__button md-icon">

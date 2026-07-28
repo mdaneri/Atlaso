@@ -338,6 +338,8 @@
       
         
       
+        
+      
     
     
     
@@ -1223,6 +1225,8 @@
       
         
       
+        
+      
     
     
     
@@ -1708,6 +1712,40 @@
     
   
   VCF Helper
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vaults/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Vaults
 
     
   </span>
@@ -2981,6 +3019,8 @@
       
         
       
+        
+      
     
     
     
@@ -3034,14 +3074,15 @@ Appliance Apply unit.</p>
 <p><em>Figure: Certificate Authority in the verified clean-appliance desktop state.</em></p>
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
-<p>For an existing appliance, create a current VM snapshot or equivalent rollback point before changing trust. The wizard
-collects only:</p>
+<p>The wizard collects only:</p>
 <ul>
 <li>target VCF API endpoint, as <code>host</code>, <code>host:port</code>, or <code>https://host:port</code>;</li>
-<li>one-time VCF API administrator credentials;</li>
-<li>target HTTPS TLS fingerprint confirmation;</li>
-<li>snapshot acknowledgment.</li>
+<li>a saved vault credential or one-time VCF API administrator credentials;</li>
+<li>target HTTPS TLS fingerprint confirmation.</li>
 </ul>
+<p>The wizard probes the target and presents the observed SHA-256 fingerprint on a dedicated pre-authentication page.
+Atlaso does not resolve a selected vault password or use manual API credentials until the operator confirms that
+fingerprint out of band. Selecting a vault locks the server address and skips the manual-login page.</p>
 <p>Atlaso never persists the API password. It stores only sanitized target, port, role/version, confirmed TLS fingerprint,
 deployed CA fingerprint, and task result metadata.</p>
 <p>The task authenticates through <code>POST /v1/tokens</code>, detects the appliance using <code>GET /v1/system/appliance-info</code>, checks

@@ -338,6 +338,8 @@
       
         
       
+        
+      
     
     
     
@@ -1341,6 +1343,8 @@
       
         
       
+        
+      
     
     
     
@@ -1823,6 +1827,40 @@
     
   
   VCF Helper
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/vaults/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Vaults
 
     
   </span>
@@ -3034,7 +3072,9 @@ when needed.</p>
 <li>Retain the appliance secrets key with the appliance recovery material; encrypted private keys are not portable
    without it.</li>
 </ol>
-<p>Backups can contain operational configuration and encrypted sensitive material. Do not attach them to public issues.</p>
+<p>Backups can contain operational configuration and encrypted sensitive material. Do not attach them to public issues.
+VCF/ESX password vault entries are not included in settings archives. Restore clears vaults and Kickstart bindings;
+recreate or reimport vault entries before re-enabling dependent scripts or PXE workflows.</p>
 <h2 id="restore-safely">Restore safely<a class="headerlink" href="#restore-safely" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Take a VM snapshot or equivalent rollback point.</li>

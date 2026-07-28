@@ -18,7 +18,7 @@
         <link rel="prev" href="../vcf-backups/">
       
       
-        <link rel="next" href="../vcf-offline-depot/">
+        <link rel="next" href="../vaults/">
       
       
         
@@ -304,6 +304,8 @@
       
         
           
+        
+      
         
       
         
@@ -1223,6 +1225,8 @@
       
         
       
+        
+      
     
     
     
@@ -1784,6 +1788,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#use-a-saved-vault-credential" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Use a saved vault credential
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#deploy-sddc-manager" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1892,6 +1907,40 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vaults/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Vaults
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
     </li>
   
 
@@ -2907,6 +2956,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#use-a-saved-vault-credential" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Use a saved vault credential
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#deploy-sddc-manager" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3091,6 +3151,8 @@
       
         
       
+        
+      
     
     
     
@@ -3142,11 +3204,36 @@
 <p><em>Figure: VCF Helper in the verified clean-appliance desktop state.</em></p>
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+<p>Administrators can also use <strong>Import passwords into a vault</strong> for VCF 9 SDDC Manager and VCF Installer appliances.
+The wizard chooses vault or manual credentials first, confirms the server second, and then opens a dedicated TLS page.
+Atlaso probes the server without resolving or sending credentials and requires the operator to confirm the observed
+fingerprint before vault or manual authentication can continue. It displays only discovered metadata for selection,
+then re-fetches and encrypts the reviewed VCF/ESX passwords in the selected vault. Source credentials are request-local
+and password values are never included in the discovery response. See <a href="../vaults/">Vaults</a> for supported entries,
+managed-script and Kickstart access, URI targets, and restore behavior.</p>
 <p>The helper creates DNS records in Atlaso, deploys SDDC Manager OVAs, and configures VCF 9 appliances to use the applied
 local offline depot. DNS does not reload <code>dnsmasq</code> or change the appliance directly. Review and submit the changed
 <code>DNS/DHCP (dnsmasq)</code> unit through the global <code>/appliance-apply</code> workflow after generation or deletion.</p>
 <p>The <code>VCF Certificate Trust</code> button opens the separate remote certificate task in a modal without mixing CA details into
 the main DNS helper workspace. See <a href="../vcf-trust/">VCF Certificate Trust</a>.</p>
+<h2 id="use-a-saved-vault-credential">Use a saved vault credential<a class="headerlink" href="#use-a-saved-vault-credential" title="Permanent link">&para;</a></h2>
+<p>An administrator can select <strong>Vault</strong> and then <strong>Key</strong> anywhere VCF Helper requests a remote vCenter, ESXi, SDDC
+Manager, VCF Installer, or VCF Automation login. Atlaso fills the server from the HTTP or HTTPS URI selected for the
+entry and fills its username. The server control is read-only, the manual-login controls are disabled, and the login
+page is skipped. The picker omits keys without an HTTP or HTTPS URI and shows one choice per valid URI when a key has several.
+If the selected vault has no usable keys, it shows <strong>No HTTP/HTTPS credentials available</strong> and keeps manual mode active.</p>
+<p>Address fields display only the selected hostname, IP, and non-default port; they do not display <code>http://</code> or
+<code>https://</code>. Fields explicitly labeled as a URL, such as <strong>VCF Automation URL</strong>, retain the complete URL.</p>
+<p>The selected password is not loaded into the page, copied into the password input, or returned by an API. The disabled
+password input indicates that the stored value will be used. Atlaso validates that the key belongs to the selected
+vault, decrypts the password on the server for that request only, and records the use without recording the value.
+Choose <strong>Enter credentials manually</strong> to return to request-local username and password entry. Service administrators
+can continue to use manual credentials but cannot select administrator-owned vault entries.</p>
+<p>Remote VCF wizards consistently use <strong>Credential</strong>, <strong>Server</strong>, <strong>TLS fingerprint</strong>, and <strong>Login</strong> as their first four
+steps. The TLS step is always pre-authentication. Workflow-specific selection and review pages follow it.</p>
+<p>The picker is available for SDDC Manager deployment inventory, VCF Offline Depot configuration, VCF Certificate Trust,
+VCF password import source authentication, and Managed LDAP for VCF Automation. The local offline-depot HTTP password
+and OVA appliance passwords remain separate fields and are never filled from this picker.</p>
 <h2 id="deploy-sddc-manager">Deploy SDDC Manager<a class="headerlink" href="#deploy-sddc-manager" title="Permanent link">&para;</a></h2>
 <p><code>Deploy SDDC Manager</code> becomes available when a valid OVA is present beneath
 <code>/mnt/atlaso-vcf-offline-depot/PROD/COMP/SDDC_MANAGER_VCF</code>. Atlaso validates the OVA manifest, reads its
@@ -3154,13 +3241,15 @@ user-configurable OVF properties, confirms the vCenter or ESXi TLS fingerprint, 
 streams the disks through a vSphere NFC lease. It refuses duplicate VM names, powers on the VM, and waits up to 90
 minutes for the VCF API.</p>
 <p>The form can optionally add managed DNS desired state, deploy Atlaso CA trust, and configure the local offline depot.
-Trust uses the VCF API only. New-VM trust does not require a snapshot because redeployment is the recovery path. All
-vSphere, OVF, VCF API, and depot passwords remain transient.</p>
+Trust uses the VCF API only and does not require a snapshot acknowledgement.
+Manually entered vSphere, OVF, VCF API, and depot passwords remain transient; a selected vault password remains
+encrypted at rest and is resolved only on the server for the request.</p>
 <h2 id="configure-vcf-offline-depot">Configure VCF Offline Depot<a class="headerlink" href="#configure-vcf-offline-depot" title="Permanent link">&para;</a></h2>
 <p>The standalone helper is available only when the local depot is enabled, applied, CA-backed, has a generated software
-depot ID, and has a selected HTTP user. Its wizard confirms the target HTTPS fingerprint, detects VCF Installer or SDDC
-Manager 9.x, collects the one-time depot HTTP password, and reads the current sanitized depot configuration. Replacing a
-different depot requires explicit confirmation.</p>
+depot ID, and has a selected HTTP user. Its wizard follows <strong>Credential</strong>, <strong>Server</strong>, <strong>TLS fingerprint</strong>, and
+<strong>Login</strong> before collecting the one-time depot HTTP password and reading the current sanitized depot configuration.
+The TLS probe runs before Atlaso resolves a selected vault password or reads manual login fields. After confirmation,
+Atlaso detects VCF Installer or SDDC Manager 9.x. Replacing a different depot requires explicit confirmation.</p>
 <p>Atlaso calls <code>PUT /v1/system/settings/depot</code>, triggers metadata refresh with
 <code>PATCH /v1/system/settings/depot/depot-sync-info</code>, and polls the matching GET endpoint for up to 60 minutes. It asks for
 the local depot user's password for each run and never stores it. Certificate trust is not implicit; configure it
@@ -3398,13 +3487,13 @@ state model.</p>
         
         
           
-          <a href="../vcf-offline-depot/" class="md-footer__link md-footer__link--next" aria-label="Next: VCF Offline Depot">
+          <a href="../vaults/" class="md-footer__link md-footer__link--next" aria-label="Next: Vaults">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                VCF Offline Depot
+                Vaults
               </div>
             </div>
             <div class="md-footer__button md-icon">

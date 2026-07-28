@@ -338,6 +338,8 @@
       
         
       
+        
+      
     
     
     
@@ -1352,6 +1354,8 @@
       
         
       
+        
+      
     
     
     
@@ -1834,6 +1838,40 @@
     
   
   VCF Helper
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/vaults/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Vaults
 
     
   </span>
@@ -3106,9 +3144,12 @@ removes its stored revisions but preserves existing task history.</p>
 <li>a read-only system filesystem except for <code>/var/lib/atlaso/automation/runs</code>;</li>
 <li>the revision's configured timeout, capped at 24 hours.</li>
 </ul>
-<p>Scripts do not receive Atlaso credentials. Output is bounded in task history. Script definitions and schedules are
-included in settings archives, but restored revisions and schedules are always disabled and source credentials are never
-exported.</p>
+<p>Scripts receive no Atlaso credentials by default. A schedule or manual run may select one named VCF/ESX password vault.
+Atlaso stages that vault as a transient systemd credential and provides <code>atlaso-vault get --key &lt;key&gt;</code> to Bash/Python
+and <code>Get-AtlasoVault -Key &lt;key&gt;</code> to PowerShell. The helper fails outside the scoped process and exact injected values are
+redacted from captured output. Output is bounded in task history. Script definitions and schedules are included in
+settings archives, but restored revisions and schedules are always disabled and vault contents are never exported. See
+<a href="../../services/vaults/">Vaults</a> for the complete key, scope, and recovery contract.</p>
 <h2 id="service-operations">Service operations<a class="headerlink" href="#service-operations" title="Permanent link">&para;</a></h2>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>systemctl<span class="w"> </span>status<span class="w"> </span>atlaso-worker<span class="w"> </span>--no-pager
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>journalctl<span class="w"> </span>-u<span class="w"> </span>atlaso-worker<span class="w"> </span>-n<span class="w"> </span><span class="m">120</span><span class="w"> </span>--no-pager

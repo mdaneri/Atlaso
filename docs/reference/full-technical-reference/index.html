@@ -336,6 +336,8 @@
       
         
       
+        
+      
     
     
     
@@ -1221,6 +1223,8 @@
       
         
       
+        
+      
     
     
     
@@ -1729,6 +1733,40 @@
   
   
     <li class="md-nav__item">
+      <a href="../../services/vaults/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Vaults
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../services/vcf-offline-depot/" class="md-nav__link">
         
   
@@ -2195,6 +2233,17 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Vaults
+      </span>
+    </span>
+  </a>
   
 </li>
       
@@ -3128,6 +3177,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#vaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Vaults
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#vcf-helper" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3719,6 +3779,22 @@ password-backed sudo OS account for local recovery and debugging.</p>
 </span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>status: disabled until VCF Backups is enabled and Local Users apply creates the Photon OS account
 </span></code></pre></div>
 <p>Set/reset this account from <code>Users</code>, then apply Local Users before exposing the SFTP endpoint beyond a development lab.</p>
+<h2 id="vaults">Vaults<a class="headerlink" href="#vaults" title="Permanent link">&para;</a></h2>
+<p>Vaults at <code>/vaults</code> store only VCF and ESX passwords. Entries contain a lowercase dotted key, description, optional
+username, encrypted password, and up to nine credential-free HTTP, HTTPS, SSH, or SFTP URIs. Passwords remain masked in
+the management UI until an administrator explicitly uses the audited, no-cache, 15-second reveal control.</p>
+<p>Managed-script jobs persist both the selected vault ID and a non-reusable scope fingerprint. The worker verifies both
+before decrypting, stages values as a transient systemd credential, and removes the staged file after execution.
+<code>Get-AtlasoVault -Key &lt;key&gt;</code> is the PowerShell interface; <code>atlaso-vault get --key &lt;key&gt;</code> is the Bash/Python interface.
+Both commands fail closed outside a scoped managed-script run.</p>
+<p>ESXi Kickstarts resolve only the vault explicitly bound to that Kickstart. Dynamic responses support
+<code>{{vault.&lt;vaultname&gt;.&lt;key&gt;.username}}</code>, <code>{{vault.&lt;vaultname&gt;.&lt;key&gt;.password}}</code>, and <code>uri1</code> through <code>uri9</code>; previews and
+source downloads retain markers, and resolved responses disable caching. VCF Helper can import supported passwords from
+VCF 9 SDDC Manager and VCF Installer after explicit TLS fingerprint confirmation.</p>
+<p>HTTP and HTTPS URI actions open a separate browser tab. SSH and SFTP actions use a short-lived one-use Web Terminal
+launch, require explicit host-key fingerprint confirmation, recheck the host key, and authenticate server-side without
+placing the password in browser state. Settings archives exclude vault entries and Kickstart bindings; restore clears
+them. See <a href="../../services/vaults/">Vaults</a> for operator procedures and recovery guidance.</p>
 <h2 id="vcf-helper">VCF Helper<a class="headerlink" href="#vcf-helper" title="Permanent link">&para;</a></h2>
 <p>VCF Helper at <code>/vcf-helper</code> generates DNS desired state, deploys SDDC Manager OVAs found under
 <code>/mnt/atlaso-vcf-offline-depot/PROD/COMP/SDDC_MANAGER_VCF</code>, imports the active Atlaso root CA into VCF 9 appliances, and
