@@ -109,6 +109,9 @@ Physical Interfaces is the reference.
   and locked until identity is valid.
 - Use the established editors for switches, enumerations, exact values, tags, and multiline content. Do not embed a form
   layout inside a row.
+- When an **Enabled** column represents ordinary desired-state availability, make it directly editable. Saving a
+  changed value must change whether that resource is available in rendered desired state while preserving the global
+  appliance-apply boundary.
 
 If a record cannot satisfy these constraints, keep its collection in Tabulator and move add/edit into a wizard.
 
@@ -143,6 +146,9 @@ boolean and keeps its established guarded workflow.
 Every wizard must:
 
 - use the shared Atlaso wizard panel, step rail, controls, spacing, and status presentation;
+- place the resource description in step 1 with its identity fields whenever the resource has a description;
+- place an ordinary desired-state **Enabled** control in its own final step immediately before **Review** whenever the
+  resource has an enabled state;
 - give the dialog an accessible name and description, move focus to the first actionable control, trap focus while open,
   and return focus to the launcher when closed;
 - show the current step, total step count, step name, and concise purpose;
@@ -155,6 +161,9 @@ Every wizard must:
 - retain entered values and validation errors when moving backward or after a recoverable submission failure;
 - require confirmation before discarding meaningful unsaved wizard input; and
 - close only after a successful save, then restore collection context and show the resulting row or status.
+
+When peer resources are presented as tabs, keep a `+ Add <resource>` launcher as the final tab after every existing
+resource. The add launcher opens the shared wizard and must not displace, sort ahead of, or appear outside the tablist.
 
 Do not perform host mutation as a side effect of moving between steps. Wizard submission saves desired state unless the
 established workflow is an explicit task action. Appliance configuration enforcement remains owned by the global

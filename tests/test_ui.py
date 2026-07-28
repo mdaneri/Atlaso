@@ -795,7 +795,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v186" in service_worker.text
+    assert "atlaso-pwa-v187" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -809,7 +809,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/vendor/codemirror/atlaso-codemirror.min.js?v=atlaso-codemirror-20260728-1" in service_worker.text
     assert "/static/app.css?v=atlaso-ui-foundation-20260728-5" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in service_worker.text
-    assert "/static/app.js?v=atlaso-complex-wizards-20260728-9" in service_worker.text
+    assert "/static/app.js?v=atlaso-complex-wizards-20260728-10" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -829,8 +829,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=atlaso-complex-wizards-20260728-9"),
-        (public_base, "/static/app.js?v=atlaso-complex-wizards-20260728-9"),
+        (base, "/static/app.js?v=atlaso-complex-wizards-20260728-10"),
+        (public_base, "/static/app.js?v=atlaso-complex-wizards-20260728-10"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4"
@@ -1269,7 +1269,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=atlaso-vaults-20260728-9" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in page.text
-    assert "/static/app.js?v=atlaso-complex-wizards-20260728-9" in page.text
+    assert "/static/app.js?v=atlaso-complex-wizards-20260728-10" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -9899,6 +9899,17 @@ def test_physical_and_vlan_pages_render(client):
     assert "data-parent-options" in vlans.text
     assert "deleteVlanInterfaceFromMenu" in app_js
     assert "refreshNetworkSideStack" in app_js
+    refreshed_side_stack_js = app_js.split("function initializeRefreshedSideStack(sideStack)", 1)[1].split(
+        "async function refreshNetworkSideStack()", 1
+    )[0]
+    assert "initializeAutosaveForms(sideStack)" in refreshed_side_stack_js
+    assert "initializeSwitchFields(sideStack)" in refreshed_side_stack_js
+    assert "initializeServiceBindEditors(sideStack)" in refreshed_side_stack_js
+    assert "initializeDnsSettings(sideStack)" in refreshed_side_stack_js
+    refresh_network_side_stack_js = app_js.split("async function refreshNetworkSideStack()", 1)[1].split(
+        "async function autoSavePhysicalInterface", 1
+    )[0]
+    assert "initializeRefreshedSideStack(nextSideStack)" in refresh_network_side_stack_js
     assert "highlightConfigPreviews(nextSideStack)" in app_js
     assert "networkStateIcon" in app_js
     assert "operStateFormatter" in app_js
@@ -12632,6 +12643,12 @@ def test_dhcp_vlan_scope_can_be_created_without_dns_server(client):
     assert "data.lease_time" in required_block
     assert "data.domain_name" in required_block
     assert "data.dns_server" not in required_block
+    derived_range_block = app_js.split("function deriveDhcpLeaseRange", 1)[1].split(
+        "function isUniqueNewDhcpScopeName", 1
+    )[0]
+    assert "address >= start && address <= end" in derived_range_block
+    assert "addressesBeforeGateway" in derived_range_block
+    assert "addressesAfterGateway" in derived_range_block
 
 
 def test_dhcp_scope_family_cannot_change_after_create(client):

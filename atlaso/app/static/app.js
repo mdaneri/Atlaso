@@ -1797,8 +1797,15 @@ function deriveDhcpLeaseRange(gateway, prefixValue, family = "ipv4") {
   if (lastUsable < firstUsable) return "";
   let start = network + 100n <= lastUsable ? network + 100n : firstUsable;
   let end = network + 200n <= lastUsable ? network + 200n : lastUsable;
-  if (start === address && start < end) start += 1n;
-  if (end === address && end > start) end -= 1n;
+  if (address >= start && address <= end) {
+    const addressesBeforeGateway = address - start;
+    const addressesAfterGateway = end - address;
+    if (addressesAfterGateway > addressesBeforeGateway) {
+      start = address + 1n;
+    } else {
+      end = address - 1n;
+    }
+  }
   if (end < start) return "";
   const format = family === "ipv6" ? integerToIpv6Address : integerToIpv4Address;
   return `${format(start)}-${format(end)}`;
@@ -4234,11 +4241,13 @@ function updateCaSettingsPreview(payload = {}) {
   }
 }
 
-function initializeCaSettings() {
-  document.querySelectorAll("[data-ca-settings]").forEach((form) => {
+function initializeCaSettings(root = document) {
+  root.querySelectorAll("[data-ca-settings]").forEach((form) => {
     if (!(form instanceof HTMLFormElement)) {
       return;
     }
+    if (form.dataset.caSettingsInitialized === "1") return;
+    form.dataset.caSettingsInitialized = "1";
     form.addEventListener("atlaso:autosave-success", (event) => {
       updateCaSettingsPreview(event.detail || {});
     });
@@ -4390,11 +4399,13 @@ function updateKmsValidation(payload = {}) {
   }
 }
 
-function initializeKmsSettings() {
-  document.querySelectorAll("[data-kms-settings]").forEach((form) => {
+function initializeKmsSettings(root = document) {
+  root.querySelectorAll("[data-kms-settings]").forEach((form) => {
     if (!(form instanceof HTMLFormElement)) {
       return;
     }
+    if (form.dataset.kmsSettingsInitialized === "1") return;
+    form.dataset.kmsSettingsInitialized = "1";
     const portInput = form.querySelector('input[name="port"]');
     const refresh = () => updateKmsDerivedAddress(form);
     if (portInput instanceof HTMLInputElement) {
@@ -4469,11 +4480,17 @@ function initializeLdapOrganizationWizard() {
   });
 }
 
-function initializeLdapPageState() {
-  const settingsForm = document.querySelector('form[action="/ldap/settings"]');
+function initializeLdapSettingsStatus(root = document) {
+  const settingsForm = root.querySelector('form[action="/ldap/settings"]');
   if (settingsForm instanceof HTMLFormElement) {
+    if (settingsForm.dataset.ldapSettingsStatusInitialized === "1") return;
+    settingsForm.dataset.ldapSettingsStatusInitialized = "1";
     settingsForm.addEventListener("atlaso:autosave-success", (event) => updateLdapSettingsStatus(event.detail || {}));
   }
+}
+
+function initializeLdapPageState() {
+  initializeLdapSettingsStatus();
   const tabList = document.querySelector("[data-ldap-organization-tabs]");
   if (!(tabList instanceof HTMLElement)) return;
   const links = Array.from(tabList.querySelectorAll("[data-ldap-organization-id]"));
@@ -5334,11 +5351,13 @@ function updateNtpValidation(payload = {}) {
   }
 }
 
-function initializeNtpSettings() {
-  document.querySelectorAll("[data-ntp-settings]").forEach((form) => {
+function initializeNtpSettings(root = document) {
+  root.querySelectorAll("[data-ntp-settings]").forEach((form) => {
     if (!(form instanceof HTMLFormElement)) {
       return;
     }
+    if (form.dataset.ntpSettingsInitialized === "1") return;
+    form.dataset.ntpSettingsInitialized = "1";
     form.addEventListener("atlaso:autosave-success", (event) => {
       const payload = event.detail || {};
       updateNtpSettingsPreview(form, payload);
@@ -6503,6 +6522,23 @@ function labeledValues(options, labels) {
   return Object.fromEntries(options.map((item) => [item, labels[item] || item]));
 }
 
+function initializeRefreshedSideStack(sideStack) {
+  initializeTagEditors(sideStack);
+  initializeServiceBindEditors(sideStack);
+  initializeSwitchFields(sideStack);
+  initializeAutosaveForms(sideStack);
+  initializeCaSettings(sideStack);
+  initializeKmsSettings(sideStack);
+  initializeNtpSettings(sideStack);
+  initializeOidcProviderSettings(sideStack);
+  initializeFirewallSettings(sideStack);
+  initializeDnsSettings(sideStack);
+  initializeVcfBackupSettings(sideStack);
+  initializeVcfRegistrySettings(sideStack);
+  initializeVcfDepotSettings(sideStack);
+  initializeLdapSettingsStatus(sideStack);
+}
+
 async function refreshNetworkSideStack() {
   const currentSideStack = document.querySelector("aside.side-stack");
   if (!(currentSideStack instanceof HTMLElement)) {
@@ -6520,6 +6556,7 @@ async function refreshNetworkSideStack() {
   const nextSideStack = nextDocument.querySelector("aside.side-stack");
   if (nextSideStack instanceof HTMLElement) {
     currentSideStack.replaceWith(nextSideStack);
+    initializeRefreshedSideStack(nextSideStack);
     highlightConfigPreviews(nextSideStack);
   }
 }
@@ -7081,9 +7118,11 @@ function updateOidcProviderValidation(payload = {}) {
   }
 }
 
-function initializeOidcProviderSettings() {
-  const form = document.querySelector('form[action="/authentication/oidc/provider"]');
+function initializeOidcProviderSettings(root = document) {
+  const form = root.querySelector('form[action="/authentication/oidc/provider"]');
   if (!(form instanceof HTMLFormElement)) return;
+  if (form.dataset.oidcProviderSettingsInitialized === "1") return;
+  form.dataset.oidcProviderSettingsInitialized = "1";
   form.addEventListener("atlaso:autosave-success", (event) => updateOidcProviderValidation(event.detail || {}));
 }
 
@@ -8946,11 +8985,13 @@ async function refreshApplianceApplySidebar() {
   updateApplianceApplySidebar(await response.json());
 }
 
-function initializeAutosaveForms() {
-  document.querySelectorAll("[data-autosave-form]").forEach((form) => {
+function initializeAutosaveForms(root = document) {
+  root.querySelectorAll("[data-autosave-form]").forEach((form) => {
     if (!(form instanceof HTMLFormElement)) {
       return;
     }
+    if (form.dataset.autosaveInitialized === "1") return;
+    form.dataset.autosaveInitialized = "1";
     form.addEventListener("atlaso:autosave-success", (event) => {
       updateDerivedListenAddressSummary(form, event.detail || {});
     });
@@ -9125,11 +9166,13 @@ function initializeAutosaveForms() {
   });
 }
 
-function initializeSwitchFields() {
-  document.querySelectorAll(".switch-field").forEach((field) => {
+function initializeSwitchFields(root = document) {
+  root.querySelectorAll(".switch-field").forEach((field) => {
     if (!(field instanceof HTMLLabelElement)) {
       return;
     }
+    if (field.dataset.switchFieldInitialized === "1") return;
+    field.dataset.switchFieldInitialized = "1";
     const input = field.querySelector(".switch-input");
     if (!(input instanceof HTMLInputElement) || input.type !== "checkbox") {
       return;
@@ -9452,19 +9495,23 @@ function initializeFirewallSourceGroupManager() {
   });
 }
 
-function initializeFirewallSettings() {
-  document.querySelectorAll('form[action="/firewall/settings"]').forEach((form) => {
+function initializeFirewallSettings(root = document) {
+  root.querySelectorAll('form[action="/firewall/settings"]').forEach((form) => {
     if (!(form instanceof HTMLFormElement)) {
       return;
     }
+    if (form.dataset.firewallSettingsInitialized === "1") return;
+    form.dataset.firewallSettingsInitialized = "1";
     form.addEventListener("atlaso:autosave-success", (event) => {
       updateFirewallDesiredState(event.detail || {});
     });
   });
-  document.querySelectorAll("[data-firewall-source-groups]").forEach((form) => {
+  root.querySelectorAll("[data-firewall-source-groups]").forEach((form) => {
     if (!(form instanceof HTMLFormElement)) {
       return;
     }
+    if (form.dataset.firewallGroupsInitialized === "1") return;
+    form.dataset.firewallGroupsInitialized = "1";
     form.addEventListener("atlaso:autosave-success", (event) => {
       updateFirewallDesiredState(event.detail || {});
     });
@@ -9685,11 +9732,13 @@ function updateDnsValidation(payload = {}) {
   }
 }
 
-function initializeDnsSettings() {
-  document.querySelectorAll('form[action="/dns/settings"]').forEach((form) => {
+function initializeDnsSettings(root = document) {
+  root.querySelectorAll('form[action="/dns/settings"]').forEach((form) => {
     if (!(form instanceof HTMLFormElement)) {
       return;
     }
+    if (form.dataset.dnsSettingsInitialized === "1") return;
+    form.dataset.dnsSettingsInitialized = "1";
     form.addEventListener("atlaso:autosave-success", (event) => {
       updateDnsValidation(event.detail || {});
     });
@@ -10158,11 +10207,13 @@ function updateVcfBackupValidation(payload = {}) {
   }
 }
 
-function initializeVcfBackupSettings() {
-  document.querySelectorAll("[data-vcf-backup-settings]").forEach((form) => {
+function initializeVcfBackupSettings(root = document) {
+  root.querySelectorAll("[data-vcf-backup-settings]").forEach((form) => {
     if (!(form instanceof HTMLFormElement)) {
       return;
     }
+    if (form.dataset.vcfBackupSettingsInitialized === "1") return;
+    form.dataset.vcfBackupSettingsInitialized = "1";
     const portInput = form.querySelector('input[name="port"]');
     const refresh = () => updateVcfBackupDerivedAddress(form);
     if (portInput instanceof HTMLInputElement) {
@@ -10451,11 +10502,13 @@ function updateVcfRegistryValidation(payload = {}) {
   }
 }
 
-function initializeVcfRegistrySettings() {
-  document.querySelectorAll("[data-vcf-registry-settings]").forEach((form) => {
+function initializeVcfRegistrySettings(root = document) {
+  root.querySelectorAll("[data-vcf-registry-settings]").forEach((form) => {
     if (!(form instanceof HTMLFormElement)) {
       return;
     }
+    if (form.dataset.vcfRegistrySettingsInitialized === "1") return;
+    form.dataset.vcfRegistrySettingsInitialized = "1";
     const portInput = form.querySelector('input[name="port"]');
     const hostnameInput = form.querySelector('input[name="hostname"]');
     const projectInput = form.querySelector('input[name="harbor_project"]');
@@ -12066,11 +12119,13 @@ function updateVcfDepotValidation(payload = {}) {
   }
 }
 
-function initializeVcfDepotSettings() {
-  document.querySelectorAll("[data-vcf-depot-settings]").forEach((form) => {
+function initializeVcfDepotSettings(root = document) {
+  root.querySelectorAll("[data-vcf-depot-settings]").forEach((form) => {
     if (!(form instanceof HTMLFormElement)) {
       return;
     }
+    if (form.dataset.vcfDepotSettingsInitialized === "1") return;
+    form.dataset.vcfDepotSettingsInitialized = "1";
     const portInput = form.querySelector('input[name="port"]');
     const hostnameInput = form.querySelector('input[name="hostname"]');
     const refresh = () => updateVcfDepotSummary(form);
@@ -12633,8 +12688,8 @@ function initializeEsxiIsoUploadForms() {
   });
 }
 
-function initializeTagEditors() {
-  document.querySelectorAll("[data-tag-editor]").forEach((editor) => {
+function initializeTagEditors(root = document) {
+  root.querySelectorAll("[data-tag-editor]").forEach((editor) => {
     if (editor instanceof HTMLElement && editor.dataset.tagEditorInitialized === "1") {
       return;
     }
@@ -12889,11 +12944,13 @@ function addTagEditorValue(editor, value) {
   list.append(token);
 }
 
-function initializeServiceBindEditors() {
-  document.querySelectorAll("[data-service-bind]").forEach((container) => {
+function initializeServiceBindEditors(root = document) {
+  root.querySelectorAll("[data-service-bind]").forEach((container) => {
     if (!(container instanceof HTMLElement)) {
       return;
     }
+    if (container.dataset.serviceBindInitialized === "1") return;
+    container.dataset.serviceBindInitialized = "1";
     const interfaceEditor = container.querySelector(".tag-editor[data-service-bind-interface]");
     const addressEditor = container.querySelector(".tag-editor[data-service-bind-address]");
     if (!(interfaceEditor instanceof HTMLElement) || !(addressEditor instanceof HTMLElement)) {

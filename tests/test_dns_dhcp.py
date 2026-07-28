@@ -111,6 +111,26 @@ def test_dnsmasq_renderer_binds_dhcp_to_sitea_interface_only():
     assert "dhcp-host=02:15:5d:00:20:99,ignore" in config
 
 
+def test_dnsmasq_renderer_excludes_records_owned_by_disabled_domains():
+    config = render_dnsmasq_config(
+        dns_settings=DnsSettings(
+            enabled=True,
+            domain="atlaso.internal",
+            disabled_domains="disabled.internal",
+        ),
+        dns_records=[
+            DnsRecord(hostname="active.atlaso.internal", record_type="A", address="192.168.50.10"),
+            DnsRecord(hostname="disabled.internal", record_type="A", address="192.168.50.20"),
+            DnsRecord(hostname="child.disabled.internal", record_type="A", address="192.168.50.21"),
+        ],
+        dhcp_settings=DhcpSettings(enabled=False),
+        dhcp_reservations=[],
+    )
+
+    assert "host-record=active.atlaso.internal,192.168.50.10" in config
+    assert "disabled.internal" not in config
+
+
 def test_dnsmasq_renderer_emits_shared_authoritative_zones_and_generated_glue():
     settings = DnsSettings(
         enabled=True,
