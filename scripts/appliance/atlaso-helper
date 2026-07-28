@@ -126,6 +126,7 @@ ATLASO_SERVICE_USER = "atlaso"
 ATLASO_STATE_DIR = Path("/var/lib/atlaso")
 AUTOMATION_SCRIPT_DIR = ATLASO_STATE_DIR / "automation" / "scripts"
 AUTOMATION_RUN_DIR = ATLASO_STATE_DIR / "automation" / "runs"
+AUTOMATION_VAULT_DIR = Path("/run/atlaso-automation-vaults")
 AUTOMATION_USER = "atlaso-automation"
 UPDATE_SOURCE_STATE_PATH = Path("/etc/atlaso/update-sources.json")
 MANAGED_PHOTON_REPO_PATH = Path("/etc/yum.repos.d/atlaso-managed.repo")
@@ -9077,10 +9078,19 @@ def _handle_automation(action: str, args: list[str]) -> int:
         print("automation run requires script path, interpreter, timeout seconds, and optional arguments after --", file=sys.stderr)
         return 2
     script_value, interpreter, timeout_value, *remaining = args
+    vault_value = ""
+    if remaining[:1] == ["--vault"]:
+        if len(remaining) < 2:
+            print("automation --vault requires a staged credential path", file=sys.stderr)
+            return 2
+        vault_value = remaining[1]
+        remaining = remaining[2:]
     if remaining and remaining[0] != "--":
         print("automation script arguments must follow --", file=sys.stderr)
         return 2
     script_arguments = remaining[1:] if remaining else []
+    vault_path: Path | None = None
+    vault_values: list[str] = []
     try:
         script_path = Path(script_value).resolve(strict=True)
         script_root = AUTOMATION_SCRIPT_DIR.resolve(strict=True)
@@ -9099,6 +9109,20 @@ def _handle_automation(action: str, args: list[str]) -> int:
         if systemd_run is None:
             raise ValueError("systemd-run is required for managed automation scripts")
         account = pwd.getpwnam(AUTOMATION_USER)
+        if vault_value:
+            vault_path = Path(vault_value).resolve(strict=True)
+            vault_root = AUTOMATION_VAULT_DIR.resolve(strict=True)
+            if not vault_path.is_relative_to(vault_root) or not vault_path.is_file():
+                raise ValueError(f"automation vault credential must be a regular file under {AUTOMATION_VAULT_DIR}")
+            if os.name != "nt" and vault_path.stat().st_mode & 0o077:
+                raise ValueError("automation vault credential must not be group or world accessible")
+            vault_payload = json.loads(vault_path.read_text(encoding="utf-8"))
+            values = vault_payload.get("values")
+            if vault_payload.get("version") != 1 or not isinstance(values, dict):
+                raise ValueError("automation vault credential is invalid")
+            if any(not isinstance(key, str) or not isinstance(value, str) for key, value in values.items()):
+                raise ValueError("automation vault credential values are invalid")
+            vault_values = [value for value in values.values() if value]
     except (KeyError, OSError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -9114,6 +9138,27 @@ def _handle_automation(action: str, args: list[str]) -> int:
         directory.mkdir(parents=True, exist_ok=True)
         os.chmod(directory, 0o700)
         _chown_path(directory, int(account.pw_uid), int(account.pw_gid))
+    execution_script = script_path
+    if interpreter == "powershell":
+        wrapper_path = run_home / "atlaso-managed-script.ps1"
+        script_literal = str(script_path).replace("'", "''")
+        vault_command_literal = str(ATLASO_VENV_LINK / "bin" / "atlaso-vault").replace("'", "''")
+        wrapper_path.write_text(
+            "function global:Get-AtlasoVault {\n"
+            "  [CmdletBinding()]\n"
+            "  param([Parameter(Mandatory=$true)][string]$Key)\n"
+            f"  $value = & '{vault_command_literal}' get --key $Key\n"
+            "  if ($LASTEXITCODE -ne 0) { throw \"Atlaso vault lookup failed for key: $Key\" }\n"
+            "  return ($value -join [Environment]::NewLine)\n"
+            "}\n"
+            f"& '{script_literal}' @args\n"
+            "exit $LASTEXITCODE\n",
+            encoding="utf-8",
+        )
+        os.chmod(wrapper_path, 0o400)
+        _chown_path(wrapper_path, int(account.pw_uid), int(account.pw_gid))
+        execution_script = wrapper_path
+    credential_property = [f"--property=LoadCredential=atlaso-vault:{vault_path}"] if vault_path else []
     try:
         result = _run(
             [
@@ -9129,6 +9174,8 @@ def _handle_automation(action: str, args: list[str]) -> int:
                 f"--setenv=XDG_CACHE_HOME={run_home / '.cache'}",
                 f"--setenv=XDG_CONFIG_HOME={run_home / '.config'}",
                 f"--setenv=XDG_DATA_HOME={run_home / '.local' / 'share'}",
+                f"--setenv=PATH={ATLASO_VENV_LINK / 'bin'}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin",
+                *credential_property,
                 "--property=NoNewPrivileges=yes",
                 "--property=PrivateTmp=yes",
                 "--property=ProtectSystem=strict",
@@ -9137,14 +9184,21 @@ def _handle_automation(action: str, args: list[str]) -> int:
                 f"--property=WorkingDirectory={run_home}",
                 f"--property=TimeoutStartSec={timeout_seconds}",
                 executable,
-                str(script_path),
+                str(execution_script),
                 *script_arguments,
             ]
         )
     finally:
+        if execution_script != script_path:
+            os.chmod(execution_script, 0o600)
         shutil.rmtree(run_home, ignore_errors=True)
-    print(result.stdout[-8000:], end="")
-    print(result.stderr[-8000:], end="", file=sys.stderr)
+    stdout = result.stdout
+    stderr = result.stderr
+    for value in sorted(set(vault_values), key=len, reverse=True):
+        stdout = stdout.replace(value, "[redacted]")
+        stderr = stderr.replace(value, "[redacted]")
+    print(stdout[-8000:], end="")
+    print(stderr[-8000:], end="", file=sys.stderr)
     return result.returncode
 
 

@@ -5,6 +5,7 @@ import logging
 import signal
 import time
 from pathlib import Path
+from secrets import compare_digest
 from typing import Any
 
 from sqlalchemy import select
@@ -13,7 +14,7 @@ from sqlalchemy.orm import Session
 from atlaso.app.adapters.system import SystemAdapter
 from atlaso.app.config import get_settings
 from atlaso.app.database import SessionLocal, init_db
-from atlaso.app.models import AuditEvent, AutomationScriptRevision, Job, JobStatus, JobStep, utcnow
+from atlaso.app.models import AuditEvent, AutomationScriptRevision, Job, JobStatus, JobStep, Vault, utcnow
 from atlaso.app.services.appliance_update import (
     APPLIANCE_UPDATE_EXECUTION_ORDER,
     APPLIANCE_UPDATE_FINALIZER_PATH,
@@ -21,11 +22,13 @@ from atlaso.app.services.appliance_update import (
     ensure_appliance_update_job_steps,
 )
 from atlaso.app.services.automation import enqueue_due_schedules, json_object
+from atlaso.app.services.vaults import decrypted_vault_values, redact_secret_values, vault_scope_identity
 
 
 LOGGER = logging.getLogger("atlaso.worker")
 POLL_SECONDS = 5
 AUTOMATION_STAGE_DIR = Path("/var/lib/atlaso/automation/scripts")
+AUTOMATION_VAULT_STAGE_DIR = Path("/run/atlaso-automation-vaults")
 WORKER_JOB_TYPES = {"appliance-update", "vcf-depot-download", "managed-script"}
 _stop_requested = False
 
@@ -363,6 +366,12 @@ def _automation_stage_path(job_id: str, interpreter: str) -> Path:
     return AUTOMATION_STAGE_DIR / f"{job_id}{suffix}"
 
 
+def _automation_vault_stage_path(job_id: str) -> Path:
+    if get_settings().environment != "appliance":
+        return Path("data") / "automation" / "vaults" / f"{job_id}.json"
+    return AUTOMATION_VAULT_STAGE_DIR / f"{job_id}.json"
+
+
 def _run_managed_script(db: Session, job: Job) -> None:
     config = _job_config(job)
     revision_id = int(config.get("revision_id") or 0)
@@ -376,10 +385,38 @@ def _run_managed_script(db: Session, job: Job) -> None:
     stage_path.parent.mkdir(parents=True, exist_ok=True)
     stage_path.write_text(revision.content, encoding="utf-8")
     stage_path.chmod(0o640)
+    vault_path: Path | None = None
+    vault_values: dict[str, str] = {}
     try:
-        result = SystemAdapter().run_automation_script(str(stage_path), revision.interpreter, revision.timeout_seconds, arguments)
+        vault_id = int(config.get("vault_id") or 0)
+        if vault_id:
+            vault = db.get(Vault, vault_id)
+            if vault is None:
+                raise ValueError("The managed script vault is missing.")
+            expected_scope = str(config.get("vault_scope") or "")
+            if not expected_scope or not compare_digest(expected_scope, vault_scope_identity(vault)):
+                raise ValueError("The managed script vault no longer matches the vault selected when the job was queued.")
+            vault_values = decrypted_vault_values(db, vault_id)
+            vault_path = _automation_vault_stage_path(job.id)
+            vault_path.parent.mkdir(parents=True, exist_ok=True)
+            vault_path.write_text(
+                json.dumps({"version": 1, "values": vault_values}, sort_keys=True),
+                encoding="utf-8",
+            )
+            vault_path.chmod(0o600)
+        result = SystemAdapter().run_automation_script(
+            str(stage_path),
+            revision.interpreter,
+            revision.timeout_seconds,
+            arguments,
+            str(vault_path) if vault_path else "",
+        )
     finally:
         stage_path.unlink(missing_ok=True)
+        if vault_path:
+            vault_path.unlink(missing_ok=True)
+    stdout = redact_secret_values(result.stdout, vault_values)
+    stderr = redact_secret_values(result.stderr, vault_values)
     payload = {
         "status": JobStatus.SUCCEEDED.value if result.returncode == 0 else JobStatus.FAILED.value,
         "success": result.returncode == 0,
@@ -391,13 +428,13 @@ def _run_managed_script(db: Session, job: Job) -> None:
         "dry_run": result.dry_run,
         "command": result.command,
         "returncode": result.returncode,
-        "stdout": result.stdout[-8000:],
-        "stderr": result.stderr[-8000:],
+        "stdout": stdout[-8000:],
+        "stderr": stderr[-8000:],
     }
     job.status = payload["status"]
     job.finished_at = utcnow()
     job.progress_percent = 100
-    job.error = None if payload["success"] else (result.stderr[-2000:] or "Managed script failed.")
+    job.error = None if payload["success"] else (stderr[-2000:] or "Managed script failed.")
     job.result = json.dumps(payload, indent=2, sort_keys=True)
     db.add(job)
     db.add(

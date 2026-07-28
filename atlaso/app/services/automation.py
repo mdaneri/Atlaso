@@ -18,9 +18,11 @@ from atlaso.app.models import (
     Job,
     JobStatus,
     Schedule,
+    Vault,
     utcnow,
 )
 from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
+from atlaso.app.services.vaults import vault_scope_identity
 
 
 SCHEDULE_TASK_TYPES = {
@@ -51,6 +53,15 @@ def json_object(raw_value: str, *, label: str = "configuration") -> dict[str, An
     if not isinstance(payload, dict):
         raise ValueError(f"{label} must be a JSON object.")
     return payload
+
+
+def bind_managed_script_vault_scope(db: Session, config: dict[str, Any]) -> None:
+    vault_id = int(config.get("vault_id") or 0)
+    if not vault_id:
+        config.pop("vault_scope", None)
+        return
+    vault = db.get(Vault, vault_id)
+    config["vault_scope"] = vault_scope_identity(vault) if vault is not None else ""
 
 
 def _parse_powershell_arguments(raw_value: str) -> list[str]:
@@ -301,6 +312,8 @@ def enqueue_schedule_now(db: Session, *, schedule: Schedule, actor: str, now: da
     if active is not None:
         raise ValueError(f"Schedule already has active task {active.id}.")
     config = json_object(schedule.task_config_json, label="Task configuration")
+    if schedule.task_type == "managed_script":
+        bind_managed_script_vault_scope(db, config)
     if schedule.task_type == "appliance_update_check":
         config["mode"] = "check"
     elif schedule.task_type == "appliance_update_install":
@@ -380,6 +393,8 @@ def enqueue_due_schedules(db: Session, *, now: datetime | None = None) -> list[J
             )
             continue
         config = json_object(schedule.task_config_json, label="Task configuration")
+        if schedule.task_type == "managed_script":
+            bind_managed_script_vault_scope(db, config)
         if schedule.task_type == "appliance_update_check":
             config["mode"] = "check"
         elif schedule.task_type == "appliance_update_install":

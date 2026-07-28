@@ -153,7 +153,7 @@ def test_web_terminal_requires_login_and_renders_admin_only_unavailable_state(cl
     assert "Web terminal access is disabled in Appliance Settings." in response.text
     assert '"detail":' not in response.text
     assert "/static/vendor/xterm/xterm.js?v=5.5.0" in response.text
-    assert "/static/terminal.js?v=web-terminal-review-20260716-3" in response.text
+    assert "/static/terminal.js?v=atlaso-vault-uri-20260727-2" in response.text
     assert "data-terminal-connect" not in response.text
     assert "data-terminal-disconnect" not in response.text
 
@@ -828,13 +828,16 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     templates = Path("atlaso/app/templates")
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
-    for shell in (base, public_base):
+    for shell, app_asset in (
+        (base, "/static/app.js?v=atlaso-vaults-20260727-17"),
+        (public_base, "/static/app.js?v=atlaso-oidc-admin-20260727-6"),
+    ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4"
         )
         assert shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4"
-        ) < shell.index("/static/app.js?v=atlaso-oidc-admin-20260727-6")
+        ) < shell.index(app_asset)
 
     wizard_templates = [
         templates / "automation.html",
@@ -879,10 +882,10 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     app_js = client.get("/static/app.js").text
     create_grid = "window.AtlasoUiPatterns.createGrid({"
 
-    assert app_js.count(create_grid) == 38
+    assert app_js.count(create_grid) == 39
     assert app_js.count('pattern: "direct-edit"') == 25
     assert app_js.count('pattern: "read-only"') == 8
-    assert app_js.count('pattern: "wizard-backed"') == 5
+    assert app_js.count('pattern: "wizard-backed"') == 6
     assert "new Tabulator(" not in app_js
     assert "new window.Tabulator(" not in app_js
     assert "atlaso-legacy-tabulator: #117" not in app_js
@@ -1010,9 +1013,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=atlaso-ui-foundation-20260727-3" in page.text
+    assert "/static/app.css?v=atlaso-vaults-20260727-7" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in page.text
-    assert "/static/app.js?v=atlaso-oidc-admin-20260727-6" in page.text
+    assert "/static/app.js?v=atlaso-vaults-20260727-17" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -12473,7 +12476,8 @@ def test_vcf_helper_page_renders_domain_dropdown(client):
     visible_workspace = response.text.split('<section class="split-workspace vcf-helper-workspace"', 1)[1].split("</section>", 1)[0]
     assert "VCF Certificate Trust" in visible_workspace
     assert "Review DNS" not in visible_workspace
-    assert visible_workspace.count('class="info-band vcf-helper-action-band"') == 6
+    assert visible_workspace.count('class="info-band vcf-helper-action-band"') == 7
+    assert "Import passwords into a vault" in visible_workspace
     assert 'id="vcf-helper-platform-title">SDDC Manager / VCF Installer</h3>' in visible_workspace
     assert 'id="vcf-helper-ldap-title">LDAP</h3>' in visible_workspace
     assert visible_workspace.count('class="vcf-helper-action-bands"') == 2
@@ -12518,6 +12522,7 @@ def test_vcf_helper_page_renders_domain_dropdown(client):
     assert "vcf-sddc-wizard-rail" in response.text
     assert "data-vcf-target-depot-step-nav" in response.text
     assert 'data-vcf-target-depot-step="target"' in response.text
+    assert 'data-vcf-target-depot-step="tls"' in response.text
     assert 'data-vcf-target-depot-step="api"' in response.text
     assert 'data-vcf-target-depot-step="depot"' in response.text
     assert 'data-vcf-target-depot-step="review"' in response.text
@@ -12564,6 +12569,7 @@ def test_vcf_helper_page_renders_domain_dropdown(client):
     assert "window.location.assign(`/tasks?job_id=${encodeURIComponent(data.job_id || \"\")}`)" in app_js
     assert "const hasTargetDetails = Boolean(data.target?.appliance)" in app_js
     assert "tlsConfirm.checked = isConfirmedTls" in app_js
+    assert 'return state === "tls" ? "tls" : state === "ready"' in app_js
 
 
 def test_vcf_sddc_dhcp_assignment_uses_static_address_outside_scope(client):
@@ -12629,7 +12635,7 @@ def test_vcf_helper_renders_certificate_trust_modal(client):
     assert response.status_code == 200
     assert "VCF Certificate Trust" in response.text
     assert 'action="/vcf-trust/root-ca"' in response.text
-    assert 'name="snapshot_acknowledged"' in response.text
+    assert 'name="snapshot_acknowledged"' not in response.text
     assert 'name="confirmed_tls_fingerprint"' in response.text
     assert "SHA-256 fingerprint" in response.text
     assert "data-vcf-trust-form" in response.text
@@ -12669,6 +12675,28 @@ def test_vcf_trust_inspects_target_tls_without_persisting_target(client, monkeyp
     csrf = client.get("/vcf-helper").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     monkeypatch.setattr(ui, "tls_sha256_fingerprint", lambda _address, _port: "AA:BB")
     monkeypatch.setattr(ui, "inspect_vcf_trust_target", lambda *_args, **_kwargs: {"role": "VcfInstaller", "version": "9.1.0.0"})
+    resolved_credentials = []
+    original_resolver = ui._resolve_vcf_helper_credentials
+
+    def track_resolver(*args, **kwargs):
+        resolved_credentials.append(True)
+        return original_resolver(*args, **kwargs)
+
+    monkeypatch.setattr(ui, "_resolve_vcf_helper_credentials", track_resolver)
+
+    awaiting = client.post(
+        "/vcf-helper/trust-root-ca/inspect-target",
+        json={
+            "csrf": csrf,
+            "address": "https://vcf-installer.example.test:8443",
+            "api_username": "administrator@vsphere.local",
+            "api_password": "api-secret",
+        },
+    )
+
+    assert awaiting.status_code == 409
+    assert awaiting.json()["fingerprint"] == "AA:BB"
+    assert resolved_credentials == []
 
     response = client.post(
         "/vcf-helper/trust-root-ca/inspect-target",
@@ -12682,6 +12710,7 @@ def test_vcf_trust_inspects_target_tls_without_persisting_target(client, monkeyp
     )
 
     assert response.status_code == 200
+    assert resolved_credentials == [True]
     assert response.json() == {
         "status": "ready",
         "address": "vcf-installer.example.test",
@@ -12711,12 +12740,19 @@ def test_vcf_trust_requires_tls_confirmation_then_queues_without_persisting_cred
     monkeypatch.setattr(ui, "tls_sha256_fingerprint", lambda _address, _port: "AA:BB")
     queued = []
     monkeypatch.setattr(ui, "queue_vcf_trust_job", lambda job_id, target_id, credentials, ca: queued.append((job_id, target_id, credentials, ca)))
+    resolved_credentials = []
+    original_resolver = ui._resolve_vcf_helper_credentials
+
+    def track_resolver(*args, **kwargs):
+        resolved_credentials.append(True)
+        return original_resolver(*args, **kwargs)
+
+    monkeypatch.setattr(ui, "_resolve_vcf_helper_credentials", track_resolver)
     csrf = client.get("/vcf-helper").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     credentials = {
         "address": "vcf-installer.example.test",
         "api_username": "administrator@vsphere.local",
         "api_password": "api-super-secret",
-        "snapshot_acknowledged": "on",
         "csrf": csrf,
     }
 
@@ -12729,6 +12765,7 @@ def test_vcf_trust_requires_tls_confirmation_then_queues_without_persisting_cred
     assert awaiting.status_code == 409
     assert awaiting.json()["status"] == "tls-confirmation-required"
     assert awaiting.json()["fingerprint"] == "AA:BB"
+    assert resolved_credentials == []
     with SessionLocal() as db:
         assert db.execute(select(Job).where(Job.type == "vcf-ca-trust")).scalars().all() == []
         assert db.execute(select(VcfTrustTarget)).scalars().all() == []
@@ -12743,6 +12780,7 @@ def test_vcf_trust_requires_tls_confirmation_then_queues_without_persisting_cred
     )
 
     assert confirmed.status_code == 202
+    assert resolved_credentials == [True]
     assert confirmed.json()["status"] == "queued"
     assert confirmed.json()["redirect"] == f"/tasks?job_id={confirmed.json()['job_id']}"
     assert len(queued) == 1
@@ -12796,7 +12834,6 @@ def test_vcf_trust_rejects_mismatched_confirmed_tls_fingerprint(client, monkeypa
             "address": "vcf-installer.example.test",
             "api_username": "administrator@vsphere.local",
             "api_password": "api-secret",
-            "snapshot_acknowledged": "on",
             "confirmed_tls_fingerprint": "CC:DD",
             "csrf": csrf,
         },
@@ -13604,16 +13641,92 @@ def test_vcf_sddc_inventory_requires_tls_confirmation_and_redacts_credentials(cl
     monkeypatch.setattr(ui, "tls_sha256_fingerprint", lambda *_args, **_kwargs: "AA:BB")
     monkeypatch.setattr(ui, "inspect_ova", lambda *_args, **_kwargs: descriptor)
     monkeypatch.setattr(ui, "vsphere_inventory", lambda *_args, **_kwargs: {"resource_pools": [], "datastores": [], "folders": [], "hosts": [], "networks": []})
+    resolved_credentials = []
+    original_resolver = ui._resolve_vcf_helper_credentials
+
+    def track_resolver(*args, **kwargs):
+        resolved_credentials.append(kwargs["purpose"])
+        return original_resolver(*args, **kwargs)
+
+    monkeypatch.setattr(ui, "_resolve_vcf_helper_credentials", track_resolver)
     payload = {"csrf": csrf, "address": "vc.example", "port": 443, "username": "admin", "password": "top-secret", "ova_path": descriptor.path}
 
     confirmation = client.post("/vcf-helper/sddc-manager/inventory", json=payload)
     assert confirmation.status_code == 409
     assert confirmation.json()["fingerprint"] == "AA:BB"
+    assert resolved_credentials == []
+
+    deploy_confirmation = client.post("/vcf-helper/sddc-manager/deploy", json=payload)
+    assert deploy_confirmation.status_code == 409
+    assert deploy_confirmation.json()["fingerprint"] == "AA:BB"
+    assert resolved_credentials == []
 
     ready = client.post("/vcf-helper/sddc-manager/inventory", json={**payload, "confirmed_tls_fingerprint": "AA:BB"})
     assert ready.status_code == 200
+    assert resolved_credentials == ["sddc_inventory"]
     assert "top-secret" not in ready.text
     assert ready.json()["ova"]["properties"][0]["password"] is True
+
+
+def test_vcf_target_depot_resolves_credentials_only_after_tls_confirmation(client, monkeypatch):
+    from atlaso.app import ui
+
+    login(client)
+    csrf = client.get("/vcf-helper").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    local = {
+        "available": True,
+        "reasons": [],
+        "hostname": "depot.atlaso.internal",
+        "port": 443,
+        "url": "https://depot.atlaso.internal",
+        "username": "atlaso",
+    }
+    monkeypatch.setattr(ui, "local_vcf_depot_target_context", lambda _db: local)
+    monkeypatch.setattr(ui, "tls_sha256_fingerprint", lambda *_args, **_kwargs: "AA:BB")
+    monkeypatch.setattr(
+        ui,
+        "inspect_target_depot",
+        lambda *_args, **_kwargs: {
+            "appliance": {"role": "VcfInstaller", "version": "9.1.0.0"},
+            "depot": {},
+        },
+    )
+    resolved_credentials = []
+    original_resolver = ui._resolve_vcf_helper_credentials
+
+    def track_resolver(*args, **kwargs):
+        resolved_credentials.append(kwargs["purpose"])
+        return original_resolver(*args, **kwargs)
+
+    monkeypatch.setattr(ui, "_resolve_vcf_helper_credentials", track_resolver)
+    payload = {
+        "csrf": csrf,
+        "address": "vcf-installer.example.test",
+        "api_username": "admin@local",
+        "api_password": "api-secret",
+        "depot_password": "depot-secret",
+    }
+
+    inspect_confirmation = client.post("/vcf-helper/offline-depot/inspect-target", json=payload)
+    assert inspect_confirmation.status_code == 409
+    assert inspect_confirmation.json()["fingerprint"] == "AA:BB"
+    assert resolved_credentials == []
+
+    configure_confirmation = client.post("/vcf-helper/offline-depot/configure", json=payload)
+    assert configure_confirmation.status_code == 409
+    assert configure_confirmation.json()["fingerprint"] == "AA:BB"
+    assert resolved_credentials == []
+
+    ready = client.post(
+        "/vcf-helper/offline-depot/inspect-target",
+        json={**payload, "confirmed_tls_fingerprint": "AA:BB"},
+    )
+    assert ready.status_code == 200
+    assert resolved_credentials == ["offline_depot_inspect"]
+    assert ready.json()["status"] == "ready"
+    assert ready.json()["tls_fingerprint"] == "AA:BB"
+    assert "api-secret" not in ready.text
+    assert "depot-secret" not in ready.text
 
 
 def test_vcf_sddc_deploy_job_persists_no_passwords(client, monkeypatch):

@@ -52,6 +52,11 @@
               <input type="hidden" name="csrf" value="{{ csrf_token }}">
               <h3>VCF connection</h3>
               <p class="muted">Use these connection details to inspect the current settings or configure and verify this organization.</p>
+              {% set credential_address_field = "target_url" %}
+              {% set credential_username_field = "username" %}
+              {% set credential_password_field = "password" %}
+              {% set credential_address_mode = "url" %}
+              {% include "partials/vcf_vault_credential_picker.html" %}
               <div class="form-grid two">
               <label><span class="field-label"><span>VCF Automation URL</span><button class="help-icon" type="button" data-help="HTTPS address of the VCF Automation endpoint. Atlaso reads the presented TLS fingerprint before sending credentials.">i</button></span><input name="target_url" value="{{ vcf_ldap_selected_organization.vcf_target_url }}" required></label>
               <label><span class="field-label"><span>VCF organization ID</span><button class="help-icon" type="button" data-help="All Apps or VM Apps organization identity used as the VCF tenant context header.">i</button></span><input name="vcf_organization_id" value="{{ vcf_ldap_selected_organization.vcf_org_id }}" required></label>

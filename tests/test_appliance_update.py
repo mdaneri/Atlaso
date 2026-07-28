@@ -937,6 +937,47 @@ def test_helper_runs_managed_script_in_unprivileged_systemd_sandbox(monkeypatch,
     assert command[-4:] == ["/usr/bin/bash", str(script_path.resolve()), "--scope", "lab environment"]
 
 
+def test_helper_loads_scoped_vault_credential_and_redacts_output(monkeypatch, tmp_path, capsys):
+    from types import SimpleNamespace
+
+    helper = load_helper_module()
+    script_root = tmp_path / "scripts"
+    run_root = tmp_path / "runs"
+    vault_root = tmp_path / "vaults"
+    script_root.mkdir()
+    vault_root.mkdir()
+    script_path = script_root / "job_2.sh"
+    script_path.write_text("atlaso-vault get --key esx.root\n", encoding="utf-8")
+    vault_path = vault_root / "job_2.json"
+    vault_path.write_text(
+        json.dumps({"version": 1, "values": {"esx.root": "VMware1!"}}),
+        encoding="utf-8",
+    )
+    vault_path.chmod(0o600)
+    monkeypatch.setattr(helper, "AUTOMATION_SCRIPT_DIR", script_root)
+    monkeypatch.setattr(helper, "AUTOMATION_RUN_DIR", run_root)
+    monkeypatch.setattr(helper, "AUTOMATION_VAULT_DIR", vault_root)
+    monkeypatch.setattr(helper.pwd, "getpwnam", lambda _name: SimpleNamespace(pw_uid=1234, pw_gid=1234))
+    monkeypatch.setattr(helper, "_chown_path", lambda *_args: None)
+    monkeypatch.setattr(helper, "_command_path", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(helper.shutil, "which", lambda name: f"/usr/bin/{name}" if name == "systemd-run" else None)
+    commands = []
+
+    def fake_run(command):
+        commands.append(command)
+        return SimpleNamespace(returncode=0, stdout="password=VMware1!\n", stderr="")
+
+    monkeypatch.setattr(helper, "_run", fake_run)
+    assert helper._handle_automation(
+        "run",
+        [str(script_path), "bash", "60", "--vault", str(vault_path), "--"],
+    ) == 0
+    assert f"--property=LoadCredential=atlaso-vault:{vault_path.resolve()}" in commands[0]
+    output = capsys.readouterr()
+    assert "password=[redacted]" in output.out
+    assert "VMware1!" not in output.out
+
+
 def test_helper_rejects_appliance_update_config_outside_apply_dir(tmp_path):
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-update.json"

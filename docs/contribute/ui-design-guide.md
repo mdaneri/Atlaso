@@ -121,6 +121,10 @@ Tasks and Audit Events are the references for operational collections.
 - Provide explicit detail actions or row navigation with keyboard equivalents.
 - Keep sensitive output, secrets, and raw error payloads out of collection cells unless an existing permission-checked
   detail flow intentionally exposes them.
+- Mask password values by default. A permission-checked reveal uses the small borderless eye control: show the plain eye
+  while masked, draw a slash through it while the value is visible, and change its accessible label and title between
+  **Reveal password** and **Hide password**. Automatically return to the masked state after 15 seconds. Reveals must
+  disable browser caching and produce an audit event without the value.
 
 ## Grid-launched wizard contract
 
@@ -149,6 +153,29 @@ Every wizard must:
 Do not perform host mutation as a side effect of moving between steps. Wizard submission saves desired state unless the
 established workflow is an explicit task action. Appliance configuration enforcement remains owned by the global
 `/appliance-apply` workflow.
+
+### VCF Helper remote-credential wizard contract
+
+Every VCF Helper wizard that connects to a remote VCF component uses the same first four steps:
+
+1. **Credential** — choose a saved vault and key, or continue with manual credentials.
+2. **Server** — show the remote server address. A saved vault key fills this value from the HTTP or HTTPS URI selected
+   in the credential picker and makes the control read-only; manual mode keeps it editable. Server-address controls
+   show only `host`, IP, or `host:port`, never the URI scheme. A control explicitly labeled as a URL retains the full
+   HTTP or HTTPS URL.
+3. **TLS fingerprint** — probe without resolving or sending credentials, display the observed SHA-256 fingerprint, and
+   require explicit out-of-band confirmation before authentication.
+4. **Login** — collect request-local username and password only in manual mode. Disable the controls and skip this step
+   when a saved vault credential is selected.
+
+Place workflow-specific steps, such as inventory selection, password selection, review, or task queueing, after this
+shared sequence. Never load a vault password into page state or a password input. If the server or fingerprint changes,
+clear the confirmation and repeat the TLS step before any credential is resolved or sent.
+
+The credential picker lists only keys with HTTP or HTTPS URIs. Render one option per valid URI so an operator can choose
+the exact endpoint when a key has several. Do not render unusable SSH-only or URI-less keys as disabled options. If the
+selected vault has no valid remote API credentials, show **No HTTP/HTTPS credentials available** and keep manual mode
+active.
 
 ## Page layout and settings
 

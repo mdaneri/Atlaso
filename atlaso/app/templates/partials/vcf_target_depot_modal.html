@@ -7,32 +7,56 @@
       <p class="kicker">VCF Helper</p>
       <h2 id="vcf-target-depot-title">Configure VCF Offline Depot</h2>
       <ol class="vcf-sddc-step-list">
-        <li><button class="vcf-sddc-step-button active" type="button" data-vcf-target-depot-step-nav data-atlaso-wizard-nav="target"><span>1</span><strong>Target</strong><small>Endpoint and depot</small></button></li>
-        <li><button class="vcf-sddc-step-button" type="button" data-vcf-target-depot-step-nav data-atlaso-wizard-nav="api" disabled><span>2</span><strong>API</strong><small>Administrator login</small></button></li>
-        <li><button class="vcf-sddc-step-button" type="button" data-vcf-target-depot-step-nav data-atlaso-wizard-nav="depot" disabled><span>3</span><strong>Depot</strong><small>HTTP password</small></button></li>
-        <li><button class="vcf-sddc-step-button" type="button" data-vcf-target-depot-step-nav data-atlaso-wizard-nav="review" disabled><span>4</span><strong>Review</strong><small>Current settings</small></button></li>
-        <li><button class="vcf-sddc-step-button" type="button" data-vcf-target-depot-step-nav data-atlaso-wizard-nav="queue" disabled><span>5</span><strong>Queue</strong><small>Start task</small></button></li>
+        <li><button class="vcf-sddc-step-button active" type="button" data-vcf-target-depot-step-nav data-atlaso-wizard-nav="credential"><span>1</span><strong>Credential</strong><small>Vault or manual</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-vcf-target-depot-step-nav data-atlaso-wizard-nav="target" disabled><span>2</span><strong>Target</strong><small>Server and depot</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-vcf-target-depot-step-nav data-atlaso-wizard-nav="tls" disabled><span>3</span><strong>TLS</strong><small>Verify fingerprint</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-vcf-target-depot-step-nav data-atlaso-wizard-nav="api" disabled><span>4</span><strong>Login</strong><small>Manual only</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-vcf-target-depot-step-nav data-atlaso-wizard-nav="depot" disabled><span>5</span><strong>Depot</strong><small>HTTP password</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-vcf-target-depot-step-nav data-atlaso-wizard-nav="review" disabled><span>6</span><strong>Review</strong><small>Current settings</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-vcf-target-depot-step-nav data-atlaso-wizard-nav="queue" disabled><span>7</span><strong>Queue</strong><small>Start task</small></button></li>
       </ol>
     </aside>
 
     <div class="vcf-sddc-wizard-main">
       <div class="confirm-modal-body vcf-sddc-wizard-body">
         <div class="vcf-sddc-wizard-heading">
-          <p class="kicker" data-vcf-target-depot-step-kicker data-atlaso-wizard-kicker>Step 1 of 5</p>
-          <h3 data-vcf-target-depot-step-title data-atlaso-wizard-title>Target and local depot</h3>
-          <p class="muted" data-vcf-target-depot-step-description data-atlaso-wizard-description>Choose the remote VCF appliance and review the local Atlaso depot endpoint.</p>
+          <p class="kicker" data-vcf-target-depot-step-kicker data-atlaso-wizard-kicker>Step 1 of 7</p>
+          <h3 data-vcf-target-depot-step-title data-atlaso-wizard-title>Choose a credential source</h3>
+          <p class="muted" data-vcf-target-depot-step-description data-atlaso-wizard-description>Use a saved vault key or continue with a one-time manual login.</p>
         </div>
         <div class="alert error hidden" data-vcf-target-depot-errors data-atlaso-wizard-error></div>
 
-        <section class="vcf-sddc-step-page" data-vcf-target-depot-step="target" data-atlaso-wizard-step="target">
+        <section class="vcf-sddc-step-page" data-vcf-target-depot-step="credential" data-atlaso-wizard-step="credential">
+          {% set credential_address_field = "address" %}
+          {% set credential_username_field = "api_username" %}
+          {% set credential_password_field = "api_password" %}
+          {% include "partials/vcf_vault_credential_picker.html" %}
+        </section>
+
+        <section class="vcf-sddc-step-page hidden" data-vcf-target-depot-step="target" data-atlaso-wizard-step="target">
           <div class="settings-list compact-settings-list">
             <div><span>Local endpoint</span><strong>{{ vcf_target_depot.url }}</strong></div>
             <div><span>HTTP user</span><strong>{{ vcf_target_depot.username or 'not configured' }}</strong></div>
             <div><span>Software depot ID</span><strong>{{ vcf_target_depot.software_depot_id or 'not generated' }}</strong></div>
           </div>
           <div class="form-grid">
-            <label><span class="field-label"><span>VCF appliance endpoint</span><button class="help-icon" type="button" data-help="VCF 9 Installer or SDDC Manager API endpoint receiving the local offline-depot configuration. Accepts host, host:port, or https://host:port; default port is 443.">i</button></span><input name="address" required></label>
+            <label><span class="field-label"><span>Server address</span><button class="help-icon" type="button" data-help="VCF 9 Installer or SDDC Manager server receiving the local offline-depot configuration. Accepts host, host:port, or https://host:port; default port is 443.">i</button></span><input name="address" required></label>
           </div>
+        </section>
+
+        <section class="vcf-sddc-step-page hidden" data-vcf-target-depot-step="tls" data-atlaso-wizard-step="tls">
+          <div class="settings-list compact-settings-list">
+            <div><span>Server</span><strong data-vcf-target-depot-review-target>Not inspected yet</strong></div>
+            <div><span>HTTPS port</span><strong data-vcf-target-depot-review-port>443</strong></div>
+            <div><span>SHA-256 fingerprint</span><strong class="mono-text" data-vcf-target-depot-review-tls>Probe the server to continue</strong></div>
+          </div>
+          <label class="vcf-sddc-tls-check hidden" data-vcf-target-depot-tls-confirmation>
+            <input type="checkbox" data-vcf-target-depot-tls-confirm required>
+            <span>
+              <strong>Confirm VCF API TLS fingerprint</strong>
+              <small>Verify this SHA-256 fingerprint out of band before continuing: <code data-vcf-target-depot-tls-confirmation-fingerprint></code></small>
+            </span>
+          </label>
         </section>
 
         <section class="vcf-sddc-step-page hidden" data-vcf-target-depot-step="api" data-atlaso-wizard-step="api">
@@ -50,19 +74,9 @@
 
         <section class="vcf-sddc-step-page hidden" data-vcf-target-depot-step="review" data-atlaso-wizard-step="review">
           <div class="settings-list compact-settings-list">
-            <div><span>Target</span><strong data-vcf-target-depot-review-target>Not inspected yet</strong></div>
-            <div><span>HTTPS port</span><strong data-vcf-target-depot-review-port>443</strong></div>
             <div><span>Role</span><strong data-vcf-target-depot-review-role>Inspect target to verify</strong></div>
             <div><span>Version</span><strong data-vcf-target-depot-review-version>Inspect target to verify</strong></div>
-            <div><span>TLS fingerprint</span><strong class="mono-text" data-vcf-target-depot-review-tls>Confirm on inspect</strong></div>
           </div>
-          <label class="vcf-sddc-tls-check hidden" data-vcf-target-depot-tls-confirmation>
-            <input type="checkbox" data-vcf-target-depot-tls-confirm required>
-            <span>
-              <strong>Confirm VCF API TLS fingerprint</strong>
-              <small>Verify this SHA-256 fingerprint before continuing: <code data-vcf-target-depot-tls-confirmation-fingerprint></code></small>
-            </span>
-          </label>
           <div class="panel detail-panel hidden" data-vcf-target-depot-current>
             <div class="panel-head"><h3>Current target depot</h3></div>
             <div class="settings-list compact-settings-list" data-vcf-target-depot-current-values></div>

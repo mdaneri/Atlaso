@@ -33,6 +33,16 @@ CAPTURE_OVERRIDES = {
         "atlaso_version": "0.9.24",
         "capture_method": "playwright-chromium",
     },
+    "vaults-clean-desktop": {
+        "source_commit": "341825a+working-tree",
+        "atlaso_version": "0.9.38",
+        "capture_method": "codex-in-app-browser",
+    },
+    "vaults-clean-responsive": {
+        "source_commit": "341825a+working-tree",
+        "atlaso_version": "0.9.38",
+        "capture_method": "codex-in-app-browser",
+    },
     "swagger-clean-responsive": {
         "source_commit": "15caa646452",
         "atlaso_version": "0.9.22",
@@ -77,6 +87,7 @@ DOCUMENTATION_PAGES = {
     "services/certificate-authority.md": ("ca-public-", "ca-requests-", "certificate-authority-"),
     "services/vcf-backups.md": ("vcf-backups-",),
     "services/vcf-helper.md": ("vcf-helper-",),
+    "services/vaults.md": ("vaults-",),
     "services/vcf-offline-depot.md": ("vcf-offline-depot-",),
     "services/vcf-private-registry.md": ("vcf-private-registry-",),
     "reference/api.md": ("swagger-",),
@@ -113,6 +124,7 @@ ROUTES = {
     "users": ("/users", "Users"),
     "vcf-backups": ("/vcf-backups", "VCF Backups"),
     "vcf-helper": ("/vcf-helper", "VCF Helper"),
+    "vaults": ("/vaults", "Vaults"),
     "vcf-offline-depot": ("/vcf-offline-depot", "VCF Offline Depot"),
     "vcf-private-registry": ("/vcf-private-registry", "VCF Private Registry"),
     "vlan-interfaces": ("/vlan-interfaces", "VLAN Interfaces"),

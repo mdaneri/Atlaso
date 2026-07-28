@@ -21,12 +21,44 @@ This verified appliance view provides visual orientation before you begin.
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+Administrators can also use **Import passwords into a vault** for VCF 9 SDDC Manager and VCF Installer appliances.
+The wizard chooses vault or manual credentials first, confirms the server second, and then opens a dedicated TLS page.
+Atlaso probes the server without resolving or sending credentials and requires the operator to confirm the observed
+fingerprint before vault or manual authentication can continue. It displays only discovered metadata for selection,
+then re-fetches and encrypts the reviewed VCF/ESX passwords in the selected vault. Source credentials are request-local
+and password values are never included in the discovery response. See [Vaults](vaults.md) for supported entries,
+managed-script and Kickstart access, URI targets, and restore behavior.
+
 The helper creates DNS records in Atlaso, deploys SDDC Manager OVAs, and configures VCF 9 appliances to use the applied
 local offline depot. DNS does not reload `dnsmasq` or change the appliance directly. Review and submit the changed
 `DNS/DHCP (dnsmasq)` unit through the global `/appliance-apply` workflow after generation or deletion.
 
 The `VCF Certificate Trust` button opens the separate remote certificate task in a modal without mixing CA details into
 the main DNS helper workspace. See [VCF Certificate Trust](vcf-trust.md).
+
+## Use a saved vault credential
+
+An administrator can select **Vault** and then **Key** anywhere VCF Helper requests a remote vCenter, ESXi, SDDC
+Manager, VCF Installer, or VCF Automation login. Atlaso fills the server from the HTTP or HTTPS URI selected for the
+entry and fills its username. The server control is read-only, the manual-login controls are disabled, and the login
+page is skipped. The picker omits keys without an HTTP or HTTPS URI and shows one choice per valid URI when a key has several.
+If the selected vault has no usable keys, it shows **No HTTP/HTTPS credentials available** and keeps manual mode active.
+
+Address fields display only the selected hostname, IP, and non-default port; they do not display `http://` or
+`https://`. Fields explicitly labeled as a URL, such as **VCF Automation URL**, retain the complete URL.
+
+The selected password is not loaded into the page, copied into the password input, or returned by an API. The disabled
+password input indicates that the stored value will be used. Atlaso validates that the key belongs to the selected
+vault, decrypts the password on the server for that request only, and records the use without recording the value.
+Choose **Enter credentials manually** to return to request-local username and password entry. Service administrators
+can continue to use manual credentials but cannot select administrator-owned vault entries.
+
+Remote VCF wizards consistently use **Credential**, **Server**, **TLS fingerprint**, and **Login** as their first four
+steps. The TLS step is always pre-authentication. Workflow-specific selection and review pages follow it.
+
+The picker is available for SDDC Manager deployment inventory, VCF Offline Depot configuration, VCF Certificate Trust,
+VCF password import source authentication, and Managed LDAP for VCF Automation. The local offline-depot HTTP password
+and OVA appliance passwords remain separate fields and are never filled from this picker.
 
 ## Deploy SDDC Manager
 
@@ -37,15 +69,17 @@ streams the disks through a vSphere NFC lease. It refuses duplicate VM names, po
 minutes for the VCF API.
 
 The form can optionally add managed DNS desired state, deploy Atlaso CA trust, and configure the local offline depot.
-Trust uses the VCF API only. New-VM trust does not require a snapshot because redeployment is the recovery path. All
-vSphere, OVF, VCF API, and depot passwords remain transient.
+Trust uses the VCF API only and does not require a snapshot acknowledgement.
+Manually entered vSphere, OVF, VCF API, and depot passwords remain transient; a selected vault password remains
+encrypted at rest and is resolved only on the server for the request.
 
 ## Configure VCF Offline Depot
 
 The standalone helper is available only when the local depot is enabled, applied, CA-backed, has a generated software
-depot ID, and has a selected HTTP user. Its wizard confirms the target HTTPS fingerprint, detects VCF Installer or SDDC
-Manager 9.x, collects the one-time depot HTTP password, and reads the current sanitized depot configuration. Replacing a
-different depot requires explicit confirmation.
+depot ID, and has a selected HTTP user. Its wizard follows **Credential**, **Server**, **TLS fingerprint**, and
+**Login** before collecting the one-time depot HTTP password and reading the current sanitized depot configuration.
+The TLS probe runs before Atlaso resolves a selected vault password or reads manual login fields. After confirmation,
+Atlaso detects VCF Installer or SDDC Manager 9.x. Replacing a different depot requires explicit confirmation.
 
 Atlaso calls `PUT /v1/system/settings/depot`, triggers metadata refresh with
 `PATCH /v1/system/settings/depot/depot-sync-info`, and polls the matching GET endpoint for up to 60 minutes. It asks for

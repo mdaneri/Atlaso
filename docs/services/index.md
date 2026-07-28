@@ -8,6 +8,9 @@ status: current
 
 # Services
 
+For VCF and ESX credential workflows, start with [Vaults](vaults.md). The guide covers encrypted storage, managed-script
+access, Kickstart markers, connection URIs, VCF Helper imports, reveal auditing, and backup/restore behavior.
+
 - [DNS](dns.md)
 - [DHCP](dhcp.md)
 - [Firewall](firewall.md)
@@ -20,6 +23,7 @@ status: current
 - [Managed LDAP](managed-ldap.md)
 - [OpenID Connect provider](oidc-provider.md)
 - [VCF backups](vcf-backups.md)
+- [Vaults](vaults.md)
 - [VCF Helper](vcf-helper.md)
 - [VCF Offline Depot](vcf-offline-depot.md)
 - [VCF Private Registry](vcf-private-registry.md)

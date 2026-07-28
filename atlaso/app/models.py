@@ -1234,6 +1234,53 @@ class VcfRegistryBundle(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class Vault(Base):
+    __tablename__ = "vaults"
+    __table_args__ = (UniqueConstraint("name", name="uq_vault_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    entries: Mapped[list["VaultEntry"]] = relationship(
+        back_populates="vault",
+        cascade="all, delete-orphan",
+        order_by="VaultEntry.key",
+    )
+
+
+class VaultEntry(Base):
+    __tablename__ = "vault_entries"
+    __table_args__ = (
+        UniqueConstraint("vault_id", "key", name="uq_vault_entry_vault_key"),
+        CheckConstraint(
+            "secret_type IN ('vcf_password', 'esx_password')",
+            name="ck_vault_entry_secret_type",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    vault_id: Mapped[int] = mapped_column(ForeignKey("vaults.id"), index=True)
+    key: Mapped[str] = mapped_column(String(180), index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    secret_type: Mapped[str] = mapped_column(String(40))
+    username: Mapped[str] = mapped_column(String(180), default="")
+    resource_name: Mapped[str] = mapped_column(String(240), default="")
+    source_type: Mapped[str] = mapped_column(String(40), default="manual")
+    source_endpoint: Mapped[str] = mapped_column(String(500), default="")
+    uris_json: Mapped[str] = mapped_column(Text, default="[]")
+    encrypted_value: Mapped[str] = mapped_column(Text)
+    created_by: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    imported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    vault: Mapped[Vault] = relationship(back_populates="entries")
+
+
 class EsxiKickstart(Base):
     __tablename__ = "esxi_kickstarts"
     __table_args__ = (UniqueConstraint("name", name="uq_esxi_kickstart_name"),)
@@ -1251,6 +1298,18 @@ class EsxiKickstart(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_rendered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class EsxiKickstartVaultBinding(Base):
+    __tablename__ = "esxi_kickstart_vault_bindings"
+
+    kickstart_id: Mapped[int] = mapped_column(
+        ForeignKey("esxi_kickstarts.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    vault_id: Mapped[int] = mapped_column(ForeignKey("vaults.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class EsxiPxeHost(Base):

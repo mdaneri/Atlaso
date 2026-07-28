@@ -26,6 +26,10 @@
         <div class="alert warn hidden" data-vcf-sddc-confirmation></div>
 
         <section class="vcf-sddc-step-page" data-vcf-sddc-step="source" data-atlaso-wizard-step="source" data-vcf-sddc-step-source>
+          {% set credential_address_field = "address" %}
+          {% set credential_username_field = "username" %}
+          {% set credential_password_field = "password" %}
+          {% include "partials/vcf_vault_credential_picker.html" %}
           <div class="form-grid">
             <label><span class="field-label"><span>SDDC Manager OVA</span><button class="help-icon" type="button" data-help="Selects a validated OVA from the fixed SDDC_MANAGER_VCF offline-depot folder. The source file is never modified.">i</button></span><select name="ova_path" required data-vcf-sddc-ova>{% for ova in vcf_sddc_ovas %}{% if not ova.error %}<option value="{{ ova.path }}">{{ ova.relative_path }}</option>{% endif %}{% endfor %}</select></label>
             <label><span class="field-label"><span>vCenter or ESXi address</span><button class="help-icon" type="button" data-help="vCenter Server or standalone ESXi endpoint used for inventory discovery and OVA import. Include :port only when it is not 443.">i</button></span><input name="address" placeholder="esxi-01.atlaso.internal or esxi-01:8443" required></label>

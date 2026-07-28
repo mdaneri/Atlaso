@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block page_title %}Vaults{% endblock %}
+{% block content %}
+<section class="panel vaults-workspace" id="vaults-workspace" data-vaults-workspace>
+  <div class="panel-head">
+    <div>
+      <h2>VCF and ESX password vaults</h2>
+      <p class="muted">Passwords remain encrypted at rest and are released only to an explicitly scoped managed script or dynamic Kickstart.</p>
+    </div>
+  </div>
+  {% if vault_error %}<div class="alert error">{{ vault_error }}</div>{% endif %}
+  <div class="alert error hidden" role="status" aria-live="polite" data-vault-uri-error></div>
+  <div class="tab-buttons zone-tabs" role="tablist" aria-label="Password vaults" data-tab-storage-key="atlaso:vaults:active-tab">
+    {% for vault in vaults %}
+      <button class="tab-button {{ 'active' if loop.first else '' }}" type="button" role="tab" data-tab-target="vault-panel-{{ vault.id }}" aria-controls="vault-panel-{{ vault.id }}" aria-selected="{{ 'true' if loop.first else 'false' }}">{{ vault.name }}</button>
+    {% endfor %}
+    <button class="tab-button" type="button" aria-haspopup="dialog" aria-controls="vault-create-modal" data-vault-create-open>+ Add vault</button>
+  </div>
+  {% if vaults %}
+    <div class="tab-panels">
+      {% for vault in vaults %}
+        <section id="vault-panel-{{ vault.id }}" class="tab-panel {{ 'active' if loop.first else '' }}" role="tabpanel" data-vault-panel data-vault-id="{{ vault.id }}" data-vault-name="{{ vault.name }}">
+          <div class="vault-panel-toolbar">
+            <p class="muted">{{ vault.description or "No description." }}</p>
+            <form
+              action="/vaults/{{ vault.id }}/delete"
+              method="post"
+              data-confirm-modal
+              data-confirm-title="Delete {{ vault.name }} vault?"
+              data-confirm-message="This permanently removes the {{ vault.name }} vault and its {{ vault.entry_rows|length }} encrypted password {{ 'entry' if vault.entry_rows|length == 1 else 'entries' }}. Vault values are not included in settings archives."
+              data-confirm-label="Delete vault"
+            ><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="button danger compact" type="submit">Delete vault</button></form>
+          </div>
+          <div id="vault-entries-table-{{ vault.id }}" class="tabulator-grid compact-grid" data-vault-entries-table data-vault-id="{{ vault.id }}" data-fallback-id="vault-entries-fallback-{{ vault.id }}"></div>
+          <script type="application/json" id="vault-entries-data-{{ vault.id }}">{{ vault.entry_rows|tojson }}</script>
+          <table id="vault-entries-fallback-{{ vault.id }}" class="data-table dns-fallback-table">
+            <thead><tr><th>Key</th><th>Description</th><th>Password</th></tr></thead>
+            <tbody>
+              {% for entry in vault.entry_rows %}<tr><td><code>{{ entry.key }}</code></td><td>{{ entry.description or "—" }}</td><td>••••••••</td></tr>{% else %}<tr><td colspan="3">No passwords are stored in this vault.</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </section>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="empty-state"><h3>No vaults yet</h3><p>Create a vault before adding or importing VCF and ESX passwords.</p><button class="button primary" type="button" data-vault-create-open>Create the first vault</button></div>
+  {% endif %}
+</section>
+
+<dialog id="vault-create-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal vault-create-wizard-modal" aria-labelledby="vault-create-title">
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="/vaults" method="post" data-atlaso-wizard data-vault-create-form>
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <aside class="vcf-sddc-wizard-rail"><p class="kicker">New vault</p><h2 id="vault-create-title">Add vault</h2><ol class="vcf-sddc-step-list"><li><button class="vcf-sddc-step-button active" type="button" data-atlaso-wizard-nav="identity"><span>1</span><strong>Identity</strong><small>Name and purpose</small></button></li><li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="review" disabled><span>2</span><strong>Review</strong><small>Confirm vault</small></button></li></ol></aside>
+    <div class="vcf-sddc-wizard-main"><div class="confirm-modal-body vcf-sddc-wizard-body">
+      <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 2</p><h3 data-atlaso-wizard-title>Name the vault</h3><p class="muted" data-atlaso-wizard-description>Use a clear environment or workflow name.</p></div><div class="alert error hidden" data-atlaso-wizard-error></div>
+      <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity"><div class="form-grid vault-create-form-grid"><label><span>Vault name</span><input name="name" maxlength="120" required autocomplete="off"></label><label><span>Description</span><textarea name="description" rows="3"></textarea></label></div></section>
+      <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review"><div class="settings-list"><div><span>Name</span><strong data-vault-create-review-name></strong></div><div><span>Description</span><strong data-vault-create-review-description></strong></div><div><span>Allowed values</span><strong>VCF and ESX passwords only</strong></div></div></section>
+    </div><div class="confirm-modal-actions"><button class="button secondary" type="button" data-atlaso-wizard-cancel>Cancel</button><button class="button secondary hidden" type="button" data-atlaso-wizard-back>Back</button><button class="button primary" type="button" data-atlaso-wizard-next>Continue</button><button class="button primary hidden" type="submit" data-atlaso-wizard-submit>Create vault</button></div></div>
+  </form>
+</dialog>
+
+<dialog id="vault-entry-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal vault-entry-wizard-modal" aria-labelledby="vault-entry-title">
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" method="post" data-atlaso-wizard data-vault-entry-form>
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="uris_json" value="[]">
+    <input type="hidden" name="copy_entry_id" value="">
+    <aside class="vcf-sddc-wizard-rail"><p class="kicker">Vault entry</p><h2 id="vault-entry-title" data-vault-entry-title>Add password</h2><ol class="vcf-sddc-step-list"><li><button class="vcf-sddc-step-button active" type="button" data-atlaso-wizard-nav="identity"><span>1</span><strong>Identity</strong><small>Key and details</small></button></li><li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="password" disabled><span>2</span><strong>Password</strong><small>Encrypted value</small></button></li><li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="uris" disabled><span>3</span><strong>URIs</strong><small>Up to nine targets</small></button></li><li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="review" disabled><span>4</span><strong>Review</strong><small>Confirm entry</small></button></li></ol></aside>
+    <div class="vcf-sddc-wizard-main"><div class="confirm-modal-body vcf-sddc-wizard-body">
+      <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 4</p><h3 data-atlaso-wizard-title>Identify the password</h3><p class="muted" data-atlaso-wizard-description>Choose a stable dotted key and optional details.</p></div><div class="alert error hidden" data-atlaso-wizard-error></div>
+      <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity"><div class="form-grid vault-entry-form-grid"><label><span>Key</span><input name="key" required maxlength="180" pattern="[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*" placeholder="vcf.sddc_manager.admin" autocomplete="off"></label><label><span>Description</span><textarea name="description" rows="3" maxlength="500"></textarea></label><label><span>Username</span><input name="username" maxlength="180" autocomplete="off"></label></div></section>
+      <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="password"><label><span>Password</span><span class="vault-entry-password-control"><input name="value" type="password" autocomplete="new-password" data-vault-entry-password><button class="vault-password-eye hidden" type="button" aria-label="Reveal password" title="Reveal password" data-vault-entry-password-eye>&#128065;</button></span><small class="muted" data-vault-entry-password-help>The value is encrypted before it is stored.</small></label></section>
+      <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="uris"><div class="vault-uri-list" data-vault-uri-list></div><div><button class="button secondary compact" type="button" data-vault-uri-add>+ Add URI</button></div><p class="muted">Supported schemes: HTTP, HTTPS, SSH, and SFTP. Credentials belong in the Username and Password fields, never in a URI.</p></section>
+      <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review"><div class="settings-list"><div><span>Key</span><strong data-vault-entry-review-key></strong></div><div><span>Username</span><strong data-vault-entry-review-username></strong></div><div><span>Password</span><strong data-vault-entry-review-password></strong></div><div><span>URIs</span><strong data-vault-entry-review-uris></strong></div></div></section>
+    </div><div class="confirm-modal-actions"><button class="button secondary" type="button" data-atlaso-wizard-cancel>Cancel</button><button class="button secondary hidden" type="button" data-atlaso-wizard-back>Back</button><button class="button primary" type="button" data-atlaso-wizard-next>Continue</button><button class="button primary hidden" type="submit" data-atlaso-wizard-submit>Save password</button></div></div>
+  </form>
+</dialog>
+
+{% for vault in vaults %}{% for entry in vault.entry_rows %}<form id="vault-entry-delete-{{ entry.id }}" action="/vaults/{{ vault.id }}/entries/{{ entry.id }}/delete" method="post" class="hidden" data-confirm-modal data-confirm-title="Remove {{ entry.key }}?" data-confirm-message="This permanently removes the encrypted password for {{ entry.key }} from the {{ vault.name }} vault." data-confirm-label="Remove"><input type="hidden" name="csrf" value="{{ csrf_token }}"></form>{% endfor %}{% endfor %}
+{% endblock %}

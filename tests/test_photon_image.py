@@ -64,6 +64,7 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     script = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
     bootstrap = Path("scripts/appliance/atlaso-bootstrap-https").read_text(encoding="utf-8")
     systemd_unit = Path("image/hyperv/systemd/atlaso.service").read_text(encoding="utf-8")
+    worker_unit = Path("image/common/systemd/atlaso-worker.service").read_text(encoding="utf-8")
     sudoers = Path("image/hyperv/sudoers.d/atlaso-helper").read_text(encoding="utf-8")
     docs = Path("image/hyperv/README.md").read_text(encoding="utf-8")
     root_docs = Path("docs/reference/full-technical-reference.md").read_text(encoding="utf-8")
@@ -98,6 +99,12 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert '"$IPXE_BOOTLOADER_TARGET_DIR/undionly.kpxe"' in script
     assert '"$IPXE_BOOTLOADER_TARGET_DIR/snponly.efi"' in script
     assert 'BOOTSTRAP_SHELL="${ATLASO_BOOTSTRAP_ADMIN_SHELL:-/usr/bin/pwsh}"' in script
+    assert 'ln -sfn "$ATLASO_HOME/.venv/bin/atlaso-vault" /usr/local/bin/atlaso-vault' in script
+    assert 'ln -sfn "$ATLASO_HOME/.venv/bin/atlaso-vault" /usr/bin/atlaso-vault' in script
+    assert '"$ATLASO_HOME/image/common/powershell/atlaso-vault-profile.ps1"' in script
+    profile = Path("image/common/powershell/atlaso-vault-profile.ps1").read_text(encoding="utf-8")
+    assert "function global:Get-AtlasoVault" in profile
+    assert "/opt/atlaso/.venv/bin/atlaso-vault" in profile
     assert '--shell "$BOOTSTRAP_SHELL"' in script
     assert "touch /etc/shells" in script
     assert 'grep -qxF "$BOOTSTRAP_SHELL" /etc/shells' in script
@@ -173,6 +180,8 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert "/etc/systemd/system/atlaso-worker.service" in script
     assert 'useradd --system --gid atlaso-automation' in script
     assert 'systemctl enable atlaso-worker.service' in script
+    assert "RuntimeDirectory=atlaso-automation-vaults" in worker_unit
+    assert "RuntimeDirectoryMode=0700" in worker_unit
     assert "atlaso ALL=(root) NOPASSWD: /opt/atlaso/bin/atlaso-helper *" in sudoers
     assert "atlaso-root-login.conf" in script
     assert "PermitRootLogin no" in script

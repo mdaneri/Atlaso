@@ -1,9 +1,9 @@
 <section class="panel terminal-panel" data-web-terminal data-terminal-available="{{ 'true' if terminal_available else 'false' }}" data-csrf="{{ csrf_token }}">
   <div class="panel-head">
     <div>
-      <h2>Appliance Web Terminal</h2>
+      <h2 data-terminal-heading>Appliance Web Terminal</h2>
       {% if terminal_available %}
-        <p class="muted">Passwordless local SSH as {{ identity.username }}. Sudo continues to use the Photon OS account password.</p>
+        <p class="muted" data-terminal-description>Passwordless local SSH as {{ identity.username }}. Sudo continues to use the Photon OS account password.</p>
       {% else %}
         <p class="muted">Terminal status for {{ identity.username }}. No shell starts until the requirement below is resolved.</p>
       {% endif %}

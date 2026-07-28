@@ -23,6 +23,7 @@ from atlaso.app.models import (
     DnsRecord,
     DnsSettings,
     EsxiKickstart,
+    EsxiKickstartVaultBinding,
     EsxiPxeHost,
     EsxNfsShare,
     EsxStorageSettings,
@@ -63,6 +64,8 @@ from atlaso.app.models import (
     VcfOfflineDepotSettings,
     VcfPrivateRegistrySettings,
     VcfRegistryBundle,
+    Vault,
+    VaultEntry,
     VlanInterface,
     WanPolicy,
 )
@@ -115,6 +118,9 @@ SCALAR_TABLES = {
 
 RESTORE_DELETE_MODELS = [
     OidcGroupMapping,
+    EsxiKickstartVaultBinding,
+    VaultEntry,
+    Vault,
     Schedule,
     AutomationScriptRevision,
     AutomationScript,
