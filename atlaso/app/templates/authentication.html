@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "partials/resource_wizard.html" import resource_wizard %}
 {% block page_title %}{{ "OpenID Connect" if oidc_page else "Authentication" }}{% endblock %}
 {% block content %}
 {% if not oidc_page %}
@@ -21,22 +22,16 @@
 
   <div class="panel">
     <div class="panel-head">
-      <h2>Create API Token</h2>
+      <h2>API Token Lifecycle</h2>
       <span class="status-pill warn">shown once</span>
     </div>
-    {% if raw_token %}
-      <div class="alert success">
-        <strong>Copy this bearer token now.</strong>
-        <textarea readonly rows="5" aria-label="Generated bearer token">{{ raw_token }}</textarea>
-      </div>
-    {% endif %}
-    <form class="form-stack" action="/authentication/api-tokens" method="post">
-      <input type="hidden" name="csrf" value="{{ csrf_token }}">
-      <label><span>Name</span><input name="name" value="Windows automation"></label>
-      <label><span>Description</span><input name="description" value="PowerShell and Hyper-V lab automation"></label>
-      <label><span>Scopes</span><textarea name="scopes" rows="3">read:dashboard read:routes read:wan read:services read:audit</textarea></label>
-      <button class="button primary" type="submit">Create token</button>
-    </form>
+    <p class="muted">Create a token from the collection's bottom add row. Tokens cannot be edited after creation; revoke and replace a token when its access must change.</p>
+    <div class="alert success {{ '' if raw_token else 'hidden' }}" data-api-token-secret-result>
+      <strong>Copy this bearer token now.</strong>
+      <p class="muted">Atlaso stores only its hash. The plaintext value cannot be displayed again.</p>
+      <textarea readonly rows="5" aria-label="Generated bearer token" data-api-token-secret>{{ raw_token or "" }}</textarea>
+      <button class="button secondary" type="button" data-copy-value="{{ raw_token or '' }}" data-api-token-copy {{ "disabled" if not raw_token else "" }}>Copy token</button>
+    </div>
   </div>
 </section>
 {% endif %}
@@ -378,11 +373,21 @@
 {% if not oidc_page %}
 <section class="panel">
   <div class="panel-head">
-    <h2>API Tokens</h2>
+    <div>
+      <h2>API Tokens</h2>
+      <p class="muted">Browse active and revoked bearer tokens. Use the bottom add row to create a scoped token.</p>
+    </div>
     <span class="muted">{{ tokens|length }} records</span>
   </div>
-  <div class="responsive-table-scroll" role="region" aria-label="API tokens" tabindex="0">
-  <table class="data-table">
+  <p id="api-tokens-status" class="autosave-status" aria-live="polite">Token lifecycle changes take effect immediately and require no appliance apply.</p>
+  <div
+    id="api-tokens-table"
+    class="tabulator-shell"
+    data-tokens='{{ api_token_rows | tojson }}'
+    data-csrf="{{ csrf_token }}"
+    data-fallback-id="api-tokens-fallback"
+  ></div>
+  <table id="api-tokens-fallback" class="data-table">
     <thead>
       <tr><th>Name</th><th>Owner</th><th>Role</th><th>Scopes</th><th>Expires</th><th>Status</th><th>Actions</th></tr>
     </thead>
@@ -407,7 +412,47 @@
       {% endfor %}
     </tbody>
   </table>
-  </div>
 </section>
+
+{% set api_token_steps = [
+  {"id": "identity", "label": "Token", "summary": "Name and purpose"},
+  {"id": "scopes", "label": "Scopes", "summary": "Least-privilege access"},
+  {"id": "review", "label": "Review", "summary": "Confirm immediate issuance"}
+] %}
+{% call resource_wizard(
+  "api-token-dialog",
+  "api-token-form",
+  "/authentication/api-tokens",
+  api_token_steps,
+  "Define the API token",
+  "Give the credential an operator-visible identity and purpose.",
+  "Create API token"
+) %}
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="record_id" value="">
+  <section data-atlaso-wizard-step="identity">
+    <div class="form-grid">
+      <label>
+        <span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Operator-visible token name. Token names do not grant access.">i</button></span>
+        <input name="name" maxlength="120" required>
+      </label>
+      <label>
+        <span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Record the automation or integration that owns this credential.">i</button></span>
+        <input name="description">
+      </label>
+    </div>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="scopes">
+    <label>
+      <span class="field-label"><span>Scopes</span><button class="help-icon" type="button" data-help="Space-separated permissions constrained by your Atlaso roles. Request only the access the integration needs.">i</button></span>
+      <textarea name="scopes" rows="7" required>read:dashboard</textarea>
+    </label>
+    <p class="muted">Allowed for your roles: <code>{{ api_token_scope_options|join(" ") }}</code></p>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="review">
+    <div class="settings-list" data-atlaso-resource-review></div>
+    <div class="alert warning">The token becomes valid immediately and its plaintext value is shown only once. No appliance apply is required.</div>
+  </section>
+{% endcall %}
 {% endif %}
 {% endblock %}

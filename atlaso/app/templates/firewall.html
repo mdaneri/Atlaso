@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "partials/resource_wizard.html" import resource_wizard %}
 {% block page_title %}Firewall{% endblock %}
 {% block content %}
 <section class="split-workspace firewall-workspace">
@@ -6,7 +7,7 @@
     <div class="panel-head">
       <div>
         <h2>Firewall Rules</h2>
-        <p class="muted">Edit nftables desired state directly in the grid. The bottom row creates a new rule once required fields are filled.</p>
+        <p class="muted">Browse operator-defined nftables desired state here. Use the bottom add row or open a rule to review its complete traffic match and safety boundary.</p>
       </div>
       <span class="status-pill {{ 'good' if firewall_settings.enabled else 'muted' }}" data-firewall-enabled-status>{{ "enabled" if firewall_settings.enabled else "disabled" }}</span>
     </div>
@@ -258,4 +259,50 @@
     </div>
   </aside>
 </section>
+
+{% set firewall_rule_steps = [
+  {"id": "policy", "label": "Rule", "summary": "Name, direction, and action"},
+  {"id": "match", "label": "Traffic", "summary": "Protocol, endpoints, and ports"},
+  {"id": "state", "label": "State", "summary": "Priority, enablement, and notes"},
+  {"id": "review", "label": "Review", "summary": "Confirm desired state"}
+] %}
+{% call resource_wizard(
+  "firewall-rule-dialog",
+  "firewall-rule-form",
+  "/firewall/rules",
+  firewall_rule_steps,
+  "Define the firewall rule",
+  "Name the operator rule and choose its nftables direction and action.",
+  "Create firewall rule"
+) %}
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="record_id" value="">
+  <section data-atlaso-wizard-step="policy">
+    <div class="form-grid">
+      <label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Stable operator-visible name for this explicit firewall rule.">i</button></span><input name="name" required></label>
+      <label><span class="field-label"><span>Direction</span><button class="help-icon" type="button" data-help="Input targets the appliance, forward crosses the appliance, and output originates from it.">i</button></span><select name="direction">{% for direction in firewall_directions %}<option value="{{ direction }}">{{ direction }}</option>{% endfor %}</select></label>
+      <label><span class="field-label"><span>Action</span><button class="help-icon" type="button" data-help="Accept permits matching traffic; drop or reject blocks it according to nftables behavior.">i</button></span><select name="action">{% for action in firewall_actions %}<option value="{{ action }}">{{ action }}</option>{% endfor %}</select></label>
+    </div>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="match">
+    <div class="form-grid">
+      <label><span class="field-label"><span>Protocol</span><button class="help-icon" type="button" data-help="Network protocol matched by this rule.">i</button></span><select name="protocol">{% for protocol in firewall_protocols %}<option value="{{ protocol }}">{{ protocol }}</option>{% endfor %}</select></label>
+      <label><span class="field-label"><span>Source</span><button class="help-icon" type="button" data-help="Source group or any traffic. Group membership is managed in the firewall settings rail.">i</button></span><select name="source"><option value="any">any</option>{% for group in firewall_source_groups %}<option value="{{ group.id }}">{{ group.name }}</option>{% endfor %}</select></label>
+      <label><span class="field-label"><span>Destination</span><button class="help-icon" type="button" data-help="Destination group or any traffic.">i</button></span><select name="destination"><option value="any">any</option>{% for group in firewall_source_groups %}<option value="{{ group.id }}">{{ group.name }}</option>{% endfor %}</select></label>
+      <label><span class="field-label"><span>Destination ports</span><button class="help-icon" type="button" data-help="Optional destination port or validated port expression for protocols that use ports.">i</button></span><input name="destination_port"></label>
+      <label><span class="field-label"><span>Interface</span><button class="help-icon" type="button" data-help="Optionally constrain the match to one current service-capable interface.">i</button></span><select name="interface_name"><option value="">any</option>{% for interface in firewall_interface_options %}<option value="{{ interface.name }}">{{ interface.name }}</option>{% endfor %}</select></label>
+    </div>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="state">
+    <div class="form-grid">
+      <label><span class="field-label"><span>Priority</span><button class="help-icon" type="button" data-help="Lower values are evaluated before higher values within Atlaso's generated ruleset.">i</button></span><input type="number" name="priority" required></label>
+      <label class="switch-field"><span class="field-label"><span>Rule enabled</span><button class="help-icon" type="button" data-help="Enabled rules enter rendered desired state; enforcement waits for global appliance apply.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
+    </div>
+    <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Operator note describing the traffic and reason for the rule.">i</button></span><input name="description"></label>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="review">
+    <div class="settings-list" data-atlaso-resource-review></div>
+    <div class="alert warning">Saving changes firewall desired state only. Enforcement remains part of the global Firewall appliance-apply unit.</div>
+  </section>
+{% endcall %}
 {% endblock %}

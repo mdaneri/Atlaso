@@ -1,0 +1,48 @@
+{% macro resource_wizard(dialog_id, form_data_name, action, steps, title, description, submit_label) -%}
+<dialog id="{{ dialog_id }}" class="confirm-modal resource-wizard-dialog" aria-labelledby="{{ dialog_id }}-title" aria-describedby="{{ dialog_id }}-description">
+  <form
+    class="confirm-modal-panel vcf-sddc-wizard-panel"
+    action="{{ action }}"
+    method="post"
+    data-{{ form_data_name }}
+    data-atlaso-wizard
+  >
+    {# Callers provide the ordered data-atlaso-wizard-step sections. #}
+    <div class="vcf-sddc-wizard-layout">
+      <aside class="vcf-sddc-wizard-rail" aria-label="{{ title }} steps">
+        <ol class="vcf-sddc-step-list">
+          {% for step in steps %}
+          <li>
+            <button
+              class="vcf-sddc-step-button {{ 'active' if loop.first else '' }}"
+              type="button"
+              data-atlaso-wizard-nav="{{ step.id }}"
+              {{ 'disabled' if not loop.first else '' }}
+            >
+              <span>{{ loop.index }}</span>
+              <strong>{{ step.label }}</strong>
+              <small>{{ step.summary }}</small>
+            </button>
+          </li>
+          {% endfor %}
+        </ol>
+      </aside>
+      <div class="vcf-sddc-wizard-content">
+        <div class="vcf-sddc-wizard-heading">
+          <p class="kicker" data-atlaso-wizard-kicker>Step 1 of {{ steps|length }}</p>
+          <h2 id="{{ dialog_id }}-title" data-atlaso-wizard-title>{{ title }}</h2>
+          <p id="{{ dialog_id }}-description" class="muted" data-atlaso-wizard-description>{{ description }}</p>
+        </div>
+        <div class="alert error hidden" data-atlaso-wizard-error></div>
+        {{ caller() }}
+      </div>
+    </div>
+    <div class="confirm-modal-actions vcf-sddc-wizard-actions">
+      <button class="button ghost" type="button" data-atlaso-wizard-cancel>Cancel</button>
+      <button class="button secondary hidden" type="button" data-atlaso-wizard-back>Back</button>
+      <button class="button primary" type="button" data-atlaso-wizard-next>Next</button>
+      <button class="button primary hidden" type="submit" data-atlaso-wizard-submit>{{ submit_label }}</button>
+    </div>
+  </form>
+</dialog>
+{%- endmacro %}

@@ -187,6 +187,7 @@ from atlaso.app.security import (
     require_session_identity,
     role_label,
     roles_to_json,
+    scopes_for_roles,
     user_roles,
     SESSION_APPLIANCE_INSTANCE_SESSION_KEY,
 )
@@ -674,6 +675,43 @@ def render(request: Request, template: str, context: dict, status_code: int = 20
         },
         status_code=status_code,
     )
+
+
+def grid_request(request: Request) -> bool:
+    return request.headers.get("X-Atlaso-Grid") == "1"
+
+
+def grid_saved_response(
+    request: Request,
+    *,
+    redirect_url: str,
+    resource_name: str,
+    resource: dict[str, Any],
+    extra: dict[str, Any] | None = None,
+) -> RedirectResponse | JSONResponse:
+    if grid_request(request):
+        return JSONResponse(
+            jsonable_encoder(
+                {
+                    resource_name: resource,
+                    **(extra or {}),
+                }
+            )
+        )
+    return RedirectResponse(redirect_url, status_code=303)
+
+
+def grid_error_response(
+    request: Request,
+    *,
+    detail: str,
+    status_code: int,
+    template_name: str,
+    context: dict[str, Any],
+) -> HTMLResponse | JSONResponse:
+    if grid_request(request):
+        return JSONResponse({"detail": detail}, status_code=status_code)
+    return render(request, template_name, context, status_code=status_code)
 
 
 def require_admin_identity(identity: Identity) -> None:
@@ -12341,7 +12379,7 @@ def create_firewall_rule(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> RedirectResponse | JSONResponse:
     verify_csrf(request, csrf)
     rule = _assign_firewall_rule(
         FirewallRule(),
@@ -12368,7 +12406,12 @@ def create_firewall_rule(
         db.rollback()
         raise HTTPException(status_code=409, detail=f"Firewall rule {rule.name} already exists.") from exc
     record_audit(db, actor=identity.username, action="create_firewall_rule", resource_type="firewall_rule", resource_id=str(rule.id))
-    return RedirectResponse("/firewall", status_code=303)
+    return grid_saved_response(
+        request,
+        redirect_url="/firewall",
+        resource_name="rule",
+        resource=firewall_rule_to_dict(rule),
+    )
 
 
 @router.post("/firewall/rules/{rule_id}/edit", response_model=None)
@@ -12389,7 +12432,7 @@ def update_firewall_rule(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> RedirectResponse | JSONResponse:
     verify_csrf(request, csrf)
     rule = db.get(FirewallRule, rule_id)
     if not rule:
@@ -12419,7 +12462,12 @@ def update_firewall_rule(
         db.rollback()
         raise HTTPException(status_code=409, detail=f"Firewall rule {rule.name} already exists.") from exc
     record_audit(db, actor=identity.username, action="update_firewall_rule", resource_type="firewall_rule", resource_id=str(rule.id))
-    return RedirectResponse("/firewall", status_code=303)
+    return grid_saved_response(
+        request,
+        redirect_url="/firewall",
+        resource_name="rule",
+        resource=firewall_rule_to_dict(rule),
+    )
 
 
 @router.post("/firewall/rules/{rule_id}/delete", response_model=None)
@@ -12429,7 +12477,7 @@ def delete_firewall_rule(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> RedirectResponse | Response:
     verify_csrf(request, csrf)
     rule = db.get(FirewallRule, rule_id)
     if not rule:
@@ -12437,6 +12485,8 @@ def delete_firewall_rule(
     db.delete(rule)
     db.commit()
     record_audit(db, actor=identity.username, action="delete_firewall_rule", resource_type="firewall_rule", resource_id=str(rule_id))
+    if grid_request(request):
+        return Response(status_code=204)
     return RedirectResponse("/firewall", status_code=303)
 
 
@@ -13449,7 +13499,7 @@ def create_dhcp_scope_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse:
+) -> RedirectResponse | HTMLResponse | JSONResponse:
     verify_csrf(request, csrf)
     scope = DhcpScope(
         name=name.strip(),
@@ -13470,18 +13520,25 @@ def create_dhcp_scope_from_ui(
         db.commit()
     except IntegrityError:
         db.rollback()
-        return render(
+        return grid_error_response(
             request,
-            "dhcp.html",
-            {
+            detail=f"DHCP IP zone {name} already exists.",
+            status_code=409,
+            template_name="dhcp.html",
+            context={
                 "identity": identity,
                 **dnsmasq_context(db),
                 "form_error": f"DHCP IP zone {name} already exists.",
             },
-            status_code=409,
         )
     record_audit(db, actor=identity.username, action="create_dhcp_scope", resource_type="dhcp_scope", resource_id=str(scope.id))
-    return RedirectResponse("/dhcp", status_code=303)
+    db.refresh(scope)
+    return grid_saved_response(
+        request,
+        redirect_url="/dhcp",
+        resource_name="scope",
+        resource=dhcp_scope_to_dict(scope),
+    )
 
 
 @router.post("/dhcp/scopes/{scope_id}/edit", response_model=None)
@@ -13503,22 +13560,23 @@ def edit_dhcp_scope_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse:
+) -> RedirectResponse | HTMLResponse | JSONResponse:
     verify_csrf(request, csrf)
     scope = db.get(DhcpScope, scope_id)
     if not scope:
         raise HTTPException(status_code=404, detail="DHCP IP zone not found")
     normalized_family = address_family.strip().lower() if address_family.strip().lower() in {"ipv4", "ipv6"} else "ipv4"
     if normalized_family != scope.address_family:
-        return render(
+        return grid_error_response(
             request,
-            "dhcp.html",
-            {
+            detail="DHCP IP zone family cannot be changed after it is created.",
+            status_code=409,
+            template_name="dhcp.html",
+            context={
                 "identity": identity,
                 **dnsmasq_context(db),
                 "form_error": "DHCP IP zone family cannot be changed after it is created.",
             },
-            status_code=409,
         )
     scope.name = name.strip()
     scope.address_family = normalized_family
@@ -13537,18 +13595,25 @@ def edit_dhcp_scope_from_ui(
         db.commit()
     except IntegrityError:
         db.rollback()
-        return render(
+        return grid_error_response(
             request,
-            "dhcp.html",
-            {
+            detail=f"DHCP IP zone {name} already exists.",
+            status_code=409,
+            template_name="dhcp.html",
+            context={
                 "identity": identity,
                 **dnsmasq_context(db),
                 "form_error": f"DHCP IP zone {name} already exists.",
             },
-            status_code=409,
         )
     record_audit(db, actor=identity.username, action="update_dhcp_scope", resource_type="dhcp_scope", resource_id=str(scope.id))
-    return RedirectResponse("/dhcp", status_code=303)
+    db.refresh(scope)
+    return grid_saved_response(
+        request,
+        redirect_url="/dhcp",
+        resource_name="scope",
+        resource=dhcp_scope_to_dict(scope),
+    )
 
 
 @router.post("/dhcp/scopes/{scope_id}/delete", response_model=None)
@@ -13558,7 +13623,7 @@ def delete_dhcp_scope_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> RedirectResponse | Response:
     verify_csrf(request, csrf)
     scope = db.get(DhcpScope, scope_id)
     if not scope:
@@ -13568,6 +13633,8 @@ def delete_dhcp_scope_from_ui(
     db.delete(scope)
     db.commit()
     record_audit(db, actor=identity.username, action="delete_dhcp_scope", resource_type="dhcp_scope", resource_id=str(scope_id))
+    if grid_request(request):
+        return Response(status_code=204)
     return RedirectResponse("/dhcp", status_code=303)
 
 
@@ -14386,7 +14453,7 @@ def create_ca_profile_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse:
+) -> RedirectResponse | HTMLResponse | JSONResponse:
     verify_csrf(request, csrf)
     profile = CaProfile(
         name=name.strip(),
@@ -14405,14 +14472,21 @@ def create_ca_profile_from_ui(
         db.commit()
     except IntegrityError:
         db.rollback()
-        return render(
+        detail = f"CA profile {name} already exists."
+        return grid_error_response(
             request,
-            "certificate_authority.html",
-            {"identity": identity, **ca_context(db), "form_error": f"CA profile {name} already exists."},
+            detail=detail,
             status_code=409,
+            template_name="certificate_authority.html",
+            context={"identity": identity, **ca_context(db), "form_error": detail},
         )
     record_audit(db, actor=identity.username, action="create_ca_profile", resource_type="ca_profile", resource_id=str(profile.id))
-    return RedirectResponse("/certificate-authority", status_code=303)
+    return grid_saved_response(
+        request,
+        redirect_url="/certificate-authority",
+        resource_name="profile",
+        resource=ca_profile_to_dict(profile),
+    )
 
 
 @router.post("/certificate-authority/profiles/{profile_id}/edit", response_model=None)
@@ -14432,7 +14506,7 @@ def edit_ca_profile_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse:
+) -> RedirectResponse | HTMLResponse | JSONResponse:
     verify_csrf(request, csrf)
     profile = db.get(CaProfile, profile_id)
     if not profile:
@@ -14452,14 +14526,21 @@ def edit_ca_profile_from_ui(
         db.commit()
     except IntegrityError:
         db.rollback()
-        return render(
+        detail = f"CA profile {name} already exists."
+        return grid_error_response(
             request,
-            "certificate_authority.html",
-            {"identity": identity, **ca_context(db), "form_error": f"CA profile {name} already exists."},
+            detail=detail,
             status_code=409,
+            template_name="certificate_authority.html",
+            context={"identity": identity, **ca_context(db), "form_error": detail},
         )
     record_audit(db, actor=identity.username, action="update_ca_profile", resource_type="ca_profile", resource_id=str(profile.id))
-    return RedirectResponse("/certificate-authority", status_code=303)
+    return grid_saved_response(
+        request,
+        redirect_url="/certificate-authority",
+        resource_name="profile",
+        resource=ca_profile_to_dict(profile),
+    )
 
 
 @router.post("/certificate-authority/profiles/{profile_id}/delete", response_model=None)
@@ -14469,7 +14550,7 @@ def delete_ca_profile_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> RedirectResponse | Response:
     verify_csrf(request, csrf)
     profile = db.get(CaProfile, profile_id)
     if not profile:
@@ -14479,6 +14560,8 @@ def delete_ca_profile_from_ui(
     db.delete(profile)
     db.commit()
     record_audit(db, actor=identity.username, action="delete_ca_profile", resource_type="ca_profile", resource_id=str(profile_id))
+    if grid_request(request):
+        return Response(status_code=204)
     return RedirectResponse("/certificate-authority", status_code=303)
 
 
@@ -14495,7 +14578,7 @@ def create_ca_certificate_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> RedirectResponse | JSONResponse:
     verify_csrf(request, csrf)
     try:
         parsed_profile_id = parse_ca_profile_id(profile_id)
@@ -14523,8 +14606,14 @@ def create_ca_certificate_from_ui(
     )
     db.add(certificate)
     db.commit()
+    db.refresh(certificate)
     record_audit(db, actor=identity.username, action="create_ca_certificate_request", resource_type="ca_certificate", resource_id=str(certificate.id))
-    return RedirectResponse("/certificate-authority", status_code=303)
+    return grid_saved_response(
+        request,
+        redirect_url="/certificate-authority",
+        resource_name="certificate",
+        resource=ca_certificate_to_dict(certificate),
+    )
 
 
 @router.post("/certificate-authority/certificates/{certificate_id}/edit", response_model=None)
@@ -14540,7 +14629,7 @@ def edit_ca_certificate_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> RedirectResponse | JSONResponse:
     verify_csrf(request, csrf)
     certificate = db.get(CaCertificate, certificate_id)
     if not certificate:
@@ -14567,8 +14656,14 @@ def edit_ca_certificate_from_ui(
     certificate.description = description or None
     certificate.enabled = enabled == "on"
     db.commit()
+    db.refresh(certificate)
     record_audit(db, actor=identity.username, action="update_ca_certificate_request", resource_type="ca_certificate", resource_id=str(certificate.id))
-    return RedirectResponse("/certificate-authority", status_code=303)
+    return grid_saved_response(
+        request,
+        redirect_url="/certificate-authority",
+        resource_name="certificate",
+        resource=ca_certificate_to_dict(certificate),
+    )
 
 
 @router.post("/certificate-authority/certificates/{certificate_id}/delete", response_model=None)
@@ -14578,7 +14673,7 @@ def delete_ca_certificate_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> RedirectResponse | Response:
     verify_csrf(request, csrf)
     certificate = db.get(CaCertificate, certificate_id)
     if not certificate:
@@ -14588,6 +14683,8 @@ def delete_ca_certificate_from_ui(
     db.delete(certificate)
     db.commit()
     record_audit(db, actor=identity.username, action="delete_ca_certificate_request", resource_type="ca_certificate", resource_id=str(certificate_id))
+    if grid_request(request):
+        return Response(status_code=204)
     return RedirectResponse("/certificate-authority", status_code=303)
 
 
@@ -15850,7 +15947,7 @@ def create_kms_client_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse:
+) -> RedirectResponse | HTMLResponse | JSONResponse:
     verify_csrf(request, csrf)
     client = KmsClient(
         name=name.strip(),
@@ -15865,9 +15962,21 @@ def create_kms_client_from_ui(
         db.commit()
     except IntegrityError:
         db.rollback()
-        return render(request, "kms.html", {"identity": identity, **kms_context(db), "form_error": f"KMS client {name} already exists."}, status_code=409)
+        detail = f"KMS client {name} already exists."
+        return grid_error_response(
+            request,
+            detail=detail,
+            status_code=409,
+            template_name="kms.html",
+            context={"identity": identity, **kms_context(db), "form_error": detail},
+        )
     record_audit(db, actor=identity.username, action="create_kms_client", resource_type="kms_client", resource_id=str(client.id))
-    return RedirectResponse("/kms", status_code=303)
+    return grid_saved_response(
+        request,
+        redirect_url="/kms",
+        resource_name="client",
+        resource=kms_client_to_dict(client),
+    )
 
 
 @router.post("/kms/clients/{client_id}/edit", response_model=None)
@@ -15883,7 +15992,7 @@ def edit_kms_client_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse:
+) -> RedirectResponse | HTMLResponse | JSONResponse:
     verify_csrf(request, csrf)
     client = db.get(KmsClient, client_id)
     if not client:
@@ -15899,9 +16008,21 @@ def edit_kms_client_from_ui(
         db.commit()
     except IntegrityError:
         db.rollback()
-        return render(request, "kms.html", {"identity": identity, **kms_context(db), "form_error": f"KMS client {name} already exists."}, status_code=409)
+        detail = f"KMS client {name} already exists."
+        return grid_error_response(
+            request,
+            detail=detail,
+            status_code=409,
+            template_name="kms.html",
+            context={"identity": identity, **kms_context(db), "form_error": detail},
+        )
     record_audit(db, actor=identity.username, action="update_kms_client", resource_type="kms_client", resource_id=str(client.id))
-    return RedirectResponse("/kms", status_code=303)
+    return grid_saved_response(
+        request,
+        redirect_url="/kms",
+        resource_name="client",
+        resource=kms_client_to_dict(client),
+    )
 
 
 @router.post("/kms/clients/{client_id}/delete", response_model=None)
@@ -15911,7 +16032,7 @@ def delete_kms_client_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> RedirectResponse | Response:
     verify_csrf(request, csrf)
     client = db.get(KmsClient, client_id)
     if not client:
@@ -15921,6 +16042,8 @@ def delete_kms_client_from_ui(
     db.delete(client)
     db.commit()
     record_audit(db, actor=identity.username, action="delete_kms_client", resource_type="kms_client", resource_id=str(client_id))
+    if grid_request(request):
+        return Response(status_code=204)
     return RedirectResponse("/kms", status_code=303)
 
 
@@ -15939,7 +16062,7 @@ def create_kms_key_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse:
+) -> RedirectResponse | HTMLResponse | JSONResponse:
     verify_csrf(request, csrf)
     key = KmsKey(
         name=name.strip(),
@@ -15957,9 +16080,22 @@ def create_kms_key_from_ui(
         db.commit()
     except IntegrityError:
         db.rollback()
-        return render(request, "kms.html", {"identity": identity, **kms_context(db), "form_error": f"KMS key {name} already exists."}, status_code=409)
+        detail = f"KMS key {name} already exists."
+        return grid_error_response(
+            request,
+            detail=detail,
+            status_code=409,
+            template_name="kms.html",
+            context={"identity": identity, **kms_context(db), "form_error": detail},
+        )
+    db.refresh(key)
     record_audit(db, actor=identity.username, action="create_kms_key", resource_type="kms_key", resource_id=str(key.id))
-    return RedirectResponse("/kms", status_code=303)
+    return grid_saved_response(
+        request,
+        redirect_url="/kms",
+        resource_name="key",
+        resource=kms_key_to_dict(key),
+    )
 
 
 @router.post("/kms/keys/{key_id}/edit", response_model=None)
@@ -15978,7 +16114,7 @@ def edit_kms_key_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse:
+) -> RedirectResponse | HTMLResponse | JSONResponse:
     verify_csrf(request, csrf)
     key = db.get(KmsKey, key_id)
     if not key:
@@ -15997,9 +16133,22 @@ def edit_kms_key_from_ui(
         db.commit()
     except IntegrityError:
         db.rollback()
-        return render(request, "kms.html", {"identity": identity, **kms_context(db), "form_error": f"KMS key {name} already exists."}, status_code=409)
+        detail = f"KMS key {name} already exists."
+        return grid_error_response(
+            request,
+            detail=detail,
+            status_code=409,
+            template_name="kms.html",
+            context={"identity": identity, **kms_context(db), "form_error": detail},
+        )
+    db.refresh(key)
     record_audit(db, actor=identity.username, action="update_kms_key", resource_type="kms_key", resource_id=str(key.id))
-    return RedirectResponse("/kms", status_code=303)
+    return grid_saved_response(
+        request,
+        redirect_url="/kms",
+        resource_name="key",
+        resource=kms_key_to_dict(key),
+    )
 
 
 @router.post("/kms/keys/{key_id}/delete", response_model=None)
@@ -16009,7 +16158,7 @@ def delete_kms_key_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> RedirectResponse | Response:
     verify_csrf(request, csrf)
     key = db.get(KmsKey, key_id)
     if not key:
@@ -16017,6 +16166,8 @@ def delete_kms_key_from_ui(
     db.delete(key)
     db.commit()
     record_audit(db, actor=identity.username, action="delete_kms_key", resource_type="kms_key", resource_id=str(key_id))
+    if grid_request(request):
+        return Response(status_code=204)
     return RedirectResponse("/kms", status_code=303)
 
 
@@ -17461,7 +17612,7 @@ def create_vcf_depot_profile_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> RedirectResponse | JSONResponse:
     verify_csrf(request, csrf)
     automated_install_selected, upgrades_only_selected, patches_only_selected = resolve_vcf_depot_download_mode_flags(
         automated_install, upgrades_only, patches_only
@@ -17490,7 +17641,18 @@ def create_vcf_depot_profile_from_ui(
         db.rollback()
         raise HTTPException(status_code=400, detail="A VCFDT download profile with this name already exists.") from exc
     record_audit(db, actor=identity.username, action="create_vcf_depot_profile", resource_type="vcf_depot_profile", resource_id=str(profile.id))
-    return RedirectResponse("/vcf-offline-depot", status_code=303)
+    db.refresh(profile)
+    secrets = vcf_depot_secret_context(db)
+    return grid_saved_response(
+        request,
+        redirect_url="/vcf-offline-depot",
+        resource_name="profile",
+        resource=vcf_depot_profile_to_dict(
+            profile,
+            download_token_present=bool(secrets["download_token_present"]),
+            activation_code_present=bool(secrets["activation_code_present"]),
+        ),
+    )
 
 
 @router.post("/vcf-offline-depot/profiles/{profile_id}/edit", response_model=None)
@@ -17514,7 +17676,7 @@ def edit_vcf_depot_profile_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> RedirectResponse | JSONResponse:
     verify_csrf(request, csrf)
     automated_install_selected, upgrades_only_selected, patches_only_selected = resolve_vcf_depot_download_mode_flags(
         automated_install, upgrades_only, patches_only
@@ -17544,7 +17706,18 @@ def edit_vcf_depot_profile_from_ui(
         db.rollback()
         raise HTTPException(status_code=400, detail="A VCFDT download profile with this name already exists.") from exc
     record_audit(db, actor=identity.username, action="update_vcf_depot_profile", resource_type="vcf_depot_profile", resource_id=str(profile.id))
-    return RedirectResponse("/vcf-offline-depot", status_code=303)
+    db.refresh(profile)
+    secrets = vcf_depot_secret_context(db)
+    return grid_saved_response(
+        request,
+        redirect_url="/vcf-offline-depot",
+        resource_name="profile",
+        resource=vcf_depot_profile_to_dict(
+            profile,
+            download_token_present=bool(secrets["download_token_present"]),
+            activation_code_present=bool(secrets["activation_code_present"]),
+        ),
+    )
 
 
 @router.post("/vcf-offline-depot/profiles/{profile_id}/download", response_model=None)
@@ -17667,7 +17840,7 @@ def delete_vcf_depot_profile_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> RedirectResponse | Response:
     verify_csrf(request, csrf)
     profile = db.get(VcfDepotDownloadProfile, profile_id)
     if not profile:
@@ -17675,6 +17848,8 @@ def delete_vcf_depot_profile_from_ui(
     db.delete(profile)
     db.commit()
     record_audit(db, actor=identity.username, action="delete_vcf_depot_profile", resource_type="vcf_depot_profile", resource_id=str(profile_id))
+    if grid_request(request):
+        return Response(status_code=204)
     return RedirectResponse("/vcf-offline-depot", status_code=303)
 
 
@@ -17788,7 +17963,7 @@ def create_vcf_registry_bundle_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> RedirectResponse | JSONResponse:
     verify_csrf(request, csrf)
     settings = get_vcf_private_registry_settings_row(db)
     bundle = VcfRegistryBundle(
@@ -17806,7 +17981,13 @@ def create_vcf_registry_bundle_from_ui(
         db.rollback()
         raise HTTPException(status_code=400, detail="A Supervisor Service bundle with this name already exists.") from exc
     record_audit(db, actor=identity.username, action="create_vcf_registry_bundle", resource_type="vcf_registry_bundle", resource_id=str(bundle.id))
-    return RedirectResponse("/vcf-private-registry", status_code=303)
+    db.refresh(bundle)
+    return grid_saved_response(
+        request,
+        redirect_url="/vcf-private-registry",
+        resource_name="bundle",
+        resource=vcf_registry_bundle_to_dict(bundle),
+    )
 
 
 @router.post("/vcf-private-registry/bundles/{bundle_id}/edit", response_model=None)
@@ -17822,7 +18003,7 @@ def edit_vcf_registry_bundle_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> RedirectResponse | JSONResponse:
     verify_csrf(request, csrf)
     settings = get_vcf_private_registry_settings_row(db)
     bundle = db.get(VcfRegistryBundle, bundle_id)
@@ -17841,7 +18022,13 @@ def edit_vcf_registry_bundle_from_ui(
         db.rollback()
         raise HTTPException(status_code=400, detail="A Supervisor Service bundle with this name already exists.") from exc
     record_audit(db, actor=identity.username, action="update_vcf_registry_bundle", resource_type="vcf_registry_bundle", resource_id=str(bundle.id))
-    return RedirectResponse("/vcf-private-registry", status_code=303)
+    db.refresh(bundle)
+    return grid_saved_response(
+        request,
+        redirect_url="/vcf-private-registry",
+        resource_name="bundle",
+        resource=vcf_registry_bundle_to_dict(bundle),
+    )
 
 
 @router.post("/vcf-private-registry/bundles/{bundle_id}/delete", response_model=None)
@@ -17851,7 +18038,7 @@ def delete_vcf_registry_bundle_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> RedirectResponse | Response:
     verify_csrf(request, csrf)
     bundle = db.get(VcfRegistryBundle, bundle_id)
     if not bundle:
@@ -17859,6 +18046,8 @@ def delete_vcf_registry_bundle_from_ui(
     db.delete(bundle)
     db.commit()
     record_audit(db, actor=identity.username, action="delete_vcf_registry_bundle", resource_type="vcf_registry_bundle", resource_id=str(bundle_id))
+    if grid_request(request):
+        return Response(status_code=204)
     return RedirectResponse("/vcf-private-registry", status_code=303)
 
 
@@ -18256,6 +18445,22 @@ def openid_connect(
     )
 
 
+def api_token_grid_row(token: ApiToken) -> dict[str, Any]:
+    active = bool(token.enabled and not token.revoked_at)
+    return {
+        "id": token.id,
+        "name": token.name,
+        "description": token.description or "",
+        "owner_username": token.owner_username,
+        "role": token.role,
+        "scopes": token.scopes,
+        "expires_at": token.expires_at.isoformat(),
+        "expires_label": token.expires_at.strftime("%Y-%m-%d"),
+        "enabled": active,
+        "status": "active" if active else "revoked",
+    }
+
+
 def authentication_context(
     db: Session,
     identity: Identity,
@@ -18273,6 +18478,8 @@ def authentication_context(
     context: dict[str, Any] = {
         "identity": identity,
         "tokens": tokens,
+        "api_token_rows": [api_token_grid_row(token) for token in tokens],
+        "api_token_scope_options": sorted(scopes_for_roles(identity.roles)),
         "raw_token": raw_token,
         "oidc_page": oidc_page,
         "oidc_admin": identity.has_role(Role.ADMIN.value),
@@ -19009,7 +19216,7 @@ def create_token_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> HTMLResponse:
+) -> HTMLResponse | JSONResponse:
     verify_csrf(request, csrf)
     user = db.get(User, identity.user_id)
     if not user:
@@ -19021,6 +19228,17 @@ def create_token_from_ui(
         settings=get_settings(),
         actor=identity.username,
     )
+    if grid_request(request):
+        token = db.get(ApiToken, token_result.token.id)
+        if token is None:
+            raise HTTPException(status_code=500, detail="The created API token could not be loaded.")
+        return grid_saved_response(
+            request,
+            redirect_url="/authentication",
+            resource_name="token",
+            resource=api_token_grid_row(token),
+            extra={"raw_token": token_result.raw_token},
+        )
     return render(
         request,
         "authentication.html",
@@ -19035,7 +19253,7 @@ def revoke_token_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> RedirectResponse | JSONResponse:
     verify_csrf(request, csrf)
     token = db.get(ApiToken, token_id)
     if not token or (not identity.has_role(Role.ADMIN.value) and token.owner_user_id != identity.user_id):
@@ -19045,7 +19263,12 @@ def revoke_token_from_ui(
     token.revoked_by = identity.username
     db.commit()
     record_audit(db, actor=identity.username, action="revoke_api_token", resource_type="api_token", resource_id=str(token.id))
-    return RedirectResponse("/authentication", status_code=303)
+    return grid_saved_response(
+        request,
+        redirect_url="/authentication",
+        resource_name="token",
+        resource=api_token_grid_row(token),
+    )
 
 
 @router.get("/users", response_class=HTMLResponse, response_model=None)

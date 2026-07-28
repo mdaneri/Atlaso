@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "partials/resource_wizard.html" import resource_wizard %}
 {% block page_title %}KMS / KMIP{% endblock %}
 {% block content %}
 <section class="split-workspace">
@@ -27,7 +28,7 @@
         <div class="section-head">
           <div>
             <h2>Managed Keys</h2>
-            <p class="muted">Edit keys directly in the grid. The bottom row stages a new key once required fields are filled.</p>
+            <p class="muted">Browse staged keys here. Use the bottom add row or open a key to review cryptographic policy, ownership, and lifecycle state.</p>
           </div>
           <span class="status-pill muted">{{ kms_keys|length }} keys</span>
         </div>
@@ -220,4 +221,87 @@
     </div>
   </aside>
 </section>
+
+{% set kms_client_steps = [
+  {"id": "identity", "label": "Client", "summary": "Name and certificate subject"},
+  {"id": "access", "label": "Access", "summary": "Role and KMIP operations"},
+  {"id": "state", "label": "State", "summary": "Enablement and notes"},
+  {"id": "review", "label": "Review", "summary": "Confirm desired state"}
+] %}
+{% call resource_wizard(
+  "kms-client-dialog",
+  "kms-client-form",
+  "/kms/clients",
+  kms_client_steps,
+  "Define the KMIP client",
+  "Name the client and bind it to the exact certificate subject used for mutual TLS.",
+  "Create KMIP client"
+) %}
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="record_id" value="">
+  <section data-atlaso-wizard-step="identity">
+    <div class="form-grid">
+      <label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Stable client identity used by KMS desired state and managed certificates.">i</button></span><input name="name" required></label>
+      <label><span class="field-label"><span>Certificate subject</span><button class="help-icon" type="button" data-help="Exact client-certificate subject authorized for this KMIP identity.">i</button></span><input name="certificate_subject" placeholder="CN=client,O=Atlaso" required></label>
+    </div>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="access">
+    <div class="form-grid">
+      <label><span class="field-label"><span>Role</span><button class="help-icon" type="button" data-help="KMIP role used by Atlaso's lab authorization model.">i</button></span><select name="role">{% for role in kms_client_roles %}<option value="{{ role }}">{{ role }}</option>{% endfor %}</select></label>
+      <label><span class="field-label"><span>Allowed operations</span><button class="help-icon" type="button" data-help="Comma-separated KMIP operations permitted for this certificate subject.">i</button></span><input name="allowed_operations" required></label>
+    </div>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="state">
+    <label class="switch-field"><span class="field-label"><span>Client enabled</span><button class="help-icon" type="button" data-help="Enabled clients enter rendered KMIP desired state after validation.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
+    <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Operator note describing the workload that owns this client.">i</button></span><input name="description"></label>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="review">
+    <div class="settings-list" data-atlaso-resource-review></div>
+    <div class="alert warning">Saving changes KMS desired state. Client certificate issuance and PyKMIP enforcement remain controlled by global appliance apply.</div>
+  </section>
+{% endcall %}
+
+{% set kms_key_steps = [
+  {"id": "identity", "label": "Key", "summary": "Name and algorithm"},
+  {"id": "policy", "label": "Policy", "summary": "Usage, ownership, and export"},
+  {"id": "state", "label": "State", "summary": "Lifecycle and enablement"},
+  {"id": "review", "label": "Review", "summary": "Confirm desired state"}
+] %}
+{% call resource_wizard(
+  "kms-key-dialog",
+  "kms-key-form",
+  "/kms/keys",
+  kms_key_steps,
+  "Define the KMS key",
+  "Name the staged key and choose its algorithm and length.",
+  "Create KMS key"
+) %}
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="record_id" value="">
+  <section data-atlaso-wizard-step="identity">
+    <div class="form-grid">
+      <label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Stable operator-visible key name in KMS desired state.">i</button></span><input name="name" required></label>
+      <label><span class="field-label"><span>Algorithm</span><button class="help-icon" type="button" data-help="Cryptographic algorithm represented by this staged key.">i</button></span><select name="algorithm">{% for algorithm in kms_key_algorithms %}<option value="{{ algorithm }}">{{ algorithm }}</option>{% endfor %}</select></label>
+      <label><span class="field-label"><span>Length</span><button class="help-icon" type="button" data-help="Key length in bits, validated against the selected algorithm by the KMS service.">i</button></span><input type="number" name="length" min="1" required></label>
+    </div>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="policy">
+    <div class="form-grid">
+      <label><span class="field-label"><span>Usage</span><button class="help-icon" type="button" data-help="Comma-separated cryptographic operations associated with this key.">i</button></span><input name="usage" required></label>
+      <label><span class="field-label"><span>Owner client</span><button class="help-icon" type="button" data-help="Optional enabled KMIP client that owns the staged key.">i</button></span><select name="owner_client_id"><option value="">Unassigned</option>{% for client in kms_clients if client.enabled %}<option value="{{ client.id }}">{{ client.name }}</option>{% endfor %}</select></label>
+      <label class="switch-field"><span class="field-label"><span>Exportable</span><button class="help-icon" type="button" data-help="Marks whether the lab key may be exported through compatible KMIP operations.">i</button></span><input class="switch-input" type="checkbox" name="exportable"><span class="switch-track" aria-hidden="true"></span></label>
+    </div>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="state">
+    <div class="form-grid">
+      <label><span class="field-label"><span>Lifecycle state</span><button class="help-icon" type="button" data-help="Desired KMIP lifecycle state for the staged key.">i</button></span><select name="state">{% for state in kms_key_states %}<option value="{{ state }}">{{ state }}</option>{% endfor %}</select></label>
+      <label class="switch-field"><span class="field-label"><span>Key enabled</span><button class="help-icon" type="button" data-help="Enabled keys enter rendered KMS desired state after validation.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
+    </div>
+    <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Operator note describing the key purpose.">i</button></span><input name="description"></label>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="review">
+    <div class="settings-list" data-atlaso-resource-review></div>
+    <div class="alert warning">Saving stages key desired state only. PyKMIP mutation remains controlled by the global KMS appliance-apply unit.</div>
+  </section>
+{% endcall %}
 {% endblock %}

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "partials/resource_wizard.html" import resource_wizard %}
 {% block page_title %}DHCP{% endblock %}
 {% block content %}
 <section class="split-workspace">
@@ -23,7 +24,7 @@
     <div class="section-head">
       <div>
         <h2>Managed IP Zones</h2>
-        <p class="muted">Edit zones directly in the grid. The bottom row creates a new zone once required fields are filled.</p>
+        <p class="muted">Browse zones in the grid. Open a row to change its network, lease, and service settings through the guided workflow.</p>
       </div>
       <span class="status-pill muted">{{ dhcp_scopes|length }} zones</span>
     </div>
@@ -373,4 +374,52 @@
     </div>
   </aside>
 </section>
+
+{% set dhcp_scope_steps = [
+  {"id": "identity", "label": "Zone", "summary": "Name, family, and interface"},
+  {"id": "network", "label": "Network", "summary": "Gateway, prefix, and range"},
+  {"id": "services", "label": "Services", "summary": "Lease, DNS, NTP, and domain"},
+  {"id": "review", "label": "Review", "summary": "Confirm desired state"}
+] %}
+{% call resource_wizard(
+  "dhcp-scope-dialog",
+  "dhcp-scope-form",
+  "/dhcp/scopes",
+  dhcp_scope_steps,
+  "Define the DHCP IP zone",
+  "Name the IP zone and bind its address family and interface.",
+  "Create IP zone"
+) %}
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="record_id" value="">
+  <section data-atlaso-wizard-step="identity">
+    <div class="form-grid">
+      <label><span class="field-label"><span>Zone name</span><button class="help-icon" type="button" data-help="Stable name used by DHCP options, reservations, and PXE settings.">i</button></span><input name="name" required></label>
+      <label><span class="field-label"><span>Address family</span><button class="help-icon" type="button" data-help="IPv4 or IPv6 cannot be changed after the IP zone is created.">i</button></span><select name="address_family"><option value="ipv4">IPv4</option><option value="ipv6">IPv6</option></select></label>
+      <label><span class="field-label"><span>Interface</span><button class="help-icon" type="button" data-help="Access-mode physical interface or VLAN that serves this lease pool.">i</button></span><select name="interface_name">{% for interface in available_interfaces %}<option value="{{ interface.name }}">{{ interface.name }}</option>{% endfor %}</select></label>
+    </div>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="network">
+    <div class="form-grid">
+      <label><span class="field-label"><span>Gateway</span><button class="help-icon" type="button" data-help="Router address advertised to clients and used to derive interface defaults.">i</button></span><input name="site_address" required></label>
+      <label><span class="field-label"><span>Prefix length</span><button class="help-icon" type="button" data-help="CIDR prefix length for the selected address family.">i</button></span><input type="number" name="prefix_length" min="0" max="128" required></label>
+      <label><span class="field-label"><span>Lease range</span><button class="help-icon" type="button" data-help="dnsmasq-compatible start and end address expression for this zone.">i</button></span><input name="range_expression" required></label>
+    </div>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="services">
+    <div class="form-grid">
+      <label><span class="field-label"><span>Lease time</span><button class="help-icon" type="button" data-help="dnsmasq lease duration such as 12h.">i</button></span><input name="lease_time" required></label>
+      <label><span class="field-label"><span>Domain</span><button class="help-icon" type="button" data-help="DNS suffix advertised to clients in this IP zone.">i</button></span><input name="domain_name" list="dhcp-zone-domain-options" required></label>
+      <label><span class="field-label"><span>DNS server</span><button class="help-icon" type="button" data-help="Resolver address advertised to clients.">i</button></span><input name="dns_server"></label>
+      <label><span class="field-label"><span>NTP server</span><button class="help-icon" type="button" data-help="Optional time-server address advertised to clients.">i</button></span><input name="ntp_server"></label>
+    </div>
+    <datalist id="dhcp-zone-domain-options">{% for domain in dns_domain_options %}<option value="{{ domain }}"></option>{% endfor %}</datalist>
+    <label class="switch-field"><span class="field-label"><span>Zone enabled</span><button class="help-icon" type="button" data-help="Enabled zones enter rendered dnsmasq desired state after validation.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
+    <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Optional operator note describing this lease pool.">i</button></span><input name="description"></label>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="review">
+    <div class="settings-list" data-atlaso-resource-review></div>
+    <div class="alert warning">Saving changes DHCP desired state only. dnsmasq changes remain controlled by global appliance apply.</div>
+  </section>
+{% endcall %}
 {% endblock %}

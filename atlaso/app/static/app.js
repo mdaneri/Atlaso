@@ -1096,6 +1096,254 @@ function showTransientGridStatus(message) {
   }, 1400);
 }
 
+async function atlasoGridWizardRequest(url, formData, { expectJson = true } = {}) {
+  const response = await fetch(url, {
+    method: "POST",
+    body: formData,
+    credentials: "same-origin",
+    headers: { "X-Atlaso-Grid": "1" },
+  });
+  const responseText = await response.text();
+  if (!response.ok) {
+    let detail = "";
+    try {
+      const payload = JSON.parse(responseText);
+      detail = payload.detail || payload.message || "";
+    } catch (_error) {
+      detail = responseText.trim().replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    }
+    throw new Error(detail || "The resource could not be saved.");
+  }
+  return expectJson && responseText ? JSON.parse(responseText) : null;
+}
+
+function populateAtlasoWizardForm(form, data = {}, { recordField = "record_id", defaults = {} } = {}) {
+  const values = { ...defaults, ...(data || {}) };
+  const recordControl = form.elements.namedItem(recordField);
+  if (recordControl) {
+    recordControl.value = data?.is_new ? "" : (data?.id ?? "");
+  }
+  const names = new Set(
+    [...form.elements]
+      .map((control) => control.name)
+      .filter((name) => name && name !== "csrf" && name !== recordField),
+  );
+  names.forEach((name) => {
+    const controls = [...form.querySelectorAll(`[name="${CSS.escape(name)}"]`)];
+    const value = values[name];
+    if (!controls.length) return;
+    if (controls[0].type === "radio") {
+      controls.forEach((control) => {
+        control.checked = String(control.value) === String(value ?? "");
+      });
+      return;
+    }
+    if (controls[0].type === "checkbox") {
+      if (controls.length === 1) {
+        controls[0].checked = Boolean(value);
+        return;
+      }
+      const selected = new Set(
+        Array.isArray(value)
+          ? value.map(String)
+          : String(value || "").split(/[\s,\n]+/).filter(Boolean),
+      );
+      controls.forEach((control) => {
+        control.checked = selected.has(String(control.value));
+      });
+      return;
+    }
+    controls[0].value = Array.isArray(value) ? value.join("\n") : (value ?? "");
+  });
+}
+
+function atlasoWizardReviewValue(form, item) {
+  if (typeof item.value === "function") {
+    return item.value(form);
+  }
+  const controls = [...form.querySelectorAll(`[name="${CSS.escape(item.field)}"]`)];
+  if (!controls.length) return "";
+  if (controls[0].type === "checkbox") {
+    if (controls.length === 1) return controls[0].checked ? "Enabled" : "Disabled";
+    return controls.filter((control) => control.checked).map((control) => control.value).join(", ");
+  }
+  if (controls[0].type === "radio") {
+    return controls.find((control) => control.checked)?.value || "";
+  }
+  if (controls[0] instanceof HTMLSelectElement) {
+    return controls[0].selectedOptions[0]?.textContent?.trim() || "";
+  }
+  return controls[0].value.trim() || "Not set";
+}
+
+function renderAtlasoWizardReview(form, reviewItems = []) {
+  const review = form.querySelector("[data-atlaso-resource-review]");
+  if (!(review instanceof HTMLElement)) return;
+  review.innerHTML = reviewItems.map((item) => (
+    `<div><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(atlasoWizardReviewValue(form, item))}</strong></div>`
+  )).join("");
+}
+
+function validateAtlasoWizardStep({ form, step }) {
+  const page = form.querySelector(`[data-atlaso-wizard-step="${CSS.escape(step.id)}"]`);
+  if (!(page instanceof HTMLElement)) return { valid: true };
+  const invalid = [...page.querySelectorAll("input, select, textarea")]
+    .find((control) => !control.disabled && typeof control.checkValidity === "function" && !control.checkValidity());
+  if (!invalid) return { valid: true };
+  invalid.reportValidity?.();
+  return {
+    valid: false,
+    field: invalid.name || undefined,
+    message: "Complete the required fields in this step before continuing.",
+  };
+}
+
+function initializeAtlasoResourceWizard(config) {
+  const element = document.getElementById(config.elementId);
+  const form = document.querySelector(config.formSelector);
+  const dialog = document.getElementById(config.dialogId);
+  if (!(element instanceof HTMLElement) || !(form instanceof HTMLFormElement) || !(dialog instanceof HTMLDialogElement)) {
+    return null;
+  }
+  const csrf = element.dataset.csrf || form.elements.namedItem("csrf")?.value || "";
+  let table = null;
+  let wizard = null;
+  const rows = [...config.rows, config.newRow];
+  const reportActionError = (error) => {
+    const message = error instanceof Error ? error.message : String(error || "The resource action failed.");
+    const status = config.actionErrorSelector
+      ? document.querySelector(config.actionErrorSelector)
+      : null;
+    if (status instanceof HTMLElement) {
+      status.textContent = message;
+      status.classList.add("error");
+      status.classList.remove("hidden");
+      status.setAttribute("role", "alert");
+      return;
+    }
+    showTransientGridStatus(message);
+  };
+  const wrapRowAction = (action) => ({
+    ...action,
+    ...(typeof action.action === "function"
+      ? {
+        action: (event, row) => Promise.resolve()
+          .then(() => action.action(event, row))
+          .catch(reportActionError),
+      }
+      : {}),
+    ...(Array.isArray(action.menu) ? { menu: action.menu.map(wrapRowAction) } : {}),
+  });
+
+  const canEdit = (data) => !data.is_new && (typeof config.canEdit !== "function" || config.canEdit(data));
+  const canDelete = (data) => !data.is_new && Boolean(config.deleteResource)
+    && (typeof config.canDelete !== "function" || config.canDelete(data));
+  const openResource = (data, launcher) => {
+    if (!data?.is_new && !canEdit(data)) return;
+    wizard?.open({ launcher, context: data?.is_new ? null : data });
+  };
+  const deleteResource = async (row) => {
+    const data = row.getData();
+    const confirmation = config.deleteConfirmation(data);
+    const confirmed = await requestConfirmation(confirmation);
+    if (!confirmed) return;
+    const body = new FormData();
+    body.set("csrf", csrf);
+    await atlasoGridWizardRequest(config.deleteUrl(data.id), body, { expectJson: false });
+    await row.delete();
+    config.onDeleted?.({ data, table });
+    showTransientGridStatus("Deleted");
+  };
+  const rowActions = [];
+  if (config.editResource !== false) {
+    rowActions.push({
+      label: config.editLabel || "Edit",
+      disabled: (row) => !canEdit(row.getData()),
+      action: (_event, row) => openResource(row.getData(), row.getElement()),
+    });
+  }
+  rowActions.push(...(config.extraActions || []).map(wrapRowAction));
+  if (config.deleteResource) {
+    rowActions.push({
+      label: config.deleteLabel || "Delete",
+      disabled: (row) => !canDelete(row.getData()),
+      action: (_event, row) => deleteResource(row).catch(reportActionError),
+    });
+  }
+  const options = {
+    ...config.options,
+    data: rows,
+    index: "id",
+    rowDblClick: (_event, row) => openResource(row.getData(), row.getElement()),
+  };
+  const grid = window.AtlasoUiPatterns.createGrid({
+    element,
+    fallback: `#${element.dataset.fallbackId}`,
+    status: config.statusSelector,
+    pattern: "wizard-backed",
+    emptyMessage: config.emptyMessage,
+    onOpenRow: (data, row, event) => openResource(data, event?.currentTarget || row?.getElement?.()),
+    rowActions,
+    options,
+  });
+  table = grid.table;
+  if (!table) {
+    grid.setError(config.gridError || "Resource changes are unavailable because the interactive grid could not initialize.");
+    return { grid, table: null, wizard: null };
+  }
+  element.atlasoTabulator = table;
+
+  wizard = window.AtlasoUiPatterns.createWizard({
+    form,
+    dialog,
+    steps: config.steps,
+    discardTitle: config.discardTitle,
+    discardMessage: config.discardMessage,
+    onOpen: ({ context }) => {
+      populateAtlasoWizardForm(form, context || {}, {
+        recordField: config.recordField || "record_id",
+        defaults: config.defaults || {},
+      });
+      const submit = form.querySelector("[data-atlaso-wizard-submit]");
+      if (submit) submit.textContent = context ? config.updateLabel : config.createLabel;
+      config.onOpen?.({ form, context });
+    },
+    validateStep: async (state) => {
+      const requiredFields = validateAtlasoWizardStep(state);
+      if (!requiredFields.valid || typeof config.validateStep !== "function") return requiredFields;
+      return config.validateStep(state);
+    },
+    onStepChange: (state) => config.onStepChange?.(state),
+    prepareReview: () => {
+      renderAtlasoWizardReview(form, config.reviewItems);
+      config.prepareReview?.({ form });
+    },
+    onSubmit: async () => {
+      const body = new FormData(form);
+      config.prepareFormData?.({ body, form });
+      const recordId = body.get(config.recordField || "record_id");
+      const url = recordId ? config.editUrl(recordId) : config.createUrl;
+      const payload = await atlasoGridWizardRequest(url, body);
+      const resource = config.normalizeResource?.(payload[config.resourceName], payload) || payload[config.resourceName];
+      if (!resource) throw new Error("The server did not return the saved resource.");
+      if (recordId) {
+        const existingRow = table.getRow(recordId) || table.getRow(Number(recordId));
+        await existingRow?.update(resource);
+      } else {
+        await table.addRow(resource, false, config.newRow.id);
+      }
+      config.onSaved?.({ payload, resource, form, table });
+      showTransientGridStatus(recordId ? "Updated" : "Created");
+      return { valid: true };
+    },
+  });
+  element.addEventListener("click", (event) => {
+    const launcher = event.target.closest("[data-atlaso-wizard-add]");
+    if (launcher instanceof HTMLButtonElement) openResource(config.newRow, launcher);
+  });
+  return { grid, table, wizard };
+}
+
 function selectElementText(element) {
   const selection = window.getSelection();
   if (!selection || !(element instanceof HTMLElement)) {
@@ -2500,278 +2748,196 @@ async function copyCaCertificateFingerprint(row) {
 }
 
 function initializeCaProfilesTable() {
-  const tableElement = document.getElementById("ca-profiles-table");
-  if (!(tableElement instanceof HTMLElement)) {
-    return;
-  }
-  const fallback = document.getElementById(tableElement.dataset.fallbackId || "");
-  if (typeof Tabulator === "undefined") {
-    showCaMessage("ca-profile-error", "Tabulator did not load. Showing the fallback table.");
-    return;
-  }
-  const csrf = tableElement.dataset.csrf || "";
-  const rows = [...JSON.parse(tableElement.dataset.profiles || "[]"), newCaProfileRow()];
-  try {
-    const atlasoGridOptions2 = {
-      data: rows,
-      index: "id",
-      layout: "fitColumns",
+  const element = document.getElementById("ca-profiles-table");
+  if (!(element instanceof HTMLElement)) return;
+  initializeAtlasoResourceWizard({
+    elementId: "ca-profiles-table",
+    formSelector: "[data-ca-profile-form]",
+    dialogId: "ca-profile-dialog",
+    rows: JSON.parse(element.dataset.profiles || "[]"),
+    newRow: newCaProfileRow(),
+    resourceName: "profile",
+    createUrl: "/certificate-authority/profiles",
+    editUrl: (id) => `/certificate-authority/profiles/${id}/edit`,
+    deleteResource: true,
+    deleteUrl: (id) => `/certificate-authority/profiles/${id}/delete`,
+    editLabel: "Edit profile",
+    deleteLabel: "Delete profile",
+    createLabel: "Create profile",
+    updateLabel: "Update profile",
+    emptyMessage: "No CA profiles configured.",
+    actionErrorSelector: "#ca-profile-error",
+    defaults: newCaProfileRow(),
+    steps: [
+      { id: "identity", title: "Define the certificate profile", description: "Name the reusable certificate policy and choose its certificate type." },
+      { id: "policy", title: "Set certificate policy", description: "Choose validity, key generation, usages, and SAN requirements." },
+      { id: "state", title: "Choose profile state", description: "Make the profile available to requests and record its operator purpose." },
+      { id: "review", title: "Review CA desired state", description: "Confirm the profile and global appliance-apply boundary." },
+    ],
+    reviewItems: [
+      { label: "Profile", field: "name" },
+      { label: "Certificate type", field: "certificate_type" },
+      { label: "Validity", value: (form) => `${form.elements.validity_days.value} days` },
+      { label: "Key", value: (form) => `${form.elements.key_algorithm.value} ${form.elements.key_size.value}` },
+      { label: "SAN required", field: "san_required" },
+      { label: "State", field: "enabled" },
+    ],
+    deleteConfirmation: (data) => ({
+      title: `Delete ${data.name} profile?`,
+      message: "This removes the CA profile from Atlaso desired state and unassigns requests using it. It will not touch the appliance until global appliance apply runs.",
+      confirmLabel: "Delete profile",
+      tone: "danger",
+    }),
+    onSaved: ({ resource }) => {
+      const select = document.querySelector("[data-ca-certificate-form] select[name='profile_id']");
+      if (!(select instanceof HTMLSelectElement)) return;
+      let option = [...select.options].find((item) => item.value === String(resource.id));
+      if (!resource.enabled) {
+        option?.remove();
+        return;
+      }
+      if (!option) {
+        option = document.createElement("option");
+        option.value = String(resource.id);
+        select.append(option);
+      }
+      option.textContent = resource.name;
+      option.dataset.sanRequired = String(Boolean(resource.san_required));
+    },
+    onDeleted: ({ data }) => {
+      const select = document.querySelector("[data-ca-certificate-form] select[name='profile_id']");
+      if (select instanceof HTMLSelectElement) {
+        [...select.options].find((option) => option.value === String(data.id))?.remove();
+      }
+    },
+    options: {
       height: "360px",
       rowHeight: 28,
       placeholder: "No CA profiles configured.",
-      reactiveData: false,
-      rowContextMenu: [
-        {
-          label: "Delete profile",
-          action: (event, row) => deleteCaProfileFromMenu(row, csrf),
-        },
-      ],
-      columns: lockNewRecordColumns([
+      columns: [
         {
           title: "Name",
           field: "name",
-          editor: "input",
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "+ Add profile here"),
           minWidth: 170,
-          cellEdited: (cell) => autoSaveCaProfile(cell, csrf),
+          formatter: (cell) => cell.getRow().getData().is_new
+            ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add profile here</button>'
+            : escapeHtml(cell.getValue()),
         },
-        {
-          title: "Type",
-          field: "certificate_type",
-          editor: "list",
-          editorParams: { values: { server: "server", client: "client", user: "user", intermediate: "intermediate" } },
-          width: 130,
-          cellEdited: (cell) => autoSaveCaProfile(cell, csrf),
-        },
-        {
-          title: "Validity",
-          field: "validity_days",
-          editor: "number",
-          width: 100,
-          cellEdited: (cell) => autoSaveCaProfile(cell, csrf),
-        },
-        {
-          title: "Key",
-          field: "key_algorithm",
-          editor: "list",
-          editorParams: { values: { RSA: "RSA", ECDSA: "ECDSA" } },
-          width: 90,
-          cellEdited: (cell) => autoSaveCaProfile(cell, csrf),
-        },
-        {
-          title: "Size",
-          field: "key_size",
-          editor: "number",
-          width: 90,
-          cellEdited: (cell) => autoSaveCaProfile(cell, csrf),
-        },
-        {
-          title: "EKU",
-          field: "extended_key_usage",
-          editor: "input",
-          minWidth: 160,
-          cellEdited: (cell) => autoSaveCaProfile(cell, csrf),
-        },
-        {
-          title: "SAN",
-          field: "san_required",
-          formatter: atlasoBooleanFormatter,
-          editor: "tickCross",
-          hozAlign: "center",
-          width: 80,
-          headerSort: false,
-          cellEdited: (cell) => autoSaveCaProfile(cell, csrf),
-        },
-        {
-          title: "Enabled",
-          field: "enabled",
-          formatter: atlasoBooleanFormatter,
-          editor: "tickCross",
-          hozAlign: "center",
-          width: 100,
-          headerSort: false,
-          cellEdited: (cell) => autoSaveCaProfile(cell, csrf),
-        },
-        {
-          title: "Description",
-          field: "description",
-          editor: "input",
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "optional note..."),
-          minWidth: 220,
-          cellEdited: (cell) => autoSaveCaProfile(cell, csrf),
-        },
-      ], "name"),
-      rowFormatter: (row) => {
-        markNewRecordRow(row, "name");
-      },
-    };
-    window.AtlasoUiPatterns.createGrid({
-      element: tableElement,
-      pattern: "direct-edit",
-      options: atlasoGridOptions2,
-    }).table;
-  } catch (error) {
-    showCaMessage("ca-profile-error", error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
-  }
+        { title: "Type", field: "certificate_type", width: 130 },
+        { title: "Validity", field: "validity_days", width: 100, formatter: (cell) => cell.getRow().getData().is_new ? "" : `${escapeHtml(cell.getValue())} days` },
+        { title: "Key", field: "key_algorithm", width: 110, formatter: (cell) => cell.getRow().getData().is_new ? "" : `${escapeHtml(cell.getValue())} ${escapeHtml(cell.getRow().getData().key_size)}` },
+        { title: "EKU", field: "extended_key_usage", minWidth: 160 },
+        { title: "SAN", field: "san_required", formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell), hozAlign: "center", width: 80, headerSort: false },
+        { title: "Enabled", field: "enabled", formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell), hozAlign: "center", width: 100, headerSort: false },
+        { title: "Description", field: "description", minWidth: 220 },
+      ],
+      rowFormatter: (row) => markNewRecordRow(row, "name"),
+    },
+  });
 }
 
 function initializeCaCertificatesTable() {
-  const tableElement = document.getElementById("ca-certificates-table");
-  if (!(tableElement instanceof HTMLElement)) {
-    return;
-  }
-  const fallback = document.getElementById(tableElement.dataset.fallbackId || "");
-  if (typeof Tabulator === "undefined") {
-    showCaMessage("ca-certificate-error", "Tabulator did not load. Showing the fallback table.");
-    return;
-  }
-  const csrf = tableElement.dataset.csrf || "";
-  const profileOptions = JSON.parse(tableElement.dataset.profileOptions || "[]");
-  const profileValues = Object.fromEntries(profileOptions.map((item) => [item.id, item.label]));
+  const element = document.getElementById("ca-certificates-table");
+  if (!(element instanceof HTMLElement)) return;
+  const profileOptions = JSON.parse(element.dataset.profileOptions || "[]");
   const defaultProfileId = profileOptions[0]?.id || "";
-  const rows = [...JSON.parse(tableElement.dataset.certificates || "[]"), newCaCertificateRow(defaultProfileId)];
-  try {
-    const atlasoGridOptions3 = {
-      data: rows,
-      index: "id",
-      layout: "fitColumns",
+  initializeAtlasoResourceWizard({
+    elementId: "ca-certificates-table",
+    formSelector: "[data-ca-certificate-form]",
+    dialogId: "ca-certificate-dialog",
+    rows: JSON.parse(element.dataset.certificates || "[]"),
+    newRow: newCaCertificateRow(defaultProfileId),
+    resourceName: "certificate",
+    createUrl: "/certificate-authority/certificates",
+    editUrl: (id) => `/certificate-authority/certificates/${id}/edit`,
+    deleteResource: true,
+    deleteUrl: (id) => `/certificate-authority/certificates/${id}/delete`,
+    canEdit: (data) => Boolean(data.can_edit),
+    canDelete: (data) => Boolean(data.can_delete),
+    editLabel: "Edit request",
+    deleteLabel: "Delete request",
+    createLabel: "Create certificate request",
+    updateLabel: "Update certificate request",
+    emptyMessage: "No certificate requests configured.",
+    actionErrorSelector: "#ca-certificate-error",
+    defaults: newCaCertificateRow(defaultProfileId),
+    steps: [
+      { id: "identity", title: "Define the certificate request", description: "Choose the common name and enabled certificate profile." },
+      { id: "names", title: "Register certificate names", description: "Enter every DNS name and IP address clients will use." },
+      { id: "state", title: "Choose request state", description: "Enable the request and record its operator purpose." },
+      { id: "review", title: "Review certificate desired state", description: "Confirm the request and global appliance-apply boundary." },
+    ],
+    validateStep: ({ form, step }) => {
+      if (step.id !== "names") return { valid: true };
+      const profile = form.elements.profile_id;
+      const requiresSan = profile instanceof HTMLSelectElement
+        && profile.selectedOptions[0]?.dataset.sanRequired === "true";
+      if (requiresSan && !form.elements.subject_alt_names.value.trim() && !form.elements.ip_addresses.value.trim()) {
+        return {
+          valid: false,
+          field: "subject_alt_names",
+          message: "The selected profile requires at least one DNS name or IP SAN.",
+        };
+      }
+      return { valid: true };
+    },
+    reviewItems: [
+      { label: "Common name", field: "common_name" },
+      { label: "Profile", field: "profile_id" },
+      { label: "DNS SANs", field: "subject_alt_names" },
+      { label: "IP SANs", field: "ip_addresses" },
+      { label: "State", field: "enabled" },
+    ],
+    deleteConfirmation: (data) => ({
+      title: `Delete ${data.common_name} certificate request?`,
+      message: "This removes the certificate request from Atlaso desired state. It will not touch the appliance until global appliance apply runs.",
+      confirmLabel: "Delete request",
+      tone: "danger",
+    }),
+    extraActions: [
+      {
+        label: "Copy fingerprint",
+        disabled: (row) => !row.getData().fingerprint,
+        action: (_event, row) => copyCaCertificateFingerprint(row),
+      },
+      {
+        label: "Export",
+        disabled: (row) => {
+          const data = row.getData();
+          return !data.can_export_certificate && !data.can_export_chain && !data.can_export_private_key;
+        },
+        menu: [
+          { label: "Certificate", disabled: (row) => !row.getData().can_export_certificate, action: (_event, row) => downloadCaCertificateArtifact(row, "certificate.pem") },
+          { label: "Certificate chain", disabled: (row) => !row.getData().can_export_chain, action: (_event, row) => downloadCaCertificateArtifact(row, "chain.pem") },
+          { label: "Private key", disabled: (row) => !row.getData().can_export_private_key, action: (_event, row) => downloadCaCertificateArtifact(row, "private-key.pem") },
+        ],
+      },
+    ],
+    options: {
       height: "420px",
       rowHeight: 28,
       placeholder: "No certificate requests configured.",
-      reactiveData: false,
-      rowContextMenu: [
-        {
-          label: "Edit request",
-          disabled: (component) => !component.getData().can_edit,
-          action: (_event, row) => openCaCertificateModal(row.getData()),
-        },
-        {
-          label: "Copy fingerprint",
-          disabled: (component) => !component.getData().fingerprint,
-          action: (_event, row) => copyCaCertificateFingerprint(row),
-        },
-        {
-          label: "Export",
-          disabled: (component) => {
-            const data = component.getData();
-            return !data.can_export_certificate && !data.can_export_chain && !data.can_export_private_key;
-          },
-          menu: [
-            {
-              label: "Certificate",
-              disabled: (component) => !component.getData().can_export_certificate,
-              action: (_event, row) => downloadCaCertificateArtifact(row, "certificate.pem"),
-            },
-            {
-              label: "Certificate chain",
-              disabled: (component) => !component.getData().can_export_chain,
-              action: (_event, row) => downloadCaCertificateArtifact(row, "chain.pem"),
-            },
-            {
-              label: "Private key",
-              disabled: (component) => !component.getData().can_export_private_key,
-              action: (_event, row) => downloadCaCertificateArtifact(row, "private-key.pem"),
-            },
-          ],
-        },
-        {
-          label: "Delete request",
-          disabled: (component) => !component.getData().can_delete,
-          action: (event, row) => deleteCaCertificateFromMenu(row, csrf),
-        },
-      ],
       columns: [
         {
           title: "Common name",
           field: "common_name",
-          editable: false,
-          formatter: (cell) => {
-            const data = cell.getRow().getData();
-            if (data.is_new) {
-              return '<button class="add-row-button" type="button">+ Add certificate here</button>';
-            }
-            return escapeHtml(cell.getValue());
-          },
-          cellClick: (_event, cell) => {
-            if (cell.getRow().getData().is_new) {
-              openCaCertificateModal();
-            }
-          },
           minWidth: 210,
+          formatter: (cell) => cell.getRow().getData().is_new
+            ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add certificate here</button>'
+            : escapeHtml(cell.getValue()),
         },
-        {
-          title: "Owner",
-          field: "managed_owner",
-          editable: false,
-          formatter: (cell) => cell.getValue() || "manual",
-          minWidth: 150,
-          headerSort: true,
-        },
-        {
-          title: "Profile",
-          field: "profile_id",
-          editable: false,
-          formatter: (cell) => profileValues[cell.getValue()] || "Unassigned",
-          minWidth: 160,
-        },
-        {
-          title: "DNS SANs",
-          field: "subject_alt_names",
-          editable: false,
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "DNS names..."),
-          minWidth: 220,
-        },
-        {
-          title: "IP SANs",
-          field: "ip_addresses",
-          editable: false,
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "IP addresses..."),
-          minWidth: 170,
-        },
-        {
-          title: "Status",
-          field: "status",
-          editable: false,
-          width: 80,
-        },
-        {
-          title: "Enabled",
-          field: "enabled",
-          formatter: atlasoBooleanFormatter,
-          editable: false,
-          hozAlign: "center",
-          width: 100,
-          headerSort: false,
-        },
-        {
-          title: "Fingerprint",
-          field: "fingerprint",
-          editable: false,
-          formatter: (cell) => escapeHtml(cell.getValue() || ""),
-          cssClass: "mono-text",
-          width: 480,
-          headerSort: false,
-        },
-        {
-          title: "Description",
-          field: "description",
-          editable: false,
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "optional note..."),
-          minWidth: 220,
-        },
+        { title: "Owner", field: "managed_owner", formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || "manual"), minWidth: 150 },
+        { title: "Profile", field: "profile_name", formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || "Unassigned"), minWidth: 160 },
+        { title: "DNS SANs", field: "subject_alt_names", minWidth: 220 },
+        { title: "IP SANs", field: "ip_addresses", minWidth: 170 },
+        { title: "Status", field: "status", width: 100 },
+        { title: "Enabled", field: "enabled", formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell), hozAlign: "center", width: 100, headerSort: false },
+        { title: "Fingerprint", field: "fingerprint", formatter: (cell) => escapeHtml(cell.getValue() || ""), cssClass: "mono-text", width: 480, headerSort: false },
+        { title: "Description", field: "description", minWidth: 220 },
       ],
-      rowFormatter: (row) => {
-        markNewRecordRow(row, "common_name");
-      },
-    };
-    window.AtlasoUiPatterns.createGrid({
-      element: tableElement,
-      pattern: "read-only",
-      options: atlasoGridOptions3,
-    }).table;
-  } catch (error) {
-    showCaMessage("ca-certificate-error", error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
-  }
+      rowFormatter: (row) => markNewRecordRow(row, "common_name"),
+    },
+  });
 }
 
 async function postKmsAction(url, data, csrf, options = {}) {
@@ -2971,123 +3137,80 @@ async function deleteFirewallRuleFromMenu(row, csrf) {
 }
 
 function initializeFirewallRulesTable() {
-  const tableElement = document.getElementById("firewall-rules-table");
-  if (!(tableElement instanceof HTMLElement)) {
-    return;
-  }
-  const fallback = document.getElementById(tableElement.dataset.fallbackId || "");
-  if (typeof Tabulator === "undefined") {
-    showCaMessage("firewall-rule-error", "Tabulator did not load. Showing the fallback table.");
-    return;
-  }
-  const csrf = tableElement.dataset.csrf || "";
-  const directions = roleValues(JSON.parse(tableElement.dataset.directions || "[]"));
-  const actions = roleValues(JSON.parse(tableElement.dataset.actions || "[]"));
-  const protocols = roleValues(JSON.parse(tableElement.dataset.protocols || "[]"));
-  const interfaces = JSON.parse(tableElement.dataset.interfaces || "[]");
-  const groups = JSON.parse(tableElement.dataset.groups || "[]");
-  const interfaceOptions = Object.fromEntries(["", ...interfaces].map((item) => [item, item || "any"]));
-  const groupOptions = firewallGroupOptions(groups);
+  const element = document.getElementById("firewall-rules-table");
+  if (!(element instanceof HTMLElement)) return;
+  const interfaces = JSON.parse(element.dataset.interfaces || "[]");
+  const groupOptions = firewallGroupOptions(JSON.parse(element.dataset.groups || "[]"));
   const groupValueFormatter = firewallGroupFormatter(groupOptions);
-  const rows = [...JSON.parse(tableElement.dataset.rules || "[]"), newFirewallRuleRow(interfaces[0] || "")];
-  const tableHeight = `${Math.min(Math.max(rows.length * 28 + 34, 90), 240)}px`;
-  try {
-    const atlasoGridOptions4 = {
-      data: rows,
-      index: "id",
-      layout: "fitColumns",
-      height: tableHeight,
+  const existingRows = JSON.parse(element.dataset.rules || "[]");
+  initializeAtlasoResourceWizard({
+    elementId: "firewall-rules-table",
+    formSelector: "[data-firewall-rule-form]",
+    dialogId: "firewall-rule-dialog",
+    rows: existingRows,
+    newRow: newFirewallRuleRow(interfaces[0] || ""),
+    resourceName: "rule",
+    createUrl: "/firewall/rules",
+    editUrl: (id) => `/firewall/rules/${id}/edit`,
+    deleteResource: true,
+    deleteUrl: (id) => `/firewall/rules/${id}/delete`,
+    editLabel: "Edit rule",
+    deleteLabel: "Delete rule",
+    createLabel: "Create firewall rule",
+    updateLabel: "Update firewall rule",
+    emptyMessage: "No operator firewall rules configured.",
+    actionErrorSelector: "#firewall-rule-error",
+    defaults: newFirewallRuleRow(interfaces[0] || ""),
+    steps: [
+      { id: "policy", title: "Define the firewall rule", description: "Name the operator rule and choose its nftables direction and action." },
+      { id: "match", title: "Match network traffic", description: "Choose protocol, source, destination, ports, and optional interface." },
+      { id: "state", title: "Choose rule state", description: "Set evaluation priority, enablement, and its operator purpose." },
+      { id: "review", title: "Review firewall desired state", description: "Confirm the rule and global appliance-apply boundary." },
+    ],
+    reviewItems: [
+      { label: "Rule", field: "name" },
+      { label: "Policy", value: (form) => `${form.elements.direction.value} / ${form.elements.action.value}` },
+      { label: "Protocol", field: "protocol" },
+      { label: "Source", field: "source" },
+      { label: "Destination", field: "destination" },
+      { label: "Ports", field: "destination_port" },
+      { label: "Interface", field: "interface_name" },
+      { label: "Priority", field: "priority" },
+      { label: "State", field: "enabled" },
+    ],
+    deleteConfirmation: (data) => ({
+      title: `Delete ${data.name}?`,
+      message: "This removes the firewall rule from Atlaso desired state. It will not touch the appliance until global appliance apply runs.",
+      confirmLabel: "Delete rule",
+      tone: "danger",
+    }),
+    options: {
+      height: `${Math.min(Math.max((existingRows.length + 1) * 28 + 34, 90), 240)}px`,
       rowHeight: 28,
-      placeholder: "No firewall rules configured.",
-      reactiveData: false,
-      rowContextMenu: [
-        {
-          label: "Delete rule",
-          action: (_event, row) => deleteFirewallRuleFromMenu(row, csrf),
-          disabled: (_component) => _component.getData().is_new,
-        },
-      ],
-      columns: lockNewRecordColumns([
+      placeholder: "No operator firewall rules configured.",
+      columns: [
         {
           title: "Name",
           field: "name",
-          editor: "input",
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "+ Add rule here"),
-          cellEdited: (cell) => autoSaveFirewallRule(cell, csrf),
+          minWidth: 170,
+          formatter: (cell) => cell.getRow().getData().is_new
+            ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add rule here</button>'
+            : escapeHtml(cell.getValue()),
         },
-        {
-          title: "Direction",
-          field: "direction",
-          editor: "list",
-          editorParams: { values: directions },
-          width: 120,
-          cellEdited: (cell) => autoSaveFirewallRule(cell, csrf),
-        },
-        {
-          title: "Action",
-          field: "action",
-          editor: "list",
-          editorParams: { values: actions },
-          width: 105,
-          cellEdited: (cell) => autoSaveFirewallRule(cell, csrf),
-        },
-        {
-          title: "Protocol",
-          field: "protocol",
-          editor: "list",
-          editorParams: { values: protocols },
-          width: 110,
-          cellEdited: (cell) => autoSaveFirewallRule(cell, csrf),
-        },
-        {
-          title: "Source",
-          field: "source",
-          editor: "list",
-          editorParams: { values: groupOptions },
-          formatter: groupValueFormatter,
-          cellEdited: (cell) => autoSaveFirewallRule(cell, csrf),
-        },
-        {
-          title: "Destination",
-          field: "destination",
-          editor: "list",
-          editorParams: { values: groupOptions },
-          formatter: groupValueFormatter,
-          cellEdited: (cell) => autoSaveFirewallRule(cell, csrf),
-        },
-        { title: "Ports", field: "destination_port", editor: "input", width: 120, cellEdited: (cell) => autoSaveFirewallRule(cell, csrf) },
-        {
-          title: "Interface",
-          field: "interface_name",
-          editor: "list",
-          editorParams: { values: interfaceOptions },
-          width: 120,
-          cellEdited: (cell) => autoSaveFirewallRule(cell, csrf),
-        },
-        { title: "Priority", field: "priority", editor: "number", width: 100, cellEdited: (cell) => autoSaveFirewallRule(cell, csrf) },
-        {
-          title: "Enabled",
-          field: "enabled",
-          formatter: atlasoBooleanFormatter,
-          editor: "tickCross",
-          hozAlign: "center",
-          width: 95,
-          cellEdited: (cell) => autoSaveFirewallRule(cell, csrf),
-        },
-        { title: "Description", field: "description", editor: "input", cellEdited: (cell) => autoSaveFirewallRule(cell, csrf) },
-      ], "name"),
-      rowFormatter: (row) => {
-        markNewRecordRow(row, "name");
-      },
-    };
-    window.AtlasoUiPatterns.createGrid({
-      element: tableElement,
-      pattern: "direct-edit",
-      options: atlasoGridOptions4,
-    }).table;
-  } catch (error) {
-    showCaMessage("firewall-rule-error", error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
-  }
+        { title: "Direction", field: "direction", width: 120 },
+        { title: "Action", field: "action", width: 105 },
+        { title: "Protocol", field: "protocol", width: 110 },
+        { title: "Source", field: "source", formatter: (cell) => cell.getRow().getData().is_new ? "" : groupValueFormatter(cell), minWidth: 150 },
+        { title: "Destination", field: "destination", formatter: (cell) => cell.getRow().getData().is_new ? "" : groupValueFormatter(cell), minWidth: 150 },
+        { title: "Ports", field: "destination_port", width: 120 },
+        { title: "Interface", field: "interface_name", formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || "any"), width: 120 },
+        { title: "Priority", field: "priority", width: 100 },
+        { title: "Enabled", field: "enabled", formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell), hozAlign: "center", width: 95 },
+        { title: "Description", field: "description", minWidth: 180 },
+      ],
+      rowFormatter: (row) => markNewRecordRow(row, "name"),
+    },
+  });
 }
 
 function managedFirewallStatusFormatter(cell) {
@@ -3851,221 +3974,166 @@ async function deleteKmsKeyFromMenu(row, csrf) {
 }
 
 function initializeKmsClientsTable() {
-  const tableElement = document.getElementById("kms-clients-table");
-  if (!(tableElement instanceof HTMLElement)) {
-    return;
-  }
-  const fallback = document.getElementById(tableElement.dataset.fallbackId || "");
-  if (typeof Tabulator === "undefined") {
-    showCaMessage("kms-client-error", "Tabulator did not load. Showing the fallback table.");
-    return;
-  }
-  const csrf = tableElement.dataset.csrf || "";
-  const roleValuesMap = roleValues(JSON.parse(tableElement.dataset.roleOptions || "[]"));
-  const rows = [...JSON.parse(tableElement.dataset.clients || "[]"), newKmsClientRow()];
-  try {
-    const atlasoGridOptions8 = {
-      data: rows,
-      index: "id",
-      layout: "fitColumns",
+  const element = document.getElementById("kms-clients-table");
+  if (!(element instanceof HTMLElement)) return;
+  const updateOwnerOption = (resource) => {
+    const select = document.querySelector("[data-kms-key-form] select[name='owner_client_id']");
+    if (!(select instanceof HTMLSelectElement)) return;
+    let option = [...select.options].find((item) => item.value === String(resource.id));
+    if (!resource.enabled) {
+      option?.remove();
+      return;
+    }
+    if (!option) {
+      option = document.createElement("option");
+      option.value = String(resource.id);
+      select.append(option);
+    }
+    option.textContent = resource.name;
+  };
+  initializeAtlasoResourceWizard({
+    elementId: "kms-clients-table",
+    formSelector: "[data-kms-client-form]",
+    dialogId: "kms-client-dialog",
+    rows: JSON.parse(element.dataset.clients || "[]"),
+    newRow: newKmsClientRow(),
+    resourceName: "client",
+    createUrl: "/kms/clients",
+    editUrl: (id) => `/kms/clients/${id}/edit`,
+    deleteResource: true,
+    deleteUrl: (id) => `/kms/clients/${id}/delete`,
+    editLabel: "Edit client",
+    deleteLabel: "Delete client",
+    createLabel: "Create KMIP client",
+    updateLabel: "Update KMIP client",
+    emptyMessage: "No KMIP clients configured.",
+    actionErrorSelector: "#kms-client-error",
+    defaults: newKmsClientRow(),
+    steps: [
+      { id: "identity", title: "Define the KMIP client", description: "Name the client and bind it to the exact certificate subject used for mutual TLS." },
+      { id: "access", title: "Grant KMIP access", description: "Choose the lab authorization role and allowlisted operations." },
+      { id: "state", title: "Choose client state", description: "Enable the client and record the workload that owns it." },
+      { id: "review", title: "Review KMS desired state", description: "Confirm the client and global appliance-apply boundary." },
+    ],
+    reviewItems: [
+      { label: "Client", field: "name" },
+      { label: "Certificate subject", field: "certificate_subject" },
+      { label: "Role", field: "role" },
+      { label: "Operations", field: "allowed_operations" },
+      { label: "State", field: "enabled" },
+    ],
+    deleteConfirmation: (data) => ({
+      title: `Delete ${data.name} client?`,
+      message: "This removes the KMS client from Atlaso desired state and unassigns any keys owned by it. It will not touch the appliance until global appliance apply runs.",
+      confirmLabel: "Delete client",
+      tone: "danger",
+    }),
+    onSaved: ({ resource }) => updateOwnerOption(resource),
+    onDeleted: ({ data }) => {
+      const select = document.querySelector("[data-kms-key-form] select[name='owner_client_id']");
+      if (select instanceof HTMLSelectElement) {
+        [...select.options].find((option) => option.value === String(data.id))?.remove();
+      }
+      const keysTable = document.getElementById("kms-keys-table")?.atlasoTabulator;
+      keysTable?.getRows?.().forEach((row) => {
+        if (String(row.getData().owner_client_id) === String(data.id)) {
+          row.update({ owner_client_id: "", owner_client_name: "Unassigned" });
+        }
+      });
+    },
+    options: {
       height: "420px",
       rowHeight: 28,
       placeholder: "No KMIP clients configured.",
-      reactiveData: false,
-      rowContextMenu: [
-        {
-          label: "Delete client",
-          action: (event, row) => deleteKmsClientFromMenu(row, csrf),
-        },
-      ],
-      columns: lockNewRecordColumns([
+      columns: [
         {
           title: "Name",
           field: "name",
-          editor: "input",
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "+ Add client here"),
           minWidth: 170,
-          cellEdited: (cell) => autoSaveKmsClient(cell, csrf),
+          formatter: (cell) => cell.getRow().getData().is_new
+            ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add client here</button>'
+            : escapeHtml(cell.getValue()),
         },
-        {
-          title: "Certificate subject",
-          field: "certificate_subject",
-          editor: "input",
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "CN=client,O=Atlaso"),
-          minWidth: 300,
-          cellEdited: (cell) => autoSaveKmsClient(cell, csrf),
-        },
-        {
-          title: "Role",
-          field: "role",
-          editor: "list",
-          editorParams: { values: roleValuesMap },
-          width: 120,
-          cellEdited: (cell) => autoSaveKmsClient(cell, csrf),
-        },
-        {
-          title: "Operations",
-          field: "allowed_operations",
-          editor: "input",
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "locate,get,register,create"),
-          minWidth: 220,
-          cellEdited: (cell) => autoSaveKmsClient(cell, csrf),
-        },
-        {
-          title: "Enabled",
-          field: "enabled",
-          formatter: atlasoBooleanFormatter,
-          editor: "tickCross",
-          hozAlign: "center",
-          width: 100,
-          headerSort: false,
-          cellEdited: (cell) => autoSaveKmsClient(cell, csrf),
-        },
-        {
-          title: "Description",
-          field: "description",
-          editor: "input",
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "optional note..."),
-          minWidth: 220,
-          cellEdited: (cell) => autoSaveKmsClient(cell, csrf),
-        },
-      ], "name"),
-      rowFormatter: (row) => {
-        markNewRecordRow(row, "name");
-      },
-    };
-    window.AtlasoUiPatterns.createGrid({
-      element: tableElement,
-      pattern: "direct-edit",
-      options: atlasoGridOptions8,
-    }).table;
-  } catch (error) {
-    showCaMessage("kms-client-error", error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
-  }
+        { title: "Certificate subject", field: "certificate_subject", minWidth: 300 },
+        { title: "Role", field: "role", width: 120 },
+        { title: "Operations", field: "allowed_operations", minWidth: 220 },
+        { title: "Enabled", field: "enabled", formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell), hozAlign: "center", width: 100, headerSort: false },
+        { title: "Description", field: "description", minWidth: 220 },
+      ],
+      rowFormatter: (row) => markNewRecordRow(row, "name"),
+    },
+  });
 }
 
 function initializeKmsKeysTable() {
-  const tableElement = document.getElementById("kms-keys-table");
-  if (!(tableElement instanceof HTMLElement)) {
-    return;
-  }
-  const fallback = document.getElementById(tableElement.dataset.fallbackId || "");
-  if (typeof Tabulator === "undefined") {
-    showCaMessage("kms-key-error", "Tabulator did not load. Showing the fallback table.");
-    return;
-  }
-  const csrf = tableElement.dataset.csrf || "";
-  const algorithmValues = roleValues(JSON.parse(tableElement.dataset.algorithmOptions || "[]"));
-  const stateValues = roleValues(JSON.parse(tableElement.dataset.stateOptions || "[]"));
-  const clientOptions = JSON.parse(tableElement.dataset.clientOptions || "[]");
-  const clientValues = { "": "Unassigned", ...Object.fromEntries(clientOptions.map((item) => [item.id, item.label])) };
+  const element = document.getElementById("kms-keys-table");
+  if (!(element instanceof HTMLElement)) return;
+  const clientOptions = JSON.parse(element.dataset.clientOptions || "[]");
   const defaultClientId = clientOptions[0]?.id || "";
-  const rows = [...JSON.parse(tableElement.dataset.keys || "[]"), newKmsKeyRow(defaultClientId)];
-  try {
-    const atlasoGridOptions9 = {
-      data: rows,
-      index: "id",
-      layout: "fitColumns",
+  initializeAtlasoResourceWizard({
+    elementId: "kms-keys-table",
+    formSelector: "[data-kms-key-form]",
+    dialogId: "kms-key-dialog",
+    rows: JSON.parse(element.dataset.keys || "[]"),
+    newRow: newKmsKeyRow(defaultClientId),
+    resourceName: "key",
+    createUrl: "/kms/keys",
+    editUrl: (id) => `/kms/keys/${id}/edit`,
+    deleteResource: true,
+    deleteUrl: (id) => `/kms/keys/${id}/delete`,
+    editLabel: "Edit key",
+    deleteLabel: "Delete key",
+    createLabel: "Create KMS key",
+    updateLabel: "Update KMS key",
+    emptyMessage: "No KMS keys configured.",
+    actionErrorSelector: "#kms-key-error",
+    defaults: newKmsKeyRow(defaultClientId),
+    steps: [
+      { id: "identity", title: "Define the KMS key", description: "Name the staged key and choose its algorithm and length." },
+      { id: "policy", title: "Set key policy", description: "Choose usage, optional client ownership, and export behavior." },
+      { id: "state", title: "Choose key lifecycle", description: "Set KMIP lifecycle state, enablement, and operator notes." },
+      { id: "review", title: "Review KMS desired state", description: "Confirm the key and global appliance-apply boundary." },
+    ],
+    reviewItems: [
+      { label: "Key", field: "name" },
+      { label: "Algorithm", value: (form) => `${form.elements.algorithm.value} ${form.elements.length.value}` },
+      { label: "Usage", field: "usage" },
+      { label: "Owner", field: "owner_client_id" },
+      { label: "Exportable", field: "exportable" },
+      { label: "Lifecycle", field: "state" },
+      { label: "Enabled", field: "enabled" },
+    ],
+    deleteConfirmation: (data) => ({
+      title: `Delete ${data.name} key?`,
+      message: "This removes the KMS key from Atlaso desired state. It will not touch the appliance until global appliance apply runs.",
+      confirmLabel: "Delete key",
+      tone: "danger",
+    }),
+    options: {
       height: "420px",
       rowHeight: 28,
       placeholder: "No KMS keys configured.",
-      reactiveData: false,
-      rowContextMenu: [
-        {
-          label: "Delete key",
-          action: (event, row) => deleteKmsKeyFromMenu(row, csrf),
-        },
-      ],
-      columns: lockNewRecordColumns([
+      columns: [
         {
           title: "Name",
           field: "name",
-          editor: "input",
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "+ Add key here"),
           minWidth: 190,
-          cellEdited: (cell) => autoSaveKmsKey(cell, csrf),
+          formatter: (cell) => cell.getRow().getData().is_new
+            ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add key here</button>'
+            : escapeHtml(cell.getValue()),
         },
-        {
-          title: "Algorithm",
-          field: "algorithm",
-          editor: "list",
-          editorParams: { values: algorithmValues },
-          width: 120,
-          cellEdited: (cell) => autoSaveKmsKey(cell, csrf),
-        },
-        {
-          title: "Length",
-          field: "length",
-          editor: "number",
-          width: 95,
-          cellEdited: (cell) => autoSaveKmsKey(cell, csrf),
-        },
-        {
-          title: "Usage",
-          field: "usage",
-          editor: "input",
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "encrypt,decrypt"),
-          minWidth: 150,
-          cellEdited: (cell) => autoSaveKmsKey(cell, csrf),
-        },
-        {
-          title: "State",
-          field: "state",
-          editor: "list",
-          editorParams: { values: stateValues },
-          minWidth: 140,
-          cellEdited: (cell) => autoSaveKmsKey(cell, csrf),
-        },
-        {
-          title: "Owner client",
-          field: "owner_client_id",
-          editor: "list",
-          editorParams: { values: clientValues },
-          formatter: (cell) => clientValues[cell.getValue()] || "Unassigned",
-          minWidth: 170,
-          cellEdited: (cell) => autoSaveKmsKey(cell, csrf),
-        },
-        {
-          title: "Exportable",
-          field: "exportable",
-          formatter: atlasoBooleanFormatter,
-          editor: "tickCross",
-          hozAlign: "center",
-          width: 110,
-          headerSort: false,
-          cellEdited: (cell) => autoSaveKmsKey(cell, csrf),
-        },
-        {
-          title: "Enabled",
-          field: "enabled",
-          formatter: atlasoBooleanFormatter,
-          editor: "tickCross",
-          hozAlign: "center",
-          width: 100,
-          headerSort: false,
-          cellEdited: (cell) => autoSaveKmsKey(cell, csrf),
-        },
-        {
-          title: "Description",
-          field: "description",
-          editor: "input",
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "optional note..."),
-          minWidth: 220,
-          cellEdited: (cell) => autoSaveKmsKey(cell, csrf),
-        },
-      ], "name"),
-      rowFormatter: (row) => {
-        markNewRecordRow(row, "name");
-      },
-    };
-    window.AtlasoUiPatterns.createGrid({
-      element: tableElement,
-      pattern: "direct-edit",
-      options: atlasoGridOptions9,
-    }).table;
-  } catch (error) {
-    showCaMessage("kms-key-error", error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
-  }
+        { title: "Algorithm", field: "algorithm", width: 120 },
+        { title: "Length", field: "length", width: 95 },
+        { title: "Usage", field: "usage", minWidth: 150 },
+        { title: "State", field: "state", minWidth: 140 },
+        { title: "Owner client", field: "owner_client_name", formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || "Unassigned"), minWidth: 170 },
+        { title: "Exportable", field: "exportable", formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell), hozAlign: "center", width: 110, headerSort: false },
+        { title: "Enabled", field: "enabled", formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell), hozAlign: "center", width: 100, headerSort: false },
+        { title: "Description", field: "description", minWidth: 220 },
+      ],
+      rowFormatter: (row) => markNewRecordRow(row, "name"),
+    },
+  });
 }
 
 function updateCaSettingsPreview(payload = {}) {
@@ -7109,6 +7177,117 @@ function validateOidcRedirectUriField(form, fieldName, { required = false } = {}
   return { valid: true };
 }
 
+function initializeApiTokensTable() {
+  const element = document.getElementById("api-tokens-table");
+  if (!(element instanceof HTMLElement)) return;
+  const csrf = element.dataset.csrf || "";
+  const revokeToken = async (row) => {
+    const data = row.getData();
+    const confirmed = await requestConfirmation({
+      title: `Revoke API token ${data.name}?`,
+      message: "The token stops authenticating immediately. Create a replacement token if the integration still needs access.",
+      confirmLabel: "Revoke token",
+      tone: "danger",
+    });
+    if (!confirmed) return;
+    const body = new FormData();
+    body.set("csrf", csrf);
+    const payload = await atlasoGridWizardRequest(`/authentication/api-tokens/${data.id}/revoke`, body);
+    await row.update(payload.token);
+    showTransientGridStatus("Revoked");
+  };
+  initializeAtlasoResourceWizard({
+    elementId: "api-tokens-table",
+    formSelector: "[data-api-token-form]",
+    dialogId: "api-token-dialog",
+    rows: JSON.parse(element.dataset.tokens || "[]"),
+    newRow: {
+      id: "api-token-new",
+      is_new: true,
+      name: "",
+      owner_username: "",
+      role: "",
+      scopes: "",
+      expires_label: "",
+      status: "",
+      enabled: false,
+    },
+    resourceName: "token",
+    createUrl: "/authentication/api-tokens",
+    editUrl: () => "",
+    editResource: false,
+    canEdit: () => false,
+    createLabel: "Create API token",
+    updateLabel: "Create API token",
+    emptyMessage: "No API tokens issued.",
+    gridError: "API token changes are unavailable because the interactive grid could not initialize.",
+    actionErrorSelector: "#api-tokens-status",
+    defaults: {
+      name: "",
+      description: "",
+      scopes: "read:dashboard",
+    },
+    steps: [
+      { id: "identity", title: "Define the API token", description: "Give the credential an operator-visible identity and purpose." },
+      { id: "scopes", title: "Grant least-privilege scopes", description: "Request only the Atlaso permissions this integration requires." },
+      { id: "review", title: "Review immediate issuance", description: "Confirm the token scope and one-time secret handling." },
+    ],
+    reviewItems: [
+      { label: "Token", field: "name" },
+      { label: "Purpose", field: "description" },
+      { label: "Scopes", field: "scopes" },
+      { label: "Enforcement", value: () => "Immediate application state" },
+    ],
+    extraActions: [
+      {
+        label: "Revoke token",
+        disabled: (row) => row.getData().is_new || !row.getData().enabled,
+        action: (_event, row) => revokeToken(row),
+      },
+    ],
+    onSaved: ({ payload }) => {
+      const result = document.querySelector("[data-api-token-secret-result]");
+      const secret = document.querySelector("[data-api-token-secret]");
+      const copy = document.querySelector("[data-api-token-copy]");
+      if (result instanceof HTMLElement && secret instanceof HTMLTextAreaElement) {
+        secret.value = payload.raw_token || "";
+        result.classList.remove("hidden");
+        if (copy instanceof HTMLButtonElement) {
+          copy.dataset.copyValue = payload.raw_token || "";
+          copy.disabled = !payload.raw_token;
+        }
+      }
+    },
+    options: {
+      height: "360px",
+      placeholder: "No API tokens issued.",
+      columns: [
+        {
+          title: "Name",
+          field: "name",
+          minWidth: 190,
+          formatter: (cell) => cell.getRow().getData().is_new
+            ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add token here</button>'
+            : escapeHtml(cell.getValue()),
+        },
+        { title: "Owner", field: "owner_username", minWidth: 140, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue()) },
+        { title: "Role", field: "role", width: 130, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue()) },
+        { title: "Scopes", field: "scopes", minWidth: 320, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue()) },
+        { title: "Expires", field: "expires_label", width: 120, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue()) },
+        {
+          title: "Status",
+          field: "status",
+          width: 105,
+          formatter: (cell) => cell.getRow().getData().is_new
+            ? ""
+            : `<span class="status-pill ${cell.getValue() === "active" ? "good" : "muted"}">${escapeHtml(cell.getValue())}</span>`,
+        },
+      ],
+      rowFormatter: (row) => markNewRecordRow(row, "name"),
+    },
+  });
+}
+
 function initializeOidcClientsTable() {
   const element = document.getElementById("oidc-clients-table");
   const form = document.querySelector("[data-oidc-client-form]");
@@ -7635,198 +7814,110 @@ function initializeDnsRecordsTableElement(tableElement) {
 }
 
 function initializeDhcpScopesTable() {
-  const tableElement = document.getElementById("dhcp-scopes-table");
-  if (!(tableElement instanceof HTMLElement)) {
-    return;
-  }
-  const fallback = document.getElementById(tableElement.dataset.fallbackId || "");
-  if (typeof Tabulator === "undefined") {
-    showDhcpScopeError("Tabulator did not load. Showing the fallback table.");
-    return;
-  }
-  const csrf = tableElement.dataset.csrf || "";
-  const interfaceOptions = JSON.parse(tableElement.dataset.interfaceOptions || "[]");
-  const scopeDefaults = JSON.parse(tableElement.dataset.scopeDefaults || "{}");
-  const domainOptions = JSON.parse(tableElement.dataset.domainOptions || "[]");
+  const element = document.getElementById("dhcp-scopes-table");
+  if (!(element instanceof HTMLElement)) return;
+  const interfaceOptions = JSON.parse(element.dataset.interfaceOptions || "[]");
+  const scopeDefaults = JSON.parse(element.dataset.scopeDefaults || "{}");
   const defaultInterface = interfaceOptions[0] || "eth1";
-  const existingRows = JSON.parse(tableElement.dataset.scopes || "[]");
-  const existingScopeNames = new Set([
-    ...(Array.isArray(scopeDefaults.existing_names) ? scopeDefaults.existing_names : []),
-    ...existingRows.map((row) => normalizeDhcpZoneName(row.name)).filter(Boolean),
-  ]);
-  const rows = [...existingRows, newDhcpScopeRow(defaultInterface, scopeDefaults)];
-  const interfaceValues = Object.fromEntries(interfaceOptions.map((item) => [item, item]));
-  const domainValues = Object.fromEntries(domainOptions.map((item) => [item, item]));
-  const handleDhcpScopeEdited = (cell) => {
-    const row = cell.getRow();
-    const data = row.getData();
-    const field = cell.getField();
-    if (data.is_new) {
-      if (field === "name" && isUniqueNewDhcpScopeName(data, existingScopeNames)) {
-        if (!data.address_family) {
-          data.address_family = dhcpDefaultFamilyForInterface(scopeDefaults, data.interface_name || defaultInterface);
-        }
-        if (!data.interface_name) {
-          data.interface_name = defaultInterface;
-        }
-        if (!data.lease_time) {
-          data.lease_time = "12h";
-        }
-      }
+  const defaults = applyDhcpScopeInterfaceDefaults(
+    {
+      ...newDhcpScopeRow(defaultInterface, scopeDefaults),
+      address_family: dhcpDefaultFamilyForInterface(scopeDefaults, defaultInterface),
+      interface_name: defaultInterface,
+      lease_time: "12h",
+    },
+    scopeDefaults,
+    { overwrite: true },
+  );
+  const form = document.querySelector("[data-dhcp-scope-form]");
+  const refreshNetworkDefaults = () => {
+    if (!(form instanceof HTMLFormElement)) return;
+    const interfaceName = form.elements.interface_name.value;
+    const family = form.elements.address_family;
+    const interfaceDefaults = dhcpInterfaceDefaults(scopeDefaults, interfaceName);
+    if (
+      family instanceof HTMLSelectElement
+      && ((family.value === "ipv4" && !interfaceDefaults.ipv4_address)
+        || (family.value === "ipv6" && !interfaceDefaults.ipv6_address))
+    ) {
+      family.value = dhcpDefaultFamilyForInterface(scopeDefaults, interfaceName);
     }
-    if ((data.is_new && field === "name") || ["interface_name", "address_family"].includes(field)) {
-      const updated = applyDhcpScopeInterfaceDefaults(data, scopeDefaults, { overwrite: field !== "name" });
-      row.update(updated);
-    }
-    if (data.is_new) {
-      row.reformat();
-    }
-    return autoSaveDhcpScope(cell, csrf);
+    const updated = applyDhcpScopeInterfaceDefaults(
+      Object.fromEntries(new FormData(form).entries()),
+      scopeDefaults,
+      { overwrite: true },
+    );
+    ["site_address", "prefix_length", "dns_server", "ntp_server", "domain_name"].forEach((name) => {
+      if (form.elements[name]) form.elements[name].value = updated[name] ?? "";
+    });
   };
-  try {
-    const atlasoGridOptions21 = {
-      data: rows,
-      index: "id",
-      layout: "fitColumns",
+  form?.elements.interface_name?.addEventListener("change", refreshNetworkDefaults);
+  form?.elements.address_family?.addEventListener("change", refreshNetworkDefaults);
+  initializeAtlasoResourceWizard({
+    elementId: "dhcp-scopes-table",
+    formSelector: "[data-dhcp-scope-form]",
+    dialogId: "dhcp-scope-dialog",
+    rows: JSON.parse(element.dataset.scopes || "[]"),
+    newRow: { ...defaults, id: "__new__", is_new: true },
+    resourceName: "scope",
+    createUrl: "/dhcp/scopes",
+    editUrl: (id) => `/dhcp/scopes/${id}/edit`,
+    deleteResource: true,
+    deleteUrl: (id) => `/dhcp/scopes/${id}/delete`,
+    editLabel: "Edit IP zone",
+    deleteLabel: "Delete IP zone",
+    createLabel: "Create IP zone",
+    updateLabel: "Update IP zone",
+    emptyMessage: "No DHCP IP zones configured.",
+    actionErrorSelector: "#dhcp-scope-error",
+    defaults,
+    steps: [
+      { id: "identity", title: "Choose zone identity", description: "Name the IP zone and bind its address family and interface." },
+      { id: "network", title: "Define the address pool", description: "Set the gateway, prefix, and lease range." },
+      { id: "services", title: "Set lease services", description: "Configure lease duration, DNS, NTP, and domain values." },
+      { id: "review", title: "Review DHCP desired state", description: "Confirm the IP zone and global appliance-apply boundary." },
+    ],
+    reviewItems: [
+      { label: "Zone", field: "name" },
+      { label: "Family", field: "address_family" },
+      { label: "Interface", field: "interface_name" },
+      { label: "Network", value: (form) => `${form.elements.site_address.value}/${form.elements.prefix_length.value}` },
+      { label: "Range", field: "range_expression" },
+      { label: "Lease", field: "lease_time" },
+      { label: "Domain", field: "domain_name" },
+      { label: "Enabled", field: "enabled" },
+    ],
+    onOpen: ({ form, context }) => {
+      const family = form.elements.address_family;
+      if (family instanceof HTMLSelectElement) family.disabled = Boolean(context);
+    },
+    prepareFormData: ({ body, form }) => body.set("address_family", form.elements.address_family.value),
+    deleteConfirmation: (data) => ({
+      title: `Delete ${data.name} IP zone?`,
+      message: "This removes the DHCP IP zone and its scoped options from Atlaso desired state. It will not touch the appliance until global appliance apply runs.",
+      confirmLabel: "Delete IP zone",
+      tone: "danger",
+    }),
+    options: {
       height: "300px",
       rowHeight: 28,
       placeholder: "No DHCP IP zones configured.",
-      reactiveData: false,
-      rowContextMenu: [
-        {
-          label: "Delete IP zone",
-          action: (event, row) => deleteDhcpScopeFromMenu(row, csrf),
-        },
-      ],
       columns: [
-        {
-          title: "Zone",
-          field: "name",
-          editor: "input",
-          editable: true,
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "+ Add IP zone here"),
-          minWidth: 140,
-          cellEdited: handleDhcpScopeEdited,
-        },
-        {
-          title: "Family",
-          field: "address_family",
-          editor: "list",
-          editable: (cell) => dhcpScopeFamilyEditable(cell, existingScopeNames),
-          editorParams: { values: { ipv4: "IPv4", ipv6: "IPv6" } },
-          formatter: (cell) => {
-            const value = cell.getValue();
-            if (cell.getRow().getData().is_new && !value) {
-              return "";
-            }
-            return value === "ipv6" ? "IPv6" : "IPv4";
-          },
-          width: 100,
-          cellEdited: handleDhcpScopeEdited,
-        },
-        {
-          title: "Interface",
-          field: "interface_name",
-          editor: "list",
-          editable: (cell) => dhcpScopeCellEditable(cell, existingScopeNames),
-          editorParams: { values: interfaceValues },
-          minWidth: 120,
-          cellEdited: handleDhcpScopeEdited,
-        },
-        {
-          title: "Gateway",
-          field: "site_address",
-          editor: "input",
-          editable: (cell) => dhcpScopeCellEditable(cell, existingScopeNames),
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "gateway..."),
-          minWidth: 140,
-          cellEdited: handleDhcpScopeEdited,
-        },
-        {
-          title: "Prefix",
-          field: "prefix_length",
-          editor: "number",
-          editable: (cell) => dhcpScopeCellEditable(cell, existingScopeNames),
-          width: 90,
-          cellEdited: handleDhcpScopeEdited,
-        },
-        {
-          title: "Range",
-          field: "range_expression",
-          editor: "input",
-          editable: (cell) => dhcpScopeCellEditable(cell, existingScopeNames),
-          formatter: dhcpRangeFormatter,
-          cellMouseEnter: (event, cell) => showDhcpRangeTooltip(event, cell.getRow().getData()),
-          cellMouseMove: moveDhcpRangeTooltip,
-          cellMouseLeave: hideDhcpRangeTooltip,
-          minWidth: 240,
-          cellEdited: handleDhcpScopeEdited,
-        },
-        {
-          title: "Lease",
-          field: "lease_time",
-          editor: "input",
-          editable: (cell) => dhcpScopeCellEditable(cell, existingScopeNames),
-          width: 90,
-          cellEdited: handleDhcpScopeEdited,
-        },
-        {
-          title: "DNS",
-          field: "dns_server",
-          editor: "input",
-          editable: (cell) => dhcpScopeCellEditable(cell, existingScopeNames),
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "DNS IP..."),
-          minWidth: 140,
-          cellEdited: handleDhcpScopeEdited,
-        },
-        {
-          title: "NTP",
-          field: "ntp_server",
-          editor: "input",
-          editable: (cell) => dhcpScopeCellEditable(cell, existingScopeNames),
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "NTP IP..."),
-          minWidth: 140,
-          cellEdited: handleDhcpScopeEdited,
-        },
-        {
-          title: "Domain",
-          field: "domain_name",
-          editor: "list",
-          editable: (cell) => dhcpScopeCellEditable(cell, existingScopeNames),
-          editorParams: {
-            values: domainValues,
-            autocomplete: true,
-            allowEmpty: false,
-          },
-          minWidth: 180,
-          cellEdited: handleDhcpScopeEdited,
-        },
-        {
-          title: "Enabled",
-          field: "enabled",
-          formatter: atlasoBooleanFormatter,
-          editor: "tickCross",
-          editable: (cell) => dhcpScopeCellEditable(cell, existingScopeNames),
-          hozAlign: "center",
-          width: 100,
-          headerSort: false,
-          cellEdited: handleDhcpScopeEdited,
-        },
+        { title: "Zone", field: "name", formatter: (cell) => cell.getRow().getData().is_new ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add IP zone here</button>' : escapeHtml(cell.getValue()), minWidth: 150 },
+        { title: "Family", field: "address_family", formatter: (cell) => cell.getRow().getData().is_new ? "" : (cell.getValue() === "ipv6" ? "IPv6" : "IPv4"), width: 100 },
+        { title: "Interface", field: "interface_name", minWidth: 120 },
+        { title: "Gateway", field: "site_address", minWidth: 140 },
+        { title: "Prefix", field: "prefix_length", width: 90 },
+        { title: "Range", field: "range_expression", formatter: dhcpRangeFormatter, minWidth: 240 },
+        { title: "Lease", field: "lease_time", width: 90 },
+        { title: "DNS", field: "dns_server", minWidth: 140 },
+        { title: "NTP", field: "ntp_server", minWidth: 140 },
+        { title: "Domain", field: "domain_name", minWidth: 180 },
+        { title: "Enabled", field: "enabled", formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell), hozAlign: "center", width: 100, headerSort: false },
       ],
-      rowFormatter: (row) => {
-        const data = row.getData();
-        row.getElement().classList.toggle("new-record-row", Boolean(data.is_new));
-        row.getElement().classList.toggle("new-record-row-locked", Boolean(data.is_new && !isUniqueNewDhcpScopeName(data, existingScopeNames)));
-      },
-    };
-    window.AtlasoUiPatterns.createGrid({
-      element: tableElement,
-      pattern: "direct-edit",
-      options: atlasoGridOptions21,
-    }).table;
-  } catch (error) {
-    showDhcpScopeError(error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
-  }
+      rowFormatter: (row) => markNewRecordRow(row, "name"),
+    },
+  });
 }
 
 function initializeDhcpOptionsTable() {
@@ -9830,96 +9921,60 @@ async function deleteVcfRegistryBundleFromMenu(row, csrf) {
 }
 
 function initializeVcfRegistryBundlesTable() {
-  const tableElement = document.getElementById("vcf-registry-bundles-table");
-  if (!(tableElement instanceof HTMLElement)) {
-    return;
-  }
-  const fallback = document.getElementById(tableElement.dataset.fallbackId || "");
-  if (typeof Tabulator === "undefined") {
-    showVcfRegistryMessage("Tabulator did not load. Showing the fallback table.");
-    return;
-  }
-  const csrf = tableElement.dataset.csrf || "";
-  const rows = [...JSON.parse(tableElement.dataset.bundles || "[]"), newVcfRegistryBundleRow()];
-  try {
-    const atlasoGridOptions25 = {
-      data: rows,
-      index: "id",
-      layout: "fitColumns",
+  const element = document.getElementById("vcf-registry-bundles-table");
+  if (!(element instanceof HTMLElement)) return;
+  initializeAtlasoResourceWizard({
+    elementId: "vcf-registry-bundles-table",
+    formSelector: "[data-vcf-registry-bundle-form]",
+    dialogId: "vcf-registry-bundle-dialog",
+    rows: JSON.parse(element.dataset.bundles || "[]"),
+    newRow: newVcfRegistryBundleRow(),
+    resourceName: "bundle",
+    createUrl: "/vcf-private-registry/bundles",
+    editUrl: (id) => `/vcf-private-registry/bundles/${id}/edit`,
+    deleteResource: true,
+    deleteUrl: (id) => `/vcf-private-registry/bundles/${id}/delete`,
+    editLabel: "Edit bundle",
+    deleteLabel: "Delete bundle",
+    createLabel: "Create bundle",
+    updateLabel: "Update bundle",
+    emptyMessage: "No Supervisor Service bundles configured.",
+    actionErrorSelector: "#vcf-registry-bundle-error",
+    defaults: newVcfRegistryBundleRow(),
+    steps: [
+      { id: "source", title: "Choose the source bundle", description: "Name the Supervisor Service bundle and identify its upstream reference." },
+      { id: "target", title: "Set the Harbor target", description: "Accept the derived target or provide an explicit internal registry reference." },
+      { id: "state", title: "Choose relocation state", description: "Set lifecycle status, enablement, and operator notes." },
+      { id: "review", title: "Review registry desired state", description: "Confirm the bundle and global appliance-apply boundary." },
+    ],
+    reviewItems: [
+      { label: "Bundle", field: "name" },
+      { label: "Source", field: "source_reference" },
+      { label: "Target", field: "target_reference" },
+      { label: "Status", field: "status" },
+      { label: "Enabled", field: "enabled" },
+    ],
+    deleteConfirmation: (data) => ({
+      title: `Delete ${data.name} bundle?`,
+      message: "This removes the Supervisor Service bundle from Atlaso desired state. It does not remove images from Harbor.",
+      confirmLabel: "Delete bundle",
+      tone: "danger",
+    }),
+    options: {
       height: "360px",
       rowHeight: 28,
       placeholder: "No Supervisor Service bundles configured.",
-      reactiveData: false,
-      rowContextMenu: [
-        {
-          label: "Delete bundle",
-          action: (_event, row) => deleteVcfRegistryBundleFromMenu(row, csrf),
-        },
+      columns: [
+        { title: "Name", field: "name", formatter: (cell) => cell.getRow().getData().is_new ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add bundle here</button>' : escapeHtml(cell.getValue()), minWidth: 170 },
+        { title: "Source reference", field: "source_reference", minWidth: 260 },
+        { title: "Target reference", field: "target_reference", minWidth: 260 },
+        { title: "Status", field: "status", width: 120 },
+        { title: "Enabled", field: "enabled", formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell), hozAlign: "center", width: 95, headerSort: false },
+        { title: "Notes", field: "notes", minWidth: 180 },
       ],
-      columns: lockNewRecordColumns([
-        {
-          title: "Name",
-          field: "name",
-          editor: "input",
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "+ Add bundle here"),
-          minWidth: 170,
-          cellEdited: (cell) => autoSaveVcfRegistryBundle(cell, csrf),
-        },
-        {
-          title: "Source reference",
-          field: "source_reference",
-          editor: "input",
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "source bundle or image..."),
-          minWidth: 260,
-          cellEdited: (cell) => autoSaveVcfRegistryBundle(cell, csrf),
-        },
-        {
-          title: "Target reference",
-          field: "target_reference",
-          editor: "input",
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "derived if blank..."),
-          minWidth: 260,
-          cellEdited: (cell) => autoSaveVcfRegistryBundle(cell, csrf),
-        },
-        {
-          title: "Status",
-          field: "status",
-          editor: "list",
-          editorParams: { values: { planned: "planned", ready: "ready", relocated: "relocated", blocked: "blocked" } },
-          width: 120,
-          cellEdited: (cell) => autoSaveVcfRegistryBundle(cell, csrf),
-        },
-        {
-          title: "Enabled",
-          field: "enabled",
-          formatter: atlasoBooleanFormatter,
-          editor: "tickCross",
-          hozAlign: "center",
-          width: 95,
-          headerSort: false,
-          cellEdited: (cell) => autoSaveVcfRegistryBundle(cell, csrf),
-        },
-        {
-          title: "Notes",
-          field: "notes",
-          editor: "input",
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "optional note..."),
-          minWidth: 180,
-          cellEdited: (cell) => autoSaveVcfRegistryBundle(cell, csrf),
-        },
-      ], "name"),
-      rowFormatter: (row) => {
-        markNewRecordRow(row, "name");
-      },
-    };
-    window.AtlasoUiPatterns.createGrid({
-      element: tableElement,
-      pattern: "direct-edit",
-      options: atlasoGridOptions25,
-    }).table;
-  } catch (error) {
-    showVcfRegistryMessage(error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
-  }
+      rowFormatter: (row) => markNewRecordRow(row, "name"),
+    },
+  });
 }
 
 function updateVcfRegistrySummary(form, payload = {}) {
@@ -10390,67 +10445,90 @@ function setVcfDepotDownloadActive(active, activeJobId = "") {
 }
 
 function initializeVcfDepotProfilesTable() {
-  const tableElement = document.getElementById("vcf-depot-profiles-table");
-  if (!(tableElement instanceof HTMLElement)) {
-    return;
-  }
-  const fallback = document.getElementById(tableElement.dataset.fallbackId || "");
-  if (typeof Tabulator === "undefined") {
-    showVcfDepotMessage("Tabulator did not load. Showing the fallback table.");
-    return;
-  }
-  const csrf = tableElement.dataset.csrf || "";
-  const componentOptions = JSON.parse(tableElement.dataset.components || "[]");
+  const element = document.getElementById("vcf-depot-profiles-table");
+  if (!(element instanceof HTMLElement)) return;
+  const componentOptions = JSON.parse(element.dataset.components || "[]");
   const componentValues = {
     "": "All components",
     ...Object.fromEntries(componentOptions.map((item) => [item.value, item.label])),
   };
-  const esxPlatformOptions = JSON.parse(tableElement.dataset.esxPlatforms || "[]");
+  const esxPlatformOptions = JSON.parse(element.dataset.esxPlatforms || "[]");
   const esxPlatformValues = Object.fromEntries(esxPlatformOptions.map((item) => [item.value, item.label]));
-  const rows = [
-    ...JSON.parse(tableElement.dataset.profiles || "[]").map((row) => ({
-      ...row,
-      disabled_platforms: vcfDepotListValues(row.disabled_platforms),
-    })),
-    newVcfDepotProfileRow(),
-  ];
-  try {
-    const atlasoGridOptions26 = {
-      data: rows,
-      index: "id",
-      layout: "fitColumns",
+  const csrf = element.dataset.csrf || "";
+  const normalize = (row) => ({
+    ...row,
+    disabled_platforms: Array.isArray(row.disabled_platforms)
+      ? row.disabled_platforms.join(",")
+      : row.disabled_platforms,
+  });
+  const adapter = initializeAtlasoResourceWizard({
+    elementId: "vcf-depot-profiles-table",
+    formSelector: "[data-vcf-depot-profile-form]",
+    dialogId: "vcf-depot-profile-dialog",
+    rows: JSON.parse(element.dataset.profiles || "[]").map(normalize),
+    newRow: newVcfDepotProfileRow(),
+    resourceName: "profile",
+    createUrl: "/vcf-offline-depot/profiles",
+    editUrl: (id) => `/vcf-offline-depot/profiles/${id}/edit`,
+    deleteResource: true,
+    deleteUrl: (id) => `/vcf-offline-depot/profiles/${id}/delete`,
+    editLabel: "Edit profile",
+    deleteLabel: "Delete profile",
+    createLabel: "Create download profile",
+    updateLabel: "Update download profile",
+    emptyMessage: "No VCFDT download profiles configured.",
+    actionErrorSelector: "#vcf-depot-profile-error",
+    defaults: newVcfDepotProfileRow(),
+    steps: [
+      { id: "identity", title: "Choose profile identity", description: "Name the VCFDT profile and select its download type." },
+      { id: "release", title: "Choose release content", description: "Set SKU, VCF release, binary type, and download mode." },
+      { id: "filter", title: "Filter components", description: "Limit component and ESX platform content when required." },
+      { id: "state", title: "Choose profile state", description: "Set enablement, lifecycle status, and notes." },
+      { id: "review", title: "Review depot desired state", description: "Confirm the VCFDT profile and execution boundary." },
+    ],
+    reviewItems: [
+      { label: "Profile", field: "name" },
+      { label: "Type", field: "profile_type" },
+      { label: "Release", value: (form) => `${form.elements.sku.value} ${form.elements.vcf_version.value}` },
+      { label: "Binary", field: "binary_type" },
+      { label: "Mode", field: "download_mode" },
+      { label: "Component", field: "component" },
+      { label: "Enabled", field: "enabled" },
+    ],
+    prepareFormData: ({ body }) => {
+      const mode = body.get("download_mode") || "automated_install";
+      body.delete("download_mode");
+      body.set(mode, "on");
+      body.set("disabled_platforms", vcfDepotListValues(body.get("disabled_platforms")).join("\n"));
+    },
+    normalizeResource: normalize,
+    extraActions: [
+      {
+        label: "Preview script",
+        disabled: (row) => Boolean(row.getData().is_new),
+        action: (_event, row) => previewVcfDepotProfileScript(row),
+      },
+      {
+        label: "Start download",
+        disabled: (row) => {
+          const data = row.getData();
+          return data.is_new || !data.enabled || !data.can_start;
+        },
+        action: (_event, row) => startVcfDepotProfileDownload(row, element.dataset.csrf || ""),
+      },
+    ],
+    deleteConfirmation: (data) => ({
+      title: `Delete ${data.name} profile?`,
+      message: "This removes the VCFDT download profile from Atlaso desired state. Existing downloaded content is not removed.",
+      confirmLabel: "Delete profile",
+      tone: "danger",
+    }),
+    options: {
       height: "380px",
       rowHeight: 34,
       placeholder: "No VCFDT download profiles configured.",
-      reactiveData: false,
-      rowContextMenu: [
-        {
-          label: "Preview script",
-          action: (_event, row) => previewVcfDepotProfileScript(row),
-          disabled: (component) => Boolean(component.getData().is_new),
-        },
-        {
-          label: "Start download",
-          action: (_event, row) => startVcfDepotProfileDownload(row, csrf),
-          disabled: (component) => {
-            const data = component.getData();
-            return data.is_new || !data.enabled || !data.can_start;
-          },
-        },
-        {
-          label: "Delete profile",
-          action: (_event, row) => deleteVcfDepotProfileFromMenu(row, csrf),
-        },
-      ],
-      columns: lockNewRecordColumns([
-        {
-          title: "Name",
-          field: "name",
-          editor: "input",
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "+ Add profile here"),
-          minWidth: 180,
-          cellEdited: (cell) => autoSaveVcfDepotProfile(cell, csrf),
-        },
+      columns: [
+        { title: "Name", field: "name", formatter: (cell) => cell.getRow().getData().is_new ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add profile here</button>' : escapeHtml(cell.getValue()), minWidth: 180 },
         {
           title: "Start",
           field: "start",
@@ -10466,98 +10544,20 @@ function initializeVcfDepotProfilesTable() {
           headerSort: false,
           cellClick: (_event, cell) => startVcfDepotProfileDownload(cell.getRow(), csrf),
         },
-        {
-          title: "Type",
-          field: "profile_type",
-          editor: "list",
-          editorParams: { values: { binaries: "binaries", metadata: "metadata", esx: "esx" } },
-          width: 110,
-          cellEdited: (cell) => autoSaveVcfDepotProfile(cell, csrf),
-        },
-        {
-          title: "Enabled",
-          field: "enabled",
-          formatter: atlasoBooleanFormatter,
-          editor: "tickCross",
-          hozAlign: "center",
-          width: 95,
-          headerSort: false,
-          cellEdited: (cell) => autoSaveVcfDepotProfile(cell, csrf),
-        },
-        {
-          title: "SKU",
-          field: "sku",
-          editor: "list",
-          editorParams: { values: { VCF: "VCF", VVF: "VVF" } },
-          width: 85,
-          cellEdited: (cell) => autoSaveVcfDepotProfile(cell, csrf),
-        },
-        {
-          title: "VCF version",
-          field: "vcf_version",
-          editor: "input",
-          width: 125,
-          cellEdited: (cell) => autoSaveVcfDepotProfile(cell, csrf),
-        },
-        {
-          title: "Binary type",
-          field: "binary_type",
-          editor: "list",
-          editorParams: { values: { INSTALL: "INSTALL", UPGRADE: "UPGRADE" } },
-          width: 125,
-          cellEdited: (cell) => autoSaveVcfDepotProfile(cell, csrf),
-        },
-        {
-          title: "Download mode",
-          field: "download_mode",
-          editor: "list",
-          editorParams: {
-            values: {
-              automated_install: "Automated install",
-              upgrades_only: "Upgrades only",
-              patches_only: "Patches only",
-            },
-          },
-          formatter: (cell) => ({
-            automated_install: "Automated install",
-            upgrades_only: "Upgrades only",
-            patches_only: "Patches only",
-          })[cell.getValue()] || "Automated install",
-          minWidth: 150,
-          cellEdited: (cell) => autoSaveVcfDepotProfile(cell, csrf),
-        },
-        {
-          title: "Component",
-          field: "component",
-          editor: "list",
-          editorParams: {
-            values: componentValues,
-            autocomplete: true,
-            listOnEmpty: true,
-            clearable: true,
-          },
-          formatter: (cell) => componentValues[cell.getValue()] || escapeHtml(cell.getValue()),
-          minWidth: 210,
-          cellEdited: (cell) => autoSaveVcfDepotProfile(cell, csrf),
-        },
-        {
-          title: "Component version",
-          field: "component_version",
-          editor: "input",
-          minWidth: 145,
-          cellEdited: (cell) => autoSaveVcfDepotProfile(cell, csrf),
-        },
+        { title: "Type", field: "profile_type", width: 110 },
+        { title: "Enabled", field: "enabled", formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell), hozAlign: "center", width: 95, headerSort: false },
+        { title: "SKU", field: "sku", width: 85 },
+        { title: "VCF version", field: "vcf_version", width: 125 },
+        { title: "Binary type", field: "binary_type", width: 125 },
+        { title: "Download mode", field: "download_mode", minWidth: 150 },
+        { title: "Component", field: "component", formatter: (cell) => componentValues[cell.getValue()] || escapeHtml(cell.getValue()), minWidth: 210 },
+        { title: "Component version", field: "component_version", minWidth: 145 },
         {
           title: "Disabled platforms",
           field: "disabled_platforms",
-          editor: vcfDepotDisabledPlatformsEditor,
-          editorParams: {
-            values: esxPlatformValues,
-          },
           formatter: (cell) => formatVcfDepotDisabledPlatforms(cell, esxPlatformValues, "none"),
           minWidth: 190,
           cssClass: "vcf-platforms-cell",
-          cellEdited: (cell) => autoSaveVcfDepotProfile(cell, csrf),
         },
         {
           title: "Last run",
@@ -10571,19 +10571,11 @@ function initializeVcfDepotProfilesTable() {
           width: 110,
           headerSort: false,
         },
-      ], "name"),
-      rowFormatter: (row) => {
-        markNewRecordRow(row, "name");
-      },
-    };
-    vcfDepotProfilesTable = window.AtlasoUiPatterns.createGrid({
-      element: tableElement,
-      pattern: "direct-edit",
-      options: atlasoGridOptions26,
-    }).table;
-  } catch (error) {
-    showVcfDepotMessage(error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
-  }
+      ],
+      rowFormatter: (row) => markNewRecordRow(row, "name"),
+    },
+  });
+  vcfDepotProfilesTable = adapter?.table || null;
 }
 
 let vcfDepotTasksTable = null;
@@ -16956,7 +16948,6 @@ document.addEventListener("DOMContentLoaded", initializeDhcpLeaseReservationActi
 document.addEventListener("DOMContentLoaded", initializeEsxiPxeHostsTable);
 document.addEventListener("DOMContentLoaded", initializeCaProfilesTable);
 document.addEventListener("DOMContentLoaded", initializeCaCertificatesTable);
-document.addEventListener("DOMContentLoaded", initializeCaCertificateModal);
 document.addEventListener("DOMContentLoaded", initializeCaSettings);
 document.addEventListener("DOMContentLoaded", initializeKmsClientsTable);
 document.addEventListener("DOMContentLoaded", initializeKmsKeysTable);
@@ -16988,6 +16979,7 @@ document.addEventListener("DOMContentLoaded", initializeRoutesWanRoutingTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanNatTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanPoliciesTable);
 document.addEventListener("DOMContentLoaded", initializePhysicalInterfacesTable);
+document.addEventListener("DOMContentLoaded", initializeApiTokensTable);
 document.addEventListener("DOMContentLoaded", initializeOidcProviderSettings);
 document.addEventListener("DOMContentLoaded", initializeOidcClientsTable);
 document.addEventListener("DOMContentLoaded", initializeOidcKeysTable);

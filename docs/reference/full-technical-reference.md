@@ -703,6 +703,15 @@ Unbound clients authenticate Local identities; organization-bound clients authen
 organization, and managed LDAP OIDC sessions never grant operator UI access. See
 [Constrained OpenID Connect provider](../services/oidc-provider.md).
 
+Complex resource collections use the shared wizard-backed Tabulator pattern. Authentication API tokens and OIDC
+clients, CA profiles and certificate requests, operator firewall rules, KMS clients and keys, DHCP IP zones, VCF
+Offline Depot download profiles, and VCF Private Registry bundles remain visible as browsable grids. The pinned bottom
+row launches add; row double-click and the context menu launch edit where permissions allow. Guided steps validate
+before advancing, retain recoverable server errors in the open dialog, and finish with a desired-state and safety-boundary
+review. Deletion continues through the shared confirmation flow. These editors save application desired state only;
+host enforcement remains owned by global Appliance Apply, while explicit depot download actions remain separate task
+operations. Server-rendered tables remain available as truthful read-only fallbacks when JavaScript is unavailable.
+
 On the Photon appliance, real mutating helper actions re-enter through a transient `systemd-run` service when
 `ATLASO_HELPER_USE_SYSTEMD_RUN=1` is set. This keeps the web control plane inside its restricted `atlaso.service`
 sandbox while allowing the reviewed root helper to write approved `/etc` configuration files from outside the service's
