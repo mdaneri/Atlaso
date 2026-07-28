@@ -8301,6 +8301,9 @@ function requestConfirmation(options = {}) {
   const modal = document.getElementById("confirm-modal");
   const title = document.getElementById("confirm-modal-title");
   const message = document.getElementById("confirm-modal-message");
+  const detailGroup = document.getElementById("confirm-modal-detail-group");
+  const detailLabel = document.getElementById("confirm-modal-detail-label");
+  const detail = document.getElementById("confirm-modal-detail");
   const confirmButton = document.getElementById("confirm-modal-confirm");
   if (!(modal instanceof HTMLDialogElement) || !(title instanceof HTMLElement) || !(message instanceof HTMLElement) || !(confirmButton instanceof HTMLButtonElement)) {
     return Promise.resolve(false);
@@ -8309,10 +8312,18 @@ function requestConfirmation(options = {}) {
   title.textContent = options.title || "Confirm action";
   message.textContent = options.message || "This action cannot be undone.";
   confirmButton.textContent = options.label || "Confirm";
+  const hasDetail = Boolean(options.detail) && detailGroup instanceof HTMLElement && detail instanceof HTMLElement;
+  modal.classList.toggle("has-confirm-detail", hasDetail);
+  if (detailGroup instanceof HTMLElement) detailGroup.classList.toggle("hidden", !hasDetail);
+  if (detailLabel instanceof HTMLElement) detailLabel.textContent = options.detailLabel || "Details";
+  if (detail instanceof HTMLElement) detail.textContent = hasDetail ? String(options.detail) : "";
 
   return new Promise((resolve) => {
     const handleClose = () => {
       modal.removeEventListener("close", handleClose);
+      modal.classList.remove("has-confirm-detail");
+      if (detailGroup instanceof HTMLElement) detailGroup.classList.add("hidden");
+      if (detail instanceof HTMLElement) detail.textContent = "";
       resolve(modal.returnValue === "confirm");
     };
     modal.addEventListener("close", handleClose);
@@ -14170,6 +14181,16 @@ function initializeVcfVaultCredentialPickers() {
   });
 }
 
+function hasSelectedVcfVaultCredential(form) {
+  if (!(form instanceof HTMLFormElement)) return false;
+  const vault = form.elements.namedItem("credential_vault_id");
+  const entry = form.elements.namedItem("credential_entry_id");
+  return vault instanceof HTMLSelectElement
+    && entry instanceof HTMLSelectElement
+    && Boolean(vault.value)
+    && Boolean(entry.value);
+}
+
 function initializeVcfTrustForm() {
   const form = document.querySelector("[data-vcf-trust-form]");
   if (!(form instanceof HTMLFormElement)) {
@@ -14190,7 +14211,7 @@ function initializeVcfTrustForm() {
   let wizard;
   let inspectedTls = "";
   const steps = [
-    { id: "target", title: "Target and root CA", description: "Choose the VCF appliance, confirm snapshot readiness, and review the active Atlaso root CA." },
+    { id: "target", title: "Target and root CA", description: "Choose the VCF appliance, select a saved credential or continue with manual login, and review the active Atlaso root CA." },
     { id: "api", title: "API credentials", description: "Enter the one-time VCF API administrator credentials used to inspect and import the root CA." },
     { id: "review", title: "Review and queue", description: "Confirm the target HTTPS TLS fingerprint, then queue the certificate trust task." },
   ];
@@ -14289,6 +14310,10 @@ function initializeVcfTrustForm() {
     dialog,
     steps,
     onNext: async ({ step }) => {
+      if (step.id === "target" && hasSelectedVcfVaultCredential(form)) {
+        const ready = await inspectTarget();
+        return ready ? "review" : false;
+      }
       if (step.id === "api") {
         const ready = await inspectTarget();
         return ready ? "review" : false;
@@ -14817,6 +14842,9 @@ function initializeVcfTargetDepotHelper() {
     dialog,
     steps,
     onNext: async ({ step }) => {
+      if (step.id === "target" && hasSelectedVcfVaultCredential(form)) {
+        return "depot";
+      }
       if (step.id === "depot") {
         const ready = await inspect();
         return ready ? "review" : false;
@@ -16450,7 +16478,9 @@ function initializeVaultsPage() {
       if (response.status === 409 && payload.error_code === "SSH_HOST_KEY_CONFIRMATION_REQUIRED") {
         const confirmed = typeof window.requestConfirmation === "function" && await window.requestConfirmation({
           title: `Trust ${payload.target}?`,
-          message: `Verify the SSH host key out of band before connecting.\n\n${payload.fingerprint}`,
+          message: "Verify the SSH host key out of band before connecting.",
+          detailLabel: "SHA-256 fingerprint",
+          detail: payload.fingerprint,
           label: "Connect",
         });
         if (!confirmed) return null;
@@ -16579,13 +16609,27 @@ function initializeVaultsPage() {
               : `<code>${escapeHtml(cell.getValue())}</code>`,
             cellClick: (_event, cell) => entryWizard.open({ context: { vaultId, row: cell.getRow().getData().is_new ? null : cell.getRow().getData() }, launcher: cell.getElement() }),
           },
-          { title: "Description", field: "description", minWidth: 260, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || "—") },
+          { title: "Description", field: "description", minWidth: 220, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || "—") },
+          { title: "Username", field: "username", minWidth: 180, formatter: (cell) => cell.getRow().getData().is_new ? "" : `<code>${escapeHtml(cell.getValue() || "—")}</code>` },
+          {
+            title: "URI(s)",
+            field: "uris",
+            minWidth: 280,
+            variableHeight: true,
+            formatter: (cell) => {
+              if (cell.getRow().getData().is_new) return "";
+              const uris = cell.getValue() || [];
+              return uris.length
+                ? `<div class="vault-uri-cell">${uris.map((uri) => `<code>${escapeHtml(uri)}</code>`).join("")}</div>`
+                : "—";
+            },
+          },
           {
             title: "Password",
             field: "has_value",
-            minWidth: 190,
+            minWidth: 170,
             headerSort: false,
-            formatter: (cell) => cell.getRow().getData().is_new ? "" : '<span class="vault-password-value" data-vault-password-value>••••••••</span> <button class="button secondary compact vault-password-eye" type="button" aria-label="Reveal password" title="Reveal password" data-vault-password-eye>&#128065;</button>',
+            formatter: (cell) => cell.getRow().getData().is_new ? "" : '<span class="vault-password-value" data-vault-password-value>••••••••</span> <button class="vault-password-eye" type="button" aria-label="Reveal password" title="Reveal password" data-vault-password-eye>&#128065;</button>',
             cellClick: async (event, cell) => {
               const eye = event.target.closest("[data-vault-password-eye]");
               if (!(eye instanceof HTMLButtonElement)) return;
@@ -16667,6 +16711,32 @@ function initializeVcfVaultImport() {
       candidatesElement.append(label);
     });
   };
+  const inspectSource = async (controller) => {
+    const response = await fetch("/vcf-helper/vault-import/inspect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      cache: "no-store",
+      body: JSON.stringify(requestPayload()),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (response.status === 409 && payload.fingerprint) {
+      form.elements.confirmed_fingerprint.value = payload.fingerprint;
+      if (fingerprintHelp) fingerprintHelp.textContent = `Observed fingerprint: ${payload.fingerprint}. Verify it out of band, then choose Continue again to confirm.`;
+      controller.setError("Verify the displayed TLS fingerprint, then choose Continue again to send credentials.");
+      return false;
+    }
+    if (!response.ok) {
+      controller.setError(payload.detail || "VCF password discovery failed.");
+      return false;
+    }
+    candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
+    if (!candidates.length) {
+      controller.setError("The source returned no supported passwords.");
+      return false;
+    }
+    renderCandidates();
+    return true;
+  };
   const wizard = window.AtlasoUiPatterns.createWizard({
     dialog: modal,
     form,
@@ -16683,30 +16753,12 @@ function initializeVcfVaultImport() {
       candidatesElement?.replaceChildren();
     },
     onNext: async ({ controller, step }) => {
-      if (step.id !== "credentials") return true;
-      const response = await fetch("/vcf-helper/vault-import/inspect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        cache: "no-store",
-        body: JSON.stringify(requestPayload()),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (response.status === 409 && payload.fingerprint) {
-        form.elements.confirmed_fingerprint.value = payload.fingerprint;
-        if (fingerprintHelp) fingerprintHelp.textContent = `Observed fingerprint: ${payload.fingerprint}. Verify it out of band, then choose Continue again to confirm.`;
-        controller.setError("Verify the displayed TLS fingerprint, then choose Continue again to send credentials.");
-        return false;
+      if (step.id === "source" && hasSelectedVcfVaultCredential(form)) {
+        return await inspectSource(controller) ? "selection" : false;
       }
-      if (!response.ok) {
-        controller.setError(payload.detail || "VCF password discovery failed.");
-        return false;
+      if (step.id === "credentials") {
+        return inspectSource(controller);
       }
-      candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
-      if (!candidates.length) {
-        controller.setError("The source returned no supported passwords.");
-        return false;
-      }
-      renderCandidates();
       return true;
     },
     validateStep: ({ step }) => {

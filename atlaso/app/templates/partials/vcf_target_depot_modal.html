@@ -33,13 +33,13 @@
           <div class="form-grid">
             <label><span class="field-label"><span>VCF appliance endpoint</span><button class="help-icon" type="button" data-help="VCF 9 Installer or SDDC Manager API endpoint receiving the local offline-depot configuration. Accepts host, host:port, or https://host:port; default port is 443.">i</button></span><input name="address" required></label>
           </div>
-        </section>
-
-        <section class="vcf-sddc-step-page hidden" data-vcf-target-depot-step="api" data-atlaso-wizard-step="api">
           {% set credential_address_field = "address" %}
           {% set credential_username_field = "api_username" %}
           {% set credential_password_field = "api_password" %}
           {% include "partials/vcf_vault_credential_picker.html" %}
+        </section>
+
+        <section class="vcf-sddc-step-page hidden" data-vcf-target-depot-step="api" data-atlaso-wizard-step="api">
           <div class="form-grid">
             <label><span class="field-label"><span>API administrator</span><button class="help-icon" type="button" data-help="One-time VCF API administrator used to inspect, update, and verify depot settings.">i</button></span><input name="api_username" value="admin@local" autocomplete="username" required></label>
             <label><span class="field-label"><span>API password</span><button class="help-icon" type="button" data-help="One-time VCF API password. It is never persisted.">i</button></span><input name="api_password" type="password" autocomplete="new-password" required></label>

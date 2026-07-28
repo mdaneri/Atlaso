@@ -23,13 +23,11 @@ This verified appliance view provides visual orientation before you begin.
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
-For an existing appliance, create a current VM snapshot or equivalent rollback point before changing trust. The wizard
-collects only:
+The wizard collects only:
 
 - target VCF API endpoint, as `host`, `host:port`, or `https://host:port`;
-- one-time VCF API administrator credentials;
-- target HTTPS TLS fingerprint confirmation;
-- snapshot acknowledgment.
+- a saved vault credential or one-time VCF API administrator credentials;
+- target HTTPS TLS fingerprint confirmation.
 
 Atlaso never persists the API password. It stores only sanitized target, port, role/version, confirmed TLS fingerprint,
 deployed CA fingerprint, and task result metadata.

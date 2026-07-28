@@ -829,7 +829,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=atlaso-vaults-20260727-7"),
+        (base, "/static/app.js?v=atlaso-vaults-20260727-8"),
         (public_base, "/static/app.js?v=atlaso-oidc-admin-20260727-6"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1013,9 +1013,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=atlaso-vaults-20260727-3" in page.text
+    assert "/static/app.css?v=atlaso-vaults-20260727-4" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in page.text
-    assert "/static/app.js?v=atlaso-vaults-20260727-7" in page.text
+    assert "/static/app.js?v=atlaso-vaults-20260727-8" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -12633,7 +12633,7 @@ def test_vcf_helper_renders_certificate_trust_modal(client):
     assert response.status_code == 200
     assert "VCF Certificate Trust" in response.text
     assert 'action="/vcf-trust/root-ca"' in response.text
-    assert 'name="snapshot_acknowledged"' in response.text
+    assert 'name="snapshot_acknowledged"' not in response.text
     assert 'name="confirmed_tls_fingerprint"' in response.text
     assert "SHA-256 fingerprint" in response.text
     assert "data-vcf-trust-form" in response.text
@@ -12720,7 +12720,6 @@ def test_vcf_trust_requires_tls_confirmation_then_queues_without_persisting_cred
         "address": "vcf-installer.example.test",
         "api_username": "administrator@vsphere.local",
         "api_password": "api-super-secret",
-        "snapshot_acknowledged": "on",
         "csrf": csrf,
     }
 
@@ -12800,7 +12799,6 @@ def test_vcf_trust_rejects_mismatched_confirmed_tls_fingerprint(client, monkeypa
             "address": "vcf-installer.example.test",
             "api_username": "administrator@vsphere.local",
             "api_password": "api-secret",
-            "snapshot_acknowledged": "on",
             "confirmed_tls_fingerprint": "CC:DD",
             "csrf": csrf,
         },

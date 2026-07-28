@@ -6544,7 +6544,7 @@ def run_vcf_trust_job(job_id: str, target_id: int, credentials: VcfTrustCredenti
             detail=(
                 f"target={target.address}:{target.api_port}; role={target.appliance_role or 'unknown'}; "
                 f"version={target.appliance_version or 'unknown'}; ca_fingerprint={ca.fingerprint}; "
-                f"snapshot_acknowledged=true; result={target.last_result}"
+                f"result={target.last_result}"
             ),
         )
 
@@ -16649,7 +16649,6 @@ def trust_vcf_root_ca_from_ui(
     credential_vault_id: str = Form(""),
     credential_entry_id: str = Form(""),
     confirmed_tls_fingerprint: str = Form(""),
-    snapshot_acknowledged: str | None = Form(None),
     awaiting_job_id: str = Form(""),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
@@ -16678,8 +16677,6 @@ def trust_vcf_root_ca_from_ui(
         errors = [str(exc.detail)]
     else:
         normalized_address, errors = _normalize_vcf_trust_address(endpoint_address)
-    if snapshot_acknowledged != "on":
-        errors.append("Confirm that a current snapshot exists before starting this remote change.")
     if not api_username.strip() or not api_password:
         errors.append("VCF API administrator credentials are required.")
     try:
@@ -16740,7 +16737,7 @@ def trust_vcf_root_ca_from_ui(
         action="queue_vcf_root_ca_import",
         resource_type="job",
         resource_id=job.id,
-        detail=f"target={normalized_address}:{port}; ca_fingerprint={ca.fingerprint}; snapshot_acknowledged=true",
+        detail=f"target={normalized_address}:{port}; ca_fingerprint={ca.fingerprint}",
     )
     queue_vcf_trust_job(job.id, target.id, credentials, ca)
     if request.headers.get("X-Atlaso-VCF-Trust") == "1":

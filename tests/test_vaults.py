@@ -202,11 +202,18 @@ def test_dynamic_kickstart_resolves_assigned_vault_without_caching(client):
 
 def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     source = Path("atlaso/app/static/app.js").read_text()
+    css = Path("atlaso/app/static/app.css").read_text()
+    base_template = Path("atlaso/app/templates/base.html").read_text()
     template = Path("atlaso/app/templates/vaults.html").read_text()
     assert "initializeVaultsPage" in source
     assert "AtlasoUiPatterns.createGrid" in source
     assert "AtlasoUiPatterns.createWizard" in source
     assert "data-vault-password-eye" in source
+    assert 'title: "Username", field: "username"' in source
+    assert 'title: "URI(s)"' in source
+    assert 'class="vault-uri-cell"' in source
+    assert '<button class="vault-password-eye"' in source
+    assert "border: 0;" in css[css.index(".vault-password-eye {"):css.index(".vcf-vault-candidate-list")]
     assert "15000" in source
     assert 'rowContextMenu: (_event, component) =>' in source
     assert 'label: "Edit password"' in source
@@ -244,7 +251,25 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert 'window.open("about:blank"' not in source
     assert "/terminal/remote#target=" in source
     assert "remoteWindow.location.replace" in source
-    assert "atlaso-vaults-20260727-7" in Path("atlaso/app/templates/base.html").read_text()
+    assert 'detailLabel: "SHA-256 fingerprint"' in source
+    assert "detail: payload.fingerprint" in source
+    assert 'id="confirm-modal-detail-group"' in base_template
+    assert 'id="confirm-modal-detail-label"' in base_template
+    assert 'id="confirm-modal-detail"' in base_template
+    assert ".confirm-modal.has-confirm-detail" in css
+    assert "overflow-wrap: anywhere;" in css[css.index(".confirm-modal-detail-group"):css.index(".confirm-modal.wide-modal")]
+    assert "atlaso-vaults-20260727-8" in base_template
+    trust_template = Path("atlaso/app/templates/partials/vcf_trust_modal.html").read_text()
+    import_template = Path("atlaso/app/templates/partials/vcf_vault_import_modal.html").read_text()
+    depot_template = Path("atlaso/app/templates/partials/vcf_target_depot_modal.html").read_text()
+    assert 'name="snapshot_acknowledged"' not in trust_template
+    assert trust_template.index("vcf_vault_credential_picker.html") < trust_template.index('data-vcf-trust-step="api"')
+    assert import_template.index("vcf_vault_credential_picker.html") < import_template.index('data-atlaso-wizard-step="credentials"')
+    assert depot_template.index("vcf_vault_credential_picker.html") < depot_template.index('data-vcf-target-depot-step="api"')
+    assert "hasSelectedVcfVaultCredential(form)" in source
+    assert 'return ready ? "review" : false;' in source
+    assert 'return await inspectSource(controller) ? "selection" : false;' in source
+    assert 'return "depot";' in source
     pxe_template = Path("atlaso/app/templates/esxi_pxe.html").read_text()
     assert "{{vault.<vaultname>.<key>.uri1}}" in pxe_template
     assert "{{vault.<vaultname>.<key>.uri9}}" in pxe_template

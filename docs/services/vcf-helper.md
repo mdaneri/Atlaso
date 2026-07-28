@@ -59,7 +59,7 @@ streams the disks through a vSphere NFC lease. It refuses duplicate VM names, po
 minutes for the VCF API.
 
 The form can optionally add managed DNS desired state, deploy Atlaso CA trust, and configure the local offline depot.
-Trust uses the VCF API only. New-VM trust does not require a snapshot because redeployment is the recovery path.
+Trust uses the VCF API only and does not require a snapshot acknowledgement.
 Manually entered vSphere, OVF, VCF API, and depot passwords remain transient; a selected vault password remains
 encrypted at rest and is resolved only on the server for the request.
 

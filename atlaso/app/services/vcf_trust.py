@@ -221,7 +221,6 @@ def sanitized_result(*, address: str, port: int, ca: RootCaInfo, state: str, **v
             "ca_subject": ca.subject,
             "ca_expires_at": ca.expires_at,
             "ca_fingerprint": ca.fingerprint,
-            "snapshot_acknowledged": True,
             "state": state,
             **values,
         },

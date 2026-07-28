@@ -9,9 +9,9 @@ status: current
 # Vaults
 
 Open **VCF Workflows > Vaults** to manage encrypted VCF and ESX passwords. Each named vault appears as a tab containing
-a table with **Key**, **Description**, and **Password** columns. Passwords are masked by default. Administrators can use
-the eye control to reveal one value for 15 seconds; Atlaso audits the reveal without recording the value and returns it
-with browser caching disabled.
+a table with **Key**, **Description**, **Username**, **URI(s)**, and **Password** columns. Multiple URIs are displayed
+on separate lines. Passwords are masked by default. Administrators can use the compact eye control to reveal one value
+for 15 seconds; Atlaso audits the reveal without recording the value and returns it with browser caching disabled.
 
 Vault keys use lowercase dotted segments, for example `vcf.sddc_manager.admin` or `esx.esx01.root`. Values are encrypted
 with the appliance secrets key before database storage. Keep `ATLASO_SECRETS_KEY` with the appliance recovery material.
@@ -20,8 +20,9 @@ entry wizard. Right-click an existing row, or focus it and press **Shift+F10**, 
 password** reopens the entry wizard, **Delete password** uses the shared destructive confirmation, and each configured
 URI has its own action. HTTP and HTTPS open in a separate browser tab; SSH and SFTP open the Atlaso Web Terminal and
 authenticate with the entry username and password. Atlaso opens the remote terminal window only after the administrator
-accepts the displayed host-key fingerprint. That window is a standalone terminal surface identified only by the remote
-hostname; it does not include the Atlaso administration shell.
+accepts the displayed host-key fingerprint. The confirmation displays the SHA-256 fingerprint in a dedicated wrapping
+field so it remains readable without horizontal scrolling. That window is a standalone terminal surface identified
+only by the remote hostname; it does not include the Atlaso administration shell.
 
 ## Managed scripts
 
@@ -85,10 +86,10 @@ rotated.
 
 ## VCF Helper autofill
 
-VCF Helper remote-connection forms provide an administrator-only **Vault** and **Key** picker. Selecting a key fills
-the server from its first HTTP or HTTPS URI and fills its username. The password remains encrypted at rest and is
-resolved only by the server when the operator inspects or submits the remote operation. It is never copied into the
-password input or included in the page metadata.
+VCF Helper remote-connection wizards provide an administrator-only **Vault** and **Key** picker on their **Target**
+page. Selecting a key fills the server from its first HTTP or HTTPS URI and fills its username, then skips the manual
+API-login page. The password remains encrypted at rest and is resolved only by the server when the operator inspects or
+submits the remote operation. It is never copied into the password input or included in the page metadata.
 
 The server rejects a key that does not belong to the selected vault and audits each use without the value. A vault
 entry intended for VCF Helper should therefore include a username and, when possible, an HTTP or HTTPS URI. Operators
