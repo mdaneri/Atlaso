@@ -76,9 +76,10 @@ encrypted at rest and is resolved only on the server for the request.
 ## Configure VCF Offline Depot
 
 The standalone helper is available only when the local depot is enabled, applied, CA-backed, has a generated software
-depot ID, and has a selected HTTP user. Its wizard confirms the target HTTPS fingerprint, detects VCF Installer or SDDC
-Manager 9.x, collects the one-time depot HTTP password, and reads the current sanitized depot configuration. Replacing a
-different depot requires explicit confirmation.
+depot ID, and has a selected HTTP user. Its wizard follows **Credential**, **Server**, **TLS fingerprint**, and
+**Login** before collecting the one-time depot HTTP password and reading the current sanitized depot configuration.
+The TLS probe runs before Atlaso resolves a selected vault password or reads manual login fields. After confirmation,
+Atlaso detects VCF Installer or SDDC Manager 9.x. Replacing a different depot requires explicit confirmation.
 
 Atlaso calls `PUT /v1/system/settings/depot`, triggers metadata refresh with
 `PATCH /v1/system/settings/depot/depot-sync-info`, and polls the matching GET endpoint for up to 60 minutes. It asks for

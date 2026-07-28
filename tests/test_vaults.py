@@ -335,7 +335,7 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert 'id="confirm-modal-detail"' in base_template
     assert ".confirm-modal.has-confirm-detail" in css
     assert "overflow-wrap: anywhere;" in css[css.index(".confirm-modal-detail-group"):css.index(".confirm-modal.wide-modal")]
-    assert "atlaso-vaults-20260727-16" in base_template
+    assert "atlaso-vaults-20260727-17" in base_template
     trust_template = Path("atlaso/app/templates/partials/vcf_trust_modal.html").read_text()
     import_template = Path("atlaso/app/templates/partials/vcf_vault_import_modal.html").read_text()
     depot_template = Path("atlaso/app/templates/partials/vcf_target_depot_modal.html").read_text()
@@ -354,7 +354,8 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert "data-vcf-trust-tls-confirmation" in trust_template
     assert "<span>Server address</span>" in trust_template
     assert 'data-atlaso-wizard-nav="credential"' in depot_template
-    assert "Step 1 of 6" in depot_template
+    assert "Step 1 of 7" in depot_template
+    assert 'data-atlaso-wizard-nav="tls"' in depot_template
     assert "addressControl.readOnly = true;" in source
     assert 'filter((uri) => /^https?:\\/\\//i.test(uri)).forEach((endpoint) =>' in source
     assert "option.dataset.endpoint = endpoint;" in source
@@ -372,7 +373,7 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert 'inspectTarget({ probeOnly: true })' in source
     assert 'return state === "ready" ? "review" : state === "tls" ? "tls" : false;' in source
     assert 'return state === "ready" ? "selection" : state === "tls" ? "tls" : false;' in source
-    assert 'return "depot";' in source
+    assert 'return hasSelectedVcfVaultCredential(form) ? "depot" : "api";' in source
     pxe_template = Path("atlaso/app/templates/esxi_pxe.html").read_text()
     assert "{{vault.<vaultname>.<key>.uri1}}" in pxe_template
     assert "{{vault.<vaultname>.<key>.uri9}}" in pxe_template

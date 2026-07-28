@@ -14765,9 +14765,10 @@ function initializeVcfTargetDepotHelper() {
   const steps = [
     { id: "credential", title: "Choose a credential source", description: "Use a saved vault key or continue with a one-time manual login." },
     { id: "target", title: "Target and local depot", description: "Choose the remote VCF appliance and review the local Atlaso depot endpoint." },
+    { id: "tls", title: "Verify the server fingerprint", description: "Confirm the observed TLS fingerprint out of band before Atlaso resolves or sends credentials." },
     { id: "api", title: "API credentials", description: "Enter the one-time VCF API administrator credentials." },
     { id: "depot", title: "Depot credentials", description: "Enter the one-time password for the configured Atlaso depot HTTP user." },
-    { id: "review", title: "Review current settings", description: "Confirm TLS and review the sanitized current target depot configuration." },
+    { id: "review", title: "Review current settings", description: "Review the sanitized current target depot configuration." },
     { id: "queue", title: "Queue configuration", description: "Start the background task and continue monitoring from Operations → Tasks." },
   ];
   const showError = (message) => { errors.textContent = message; errors.classList.toggle("hidden", !message); };
@@ -14839,11 +14840,10 @@ function initializeVcfTargetDepotHelper() {
       const { response, data } = await vcfHelperJson("/vcf-helper/offline-depot/inspect-target", "POST", payload());
       if (response.status === 409 && data.status === "tls-confirmation-required") {
         renderCurrentDepot(data);
-        wizard.showStep("review", { unlock: true });
-        return false;
+        return "tls";
       }
       renderCurrentDepot(data);
-      return true;
+      return "ready";
     } catch (error) {
       showError(error.message);
       return false;
@@ -14859,17 +14859,27 @@ function initializeVcfTargetDepotHelper() {
     dialog,
     steps,
     onNext: async ({ step }) => {
-      if (step.id === "target" && hasSelectedVcfVaultCredential(form)) {
-        return "depot";
+      if (step.id === "target") {
+        const state = await inspect();
+        return state === "tls" ? "tls" : state === "ready"
+          ? (hasSelectedVcfVaultCredential(form) ? "depot" : "api")
+          : false;
+      }
+      if (step.id === "tls") {
+        if (!(tlsConfirm instanceof HTMLInputElement) || !tlsConfirm.checked || !inspectedTls) {
+          return false;
+        }
+        if (tls instanceof HTMLInputElement) tls.value = inspectedTls;
+        return hasSelectedVcfVaultCredential(form) ? "depot" : "api";
       }
       if (step.id === "depot") {
-        const ready = await inspect();
-        return ready ? "review" : false;
+        const state = await inspect();
+        return state === "ready" ? "review" : state === "tls" ? "tls" : false;
       }
       if (step.id === "review") {
         if (!inspected && !(tls instanceof HTMLInputElement && tls.value)) {
-          const ready = await inspect();
-          if (!ready) return false;
+          const state = await inspect();
+          if (state !== "ready") return state === "tls" ? "tls" : false;
         }
         return "queue";
       }
@@ -14890,7 +14900,7 @@ function initializeVcfTargetDepotHelper() {
         }
         if (response.status === 409 && data.status === "tls-confirmation-required") {
           renderCurrentDepot(data);
-          wizard.showStep("review", { unlock: true });
+          wizard.showStep("tls", { unlock: true });
           if (submit instanceof HTMLButtonElement) submit.textContent = "Configure and sync";
           return { ok: false };
         }
@@ -14910,18 +14920,6 @@ function initializeVcfTargetDepotHelper() {
   tlsConfirm?.addEventListener("change", async () => {
     if (!(tlsConfirm instanceof HTMLInputElement) || !(tls instanceof HTMLInputElement)) return;
     tls.value = tlsConfirm.checked ? inspectedTls : "";
-    if (!tlsConfirm.checked || !inspectedTls) {
-      return;
-    }
-    if (reviewRole instanceof HTMLElement) reviewRole.textContent = "Inspecting…";
-    if (reviewVersion instanceof HTMLElement) reviewVersion.textContent = "Inspecting…";
-    const ready = await inspect();
-    if (!ready) {
-      tls.value = "";
-      tlsConfirm.checked = false;
-      if (reviewRole instanceof HTMLElement) reviewRole.textContent = "After TLS confirmation";
-      if (reviewVersion instanceof HTMLElement) reviewVersion.textContent = "After TLS confirmation";
-    }
   });
 }
 

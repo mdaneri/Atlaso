@@ -16327,6 +16327,11 @@ async def vcf_sddc_manager_inventory(
     require_vcf_helper_write(identity)
     payload = await _vcf_helper_json(request)
     address, port = _split_vcf_endpoint_address_port(payload.get("address"), payload.get("port"))
+    if not address:
+        raise HTTPException(status_code=422, detail="Target address is required.")
+    fingerprint, confirmation = _confirmed_tls_fingerprint(address, port, str(payload.get("confirmed_tls_fingerprint") or ""))
+    if confirmation:
+        return confirmation
     username, password = _resolve_vcf_helper_credentials(
         db,
         identity,
@@ -16337,9 +16342,6 @@ async def vcf_sddc_manager_inventory(
     )
     if not address or not username or not password:
         raise HTTPException(status_code=422, detail="Target address, username, and password are required.")
-    fingerprint, confirmation = _confirmed_tls_fingerprint(address, port, str(payload.get("confirmed_tls_fingerprint") or ""))
-    if confirmation:
-        return confirmation
     try:
         inventory = vsphere_inventory(address, username, password, port=port, expected_fingerprint=fingerprint)
         descriptor = inspect_ova(str(payload.get("ova_path") or ""))
@@ -16360,6 +16362,11 @@ async def deploy_vcf_sddc_manager_from_ui(
     require_vcf_helper_write(identity)
     payload = await _vcf_helper_json(request)
     address, port = _split_vcf_endpoint_address_port(payload.get("address"), payload.get("port"))
+    if not address:
+        raise HTTPException(status_code=422, detail="Target address is required.")
+    _fingerprint, confirmation = _confirmed_tls_fingerprint(address, port, str(payload.get("confirmed_tls_fingerprint") or ""))
+    if confirmation:
+        return confirmation
     username, password = _resolve_vcf_helper_credentials(
         db,
         identity,
@@ -16370,9 +16377,6 @@ async def deploy_vcf_sddc_manager_from_ui(
     )
     if not address or not username or not password:
         raise HTTPException(status_code=422, detail="Target address, username, and password are required.")
-    _fingerprint, confirmation = _confirmed_tls_fingerprint(address, port, str(payload.get("confirmed_tls_fingerprint") or ""))
-    if confirmation:
-        return confirmation
     try:
         descriptor = inspect_ova(str(payload.get("ova_path") or ""))
     except VcfSddcDeploymentError as exc:
@@ -16490,6 +16494,11 @@ async def inspect_vcf_offline_depot_target_from_ui(
         address, port = _split_vcf_endpoint_address_port(payload.get("address"), payload.get("port"))
     except HTTPException as exc:
         raise exc
+    if not address:
+        raise HTTPException(status_code=422, detail="Target address is required.")
+    fingerprint, confirmation = _confirmed_tls_fingerprint(address, port, str(payload.get("confirmed_tls_fingerprint") or ""))
+    if confirmation:
+        return confirmation
     api_username, api_password = _resolve_vcf_helper_credentials(
         db,
         identity,
@@ -16498,9 +16507,6 @@ async def inspect_vcf_offline_depot_target_from_ui(
         password_field="api_password",
         purpose="offline_depot_inspect",
     )
-    fingerprint, confirmation = _confirmed_tls_fingerprint(address, port, str(payload.get("confirmed_tls_fingerprint") or ""))
-    if confirmation:
-        return confirmation
     try:
         target = inspect_target_depot(address, api_username, api_password, port=port, expected_fingerprint=fingerprint)
     except VcfDepotTargetError as exc:
@@ -16531,6 +16537,11 @@ async def configure_vcf_offline_depot_target_from_ui(
         address, port = _split_vcf_endpoint_address_port(payload.get("address"), payload.get("port"))
     except HTTPException as exc:
         raise exc
+    if not address:
+        raise HTTPException(status_code=422, detail="Target address is required.")
+    fingerprint, confirmation = _confirmed_tls_fingerprint(address, port, str(payload.get("confirmed_tls_fingerprint") or ""))
+    if confirmation:
+        return confirmation
     api_username, api_password = _resolve_vcf_helper_credentials(
         db,
         identity,
@@ -16542,9 +16553,6 @@ async def configure_vcf_offline_depot_target_from_ui(
     depot_password = str(payload.get("depot_password") or "")
     if not address or not api_username or not api_password or not depot_password:
         raise HTTPException(status_code=422, detail="Target API credentials and the one-time depot password are required.")
-    fingerprint, confirmation = _confirmed_tls_fingerprint(address, port, str(payload.get("confirmed_tls_fingerprint") or ""))
-    if confirmation:
-        return confirmation
     replace_existing = bool(payload.get("replace_existing"))
     try:
         current = inspect_target_depot(address, api_username, api_password, port=port, expected_fingerprint=fingerprint)["depot"]
