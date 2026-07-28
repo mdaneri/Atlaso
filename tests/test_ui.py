@@ -1013,7 +1013,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=atlaso-vaults-20260727-4" in page.text
+    assert "/static/app.css?v=atlaso-vaults-20260727-5" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in page.text
     assert "/static/app.js?v=atlaso-vaults-20260727-8" in page.text
     app_css = client.get("/static/app.css")
