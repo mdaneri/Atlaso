@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "partials/resource_wizard.html" import resource_wizard %}
 {% block page_title %}Managed LDAP{% endblock %}
 {% macro render_ldap_settings_panel() %}
     <div class="panel detail-panel">
@@ -93,13 +94,15 @@
     <div id="ldap-directory-panel">
         <div class="section-head">
           <div><h2>Organizations</h2><p class="muted">Each organization receives an isolated suffix, database, users OU, groups OU, and read-only VCF bind identity.</p></div>
-          <span class="status-pill muted">{{ ldap_organizations|length }} organizations</span>
+          <div class="button-row">
+            <span class="status-pill muted">{{ ldap_organizations|length }} organizations</span>
+            <button class="button secondary compact" type="button" data-ldap-organization-open>+ Organization</button>
+          </div>
         </div>
         <div class="tab-buttons zone-tabs" role="tablist" aria-label="LDAP organizations" data-ldap-organization-tabs>
           {% for organization in ldap_organizations %}
             <a class="tab-button {{ 'active' if ldap_selected_organization and organization.id == ldap_selected_organization.id else '' }}" role="tab" {% if ldap_selected_organization and organization.id == ldap_selected_organization.id %}aria-selected="true"{% else %}aria-selected="false"{% endif %} href="/ldap?organization_id={{ organization.id }}#ldap-directory-panel" data-ldap-organization-id="{{ organization.id }}">{{ organization.name }}</a>
           {% endfor %}
-          <button class="tab-button" type="button" role="tab" data-tab-target="ldap-organization-new" aria-controls="ldap-organization-new" aria-selected="false">+ Organization</button>
         </div>
         <div class="tab-panels">
           <div id="ldap-organization-current" class="tab-panel active" role="tabpanel">
@@ -174,19 +177,6 @@
             <div class="empty-state"><h3>Create an organization first</h3><p>Directory users, groups, bind credentials, VCF connections, and suffix-specific bundles appear here.</p></div>
           {% endif %}
           </div>
-          <div id="ldap-organization-new" class="tab-panel" role="tabpanel" hidden>
-            <div class="empty-state zone-create">
-              <div><h2>New Organization</h2><p class="muted">Create an isolated LDAP suffix. A new organization tab will be added for its users and groups.</p></div>
-              <form class="form-stack" action="/ldap/organizations" method="post">
-                <input type="hidden" name="csrf" value="{{ csrf_token }}">
-                <label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Operator-facing VCF organization label stored in Atlaso.">i</button></span><input name="name" required></label>
-                <label><span class="field-label"><span>Slug</span><button class="help-icon" type="button" data-help="Lowercase stable identifier used in the default suffix and OpenLDAP data directory. Leave blank to derive it from the name.">i</button></span><input name="slug" placeholder="org-a"></label>
-                <label><span class="field-label"><span>Suffix DN</span><button class="help-icon" type="button" data-help="Unique naming context for this organization. Leave blank for dc=&lt;slug&gt;,dc=ldap,dc=atlaso,dc=internal.">i</button></span><input name="suffix_dn" placeholder="dc=org-a,dc=ldap,dc=atlaso,dc=internal"></label>
-                <label class="switch-field"><span class="field-label"><span>Enabled</span><button class="help-icon" type="button" data-help="Includes this organization database in the next global LDAP apply.">i</button></span><input class="switch-input" type="checkbox" name="enabled" checked><span class="switch-track" aria-hidden="true"></span></label>
-                <button class="button primary" type="submit">Create organization</button>
-              </form>
-            </div>
-          </div>
         </div>
     </div>
   </div>
@@ -216,6 +206,40 @@
     </div>
   </aside>
 </section>
+
+{% set ldap_organization_steps = [
+  {"id": "identity", "label": "Organization", "summary": "Name and desired state"},
+  {"id": "directory", "label": "Directory", "summary": "Slug and isolated suffix"},
+  {"id": "review", "label": "Review", "summary": "Confirm bind identity creation"}
+] %}
+{% call resource_wizard(
+  "ldap-organization-dialog",
+  "ldap-organization-form",
+  "/ldap/organizations",
+  ldap_organization_steps,
+  "Create LDAP organization",
+  "Name the VCF organization and choose its isolated LDAP naming context.",
+  "Create organization"
+) %}
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <section data-atlaso-wizard-step="identity">
+    <div class="form-grid">
+      <label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Operator-facing VCF organization label stored in Atlaso.">i</button></span><input name="name" required maxlength="160" autocomplete="off"></label>
+      <label class="switch-field"><span class="field-label"><span>Enabled</span><button class="help-icon" type="button" data-help="Includes this organization database in the next global LDAP apply.">i</button></span><input class="switch-input" type="checkbox" name="enabled" checked><span class="switch-track" aria-hidden="true"></span></label>
+    </div>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="directory">
+    <div class="form-grid">
+      <label><span class="field-label"><span>Slug</span><button class="help-icon" type="button" data-help="Lowercase stable identifier used in the default suffix and OpenLDAP data directory. Leave blank to derive it from the name.">i</button></span><input name="slug" placeholder="org-a" autocomplete="off"></label>
+      <label><span class="field-label"><span>Suffix DN</span><button class="help-icon" type="button" data-help="Unique naming context for this organization. Leave blank for dc=&lt;slug&gt;,dc=ldap,dc=atlaso,dc=internal.">i</button></span><input name="suffix_dn" placeholder="dc=org-a,dc=ldap,dc=atlaso,dc=internal" autocomplete="off"></label>
+    </div>
+    <div class="alert warning">Atlaso creates a separate LDAP database plus a one-time read-only VCF bind credential for this suffix.</div>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="review">
+    <div class="settings-list" data-atlaso-resource-review></div>
+    <div class="alert warning">The bind password is shown once after creation. LDAP host mutation remains part of global Appliance Apply.</div>
+  </section>
+{% endcall %}
 
 {% if ldap_one_time_bind_secret %}
 <dialog id="ldap-bind-secret-modal" class="confirm-modal" aria-labelledby="ldap-bind-secret-modal-title" data-ldap-bind-secret-auto-open>

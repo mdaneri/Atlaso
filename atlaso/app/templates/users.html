@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "partials/resource_wizard.html" import resource_wizard %}
 {% block page_title %}Users{% endblock %}
 {% block content %}
 <section class="split-workspace">
@@ -135,6 +136,59 @@
     </div>
   </aside>
 </section>
+
+{% set local_user_steps = [
+  {"id": "identity", "label": "Identity", "summary": "Username and Atlaso roles"},
+  {"id": "access", "label": "Access", "summary": "Photon shell and Web SSH"},
+  {"id": "review", "label": "Review", "summary": "Confirm desired account state"}
+] %}
+{% call resource_wizard(
+  "user-account-dialog",
+  "user-account-form",
+  "/users",
+  local_user_steps,
+  "Define the local user",
+  "Set the Atlaso identity, roles, and desired Photon access.",
+  "Create local user"
+) %}
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="record_id" value="">
+  <section data-atlaso-wizard-step="identity">
+    <label>
+      <span class="field-label"><span>Username</span><button class="help-icon" type="button" data-help="Lowercase local identity used by Atlaso and, after Local Users apply, Photon OS.">i</button></span>
+      <input name="username" required maxlength="120" autocomplete="off">
+    </label>
+    <fieldset class="scope-choice-fieldset">
+      <legend>Atlaso roles</legend>
+      <div class="scope-choice-grid">
+        {% for role in roles %}
+          <label class="scope-choice">
+            <input type="checkbox" name="roles" value="{{ role }}">
+            <span><strong>{{ role|replace("_", " ")|title }}</strong><small>Grant the {{ role|replace("_", " ") }} role.</small></span>
+          </label>
+        {% endfor %}
+      </div>
+    </fieldset>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="access">
+    <div class="form-grid">
+      <label>
+        <span class="field-label"><span>Photon shell</span><button class="help-icon" type="button" data-help="The desired Photon OS login shell. Use nologin unless this account requires interactive access.">i</button></span>
+        <select name="shell">{% for shell in shells %}<option value="{{ shell }}">{{ shell }}</option>{% endfor %}</select>
+      </label>
+      <label class="switch-field">
+        <span class="field-label"><span>Web SSH access</span><button class="help-icon" type="button" data-help="Allows this enabled local user to open the appliance web terminal. An interactive shell is required.">i</button></span>
+        <input class="switch-input" type="checkbox" name="web_terminal_access">
+        <span class="switch-track" aria-hidden="true"></span>
+      </label>
+    </div>
+    <div class="alert warning">Creating a user does not stage a Photon password. Use the row action after saving, then submit the Local Users appliance-apply unit.</div>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="review">
+    <div class="settings-list" data-atlaso-resource-review></div>
+    <div class="alert warning">Saving changes local-user desired state only. Photon OS enforcement remains part of global Appliance Apply.</div>
+  </section>
+{% endcall %}
 
 <dialog id="user-password-modal" class="confirm-modal" aria-labelledby="user-password-modal-title">
   <form id="user-password-form" class="confirm-modal-panel form-stack" action="/users/0/password" method="post">

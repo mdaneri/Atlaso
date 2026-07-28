@@ -1153,6 +1153,17 @@ function populateAtlasoWizardForm(form, data = {}, { recordField = "record_id", 
       });
       return;
     }
+    if (controls[0] instanceof HTMLSelectElement && controls[0].multiple) {
+      const selected = new Set(
+        Array.isArray(value)
+          ? value.map(String)
+          : String(value || "").split(/[\s,\n]+/).filter(Boolean),
+      );
+      [...controls[0].options].forEach((option) => {
+        option.selected = selected.has(String(option.value));
+      });
+      return;
+    }
     controls[0].value = Array.isArray(value) ? value.join("\n") : (value ?? "");
   });
 }
@@ -1171,7 +1182,7 @@ function atlasoWizardReviewValue(form, item) {
     return controls.find((control) => control.checked)?.value || "";
   }
   if (controls[0] instanceof HTMLSelectElement) {
-    return controls[0].selectedOptions[0]?.textContent?.trim() || "";
+    return [...controls[0].selectedOptions].map((option) => option.textContent?.trim() || "").filter(Boolean).join(", ");
   }
   return controls[0].value.trim() || "Not set";
 }
@@ -3524,27 +3535,6 @@ function openUserPasswordModal(data) {
   }
 }
 
-async function deleteUserFromMenu(row, csrf) {
-  clearCaMessage("users-error");
-  const data = row.getData();
-  if (data.is_new) {
-    return;
-  }
-  const confirmed = await requestConfirmation({
-    title: `Remove ${data.username}?`,
-    message: "This removes the local Atlaso account, revokes its API tokens, and removes the managed Photon OS account on the next global appliance apply.",
-    label: "Remove user",
-  });
-  if (!confirmed) {
-    return;
-  }
-  try {
-    await postUserAction(`/users/${data.id}/delete`, {}, csrf);
-  } catch (error) {
-    showCaMessage("users-error", error instanceof Error ? error.message : "The user could not be removed.");
-  }
-}
-
 async function unlockUserFromMenu(row, csrf) {
   clearCaMessage("users-error");
   const data = row.getData();
@@ -3606,166 +3596,135 @@ function newUserRow() {
   };
 }
 
-function normalizeUserRoleSelection(value, allowedRoles) {
-  const rawValues = Array.isArray(value) ? value : String(value || "").split(",");
-  const selected = rawValues
-    .map((item) => String(item || "").trim())
-    .filter((item, index, values) => allowedRoles.includes(item) && values.indexOf(item) === index);
-  return selected.length ? selected : ["viewer"];
-}
-
 function userRolesFormatter(cell) {
   const data = cell.getRow().getData();
   const roles = Array.isArray(data.roles) && data.roles.length ? data.roles : String(data.roles_text || data.role || "viewer").split(",");
   return escapeHtml(roles.map((role) => String(role).trim()).filter(Boolean).join(", ") || "viewer");
 }
 
-function syncUserRoleFields(row, roles) {
-  const selectedRoles = Array.isArray(roles) && roles.length ? roles : ["viewer"];
-  const roleText = selectedRoles.join(", ");
-  const data = row.getData();
-  data.role = selectedRoles[0] || "viewer";
-  data.roles = selectedRoles;
-  data.roles_label = roleText;
-  data.roles_text = roleText;
-  row.update({
-    role: data.role,
-    roles: data.roles,
-    roles_label: roleText,
-    roles_text: roleText,
-  });
-}
-
-function hasRequiredUserFields(data) {
-  return Boolean((data.username || "").trim());
-}
-
-async function autoSaveUser(cell, csrf) {
-  clearCaMessage("users-error");
-  const row = cell.getRow();
-  const data = row.getData();
-  if (data.is_new) {
-    if (!hasRequiredUserFields(data)) {
-      return;
-    }
-    try {
-      await postUserAction("/users", data, csrf, { reload: false });
-      showTransientGridStatus("Added");
-      window.location.reload();
-    } catch (error) {
-      showCaMessage("users-error", error instanceof Error ? error.message : "The user could not be added.");
-      if (typeof cell.restoreOldValue === "function") {
-        cell.restoreOldValue();
-      }
-    }
-    return;
-  }
-  try {
-    await postUserAction(`/users/${data.id}/edit`, data, csrf, { reload: false });
-    showTransientGridStatus("Saved");
-  } catch (error) {
-    showCaMessage("users-error", error instanceof Error ? error.message : "The user could not be saved.");
-    if (typeof cell.restoreOldValue === "function") {
-      cell.restoreOldValue();
-    }
-  }
-}
-
 function initializeUsersTable() {
-  const tableElement = document.getElementById("users-table");
-  if (!(tableElement instanceof HTMLElement)) {
-    return;
-  }
-  const fallback = document.getElementById(tableElement.dataset.fallbackId || "");
-  if (typeof Tabulator === "undefined") {
-    showCaMessage("users-error", "Tabulator did not load. Showing the fallback table.");
-    return;
-  }
-  const csrf = tableElement.dataset.csrf || "";
-  const shells = JSON.parse(tableElement.dataset.shells || '["/sbin/nologin","/bin/bash","/bin/sh"]');
-  const roles = JSON.parse(tableElement.dataset.roles || '["viewer"]');
-  const roleOptions = roleValues(roles);
-  const rows = [...JSON.parse(tableElement.dataset.users || "[]"), newUserRow()];
-  try {
-    const atlasoGridOptions7 = {
-      data: rows,
-      index: "id",
-      layout: "fitColumns",
+  const element = document.getElementById("users-table");
+  if (!(element instanceof HTMLElement)) return;
+  const csrf = element.dataset.csrf || "";
+  const existingRows = JSON.parse(element.dataset.users || "[]");
+  initializeAtlasoResourceWizard({
+    elementId: "users-table",
+    formSelector: "[data-user-account-form]",
+    dialogId: "user-account-dialog",
+    rows: existingRows,
+    newRow: newUserRow(),
+    resourceName: "user",
+    createUrl: "/users",
+    editUrl: (id) => `/users/${id}/edit`,
+    deleteResource: true,
+    deleteUrl: (id) => `/users/${id}/delete`,
+    editLabel: "Edit user",
+    deleteLabel: "Remove user",
+    createLabel: "Create local user",
+    updateLabel: "Update local user",
+    emptyMessage: "No local users configured.",
+    gridError: "Local-user changes are unavailable because the interactive grid could not initialize.",
+    actionErrorSelector: "#users-error",
+    defaults: newUserRow(),
+    steps: [
+      { id: "identity", title: "Define the local identity", description: "Choose the username and Atlaso authorization roles." },
+      { id: "access", title: "Choose Photon access", description: "Set the desired login shell and optional Web SSH access." },
+      { id: "review", title: "Review local-user desired state", description: "Confirm the account and global appliance-apply boundary." },
+    ],
+    reviewItems: [
+      { label: "Username", field: "username" },
+      {
+        label: "Roles",
+        value: (form) => [...form.querySelectorAll('input[name="roles"]:checked')].map((input) => input.value).join(", "),
+      },
+      { label: "Photon shell", field: "shell" },
+      { label: "Web SSH", field: "web_terminal_access" },
+      { label: "Photon password", value: () => "Set separately after save" },
+    ],
+    validateStep: ({ form, step }) => {
+      if (step.id === "identity" && !form.querySelector('input[name="roles"]:checked')) {
+        return {
+          valid: false,
+          message: "Select at least one Atlaso role.",
+          field: form.querySelector('input[name="roles"]'),
+        };
+      }
+      if (
+        step.id === "access"
+        && form.elements.web_terminal_access.checked
+        && form.elements.shell.value === "/sbin/nologin"
+      ) {
+        return { valid: false, message: "Web SSH access requires an interactive Photon shell.", field: "shell" };
+      }
+      return { valid: true };
+    },
+    deleteConfirmation: (data) => ({
+      title: `Remove ${data.username}?`,
+      message: "This removes the local Atlaso account, revokes its API tokens, and removes the managed Photon OS account on the next global appliance apply.",
+      confirmLabel: "Remove user",
+      tone: "danger",
+    }),
+    canDelete: (data) => !data.is_current,
+    extraActions: [
+      {
+        label: "Set/reset Photon OS password",
+        disabled: (row) => row.getData().is_new,
+        action: (_event, row) => openUserPasswordModal(row.getData()),
+      },
+      {
+        label: "Unlock OS account",
+        disabled: (row) => {
+          const data = row.getData();
+          return data.is_new || !data.enabled || !data.os_unlock_available || data.unlock_requested;
+        },
+        action: (_event, row) => unlockUserFromMenu(row, csrf),
+      },
+      {
+        label: "Disable user",
+        disabled: (row) => {
+          const data = row.getData();
+          return data.is_new || data.is_current || !data.enabled;
+        },
+        action: (_event, row) => disableUserFromMenu(row, csrf),
+      },
+    ],
+    options: {
       height: "420px",
       rowHeight: 28,
       placeholder: "No local users configured.",
       reactiveData: false,
-      rowContextMenu: [
-        {
-          label: "Set/reset Photon OS password",
-          action: (_event, row) => openUserPasswordModal(row.getData()),
-          disabled: (component) => component.getData().is_new,
-        },
-        {
-          label: "Unlock OS account",
-          action: (_event, row) => unlockUserFromMenu(row, csrf),
-          disabled: (component) => {
-            const data = component.getData();
-            return data.is_new || !data.enabled || !data.os_unlock_available || data.unlock_requested;
-          },
-        },
-        {
-          label: "Disable user",
-          action: (_event, row) => disableUserFromMenu(row, csrf),
-          disabled: (component) => {
-            const data = component.getData();
-            return data.is_new || data.is_current || !data.enabled;
-          },
-        },
-        {
-          label: "Remove user",
-          action: (_event, row) => deleteUserFromMenu(row, csrf),
-          disabled: (component) => component.getData().is_new || component.getData().is_current,
-        },
-      ],
-      columns: lockNewRecordColumns([
+      columns: [
         {
           title: "Username",
           field: "username",
-          editor: "input",
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "+ Add user here"),
-          cellEdited: (cell) => autoSaveUser(cell, csrf),
+          minWidth: 170,
+          formatter: (cell) => cell.getRow().getData().is_new
+            ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add user here</button>'
+            : escapeHtml(cell.getValue()),
         },
         {
           title: "Roles",
           field: "roles",
-          editor: "list",
-          editorParams: { values: roleOptions, multiselect: true },
           formatter: userRolesFormatter,
-          cellEdited: (cell) => {
-            const selectedRoles = normalizeUserRoleSelection(cell.getValue(), roles);
-            syncUserRoleFields(cell.getRow(), selectedRoles);
-            autoSaveUser(cell, csrf);
-          },
           minWidth: 190,
         },
         {
           title: "Shell",
           field: "shell",
-          editor: "list",
-          editorParams: { values: shells },
           minWidth: 145,
-          cellEdited: (cell) => autoSaveUser(cell, csrf),
         },
         {
           title: "Web SSH",
           field: "web_terminal_access",
-          formatter: atlasoBooleanFormatter,
-          editor: "tickCross",
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell),
           hozAlign: "center",
           width: 105,
-          cellEdited: (cell) => autoSaveUser(cell, csrf),
           headerTooltip: "Allows this enabled local user to open the appliance web terminal. An interactive shell is also required.",
         },
         {
           title: "Enabled",
           field: "enabled",
-          formatter: atlasoBooleanFormatter,
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell),
           hozAlign: "center",
           width: 110,
         },
@@ -3773,8 +3732,9 @@ function initializeUsersTable() {
           title: "OS account",
           field: "os_account_state",
           formatter: (cell) => {
-            const value = String(cell.getValue() || "");
             const data = cell.getRow().getData();
+            if (data.is_new) return "";
+            const value = String(cell.getValue() || "");
             const pill = value === "present" ? "good" : ["locked", "faillock blocked", "password not set"].includes(value) ? "warn" : "muted";
             const pending = data.unlock_requested ? ' <span class="status-pill warn">unlock pending</span>' : "";
             const title = data.os_account_detail ? ` title="${escapeHtml(data.os_account_detail)}"` : "";
@@ -3782,26 +3742,17 @@ function initializeUsersTable() {
           },
           minWidth: 190,
         },
-        { title: "Created", field: "created_at", width: 120 },
+        { title: "Created", field: "created_at", formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue()), width: 120 },
         {
           title: "Session",
           field: "is_current",
           formatter: (cell) => (cell.getValue() ? '<span class="status-pill good">current</span>' : ""),
           width: 110,
         },
-      ], "username"),
-      rowFormatter: (row) => {
-        markNewRecordRow(row, "username");
-      },
-    };
-    window.AtlasoUiPatterns.createGrid({
-      element: tableElement,
-      pattern: "direct-edit",
-      options: atlasoGridOptions7,
-    }).table;
-  } catch (error) {
-    showCaMessage("users-error", error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
-  }
+      ],
+      rowFormatter: (row) => markNewRecordRow(row, "username"),
+    },
+  });
 }
 
 function initializeUserPasswordForm() {
@@ -4309,6 +4260,41 @@ function updateLdapSettingsStatus(payload = {}) {
   }
 }
 
+function initializeLdapOrganizationWizard() {
+  const form = document.querySelector("[data-ldap-organization-form]");
+  const dialog = document.getElementById("ldap-organization-dialog");
+  const launchers = [...document.querySelectorAll("[data-ldap-organization-open]")];
+  if (
+    !(form instanceof HTMLFormElement)
+    || !(dialog instanceof HTMLDialogElement)
+    || !launchers.length
+    || !window.AtlasoUiPatterns
+  ) {
+    return;
+  }
+  const wizard = window.AtlasoUiPatterns.createWizard({
+    form,
+    dialog,
+    steps: [
+      { id: "identity", title: "Name the organization", description: "Choose its operator-visible name and desired state." },
+      { id: "directory", title: "Choose the naming context", description: "Accept derived values or set a stable slug and isolated LDAP suffix." },
+      { id: "review", title: "Review organization creation", description: "Confirm the new database and one-time VCF bind credential." },
+    ],
+    discardTitle: "Discard LDAP organization?",
+    discardMessage: "The organization values entered in this wizard will be lost.",
+    prepareReview: () => renderAtlasoWizardReview(form, [
+      { label: "Organization", field: "name" },
+      { label: "Slug", value: () => form.elements.slug.value.trim() || "Derived from name" },
+      { label: "Suffix DN", value: () => form.elements.suffix_dn.value.trim() || "Derived from slug" },
+      { label: "Desired state", field: "enabled" },
+      { label: "Bind credential", value: () => "Generated and shown once" },
+    ]),
+  });
+  launchers.forEach((button) => {
+    button.addEventListener("click", () => wizard.open({ launcher: button }));
+  });
+}
+
 function initializeLdapPageState() {
   const settingsForm = document.querySelector('form[action="/ldap/settings"]');
   if (settingsForm instanceof HTMLFormElement) {
@@ -4371,11 +4357,6 @@ function initializeLdapPageState() {
         item.classList.toggle("active", active);
         item.setAttribute("aria-selected", active ? "true" : "false");
       });
-      const newOrganizationPanel = document.getElementById("ldap-organization-new");
-      if (newOrganizationPanel instanceof HTMLElement) {
-        newOrganizationPanel.classList.remove("active");
-        newOrganizationPanel.setAttribute("hidden", "");
-      }
       rememberOrganization(organizationId);
       const targetUrl = new URL(link.href, window.location.href);
       if (options.history !== false) {
@@ -16952,6 +16933,7 @@ document.addEventListener("DOMContentLoaded", initializeCaSettings);
 document.addEventListener("DOMContentLoaded", initializeKmsClientsTable);
 document.addEventListener("DOMContentLoaded", initializeKmsKeysTable);
 document.addEventListener("DOMContentLoaded", initializeKmsSettings);
+document.addEventListener("DOMContentLoaded", initializeLdapOrganizationWizard);
 document.addEventListener("DOMContentLoaded", initializeLdapPageState);
 document.addEventListener("DOMContentLoaded", initializeLdapDirectoryTables);
 document.addEventListener("DOMContentLoaded", initializeLdapPasswordModal);

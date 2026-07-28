@@ -19336,7 +19336,7 @@ def create_user_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> RedirectResponse | JSONResponse:
     require_admin_identity(identity)
     verify_csrf(request, csrf)
     username = username.strip().lower()
@@ -19361,7 +19361,13 @@ def create_user_from_ui(
     db.add(user)
     db.commit()
     record_audit(db, actor=identity.username, action="create_local_user", resource_type="user", resource_id=str(user.id))
-    return RedirectResponse("/users", status_code=303)
+    db.refresh(user)
+    return grid_saved_response(
+        request,
+        redirect_url="/users",
+        resource_name="user",
+        resource=user_to_dict(user, identity.user_id),
+    )
 
 
 @router.post("/users/{user_id}/edit", response_model=None)
@@ -19491,7 +19497,7 @@ def delete_user_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> Response:
     require_admin_identity(identity)
     verify_csrf(request, csrf)
     user = db.get(User, user_id)
@@ -19509,6 +19515,8 @@ def delete_user_from_ui(
     db.delete(user)
     db.commit()
     record_audit(db, actor=identity.username, action="delete_local_user", resource_type="user", resource_id=str(user_id))
+    if grid_request(request):
+        return Response(status_code=204)
     return RedirectResponse("/users", status_code=303)
 
 

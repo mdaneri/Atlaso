@@ -795,7 +795,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v178" in service_worker.text
+    assert "atlaso-pwa-v179" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -809,7 +809,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/vendor/codemirror/atlaso-codemirror.min.js" in service_worker.text
     assert "/static/app.css?v=atlaso-ui-foundation-20260727-3" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in service_worker.text
-    assert "/static/app.js?v=atlaso-complex-wizards-20260727-1" in service_worker.text
+    assert "/static/app.js?v=atlaso-complex-wizards-20260727-2" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -829,8 +829,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=atlaso-complex-wizards-20260727-1"),
-        (public_base, "/static/app.js?v=atlaso-complex-wizards-20260727-1"),
+        (base, "/static/app.js?v=atlaso-complex-wizards-20260727-2"),
+        (public_base, "/static/app.js?v=atlaso-complex-wizards-20260727-2"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4"
@@ -882,8 +882,8 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     app_js = client.get("/static/app.js").text
     create_grid = "window.AtlasoUiPatterns.createGrid({"
 
-    assert app_js.count(create_grid) == 32
-    assert app_js.count('pattern: "direct-edit"') == 18
+    assert app_js.count(create_grid) == 31
+    assert app_js.count('pattern: "direct-edit"') == 17
     assert app_js.count('pattern: "read-only"') == 7
     assert app_js.count('pattern: "wizard-backed"') == 7
     assert "new Tabulator(" not in app_js
@@ -900,7 +900,6 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
         "initializeDhcpLeasesTable": "read-only",
         "initializeManagedFirewallRulesTable": "direct-edit",
         "initializeServicesTable": "direct-edit",
-        "initializeUsersTable": "direct-edit",
         "initializeNTPsecUpstreamsTable": "direct-edit",
         "initializeRoutesWanRoutingTable": "direct-edit",
         "initializeRoutesWanNatTable": "direct-edit",
@@ -935,6 +934,7 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
         "initializeKmsClientsTable",
         "initializeKmsKeysTable",
         "initializeDhcpScopesTable",
+        "initializeUsersTable",
         "initializeVcfRegistryBundlesTable",
         "initializeVcfDepotProfilesTable",
     ):
@@ -1183,12 +1183,19 @@ def test_reported_template_accessibility_contracts():
     assert 'aria-describedby="{{ dialog_id }}-description"' in resource_wizard
     assert "data-atlaso-wizard-error" in resource_wizard
     assert "data-atlaso-wizard-submit" in resource_wizard
+    assert 'class="confirm-modal wide-modal vcf-sddc-wizard-modal resource-wizard-dialog"' in resource_wizard
+    assert '<div class="vcf-sddc-wizard-main">' in resource_wizard
+    assert '<div class="confirm-modal-body vcf-sddc-wizard-body">' in resource_wizard
+    assert "vcf-sddc-wizard-layout" not in resource_wizard
+    assert "vcf-sddc-wizard-content" not in resource_wizard
     for template_name, form_marker in {
         "authentication.html": '"api-token-form"',
         "certificate_authority.html": '"ca-certificate-form"',
         "firewall.html": '"firewall-rule-form"',
         "kms.html": '"kms-key-form"',
         "dhcp.html": '"dhcp-scope-form"',
+        "users.html": '"user-account-form"',
+        "ldap.html": '"ldap-organization-form"',
         "vcf_offline_depot.html": '"vcf-depot-profile-form"',
         "vcf_private_registry.html": '"vcf-registry-bundle-form"',
     }.items():
@@ -1232,7 +1239,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=atlaso-vaults-20260727-7" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in page.text
-    assert "/static/app.js?v=atlaso-complex-wizards-20260727-1" in page.text
+    assert "/static/app.js?v=atlaso-complex-wizards-20260727-2" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -4510,6 +4517,9 @@ def test_local_users_page_separates_ldap_authentication(client):
     assert "Local Users" in users.text
     assert "Managed VCF directory users remain isolated" in users.text
     assert "users-table" in users.text
+    assert 'id="user-account-dialog"' in users.text
+    assert "data-user-account-form" in users.text
+    assert "data-atlaso-resource-review" in users.text
     assert "user-password-modal" in users.text
     assert "data-password-toggle" in users.text
     assert "Password Reset" not in users.text
@@ -4543,6 +4553,21 @@ def test_local_users_page_separates_ldap_authentication(client):
         follow_redirects=False,
     )
     assert multi_role_created.status_code == 303
+    wizard_created = client.post(
+        "/users",
+        data={"username": "wizard-user", "roles": ["viewer"], "shell": "/bin/bash", "csrf": csrf},
+        headers={"X-Atlaso-Grid": "1"},
+    )
+    assert wizard_created.status_code == 200
+    assert wizard_created.json()["user"]["username"] == "wizard-user"
+    assert wizard_created.json()["user"]["roles"] == ["viewer"]
+    wizard_user_id = wizard_created.json()["user"]["id"]
+    wizard_deleted = client.post(
+        f"/users/{wizard_user_id}/delete",
+        data={"csrf": csrf},
+        headers={"X-Atlaso-Grid": "1"},
+    )
+    assert wizard_deleted.status_code == 204
     stale_role_created = client.post(
         "/users",
         data={"username": "demote-me", "role": "viewer", "roles": "admin", "shell": "/sbin/nologin", "csrf": csrf},
@@ -4583,16 +4608,18 @@ def test_local_users_page_separates_ldap_authentication(client):
     assert "userActionsFormatter" not in app_js.text
     assert "formatter: userActionsFormatter" not in app_js.text
     assert "openUserPasswordModal" in app_js.text
-    assert "deleteUserFromMenu" in app_js.text
+    assert "deleteUserFromMenu" not in app_js.text
     assert "Unlock OS account" in app_js.text
     assert "disableUserFromMenu" in app_js.text
     assert "Disable user" in app_js.text
     users_table_js = app_js.text.split("function initializeUsersTable()", 1)[1].split("function initializeUserPasswordForm()", 1)[0]
-    roles_column_js = users_table_js.split('title: "Roles"', 1)[1].split('title: "Shell"', 1)[0]
-    assert 'field: "roles"' in roles_column_js
-    assert 'editor: "list"' in roles_column_js
-    assert "multiselect: true" in roles_column_js
-    assert "syncUserRoleFields" in roles_column_js
+    assert "initializeAtlasoResourceWizard({" in users_table_js
+    assert 'dialogId: "user-account-dialog"' in users_table_js
+    assert 'resourceName: "user"' in users_table_js
+    assert 'editor:' not in users_table_js
+    assert "cellEdited:" not in users_table_js
+    assert "Select at least one Atlaso role." in users_table_js
+    assert "Web SSH access requires an interactive Photon shell." in users_table_js
     enabled_column_js = users_table_js.split('title: "Enabled"', 1)[1].split('title: "OS account"', 1)[0]
     assert "editor:" not in enabled_column_js
     assert "validatePasswordMatch" in app_js.text
@@ -4652,7 +4679,10 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     assert "ldap-groups-table" in created.text
     assert "data-ldap-organization-tabs" in created.text
     assert ">+ Organization</button>" in created.text
-    assert 'id="ldap-organization-new"' in created.text
+    assert 'id="ldap-organization-dialog"' in created.text
+    assert "data-ldap-organization-form" in created.text
+    assert "data-ldap-organization-open" in created.text
+    assert 'id="ldap-organization-new"' not in created.text
     assert "<summary>Create organization</summary>" not in created.text
     assert "<summary>Add user</summary>" not in created.text
     assert "<summary>Add group</summary>" not in created.text
@@ -4676,6 +4706,10 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     assert 'document.addEventListener("DOMContentLoaded", () => initializeDownloadValueButtons())' in app_js
     assert 'const LDAP_ORGANIZATION_SELECTION_KEY = "atlaso:ldap:organization"' in app_js
     assert "function initializeLdapPageState()" in app_js
+    assert "function initializeLdapOrganizationWizard()" in app_js
+    ldap_organization_wizard_js = app_js.split("function initializeLdapOrganizationWizard()", 1)[1].split("function initializeLdapPageState()", 1)[0]
+    assert "window.AtlasoUiPatterns.createWizard({" in ldap_organization_wizard_js
+    assert "data-ldap-organization-open" in ldap_organization_wizard_js
     ldap_page_state_js = app_js.split("function initializeLdapPageState()", 1)[1].split("function attachLdapGridState(", 1)[0]
     assert 'await fetch(link.href' in ldap_page_state_js
     assert 'currentPanel.replaceWith(document.importNode(nextCurrentPanel, true))' in ldap_page_state_js
@@ -4683,7 +4717,7 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     assert 'window.addEventListener("popstate"' in ldap_page_state_js
     assert 'window.location.replace(validStoredLink.href)' not in ldap_page_state_js
     assert 'tabList.querySelectorAll(".tab-button")' in ldap_page_state_js
-    assert 'newOrganizationPanel.setAttribute("hidden", "")' in ldap_page_state_js
+    assert "newOrganizationPanel" not in ldap_page_state_js
     assert "initializeLdapDirectoryTables()" in ldap_page_state_js
     assert "initializeTabs()" in ldap_page_state_js
     assert "function attachLdapGridState(" in app_js

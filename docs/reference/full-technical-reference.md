@@ -710,7 +710,14 @@ row launches add; row double-click and the context menu launch edit where permis
 before advancing, retain recoverable server errors in the open dialog, and finish with a desired-state and safety-boundary
 review. Deletion continues through the shared confirmation flow. These editors save application desired state only;
 host enforcement remains owned by global Appliance Apply, while explicit depot download actions remain separate task
-operations. Server-rendered tables remain available as truthful read-only fallbacks when JavaScript is unavailable.
+operations. Their dialogs reuse the standard wide wizard shell: a fixed step rail, a scrollable content region, and a
+separate footer action row that remains readable without narrowing the form. Server-rendered tables remain available as
+truthful read-only fallbacks when JavaScript is unavailable.
+
+Local Users uses the same wizard-backed collection pattern for account identity, Atlaso roles, Photon shell, and Web SSH
+desired state; password staging, unlock, disable, and removal remain explicit row actions. Managed LDAP organization
+creation also opens the shared wizard from the Organizations heading, while existing organization tabs continue to
+switch directory context without a full page reload.
 
 On the Photon appliance, real mutating helper actions re-enter through a transient `systemd-run` service when
 `ATLASO_HELPER_USE_SYSTEMD_RUN=1` is set. This keeps the web control plane inside its restricted `atlaso.service`
