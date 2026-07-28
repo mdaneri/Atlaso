@@ -15129,13 +15129,16 @@ function initializeAutomationTables() {
   };
   const scheduleModal = document.getElementById("automation-schedule-modal");
   const scheduleForm = document.querySelector("[data-automation-schedule-form]");
+  const scriptCreateDialog = document.getElementById("automation-script-create-dialog");
+  const scriptCreateForm = document.querySelector("[data-automation-script-create-form]");
   const scriptModal = document.getElementById("automation-script-modal");
   const scriptRunModal = document.getElementById("automation-script-run-modal");
   const scriptRunForm = document.querySelector("[data-automation-script-run-form]");
   const scriptDiffModal = document.getElementById("automation-script-diff-modal");
   let activeScriptRow = null;
   let activeScriptInterpreter = "bash";
-  let createScriptFromGridRow = null;
+  let scriptCreateWizard = null;
+  let openScriptCreateWizard = null;
   const openAutomationModal = (modal) => {
     if (!(modal instanceof HTMLDialogElement)) return;
     modal.showModal();
@@ -15178,13 +15181,11 @@ function initializeAutomationTables() {
       updateScriptLanguage(data.interpreter || "bash");
       setScriptEditorValue(data.source_content || "");
       if (scriptFileInput instanceof HTMLInputElement) scriptFileInput.value = "";
-      if (scriptModalTitle instanceof HTMLElement) scriptModalTitle.textContent = data.is_new ? "Add script source" : `New ${data.name} revision`;
+      if (scriptModalTitle instanceof HTMLElement) scriptModalTitle.textContent = `New ${data.name} revision`;
       if (scriptModalDescription instanceof HTMLElement) {
-        scriptModalDescription.textContent = data.is_new
-          ? "Enter or import the first immutable revision, then return it to the new grid row."
-          : `Edit or import source for a new immutable revision. Revision ${data.latest_revision} remains unchanged.`;
+        scriptModalDescription.textContent = `Edit or import source for a new immutable revision. Revision ${data.latest_revision} remains unchanged.`;
       }
-      if (scriptConfirm instanceof HTMLButtonElement) scriptConfirm.textContent = data.is_new ? "Use script content" : "Create new disabled revision";
+      if (scriptConfirm instanceof HTMLButtonElement) scriptConfirm.textContent = "Create new disabled revision";
       if (scriptImportStatus instanceof HTMLElement) {
         scriptImportStatus.textContent = "Paste code or import a .sh, .bash, .py, .ps1, or .txt file (maximum 1 MiB).";
         scriptImportStatus.classList.remove("error-text");
@@ -15235,14 +15236,6 @@ function initializeAutomationTables() {
           return;
         }
         const data = activeScriptRow.getData();
-        if (data.is_new) {
-          Promise.resolve(activeScriptRow.update({ source_content: content, source_ready: true, interpreter: activeScriptInterpreter })).then(() => {
-            activeScriptRow.reformat();
-            scriptModal.close("source-ready");
-            if (typeof createScriptFromGridRow === "function") createScriptFromGridRow(activeScriptRow);
-          });
-          return;
-        }
         const revisionForm = document.getElementById(`automation-script-revision-${data.id}`);
         if (!(revisionForm instanceof HTMLFormElement)) return;
         revisionForm.elements.interpreter.value = activeScriptInterpreter;
@@ -15253,6 +15246,140 @@ function initializeAutomationTables() {
         revisionForm.requestSubmit();
       });
     }
+  }
+
+  if (scriptCreateDialog instanceof HTMLDialogElement && scriptCreateForm instanceof HTMLFormElement) {
+    const scriptCreateFile = scriptCreateForm.querySelector("[data-automation-script-create-file]");
+    const scriptCreateContent = scriptCreateForm.querySelector("#automation-script-create-content");
+    const scriptCreateInterpreter = scriptCreateForm.querySelector("[data-automation-script-create-interpreter]");
+    const scriptCreateLanguage = scriptCreateForm.querySelector("[data-automation-script-create-language]");
+    const scriptCreateImportStatus = scriptCreateForm.querySelector("[data-automation-script-create-import-status]");
+    const normalizedScriptInterpreter = (value) => (
+      ["bash", "powershell", "python"].includes(value) ? value : "bash"
+    );
+    const setScriptCreateEditorValue = (value) => {
+      if (!(scriptCreateContent instanceof HTMLTextAreaElement)) return;
+      if (window.AtlasoCodeMirror && typeof window.AtlasoCodeMirror.setValue === "function") {
+        window.AtlasoCodeMirror.setValue(scriptCreateContent, value);
+      } else {
+        scriptCreateContent.value = value;
+        scriptCreateContent.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    };
+    const scriptCreateEditorValue = () => {
+      if (!(scriptCreateContent instanceof HTMLTextAreaElement)) return "";
+      return scriptCreateContent.atlasoCodeMirrorView?.state?.doc?.toString() ?? scriptCreateContent.value;
+    };
+    const updateScriptCreateLanguage = (value) => {
+      const interpreter = normalizedScriptInterpreter(value);
+      if (scriptCreateInterpreter instanceof HTMLSelectElement) scriptCreateInterpreter.value = interpreter;
+      if (scriptCreateLanguage instanceof HTMLElement) scriptCreateLanguage.textContent = interpreter;
+      if (scriptCreateContent instanceof HTMLTextAreaElement) {
+        scriptCreateContent.dataset.scriptInterpreter = interpreter;
+        scriptCreateContent.setAttribute("aria-label", `${interpreter} managed script source code`);
+      }
+    };
+    const resetScriptCreateImportStatus = () => {
+      if (!(scriptCreateImportStatus instanceof HTMLElement)) return;
+      scriptCreateImportStatus.textContent = "Paste code or import a .sh, .bash, .py, .ps1, or .txt file (maximum 1 MiB).";
+      scriptCreateImportStatus.classList.remove("error-text");
+    };
+    if (scriptCreateFile instanceof HTMLInputElement && scriptCreateContent instanceof HTMLTextAreaElement) {
+      scriptCreateFile.addEventListener("change", async () => {
+        const file = scriptCreateFile.files?.[0];
+        if (!file) return;
+        if (file.size > 1024 * 1024) {
+          scriptCreateFile.value = "";
+          if (scriptCreateImportStatus instanceof HTMLElement) {
+            scriptCreateImportStatus.textContent = "Choose a script file no larger than 1 MiB.";
+            scriptCreateImportStatus.classList.add("error-text");
+          }
+          return;
+        }
+        const extension = file.name.toLowerCase().split(".").pop() || "";
+        const interpreterByExtension = { sh: "bash", bash: "bash", py: "python", ps1: "powershell" };
+        const inferredInterpreter = interpreterByExtension[extension];
+        if (inferredInterpreter) updateScriptCreateLanguage(inferredInterpreter);
+        setScriptCreateEditorValue(await file.text());
+        if (scriptCreateImportStatus instanceof HTMLElement) {
+          const interpreterNote = inferredInterpreter ? `; interpreter set to ${inferredInterpreter}` : "";
+          scriptCreateImportStatus.textContent = `${file.name} loaded into the editor${interpreterNote}. Review it before creating the revision.`;
+          scriptCreateImportStatus.classList.remove("error-text");
+        }
+      });
+    }
+    scriptCreateInterpreter?.addEventListener("change", () => updateScriptCreateLanguage(scriptCreateInterpreter.value));
+    scriptCreateWizard = window.AtlasoUiPatterns.createWizard({
+      form: scriptCreateForm,
+      dialog: scriptCreateDialog,
+      steps: [
+        { id: "identity", title: "Name the managed script", description: "Give the script an operator-visible identity and purpose." },
+        { id: "runtime", title: "Choose the runtime", description: "Select its allowlisted interpreter and bounded timeout." },
+        { id: "source", title: "Add the first revision", description: "Enter or import the immutable source stored as revision 1." },
+        { id: "review", title: "Review managed-script creation", description: "Confirm the disabled revision before saving it." },
+      ],
+      discardTitle: "Discard managed script?",
+      discardMessage: "The script identity, runtime, and source entered in this wizard will be lost.",
+      onOpen: () => {
+        updateScriptCreateLanguage("bash");
+        scriptCreateForm.elements.timeout_seconds.value = "3600";
+        setScriptCreateEditorValue("");
+        if (scriptCreateFile instanceof HTMLInputElement) scriptCreateFile.value = "";
+        resetScriptCreateImportStatus();
+      },
+      validateStep: ({ step }) => {
+        if (step.id !== "source") return { valid: true };
+        const content = scriptCreateEditorValue();
+        if (!content.trim()) {
+          return { valid: false, field: "content", message: "Script content is required." };
+        }
+        if (scriptCreateContent instanceof HTMLTextAreaElement) scriptCreateContent.value = content;
+        return { valid: true };
+      },
+      prepareReview: () => {
+        const content = scriptCreateEditorValue();
+        if (scriptCreateContent instanceof HTMLTextAreaElement) scriptCreateContent.value = content;
+        const lines = content ? content.split(/\r?\n/).length : 0;
+        renderAtlasoWizardReview(scriptCreateForm, [
+          { label: "Script", field: "name" },
+          { label: "Description", field: "description" },
+          { label: "Interpreter", field: "interpreter" },
+          { label: "Timeout", value: () => `${scriptCreateForm.elements.timeout_seconds.value} seconds` },
+          { label: "Initial source", value: () => `${lines} ${lines === 1 ? "line" : "lines"}` },
+          { label: "Revision state", value: () => "Disabled" },
+        ]);
+      },
+      onSubmit: async () => {
+        if (scriptCreateContent instanceof HTMLTextAreaElement) {
+          scriptCreateContent.value = scriptCreateEditorValue();
+        }
+        const response = await fetch(scriptCreateForm.action, {
+          method: "POST",
+          body: new FormData(scriptCreateForm),
+          credentials: "same-origin",
+          headers: {
+            Accept: "application/json",
+            "X-Atlaso-Wizard": "1",
+          },
+        });
+        const responseText = await response.text();
+        let payload = {};
+        try {
+          payload = responseText ? JSON.parse(responseText) : {};
+        } catch (_error) {
+          payload = {};
+        }
+        if (!response.ok) throw new Error(payload.detail || "The managed script could not be created.");
+        try {
+          window.localStorage.setItem("atlaso:automation:workspace-tab", "scripts");
+        } catch {
+          // The hash still restores the Managed Scripts workspace when storage is unavailable.
+        }
+        window.location.assign("/automation#scripts");
+        return { valid: true };
+      },
+    });
+    openScriptCreateWizard = (launcher) => scriptCreateWizard.open({ launcher });
   }
 
   const updateScriptRunGuidance = (interpreter) => {
@@ -15844,7 +15971,7 @@ function initializeAutomationTables() {
   const scriptsElement = document.getElementById("automation-scripts-table");
   if (scriptsElement instanceof HTMLElement) {
     const scriptRows = parseTableData("automation-scripts-data");
-    scriptRows.push({ is_new: true, is_activated: false, name: "", description: "", interpreter: "bash", timeout_seconds: 3600, source_content: "", source_ready: false });
+    scriptRows.push({ is_new: true, name: "" });
     const showScriptGridStatus = (message, isError = false) => {
       const status = document.getElementById("automation-script-grid-status");
       if (!(status instanceof HTMLElement)) return;
@@ -15890,33 +16017,6 @@ function initializeAutomationTables() {
       showScriptGridStatus("Creating a new disabled immutable revision…");
       form.requestSubmit();
     };
-    createScriptFromGridRow = (row) => {
-      const data = row.getData();
-      const name = String(data.name || "").trim();
-      if (!name) {
-        showScriptGridStatus("Enter a script name first.", true);
-        return;
-      }
-      if (!String(data.source_content || "").trim()) {
-        showScriptGridStatus("Open the Source (…) editor and add script content before creating the revision.", true);
-        openScriptSource(row);
-        return;
-      }
-      const timeout = Number(data.timeout_seconds || 0);
-      if (!Number.isInteger(timeout) || timeout < 1 || timeout > 86400) {
-        showScriptGridStatus("Timeout must be between 1 and 86400 seconds.", true);
-        return;
-      }
-      const form = document.getElementById("automation-script-create-form");
-      if (!(form instanceof HTMLFormElement)) return;
-      form.elements.name.value = name;
-      form.elements.description.value = String(data.description || "").trim();
-      form.elements.interpreter.value = data.interpreter || "bash";
-      form.elements.timeout_seconds.value = String(timeout);
-      form.elements.content.value = data.source_content;
-      showScriptGridStatus("Creating the first immutable disabled revision…");
-      form.requestSubmit();
-    };
     const atlasoGridOptions33 = {
       data: scriptRows,
       layout: "fitColumns",
@@ -15956,20 +16056,22 @@ function initializeAutomationTables() {
           width: 250,
           minWidth: 230,
           editor: "input",
-          editable: true,
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "+ Add managed script here"),
-          cellEdited: (cell) => {
-            if (cell.getRow().getData().is_new) {
-              cell.getRow().update({ is_activated: Boolean(String(cell.getValue() || "").trim()) });
-              cell.getRow().reformat();
-              return;
+          editable: (cell) => !cell.getRow().getData().is_new,
+          formatter: (cell) => cell.getRow().getData().is_new
+            ? '<button class="add-row-button" type="button" data-automation-script-wizard-open>+ Add managed script here</button>'
+            : escapeHtml(cell.getValue()),
+          cellClick: (event, cell) => {
+            if (cell.getRow().getData().is_new && typeof openScriptCreateWizard === "function") {
+              openScriptCreateWizard(event?.target);
             }
+          },
+          cellEdited: (cell) => {
             saveExistingScriptMetadata(cell);
           },
         },
-        { title: "Description", field: "description", minWidth: 190, editor: "input", editable: true, formatter: (cell) => dnsAddRowHintFormatter(cell, "optional note..."), cellEdited: (cell) => { if (!cell.getRow().getData().is_new) saveExistingScriptMetadata(cell); } },
-        { title: "Interpreter", field: "interpreter", width: 115, editor: "list", editable: true, editorParams: { values: { bash: "bash", powershell: "powershell", python: "python" } }, cellEdited: (cell) => { if (!cell.getRow().getData().is_new) createRevisionFromGridCell(cell); } },
-        { title: "Timeout", field: "timeout_seconds", width: 95, editor: "number", editable: true, editorParams: { min: 1, max: 86400 }, cellEdited: (cell) => { if (!cell.getRow().getData().is_new) createRevisionFromGridCell(cell); } },
+        { title: "Description", field: "description", minWidth: 190, editor: "input", editable: (cell) => !cell.getRow().getData().is_new, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || ""), cellEdited: saveExistingScriptMetadata },
+        { title: "Interpreter", field: "interpreter", width: 115, editor: "list", editable: (cell) => !cell.getRow().getData().is_new, editorParams: { values: { bash: "bash", powershell: "powershell", python: "python" } }, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || ""), cellEdited: createRevisionFromGridCell },
+        { title: "Timeout", field: "timeout_seconds", width: 95, editor: "number", editable: (cell) => !cell.getRow().getData().is_new, editorParams: { min: 1, max: 86400 }, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || ""), cellEdited: createRevisionFromGridCell },
         {
           title: "Source",
           field: "source_content",
@@ -15979,12 +16081,12 @@ function initializeAutomationTables() {
           hozAlign: "center",
           formatter: (cell) => {
             const data = cell.getRow().getData();
-            const ready = data.is_new && data.source_ready;
-            return `<button class="automation-source-button${ready ? " ready" : ""}" type="button" aria-label="${ready ? "Edit loaded" : "Open"} script source" title="${ready ? "Script source loaded" : "Open CodeMirror source editor"}">…</button>`;
+            if (data.is_new) return "";
+            return '<button class="automation-source-button" type="button" aria-label="Open script source" title="Open CodeMirror source editor">…</button>';
           },
           cellClick: (_event, cell) => {
             const data = cell.getRow().getData();
-            if (!data.is_new || data.is_activated || String(data.name || "").trim()) openScriptSource(cell.getRow());
+            if (!data.is_new) openScriptSource(cell.getRow());
           },
         },
         {
@@ -15993,7 +16095,7 @@ function initializeAutomationTables() {
           width: 85,
           formatter: (cell) => {
             const data = cell.getRow().getData();
-            if (data.is_new) return "new";
+            if (data.is_new) return "";
             const revisionLabel = `r${cell.getValue()}`;
             return Array.isArray(data.revisions) && data.revisions.length >= 2
               ? `<button class="automation-revision-button" type="button" aria-label="Compare ${escapeHtml(data.name)} revisions" title="Compare latest revisions">${revisionLabel}</button>`
@@ -16001,14 +16103,14 @@ function initializeAutomationTables() {
           },
           cellClick: (_event, cell) => openScriptRevisionDiff(cell.getRow().getData()),
         },
-        { title: "State", field: "latest_enabled", width: 85, formatter: atlasoBooleanFormatter, editor: "tickCross", editable: (cell) => !cell.getRow().getData().is_new, hozAlign: "center", headerSort: false, cellEdited: (cell) => submitForm("automation-script-toggle", cell.getRow().getData().id) },
-        { title: "Schedules", field: "schedule_count", width: 95, formatter: (cell) => cell.getRow().getData().is_new ? "0" : cell.getValue() },
-        { title: "Updated", field: "updated_at", minWidth: 165, formatter: (cell) => cell.getRow().getData().is_new ? "after creation" : cell.getValue() },
+        { title: "State", field: "latest_enabled", width: 85, formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell), editor: "tickCross", editable: (cell) => !cell.getRow().getData().is_new, hozAlign: "center", headerSort: false, cellEdited: (cell) => submitForm("automation-script-toggle", cell.getRow().getData().id) },
+        { title: "Schedules", field: "schedule_count", width: 95, formatter: (cell) => cell.getRow().getData().is_new ? "" : cell.getValue() },
+        { title: "Updated", field: "updated_at", minWidth: 165, formatter: (cell) => cell.getRow().getData().is_new ? "" : cell.getValue() },
       ], "name"),
     };
     scriptsElement.atlasoTabulator = window.AtlasoUiPatterns.createGrid({
       element: scriptsElement,
-      pattern: "direct-edit",
+      pattern: "wizard-backed",
       onReady: () => {
         scriptsElement.atlasoTabulatorReady = true;
       },

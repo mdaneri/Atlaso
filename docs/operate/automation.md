@@ -57,14 +57,17 @@ Creating or editing a script always creates a new immutable, disabled revision. 
 a particular revision before it can be run manually or selected by a schedule. Schedules remain pinned to that exact
 revision; disabling it makes execution fail closed.
 
-Managed-script rows edit name, description, interpreter, timeout, and state in the grid. Source is opened through the
-compact source action in a nearly full-window CodeMirror modal, which also imports `.sh`, `.bash`, `.py`, `.ps1`, or
-`.txt` files up to 1 MiB. An edit that changes revision-owned fields creates a new disabled immutable revision; it never
-rewrites historical source. When a script has at least two revisions, selecting its revision cell opens a
-near-full-window, two-column comparison. Base and comparison selectors list every immutable revision with its creation
-date and state, so operators can compare any two revisions. The viewer aligns corresponding rows, shows original line
-numbers, collapses long unchanged runs, colors removals and additions, and uses a Prism grammar selected from the script
-interpreter.
+Selecting **+ Add managed script here** opens a four-step wizard for identity, runtime, the first source revision, and
+review. The source step accepts direct CodeMirror input or imports `.sh`, `.bash`, `.py`, `.ps1`, or `.txt` files up to
+1 MiB. Creation always stores immutable revision 1 in the disabled state.
+
+Existing managed-script rows edit name, description, interpreter, timeout, and state in the grid. Their compact source
+action opens a nearly full-window CodeMirror modal for creating another disabled immutable revision. An edit that
+changes revision-owned fields creates a new disabled immutable revision; it never rewrites historical source. When a
+script has at least two revisions, selecting its revision cell opens a near-full-window, two-column comparison. Base
+and comparison selectors list every immutable revision with its creation date and state, so operators can compare any
+two revisions. The viewer aligns corresponding rows, shows original line numbers, collapses long unchanged runs,
+colors removals and additions, and uses a Prism grammar selected from the script interpreter.
 
 **Run latest revision** opens a confirmation modal instead of immediately creating a task. The modal names the exact
 revision and interpreter and accepts the same literal parameter syntax used by schedules. Schedule and manual-run

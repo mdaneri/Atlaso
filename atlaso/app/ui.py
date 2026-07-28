@@ -10852,7 +10852,10 @@ def create_automation_script_from_ui(
 ) -> Response:
     verify_csrf(request, csrf)
     require_admin_identity(identity)
+    wizard_request = request.headers.get("X-Atlaso-Wizard") == "1"
     if not name.strip():
+        if wizard_request:
+            return JSONResponse({"status": "error", "detail": "Script name is required.", "errors": ["Script name is required."]}, status_code=422)
         return _automation_render_error(request, identity, db, "Script name is required.")
     script = AutomationScript(name=name.strip(), description=description.strip(), created_by=identity.username)
     db.add(script)
@@ -10863,8 +10866,15 @@ def create_automation_script_from_ui(
     except (IntegrityError, ValueError) as exc:
         db.rollback()
         message = "A script with this name already exists." if isinstance(exc, IntegrityError) else str(exc)
+        if wizard_request:
+            return JSONResponse(
+                {"status": "error", "detail": message, "errors": [message]},
+                status_code=409 if isinstance(exc, IntegrityError) else 422,
+            )
         return _automation_render_error(request, identity, db, message, status_code=409 if isinstance(exc, IntegrityError) else 422)
     record_audit(db, actor=identity.username, action="create_automation_script", resource_type="automation_script", resource_id=str(script.id))
+    if wizard_request:
+        return JSONResponse({"status": "saved", "script_id": script.id})
     return RedirectResponse("/automation#scripts", status_code=303)
 
 

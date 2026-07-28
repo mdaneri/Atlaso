@@ -104,6 +104,12 @@ def test_managed_script_revision_is_immutable_enabled_and_run_by_worker(client):
     assert 'automation-fill-grid' in page.text
     assert 'id="automation-schedule-edit-' not in page.text
     assert 'id="automation-script-modal"' in page.text
+    assert 'id="automation-script-create-dialog"' in page.text
+    assert "data-automation-script-create-form" in page.text
+    assert 'data-atlaso-wizard-step="identity"' in page.text
+    assert 'data-atlaso-wizard-step="runtime"' in page.text
+    assert 'data-atlaso-wizard-step="source"' in page.text
+    assert 'data-atlaso-wizard-step="review"' in page.text
     assert 'id="automation-script-run-modal"' in page.text
     assert 'data-automation-script-run-arguments' in page.text
     assert 'id="automation-script-diff-modal"' in page.text
@@ -122,12 +128,54 @@ def test_managed_script_revision_is_immutable_enabled_and_run_by_worker(client):
     assert 'id="automation-script-content"' in page.text
     assert "data-codemirror-editor" in page.text
     assert "data-automation-script-file" in page.text
+    assert "data-automation-script-create-file" in page.text
     assert "data-automation-script-source-confirm" in page.text
     assert 'id="automation-script-grid-status"' in page.text
     assert "Import script file" in page.text
     assert "<summary>+ Add schedule here</summary>" not in page.text
     assert "<summary>+ Add managed script here</summary>" not in page.text
+    app_js = Path("atlaso/app/static/app.js").read_text(encoding="utf-8")
+    assert "scriptCreateWizard = window.AtlasoUiPatterns.createWizard({" in app_js
+    assert "data-automation-script-wizard-open" in app_js
+    assert '"X-Atlaso-Wizard": "1"' in app_js
     csrf = csrf_from_page(page.text)
+    wizard_response = client.post(
+        "/automation/scripts",
+        data={
+            "csrf": csrf,
+            "name": "wizard-inventory-report",
+            "description": "Created through the guided flow",
+            "interpreter": "bash",
+            "timeout_seconds": "120",
+            "content": "#!/bin/bash\ndate",
+        },
+        headers={"X-Atlaso-Wizard": "1", "Accept": "application/json"},
+    )
+    assert wizard_response.status_code == 200
+    assert wizard_response.json()["status"] == "saved"
+    duplicate_wizard_response = client.post(
+        "/automation/scripts",
+        data={
+            "csrf": csrf,
+            "name": "wizard-inventory-report",
+            "interpreter": "bash",
+            "timeout_seconds": "120",
+            "content": "#!/bin/bash\ndate",
+        },
+        headers={"X-Atlaso-Wizard": "1", "Accept": "application/json"},
+    )
+    assert duplicate_wizard_response.status_code == 409
+    assert duplicate_wizard_response.json()["detail"] == "A script with this name already exists."
+    with SessionLocal() as db:
+        wizard_script = db.execute(
+            select(AutomationScript).where(AutomationScript.name == "wizard-inventory-report")
+        ).scalar_one()
+        wizard_revision = db.execute(
+            select(AutomationScriptRevision).where(AutomationScriptRevision.script_id == wizard_script.id)
+        ).scalar_one()
+        assert wizard_revision.interpreter == "bash"
+        assert wizard_revision.timeout_seconds == 120
+        assert wizard_revision.enabled is False
     response = client.post(
         "/automation/scripts",
         data={
