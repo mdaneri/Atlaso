@@ -85,6 +85,73 @@ def test_vault_ui_encrypts_masks_and_explicitly_reveals_password(client):
         assert "Correct-Horse-Battery-Staple!" not in (event.detail or "")
 
 
+def test_vault_ui_copies_entry_without_returning_plaintext(client):
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, Vault, VaultEntry
+    from atlaso.app.secrets import decrypt_secret
+
+    login(client)
+    page = client.get("/vaults")
+    csrf = csrf_from_page(page.text)
+    created = client.post(
+        "/vaults",
+        data={"csrf": csrf, "name": "Copy source", "description": ""},
+        follow_redirects=False,
+    )
+    assert created.status_code == 303
+    with SessionLocal() as db:
+        vault = db.execute(select(Vault).where(Vault.name == "Copy source")).scalar_one()
+        vault_id = vault.id
+
+    source_response = client.post(
+        f"/vaults/{vault_id}/entries",
+        data={
+            "csrf": csrf,
+            "key": "vcf.source.admin",
+            "description": "Source credential",
+            "value": "Copy-Me-Server-Side!",
+            "username": "administrator",
+            "uris_json": '["https://vcf.example.internal"]',
+        },
+        follow_redirects=False,
+    )
+    assert source_response.status_code == 303
+    with SessionLocal() as db:
+        source = db.execute(select(VaultEntry).where(VaultEntry.key == "vcf.source.admin")).scalar_one()
+        source_id = source.id
+        source_ciphertext = source.encrypted_value
+
+    copied_response = client.post(
+        f"/vaults/{vault_id}/entries",
+        data={
+            "csrf": csrf,
+            "copy_entry_id": source_id,
+            "key": "vcf.source.admin.copy",
+            "description": "Copied credential",
+            "username": "administrator",
+            "uris_json": '["https://copy.example.internal"]',
+        },
+        follow_redirects=False,
+    )
+    assert copied_response.status_code == 303
+    assert "Copy-Me-Server-Side!" not in copied_response.text
+
+    with SessionLocal() as db:
+        copied = db.execute(select(VaultEntry).where(VaultEntry.key == "vcf.source.admin.copy")).scalar_one()
+        assert copied.encrypted_value != source_ciphertext
+        assert decrypt_secret(copied.encrypted_value) == "Copy-Me-Server-Side!"
+        assert copied.username == "administrator"
+        assert json.loads(copied.uris_json) == ["https://copy.example.internal"]
+        event = db.execute(
+            select(AuditEvent).where(
+                AuditEvent.action == "create_vault_entry",
+                AuditEvent.resource_id == str(copied.id),
+            )
+        ).scalar_one()
+        assert f"copied_from_entry_id={source_id}" in (event.detail or "")
+        assert "Copy-Me-Server-Side!" not in (event.detail or "")
+
+
 def test_vault_service_rejects_unsupported_types(client):
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Vault
@@ -216,8 +283,11 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert "border: 0;" in css[css.index(".vault-password-eye {"):css.index(".vcf-vault-candidate-list")]
     assert "15000" in source
     assert 'rowContextMenu: (_event, component) =>' in source
-    assert 'label: "Edit password"' in source
-    assert 'label: "Delete password"' in source
+    assert 'label: "Edit"' in source
+    assert 'label: "Copy"' in source
+    assert 'label: "Open"' in source
+    assert "menu: uriActions" in source
+    assert 'label: "Remove"' in source
     assert "if (row.is_new) return [];" in source
     assert "window.confirm" not in source[source.index("function initializeVaultsPage"):source.index("function initializeVcfVaultImport")]
     assert '<button class="button danger compact" type="button">Delete</button>' not in source
@@ -246,7 +316,10 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert 'data-fallback-id="vault-entries-fallback-{{ vault.id }}"' in template
     assert 'id="vault-entries-fallback-{{ vault.id }}"' in template
     assert "openVaultUri" in source
-    assert "Connect\" : \"Open" in source
+    assert "data-vault-uri-error" in template
+    assert "Remote target unavailable" in source
+    assert "data-vault-entry-password-eye" in template
+    assert "copy_entry_id" in template
     assert "/terminal/remote-launches" in source
     assert 'window.open("about:blank"' not in source
     assert "/terminal/remote#target=" in source
@@ -258,7 +331,7 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert 'id="confirm-modal-detail"' in base_template
     assert ".confirm-modal.has-confirm-detail" in css
     assert "overflow-wrap: anywhere;" in css[css.index(".confirm-modal-detail-group"):css.index(".confirm-modal.wide-modal")]
-    assert "atlaso-vaults-20260727-12" in base_template
+    assert "atlaso-vaults-20260727-14" in base_template
     trust_template = Path("atlaso/app/templates/partials/vcf_trust_modal.html").read_text()
     import_template = Path("atlaso/app/templates/partials/vcf_vault_import_modal.html").read_text()
     depot_template = Path("atlaso/app/templates/partials/vcf_target_depot_modal.html").read_text()
@@ -411,7 +484,7 @@ def test_remote_vault_uri_launch_uses_one_use_server_side_ticket(client, monkeyp
     assert "sidebar" not in remote_page.text
     assert "Primary" not in remote_page.text
     assert "/static/terminal.js?v=atlaso-vault-uri-20260727-2" in remote_page.text
-    assert "/static/app.css?v=atlaso-vaults-20260727-5" in remote_page.text
+    assert "/static/app.css?v=atlaso-vaults-20260727-6" in remote_page.text
 
     ticket_response = client.post(
         "/terminal/tickets",
@@ -443,6 +516,19 @@ def test_remote_vault_uri_launch_uses_one_use_server_side_ticket(client, monkeyp
         },
     )
     assert replay.status_code == 400
+
+    def unavailable_target(*_args):
+        raise ConnectionRefusedError(10061, "Connection refused by remote host")
+
+    monkeypatch.setattr(web_terminal, "_probe_remote_ssh_host", unavailable_target)
+    unavailable = client.post("/terminal/remote-launches", data=launch_data)
+    assert unavailable.status_code == 422
+    assert unavailable.json()["detail"] == (
+        "The SSH target vcf.example.internal:2222 is unavailable. "
+        "Verify the address, port, and SSH service."
+    )
+    assert "10061" not in unavailable.text
+    assert "Connection refused by remote host" not in unavailable.text
 
 
 def test_remote_vault_uri_authenticates_server_side_after_rechecking_host_key(client, monkeypatch):

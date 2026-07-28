@@ -7858,6 +7858,13 @@ textarea {
   outline-offset: 1px;
 }
 
+.vault-entry-password-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 1.5rem;
+  align-items: center;
+  gap: 6px;
+}
+
 .vault-uri-cell {
   display: grid;
   gap: 3px;

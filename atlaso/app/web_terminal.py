@@ -397,9 +397,15 @@ async def create_remote_terminal_launch(
         raise HTTPException(status_code=404, detail="Vault entry not found.")
     try:
         hostname, port, _username = _remote_entry_target(entry, uri_index)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    try:
         fingerprint = await asyncio.to_thread(_probe_remote_ssh_host, hostname, port)
-    except (OSError, ValueError, paramiko.SSHException) as exc:
-        raise HTTPException(status_code=422, detail=str(exc) or "The SSH target is unavailable.") from exc
+    except (OSError, paramiko.SSHException) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"The SSH target {hostname}:{port} is unavailable. Verify the address, port, and SSH service.",
+        ) from exc
     target = f"{hostname}:{port}"
     if confirmed_fingerprint != fingerprint:
         return JSONResponse(

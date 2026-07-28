@@ -16,13 +16,15 @@ for 15 seconds; Atlaso audits the reveal without recording the value and returns
 Vault keys use lowercase dotted segments, for example `vcf.sddc_manager.admin` or `esx.esx01.root`. Values are encrypted
 with the appliance secrets key before database storage. Keep `ATLASO_SECRETS_KEY` with the appliance recovery material.
 Each entry may also store up to nine credential-free HTTP, HTTPS, SSH, or SFTP URIs. Add them on the third page of the
-entry wizard. Right-click an existing row, or focus it and press **Shift+F10**, to open its context menu. **Edit
-password** reopens the entry wizard, **Delete password** uses the shared destructive confirmation, and each configured
-URI has its own action. HTTP and HTTPS open in a separate browser tab; SSH and SFTP open the Atlaso Web Terminal and
-authenticate with the entry username and password. Atlaso opens the remote terminal window only after the administrator
-accepts the displayed host-key fingerprint. The confirmation displays the SHA-256 fingerprint in a dedicated wrapping
-field so it remains readable without horizontal scrolling. That window is a standalone terminal surface identified
-only by the remote hostname; it does not include the Atlaso administration shell.
+entry wizard. Right-click an existing row, or focus it and press **Shift+F10**, to open its context menu. **Edit**
+reopens the entry wizard, **Copy** creates a new entry without loading the encrypted value into the page, **Open**
+contains a submenu with every configured URI, and **Remove** uses the shared destructive confirmation. HTTP and HTTPS
+open in a separate browser tab; SSH and SFTP open the Atlaso Web Terminal and authenticate with the entry username and
+password. Atlaso opens the remote terminal window only after the administrator accepts the displayed host-key
+fingerprint. If the target cannot be reached, the Vaults page displays a visible error naming the URI and safe
+troubleshooting guidance. The confirmation displays the SHA-256 fingerprint in a dedicated wrapping field so it
+remains readable without horizontal scrolling. That window is a standalone terminal surface identified only by the
+remote hostname; it does not include the Atlaso administration shell.
 
 ## Managed scripts
 

@@ -16394,6 +16394,11 @@ function initializeVaultsPage() {
   if (!(entryModal instanceof HTMLDialogElement) || !(entryForm instanceof HTMLFormElement)) return;
   const uriList = entryForm.querySelector("[data-vault-uri-list]");
   const uriAddButton = entryForm.querySelector("[data-vault-uri-add]");
+  const entrySubmit = entryForm.querySelector("[data-atlaso-wizard-submit]");
+  const entryPassword = entryForm.querySelector("[data-vault-entry-password]");
+  const entryPasswordEye = entryForm.querySelector("[data-vault-entry-password-eye]");
+  const uriError = workspace.querySelector("[data-vault-uri-error]");
+  let entryPasswordRevealTimer = 0;
   const uriValues = () => [...(uriList?.querySelectorAll("[data-vault-uri-input]") || [])]
     .map((input) => String(input.value || "").trim())
     .filter(Boolean);
@@ -16472,6 +16477,10 @@ function initializeVaultsPage() {
   const openVaultUri = async (vaultId, row, index) => {
     const uri = row.uris?.[index];
     if (!uri) return;
+    if (uriError instanceof HTMLElement) {
+      uriError.textContent = "";
+      uriError.classList.add("hidden");
+    }
     const scheme = new URL(uri).protocol;
     if (scheme === "http:" || scheme === "https:") {
       window.open(uri, "_blank", "noopener");
@@ -16529,7 +16538,13 @@ function initializeVaultsPage() {
       if (!opened) throw new Error("Allow pop-ups for Atlaso to open the approved remote terminal.");
     } catch (error) {
       remoteWindow?.close();
-      showTransientGridStatus(error instanceof Error ? error.message : "The remote terminal could not be prepared.");
+      const message = error instanceof Error ? error.message : "The remote terminal could not be prepared.";
+      if (uriError instanceof HTMLElement) {
+        uriError.textContent = `Could not open ${uri}. ${message}`;
+        uriError.classList.remove("hidden");
+        uriError.scrollIntoView({ block: "nearest" });
+      }
+      showTransientGridStatus("Remote target unavailable");
     }
   };
   const entryWizard = window.AtlasoUiPatterns.createWizard({
@@ -16557,21 +16572,75 @@ function initializeVaultsPage() {
     },
     onOpen: ({ context }) => {
       const row = context?.row || null;
+      const copying = Boolean(context?.copy && row);
       const vaultId = context?.vaultId;
+      window.clearTimeout(entryPasswordRevealTimer);
+      entryPasswordRevealTimer = 0;
       entryForm.reset();
-      entryForm.action = row
+      if (entryPassword instanceof HTMLInputElement) entryPassword.type = "password";
+      entryForm.action = row && !copying
         ? `/vaults/${vaultId}/entries/${row.id}/edit`
         : `/vaults/${vaultId}/entries`;
-      entryForm.elements.key.value = row?.key || "";
+      entryForm.elements.copy_entry_id.value = copying ? String(row.id) : "";
+      entryForm.elements.key.value = copying ? String(context.copyKey || "") : row?.key || "";
       entryForm.elements.description.value = row?.description || "";
       entryForm.elements.username.value = row?.username || "";
       renderUriRows(row?.uris || []);
       entryForm.elements.value.required = !row;
       const title = entryForm.querySelector("[data-vault-entry-title]");
-      if (title) title.textContent = row ? "Edit or rotate password" : "Add password";
+      if (title) title.textContent = copying ? "Copy entry" : row ? "Edit entry" : "Add password";
       const help = entryForm.querySelector("[data-vault-entry-password-help]");
-      if (help) help.textContent = row ? "Leave blank to retain the existing encrypted value." : "The value is encrypted before it is stored.";
+      if (help) help.textContent = copying
+        ? "Leave blank to copy the existing encrypted value without loading it into this page."
+        : row
+          ? "Leave blank to retain the existing encrypted value."
+          : "The value is encrypted before it is stored.";
+      if (entrySubmit instanceof HTMLButtonElement) entrySubmit.textContent = copying ? "Copy entry" : row ? "Save entry" : "Save password";
+      entryPasswordEye?.classList.toggle("hidden", !row || copying);
+      if (entryPasswordEye instanceof HTMLButtonElement) {
+        entryPasswordEye.dataset.revealed = "false";
+        entryPasswordEye.setAttribute("aria-label", "Reveal password");
+      }
     },
+  });
+  entryPasswordEye?.addEventListener("click", async () => {
+    if (!(entryPasswordEye instanceof HTMLButtonElement) || !(entryPassword instanceof HTMLInputElement)) return;
+    if (entryPasswordEye.dataset.revealed === "true") {
+      entryPassword.type = "password";
+      entryPasswordEye.dataset.revealed = "false";
+      entryPasswordEye.setAttribute("aria-label", "Reveal password");
+      return;
+    }
+    const match = entryForm.action.match(/\/vaults\/(\d+)\/entries\/(\d+)\/edit$/);
+    if (!match) return;
+    entryPasswordEye.disabled = true;
+    const body = new FormData();
+    body.set("csrf", String(entryForm.elements.csrf.value || ""));
+    try {
+      const response = await fetch(`/vaults/${match[1]}/entries/${match[2]}/reveal`, {
+        method: "POST",
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+        body,
+      });
+      if (!response.ok) throw new Error();
+      const payload = await response.json();
+      entryPassword.value = String(payload.value || "");
+      entryPassword.type = "text";
+      entryPasswordEye.dataset.revealed = "true";
+      entryPasswordEye.setAttribute("aria-label", "Hide password");
+      entryPasswordRevealTimer = window.setTimeout(() => {
+        if (!entryPassword.isConnected) return;
+        entryPassword.type = "password";
+        entryPasswordEye.dataset.revealed = "false";
+        entryPasswordEye.setAttribute("aria-label", "Reveal password");
+        entryPasswordRevealTimer = 0;
+      }, 15000);
+    } catch (_error) {
+      showTransientGridStatus("Password reveal failed");
+    } finally {
+      entryPasswordEye.disabled = false;
+    }
   });
 
   document.querySelectorAll("[data-vault-entries-table]").forEach((element) => {
@@ -16592,23 +16661,45 @@ function initializeVaultsPage() {
         rowContextMenu: (_event, component) => {
           const row = component.getData();
           if (row.is_new) return [];
-          const uriActions = (row.uris || []).map((uri, index) => ({
-            label: `${["ssh:", "sftp:"].includes(new URL(uri).protocol) ? "Connect" : "Open"} URI ${index + 1} (${new URL(uri).protocol.slice(0, -1).toUpperCase()})`,
-            action: () => openVaultUri(vaultId, row, index),
-          }));
+          const uriActions = (row.uris || []).map((uri, index) => {
+            const parsed = new URL(uri);
+            return {
+              label: `URI ${index + 1} · ${parsed.protocol.slice(0, -1).toUpperCase()} · ${parsed.host}`,
+              action: () => openVaultUri(vaultId, row, index),
+            };
+          });
+          const existingKeys = new Set(rows.filter((candidate) => !candidate.is_new).map((candidate) => String(candidate.key || "")));
+          const copyKeyWithSuffix = (suffix) => {
+            const marker = suffix === 1 ? ".copy" : `.copy${suffix}`;
+            return `${String(row.key || "").slice(0, 180 - marker.length).replace(/\.$/, "")}${marker}`;
+          };
+          let copySuffix = 1;
+          let copyKey = copyKeyWithSuffix(copySuffix);
+          while (existingKeys.has(copyKey)) copyKey = copyKeyWithSuffix(copySuffix += 1);
           return [
             {
-              label: "Edit password",
+              label: "Edit",
               action: (_menuEvent, rowComponent) => entryWizard.open({
                 context: { vaultId, row: rowComponent.getData() },
                 launcher: rowComponent.getElement(),
               }),
             },
-            { separator: true },
-            ...uriActions,
-            ...(uriActions.length ? [{ separator: true }] : []),
             {
-              label: "Delete password",
+              label: "Copy",
+              action: (_menuEvent, rowComponent) => entryWizard.open({
+                context: { vaultId, row: rowComponent.getData(), copy: true, copyKey },
+                launcher: rowComponent.getElement(),
+              }),
+            },
+            { separator: true },
+            {
+              label: "Open",
+              disabled: uriActions.length === 0,
+              menu: uriActions,
+            },
+            { separator: true },
+            {
+              label: "Remove",
               action: (_menuEvent, rowComponent) => {
                 const data = rowComponent.getData();
                 document.getElementById(`vault-entry-delete-${data.id}`)?.requestSubmit();

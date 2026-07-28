@@ -8193,11 +8193,12 @@ def create_vault_entry_from_ui(
     vault_id: int,
     request: Request,
     key: str = Form(...),
-    value: str = Form(...),
+    value: str = Form(""),
     description: str = Form(""),
     username: str = Form(""),
     resource_name: str = Form(""),
     uris_json: str = Form("[]"),
+    copy_entry_id: str = Form(""),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
@@ -8207,18 +8208,30 @@ def create_vault_entry_from_ui(
     vault = db.get(Vault, vault_id)
     if vault is None:
         raise HTTPException(status_code=404, detail="Vault not found.")
+    source_entry: VaultEntry | None = None
+    if copy_entry_id.strip():
+        try:
+            source_entry = db.get(VaultEntry, int(copy_entry_id))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Choose a valid vault entry to copy.") from exc
+        if source_entry is None or source_entry.vault_id != vault.id:
+            raise HTTPException(status_code=404, detail="Vault entry not found.")
+    copied_value = decrypt_secret(source_entry.encrypted_value) if source_entry is not None and not value else value
     try:
         _entry, created = upsert_vault_entry(
             db,
             vault=vault,
             entry=VaultEntryInput(
                 key=key,
-                secret_type="esx_password" if key.strip().lower().startswith("esx.") else "vcf_password",
-                value=value,
+                secret_type=source_entry.secret_type if source_entry is not None else ("esx_password" if key.strip().lower().startswith("esx.") else "vcf_password"),
+                value=copied_value,
                 description=description,
                 username=username,
-                resource_name=resource_name,
+                resource_name=source_entry.resource_name if source_entry is not None else resource_name,
+                source_type=(source_entry.source_type or "manual") if source_entry is not None else "manual",
+                source_endpoint=(source_entry.source_endpoint or "") if source_entry is not None else "",
                 uris=parse_vault_uris_json(uris_json),
+                imported_at=source_entry.imported_at if source_entry is not None else None,
             ),
             actor=identity.username,
         )
@@ -8237,7 +8250,8 @@ def create_vault_entry_from_ui(
         action="create_vault_entry",
         resource_type="vault_entry",
         resource_id=str(_entry.id),
-        detail=f"vault_id={vault.id}; key={_entry.key}; type={_entry.secret_type}",
+        detail=f"vault_id={vault.id}; key={_entry.key}; type={_entry.secret_type}"
+        + (f"; copied_from_entry_id={source_entry.id}" if source_entry is not None else ""),
     )
     return RedirectResponse(f"/vaults#vault-panel-{vault.id}", status_code=303)
 
