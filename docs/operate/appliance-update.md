@@ -85,10 +85,15 @@ signatures, and bundles without re-signing them. Every source must satisfy the s
 remain encrypted in the database and move to the privileged helper only in the existing mode-0600 transient file. They
 are not written to manifests, tasks, audits, URLs, or helper output.
 
-Photon and PowerShell source fields autosave as desired runtime-maintenance configuration. **Synchronize repositories**
-explicitly writes only Atlaso-owned tdnf and PowerShell client configuration. Their source cards show whether that
-synchronization has not run, succeeded, or failed. Signed Atlaso sources are read directly, are checked during each
-update, and do not configure pip or report package-client synchronization state.
+Create a Photon, PowerShell, or Atlaso source from the **+ Repository** button in its ecosystem group. The guided
+workflow collects repository identity, its endpoint and ecosystem-specific trust policy, desired availability, and a
+final review. Saving the wizard creates desired state only: it does not install packages or change a running package
+client.
+
+Existing Photon and PowerShell source fields autosave as desired runtime-maintenance configuration. **Synchronize
+repositories** explicitly writes only Atlaso-owned tdnf and PowerShell client configuration. Their source cards show
+whether that synchronization has not run, succeeded, or failed. Signed Atlaso sources are read directly, are checked
+during each update, and do not configure pip or report package-client synchronization state.
 
 Each source editor presents repository identity first, then its location or discovered runtime data, followed by one
 grouped **Repository behavior** row. Autosave and synchronization state remain together in a separated footer, with

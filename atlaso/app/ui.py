@@ -10140,33 +10140,61 @@ def create_appliance_update_source(
     url: str = Form(""),
     priority: int = Form(50),
     enabled: str | None = Form(None),
+    trusted: str | None = Form(None),
+    channel: str = Form("stable"),
+    managed: str | None = Form(None),
+    gpgcheck: str | None = Form(None),
+    gpgkey: str = Form(""),
+    tls_verify: str | None = Form(None),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
     verify_csrf(request, csrf)
     require_admin_identity(identity)
+    wizard_request = request.headers.get("X-Atlaso-Wizard") == "1"
     normalized_kind = kind.strip().lower()
+    settings = default_source_settings(normalized_kind)
+    if normalized_kind == "powershell" and (wizard_request or trusted is not None):
+        settings["trusted"] = trusted == "on"
+    elif normalized_kind == "atlaso":
+        settings["channel"] = channel.strip().lower()
+    elif normalized_kind == "photon" and wizard_request:
+        settings.update(
+            {
+                "managed": managed == "on",
+                "gpgcheck": gpgcheck == "on",
+                "gpgkey": gpgkey.strip(),
+                "tls_verify": tls_verify == "on",
+            }
+        )
     source = UpdateSource(
         kind=normalized_kind,
         name=name.strip(),
         url=url.strip(),
         priority=priority,
         enabled=enabled == "on",
-        settings_json=json.dumps(default_source_settings(normalized_kind), sort_keys=True),
+        settings_json=json.dumps(settings, sort_keys=True),
     )
     errors = validate_update_source(source)
     if not source.name:
         errors.insert(0, "Source name is required.")
     if errors:
+        if wizard_request:
+            return JSONResponse({"status": "error", "detail": " ".join(errors), "errors": errors}, status_code=422)
         return render(request, "appliance_update.html", {"identity": identity, **appliance_update_context(db), "update_error": " ".join(errors)}, status_code=422)
     db.add(source)
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
-        return render(request, "appliance_update.html", {"identity": identity, **appliance_update_context(db), "update_error": "A source with this name and type already exists."}, status_code=409)
+        message = "A source with this name and type already exists."
+        if wizard_request:
+            return JSONResponse({"status": "error", "detail": message, "errors": [message]}, status_code=409)
+        return render(request, "appliance_update.html", {"identity": identity, **appliance_update_context(db), "update_error": message}, status_code=409)
     record_audit(db, actor=identity.username, action="create_software_source", resource_type="update_source", resource_id=str(source.id), detail=f"kind={source.kind}; name={source.name}")
+    if wizard_request:
+        return JSONResponse({"status": "saved", "source": update_source_payload(source)})
     return RedirectResponse("/appliance-update#update-sources", status_code=303)
 
 

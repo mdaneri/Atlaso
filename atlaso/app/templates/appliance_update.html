@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "partials/resource_wizard.html" import resource_wizard %}
 {% block page_title %}Appliance Update{% endblock %}
 {% block content %}
 <section class="split-workspace">
@@ -28,10 +29,17 @@
         <details class="apply-unit-card config-diff update-source-details" id="update-source-group-{{ group.kind }}" data-update-source-group="{{ group.kind }}">
           <summary><span><strong>{{ group.kind|upper }}</strong> · repositories</span><span class="status-pill muted">{{ group.sources|length }} configured</span></summary>
           <div class="managed-package-content">
+            <div class="panel-head compact">
+              <p class="muted">Open a configured repository to edit it, or use guided setup to add another source.</p>
+              <button class="button secondary compact" type="button" data-update-source-wizard-open data-update-source-kind="{{ group.kind }}">+ Repository</button>
+            </div>
+            {% if group.sources %}
             <div class="tab-buttons zone-tabs" role="tablist" aria-label="{{ group.kind }} repositories" data-tab-storage-key="atlaso:appliance-update:{{ group.kind }}-repository-tab">
               {% for source in group.sources %}<button class="tab-button {{ 'active' if loop.first else '' }}" type="button" role="tab" data-tab-target="update-source-{{ source.id }}" aria-controls="update-source-{{ source.id }}" {% if loop.first %}aria-selected="true"{% else %}aria-selected="false"{% endif %}>{{ source.name }}</button>{% endfor %}
-              <button class="tab-button {{ 'active' if not group.sources else '' }}" type="button" role="tab" data-tab-target="update-source-{{ group.kind }}-new" aria-controls="update-source-{{ group.kind }}-new" {% if not group.sources %}aria-selected="true"{% else %}aria-selected="false"{% endif %} {% if group.kind == 'powershell' %}data-powershell-source-new-tab{% endif %}>+ Repository</button>
             </div>
+            {% else %}
+              <p class="muted">No {{ group.kind }} repositories are configured.</p>
+            {% endif %}
             <div class="tab-panels">
               {% for source in group.sources %}
                 <div id="update-source-{{ source.id }}" class="tab-panel {{ 'active' if loop.first else '' }}" role="tabpanel" {{ 'hidden' if not loop.first else '' }}>
@@ -77,16 +85,6 @@
                   <form id="delete-update-source-{{ source.id }}" class="hidden" action="/appliance-update/sources/{{ source.id }}/delete" method="post" data-confirm-modal data-confirm-title="Delete {{ source.name }}?" data-confirm-message="This removes the repository from Atlaso. Packages assigned to it block deletion." data-confirm-label="Delete repository"><input type="hidden" name="csrf" value="{{ csrf_token }}"></form>
                 </div>
               {% endfor %}
-              <div id="update-source-{{ group.kind }}-new" class="tab-panel {{ 'active' if not group.sources else '' }}" role="tabpanel" {{ 'hidden' if group.sources else '' }}>
-                <form class="form-grid aligned-control-grid" action="/appliance-update/sources" method="post" data-new-update-source-form>
-                  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="kind" value="{{ group.kind }}">
-                  <label><span class="field-label"><span>Repository name</span><button class="help-icon" type="button" data-help="Unique repository name within the {{ group.kind }} ecosystem.">i</button></span><input name="name" required autocomplete="off"></label>
-                  <label><span class="field-label"><span>Repository URL</span><button class="help-icon" type="button" data-help="HTTP(S) location consumed by the {{ group.kind }} package client.">i</button></span><input name="url" placeholder="https://packages.example.test/repository" autocomplete="off"></label>
-                  <label><span class="field-label"><span>Priority</span><button class="help-icon" type="button" data-help="Lower values are considered first among {{ group.kind }} repositories.">i</button></span><input type="number" name="priority" min="0" max="100" value="50"></label>
-                  <label class="switch-field"><span class="field-label"><span>Repository enabled</span><button class="help-icon" type="button" data-help="Includes this repository in the next source synchronization and future updates.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
-                  <div class="form-actions full"><button class="button primary" type="submit">Create {{ group.kind }} repository</button></div>
-                </form>
-              </div>
             </div>
           </div>
         </details>
@@ -278,4 +276,60 @@
     </div>
   </aside>
 </section>
+
+{% set update_source_steps = [
+  {"id": "identity", "label": "Repository", "summary": "Ecosystem, name, and priority"},
+  {"id": "endpoint", "label": "Endpoint", "summary": "Location and trust policy"},
+  {"id": "state", "label": "State", "summary": "Desired availability"},
+  {"id": "review", "label": "Review", "summary": "Confirm repository creation"}
+] %}
+{% call resource_wizard(
+  "appliance-update-source-dialog",
+  "appliance-update-source-form",
+  "/appliance-update/sources",
+  update_source_steps,
+  "Add update repository",
+  "Define a desired update source without changing the running package clients.",
+  "Create repository"
+) %}
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="kind" value="">
+  <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity">
+    <div class="settings-list compact-list">
+      <div><span>Ecosystem</span><strong data-update-source-kind-label>Not selected</strong></div>
+    </div>
+    <div class="form-grid">
+      <label><span class="field-label"><span>Repository name</span><button class="help-icon" type="button" data-help="Unique repository name within the selected package ecosystem.">i</button></span><input name="name" required maxlength="160" autocomplete="off"></label>
+      <label><span class="field-label"><span>Priority</span><button class="help-icon" type="button" data-help="Lower values are considered first among repositories in this ecosystem.">i</button></span><input type="number" name="priority" min="0" max="100" value="50" required></label>
+    </div>
+  </section>
+  <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="endpoint">
+    <label>
+      <span class="field-label"><span data-update-source-url-label>Repository URL</span><button class="help-icon" type="button" data-help="HTTP(S) location used by the selected update ecosystem. Atlaso release sources must use HTTPS.">i</button></span>
+      <input name="url" type="url" placeholder="https://packages.example.test/repository" autocomplete="off">
+    </label>
+    <div class="form-grid hidden" data-update-source-kind-fields="atlaso">
+      <label><span class="field-label"><span>Release channel</span><button class="help-icon" type="button" data-help="Selects the signed channel pointer below the release base URL.">i</button></span><select name="channel">{% for channel in atlaso_channels %}<option value="{{ channel }}">{{ channel }}</option>{% endfor %}</select></label>
+    </div>
+    <div class="form-stack hidden" data-update-source-kind-fields="photon">
+      <label><span class="field-label"><span>GPG key URL</span><button class="help-icon" type="button" data-help="Key reference written into Atlaso's managed Photon repository definition.">i</button></span><input name="gpgkey" autocomplete="off"></label>
+      <div class="source-option-grid">
+        <label class="switch-field source-option"><span class="field-label"><span>Atlaso managed</span><button class="help-icon" type="button" data-help="Writes this source into Atlaso's owned Photon repository file during repository synchronization.">i</button></span><input class="switch-input" type="checkbox" name="managed" checked><span class="switch-track" aria-hidden="true"></span></label>
+        <label class="switch-field source-option"><span class="field-label"><span>Verify RPM signatures</span><button class="help-icon" type="button" data-help="Requires RPM signature validation for this managed Photon repository.">i</button></span><input class="switch-input" type="checkbox" name="gpgcheck" checked><span class="switch-track" aria-hidden="true"></span></label>
+        <label class="switch-field source-option"><span class="field-label"><span>Verify TLS</span><button class="help-icon" type="button" data-help="Requires certificate validation when connecting to this source.">i</button></span><input class="switch-input" type="checkbox" name="tls_verify" checked><span class="switch-track" aria-hidden="true"></span></label>
+      </div>
+    </div>
+    <div class="form-grid hidden" data-update-source-kind-fields="powershell">
+      <label class="switch-field"><span class="field-label"><span>Trusted repository</span><button class="help-icon" type="button" data-help="Registers this repository as Trusted for non-interactive module installation. Enable only for a controlled source.">i</button></span><input class="switch-input" type="checkbox" name="trusted"><span class="switch-track" aria-hidden="true"></span></label>
+    </div>
+  </section>
+  <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="state">
+    <label class="switch-field"><span class="field-label"><span>Repository enabled</span><button class="help-icon" type="button" data-help="Includes this source in future update work and in the next explicit repository synchronization.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
+    <div class="alert warning">Saving creates desired state only. Photon and PowerShell clients change only after the separate Synchronize repositories action; Atlaso release sources are verified during update checks.</div>
+  </section>
+  <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review">
+    <div class="settings-list" data-atlaso-resource-review></div>
+    <div class="alert warning">No package is installed and no runtime repository configuration is changed by this step.</div>
+  </section>
+{% endcall %}
 {% endblock %}

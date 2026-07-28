@@ -16038,6 +16038,135 @@ function initializeManagedPackagePolicies() {
   });
 }
 
+function initializeApplianceUpdateSourceWizard() {
+  const form = document.querySelector("[data-appliance-update-source-form]");
+  const dialog = document.getElementById("appliance-update-source-dialog");
+  const launchers = [...document.querySelectorAll("[data-update-source-wizard-open]")];
+  if (
+    !(form instanceof HTMLFormElement)
+    || !(dialog instanceof HTMLDialogElement)
+    || !launchers.length
+    || !window.AtlasoUiPatterns
+  ) {
+    return;
+  }
+
+  const kindControl = form.elements.namedItem("kind");
+  const urlControl = form.elements.namedItem("url");
+  const managedControl = form.elements.namedItem("managed");
+  const kindLabel = form.querySelector("[data-update-source-kind-label]");
+  const urlLabel = form.querySelector("[data-update-source-url-label]");
+  let selectedKind = "";
+
+  const updateUrlRequirement = () => {
+    if (!(urlControl instanceof HTMLInputElement)) return;
+    const photonManaged = selectedKind === "photon"
+      && managedControl instanceof HTMLInputElement
+      && managedControl.checked;
+    urlControl.required = selectedKind === "powershell" || photonManaged;
+  };
+
+  const selectKind = (kind) => {
+    selectedKind = ["atlaso", "photon", "powershell"].includes(kind) ? kind : "";
+    if (kindControl instanceof HTMLInputElement) kindControl.value = selectedKind;
+    if (kindLabel instanceof HTMLElement) kindLabel.textContent = selectedKind ? selectedKind.toUpperCase() : "Not selected";
+    if (urlLabel instanceof HTMLElement) {
+      urlLabel.textContent = selectedKind === "atlaso" ? "Signed release base URL" : "Repository URL";
+    }
+    form.querySelectorAll("[data-update-source-kind-fields]").forEach((group) => {
+      const active = group.getAttribute("data-update-source-kind-fields") === selectedKind;
+      group.classList.toggle("hidden", !active);
+      group.querySelectorAll("input, select, textarea").forEach((control) => {
+        control.disabled = !active;
+      });
+    });
+    updateUrlRequirement();
+  };
+
+  if (managedControl instanceof HTMLInputElement) {
+    managedControl.addEventListener("change", updateUrlRequirement);
+  }
+
+  const wizard = window.AtlasoUiPatterns.createWizard({
+    form,
+    dialog,
+    steps: [
+      { id: "identity", title: "Name the repository", description: "Confirm its ecosystem, operator-visible name, and resolution priority." },
+      { id: "endpoint", title: "Configure the endpoint", description: "Set the repository location and ecosystem-specific trust policy." },
+      { id: "state", title: "Choose desired availability", description: "Decide whether the source participates in future update work." },
+      { id: "review", title: "Review repository creation", description: "Confirm the desired state before saving it." },
+    ],
+    discardTitle: "Discard repository setup?",
+    discardMessage: "The repository values entered in this wizard will be lost.",
+    onOpen: ({ context }) => {
+      form.reset();
+      selectKind(context?.kind || "");
+    },
+    validateStep: (state) => validateAtlasoWizardStep(state),
+    prepareReview: () => {
+      const reviewItems = [
+        { label: "Ecosystem", value: () => selectedKind.toUpperCase() },
+        { label: "Repository", field: "name" },
+        { label: "Priority", field: "priority" },
+        { label: selectedKind === "atlaso" ? "Release base URL" : "Repository URL", field: "url" },
+      ];
+      if (selectedKind === "atlaso") reviewItems.push({ label: "Release channel", field: "channel" });
+      if (selectedKind === "powershell") reviewItems.push({ label: "Trusted", field: "trusted" });
+      if (selectedKind === "photon") {
+        reviewItems.push(
+          { label: "Atlaso managed", field: "managed" },
+          { label: "RPM signatures", field: "gpgcheck" },
+          { label: "TLS verification", field: "tls_verify" },
+          { label: "GPG key URL", field: "gpgkey" },
+        );
+      }
+      reviewItems.push({ label: "Desired state", field: "enabled" });
+      renderAtlasoWizardReview(form, reviewItems);
+    },
+    onSubmit: async () => {
+      const response = await fetch(form.action, {
+        method: "POST",
+        body: new FormData(form),
+        credentials: "same-origin",
+        headers: {
+          Accept: "application/json",
+          "X-Atlaso-Wizard": "1",
+        },
+      });
+      const responseText = await response.text();
+      let payload = {};
+      try {
+        payload = responseText ? JSON.parse(responseText) : {};
+      } catch (_error) {
+        payload = {};
+      }
+      if (!response.ok) {
+        throw new Error(payload.detail || "The repository could not be created.");
+      }
+      if (!payload.source?.id) {
+        throw new Error("The server did not return the created repository.");
+      }
+      try {
+        window.localStorage.setItem("atlaso:appliance-update:workspace-tab", "appliance-update-sources");
+        window.localStorage.setItem(
+          `atlaso:appliance-update:${selectedKind}-repository-tab`,
+          `update-source-${payload.source.id}`,
+        );
+      } catch {
+        // Reloading the page still shows the saved repository when storage is unavailable.
+      }
+      window.location.assign("/appliance-update#update-sources");
+      return { valid: true };
+    },
+  });
+
+  launchers.forEach((button) => {
+    button.addEventListener("click", () => {
+      wizard.open({ launcher: button, context: { kind: button.dataset.updateSourceKind || "" } });
+    });
+  });
+}
+
 function initializeEsxStorageTables() {
   const volumeElement = document.getElementById("esx-storage-volumes-table");
   const shareElement = document.getElementById("esx-storage-shares-table");
@@ -16940,6 +17069,7 @@ document.addEventListener("DOMContentLoaded", initializeLdapPasswordModal);
 document.addEventListener("DOMContentLoaded", initializeLdapBindSecretModal);
 document.addEventListener("DOMContentLoaded", initializeAutomationTables);
 document.addEventListener("DOMContentLoaded", initializeManagedPackagePolicies);
+document.addEventListener("DOMContentLoaded", initializeApplianceUpdateSourceWizard);
 document.addEventListener("DOMContentLoaded", initializeNtpSettings);
 document.addEventListener("DOMContentLoaded", initializeNTPsecUpstreamsTable);
 document.addEventListener("DOMContentLoaded", initializeNTPsecSourceHealthModal);

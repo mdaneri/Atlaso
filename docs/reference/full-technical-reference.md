@@ -197,6 +197,9 @@ Appliance Update is a separate runtime-maintenance workflow from global `/applia
 cover Photon/tdnf, PowerShell Gallery or internal PowerShell repositories, and signed Atlaso release channels; the
 retired Python Libraries and independent wheel streams are not available. Update work is queued to
 `atlaso-worker.service`; the same worker runs Automation schedules, managed scripts, and VCF Offline Depot downloads.
+Repository creation uses the shared guided workflow to capture identity, endpoint and trust policy, desired state, and
+review before saving. Runtime package-client configuration still changes only through the explicit repository
+synchronization task.
 
 Successful `main` CI publishes immutable signed release bundles to GitHub Releases and advances the signed `development`
 pointer on GitHub Pages. The Pages root provides a static release-repository landing page, while appliances use the

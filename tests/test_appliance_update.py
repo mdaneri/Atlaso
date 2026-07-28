@@ -507,7 +507,6 @@ def test_software_source_and_managed_module_lifecycle(client):
     assert "data-runtime-photon-repositories" in grouped_page.text
     assert "data-runtime-python-index" not in grouped_page.text
     assert "https://pypi.org/simple" not in grouped_page.text
-    assert grouped_page.text.count("aligned-control-grid") >= 3
     assert 'aria-label="Appliance update workspace"' in grouped_page.text
     assert 'data-tab-target="appliance-update-sources"' in grouped_page.text
     assert 'data-tab-target="appliance-update-streams"' in grouped_page.text
@@ -533,10 +532,17 @@ def test_software_source_and_managed_module_lifecycle(client):
     assert "data-add-powershell-repository" not in grouped_page.text
     assert 'data-update-source-group="powershell"' in grouped_page.text
     assert 'aria-label="powershell repositories"' in grouped_page.text
-    assert "data-powershell-source-new-tab" in grouped_page.text
-    assert 'data-tab-target="update-source-powershell-new"' in grouped_page.text
+    assert grouped_page.text.count("data-update-source-wizard-open") == 3
+    assert 'data-update-source-kind="powershell"' in grouped_page.text
+    assert 'id="appliance-update-source-dialog"' in grouped_page.text
+    assert "data-appliance-update-source-form" in grouped_page.text
+    assert "data-powershell-source-new-tab" not in grouped_page.text
+    assert 'data-tab-target="update-source-powershell-new"' not in grouped_page.text
     assert "PSGallery" in grouped_page.text
     assert "PrivateGallery" in grouped_page.text
+    app_js = Path("atlaso/app/static/app.js").read_text(encoding="utf-8")
+    assert "function initializeApplianceUpdateSourceWizard()" in app_js
+    assert "window.AtlasoUiPatterns.createWizard({" in app_js
     app_css = Path("atlaso/app/static/app.css").read_text(encoding="utf-8")
     assert ".detail-rail .detail-panel {\n  position: static;" in app_css
     assert ".detail-rail {\n  position: sticky;\n  top: 22px;" in app_css
@@ -554,6 +560,30 @@ def test_software_source_and_managed_module_lifecycle(client):
     assert ".source-option-grid {\n  display: grid;" in app_css
     assert ".source-editor-footer {\n  display: flex;" in app_css
     assert "class=\"source-validation-state\"" in grouped_page.text
+    wizard_created = client.post(
+        "/appliance-update/sources",
+        data={
+            "csrf": csrf,
+            "kind": "photon",
+            "name": "WizardPhoton",
+            "url": "https://packages.example.test/photon",
+            "priority": "15",
+            "managed": "on",
+            "gpgcheck": "on",
+            "gpgkey": "https://packages.example.test/keys/RPM-GPG-KEY",
+            "tls_verify": "on",
+            "enabled": "on",
+        },
+        headers={"X-Atlaso-Wizard": "1", "Accept": "application/json"},
+    )
+    assert wizard_created.status_code == 200
+    assert wizard_created.json()["status"] == "saved"
+    assert wizard_created.json()["source"]["settings"] == {
+        "gpgcheck": True,
+        "gpgkey": "https://packages.example.test/keys/RPM-GPG-KEY",
+        "managed": True,
+        "tls_verify": True,
+    }
     with SessionLocal() as db:
         package = db.execute(select(ManagedPackage).where(ManagedPackage.name == "Private.PowerCLI.Tools")).scalar_one()
         package_id = package.id
