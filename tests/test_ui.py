@@ -883,9 +883,9 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     create_grid = "window.AtlasoUiPatterns.createGrid({"
 
     assert app_js.count(create_grid) == 31
-    assert app_js.count('pattern: "direct-edit"') == 17
+    assert app_js.count('pattern: "direct-edit"') == 16
     assert app_js.count('pattern: "read-only"') == 7
-    assert app_js.count('pattern: "wizard-backed"') == 7
+    assert app_js.count('pattern: "wizard-backed"') == 8
     assert "new Tabulator(" not in app_js
     assert "new window.Tabulator(" not in app_js
     assert "atlaso-legacy-tabulator: #117" not in app_js
@@ -949,9 +949,9 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
 
     automation_block = function_block("initializeAutomationTables")
     assert automation_block.count(create_grid) == 3
-    assert automation_block.count('pattern: "direct-edit"') == 1
+    assert automation_block.count('pattern: "direct-edit"') == 0
     assert automation_block.count('pattern: "read-only"') == 1
-    assert automation_block.count('pattern: "wizard-backed"') == 1
+    assert automation_block.count('pattern: "wizard-backed"') == 2
 
     storage_block = function_block("initializeEsxStorageTables")
     assert storage_block.count(create_grid) == 2
