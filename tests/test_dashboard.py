@@ -123,7 +123,7 @@ def test_dashboard_setup_exit_healthy_and_needs_attention_states(client, monkeyp
         assert attention["overall"]["primary_action"]["url"] == "/tasks?job_id=job_dashboard_failed"
 
 
-def test_dashboard_successful_appliance_apply_resolves_earlier_apply_failure(client, monkeypatch):
+def test_dashboard_successful_appliance_apply_resolves_retried_units(client, monkeypatch):
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, utcnow
@@ -141,6 +141,15 @@ def test_dashboard_successful_appliance_apply_resolves_earlier_apply_failure(cli
                     created_by="admin",
                     created_at=failed_at,
                     finished_at=failed_at,
+                    result=json.dumps(
+                        {
+                            "selected_units": ["network", "firewall"],
+                            "units": [
+                                {"unit_id": "network", "success": True},
+                                {"unit_id": "firewall", "success": False},
+                            ],
+                        }
+                    ),
                 ),
                 Job(
                     id="job_dashboard_apply_recovered",
@@ -149,6 +158,12 @@ def test_dashboard_successful_appliance_apply_resolves_earlier_apply_failure(cli
                     created_by="admin",
                     created_at=succeeded_at,
                     finished_at=succeeded_at,
+                    result=json.dumps(
+                        {
+                            "selected_units": ["firewall"],
+                            "units": [{"unit_id": "firewall", "success": True}],
+                        }
+                    ),
                 ),
             ]
         )
@@ -162,6 +177,58 @@ def test_dashboard_successful_appliance_apply_resolves_earlier_apply_failure(cli
     activity_urls = [item["url"] for item in snapshot["recent_activity"]]
     assert "/tasks?job_id=job_dashboard_apply_failed" in activity_urls
     assert "/tasks?job_id=job_dashboard_apply_recovered" in activity_urls
+
+
+def test_dashboard_unrelated_success_does_not_resolve_apply_failure(client, monkeypatch):
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, utcnow
+
+    monkeypatch.setattr(ui, "dashboard_appliance_apply_units", lambda _db: controlled_units())
+    failed_at = utcnow() - timedelta(minutes=2)
+    succeeded_at = utcnow()
+    with SessionLocal() as db:
+        db.add_all(
+            [
+                Job(
+                    id="job_dashboard_network_failed",
+                    type="appliance-apply",
+                    status=JobStatus.FAILED.value,
+                    created_by="admin",
+                    created_at=failed_at,
+                    finished_at=failed_at,
+                    result=json.dumps(
+                        {
+                            "selected_units": ["network"],
+                            "units": [{"unit_id": "network", "success": False}],
+                        }
+                    ),
+                ),
+                Job(
+                    id="job_dashboard_firewall_succeeded",
+                    type="appliance-apply",
+                    status=JobStatus.SUCCEEDED.value,
+                    created_by="admin",
+                    created_at=succeeded_at,
+                    finished_at=succeeded_at,
+                    result=json.dumps(
+                        {
+                            "selected_units": ["firewall"],
+                            "units": [{"unit_id": "firewall", "success": True}],
+                        }
+                    ),
+                ),
+            ]
+        )
+        db.commit()
+
+        snapshot = ui.dashboard_snapshot(db)
+
+    assert snapshot["overall"]["state"] == "needs-attention"
+    assert [item["url"] for item in snapshot["attention_items"]] == [
+        "/tasks?job_id=job_dashboard_network_failed"
+    ]
+    assert snapshot["tasks"]["failed_24h"] == 1
 
 
 def test_dashboard_attention_priority_pending_separation_and_false_positive_filters(client, monkeypatch):
