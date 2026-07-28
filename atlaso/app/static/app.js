@@ -14117,6 +14117,9 @@ function initializeVcfVaultCredentialPickers() {
       control?.dispatchEvent(new Event("change", { bubbles: true }));
     };
     const setManualMode = () => {
+      if (addressControl instanceof HTMLInputElement) {
+        addressControl.readOnly = false;
+      }
       if (passwordControl instanceof HTMLInputElement) {
         passwordControl.disabled = false;
         passwordControl.required = passwordWasRequired;
@@ -14128,8 +14131,11 @@ function initializeVcfVaultCredentialPickers() {
       const vault = byVaultId.get(vaultSelect.value);
       entrySelect.replaceChildren(new Option(vault ? "Choose a key" : "Choose a vault first", ""));
       (vault?.entries || []).forEach((entry) => {
+        const endpoint = (entry.uris || []).find((uri) => /^https?:\/\//i.test(uri)) || "";
         const username = entry.username ? ` — ${entry.username}` : "";
-        entrySelect.append(new Option(`${entry.key}${username}`, String(entry.id)));
+        const option = new Option(`${entry.key}${username}${endpoint ? "" : " — no HTTP URI"}`, String(entry.id));
+        option.disabled = !endpoint;
+        entrySelect.append(option);
       });
       entrySelect.disabled = !vault;
       setManualMode();
@@ -14144,6 +14150,7 @@ function initializeVcfVaultCredentialPickers() {
       const endpoint = (entry.uris || []).find((uri) => /^https?:\/\//i.test(uri)) || "";
       if (addressControl instanceof HTMLInputElement && endpoint) {
         addressControl.value = endpoint;
+        addressControl.readOnly = true;
         emitChange(addressControl);
       }
       if (usernameControl instanceof HTMLInputElement) {
@@ -14166,9 +14173,7 @@ function initializeVcfVaultCredentialPickers() {
         passwordControl.placeholder = "Stored vault password will be used";
       }
       if (status instanceof HTMLElement) {
-        status.textContent = endpoint
-          ? `Using ${vault.name} / ${entry.key}. The stored password is never loaded into this page.`
-          : `Using ${vault.name} / ${entry.key}. Enter the server manually; this key has no HTTP or HTTPS URI.`;
+        status.textContent = `Using ${vault.name} / ${entry.key}. The server address is locked to the vault URI and the stored password is never loaded into this page.`;
       }
     };
     vaultSelect.addEventListener("change", fillEntryOptions);
@@ -14211,7 +14216,8 @@ function initializeVcfTrustForm() {
   let wizard;
   let inspectedTls = "";
   const steps = [
-    { id: "target", title: "Target and root CA", description: "Choose the VCF appliance, select a saved credential or continue with manual login, and review the active Atlaso root CA." },
+    { id: "credential", title: "Choose a credential source", description: "Use a saved vault key or continue with a one-time manual login." },
+    { id: "target", title: "Target and root CA", description: "Confirm the VCF server address and review the active Atlaso root CA." },
     { id: "api", title: "API credentials", description: "Enter the one-time VCF API administrator credentials used to inspect and import the root CA." },
     { id: "review", title: "Review and queue", description: "Confirm the target HTTPS TLS fingerprint, then queue the certificate trust task." },
   ];
@@ -14747,6 +14753,7 @@ function initializeVcfTargetDepotHelper() {
   let inspected = null;
   let inspectedTls = "";
   const steps = [
+    { id: "credential", title: "Choose a credential source", description: "Use a saved vault key or continue with a one-time manual login." },
     { id: "target", title: "Target and local depot", description: "Choose the remote VCF appliance and review the local Atlaso depot endpoint." },
     { id: "api", title: "API credentials", description: "Enter the one-time VCF API administrator credentials." },
     { id: "depot", title: "Depot credentials", description: "Enter the one-time password for the configured Atlaso depot HTTP user." },
@@ -16741,6 +16748,7 @@ function initializeVcfVaultImport() {
     dialog: modal,
     form,
     steps: [
+      { id: "credential", title: "Choose a credential source", description: "Use a saved vault key or continue with a one-time manual login." },
       { id: "source", title: "Choose the VCF source", description: "Identify the appliance and confirm its TLS certificate fingerprint." },
       { id: "credentials", title: "Authenticate to the source", description: "Credentials are used only for this discovery and reviewed import." },
       { id: "selection", title: "Choose passwords", description: "Select supported VCF and ESX password metadata to import." },

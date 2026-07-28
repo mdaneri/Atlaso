@@ -2,25 +2,28 @@
   <form class="confirm-modal-panel vcf-sddc-wizard-panel" data-atlaso-wizard data-vcf-vault-import-form>
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <aside class="vcf-sddc-wizard-rail" aria-label="VCF password import steps"><p class="kicker">Remote VCF maintenance</p><h2 id="vcf-vault-import-title">Import passwords into a vault</h2><ol class="vcf-sddc-step-list">
-      <li><button class="vcf-sddc-step-button active" type="button" data-atlaso-wizard-nav="source"><span>1</span><strong>Source</strong><small>Appliance and TLS</small></button></li>
-      <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="credentials" disabled><span>2</span><strong>Credentials</strong><small>Authenticate</small></button></li>
-      <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="selection" disabled><span>3</span><strong>Passwords</strong><small>Choose values</small></button></li>
-      <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="review" disabled><span>4</span><strong>Review</strong><small>Import destination</small></button></li>
+      <li><button class="vcf-sddc-step-button active" type="button" data-atlaso-wizard-nav="credential"><span>1</span><strong>Credential</strong><small>Vault or manual</small></button></li>
+      <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="source" disabled><span>2</span><strong>Source</strong><small>Server and TLS</small></button></li>
+      <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="credentials" disabled><span>3</span><strong>Login</strong><small>Manual only</small></button></li>
+      <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="selection" disabled><span>4</span><strong>Passwords</strong><small>Choose values</small></button></li>
+      <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="review" disabled><span>5</span><strong>Review</strong><small>Import destination</small></button></li>
     </ol></aside>
     <div class="vcf-sddc-wizard-main"><div class="confirm-modal-body vcf-sddc-wizard-body">
-      <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 4</p><h3 data-atlaso-wizard-title>Choose the VCF source</h3><p class="muted" data-atlaso-wizard-description>Identify the appliance and confirm its TLS certificate fingerprint.</p></div>
+      <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 5</p><h3 data-atlaso-wizard-title>Choose a credential source</h3><p class="muted" data-atlaso-wizard-description>Use a saved vault key or continue with a one-time manual login.</p></div>
       <div class="alert error hidden" data-atlaso-wizard-error></div>
-      <section class="vcf-sddc-step-page" data-atlaso-wizard-step="source"><div class="form-grid">
-        <label><span>Source type</span><select name="source_type"><option value="sddc_manager">SDDC Manager</option><option value="vcf_installer">VCF Installer</option></select></label>
-        <label><span>API address</span><input name="address" required placeholder="sddc-manager.example.internal" autocomplete="off"></label>
-        <label><span>API port</span><input name="port" type="number" min="1" max="65535" value="443" required></label>
-        <label class="full"><span>Confirmed SHA-256 fingerprint</span><input name="confirmed_fingerprint" autocomplete="off" placeholder="Connect once to obtain the fingerprint"><small class="muted" data-vcf-vault-fingerprint>Atlaso will show the current fingerprint before sending credentials.</small></label>
-      </div>
+      <section class="vcf-sddc-step-page" data-atlaso-wizard-step="credential">
         {% set credential_address_field = "address" %}
         {% set credential_username_field = "username" %}
         {% set credential_password_field = "password" %}
         {% set credential_port_field = "port" %}
         {% include "partials/vcf_vault_credential_picker.html" %}
+      </section>
+      <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="source"><div class="form-grid">
+        <label><span>Source type</span><select name="source_type"><option value="sddc_manager">SDDC Manager</option><option value="vcf_installer">VCF Installer</option></select></label>
+        <label><span>Server address</span><input name="address" required placeholder="sddc-manager.example.internal" autocomplete="off"></label>
+        <label><span>API port</span><input name="port" type="number" min="1" max="65535" value="443" required></label>
+        <label class="full"><span>Confirmed SHA-256 fingerprint</span><input name="confirmed_fingerprint" autocomplete="off" placeholder="Connect once to obtain the fingerprint"><small class="muted" data-vcf-vault-fingerprint>Atlaso will show the current fingerprint before sending credentials.</small></label>
+      </div>
       </section>
       <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="credentials">
         <div class="form-grid"><label><span>API username</span><input name="username" required autocomplete="username"></label><label><span>API password</span><input name="password" type="password" required autocomplete="current-password"></label></div>

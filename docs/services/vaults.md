@@ -86,13 +86,14 @@ rotated.
 
 ## VCF Helper autofill
 
-VCF Helper remote-connection wizards provide an administrator-only **Vault** and **Key** picker on their **Target**
-page. Selecting a key fills the server from its first HTTP or HTTPS URI and fills its username, then skips the manual
-API-login page. The password remains encrypted at rest and is resolved only by the server when the operator inspects or
-submits the remote operation. It is never copied into the password input or included in the page metadata.
+VCF Helper remote-connection wizards start with an administrator-only **Vault** and **Key** choice. Selecting a key
+fills and locks the server address from its first HTTP or HTTPS URI, fills its username, and skips the manual API-login
+page. Keys without an HTTP or HTTPS URI are unavailable in this picker. The password remains encrypted at rest and is
+resolved only by the server when the operator inspects or submits the remote operation. It is never copied into the
+password input or included in the page metadata.
 
 The server rejects a key that does not belong to the selected vault and audits each use without the value. A vault
-entry intended for VCF Helper should therefore include a username and, when possible, an HTTP or HTTPS URI. Operators
-can still enter the server manually when a key has no suitable URI.
+entry intended for VCF Helper must therefore include a username and an HTTP or HTTPS URI. Operators can instead choose
+manual credentials and enter the server themselves.
 
 Vault entries are intentionally excluded from settings archives. Reimport or recreate them after restore.

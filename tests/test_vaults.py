@@ -258,7 +258,7 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert 'id="confirm-modal-detail"' in base_template
     assert ".confirm-modal.has-confirm-detail" in css
     assert "overflow-wrap: anywhere;" in css[css.index(".confirm-modal-detail-group"):css.index(".confirm-modal.wide-modal")]
-    assert "atlaso-vaults-20260727-8" in base_template
+    assert "atlaso-vaults-20260727-9" in base_template
     trust_template = Path("atlaso/app/templates/partials/vcf_trust_modal.html").read_text()
     import_template = Path("atlaso/app/templates/partials/vcf_vault_import_modal.html").read_text()
     depot_template = Path("atlaso/app/templates/partials/vcf_target_depot_modal.html").read_text()
@@ -266,6 +266,16 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert trust_template.index("vcf_vault_credential_picker.html") < trust_template.index('data-vcf-trust-step="api"')
     assert import_template.index("vcf_vault_credential_picker.html") < import_template.index('data-atlaso-wizard-step="credentials"')
     assert depot_template.index("vcf_vault_credential_picker.html") < depot_template.index('data-vcf-target-depot-step="api"')
+    assert 'data-atlaso-wizard-nav="credential"' in import_template
+    assert "Step 1 of 5" in import_template
+    assert "<span>Server address</span>" in import_template
+    assert 'data-atlaso-wizard-nav="credential"' in trust_template
+    assert "Step 1 of 4" in trust_template
+    assert "<span>Server address</span>" in trust_template
+    assert 'data-atlaso-wizard-nav="credential"' in depot_template
+    assert "Step 1 of 6" in depot_template
+    assert "addressControl.readOnly = true;" in source
+    assert "option.disabled = !endpoint;" in source
     assert "hasSelectedVcfVaultCredential(form)" in source
     assert 'return ready ? "review" : false;' in source
     assert 'return await inspectSource(controller) ? "selection" : false;' in source

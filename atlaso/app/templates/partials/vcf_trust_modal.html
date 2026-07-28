@@ -8,18 +8,19 @@
       <p class="kicker">Remote VCF maintenance</p>
       <h2 id="vcf-trust-modal-title">VCF Certificate Trust</h2>
       <ol class="vcf-sddc-step-list">
-        <li><button class="vcf-sddc-step-button active" type="button" data-vcf-trust-step-nav data-atlaso-wizard-nav="target"><span>1</span><strong>Target</strong><small>Appliance and CA</small></button></li>
-        <li><button class="vcf-sddc-step-button" type="button" data-vcf-trust-step-nav data-atlaso-wizard-nav="api" disabled><span>2</span><strong>API</strong><small>Administrator login</small></button></li>
-        <li><button class="vcf-sddc-step-button" type="button" data-vcf-trust-step-nav data-atlaso-wizard-nav="review" disabled><span>3</span><strong>Review</strong><small>TLS and queue</small></button></li>
+        <li><button class="vcf-sddc-step-button active" type="button" data-vcf-trust-step-nav data-atlaso-wizard-nav="credential"><span>1</span><strong>Credential</strong><small>Vault or manual</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-vcf-trust-step-nav data-atlaso-wizard-nav="target" disabled><span>2</span><strong>Target</strong><small>Server and CA</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-vcf-trust-step-nav data-atlaso-wizard-nav="api" disabled><span>3</span><strong>Login</strong><small>Manual only</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-vcf-trust-step-nav data-atlaso-wizard-nav="review" disabled><span>4</span><strong>Review</strong><small>TLS and queue</small></button></li>
       </ol>
     </aside>
 
     <div class="vcf-sddc-wizard-main">
       <div class="confirm-modal-body vcf-sddc-wizard-body">
         <div class="vcf-sddc-wizard-heading">
-          <p class="kicker" data-vcf-trust-step-kicker data-atlaso-wizard-kicker>Step 1 of 3</p>
-          <h3 data-vcf-trust-step-title data-atlaso-wizard-title>Target and root CA</h3>
-          <p class="muted" data-vcf-trust-step-description data-atlaso-wizard-description>Choose the VCF appliance and review the active Atlaso root CA.</p>
+          <p class="kicker" data-vcf-trust-step-kicker data-atlaso-wizard-kicker>Step 1 of 4</p>
+          <h3 data-vcf-trust-step-title data-atlaso-wizard-title>Choose a credential source</h3>
+          <p class="muted" data-vcf-trust-step-description data-atlaso-wizard-description>Use a saved vault key or continue with a one-time manual login.</p>
         </div>
 
         {% if vcf_trust_errors %}
@@ -27,14 +28,17 @@
         {% endif %}
         <div class="alert error hidden" data-vcf-trust-form-errors data-atlaso-wizard-error></div>
 
-        <section class="vcf-sddc-step-page" data-vcf-trust-step="target" data-atlaso-wizard-step="target">
-          <div class="form-grid">
-            <label><span class="field-label"><span>VCF appliance endpoint</span><button class="help-icon" type="button" data-help="The VCF 9 Installer or SDDC Manager API endpoint that receives the Atlaso root CA. Accepts host, host:port, or https://host:port; default port is 443.">i</button></span><input name="address" required></label>
-          </div>
+        <section class="vcf-sddc-step-page" data-vcf-trust-step="credential" data-atlaso-wizard-step="credential">
           {% set credential_address_field = "address" %}
           {% set credential_username_field = "api_username" %}
           {% set credential_password_field = "api_password" %}
           {% include "partials/vcf_vault_credential_picker.html" %}
+        </section>
+
+        <section class="vcf-sddc-step-page hidden" data-vcf-trust-step="target" data-atlaso-wizard-step="target">
+          <div class="form-grid">
+            <label><span class="field-label"><span>Server address</span><button class="help-icon" type="button" data-help="The VCF 9 Installer or SDDC Manager server that receives the Atlaso root CA. Accepts host, host:port, or https://host:port; default port is 443.">i</button></span><input name="address" required></label>
+          </div>
           {% if vcf_trust_ca %}
             <div class="settings-list compact-settings-list">
               <div><span>Root CA subject</span><strong>{{ vcf_trust_ca.subject }}</strong></div>
