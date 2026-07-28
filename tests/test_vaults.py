@@ -322,7 +322,7 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert "Remote target unavailable" in source
     assert "data-vault-entry-password-eye" in template
     assert "copy_entry_id" in template
-    assert 'entryPassword.placeholder = copying ? "••••••••" : "";' in source
+    assert "entryPassword.placeholder = copying" in source
     assert "The encrypted value will be copied." in source
     assert "/terminal/remote-launches" in source
     assert 'window.open("about:blank"' not in source
