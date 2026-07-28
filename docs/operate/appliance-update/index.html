@@ -3225,15 +3225,22 @@ verification.</p>
 signatures, and bundles without re-signing them. Every source must satisfy the same signed v2 contract. Credentials
 remain encrypted in the database and move to the privileged helper only in the existing mode-0600 transient file. They
 are not written to manifests, tasks, audits, URLs, or helper output.</p>
-<p>Photon and PowerShell source fields autosave as desired runtime-maintenance configuration. <strong>Synchronize repositories</strong>
-explicitly writes only Atlaso-owned tdnf and PowerShell client configuration. Their source cards show whether that
-synchronization has not run, succeeded, or failed. Signed Atlaso sources are read directly, are checked during each
-update, and do not configure pip or report package-client synchronization state.</p>
+<p>Create a Photon, PowerShell, or Atlaso source from the <strong>+ Repository</strong> launcher in that ecosystem's repository tab
+strip. The guided
+workflow collects repository identity, its endpoint and ecosystem-specific trust policy, desired availability, and a
+final review. Saving the wizard creates desired state only: it does not install packages or change a running package
+client.</p>
+<p>Existing Photon and PowerShell source fields autosave as desired runtime-maintenance configuration. <strong>Synchronize
+repositories</strong> explicitly writes only Atlaso-owned tdnf and PowerShell client configuration. Their source cards show
+whether that synchronization has not run, succeeded, or failed. Signed Atlaso sources are read directly, are checked
+during each update, and do not configure pip or report package-client synchronization state.</p>
 <p>Each source editor presents repository identity first, then its location or discovered runtime data, followed by one
 grouped <strong>Repository behavior</strong> row. Autosave and synchronization state remain together in a separated footer, with
 repository deletion isolated as the destructive action.</p>
 <p>Managed PowerShell module editors follow the same hierarchy: module identity and version policy first, then a grouped
-<strong>Module behavior</strong> switch and a separated autosave/delete footer. The Update Streams workspace keeps the shared Tasks
+<strong>Module behavior</strong> switch and a separated autosave/delete footer. The <strong>+ Module</strong> launcher opens a reviewed wizard for
+module identity, version resolution, enablement, and final confirmation; saving it does not install the module. The
+Update Streams workspace keeps the shared Tasks
 grid, server-scoped to Appliance Update tasks. It preserves the standard sorting, filtering, component tree, progress,
 row menu, and detail behavior. Because the embedded endpoint is already scoped to Appliance Update, the Task / Component
 column is fixed there; the full Tasks page retains its editable component filter. The grid expands through the remaining

@@ -3074,14 +3074,20 @@
 
 <h2 id="configure-a-scope">Configure a scope<a class="headerlink" href="#configure-a-scope" title="Permanent link">&para;</a></h2>
 <ol>
-<li>Select the interface that owns the client network.</li>
-<li>Define a non-overlapping address range, lease policy, gateway, and DNS options.</li>
+<li>Select <strong>Add IP zone here</strong> and use the five-step guided workflow.</li>
+<li>Select the interface that owns the client network and record the zone description with its identity.</li>
+<li>Confirm the lease range Atlaso derives from the gateway and prefix, or replace it with another valid,
+   non-overlapping range.</li>
+<li>Configure lease, DNS, NTP, and domain options, then choose the zone's desired enablement in its dedicated step.</li>
 <li>Add reservations with unique client identity and address values.</li>
 <li>Resolve Validation-card errors and inspect the rendered dnsmasq preview.</li>
 <li>Submit <code>DNS/DHCP (dnsmasq)</code> through <a href="../../operate/appliance-apply/">Appliance Apply</a>.</li>
 </ol>
 <p>Changing a scope does not serve leases until the global apply task succeeds. Interface changes also affect generated
-firewall bootstrap rules, so confirm the intended bind target in the review.</p>
+firewall bootstrap rules, so confirm the intended bind target in the review. Existing zones can be enabled or disabled
+directly from the grid without reopening the wizard.</p>
+<p>Select <strong>Add DHCP option here</strong> to choose Global defaults or a specific IP zone, enter the option code and value, set
+enablement, and review the desired state. Existing option enablement remains directly editable in the grid.</p>
 <h2 id="verify">Verify<a class="headerlink" href="#verify" title="Permanent link">&para;</a></h2>
 <p>Confirm the task succeeded, <code>dnsmasq</code> is healthy, and a test client on the selected network receives the expected lease
 and options. Roll back by restoring the previous desired state and submitting a new global apply.</p>

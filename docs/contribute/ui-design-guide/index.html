@@ -3451,6 +3451,9 @@ Physical Interfaces is the reference.</p>
   and locked until identity is valid.</li>
 <li>Use the established editors for switches, enumerations, exact values, tags, and multiline content. Do not embed a form
   layout inside a row.</li>
+<li>When an <strong>Enabled</strong> column represents ordinary desired-state availability, make it directly editable. Saving a
+  changed value must change whether that resource is available in rendered desired state while preserving the global
+  appliance-apply boundary.</li>
 </ul>
 <p>If a record cannot satisfy these constraints, keep its collection in Tabulator and move add/edit into a wizard.</p>
 <h3 id="read-only-collections">Read-only collections<a class="headerlink" href="#read-only-collections" title="Permanent link">&para;</a></h3>
@@ -3471,9 +3474,17 @@ Physical Interfaces is the reference.</p>
 workflow.</p>
 <p>The Tabulator collection remains visible when the wizard is closed. Launch add from the bottom add row. Launch edit from
 row double-click or the row context menu when both are appropriate and discoverable.</p>
+<p>Keep an ordinary desired-state <strong>Enabled</strong> boolean directly editable in its collection even when the rest of the record
+uses a wizard. Use the standard tick/cross formatter and <code>tickCross</code> editor, save the complete validated record through
+its existing edit route, restore the previous value on failure, and never invoke appliance enforcement. A security or
+lifecycle boundary that requires credentials, confirmation, or an irreversible action is not an ordinary Enabled
+boolean and keeps its established guarded workflow.</p>
 <p>Every wizard must:</p>
 <ul>
 <li>use the shared Atlaso wizard panel, step rail, controls, spacing, and status presentation;</li>
+<li>place the resource description in step 1 with its identity fields whenever the resource has a description;</li>
+<li>place an ordinary desired-state <strong>Enabled</strong> control in its own final step immediately before <strong>Review</strong> whenever the
+  resource has an enabled state;</li>
 <li>give the dialog an accessible name and description, move focus to the first actionable control, trap focus while open,
   and return focus to the launcher when closed;</li>
 <li>show the current step, total step count, step name, and concise purpose;</li>
@@ -3487,6 +3498,8 @@ row double-click or the row context menu when both are appropriate and discovera
 <li>require confirmation before discarding meaningful unsaved wizard input; and</li>
 <li>close only after a successful save, then restore collection context and show the resulting row or status.</li>
 </ul>
+<p>When peer resources are presented as tabs, keep a <code>+ Add &lt;resource&gt;</code> launcher as the final tab after every existing
+resource. The add launcher opens the shared wizard and must not displace, sort ahead of, or appear outside the tablist.</p>
 <p>Do not perform host mutation as a side effect of moving between steps. Wizard submission saves desired state unless the
 established workflow is an explicit task action. Appliance configuration enforcement remains owned by the global
 <code>/appliance-apply</code> workflow.</p>

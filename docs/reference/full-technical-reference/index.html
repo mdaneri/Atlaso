@@ -3671,7 +3671,10 @@ and the Atlaso web UI.</p>
 <p>Appliance Update is a separate runtime-maintenance workflow from global <code>/appliance-apply</code>. Repository-style sources
 cover Photon/tdnf, PowerShell Gallery or internal PowerShell repositories, and signed Atlaso release channels; the
 retired Python Libraries and independent wheel streams are not available. Update work is queued to
-<code>atlaso-worker.service</code>; the same worker runs Automation schedules, managed scripts, and VCF Offline Depot downloads.</p>
+<code>atlaso-worker.service</code>; the same worker runs Automation schedules, managed scripts, and VCF Offline Depot downloads.
+Repository creation uses the shared guided workflow to capture identity, endpoint and trust policy, desired state, and
+review before saving. Runtime package-client configuration still changes only through the explicit repository
+synchronization task.</p>
 <p>Successful <code>main</code> CI publishes immutable signed release bundles to GitHub Releases and advances the signed <code>development</code>
 pointer on GitHub Pages. The Pages root provides a static release-repository landing page, while appliances use the
 signed machine-readable documents under <code>/updates</code>. <code>preview</code> and <code>stable</code> promotions reuse an existing verified
@@ -4089,6 +4092,21 @@ or scopes.
 Unbound clients authenticate Local identities; organization-bound clients authenticate only their fixed managed LDAP
 organization, and managed LDAP OIDC sessions never grant operator UI access. See
 <a href="../../services/oidc-provider/">Constrained OpenID Connect provider</a>.</p>
+<p>Complex resource collections use the shared wizard-backed Tabulator pattern. Authentication API tokens use a
+role-constrained scope checklist instead of free-form permission text. Authentication API tokens and OIDC
+clients, CA profiles and certificate requests, operator firewall rules, KMS clients and keys, DHCP IP zones, VCF
+Offline Depot download profiles, and VCF Private Registry bundles remain visible as browsable grids. The pinned bottom
+row launches add; row double-click and the context menu launch edit where permissions allow. Guided steps validate
+before advancing, retain recoverable server errors in the open dialog, and finish with a desired-state and safety-boundary
+review. Deletion continues through the shared confirmation flow. These editors save application desired state only;
+host enforcement remains owned by global Appliance Apply, while explicit depot download actions remain separate task
+operations. Their dialogs reuse the standard wide wizard shell: a fixed step rail, a scrollable content region, and a
+separate footer action row that remains readable without narrowing the form. Server-rendered tables remain available as
+truthful read-only fallbacks when JavaScript is unavailable.</p>
+<p>Local Users uses the same wizard-backed collection pattern for account identity, Atlaso roles, Photon shell, and Web SSH
+desired state; password staging, unlock, disable, and removal remain explicit row actions. Managed LDAP organization
+creation also opens the shared wizard from the Organizations heading, while existing organization tabs continue to
+switch directory context without a full page reload.</p>
 <p>On the Photon appliance, real mutating helper actions re-enter through a transient <code>systemd-run</code> service when
 <code>ATLASO_HELPER_USE_SYSTEMD_RUN=1</code> is set. This keeps the web control plane inside its restricted <code>atlaso.service</code>
 sandbox while allowing the reviewed root helper to write approved <code>/etc</code> configuration files from outside the service's
