@@ -60,6 +60,18 @@ status: current
   file with Python 3.14 and pip-tools 7.6.0, preserve hashes and `--allow-unsafe`, refresh the appliance declaration
   fingerprint, and run the lock and Photon compatibility checks.
 
+## Data Classification And Redaction
+
+- IP addresses, MAC addresses, hostnames, and account names are non-sensitive operational identifiers when they appear
+  by themselves. Their presence alone is not a reason to suppress a useful operational log or audit record.
+- Passwords, tokens, authenticated URLs, session material, private keys, hashes, and other secret-bearing data are
+  sensitive and must remain out of public issues, pull requests, previews, baselines, tasks, logs, audits, screenshots,
+  test output, and final responses.
+- Treat an operational identifier as sensitive when it is embedded in or paired with authentication or cryptographic
+  material. Review the complete context before recording, rendering, or sharing it.
+- This classification does not relax authentication, authorization, access control, least-privilege, or an operator's
+  site or organization handling requirements. Preserve those controls even when a value is not sensitive by itself.
+
 ## UI Defaults
 
 - Every configurable setting should include an adjacent `i` help control using the `.field-label` and `.help-icon`

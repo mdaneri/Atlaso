@@ -93,6 +93,11 @@ Atlaso writes operational events to `/var/log/atlaso/atlaso.log`. Audit events, 
 submissions are mirrored there with sensitive values redacted. The Settings page controls local file verbosity and can
 also forward the same operational events to an external syslog receiver.
 
+For logging and audit purposes, IP addresses, MAC addresses, hostnames, and account names are non-sensitive operational
+identifiers when they appear by themselves. Passwords, tokens, authenticated URLs, session material, private keys,
+hashes, and other secret-bearing data remain sensitive. An identifier is sensitive when embedded in or paired with
+authentication or cryptographic material. This classification does not relax access controls or site handling policy.
+
 The `Monitor` page is an operator-facing, read-only runtime view for appliance resource health. It charts thick
 appliance totals alongside thin per-logical-CPU, per-interface RX/TX, and unique-device disk activity over the last one,
 three, or six hours, plus memory pressure and compact per-interface and virtual-machine context. Disk Activity retains a

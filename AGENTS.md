@@ -64,6 +64,10 @@ The following cross-cutting boundaries always apply:
   agent policies and canonical OIDC service guide. Administration keeps generated client IDs immutable, shows secrets
   once, validates the issuer against the applied Management HTTPS certificate, preserves retired-key overlap, and
   exports only public relying-party metadata.
+- IP addresses, MAC addresses, hostnames, and account names are non-sensitive operational identifiers by themselves.
+  Passwords, tokens, authenticated URLs, session material, private keys, hashes, and other secret-bearing data remain
+  sensitive; treat an identifier as sensitive when it is embedded in or paired with authentication or cryptographic
+  material.
 - Never expose credentials, authenticated URLs, private keys, raw secrets, or secret-bearing commands in UI, jobs,
   audits, logs, documentation, screenshots, or video.
 - Vault passwords are the narrow exception for an explicit administrator eye reveal: keep them masked by default,

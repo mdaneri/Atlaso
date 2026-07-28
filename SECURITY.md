@@ -5,6 +5,20 @@
 Security fixes are provided for the latest published Atlaso release and the current `main` branch while a fix is being
 prepared.
 
+## Atlaso data classification
+
+Atlaso treats IP addresses, MAC addresses, hostnames, and account names as non-sensitive operational identifiers when
+they appear by themselves.
+
+Passwords, tokens, authenticated URLs, session material, private keys, hashes, and other secret-bearing data are
+sensitive. An operational identifier becomes sensitive when it is embedded in or paired with authentication or
+cryptographic material.
+
+This classification does not make authenticated or access-restricted data public, bypass authorization, or override an
+operator's site or organization handling requirements. Review the complete context before sharing logs, audits,
+screenshots, or diagnostics. When the context is uncertain, keep the material private and use the vulnerability
+reporting process below.
+
 ## Reporting a vulnerability
 
 Please do not report security vulnerabilities in public GitHub issues, discussions, pull requests, or chat channels.
