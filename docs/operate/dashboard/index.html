@@ -3105,12 +3105,15 @@ path is healthy and a global appliance-apply task has succeeded.</p>
 <p>Actionable exceptions use this fixed priority:</p>
 <ol>
 <li>changed appliance-apply units that fail validation;</li>
-<li>failed tasks created during the last 24 hours;</li>
+<li>failed tasks created during the last 24 hours, except an appliance-apply failure whose unresolved units were all
+   covered by later successful appliance applies;</li>
 <li>enabled services that are stopped or unhealthy;</li>
 <li>configured physical interfaces that are missing or unexpectedly down.</li>
 </ol>
 <p>Valid changed units stay in the separate Changes &amp; Tasks summary. Disabled optional services and interfaces whose
-desired role and mode are both <code>unused</code> do not create attention items.</p>
+desired role and mode are both <code>unused</code> do not create attention items. A successful apply for unrelated units does not
+clear an earlier failure. A resolved appliance-apply failure remains in Tasks, Audit Events, and Recent activity as
+history; only its actionable dashboard warning is cleared.</p>
 <h2 id="private-snapshot-and-refresh">Private snapshot and refresh<a class="headerlink" href="#private-snapshot-and-refresh" title="Permanent link">&para;</a></h2>
 <p>The initial page and session-authenticated <code>GET /dashboard/data</code> endpoint use the same snapshot builder. The private
 response contains generated time, overall state, readiness, attention, pending-change and task summaries, service and
