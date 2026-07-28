@@ -12332,8 +12332,8 @@ function initializeTagEditors() {
       if (!(menu instanceof HTMLElement)) {
         return value;
       }
-      const escapedValue = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(value) : value.replace(/"/g, '\\"');
-      const option = menu.querySelector(`[data-tag-option="${escapedValue}"]`);
+      const option = [...menu.querySelectorAll("[data-tag-option]")]
+        .find((candidate) => candidate.dataset.tagOption === value);
       if (option instanceof HTMLElement) {
         return option.getAttribute("data-tag-label") || option.textContent.trim() || value;
       }

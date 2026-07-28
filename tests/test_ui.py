@@ -5655,6 +5655,9 @@ def test_dns_and_dhcp_pages_render(client):
 
     app_js = client.get("/static/app.js")
     assert app_js.status_code == 200
+    assert 'menu.querySelectorAll("[data-tag-option]")' in app_js.text
+    assert "candidate.dataset.tagOption === value" in app_js.text
+    assert 'value.replace(/"/g' not in app_js.text
     assert "cellEdited" in app_js.text
     assert "rowContextMenu" in app_js.text
     assert "newDnsRecordRow" in app_js.text
