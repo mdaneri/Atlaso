@@ -456,15 +456,35 @@ def _run_managed_script(db: Session, job: Job) -> None:
 
 
 def _run_pxe_media_sync(db: Session, job: Job) -> None:
-    from atlaso.app.services.network_boot import media_to_dict, sync_network_boot_media
+    from atlaso.app.services.network_boot import (
+        media_to_dict,
+        network_boot_upload_path,
+        sync_network_boot_media,
+    )
 
     config = _job_config(job)
     environment = str(config.get("environment") or "")
-    media = sync_network_boot_media(db, environment_key=environment)
+    source = str(config.get("source") or "download")
+    upload_path = network_boot_upload_path(job.id) if source == "upload" else None
+    try:
+        media = sync_network_boot_media(
+            db,
+            environment_key=environment,
+            uploaded_artifact=upload_path,
+            uploaded_filename=str(config.get("filename") or ""),
+        )
+    finally:
+        if upload_path is not None:
+            upload_path.unlink(missing_ok=True)
+            try:
+                upload_path.parent.rmdir()
+            except OSError:
+                pass
     payload = {
         "status": JobStatus.SUCCEEDED.value,
         "success": True,
         "environment": environment,
+        "source": source,
         "media": media_to_dict(media),
         "activation": "pending desired state; global appliance apply is required",
     }

@@ -38,14 +38,14 @@
            data-can-write="{{ 'true' if network_boot_can_write else 'false' }}"
            data-fallback-id="network-boot-environments-fallback"></div>
       <table id="network-boot-environments-fallback" class="data-table compact">
-        <thead><tr><th>Environment</th><th>Enabled</th><th>Desired</th><th>Newest installed</th><th>Active</th><th>Ready</th><th>Verification</th><th>Risk</th></tr></thead>
+        <thead><tr><th>Environment</th><th>Enabled</th><th>Desired</th><th>Newest installed</th><th>Active</th><th>Ready</th><th>Verification</th><th>Risk</th><th>Actions</th></tr></thead>
         <tbody>
           {% for row in network_boot_environments %}
-            <tr><td>{{ row.label }}</td><td>{{ "Yes" if row.enabled else "No" }}</td><td>{{ row.desired_version or "Not selected" }}</td><td>{{ row.installed_versions[0].version if row.installed_versions else "Not installed" }}</td><td>{{ row.active_version or "Not active" }}</td><td>{{ "Ready" if row.ready else "Pending" }}</td><td>{{ row.verification_method }}</td><td>{{ row.risk }}</td></tr>
+            <tr><td>{{ row.label }}</td><td>{{ "Yes" if row.enabled else "No" }}</td><td>{{ row.desired_version or "Not selected" }}</td><td>{{ row.installed_versions[0].version if row.installed_versions else "Not installed" }}</td><td>{{ row.active_version or "Not active" }}</td><td>{{ "Ready" if row.ready else "Pending" }}</td><td>{{ row.verification_method }}</td><td>{{ row.risk }}</td><td>{{ "Bundled" if row.key == "inventory" else "Download or upload" }}</td></tr>
           {% endfor %}
         </tbody>
       </table>
-      <p class="muted">Downloads create immutable verified cache entries. Enablement and version selection remain pending until global appliance apply.</p>
+      <p class="muted">Download resolves the latest stable release. Upload accepts the same upstream asset from your workstation. Both paths verify the authoritative digest or signature before creating an immutable cache entry. Enablement and version selection remain pending until global appliance apply.</p>
     </div>
     <div id="network-boot-settings-panel" class="tab-panel" role="tabpanel" hidden>
       <div class="settings-list compact-settings-list">
@@ -81,6 +81,29 @@
   </div>
 </dialog>
 {% if network_boot_can_write %}
+<dialog id="network-boot-upload-dialog" class="confirm-modal task-modal" aria-labelledby="network-boot-upload-title">
+  <form class="confirm-modal-panel form-stack" data-network-boot-upload-form>
+    <div class="confirm-modal-body form-stack">
+      <p class="kicker">Network Boot media</p>
+      <h2 id="network-boot-upload-title">Upload verified media</h2>
+      <p class="muted">Upload the upstream release asset for <strong data-network-boot-upload-label>the selected environment</strong>. Atlaso resolves the current stable release and verifies the uploaded bytes against its authoritative digest or signed checksum before installation.</p>
+      <input type="hidden" name="environment_key">
+      <label>
+        <span class="field-label"><span>Release asset</span><button class="help-icon" type="button" data-help="Choose the original upstream ZIP or IMG asset. Uploads are limited to 2 GiB and are never activated until global appliance apply.">i</button></span>
+        <span class="file-upload-control">
+          <input class="file-upload-input" type="file" name="artifact" accept=".zip,.img,application/zip,application/octet-stream" required data-file-upload-input>
+          <span class="file-upload-surface"><span class="file-upload-copy"><strong>Choose boot media file</strong><small data-file-upload-name>ZIP or IMG, up to 2 GiB</small></span></span>
+        </span>
+      </label>
+      <progress class="upload-progress" value="0" max="100" data-network-boot-upload-progress hidden></progress>
+      <p class="autosave-status" data-state="idle" data-network-boot-upload-status aria-live="polite">Choose the matching upstream release asset.</p>
+    </div>
+    <div class="confirm-modal-actions">
+      <button class="button primary" type="submit" data-network-boot-upload-submit>Upload and verify</button>
+      <button class="button ghost" type="button" data-network-boot-upload-close>Cancel</button>
+    </div>
+  </form>
+</dialog>
 <dialog id="network-boot-promote-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="network-boot-promote-title">
   <form class="confirm-modal-panel vcf-sddc-wizard-panel" data-network-boot-promote-form data-atlaso-wizard novalidate>
     <input type="hidden" name="host_id">

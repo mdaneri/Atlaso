@@ -49,6 +49,8 @@ NETWORK_BOOT_MAX_SESSIONS = 4096
 NETWORK_BOOT_SESSION_LIFETIME = timedelta(hours=8)
 NETWORK_BOOT_ONLINE_THRESHOLD = timedelta(seconds=30)
 NETWORK_BOOT_MEDIA_ROOT = Path("/var/lib/atlaso/pxe/media")
+NETWORK_BOOT_UPLOAD_ROOT = Path("/var/lib/atlaso/pxe/uploads")
+NETWORK_BOOT_UPLOAD_MAX_BYTES = 2 * 1024 * 1024 * 1024
 NETWORK_BOOT_HTTP_ROOT = Path("/var/lib/atlaso/pxe/http")
 NETWORK_BOOT_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/esxi-pxe/atlaso-esxi-pxe.json"
 NETWORK_BOOT_UNIT_ID = "esxi_pxe"
@@ -1583,11 +1585,7 @@ def _verified_cached_media(
         artifact = (files or {}).get(PurePosixPath(filename).as_posix())
         if artifact is None:
             return None
-        with artifact.open("rb") as artifact_stream:
-            actual_sha256 = hashlib.file_digest(
-                artifact_stream,
-                "sha256",
-            ).hexdigest()
+        actual_sha256 = _file_sha256(artifact)
         if not secrets.compare_digest(
             actual_sha256,
             expected_sha256,
@@ -1596,11 +1594,28 @@ def _verified_cached_media(
     return directory
 
 
+def _file_sha256(path: Path) -> str:
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def network_boot_upload_path(
+    job_id: str,
+    *,
+    upload_root: Path | None = None,
+) -> Path:
+    if not re.fullmatch(r"job_[0-9a-f]{32}", job_id):
+        raise ValueError("Network Boot upload task identifier is invalid.")
+    return (upload_root or NETWORK_BOOT_UPLOAD_ROOT).resolve() / job_id / "artifact"
+
+
 def sync_network_boot_media(
     db: Session,
     *,
     environment_key: str,
     media_root: Path = NETWORK_BOOT_MEDIA_ROOT,
+    uploaded_artifact: Path | None = None,
+    uploaded_filename: str = "",
 ) -> NetworkBootMedia:
     key = normalize_environment_key(environment_key)
     if key == "inventory":
@@ -1645,10 +1660,25 @@ def sync_network_boot_media(
     with tempfile.TemporaryDirectory(prefix=f"atlaso-{key}-") as temp_dir:
         temporary = Path(temp_dir)
         artifact = temporary / descriptor["filename"]
-        _final_url, artifact_sha256 = BoundedHttpsDownloader().download(
-            descriptor["asset_url"],
-            artifact,
-        )
+        acquisition = "download"
+        if uploaded_artifact is not None:
+            if (
+                uploaded_artifact.is_symlink()
+                or not uploaded_artifact.is_file()
+                or uploaded_artifact.stat().st_size <= 0
+                or uploaded_artifact.stat().st_size > NETWORK_BOOT_UPLOAD_MAX_BYTES
+            ):
+                raise ValueError(
+                    "Uploaded boot media is empty, unsafe, or exceeds the 2 GiB limit."
+                )
+            shutil.copyfile(uploaded_artifact, artifact)
+            artifact_sha256 = _file_sha256(artifact)
+            acquisition = "upload"
+        else:
+            _final_url, artifact_sha256 = BoundedHttpsDownloader().download(
+                descriptor["asset_url"],
+                artifact,
+            )
         expected_sha256 = descriptor.get("sha256", "")
         if descriptor.get("checksum_url"):
             checksum_path = temporary / "CHECKSUMS.TXT"
@@ -1732,8 +1762,12 @@ def sync_network_boot_media(
                 "verification_method": entry.verification_method,
                 "license": entry.license_name,
                 "verified_at": utcnow().isoformat(),
+                "acquisition": acquisition,
+                "uploaded_filename": Path(uploaded_filename).name
+                if acquisition == "upload"
+                else "",
                 "artifacts": {
-                    filename: hashlib.sha256((staging / filename).read_bytes()).hexdigest()
+                    filename: _file_sha256(staging / filename)
                     for filename in extracted
                 },
             }

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Annotated, Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import desc, select
 from sqlalchemy.exc import IntegrityError
@@ -40,10 +40,12 @@ from atlaso.app.services.esxi_pxe import (
 from atlaso.app.services.network_boot import (
     acknowledge_inventory_command,
     NETWORK_BOOT_MEDIA_ROOT,
+    NETWORK_BOOT_UPLOAD_MAX_BYTES,
     catalog_rows,
     host_to_dict,
     inventory_session_for_token,
     issue_inventory_session,
+    network_boot_upload_path,
     poll_inventory_command,
     queue_reboot_command,
     render_network_boot_menu,
@@ -249,6 +251,102 @@ def sync_network_boot_environment(
     )
     db.commit()
     return {"job_id": job.id, "status": job.status, "environment": environment_key}
+
+
+@router.post(
+    "/environments/{environment_key}/upload",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def upload_network_boot_environment(
+    environment_key: str,
+    request: Request,
+    artifact: Annotated[UploadFile, File()],
+    identity: Annotated[
+        Identity,
+        Depends(require_api_or_session_scope("write:pxe")),
+    ],
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    rows = {row["key"]: row for row in catalog_rows(db)}
+    if environment_key not in rows or environment_key == "inventory":
+        raise HTTPException(
+            status_code=422,
+            detail="Select one of the four uploadable maintenance environments.",
+        )
+    active = db.execute(
+        select(Job).where(
+            Job.type == "pxe-media-sync",
+            Job.status.in_((JobStatus.PENDING.value, JobStatus.RUNNING.value)),
+        )
+    ).scalars().first()
+    if active is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Network Boot media task {active.id} is already active.",
+        )
+    filename = Path(artifact.filename or "").name
+    if not filename or len(filename) > 240:
+        raise HTTPException(status_code=422, detail="Choose a named boot media file.")
+    job_id = f"job_{uuid4().hex}"
+    upload_path = network_boot_upload_path(job_id)
+    total = 0
+    try:
+        upload_path.parent.mkdir(parents=True, mode=0o700, exist_ok=False)
+        with upload_path.open("xb") as output:
+            while chunk := await artifact.read(1024 * 1024):
+                total += len(chunk)
+                if total > NETWORK_BOOT_UPLOAD_MAX_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail="Network Boot media uploads are limited to 2 GiB.",
+                    )
+                output.write(chunk)
+        if total == 0:
+            raise HTTPException(status_code=422, detail="Uploaded boot media is empty.")
+        upload_path.chmod(0o600)
+        job = Job(
+            id=job_id,
+            type="pxe-media-sync",
+            status=JobStatus.PENDING.value,
+            created_by=identity.username,
+            progress_percent=0,
+            task_config_json=json.dumps(
+                {
+                    "environment": environment_key,
+                    "request_id": request.state.request_id,
+                    "source": "upload",
+                    "filename": filename,
+                },
+                sort_keys=True,
+            ),
+        )
+        db.add(job)
+        record_audit(
+            db,
+            actor=identity.username,
+            action="queue_pxe_media_upload",
+            resource_type="job",
+            resource_id=job.id,
+            detail=f"environment={environment_key}; filename={filename}; bytes={total}",
+            request_id=request.state.request_id,
+        )
+        db.commit()
+    except Exception:
+        upload_path.unlink(missing_ok=True)
+        try:
+            upload_path.parent.rmdir()
+        except OSError:
+            pass
+        raise
+    finally:
+        await artifact.close()
+    return {
+        "job_id": job_id,
+        "status": JobStatus.PENDING.value,
+        "environment": environment_key,
+        "filename": filename,
+        "bytes": total,
+    }
 
 
 @router.delete("/environments/{environment_key}/media/{version}")

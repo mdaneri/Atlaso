@@ -18139,12 +18139,13 @@ function initializeVcfVaultImport() {
 
 async function networkBootRequest(url, options = {}) {
   const csrf = document.querySelector("input[name='csrf']")?.value || "";
+  const isFormData = options.body instanceof FormData;
   const response = await fetch(url, {
     credentials: "same-origin",
     cache: "no-store",
     headers: {
       Accept: "application/json",
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
+      ...(options.body && !isFormData ? { "Content-Type": "application/json" } : {}),
       ...(csrf ? { "X-CSRF-Token": csrf } : {}),
     },
     ...options,
@@ -18161,6 +18162,12 @@ function initializeNetworkBootPage() {
   const canWrite = hostsElement.dataset.canWrite === "true";
   const hostDialog = document.getElementById("network-boot-host-dialog");
   const detailElement = hostDialog?.querySelector("[data-network-boot-host-detail]");
+  const uploadDialog = document.getElementById("network-boot-upload-dialog");
+  const uploadForm = uploadDialog?.querySelector("[data-network-boot-upload-form]");
+  const uploadLabel = uploadDialog?.querySelector("[data-network-boot-upload-label]");
+  const uploadProgress = uploadDialog?.querySelector("[data-network-boot-upload-progress]");
+  const uploadStatus = uploadDialog?.querySelector("[data-network-boot-upload-status]");
+  const uploadSubmit = uploadDialog?.querySelector("[data-network-boot-upload-submit]");
   let selectedHost = null;
   const openHost = async (row) => {
     try {
@@ -18220,6 +18227,31 @@ function initializeNetworkBootPage() {
       showTransientGridStatus(error instanceof Error ? error.message : "Network Boot desired state could not be saved.");
     }
   };
+  const queueEnvironmentDownload = async (data) => {
+    const confirmed = await requestConfirmation({
+      title: `Download latest ${data.label}?`,
+      message: "Atlaso will resolve, verify, and install one immutable upstream release. The active boot menu will not change.",
+      label: "Queue download",
+    });
+    if (!confirmed) return;
+    const queued = await networkBootRequest(`/api/v1/network-boot/environments/${data.key}/sync`, { method: "POST" });
+    showTransientGridStatus(`Queued verified download task ${queued.job_id}.`);
+  };
+  const openEnvironmentUpload = (data) => {
+    if (!(uploadDialog instanceof HTMLDialogElement) || !(uploadForm instanceof HTMLFormElement)) return;
+    uploadForm.reset();
+    uploadForm.elements.environment_key.value = data.key;
+    if (uploadLabel) uploadLabel.textContent = data.label;
+    if (uploadProgress instanceof HTMLProgressElement) {
+      uploadProgress.hidden = true;
+      uploadProgress.value = 0;
+    }
+    if (uploadStatus instanceof HTMLElement) {
+      uploadStatus.dataset.state = "idle";
+      uploadStatus.textContent = "Choose the matching upstream release asset.";
+    }
+    uploadDialog.showModal();
+  };
   window.AtlasoUiPatterns.createGrid({
     element: environmentsElement,
     fallback: `#${environmentsElement.dataset.fallbackId}`,
@@ -18234,13 +18266,7 @@ function initializeNetworkBootPage() {
           label: "Download latest stable",
           disabled: (_event, row) => row.getData().key === "inventory",
           action: async (_event, row) => {
-            const data = row.getData();
-            const confirmed = await requestConfirmation({
-              title: `Download latest ${data.label}?`,
-              message: "Atlaso will resolve, verify, and install one immutable upstream release. The active boot menu will not change.",
-              label: "Queue download",
-            });
-            if (confirmed) await networkBootRequest(`/api/v1/network-boot/environments/${data.key}/sync`, { method: "POST" });
+            await queueEnvironmentDownload(row.getData());
           },
         },
       ] : [],
@@ -18265,8 +18291,100 @@ function initializeNetworkBootPage() {
         { title: "Ready", field: "ready", width: 85, formatter: "tickCross" },
         { title: "Verification", field: "verification_method", minWidth: 220 },
         { title: "Risk", field: "risk", minWidth: 240 },
+        {
+          title: "Actions",
+          field: "key",
+          minWidth: 190,
+          headerSort: false,
+          formatter: (cell) => {
+            if (!canWrite) return "";
+            if (cell.getValue() === "inventory") return '<span class="muted">Bundled</span>';
+            return '<button class="button tiny secondary" type="button" data-network-boot-action="download">Download</button><button class="button tiny ghost" type="button" data-network-boot-action="upload">Upload</button>';
+          },
+          cellClick: async (event, cell) => {
+            const button = event.target.closest("[data-network-boot-action]");
+            if (!(button instanceof HTMLButtonElement)) return;
+            const data = cell.getRow().getData();
+            try {
+              if (button.dataset.networkBootAction === "download") {
+                await queueEnvironmentDownload(data);
+              } else if (button.dataset.networkBootAction === "upload") {
+                openEnvironmentUpload(data);
+              }
+            } catch (error) {
+              showTransientGridStatus(error instanceof Error ? error.message : "The Network Boot media task could not be queued.");
+            }
+          },
+        },
       ],
     },
+  });
+  uploadDialog?.querySelector("[data-network-boot-upload-close]")?.addEventListener("click", () => uploadDialog.close());
+  uploadForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (!(uploadForm instanceof HTMLFormElement) || !(uploadDialog instanceof HTMLDialogElement)) return;
+    const fileInput = uploadForm.elements.artifact;
+    const environmentKey = uploadForm.elements.environment_key.value;
+    if (!(fileInput instanceof HTMLInputElement) || !fileInput.files?.length || !environmentKey) {
+      if (uploadStatus instanceof HTMLElement) {
+        uploadStatus.dataset.state = "error";
+        uploadStatus.textContent = "Choose a boot media file before uploading.";
+      }
+      return;
+    }
+    const file = fileInput.files[0];
+    const body = new FormData(uploadForm);
+    const request = new XMLHttpRequest();
+    request.open("POST", `/api/v1/network-boot/environments/${environmentKey}/upload`);
+    request.setRequestHeader("Accept", "application/json");
+    const csrf = document.querySelector("input[name='csrf']")?.value || "";
+    if (csrf) request.setRequestHeader("X-CSRF-Token", csrf);
+    request.upload.addEventListener("loadstart", () => {
+      if (uploadProgress instanceof HTMLProgressElement) {
+        uploadProgress.hidden = false;
+        uploadProgress.value = 0;
+      }
+      if (uploadSubmit instanceof HTMLButtonElement) uploadSubmit.disabled = true;
+      if (uploadStatus instanceof HTMLElement) {
+        uploadStatus.dataset.state = "saving";
+        uploadStatus.textContent = `Uploading ${file.name}...`;
+      }
+    });
+    request.upload.addEventListener("progress", (progressEvent) => {
+      if (!(uploadProgress instanceof HTMLProgressElement) || !progressEvent.lengthComputable) return;
+      const percent = Math.max(0, Math.min(100, Math.round((progressEvent.loaded / progressEvent.total) * 100)));
+      uploadProgress.value = percent;
+      if (uploadStatus instanceof HTMLElement) uploadStatus.textContent = `Uploading ${file.name}: ${percent}%`;
+    });
+    request.addEventListener("load", () => {
+      let payload = {};
+      try {
+        payload = JSON.parse(request.responseText || "{}");
+      } catch (_error) {
+        payload = {};
+      }
+      if (request.status >= 200 && request.status < 300) {
+        if (uploadStatus instanceof HTMLElement) {
+          uploadStatus.dataset.state = "saved";
+          uploadStatus.textContent = `Queued verification task ${payload.job_id}. You can close this dialog and follow it on Tasks.`;
+        }
+        return;
+      }
+      if (uploadStatus instanceof HTMLElement) {
+        uploadStatus.dataset.state = "error";
+        uploadStatus.textContent = payload.detail || `Upload failed with HTTP ${request.status}.`;
+      }
+    });
+    request.addEventListener("error", () => {
+      if (uploadStatus instanceof HTMLElement) {
+        uploadStatus.dataset.state = "error";
+        uploadStatus.textContent = "Upload failed before Atlaso received the file.";
+      }
+    });
+    request.addEventListener("loadend", () => {
+      if (uploadSubmit instanceof HTMLButtonElement) uploadSubmit.disabled = false;
+    });
+    request.send(body);
   });
   const promoteDialog = document.getElementById("network-boot-promote-dialog");
   const promoteForm = promoteDialog?.querySelector("[data-network-boot-promote-form]");

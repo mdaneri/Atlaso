@@ -38,6 +38,7 @@ from atlaso.app.services.network_boot import (
     issue_inventory_session,
     inventory_session_for_token,
     latest_live_session,
+    network_boot_upload_path,
     normalize_inventory_report,
     poll_inventory_command,
     queue_reboot_command,
@@ -347,6 +348,40 @@ def test_public_inventory_session_binds_identity_and_rejects_replay(client):
         json=inventory_report(),
     )
     assert replay.status_code == 409
+
+
+def test_media_upload_is_staged_as_a_durable_verification_job(
+    client,
+    db_session,
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(
+        "atlaso.app.api.network_boot.network_boot_upload_path",
+        lambda job_id: tmp_path / job_id / "artifact",
+    )
+    token = create_api_token(client, ["write:pxe"])
+    response = client.post(
+        "/api/v1/network-boot/environments/shredos/upload",
+        headers={"Authorization": f"Bearer {token}"},
+        files={
+            "artifact": (
+                "shredos-2025.11.img",
+                b"uploaded boot media",
+                "application/octet-stream",
+            )
+        },
+    )
+
+    assert response.status_code == 202, response.text
+    payload = response.json()
+    staged = tmp_path / payload["job_id"] / "artifact"
+    assert staged.read_bytes() == b"uploaded boot media"
+    job = db_session.get(Job, payload["job_id"])
+    config = json.loads(job.task_config_json)
+    assert config["source"] == "upload"
+    assert config["environment"] == "shredos"
+    assert config["filename"] == "shredos-2025.11.img"
 
 
 def test_inventory_session_stores_only_token_hash_and_expires(db_session):
@@ -827,3 +862,49 @@ def test_media_sync_revalidates_and_repairs_corrupt_cached_artifacts(
 
     assert repaired.artifact_sha256 == replacement_sha256
     assert (installed / "shredos.img").read_bytes() == replacement
+
+
+def test_media_sync_verifies_uploaded_artifact_without_downloading_it(
+    db_session,
+    monkeypatch,
+    tmp_path,
+):
+    uploaded = tmp_path / "uploaded.img"
+    uploaded.write_bytes(b"operator supplied asset")
+    digest = hashlib.sha256(uploaded.read_bytes()).hexdigest()
+    monkeypatch.setattr(
+        network_boot,
+        "_release_descriptor",
+        lambda _key: {
+            "version": "2025.12",
+            "filename": "shredos.img",
+            "asset_url": "https://example.test/shredos.img",
+            "sha256": digest,
+        },
+    )
+
+    def reject_download(*_args, **_kwargs):
+        raise AssertionError("The uploaded release asset must not be downloaded again.")
+
+    monkeypatch.setattr(BoundedHttpsDownloader, "download", reject_download)
+    media = sync_network_boot_media(
+        db_session,
+        environment_key="shredos",
+        media_root=tmp_path / "media",
+        uploaded_artifact=uploaded,
+        uploaded_filename="local-copy.img",
+    )
+    manifest = json.loads(media.manifest_json)
+
+    assert media.artifact_sha256 == digest
+    assert manifest["acquisition"] == "upload"
+    assert manifest["uploaded_filename"] == "local-copy.img"
+
+
+def test_network_boot_upload_path_rejects_untrusted_job_identifiers(tmp_path):
+    valid = "job_" + ("a" * 32)
+    assert network_boot_upload_path(valid, upload_root=tmp_path) == (
+        tmp_path.resolve() / valid / "artifact"
+    )
+    with pytest.raises(ValueError, match="identifier is invalid"):
+        network_boot_upload_path("../../escape", upload_root=tmp_path)

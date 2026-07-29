@@ -933,6 +933,9 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     assert network_boot.count(create_grid) == 2
     assert network_boot.count('pattern: "direct-edit"') == 1
     assert network_boot.count('pattern: "read-only"') == 1
+    assert 'data-network-boot-action="download"' in network_boot
+    assert 'data-network-boot-action="upload"' in network_boot
+    assert "/api/v1/network-boot/environments/${environmentKey}/upload" in network_boot
 
     adapter_block = function_block("initializeAtlasoResourceWizard")
     assert adapter_block.count(create_grid) == 1

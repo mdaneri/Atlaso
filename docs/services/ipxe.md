@@ -61,12 +61,19 @@ Live. They are disabled and uninstalled by default. **Download latest stable**
 queues a durable `pxe-media-sync` task that:
 
 1. resolves one concrete stable release from the fixed upstream;
-2. downloads over HTTPS with redirect, timeout, and size limits;
+2. downloads over HTTPS with redirect, timeout, and size limits, or accepts the
+   same release asset through the visible **Upload** action;
 3. verifies the published SHA-256 digest or signed checksum with the pinned
    project fingerprint;
 4. rejects unsafe archive paths and extracts only required boot files; and
 5. atomically installs an immutable cache under
    `/var/lib/atlaso/pxe/media/<environment>/<version>`.
+
+Each downloadable catalog row has visible **Download** and **Upload** actions.
+Upload is limited to 2 GiB and stages the file only for the durable verification
+task. Atlaso still resolves the authoritative stable release metadata and
+checks the uploaded bytes against the same upstream digest or signed checksum;
+the operator cannot substitute an unverified checksum.
 
 Downloading never changes the active menu. Editing **Enabled** or **Desired
 version** creates pending state; global **Appliance Apply** is the only
