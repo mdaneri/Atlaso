@@ -753,11 +753,15 @@ def local_user_os_statuses(users: list[User], policy: dict[str, bool | int]) -> 
     adapter = SystemAdapter()
     if adapter.dry_run or not hasattr(adapter, "local_users_status"):
         return statuses
+    apply_path = Path(LOCAL_USERS_STAGED_CONFIG_PATH)
+    status_path = apply_path.with_name(f".{apply_path.stem}.status-{uuid4().hex}{apply_path.suffix}")
     try:
-        config_path = stage_appliance_apply_config(LOCAL_USERS_STAGED_CONFIG_PATH, render_local_users_preview(users, password_policy=policy))
+        config_path = stage_appliance_apply_config(str(status_path), render_local_users_preview(users, password_policy=policy))
         result = adapter.local_users_status(config_path)
     except OSError:
         result = None
+    finally:
+        status_path.unlink(missing_ok=True)
     if result is None or result.returncode != 0:
         return statuses
     payload: dict[str, Any] | None = None
@@ -9225,6 +9229,7 @@ def _write_staged_config_file(path: Path, config_preview: str) -> None:
         temp_path.write_text(config_preview, encoding="utf-8")
         temp_path.chmod(0o600)
         temp_path.replace(path)
+        path.chmod(0o600)
     finally:
         if temp_path.exists():
             temp_path.unlink()
@@ -9243,6 +9248,16 @@ def stage_appliance_apply_config(config_path: str, config_preview: str) -> str:
     return str(path)
 
 
+def cleanup_transient_secret_staging_files() -> None:
+    for path_value in (LOCAL_USERS_STAGED_CONFIG_PATH, CA_STAGED_CONFIG_PATH, LDAP_STAGED_CONFIG_PATH):
+        Path(path_value).unlink(missing_ok=True)
+    local_users_path = Path(LOCAL_USERS_STAGED_CONFIG_PATH)
+    for status_path in local_users_path.parent.glob(
+        f".{local_users_path.stem}.status-*{local_users_path.suffix}"
+    ):
+        status_path.unlink(missing_ok=True)
+
+
 def execute_appliance_apply_unit(unit: dict[str, Any], *, adapter: SystemAdapter | None = None) -> dict[str, Any]:
     context = unit["context"]
     adapter = adapter or SystemAdapter()
@@ -9257,15 +9272,27 @@ def execute_appliance_apply_unit(unit: dict[str, Any], *, adapter: SystemAdapter
                 break
         return results
 
+    def run_secret_config_steps(
+        staged_path: str,
+        config_preview: str,
+        steps_for_path: Any,
+    ) -> list[Any]:
+        if adapter.dry_run:
+            return run_adapter_steps(steps_for_path(staged_path))
+        try:
+            config_path = stage_appliance_apply_config(staged_path, config_preview)
+            return run_adapter_steps(steps_for_path(config_path))
+        finally:
+            Path(staged_path).unlink(missing_ok=True)
+
     if unit_id == "local_users":
-        config_path = LOCAL_USERS_STAGED_CONFIG_PATH
-        if not adapter.dry_run:
-            config_path = stage_appliance_apply_config(LOCAL_USERS_STAGED_CONFIG_PATH, unit["raw_config_preview"])
-        results = run_adapter_steps(
-            [
+        results = run_secret_config_steps(
+            LOCAL_USERS_STAGED_CONFIG_PATH,
+            unit["raw_config_preview"],
+            lambda config_path: [
                 lambda: adapter.validate_local_users_config(config_path),
                 lambda: adapter.apply_local_users_config(config_path),
-            ]
+            ],
         )
     elif unit_id == "appliance_settings":
         settings = context["appliance_settings"]
@@ -9342,17 +9369,13 @@ def execute_appliance_apply_unit(unit: dict[str, Any], *, adapter: SystemAdapter
             ]
         )
     elif unit_id == "ca":
-        config_path = CA_STAGED_CONFIG_PATH
-        if not adapter.dry_run:
-            config_path = stage_appliance_apply_config(
-                CA_STAGED_CONFIG_PATH,
-                render_ca_apply_payload(context["ca_settings"], context["ca_certificates"], include_private_keys=True),
-            )
-        results = run_adapter_steps(
-            [
+        results = run_secret_config_steps(
+            CA_STAGED_CONFIG_PATH,
+            render_ca_apply_payload(context["ca_settings"], context["ca_certificates"], include_private_keys=True),
+            lambda config_path: [
                 lambda: adapter.validate_ca_config(config_path),
                 lambda: adapter.apply_ca_config(config_path),
-            ]
+            ],
         )
     elif unit_id == "kms":
         config_path = KMS_STAGED_CONFIG_PATH
@@ -9365,20 +9388,14 @@ def execute_appliance_apply_unit(unit: dict[str, Any], *, adapter: SystemAdapter
             ]
         )
     elif unit_id == "ldap":
-        config_path = LDAP_STAGED_CONFIG_PATH
-        if not adapter.dry_run:
-            config_path = stage_appliance_apply_config(LDAP_STAGED_CONFIG_PATH, unit["raw_config_preview"])
-        results = run_adapter_steps(
-            [
+        results = run_secret_config_steps(
+            LDAP_STAGED_CONFIG_PATH,
+            unit["raw_config_preview"],
+            lambda config_path: [
                 lambda: adapter.validate_ldap_config(config_path),
                 lambda: adapter.apply_ldap_config(config_path),
-            ]
+            ],
         )
-        if not adapter.dry_run:
-            try:
-                Path(config_path).unlink(missing_ok=True)
-            except OSError:
-                pass
     elif unit_id == "ntpd":
         config_path = NTP_STAGED_CONFIG_PATH
         if not adapter.dry_run:
