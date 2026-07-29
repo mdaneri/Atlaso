@@ -4221,12 +4221,18 @@ lease file at <code>/var/lib/atlaso/dnsmasq/dhcp.leases</code>; live lease readb
 <code>atlaso-helper dnsmasq leases --real</code> path.</p>
 <h2 id="infrastructure-and-security-units">Infrastructure and security units<a class="headerlink" href="#infrastructure-and-security-units" title="Permanent link">&para;</a></h2>
 <h3 id="esxi-pxe-apply">ESXi PXE apply<a class="headerlink" href="#esxi-pxe-apply" title="Permanent link">&para;</a></h3>
-<p>The ESXi PXE apply unit owns generated installer boot artifacts. Operators edit Kickstart source in the database through
-the built-in CodeMirror editor; filesystem copies are derived artifacts, not desired state. Saving a Kickstart updates
-the database source hash and marks <code>esxi_pxe</code> changed, but does not write <code>/var/lib/atlaso/pxe/http/esxi/ks/&lt;id&gt;.cfg</code>.
+<p>The ESXi PXE apply unit owns generated installer boot artifacts. Operators manage Kickstarts in a wizard-backed
+Tabulator collection and edit database source through the built-in Monaco Editor; filesystem copies are derived
+artifacts, not desired state. Saving a Kickstart updates the database source hash and marks <code>esxi_pxe</code> changed, but does
+not write <code>/var/lib/atlaso/pxe/http/esxi/ks/&lt;id&gt;.cfg</code>.
 Boot-time Kickstart requests use <code>/pxe/esxi/ks/&lt;file&gt;.cfg?mac=&lt;normalized-mac&gt;</code> so Atlaso can render <code>{{variable}}</code>
 markers for the selected host. The endpoint requires an explicit valid MAC and does not infer MAC identity from source
 IP or DHCP leases.</p>
+<p>Kickstart vault scope is derived only from exact
+<code>{{vault.&lt;vaultname&gt;.&lt;key&gt;.&lt;username|password|uri1..uri9&gt;}}</code> source markers. Save and validation reject malformed,
+missing, renamed, inaccessible, or unsupported references. Boot-time rendering revalidates the references and resolves
+only the exact requested values. Vault values never enter editor completion metadata, page state, previews, diffs,
+jobs, logs, or audits.</p>
 <h4 id="installer-images">Installer images<a class="headerlink" href="#installer-images" title="Permanent link">&para;</a></h4>
 <p>The ESXi PXE page also discovers installer ISOs under <code>/mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST</code>, the VCFDT ESX
 host component folder, and creates that folder when needed. The Installer ISOs tab lists images found there, marks
@@ -4237,7 +4243,9 @@ are reconciled on the next global <code>esxi_pxe</code> apply.</p>
 <p>Host references are edited in a Tabulator grid. Each host can select a database Kickstart and installer ISO and can
 define custom Kickstart variables as JSON. Built-in variables include host identity, selected DHCP scope values such as
 <code>{{dhcp.gateway}}</code>, <code>{{dhcp.dns_servers}}</code>, and <code>{{dhcp.ntp_servers}}</code>, and the PXE HTTP base URL; custom values are
-referenced as <code>{{custom.&lt;name&gt;}}</code>. The grid also has a default profile for undefined MAC addresses; when enabled with an
+referenced as <code>{{custom.&lt;name&gt;}}</code>. The Custom Variables collection defines the available names and optional non-secret
+defaults; a host-specific Variables JSON value overrides its matching default. The grid also has a default profile for
+undefined MAC addresses; when enabled with an
 installer ISO, Atlaso generates the top-level default <code>boot.cfg</code>, HTTP <code>boot.cfg</code>, and <code>pxelinux.cfg/default</code> artifacts
 from that profile instead of falling back to the first host reference. The default profile cannot use a Kickstart
 because dynamic Kickstart rendering requires a defined host MAC.</p>
@@ -4484,7 +4492,7 @@ or activation-code file, but missing profile credentials do not block applying t
 creates a durable <code>vcf-depot-download</code> task, writes runtime token or activation-code files under the VCFDT working tree,
 runs VCFDT as the Atlaso service user, and keeps credential bodies out of task output. Enabled profiles can also be
 scheduled under Operations → Automation. The application properties editor saves desired-state text and syncs the
-CodeMirror value before submit; global apply writes the runtime <code>application-prodv2.properties</code> used by the active tool.
+Monaco Editor value before submit; global apply writes the runtime <code>application-prodv2.properties</code> used by the active tool.
 Through
 <code>atlaso-helper vcf-offline-depot validate|stage-tool|apply-properties|generate-software-depot-id|sync-intent|apply-https</code>,
 the helper validates the staged site, rejects broad depot-root exposure and duplicate hostname/listener combinations,

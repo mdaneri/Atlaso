@@ -3159,8 +3159,9 @@ runtime credential is present.</p>
 verifies that fingerprint as well as the database ID, so deleting and recreating a vault cannot redirect an older queued
 job to different credentials.</p>
 <h2 id="esxi-kickstarts">ESXi Kickstarts<a class="headerlink" href="#esxi-kickstarts" title="Permanent link">&para;</a></h2>
-<p>Choose one vault in the Kickstart editor. The vault-name segment is the selected vault name normalized to lowercase,
-with spaces and punctuation replaced by underscores. Reference the entry username and password explicitly:</p>
+<p>Kickstarts do not select or bind a vault. Declare each required value directly in Kickstart source. The vault-name
+segment is the vault name normalized to lowercase, with spaces and punctuation replaced by underscores. Reference the
+entry username and password explicitly:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>network --hostname={{vault.management.esx.esx01.root.username}}
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>rootpw {{vault.management.esx.esx01.root.password}}
 </span></code></pre></div>
@@ -3169,9 +3170,13 @@ with spaces and punctuation replaced by underscores. Reference the entry usernam
 </span></code></pre></div>
 <p>Markers are available from <code>uri1</code> through <code>uri9</code> when that position is configured. Removing or reordering an entry URI
 changes its marker position.</p>
-<p>Atlaso resolves vault markers only for an enabled host assigned to that Kickstart. Source, preview, and download views
-retain the marker; the dynamic response is not persisted and is returned with <code>Cache-Control: no-store</code>. A marker naming
-a vault other than the vault selected for the Kickstart fails validation.</p>
+<p>The Kickstart Monaco Editor suggests authorized vault, key, and supported subkey names after <code>{{</code>; completion metadata
+contains names and descriptions only, never credential values. Saving or validating source parses every vault marker
+and rejects malformed markers, missing or renamed vaults and keys, unsupported subkeys, and inaccessible references.
+Atlaso resolves only the exact referenced values for an enabled host assigned to that Kickstart and revalidates them at
+request time. Source, preview, and download views retain the marker; the dynamic response is not persisted and is
+returned with <code>Cache-Control: no-store</code>. Atlaso blocks deletion of a vault while an enabled Kickstart references one of
+its markers; remove or replace those marker dependencies first.</p>
 <h2 id="remote-uri-security">Remote URI security<a class="headerlink" href="#remote-uri-security" title="Permanent link">&para;</a></h2>
 <p>Do not place credentials in a URI. For SSH and SFTP targets, Atlaso probes the remote host key before decrypting the
 entry password and requires the administrator to confirm its SHA-256 fingerprint. Verify that fingerprint out of band.

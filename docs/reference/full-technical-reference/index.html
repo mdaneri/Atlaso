@@ -3876,16 +3876,19 @@ the management UI until an administrator explicitly uses the audited, no-cache, 
 before decrypting, stages values as a transient systemd credential, and removes the staged file after execution.
 <code>Get-AtlasoVault -Key &lt;key&gt;</code> is the PowerShell interface; <code>atlaso-vault get --key &lt;key&gt;</code> is the Bash/Python interface.
 Both commands fail closed outside a scoped managed-script run.</p>
-<p>ESXi Kickstarts resolve only the vault explicitly bound to that Kickstart. Dynamic responses support
-<code>{{vault.&lt;vaultname&gt;.&lt;key&gt;.username}}</code>, <code>{{vault.&lt;vaultname&gt;.&lt;key&gt;.password}}</code>, and <code>uri1</code> through <code>uri9</code>; previews and
-source downloads retain markers, and resolved responses disable caching. VCF Helper can import supported passwords from
-VCF 9 SDDC Manager and VCF Installer after explicit TLS fingerprint confirmation. VCF Automation and vSphere
+<p>ESXi Kickstarts derive vault scope exclusively from exact source markers. Dynamic responses support
+<code>{{vault.&lt;vaultname&gt;.&lt;key&gt;.username}}</code>, <code>{{vault.&lt;vaultname&gt;.&lt;key&gt;.password}}</code>, and <code>uri1</code> through <code>uri9</code>; save,
+validation, and request-time rendering fail closed for malformed, missing, renamed, inaccessible, or unsupported
+references. Completion metadata contains names only, resolution is limited to exact referenced values, previews and
+source downloads retain markers, and resolved responses disable caching. VCF Helper can import supported passwords
+from VCF 9 SDDC Manager and VCF Installer after explicit TLS fingerprint confirmation. VCF Automation and vSphere
 pre-authentication fingerprint probes require TLS 1.2 or newer while retaining fingerprint confirmation, rather than
 ordinary CA verification, as the trust decision.</p>
 <p>HTTP and HTTPS URI actions open a separate browser tab. SSH and SFTP actions use a short-lived one-use Web Terminal
 launch, require explicit host-key fingerprint confirmation, recheck the host key, and authenticate server-side without
-placing the password in browser state. Settings archives exclude vault entries and Kickstart bindings; restore clears
-them. See <a href="../../services/vaults/">Vaults</a> for operator procedures and recovery guidance.</p>
+placing the password in browser state. Settings archives exclude vault entries; restore also clears the unused legacy
+Kickstart-binding compatibility table. See <a href="../../services/vaults/">Vaults</a> for operator procedures and recovery
+guidance.</p>
 <h2 id="vcf-helper">VCF Helper<a class="headerlink" href="#vcf-helper" title="Permanent link">&para;</a></h2>
 <p>VCF Helper at <code>/vcf-helper</code> generates DNS desired state, deploys SDDC Manager OVAs found under
 <code>/mnt/atlaso-vcf-offline-depot/PROD/COMP/SDDC_MANAGER_VCF</code>, imports the active Atlaso root CA into VCF 9 appliances, and
@@ -4091,8 +4094,13 @@ Kickstart responses are rendered dynamically by Atlaso from <code>/pxe/esxi/ks/&
 templates may use restricted <code>{{variable}}</code> markers such as <code>{{host.hostname}}</code>, <code>{{host.ip_address}}</code>,
 <code>{{dhcp.gateway}}</code>, <code>{{dhcp.netmask}}</code>, <code>{{dhcp.dns_servers}}</code>, <code>{{dhcp.ntp_servers}}</code>, <code>{{dhcp.domain}}</code>,
 <code>{{pxe.http_base_url}}</code>, and per-host custom values under <code>{{custom.&lt;name&gt;}}</code>. Missing, invalid, disabled, or unknown
-MAC selectors return an error; Atlaso does not infer MAC addresses from source IP or leases. Saving in the CodeMirror
-editor updates desired state and marks the <code>esxi_pxe</code> apply unit changed. ESXi PXE boot settings select one or more IPv4
+MAC selectors return an error; Atlaso does not infer MAC addresses from source IP or leases. Kickstarts are managed in
+a wizard-backed Tabulator collection with direct Enabled editing and a four-step Monaco Editor wizard. Completion
+suggests built-in variables, custom definitions from the direct-edit <strong>Custom Variables</strong> collection, the editable
+<code>{{custom.&lt;variable&gt;}}</code> template, and authorized exact vault markers after <code>{{</code> without loading vault values. Custom
+definitions carry a description and optional non-secret default; per-host Host References JSON values take precedence
+over that default.
+Saving updates desired state and marks the <code>esxi_pxe</code> apply unit changed. ESXi PXE boot settings select one or more IPv4
 DHCP IP zones instead of a freeform interface/IP pair; Atlaso derives the PXE interfaces, TFTP server addresses, DNS
 records, firewall bind targets, and dnsmasq scope tags from those zones. Native UEFI HTTP URLs are generated per
 selected IPv4 zone unless an operator supplies a manual absolute URL. Installer ISO choices are discovered from

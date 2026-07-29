@@ -3149,8 +3149,10 @@ when needed.</p>
    without it.</li>
 </ol>
 <p>Backups can contain operational configuration and encrypted sensitive material. Do not attach them to public issues.
-VCF/ESX password vault entries are not included in settings archives. Restore clears vaults and Kickstart bindings;
-recreate or reimport vault entries before re-enabling dependent scripts or PXE workflows.</p>
+VCF/ESX password vault entries are not included in settings archives. Restore clears vaults and the unused legacy
+Kickstart-binding compatibility table; recreate or reimport vault entries before re-enabling dependent scripts or PXE
+workflows. Non-secret ESXi PXE custom-variable catalog definitions and defaults are included so restored Kickstarts
+retain their <code>{{custom.*}}</code> prerequisites.</p>
 <h2 id="restore-safely">Restore safely<a class="headerlink" href="#restore-safely" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Take a VM snapshot or equivalent rollback point.</li>
