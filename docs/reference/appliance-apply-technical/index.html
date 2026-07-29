@@ -4268,8 +4268,10 @@ validates that the staged config stays under the KMS apply directory, checks the
 certificate/key/CA file paths, PyKMIP availability, and SQLite database path, then installs
 <code>/etc/atlaso/kms/pykmip.conf</code>, writes <code>/etc/pykmip/server.conf</code>, installs <code>atlaso-kms.service</code>, and enables/restarts the
 listener. The service launches PyKMIP through Atlaso's compatibility wrapper so Photon Python streams where legacy
-<code>ssl.wrap_socket</code> was removed can still run the lab KMIP server. Disabling KMS stops and disables <code>atlaso-kms.service</code>
-while preserving <code>/var/lib/atlaso/kms/pykmip.db</code>. Firewall apply owns TCP/5696 access to the selected interface.</p>
+<code>ssl.wrap_socket</code> was removed can still run the lab KMIP server. The wrapper uses a modern server context with an
+explicit TLS 1.2 minimum even when PyKMIP supplies its legacy fixed-protocol argument. Disabling KMS stops and disables
+<code>atlaso-kms.service</code> while preserving <code>/var/lib/atlaso/kms/pykmip.db</code>. Firewall apply owns TCP/5696 access to the
+selected interface.</p>
 <h2 id="appliance-settings-and-operations">Appliance settings and operations<a class="headerlink" href="#appliance-settings-and-operations" title="Permanent link">&para;</a></h2>
 <h3 id="ntpsec-apply">NTPsec apply<a class="headerlink" href="#ntpsec-apply" title="Permanent link">&para;</a></h3>
 <p>The real NTPsec apply path is Photon <code>ntpd.service</code> backed. The <strong>NTP / NTS</strong> page owns enabled state, service hostname,

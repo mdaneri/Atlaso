@@ -3194,9 +3194,11 @@ directory sizing, and the one-time credential warning before creation.</p>
 used, search bases, bind DN, VCF Automation 9.1 JSON, and operator instructions. The bind password is intentionally
 separate. Generated VCF settings prefer LDAPS whenever it is enabled; plaintext LDAP is used only when LDAPS is disabled
 and LDAP is enabled.</p>
-<p>The guided workflow pins the VCF Automation TLS SHA-256 fingerprint, reads current organization LDAP settings, requires
-explicit replacement approval, writes <code>settingsSource=DEFINED</code>, tests LDAP, and verifies that VCF can find at least one
-user and group. Administrator credentials are transient and are not stored.</p>
+<p>The guided workflow requires TLS 1.2 or newer while probing and pins the VCF Automation TLS SHA-256 fingerprint. The
+fingerprint confirmation remains the trust decision; Atlaso does not silently replace it with ordinary CA
+verification. The workflow reads current organization LDAP settings, requires explicit replacement approval, writes
+<code>settingsSource=DEFINED</code>, tests LDAP, and verifies that VCF can find at least one user and group. Administrator
+credentials are transient and are not stored.</p>
 <p>The VCF 9.1 mapping includes:</p>
 <div class="language-json highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">&quot;userAttributes&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>

@@ -3080,7 +3080,7 @@
 <li>Submit the KMS/KMIP unit through <a href="../../operate/appliance-apply/">Appliance Apply</a>.</li>
 </ol>
 <p>Keep the listener restricted to intended lab networks. Never publish private keys or client credentials in
-documentation, screenshots, task notes, or issues.</p>
+documentation, screenshots, task notes, or issues. The compatibility listener requires TLS 1.2 or newer.</p>
 <h2 id="verify">Verify<a class="headerlink" href="#verify" title="Permanent link">&para;</a></h2>
 <p>Confirm the apply task succeeded, the service is healthy, and an approved client can establish the expected trusted
 connection. If validation or client negotiation fails, restore the prior desired state and submit a new apply rather
