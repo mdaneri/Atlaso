@@ -8735,6 +8735,13 @@ function initializeKickstartCollection() {
   if (!(element instanceof HTMLElement) || !(form instanceof HTMLFormElement)) return;
   const source = form.elements.namedItem("content");
   if (!(source instanceof HTMLTextAreaElement)) return;
+  const updateSummary = (table) => {
+    const summary = document.querySelector("[data-esxi-pxe-summary]");
+    if (!(summary instanceof HTMLElement) || !table) return;
+    const kickstartCount = table.getData().filter((row) => !row.is_new).length;
+    const isoCount = Number(summary.dataset.isoCount || 0);
+    summary.textContent = `${kickstartCount} Kickstarts / ${isoCount} ISOs`;
+  };
   const submitAction = (action, id) => {
     const actionForm = document.createElement("form");
     actionForm.method = "post";
@@ -8809,6 +8816,8 @@ function initializeKickstartCollection() {
       form.querySelector('[data-kickstart-review="variables"]').textContent = [...window.AtlasoMonaco.getValue(source).matchAll(/\{\{\s*([^}]+)\s*\}\}/g)]
         .map((match) => match[1].trim()).join(", ") || "None";
     },
+    onSaved: ({ table }) => updateSummary(table),
+    onDeleted: ({ table }) => updateSummary(table),
     options: {
       layout: "fitColumns",
       height: "360px",

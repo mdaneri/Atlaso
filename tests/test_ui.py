@@ -800,7 +800,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v200" in service_worker.text
+    assert "atlaso-pwa-v201" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -814,7 +814,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-5" in service_worker.text
     assert "/static/app.css?v=atlaso-monaco-expand-20260729-4" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in service_worker.text
-    assert "/static/app.js?v=atlaso-monaco-kickstarts-20260729-2" in service_worker.text
+    assert "/static/app.js?v=atlaso-monaco-kickstarts-20260729-3" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -834,8 +834,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=atlaso-monaco-kickstarts-20260729-2"),
-        (public_base, "/static/app.js?v=atlaso-monaco-kickstarts-20260729-2"),
+        (base, "/static/app.js?v=atlaso-monaco-kickstarts-20260729-3"),
+        (public_base, "/static/app.js?v=atlaso-monaco-kickstarts-20260729-3"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5"
@@ -1279,7 +1279,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=atlaso-monaco-expand-20260729-4" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in page.text
-    assert "/static/app.js?v=atlaso-monaco-kickstarts-20260729-2" in page.text
+    assert "/static/app.js?v=atlaso-monaco-kickstarts-20260729-3" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -3420,6 +3420,9 @@ def test_monaco_is_the_only_bundled_editor_and_kickstart_uses_shared_collection(
     assert 'label: "Validate Kickstart"' in kickstart_js
     assert 'label: "Download Kickstart"' in kickstart_js
     assert "deleteResource: true" in kickstart_js
+    assert 'document.querySelector("[data-esxi-pxe-summary]")' in kickstart_js
+    assert "onSaved: ({ table }) => updateSummary(table)" in kickstart_js
+    assert "onDeleted: ({ table }) => updateSummary(table)" in kickstart_js
     assert "atlaso-kickstart" in monaco_source
     assert "vs/editor/editor.all.js" in monaco_source
     assert 'triggerCharacters: ["{"]' in monaco_source

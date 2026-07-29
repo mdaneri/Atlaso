@@ -99,7 +99,7 @@
         <h2>ESXi Kickstarts</h2>
         <p class="muted">Database-owned Kickstart source files for generated PXE HTTP boot copies.</p>
       </div>
-      <span class="status-pill {{ 'warn' if esxi_pxe_validation_errors else 'good' }}">{{ esxi_kickstarts|length }} Kickstarts / {{ esxi_installer_isos|length }} ISOs</span>
+      <span class="status-pill {{ 'warn' if esxi_pxe_validation_errors else 'good' }}" data-esxi-pxe-summary data-iso-count="{{ esxi_installer_isos|length }}">{{ esxi_kickstarts|length }} Kickstarts / {{ esxi_installer_isos|length }} ISOs</span>
     </div>
 
     {% if esxi_pxe_error %}
