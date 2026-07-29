@@ -181,7 +181,16 @@ function enhanceTextarea(textarea, options = {}) {
     }
     modelCompletions.set(editor.getModel().uri.toString(), Array.isArray(completions) ? completions : []);
   }
-  editor.onDidChangeModelContent(() => updateTextarea(textarea, editor.getValue()));
+  editor.onDidChangeModelContent(() => {
+    updateTextarea(textarea, editor.getValue());
+    if (editorLanguage(textarea, options) !== "atlaso-kickstart") return;
+    const position = editor.getPosition();
+    if (!position) return;
+    const linePrefix = editor.getModel().getLineContent(position.lineNumber).slice(0, position.column - 1);
+    if (linePrefix.endsWith("{{")) {
+      editor.trigger("atlaso-kickstart", "editor.action.triggerSuggest", {});
+    }
+  });
   textarea.atlasoMonacoEditor = editor;
   textarea.atlasoMonacoContainer = container;
   textarea.atlasoMonacoShell = shell;
@@ -215,7 +224,7 @@ function focus(textarea) {
 
 window.MonacoEnvironment = {
   getWorker() {
-    return new Worker("/static/vendor/monaco/editor.worker.js?v=atlaso-monaco-20260729-3");
+    return new Worker("/static/vendor/monaco/editor.worker.js?v=atlaso-monaco-20260729-4");
   },
 };
 window.AtlasoMonaco = { enhanceTextarea, focus, getValue, setLanguage, setValue };
