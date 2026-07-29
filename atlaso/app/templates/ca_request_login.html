@@ -12,7 +12,7 @@
       {% if error %}
         <div class="alert error">{{ error }}</div>
       {% endif %}
-      <form class="form-stack" action="{{ login_action|default('/requests/login') }}" method="post">
+      <form class="form-stack" action="{{ login_action|default('/requests/login') }}" method="post" target="_self">
         <input type="hidden" name="csrf" value="{{ csrf_token }}">
         <input type="hidden" name="next" value="{{ return_to or '/requests' }}">
         <label>

@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Atlaso - Sign in</title>
+    <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-title" content="Atlaso">
     <link rel="manifest" href="/manifest.webmanifest">
@@ -30,7 +31,7 @@
         {% if error %}
           <div class="alert error">{{ error }}</div>
         {% endif %}
-        <form class="form-stack" action="/login" method="post">
+        <form class="form-stack" action="/login" method="post" target="_self">
           <input type="hidden" name="csrf" value="{{ csrf_token }}">
           <input type="hidden" name="next" value="{{ return_to or '/' }}">
           <label>
