@@ -474,8 +474,9 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert 'return state === "ready" ? "selection" : state === "tls" ? "tls" : false;' in source
     assert 'return hasSelectedVcfVaultCredential(form) ? "depot" : "api";' in source
     pxe_template = Path("atlaso/app/templates/esxi_pxe.html").read_text()
-    assert "{{vault.<vaultname>.<key>.uri1}}" in pxe_template
-    assert "{{vault.<vaultname>.<key>.uri9}}" in pxe_template
+    assert "Vault access is declared only with" not in pxe_template
+    assert "{{vault.<vaultname>.<key>.uri1}}" not in pxe_template
+    assert "{{vault.<vaultname>.<key>.uri9}}" not in pxe_template
 
 
 def test_vmware_wheel_deploy_exposes_fail_closed_vault_shell_commands():
