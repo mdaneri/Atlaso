@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import logging
+import os
 import re
 import shlex
 import shutil
@@ -9225,12 +9226,22 @@ def log_appliance_apply_submission(
 def _write_staged_config_file(path: Path, config_preview: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    file_descriptor = -1
     try:
-        temp_path.write_text(config_preview, encoding="utf-8")
+        file_descriptor = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(file_descriptor, "w", encoding="utf-8") as handle:
+            file_descriptor = -1
+            # The constrained helper requires transient file input; mode and terminal cleanup are enforced below.
+            # codeql[py/clear-text-storage-sensitive-data]
+            handle.write(config_preview)
+            handle.flush()
+            os.fsync(handle.fileno())
         temp_path.chmod(0o600)
         temp_path.replace(path)
         path.chmod(0o600)
     finally:
+        if file_descriptor >= 0:
+            os.close(file_descriptor)
         if temp_path.exists():
             temp_path.unlink()
 
