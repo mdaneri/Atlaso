@@ -9261,12 +9261,19 @@ def stage_appliance_apply_config(config_path: str, config_preview: str) -> str:
 
 def cleanup_transient_secret_staging_files() -> None:
     for path_value in (LOCAL_USERS_STAGED_CONFIG_PATH, CA_STAGED_CONFIG_PATH, LDAP_STAGED_CONFIG_PATH):
-        Path(path_value).unlink(missing_ok=True)
+        staged_path = Path(path_value)
+        staged_path.unlink(missing_ok=True)
+        for temp_path in staged_path.parent.glob(f".{staged_path.name}.*.tmp"):
+            temp_path.unlink(missing_ok=True)
     local_users_path = Path(LOCAL_USERS_STAGED_CONFIG_PATH)
     for status_path in local_users_path.parent.glob(
         f".{local_users_path.stem}.status-*{local_users_path.suffix}"
     ):
         status_path.unlink(missing_ok=True)
+    for status_temp_path in local_users_path.parent.glob(
+        f"..{local_users_path.stem}.status-*{local_users_path.suffix}.*.tmp"
+    ):
+        status_temp_path.unlink(missing_ok=True)
 
 
 def execute_appliance_apply_unit(unit: dict[str, Any], *, adapter: SystemAdapter | None = None) -> dict[str, Any]:

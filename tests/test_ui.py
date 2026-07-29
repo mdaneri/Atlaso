@@ -11616,7 +11616,12 @@ def test_application_restart_removes_stale_secret_staging_inputs(client, monkeyp
     ca_path = tmp_path / "apply" / "ca" / "atlaso-ca.json"
     ldap_path = tmp_path / "apply" / "ldap" / "atlaso-ldap.json"
     status_path = local_users_path.with_name(".atlaso-users.status-stale.json")
-    for path in (local_users_path, ca_path, ldap_path, status_path):
+    atomic_temp_paths = [
+        path.with_name(f".{path.name}.stale.tmp")
+        for path in (local_users_path, ca_path, ldap_path, status_path)
+    ]
+    stale_paths = [local_users_path, ca_path, ldap_path, status_path, *atomic_temp_paths]
+    for path in stale_paths:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('{"password":"RestartSecret1!"}', encoding="utf-8")
         path.chmod(0o600)
@@ -11628,7 +11633,7 @@ def test_application_restart_removes_stale_secret_staging_inputs(client, monkeyp
     with TestClient(create_app()) as restarted_client:
         assert restarted_client.get("/openapi.json").status_code == 200
 
-    assert all(not path.exists() for path in (local_users_path, ca_path, ldap_path, status_path))
+    assert all(not path.exists() for path in stale_paths)
 
 
 def test_appliance_startup_initializes_factory_apply_baseline(monkeypatch, tmp_path):

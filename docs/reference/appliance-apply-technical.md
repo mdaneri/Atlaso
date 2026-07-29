@@ -130,9 +130,9 @@ such as `password staged` or `password not staged; reset to sync`.
 
 For a real apply, the control plane writes the helper input with mode `0600` immediately before validation. A
 `finally` boundary removes it after validation or apply returns or raises, and the helper independently removes an
-allowlisted apply input on every terminal apply path. Startup removes any stale fixed apply input. Read-only OS status
-uses a unique `.atlaso-users.status-*.json` file without password values and deletes it after the request, so it cannot
-replace the fixed apply payload.
+allowlisted apply input on every terminal apply path. Startup removes stale fixed inputs and their tightly matched
+atomic temporary files. Read-only OS status uses a unique `.atlaso-users.status-*.json` file without password values
+and deletes it after the request, so it cannot replace the fixed apply payload.
 
 ### Physical interface inventory
 
