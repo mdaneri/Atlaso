@@ -1,4 +1,5 @@
 import * as monaco from "monaco-editor/esm/vs/editor/editor.api";
+import "monaco-editor/esm/vs/editor/editor.all.js";
 import "monaco-editor/esm/vs/basic-languages/python/python.contribution";
 import "monaco-editor/esm/vs/basic-languages/shell/shell.contribution";
 import "monaco-editor/esm/vs/basic-languages/powershell/powershell.contribution";
@@ -171,7 +172,7 @@ function focus(textarea) {
 
 window.MonacoEnvironment = {
   getWorker() {
-    return new Worker("/static/vendor/monaco/editor.worker.js?v=atlaso-monaco-20260729-1");
+    return new Worker("/static/vendor/monaco/editor.worker.js?v=atlaso-monaco-20260729-2");
   },
 };
 window.AtlasoMonaco = { enhanceTextarea, focus, getValue, setLanguage, setValue };

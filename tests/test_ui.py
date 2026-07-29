@@ -800,7 +800,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v190" in service_worker.text
+    assert "atlaso-pwa-v191" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -811,7 +811,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert 'url.pathname.startsWith("/api/")' in service_worker.text
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
-    assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-1" in service_worker.text
+    assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-2" in service_worker.text
     assert "/static/app.css?v=atlaso-ui-foundation-20260728-5" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in service_worker.text
     assert "/static/app.js?v=atlaso-monaco-kickstarts-20260729-1" in service_worker.text
@@ -3408,6 +3408,8 @@ def test_monaco_is_the_only_bundled_editor_and_kickstart_uses_shared_collection(
     assert not Path("atlaso/app/static/vendor/codemirror").exists()
     assert not Path("scripts/build_codemirror.mjs").exists()
     assert "/static/vendor/monaco/atlaso-monaco.min.js" in base
+    monaco_bundle = Path("atlaso/app/static/vendor/monaco/atlaso-monaco.min.js").read_text(encoding="utf-8")
+    assert "editor.contrib.suggestController" in monaco_bundle
     assert Path("atlaso/app/static/vendor/monaco/editor.worker.js").is_file()
     assert "initializeAtlasoResourceWizard" in app_js
     kickstart_js = app_js.split("function initializeKickstartCollection()", 1)[1].split("function initializeZoneEditors()", 1)[0]
@@ -3417,6 +3419,7 @@ def test_monaco_is_the_only_bundled_editor_and_kickstart_uses_shared_collection(
     assert 'label: "Download Kickstart"' in kickstart_js
     assert "deleteResource: true" in kickstart_js
     assert "atlaso-kickstart" in monaco_source
+    assert "vs/editor/editor.all.js" in monaco_source
     assert 'triggerCharacters: ["{"]' in monaco_source
     assert "modelCompletions" in monaco_source
     assert "python.contribution" in monaco_source
