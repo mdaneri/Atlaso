@@ -34,7 +34,7 @@ only through the global appliance-change workflow and its constrained privileged
 ## Project
 
 - [Brand guide](docs/assets/brand/BRAND_GUIDE.md)
-- [Security policy](SECURITY.md)
+- [Security and data classification policy](SECURITY.md)
 - [Code of conduct](CODE_OF_CONDUCT.md)
 - [License](LICENSE)
 

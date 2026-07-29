@@ -32,11 +32,18 @@ This verified appliance view provides visual orientation before you begin.
 Audit entries describe the action and sanitized result. They must not expose passwords, private keys, authenticated
 URLs, or other secret-bearing values.
 
+IP addresses, MAC addresses, hostnames, and account names are not sensitive by themselves in Atlaso and may remain in
+an audit event when they identify the affected resource. Passwords, tokens, authenticated URLs, session material,
+private keys, password hashes, credential verifiers, and other secret-bearing data remain sensitive. Content-integrity
+hashes of non-secret material and one-way change-detection hashes of encrypted-at-rest ciphertext do not. An identifier
+must also be treated as sensitive when it is embedded in or paired with authentication or cryptographic material.
+
 ## Verify and escalate
 
 For an appliance apply or maintenance action, correlate the event with the task identifier and terminal task state.
 Use [Operational logs](logs.md) for runtime diagnostics. Preserve the relevant timestamps and identifiers when
-escalating; do not copy credentials or raw secrets into an issue.
+escalating; do not copy credentials or raw secrets into an issue. The data classification does not make authenticated
+audit history public or override site handling policy.
 
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states

@@ -108,5 +108,6 @@ requirements in this guide.
 
 ## Security and conduct
 
-Read the [Security Policy](SECURITY.md) before reporting a vulnerability. Read the [Code of Conduct](CODE_OF_CONDUCT.md)
-before participating in community spaces.
+Read the [Security Policy](SECURITY.md), including Atlaso's operational-identifier data classification, before handling
+or reporting security-relevant material. Read the [Code of Conduct](CODE_OF_CONDUCT.md) before participating in
+community spaces.

@@ -64,6 +64,11 @@ The following cross-cutting boundaries always apply:
   agent policies and canonical OIDC service guide. Administration keeps generated client IDs immutable, shows secrets
   once, validates the issuer against the applied Management HTTPS certificate, preserves retired-key overlap, and
   exports only public relying-party metadata.
+- IP addresses, MAC addresses, hostnames, and account names are non-sensitive operational identifiers by themselves.
+  Passwords, tokens, authenticated URLs, session material, private keys, password hashes, credential verifiers, and
+  other secret-bearing data remain sensitive; content-integrity hashes of non-secret material and one-way
+  change-detection hashes of encrypted-at-rest ciphertext do not. Treat an identifier as sensitive when it is embedded
+  in or paired with authentication or cryptographic material.
 - Never expose credentials, authenticated URLs, private keys, raw secrets, or secret-bearing commands in UI, jobs,
   audits, logs, documentation, screenshots, or video.
 - The appliance-native vSphere Key Provider targets only VCF 9.1 and implements the checked-in bounded KMIP contract.
