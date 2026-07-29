@@ -16,6 +16,7 @@ const KICKSTART_VARIABLES = [
   ["dhcp.ntp_servers", "DHCP NTP server list"],
   ["dhcp.domain", "DHCP domain"],
   ["pxe.http_base_url", "ESXi PXE HTTP base URL"],
+  ["custom.<variable>", "Custom value from ESXi PXE Host References", "custom.${1:variable}}}"],
 ];
 
 const languageDefinitions = {
@@ -79,12 +80,13 @@ monaco.languages.registerCompletionItemProvider("atlaso-kickstart", {
       endColumn: position.column,
     };
     return {
-      suggestions: [...KICKSTART_VARIABLES, ...(modelCompletions.get(model.uri.toString()) || [])].map(([label, detail]) => ({
+      suggestions: [...KICKSTART_VARIABLES, ...(modelCompletions.get(model.uri.toString()) || [])].map(([label, detail, insertText]) => ({
         label,
         detail,
         documentation: detail,
         kind: monaco.languages.CompletionItemKind.Variable,
-        insertText: `${label}}}`,
+        insertText: insertText || `${label}}}`,
+        insertTextRules: insertText ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
         range,
         sortText: label.startsWith("vault.") ? `2-${label}` : `1-${label}`,
       })),
@@ -224,7 +226,7 @@ function focus(textarea) {
 
 window.MonacoEnvironment = {
   getWorker() {
-    return new Worker("/static/vendor/monaco/editor.worker.js?v=atlaso-monaco-20260729-5");
+    return new Worker("/static/vendor/monaco/editor.worker.js?v=atlaso-monaco-20260729-6");
   },
 };
 window.AtlasoMonaco = { enhanceTextarea, focus, getValue, setLanguage, setValue };

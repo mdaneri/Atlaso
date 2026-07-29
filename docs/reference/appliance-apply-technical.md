@@ -289,7 +289,9 @@ are reconciled on the next global `esxi_pxe` apply.
 Host references are edited in a Tabulator grid. Each host can select a database Kickstart and installer ISO and can
 define custom Kickstart variables as JSON. Built-in variables include host identity, selected DHCP scope values such as
 `{{dhcp.gateway}}`, `{{dhcp.dns_servers}}`, and `{{dhcp.ntp_servers}}`, and the PXE HTTP base URL; custom values are
-referenced as `{{custom.<name>}}`. The grid also has a default profile for undefined MAC addresses; when enabled with an
+referenced as `{{custom.<name>}}`. The Custom Variables collection defines the available names and optional non-secret
+defaults; a host-specific Variables JSON value overrides its matching default. The grid also has a default profile for
+undefined MAC addresses; when enabled with an
 installer ISO, Atlaso generates the top-level default `boot.cfg`, HTTP `boot.cfg`, and `pxelinux.cfg/default` artifacts
 from that profile instead of falling back to the first host reference. The default profile cannot use a Kickstart
 because dynamic Kickstart rendering requires a defined host MAC.

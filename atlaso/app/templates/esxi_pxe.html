@@ -112,6 +112,7 @@
     <div class="tab-buttons tool-tabs" role="tablist" aria-label="ESXi PXE views" data-tab-storage-key="atlaso:esxi-pxe:active-tab">
       <button class="tab-button active" type="button" role="tab" data-tab-target="esxi-pxe-hosts-panel" aria-controls="esxi-pxe-hosts-panel" aria-selected="true">Host References</button>
       <button class="tab-button" type="button" role="tab" data-tab-target="esxi-pxe-editor-panel" aria-controls="esxi-pxe-editor-panel" aria-selected="false">Kickstarts</button>
+      <button class="tab-button" type="button" role="tab" data-tab-target="esxi-pxe-custom-variables-panel" aria-controls="esxi-pxe-custom-variables-panel" aria-selected="false">Custom Variables</button>
       <button class="tab-button" type="button" role="tab" data-tab-target="esxi-pxe-isos-panel" aria-controls="esxi-pxe-isos-panel" aria-selected="false">Installer ISOs</button>
       <button class="tab-button" type="button" role="tab" data-tab-target="esxi-pxe-preview-panel" aria-controls="esxi-pxe-preview-panel" aria-selected="false">Preview</button>
     </div>
@@ -157,7 +158,7 @@
                 <h3>Edit {{ esxi_selected_kickstart.name }}</h3>
                 <input type="hidden" name="csrf" value="{{ csrf_token }}">
                 <label>Name <input name="name" value="{{ esxi_selected_kickstart.name }}" required maxlength="120"></label>
-                <label>Description <input name="description" value="{{ esxi_selected_kickstart.description or '' }}"></label>
+                <label>Description <textarea name="description" rows="3" maxlength="500">{{ esxi_selected_kickstart.description or '' }}</textarea></label>
                 <label>Kickstart source <textarea name="content" rows="24" required>{{ esxi_selected_kickstart.content }}</textarea></label>
                 <label><input type="checkbox" name="enabled" {{ "checked" if esxi_selected_kickstart.enabled else "" }}> Enabled</label>
                 <button class="button primary" type="submit">Save Kickstart</button>
@@ -167,7 +168,7 @@
               <h3>Add Kickstart</h3>
               <input type="hidden" name="csrf" value="{{ csrf_token }}">
               <label>Name <input name="name" required maxlength="120"></label>
-              <label>Description <input name="description"></label>
+              <label>Description <textarea name="description" rows="3" maxlength="500"></textarea></label>
               <label>Kickstart source <textarea name="content" rows="24" required>{{ esxi_default_kickstart_content }}</textarea></label>
               <label><input type="checkbox" name="enabled" checked> Enabled</label>
               <button class="button primary" type="submit">Save Kickstart</button>
@@ -256,6 +257,45 @@
             </tbody>
           </table>
         </div>
+      </div>
+
+      <div id="esxi-pxe-custom-variables-panel" class="tab-panel" role="tabpanel" hidden>
+        <p class="muted">Define non-secret variables available to Kickstart source as <code>{{ "{{custom.<name>}}" }}</code>. Host References values override the optional default for a specific host.</p>
+        <div id="esxi-custom-variables-error" class="alert error hidden"></div>
+        <div
+          id="esxi-custom-variables-table"
+          class="tabulator-shell"
+          data-rows='{{ esxi_custom_variables | tojson }}'
+          data-csrf="{{ csrf_token }}"
+          data-can-write="{{ 'true' if esxi_can_write else 'false' }}"
+          data-fallback-id="esxi-custom-variables-fallback"
+        ></div>
+        <table id="esxi-custom-variables-fallback" class="data-table compact">
+          <thead><tr><th>Custom variable name</th><th>Description</th><th>Default value, if any</th><th>Actions</th></tr></thead>
+          <tbody>
+            {% for variable in esxi_custom_variables %}
+              <tr>
+                <td><input name="name" value="{{ variable.name }}" form="custom-variable-{{ loop.index }}" aria-label="Custom variable name" {{ "disabled" if not esxi_can_write else "" }}></td>
+                <td><input name="description" value="{{ variable.description }}" form="custom-variable-{{ loop.index }}" aria-label="Custom variable description" {{ "disabled" if not esxi_can_write else "" }}></td>
+                <td><input name="default_value" value="{{ variable.default_value }}" form="custom-variable-{{ loop.index }}" aria-label="Custom variable default value" {{ "disabled" if not esxi_can_write else "" }}></td>
+                <td>
+                  {% if esxi_can_write %}
+                    <form id="custom-variable-{{ loop.index }}" class="inline-form" action="/esxi-pxe/custom-variables/{{ variable.name }}" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">Save</button></form>
+                    <form class="inline-form" action="/esxi-pxe/custom-variables/{{ variable.name }}/delete" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">Delete</button></form>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+            {% if esxi_can_write %}
+              <tr class="new-record-row">
+                <td><input name="name" form="custom-variable-new" aria-label="New custom variable name" placeholder="+ Add custom variable"></td>
+                <td><input name="description" form="custom-variable-new" aria-label="New custom variable description"></td>
+                <td><input name="default_value" form="custom-variable-new" aria-label="New custom variable default value"></td>
+                <td><form id="custom-variable-new" action="/esxi-pxe/custom-variables" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">Add</button></form></td>
+              </tr>
+            {% endif %}
+          </tbody>
+        </table>
       </div>
 
       <div id="esxi-pxe-isos-panel" class="tab-panel" role="tabpanel" hidden>
@@ -389,7 +429,7 @@
         <div class="alert error hidden" data-atlaso-wizard-error></div>
         <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity">
           <label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Unique operator-facing name for this database-owned Kickstart.">i</button></span><input name="name" required maxlength="120"></label>
-          <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Optional operator note; it is not added to generated source.">i</button></span><input name="description"></label>
+          <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Optional operator note; it is not added to generated source.">i</button></span><textarea name="description" rows="3" maxlength="500"></textarea></label>
         </section>
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="source">
           <div class="automation-script-editor-head"><span class="field-label"><span>Kickstart source</span><button class="help-icon" type="button" data-help="ESXi Kickstart source of truth. Type two opening braces for Atlaso variable suggestions.">i</button></span><label class="file-upload-control compact-file-upload"><input class="file-upload-input" type="file" accept=".cfg,.ks" data-kickstart-import><span class="file-upload-surface"><span class="file-upload-copy"><strong>Import .cfg or .ks</strong></span></span></label></div>

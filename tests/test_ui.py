@@ -801,7 +801,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v201" in service_worker.text
+    assert "atlaso-pwa-v202" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -812,10 +812,10 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert 'url.pathname.startsWith("/api/")' in service_worker.text
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
-    assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-5" in service_worker.text
+    assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6" in service_worker.text
     assert "/static/app.css?v=atlaso-monaco-expand-20260729-4" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in service_worker.text
-    assert "/static/app.js?v=atlaso-monaco-kickstarts-20260729-3" in service_worker.text
+    assert "/static/app.js?v=atlaso-monaco-kickstarts-20260729-4" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -835,8 +835,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=atlaso-monaco-kickstarts-20260729-3"),
-        (public_base, "/static/app.js?v=atlaso-monaco-kickstarts-20260729-3"),
+        (base, "/static/app.js?v=atlaso-monaco-kickstarts-20260729-4"),
+        (public_base, "/static/app.js?v=atlaso-monaco-kickstarts-20260729-4"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5"
@@ -1280,7 +1280,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=atlaso-monaco-expand-20260729-4" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in page.text
-    assert "/static/app.js?v=atlaso-monaco-kickstarts-20260729-3" in page.text
+    assert "/static/app.js?v=atlaso-monaco-kickstarts-20260729-4" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -3339,10 +3339,15 @@ def test_esxi_pxe_ui_create_apply_and_job_redaction(client):
     assert 'accept=".cfg,.ks"' in page.text
     assert 'name="vault_id"' not in page.text
     assert 'data-monaco-language="atlaso-kickstart"' in page.text
+    assert '<textarea name="description" rows="3" maxlength="500"></textarea>' in page.text
     host_tab = page.text.index('data-tab-target="esxi-pxe-hosts-panel"')
     kickstart_tab = page.text.index('data-tab-target="esxi-pxe-editor-panel"')
+    custom_variables_tab = page.text.index('data-tab-target="esxi-pxe-custom-variables-panel"')
     iso_tab = page.text.index('data-tab-target="esxi-pxe-isos-panel"')
-    assert host_tab < kickstart_tab < iso_tab
+    assert host_tab < kickstart_tab < custom_variables_tab < iso_tab
+    assert 'id="esxi-custom-variables-table"' in page.text
+    assert "Custom variable name" in page.text
+    assert "Default value, if any" in page.text
     assert '<button class="tab-button active" type="button" role="tab" data-tab-target="esxi-pxe-hosts-panel"' in page.text
     assert 'id="esxi-pxe-hosts-panel" class="tab-panel active" role="tabpanel">' in page.text
     assert 'id="esxi-pxe-editor-panel" class="tab-panel" role="tabpanel" hidden' in page.text
@@ -3454,6 +3459,65 @@ def test_monaco_is_the_only_bundled_editor_and_kickstart_uses_shared_collection(
     assert "python.contribution" in monaco_source
     assert "shell.contribution" in monaco_source
     assert "powershell.contribution" in monaco_source
+
+
+def test_esxi_custom_variable_collection_drives_kickstart_completion_and_validation(client):
+    login(client)
+    page = client.get("/esxi-pxe")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    created = client.post(
+        "/esxi-pxe/custom-variables",
+        headers={"Accept": "application/json"},
+        data={
+            "csrf": csrf,
+            "name": "install_disk",
+            "description": "Preferred ESXi installation disk",
+            "default_value": "firstdisk",
+        },
+    )
+
+    assert created.status_code == 200, created.text
+    assert created.json()["variable"] == {
+        "id": "install_disk",
+        "name": "install_disk",
+        "description": "Preferred ESXi installation disk",
+        "default_value": "firstdisk",
+    }
+    refreshed = client.get("/esxi-pxe")
+    assert "custom.install_disk" in refreshed.text
+    assert "Preferred ESXi installation disk" in refreshed.text
+
+    kickstart = client.post(
+        "/esxi-pxe/kickstarts",
+        headers={"Accept": "application/json"},
+        data={
+            "csrf": csrf,
+            "name": "Catalog variable",
+            "description": "",
+            "content": "install --firstdisk={{custom.install_disk}}\nnetwork --bootproto=dhcp\nrootpw --iscrypted placeholder\n",
+            "enabled": "on",
+        },
+    )
+    assert kickstart.status_code == 200, kickstart.text
+
+    deleted = client.post(
+        "/esxi-pxe/custom-variables/install_disk/delete",
+        headers={"Accept": "application/json"},
+        data={"csrf": csrf},
+    )
+    assert deleted.status_code == 200
+    rejected = client.post(
+        "/esxi-pxe/kickstarts",
+        headers={"Accept": "application/json"},
+        data={
+            "csrf": csrf,
+            "name": "Undefined catalog variable",
+            "description": "",
+            "content": "install --firstdisk={{custom.install_disk}}\nnetwork --bootproto=dhcp\nrootpw --iscrypted placeholder\n",
+        },
+    )
+    assert rejected.status_code == 400
 
 
 def test_esxi_pxe_iso_upload_and_host_selection(client, monkeypatch, tmp_path):
@@ -3738,6 +3802,7 @@ def test_esxi_kickstart_host_variables_render_from_mac_endpoint(client):
         esxi_pxe_boot_settings,
         esxi_pxe_host_artifacts,
         host_variables_json,
+        save_custom_variable_definition,
         save_esxi_pxe_boot_settings,
     )
 
@@ -3762,6 +3827,12 @@ def test_esxi_kickstart_host_variables_render_from_mac_endpoint(client):
             enabled=True,
         )
         db.add(host)
+        save_custom_variable_definition(
+            db,
+            name="disk",
+            description="Installation disk",
+            default_value="fallbackdisk",
+        )
         save_esxi_pxe_boot_settings(
             db,
             enabled=True,
@@ -3829,8 +3900,8 @@ def test_esxi_kickstart_host_variables_render_from_mac_endpoint(client):
         db.add(host)
         db.commit()
     unresolved = client.get(f"/pxe/esxi/ks/{kickstart_file}?mac=01-00-50-56-aa-bb-cc")
-    assert unresolved.status_code == 400
-    assert "custom.disk" in unresolved.text
+    assert unresolved.status_code == 200
+    assert "install --firstdisk=fallbackdisk" in unresolved.text
 
 
 def test_esxi_pxe_host_variables_api_and_manifest(client):
@@ -3913,6 +3984,8 @@ def test_esxi_pxe_boot_settings_update_dnsmasq_and_apply_manifest(client):
     monaco_source = Path("scripts/monaco-entry.js").read_text()
     assert '"host.hostname"' in monaco_source
     assert '"dhcp.ntp_servers"' in monaco_source
+    assert '"custom.<variable>"' in monaco_source
+    assert '"custom.${1:variable}}}"' in monaco_source
     assert "modelCompletions" in monaco_source
     assert 'class="left-stack"' in page.text
     assert page.text.index("<h2>Boot Service</h2>") < page.text.index("<h2>ESXi Kickstarts</h2>")

@@ -594,15 +594,17 @@ from atlaso.app.services.esxi_pxe import (
     assign_kickstart_content,
     canonical_http_path,
     content_hash,
+    custom_variable_defaults,
+    custom_variable_definitions,
     decode_kickstart_upload,
     default_host_to_dict,
+    delete_custom_variable_definition,
     esxi_pxe_boot_settings,
     esxi_pxe_default_host_settings,
     esxi_pxe_host_artifacts,
     esxi_pxe_service_state_from_boot,
     generated_kickstart_path,
     host_to_dict,
-    host_variables,
     host_variables_json,
     installer_iso_inventory,
     installer_iso_root_path,
@@ -611,6 +613,7 @@ from atlaso.app.services.esxi_pxe import (
     kickstart_template_validation_errors,
     kickstart_to_dict,
     kickstart_validation,
+    validate_kickstart_custom_references,
     validate_kickstart_vault_references,
     mark_kickstarts_applied,
     normalize_host_mac,
@@ -621,6 +624,7 @@ from atlaso.app.services.esxi_pxe import (
     render_kickstart_for_host,
     render_esxi_pxe_manifest,
     render_esxi_pxe_preview,
+    save_custom_variable_definition,
     save_esxi_pxe_default_host_settings,
     save_esxi_pxe_boot_settings,
     store_installer_iso_upload,
@@ -7158,9 +7162,12 @@ def esxi_pxe_context(db: Session) -> dict[str, Any]:
             validation_warnings.append(f"ESXi PXE hostname {boot_settings['hostname']} is not present in managed DNS records.")
         if not esxi_pxe_host_artifacts(hosts, boot_settings, default_host):
             validation_warnings.append("ESXi PXE bootstrap is enabled, but no enabled host reference or default profile has an installer ISO selected.")
-    validation_errors.extend(kickstart_template_validation_errors(kickstarts, hosts, boot_settings, default_host))
+    custom_variables = custom_variable_definitions(db)
+    custom_defaults = {item["name"]: item["default_value"] for item in custom_variables}
+    validation_errors.extend(kickstart_template_validation_errors(kickstarts, hosts, boot_settings, default_host, custom_defaults))
     for kickstart in kickstarts:
         try:
+            validate_kickstart_custom_references(db, kickstart.content)
             validate_kickstart_vault_references(db, kickstart.content)
         except ValueError as exc:
             validation_errors.append(f"{kickstart.name}: {exc}")
@@ -7169,11 +7176,12 @@ def esxi_pxe_context(db: Session) -> dict[str, Any]:
         "esxi_kickstarts": kickstarts,
         "esxi_kickstart_completions": [
             *[
-                [f"custom.{key}", "Custom value from ESXi PXE Host References"]
-                for key in sorted({key for host in hosts for key in host_variables(host)})
+                [f"custom.{item['name']}", item["description"] or "Custom ESXi Kickstart variable"]
+                for item in custom_variables
             ],
             *kickstart_vault_marker_catalog(db),
         ],
+        "esxi_custom_variables": custom_variables,
         "esxi_kickstart_rows": [kickstart_to_dict(row) for row in kickstarts],
         "esxi_pxe_hosts": hosts,
         "esxi_pxe_host_rows": [default_host_to_dict(default_host), *[host_to_dict(row) for row in hosts]],
@@ -7210,8 +7218,8 @@ def esxi_pxe_context(db: Session) -> dict[str, Any]:
         "esxi_pxe_validation_errors": validation_errors,
         "esxi_pxe_validation_warnings": list(dict.fromkeys(validation_warnings)),
         "esxi_pxe_validation_by_id": validation_by_id,
-        "esxi_pxe_manifest": render_esxi_pxe_manifest(kickstarts, hosts, boot_settings, default_host),
-        "esxi_pxe_preview": render_esxi_pxe_preview(kickstarts, hosts, boot_settings, default_host),
+        "esxi_pxe_manifest": render_esxi_pxe_manifest(kickstarts, hosts, boot_settings, default_host, custom_variables),
+        "esxi_pxe_preview": render_esxi_pxe_preview(kickstarts, hosts, boot_settings, default_host, custom_variables),
         "esxi_pxe_config_path": ESXI_PXE_STAGED_CONFIG_PATH,
         "esxi_pxe_strict_validation": strict,
         "esxi_default_kickstart_name": DEFAULT_ESXI_KICKSTART_NAME,
@@ -20434,6 +20442,7 @@ def serve_esxi_kickstart_file(kickstart_file: str, mac: str = "", db: Session = 
             host,
             esxi_pxe_boot_settings(db),
             vault_values,
+            custom_variable_defaults(db),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -20578,6 +20587,7 @@ def create_esxi_kickstart_from_ui(
         db.add(kickstart)
         db.flush()
         assign_kickstart_content(kickstart, content, max_bytes=get_settings().esxi_kickstart_max_bytes)
+        validate_kickstart_custom_references(db, kickstart.content)
         validate_kickstart_vault_references(db, kickstart.content)
         db.commit()
     except (ValueError, IntegrityError) as exc:
@@ -20627,6 +20637,7 @@ def update_esxi_kickstart_from_ui(
         kickstart.description = description or None
         kickstart.enabled = enabled
         assign_kickstart_content(kickstart, content, max_bytes=get_settings().esxi_kickstart_max_bytes)
+        validate_kickstart_custom_references(db, kickstart.content)
         validate_kickstart_vault_references(db, kickstart.content)
         db.add(kickstart)
         db.commit()
@@ -20721,6 +20732,7 @@ def validate_esxi_kickstart_from_ui(
         raise HTTPException(status_code=404, detail="Kickstart not found")
     errors, warnings = kickstart_validation(kickstart.content, strict=strict_validation_enabled(db), max_bytes=get_settings().esxi_kickstart_max_bytes)
     try:
+        validate_kickstart_custom_references(db, kickstart.content)
         validate_kickstart_vault_references(db, kickstart.content)
     except ValueError as exc:
         errors.append(str(exc))
@@ -20755,6 +20767,110 @@ def download_esxi_kickstart_from_ui(
     return Response(kickstart.content, media_type="text/plain; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="{filename}.cfg"'})
 
 
+@router.post("/esxi-pxe/custom-variables", response_model=None)
+def create_esxi_custom_variable_from_ui(
+    request: Request,
+    name: str = Form(...),
+    description: str = Form(""),
+    default_value: str = Form(""),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> RedirectResponse | JSONResponse:
+    require_esxi_pxe_write(identity)
+    verify_csrf(request, csrf)
+    try:
+        variable = save_custom_variable_definition(
+            db,
+            name=name,
+            description=description,
+            default_value=default_value,
+        )
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+    record_audit(
+        db,
+        actor=identity.username,
+        action="create_esxi_custom_variable",
+        resource_type="esxi_custom_variable",
+        resource_id=variable["name"],
+        detail=f"name={variable['name']}",
+        request_id=request.state.request_id,
+    )
+    if "application/json" in request.headers.get("accept", ""):
+        return JSONResponse({"variable": variable})
+    return RedirectResponse("/esxi-pxe#esxi-pxe-custom-variables-panel", status_code=303)
+
+
+@router.post("/esxi-pxe/custom-variables/{variable_name}", response_model=None)
+def update_esxi_custom_variable_from_ui(
+    variable_name: str,
+    request: Request,
+    name: str = Form(...),
+    description: str = Form(""),
+    default_value: str = Form(""),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> RedirectResponse | JSONResponse:
+    require_esxi_pxe_write(identity)
+    verify_csrf(request, csrf)
+    if variable_name not in {item["name"] for item in custom_variable_definitions(db)}:
+        raise HTTPException(status_code=404, detail="Custom variable not found")
+    try:
+        variable = save_custom_variable_definition(
+            db,
+            name=name,
+            description=description,
+            default_value=default_value,
+            original_name=variable_name,
+        )
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+    record_audit(
+        db,
+        actor=identity.username,
+        action="update_esxi_custom_variable",
+        resource_type="esxi_custom_variable",
+        resource_id=variable["name"],
+        detail=f"previous_name={variable_name} name={variable['name']}",
+        request_id=request.state.request_id,
+    )
+    if "application/json" in request.headers.get("accept", ""):
+        return JSONResponse({"variable": variable})
+    return RedirectResponse("/esxi-pxe#esxi-pxe-custom-variables-panel", status_code=303)
+
+
+@router.post("/esxi-pxe/custom-variables/{variable_name}/delete", response_model=None)
+def delete_esxi_custom_variable_from_ui(
+    variable_name: str,
+    request: Request,
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> RedirectResponse | JSONResponse:
+    require_esxi_pxe_write(identity)
+    verify_csrf(request, csrf)
+    if not delete_custom_variable_definition(db, variable_name):
+        raise HTTPException(status_code=404, detail="Custom variable not found")
+    db.commit()
+    record_audit(
+        db,
+        actor=identity.username,
+        action="delete_esxi_custom_variable",
+        resource_type="esxi_custom_variable",
+        resource_id=variable_name,
+        request_id=request.state.request_id,
+    )
+    if "application/json" in request.headers.get("accept", ""):
+        return JSONResponse({"deleted": variable_name})
+    return RedirectResponse("/esxi-pxe#esxi-pxe-custom-variables-panel", status_code=303)
+
+
 @router.post("/esxi-pxe/kickstarts/upload", response_model=None)
 async def upload_esxi_kickstart_from_ui(
     request: Request,
@@ -20780,6 +20896,8 @@ async def upload_esxi_kickstart_from_ui(
         )
         db.add(kickstart)
         db.flush()
+        validate_kickstart_custom_references(db, kickstart.content)
+        validate_kickstart_vault_references(db, kickstart.content)
         kickstart.http_path = canonical_http_path(kickstart.id, kickstart.content_hash)
         db.commit()
     except (ValueError, IntegrityError) as exc:

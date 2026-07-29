@@ -624,7 +624,10 @@ templates may use restricted `{{variable}}` markers such as `{{host.hostname}}`,
 `{{pxe.http_base_url}}`, and per-host custom values under `{{custom.<name>}}`. Missing, invalid, disabled, or unknown
 MAC selectors return an error; Atlaso does not infer MAC addresses from source IP or leases. Kickstarts are managed in
 a wizard-backed Tabulator collection with direct Enabled editing and a four-step Monaco Editor wizard. Completion
-suggests built-in, discovered custom, and authorized exact vault markers after `{{` without loading vault values.
+suggests built-in variables, custom definitions from the direct-edit **Custom Variables** collection, the editable
+`{{custom.<variable>}}` template, and authorized exact vault markers after `{{` without loading vault values. Custom
+definitions carry a description and optional non-secret default; per-host Host References JSON values take precedence
+over that default.
 Saving updates desired state and marks the `esxi_pxe` apply unit changed. ESXi PXE boot settings select one or more IPv4
 DHCP IP zones instead of a freeform interface/IP pair; Atlaso derives the PXE interfaces, TFTP server addresses, DNS
 records, firewall bind targets, and dnsmasq scope tags from those zones. Native UEFI HTTP URLs are generated per

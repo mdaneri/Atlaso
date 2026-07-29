@@ -1,11 +1,11 @@
-const ATLASO_CACHE = "atlaso-pwa-v201";
+const ATLASO_CACHE = "atlaso-pwa-v202";
 const ATLASO_ASSETS = [
   "/manifest.webmanifest",
   "/favicon.ico",
   "/static/offline.html",
   "/static/app.css?v=atlaso-monaco-expand-20260729-4",
   "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5",
-  "/static/app.js?v=atlaso-monaco-kickstarts-20260729-3",
+  "/static/app.js?v=atlaso-monaco-kickstarts-20260729-4",
   "/static/terminal.js?v=web-terminal-review-20260716-3",
   "/static/vendor/xterm/xterm.css?v=5.5.0",
   "/static/vendor/xterm/xterm.js?v=5.5.0",
@@ -17,9 +17,9 @@ const ATLASO_ASSETS = [
   "/static/brand/atlaso-app-icon-dark-512.png",
   "/static/vendor/tabulator/tabulator.min.css",
   "/static/vendor/tabulator/tabulator.min.js",
-  "/static/vendor/monaco/atlaso-monaco.min.css?v=atlaso-monaco-20260729-5",
-  "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-5",
-  "/static/vendor/monaco/editor.worker.js?v=atlaso-monaco-20260729-5",
+  "/static/vendor/monaco/atlaso-monaco.min.css?v=atlaso-monaco-20260729-6",
+  "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6",
+  "/static/vendor/monaco/editor.worker.js?v=atlaso-monaco-20260729-6",
   "/static/vendor/prism/prism-core.min.js",
   "/static/vendor/prism/prism-diff.min.js"
 ];

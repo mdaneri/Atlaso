@@ -36,6 +36,13 @@ enabled assigned host requests the dynamic response. Source downloads and previe
 renamed references fail closed, and dynamic responses disable caching. See [Vaults](vaults.md) for marker examples,
 URI ordering, and secret-handling boundaries.
 
+Define non-secret custom values in the **Custom Variables** tab before **Installer ISOs**. Each row records the variable
+name, operator description, and an optional default. Monaco offers those rows as concrete `{{custom.<name>}}`
+completions. A matching value in a Host References variables JSON object overrides the default for that host; when no
+override exists, Atlaso renders the configured default. Deleting a referenced definition makes the Kickstart invalid
+until the definition is restored or the marker is removed. Use vault markers instead of custom-variable defaults for
+credentials or other secrets.
+
 > Terminology note: Broadcom documentation uses **ESX** in these 9.x installation pages. Older VMware material often
 > used **ESXi**.
 
