@@ -1,4 +1,4 @@
-const ATLASO_CACHE = "atlaso-pwa-v197";
+const ATLASO_CACHE = "atlaso-pwa-v198";
 const ATLASO_ASSETS = [
   "/manifest.webmanifest",
   "/favicon.ico",
@@ -17,9 +17,9 @@ const ATLASO_ASSETS = [
   "/static/brand/atlaso-app-icon-dark-512.png",
   "/static/vendor/tabulator/tabulator.min.css",
   "/static/vendor/tabulator/tabulator.min.js",
-  "/static/vendor/monaco/atlaso-monaco.min.css?v=atlaso-monaco-20260729-4",
-  "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-4",
-  "/static/vendor/monaco/editor.worker.js?v=atlaso-monaco-20260729-4",
+  "/static/vendor/monaco/atlaso-monaco.min.css?v=atlaso-monaco-20260729-5",
+  "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-5",
+  "/static/vendor/monaco/editor.worker.js?v=atlaso-monaco-20260729-5",
   "/static/vendor/prism/prism-core.min.js",
   "/static/vendor/prism/prism-diff.min.js"
 ];

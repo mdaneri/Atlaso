@@ -800,7 +800,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v197" in service_worker.text
+    assert "atlaso-pwa-v198" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -811,7 +811,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert 'url.pathname.startsWith("/api/")' in service_worker.text
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
-    assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-4" in service_worker.text
+    assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-5" in service_worker.text
     assert "/static/app.css?v=atlaso-monaco-expand-20260729-4" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in service_worker.text
     assert "/static/app.js?v=atlaso-monaco-kickstarts-20260729-1" in service_worker.text
@@ -3424,6 +3424,7 @@ def test_monaco_is_the_only_bundled_editor_and_kickstart_uses_shared_collection(
     assert "vs/editor/editor.all.js" in monaco_source
     assert 'triggerCharacters: ["{"]' in monaco_source
     assert 'linePrefix.endsWith("{{")' in monaco_source
+    assert "requestAnimationFrame(() => editor.trigger" in monaco_source
     assert '"editor.action.triggerSuggest"' in monaco_source
     assert "modelCompletions" in monaco_source
     assert '"atlaso-monaco-expand-button"' in monaco_source

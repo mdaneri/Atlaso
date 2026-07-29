@@ -188,7 +188,7 @@ function enhanceTextarea(textarea, options = {}) {
     if (!position) return;
     const linePrefix = editor.getModel().getLineContent(position.lineNumber).slice(0, position.column - 1);
     if (linePrefix.endsWith("{{")) {
-      editor.trigger("atlaso-kickstart", "editor.action.triggerSuggest", {});
+      requestAnimationFrame(() => editor.trigger("atlaso-kickstart", "editor.action.triggerSuggest", {}));
     }
   });
   textarea.atlasoMonacoEditor = editor;
@@ -224,7 +224,7 @@ function focus(textarea) {
 
 window.MonacoEnvironment = {
   getWorker() {
-    return new Worker("/static/vendor/monaco/editor.worker.js?v=atlaso-monaco-20260729-4");
+    return new Worker("/static/vendor/monaco/editor.worker.js?v=atlaso-monaco-20260729-5");
   },
 };
 window.AtlasoMonaco = { enhanceTextarea, focus, getValue, setLanguage, setValue };
