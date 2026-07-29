@@ -95,9 +95,10 @@ also forward the same operational events to an external syslog receiver.
 
 For logging and audit purposes, IP addresses, MAC addresses, hostnames, and account names are non-sensitive operational
 identifiers when they appear by themselves. Passwords, tokens, authenticated URLs, session material, private keys,
-password-, credential-, or secret-derived hashes, and other secret-bearing data remain sensitive; content-integrity
-hashes of non-secret material do not. An identifier is sensitive when embedded in or paired with authentication or
-cryptographic material. This classification does not relax access controls or site handling policy.
+password hashes, credential verifiers, and other secret-bearing data remain sensitive. Content-integrity hashes of
+non-secret material and one-way change-detection hashes of encrypted-at-rest ciphertext do not. An identifier is
+sensitive when embedded in or paired with authentication or cryptographic material. This classification does not relax
+access controls or site handling policy.
 
 The `Monitor` page is an operator-facing, read-only runtime view for appliance resource health. It charts thick
 appliance totals alongside thin per-logical-CPU, per-interface RX/TX, and unique-device disk activity over the last one,

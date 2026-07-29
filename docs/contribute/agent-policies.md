@@ -64,10 +64,10 @@ status: current
 
 - IP addresses, MAC addresses, hostnames, and account names are non-sensitive operational identifiers when they appear
   by themselves. Their presence alone is not a reason to suppress a useful operational log or audit record.
-- Passwords, tokens, authenticated URLs, session material, private keys, password-, credential-, or secret-derived
-  hashes, and other secret-bearing data are sensitive and must remain out of public issues, pull requests, previews,
-  baselines, tasks, logs, audits, screenshots, test output, and final responses. Content-integrity hashes of non-secret
-  material are not sensitive by themselves.
+- Passwords, tokens, authenticated URLs, session material, private keys, password hashes, credential verifiers, and
+  other secret-bearing data are sensitive and must remain out of public issues, pull requests, previews, baselines,
+  tasks, logs, audits, screenshots, test output, and final responses. Content-integrity hashes of non-secret material
+  and one-way change-detection hashes of encrypted-at-rest ciphertext are not sensitive by themselves.
 - Treat an operational identifier as sensitive when it is embedded in or paired with authentication or cryptographic
   material. Review the complete context before recording, rendering, or sharing it.
 - This classification does not relax authentication, authorization, access control, least-privilege, or an operator's
