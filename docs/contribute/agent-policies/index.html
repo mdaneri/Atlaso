@@ -420,6 +420,8 @@
       
         
       
+        
+      
     
     
     
@@ -2297,6 +2299,8 @@
       
         
       
+        
+      
     
     
     
@@ -2357,6 +2361,40 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dependency-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Dependency management
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -3409,6 +3447,8 @@
       
         
       
+        
+      
     
     
     
@@ -3500,8 +3540,10 @@
   pre-existing issue and per-update documentation requirements. They must carry the <code>enhancement</code> type label plus
   <code>dependencies</code>, remain subject to the normal version, CI, review, and squash-merge gates, and must not weaken
   Atlaso's generated-lock or release boundaries. Before merging a Python update, regenerate every affected <code>.lock</code>
-  file with Python 3.14 and pip-tools 7.6.0, preserve hashes and <code>--allow-unsafe</code>, refresh the appliance declaration
-  fingerprint, and run the lock and Photon compatibility checks.</li>
+  file through <code>python scripts/compile_requirements.py</code> with Python 3.14 and pip-tools 7.6.0. The wrapper must retain
+  pip's <code>--uploaded-prior-to=P7D</code> cutoff for every direct, transitive, and security update, preserve hashes and required
+  <code>--allow-unsafe</code> behavior, refresh the appliance declaration fingerprint, and run the dependency-policy, lock, and
+  Photon compatibility checks. Do not admit a Python distribution uploaded less than seven full days ago.</li>
 </ul>
 <h2 id="data-classification-and-redaction">Data Classification And Redaction<a class="headerlink" href="#data-classification-and-redaction" title="Permanent link">&para;</a></h2>
 <ul>
