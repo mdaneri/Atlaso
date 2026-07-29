@@ -6830,6 +6830,7 @@ textarea {
 }
 
 .atlaso-monaco-editor {
+  position: relative;
   width: 100%;
   overflow: hidden;
   border: 1px solid var(--border);
@@ -6840,6 +6841,57 @@ textarea {
 .atlaso-monaco-editor:focus-within {
   border-color: #1769e0;
   box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.14);
+}
+
+.atlaso-monaco-expand-button {
+  position: absolute;
+  z-index: 20;
+  top: 7px;
+  right: 18px;
+  min-height: 28px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 4px 9px;
+  background: rgba(248, 250, 252, 0.96);
+  color: #334155;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.atlaso-monaco-expand-button:hover,
+.atlaso-monaco-expand-button:focus-visible {
+  border-color: #1769e0;
+  color: #1769e0;
+  outline: none;
+}
+
+body.atlaso-monaco-expanded-open {
+  overflow: hidden;
+}
+
+dialog.has-expanded-monaco,
+dialog.has-expanded-monaco .confirm-modal-panel {
+  overflow: visible;
+}
+
+.atlaso-monaco-editor.is-expanded {
+  position: fixed;
+  z-index: 10000;
+  inset: 24px;
+  width: auto !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  border-radius: 10px;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.32);
+}
+
+@media (max-width: 700px) {
+  .atlaso-monaco-editor.is-expanded {
+    inset: 8px;
+  }
 }
 
 .terminal-note {

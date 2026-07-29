@@ -132,6 +132,41 @@ function enhanceTextarea(textarea, options = {}) {
     accessibilitySupport: "auto",
     tabSize: 2,
   });
+  const expandButton = document.createElement("button");
+  expandButton.className = "atlaso-monaco-expand-button";
+  expandButton.type = "button";
+  expandButton.textContent = "Expand editor";
+  expandButton.setAttribute("aria-label", "Expand editor");
+  expandButton.setAttribute("aria-pressed", "false");
+  container.append(expandButton);
+  const hostDialog = container.closest("dialog");
+  const setExpanded = (expanded, { restoreFocus = false } = {}) => {
+    document.querySelectorAll(".atlaso-monaco-editor.is-expanded").forEach((other) => {
+      if (other !== container) other.atlasoMonacoRestore?.();
+    });
+    container.classList.toggle("is-expanded", expanded);
+    hostDialog?.classList.toggle("has-expanded-monaco", expanded);
+    document.body.classList.toggle("atlaso-monaco-expanded-open", expanded);
+    expandButton.textContent = expanded ? "Restore editor" : "Expand editor";
+    expandButton.setAttribute("aria-label", expandButton.textContent);
+    expandButton.setAttribute("aria-pressed", String(expanded));
+    requestAnimationFrame(() => editor.layout());
+    if (restoreFocus) expandButton.focus();
+  };
+  container.atlasoMonacoRestore = () => setExpanded(false, { restoreFocus: true });
+  expandButton.addEventListener("click", () => {
+    setExpanded(!container.classList.contains("is-expanded"));
+  });
+  document.addEventListener("keydown", (event) => {
+    if (
+      event.key === "Escape"
+      && container.classList.contains("is-expanded")
+      && !document.querySelector(".suggest-widget.visible")
+    ) {
+      event.preventDefault();
+      setExpanded(false, { restoreFocus: true });
+    }
+  });
   if (editorLanguage(textarea, options) === "atlaso-kickstart") {
     let completions = options.completions;
     if (!Array.isArray(completions) && textarea.dataset.monacoCompletions) {

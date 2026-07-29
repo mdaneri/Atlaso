@@ -3387,6 +3387,7 @@ def test_monaco_is_the_only_bundled_editor_and_kickstart_uses_shared_collection(
     package = Path("package.json").read_text(encoding="utf-8")
     lock = Path("package-lock.json").read_text(encoding="utf-8")
     base = Path("atlaso/app/templates/base.html").read_text(encoding="utf-8")
+    app_css = Path("atlaso/app/static/app.css").read_text(encoding="utf-8")
     app_js = Path("atlaso/app/static/app.js").read_text(encoding="utf-8")
     monaco_source = Path("scripts/monaco-entry.js").read_text(encoding="utf-8")
     templates = "\n".join(
@@ -3422,6 +3423,10 @@ def test_monaco_is_the_only_bundled_editor_and_kickstart_uses_shared_collection(
     assert "vs/editor/editor.all.js" in monaco_source
     assert 'triggerCharacters: ["{"]' in monaco_source
     assert "modelCompletions" in monaco_source
+    assert '"atlaso-monaco-expand-button"' in monaco_source
+    assert '"has-expanded-monaco"' in monaco_source
+    assert 'event.key === "Escape"' in monaco_source
+    assert ".atlaso-monaco-editor.is-expanded" in app_css
     assert "python.contribution" in monaco_source
     assert "shell.contribution" in monaco_source
     assert "powershell.contribution" in monaco_source
