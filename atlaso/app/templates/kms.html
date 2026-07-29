@@ -280,10 +280,13 @@
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
   <input type="hidden" name="record_id" value="">
   <section data-atlaso-wizard-step="identity">
-    <div class="form-grid">
-      <label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Stable operator-visible key name in KMS desired state.">i</button></span><input name="name" required></label>
-      <label><span class="field-label"><span>Algorithm</span><button class="help-icon" type="button" data-help="Cryptographic algorithm represented by this staged key.">i</button></span><select name="algorithm">{% for algorithm in kms_key_algorithms %}<option value="{{ algorithm }}">{{ algorithm }}</option>{% endfor %}</select></label>
-      <label><span class="field-label"><span>Length</span><button class="help-icon" type="button" data-help="Key length in bits, validated against the selected algorithm by the KMS service.">i</button></span><input type="number" name="length" min="1" required></label>
+    <div class="form-stack">
+      <div class="form-grid">
+        <label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Stable operator-visible key name in KMS desired state.">i</button></span><input name="name" required></label>
+        <label><span class="field-label"><span>Algorithm</span><button class="help-icon" type="button" data-help="Cryptographic algorithm represented by this staged key.">i</button></span><select name="algorithm">{% for algorithm in kms_key_algorithms %}<option value="{{ algorithm }}">{{ algorithm }}</option>{% endfor %}</select></label>
+        <label><span class="field-label"><span>Length</span><button class="help-icon" type="button" data-help="Key length in bits, validated against the selected algorithm by the KMS service.">i</button></span><input type="number" name="length" min="1" required></label>
+      </div>
+      <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Operator note describing the key purpose.">i</button></span><textarea name="description" rows="3" maxlength="1000"></textarea></label>
     </div>
   </section>
   <section class="hidden" data-atlaso-wizard-step="policy">
@@ -298,7 +301,6 @@
       <label><span class="field-label"><span>Lifecycle state</span><button class="help-icon" type="button" data-help="Desired KMIP lifecycle state for the staged key.">i</button></span><select name="state">{% for state in kms_key_states %}<option value="{{ state }}">{{ state }}</option>{% endfor %}</select></label>
       <label class="switch-field"><span class="field-label"><span>Key enabled</span><button class="help-icon" type="button" data-help="Enabled keys enter rendered KMS desired state after validation.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
     </div>
-    <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Operator note describing the key purpose.">i</button></span><input name="description"></label>
   </section>
   <section class="hidden" data-atlaso-wizard-step="review">
     <div class="settings-list" data-atlaso-resource-review></div>

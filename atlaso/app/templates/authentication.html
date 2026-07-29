@@ -189,16 +189,16 @@
   <div id="oidc-clients-table" class="tabulator-shell" data-clients='{{ oidc_clients | tojson }}' data-csrf="{{ csrf_token }}" data-fallback-id="oidc-clients-fallback"></div>
   <p id="oidc-clients-status" class="autosave-status" aria-live="polite">Client lifecycle changes are immediate application state and require no appliance apply.</p>
   <table id="oidc-clients-fallback" class="data-table">
-    <thead><tr><th>Name</th><th>Client ID</th><th>Organization</th><th>Exact redirects</th><th>Status</th></tr></thead>
+    <thead><tr><th>Name</th><th>Description</th><th>Client ID</th><th>Organization</th><th>Exact redirects</th><th>Status</th></tr></thead>
     <tbody>
       {% for client in oidc_clients %}
         <tr>
-          <td>{{ client.name }}</td><td><code>{{ client.client_id }}</code></td><td>{{ client.organization_slug or "Unbound" }}</td>
+          <td>{{ client.name }}</td><td>{{ client.description or "" }}</td><td><code>{{ client.client_id }}</code></td><td>{{ client.organization_slug or "Unbound" }}</td>
           <td>{% for uri in client.redirect_uris %}<code>{{ uri }}</code>{% if not loop.last %}<br>{% endif %}{% endfor %}</td>
           <td><span class="status-pill {{ 'good' if client.enabled else 'muted' }}">{{ "enabled" if client.enabled else "disabled" }}</span></td>
         </tr>
-      {% else %}<tr><td colspan="5" class="muted">No confidential clients registered.</td></tr>{% endfor %}
-      <tr class="new-record-row"><td colspan="5"><button class="add-row-button" type="button" data-oidc-client-add>+ Add client here</button></td></tr>
+      {% else %}<tr><td colspan="6" class="muted">No confidential clients registered.</td></tr>{% endfor %}
+      <tr class="new-record-row"><td colspan="6"><button class="add-row-button" type="button" data-oidc-client-add>+ Add client here</button></td></tr>
     </tbody>
   </table>
 </section>
@@ -232,9 +232,12 @@
       <div class="confirm-modal-body vcf-sddc-wizard-body">
           <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 4</p><h3 data-atlaso-wizard-title>Register confidential client</h3><p class="muted" data-atlaso-wizard-description>Set its identity and validated authentication source.</p></div>
         <div class="alert error hidden" data-atlaso-wizard-error></div>
-        <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity"><div class="form-grid">
-          <label><span class="field-label"><span>Client name</span><button class="help-icon" type="button" data-help="Operator-facing label; it is not emitted as an identity claim.">i</button></span><input name="name" required maxlength="160"></label>
-          <label><span class="field-label"><span>Bound organization</span><button class="help-icon" type="button" data-help="Bound clients authenticate only against this enabled managed LDAP organization. Unbound clients require explicit source selection.">i</button></span><select name="organization_id"><option value="">Unbound</option>{% for organization in oidc_organizations %}<option value="{{ organization.id }}">{{ organization.name }}</option>{% endfor %}</select></label>
+        <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity"><div class="form-stack">
+          <div class="form-grid">
+            <label><span class="field-label"><span>Client name</span><button class="help-icon" type="button" data-help="Operator-facing label; it is not emitted as an identity claim.">i</button></span><input name="name" required maxlength="160"></label>
+            <label><span class="field-label"><span>Bound organization</span><button class="help-icon" type="button" data-help="Bound clients authenticate only against this enabled managed LDAP organization. Unbound clients require explicit source selection.">i</button></span><select name="organization_id"><option value="">Unbound</option>{% for organization in oidc_organizations %}<option value="{{ organization.id }}">{{ organization.name }}</option>{% endfor %}</select></label>
+          </div>
+          <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Optional operator note describing the relying party and its purpose.">i</button></span><textarea name="description" rows="3" maxlength="1000"></textarea></label>
           <fieldset class="scope-choice-fieldset">
             <legend>Allowed scopes</legend>
             <div class="scope-choice-grid">
@@ -431,14 +434,14 @@
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
   <input type="hidden" name="record_id" value="">
   <section data-atlaso-wizard-step="identity">
-    <div class="form-grid">
+    <div class="form-stack">
       <label>
         <span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Operator-visible token name. Token names do not grant access.">i</button></span>
         <input name="name" maxlength="120" required>
       </label>
       <label>
         <span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Record the automation or integration that owns this credential.">i</button></span>
-        <input name="description">
+        <textarea name="description" rows="3" maxlength="1000"></textarea>
       </label>
     </div>
   </section>

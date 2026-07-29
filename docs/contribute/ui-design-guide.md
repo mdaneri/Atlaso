@@ -146,6 +146,8 @@ boolean and keeps its established guarded workflow.
 Every wizard must:
 
 - use the shared Atlaso wizard panel, step rail, controls, spacing, and status presentation;
+- use the shared two-column `.form-grid` for peer fields and `.form-stack` for consistently spaced full-width rows;
+- keep an operator Description in the first step on its own full-width multiline row when the resource supports one;
 - place the resource description in step 1 with its identity fields whenever the resource has a description;
 - place an ordinary desired-state **Enabled** control in its own final step immediately before **Review** whenever the
   resource has an enabled state;

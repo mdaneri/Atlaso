@@ -24,10 +24,11 @@ This verified appliance view provides visual orientation before you begin.
 ## Configure a scope
 
 1. Select **Add IP zone here** and use the five-step guided workflow.
-2. Select the interface that owns the client network and record the zone description with its identity.
+2. Select the interface that owns the client network and record the multiline zone description on its own identity row.
 3. Confirm the lease range Atlaso derives from the gateway and prefix, or replace it with another valid,
    non-overlapping range.
-4. Configure lease, DNS, NTP, and domain options, then choose the zone's desired enablement in its dedicated step.
+4. Configure the lease as a positive whole-number duration with an explicit **Minutes**, **Hours**, or **Days** unit,
+   then set DNS, NTP, and domain options and choose the zone's desired enablement in its dedicated step.
 5. Add reservations with unique client identity and address values.
 6. Resolve Validation-card errors and inspect the rendered dnsmasq preview.
 7. Submit `DNS/DHCP (dnsmasq)` through [Appliance Apply](../operate/appliance-apply.md).

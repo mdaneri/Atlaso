@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "partials/resource_wizard.html" import resource_wizard %}
 {% block page_title %}NTP / NTS{% endblock %}
 {% block content %}
 <section class="split-workspace">
@@ -184,4 +185,37 @@
     </div>
   </aside>
 </section>
+
+{% set ntp_source_steps = [
+  {"id": "identity", "label": "Source", "summary": "Endpoint and description"},
+  {"id": "enablement", "label": "Enablement", "summary": "NTS and desired source state"},
+  {"id": "review", "label": "Review", "summary": "Confirm desired state"}
+] %}
+{% call resource_wizard(
+  "ntp-source-dialog",
+  "ntp-source-form",
+  "/ntp/settings",
+  ntp_source_steps,
+  "Define the NTP source",
+  "Set the upstream endpoint and its operator-visible purpose.",
+  "Save NTP source"
+) %}
+  <input type="hidden" name="record_id" value="">
+  <section data-atlaso-wizard-step="identity">
+    <div class="form-stack">
+      <label><span class="field-label"><span>Source</span><button class="help-icon" type="button" data-help="IPv4 address, IPv6 address, or fully qualified DNS name. Append :port for a non-default port; use [IPv6]:port for IPv6.">i</button></span><input name="source" placeholder="time.example.com[:4460]" autocomplete="off" required></label>
+      <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Optional operator note describing this time source.">i</button></span><textarea name="description" rows="3" maxlength="1000"></textarea></label>
+    </div>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="enablement">
+    <div class="form-stack">
+      <label class="switch-field{% if not ntp_nts_supported %} disabled-field{% endif %}"{% if not ntp_nts_supported %} aria-disabled="true"{% endif %}><span class="field-label"><span>Use NTS</span><button class="help-icon" type="button" data-help="{% if ntp_nts_supported %}Authenticate this upstream with Network Time Security.{% else %}Unavailable because the installed ntpd binary does not include NTS support.{% endif %}">i</button></span><input class="switch-input" type="checkbox" name="use_nts"{% if not ntp_nts_supported %} disabled{% endif %}><span class="switch-track" aria-hidden="true"></span></label>
+      <label class="switch-field"><span class="field-label"><span>Source enabled</span><button class="help-icon" type="button" data-help="Enabled sources enter rendered NTPsec desired state after global appliance apply.">i</button></span><input class="switch-input" type="checkbox" name="enabled" checked><span class="switch-track" aria-hidden="true"></span></label>
+    </div>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="review">
+    <div class="settings-list" data-atlaso-resource-review></div>
+    <div class="alert warning">Saving changes NTP desired state only. NTPsec configuration remains controlled by global appliance apply.</div>
+  </section>
+{% endcall %}
 {% endblock %}
