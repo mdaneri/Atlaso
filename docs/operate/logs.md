@@ -33,6 +33,13 @@ This verified appliance view provides visual orientation before you begin.
 The UI intentionally avoids presenting credentials and secret-bearing command lines. If a log entry appears to contain
 sensitive data, do not publish it; follow the private process in the repository security policy.
 
+IP addresses, MAC addresses, hostnames, and account names are not sensitive by themselves in Atlaso. Passwords, tokens,
+authenticated URLs, session material, private keys, password hashes, credential verifiers, and other secret-bearing
+data remain sensitive. Content-integrity hashes of non-secret material and one-way change-detection hashes of
+encrypted-at-rest ciphertext do not. Review the complete excerpt before sharing it because authentication or
+cryptographic context can make an otherwise ordinary identifier sensitive. This classification does not make
+authenticated logs public or override site handling policy.
+
 ## Next steps
 
 Logs are evidence, not an enforcement surface. Correct desired state in the owning service page and submit it through
