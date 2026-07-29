@@ -3438,9 +3438,10 @@ returns 404 for unrelated paths. Listener, DNS, certificate, and firewall desire
 Appliance Apply. Client, key, mapping, and subject lifecycle remains immediate application state.</p>
 <p>Confidential clients are browsed in a Tabulator collection. The bottom <strong>+ Add client here</strong> row and existing client
 rows open the shared reviewed wizard for creation and editing.
-Editing can change the operator label, identity-source binding, granted scopes, exact redirect and post-logout URIs,
-loopback-development posture, and enabled state. Enablement has its own wizard step before review. It never changes the
-generated client ID or exposes the Argon2 secret hash. Creation and secret rotation show plaintext exactly once.</p>
+Editing can change the operator label, full-width multiline purpose description, identity-source binding, granted
+scopes, exact redirect and post-logout URIs, loopback-development posture, and enabled state. Description stays in the
+first identity step. Enablement has its own wizard step before review. It never changes the generated client ID or
+exposes the Argon2 secret hash. Creation and secret rotation show plaintext exactly once.</p>
 <p>Client row actions provide a redacted relying-party integration download. It contains only issuer and discovery
 metadata, public endpoints, client ID, authentication method, granted scopes, exact registered URIs, identity-source
 posture, and enabled state. It never includes a client secret, token, authorization code, private key, password,

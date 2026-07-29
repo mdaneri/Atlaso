@@ -3195,7 +3195,9 @@ unit through Appliance Apply.</p>
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
 <p>Select <strong>+ Domain</strong> to create a forward domain through the guided identity, enablement, and review steps. Each domain
-tab exposes a direct enablement switch. Disabling a domain retains the domain and all scoped records in Atlaso's
+identity includes a full-width multiline description. The selected domain tab presents that description as its heading
+and keeps the DNS suffix in the supporting line. Each domain tab exposes a direct enablement switch. Disabling a domain
+retains the domain and all scoped records in Atlaso's
 database while excluding that zone from rendered dnsmasq desired state; at least one domain must remain enabled.</p>
 <h2 id="local-and-authoritative-modes">Local and authoritative modes<a class="headerlink" href="#local-and-authoritative-modes" title="Permanent link">&para;</a></h2>
 <p>With <strong>Authoritative</strong> off, each managed domain renders as <code>local=/domain/</code>. Atlaso answers known local records and

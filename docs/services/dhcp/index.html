@@ -3151,10 +3151,13 @@
 <h2 id="configure-a-scope">Configure a scope<a class="headerlink" href="#configure-a-scope" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Select <strong>Add IP zone here</strong> and use the five-step guided workflow.</li>
-<li>Select the interface that owns the client network and record the zone description with its identity.</li>
+<li>Select the interface that owns the client network and record the multiline zone description on its own identity row.</li>
 <li>Confirm the lease range Atlaso derives from the gateway and prefix, or replace it with another valid,
    non-overlapping range.</li>
-<li>Configure lease, DNS, NTP, and domain options, then choose the zone's desired enablement in its dedicated step.</li>
+<li>Configure the lease as a positive whole-number duration with an explicit <strong>Minutes</strong>, <strong>Hours</strong>, or <strong>Days</strong> unit,
+   then set DNS, NTP, and domain options and choose the zone's desired enablement in its dedicated step.
+   Existing lease strings outside those supported units remain unchanged until the operator supplies a supported
+   duration and unit.</li>
 <li>Add reservations with unique client identity and address values.</li>
 <li>Resolve Validation-card errors and inspect the rendered dnsmasq preview.</li>
 <li>Submit <code>DNS/DHCP (dnsmasq)</code> through <a href="../../operate/appliance-apply/">Appliance Apply</a>.</li>
