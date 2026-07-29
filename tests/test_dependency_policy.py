@@ -1,7 +1,15 @@
+import io
+import json
 from pathlib import Path
 
 from scripts.check_dependency_policy import LOCK_POLICIES, validate
-from scripts.compile_requirements import LOCK_TARGETS, _compile_command
+from scripts.compile_requirements import (
+    LOCK_TARGETS,
+    _assert_index_provides_upload_times,
+    _compile_command,
+    _compile_environment,
+    _validated_index_url,
+)
 
 
 def write_valid_policy(root: Path) -> None:
@@ -23,7 +31,12 @@ updates:
         encoding="utf-8",
     )
     for policy in LOCK_POLICIES:
-        options = ["--generate-hashes", f"--output-file={policy.path}"]
+        options = [
+            "--generate-hashes",
+            "--index-url=https://pypi.org/simple",
+            "--no-emit-index-url",
+            f"--output-file={policy.path}",
+        ]
         if policy.allow_unsafe:
             options.append("--allow-unsafe")
         options.append("--uploaded-prior-to=P7D")
@@ -97,12 +110,34 @@ def test_dependency_policy_rejects_unhashed_pin(tmp_path: Path) -> None:
     )
 
 
+def test_dependency_policy_rejects_non_exact_requirement(tmp_path: Path) -> None:
+    write_valid_policy(tmp_path)
+    path = tmp_path / "requirements-release-tools.lock"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "second>=2.0 \\\n"
+        + "    --hash=sha256:"
+        + ("b" * 64)
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "requirements-release-tools.lock:" in error
+        and "requirement must use an exact == pin" in error
+        for error in validate(tmp_path)
+    )
+
+
 def test_lock_compiler_applies_upload_cutoff_to_every_target() -> None:
     for target in LOCK_TARGETS:
         command = _compile_command(target, upgrade=False)
 
         assert "--uploaded-prior-to=P7D" in command
         assert "--generate-hashes" in command
+        assert "--index-url=https://pypi.org/simple" in command
+        assert "--no-config" in command
+        assert "--no-emit-index-url" in command
         assert f"--output-file={target.output}" in command
         assert ("--allow-unsafe" in command) is target.allow_unsafe
 
@@ -112,3 +147,67 @@ def test_lock_compiler_adds_upgrade_only_when_requested() -> None:
 
     assert "--upgrade" not in _compile_command(target, upgrade=False)
     assert "--upgrade" in _compile_command(target, upgrade=True)
+
+
+def test_index_validation_requires_https_without_embedded_credentials() -> None:
+    assert _validated_index_url("https://example.invalid/simple/") == (
+        "https://example.invalid/simple"
+    )
+
+    for index_url in (
+        "http://example.invalid/simple",
+        "https://user:secret@example.invalid/simple",
+    ):
+        try:
+            _validated_index_url(index_url)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError(f"{index_url} should have been rejected")
+
+
+def test_index_metadata_check_rejects_missing_upload_times(monkeypatch) -> None:
+    payload = {"files": [{"filename": "pip.whl"}]}
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda request, timeout: io.BytesIO(json.dumps(payload).encode("utf-8")),
+    )
+
+    try:
+        _assert_index_provides_upload_times("https://example.invalid/simple")
+    except RuntimeError as exc:
+        assert "does not provide complete upload-time metadata" in str(exc)
+    else:
+        raise AssertionError("index without upload times should have been rejected")
+
+
+def test_index_metadata_check_accepts_complete_upload_times(monkeypatch) -> None:
+    payload = {
+        "files": [
+            {
+                "filename": "pip.whl",
+                "upload-time": "2026-01-01T00:00:00Z",
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda request, timeout: io.BytesIO(json.dumps(payload).encode("utf-8")),
+    )
+
+    _assert_index_provides_upload_times("https://example.invalid/simple")
+
+
+def test_compile_environment_ignores_unverified_package_sources(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("PIP_INDEX_URL", "https://mirror.invalid/simple")
+    monkeypatch.setenv("PIP_EXTRA_INDEX_URL", "https://extra.invalid/simple")
+    monkeypatch.setenv("PIP_FIND_LINKS", "https://files.invalid/")
+
+    environment = _compile_environment()
+
+    assert environment["PIP_CONFIG_FILE"]
+    assert "PIP_INDEX_URL" not in environment
+    assert "PIP_EXTRA_INDEX_URL" not in environment
+    assert "PIP_FIND_LINKS" not in environment

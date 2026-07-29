@@ -6,13 +6,17 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
 import tomllib
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,6 +24,7 @@ EXPECTED_PYTHON = (3, 14)
 EXPECTED_PIP_TOOLS = "7.6.0"
 MINIMUM_PIP = (26, 0)
 MINIMUM_AGE = "P7D"
+DEFAULT_INDEX_URL = "https://pypi.org/simple"
 DECLARATION_HASH_RE = re.compile(r"^# atlaso-declarations-sha256: [0-9a-f]{64}$")
 
 
@@ -76,13 +81,21 @@ def _toolchain_error() -> str:
     return ""
 
 
-def _compile_command(target: LockTarget, *, upgrade: bool) -> list[str]:
+def _compile_command(
+    target: LockTarget,
+    *,
+    upgrade: bool,
+    index_url: str = DEFAULT_INDEX_URL,
+) -> list[str]:
     command = [
         sys.executable,
         "-m",
         "piptools",
         "compile",
         "--generate-hashes",
+        f"--index-url={index_url}",
+        "--no-config",
+        "--no-emit-index-url",
         "--quiet",
         f"--output-file={target.output}",
         f"--uploaded-prior-to={MINIMUM_AGE}",
@@ -95,6 +108,50 @@ def _compile_command(target: LockTarget, *, upgrade: bool) -> list[str]:
         command.append("--upgrade")
     command.extend(target.inputs)
     return command
+
+
+def _validated_index_url(index_url: str) -> str:
+    parsed = urlsplit(index_url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise RuntimeError("the package index must use an absolute HTTPS URL")
+    if parsed.username is not None or parsed.password is not None:
+        raise RuntimeError("the package index URL must not contain embedded credentials")
+    return index_url.rstrip("/")
+
+
+def _assert_index_provides_upload_times(index_url: str) -> None:
+    request = urllib.request.Request(
+        f"{index_url}/pip/",
+        headers={"Accept": "application/vnd.pypi.simple.v1+json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            payload = json.load(response)
+    except (OSError, ValueError, urllib.error.HTTPError) as exc:
+        raise RuntimeError(
+            "the package index upload-time metadata check failed"
+        ) from exc
+    files = payload.get("files") if isinstance(payload, dict) else None
+    if not files or any(
+        not isinstance(file, dict) or not file.get("upload-time") for file in files
+    ):
+        raise RuntimeError(
+            "the package index does not provide complete upload-time metadata; "
+            f"cannot enforce --uploaded-prior-to={MINIMUM_AGE}"
+        )
+
+
+def _compile_environment() -> dict[str, str]:
+    environment = os.environ.copy()
+    for name in (
+        "PIP_EXTRA_INDEX_URL",
+        "PIP_FIND_LINKS",
+        "PIP_INDEX_URL",
+        "PIP_NO_INDEX",
+    ):
+        environment.pop(name, None)
+    environment["PIP_CONFIG_FILE"] = os.devnull
+    return environment
 
 
 def _appliance_declaration_hash() -> str:
@@ -152,15 +209,31 @@ def main() -> int:
         action="store_true",
         help="Upgrade eligible packages while retaining the seven-day cutoff.",
     )
+    parser.add_argument(
+        "--index-url",
+        default=DEFAULT_INDEX_URL,
+        help=(
+            "PEP 691/700 package index used for resolution "
+            f"(default: {DEFAULT_INDEX_URL})."
+        ),
+    )
     args = parser.parse_args()
     error = _toolchain_error()
     if error:
         print(error, file=sys.stderr)
         return 2
+    try:
+        index_url = _validated_index_url(args.index_url)
+        _assert_index_provides_upload_times(index_url)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    environment = _compile_environment()
     for target in LOCK_TARGETS:
         subprocess.run(
-            _compile_command(target, upgrade=args.upgrade),
+            _compile_command(target, upgrade=args.upgrade, index_url=index_url),
             cwd=ROOT,
+            env=environment,
             check=True,
         )
     _record_appliance_declaration_hash()

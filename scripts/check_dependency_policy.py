@@ -13,7 +13,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MINIMUM_AGE_DAYS = 7
 UPLOAD_CUTOFF = f"P{MINIMUM_AGE_DAYS}D"
-PIN_RE = re.compile(r"^[A-Za-z0-9_.-]+==[^\s\\]+")
+INDEX_URL = "https://pypi.org/simple"
+PIN_RE = re.compile(
+    r"^[A-Za-z0-9_.-]+==[^\s\\;]+(?:\s*;\s*[^\\]+)?\s*\\?$"
+)
 HASH_RE = re.compile(r"--hash=sha256:[0-9a-f]{64}")
 
 
@@ -113,6 +116,8 @@ def validate(root: Path = ROOT) -> list[str]:
         else:
             required_options = {
                 "--generate-hashes",
+                f"--index-url={INDEX_URL}",
+                "--no-emit-index-url",
                 f"--output-file={policy.path}",
                 f"--uploaded-prior-to={UPLOAD_CUTOFF}",
             }
@@ -133,17 +138,31 @@ def validate(root: Path = ROOT) -> list[str]:
                     f"{', '.join(missing_inputs)}"
                 )
 
-        pin_indexes = [
-            index for index, line in enumerate(lines) if PIN_RE.match(line)
+        requirement_indexes = [
+            index
+            for index, line in enumerate(lines)
+            if line
+            and not line[0].isspace()
+            and not line.startswith("#")
+            and not line.startswith("--")
         ]
-        if not pin_indexes:
-            errors.append(f"{policy.path}: lock contains no exact package pins")
+        if not requirement_indexes:
+            errors.append(f"{policy.path}: lock contains no package requirements")
             continue
-        for offset, index in enumerate(pin_indexes):
-            next_pin = (
-                pin_indexes[offset + 1] if offset + 1 < len(pin_indexes) else len(lines)
+        for offset, index in enumerate(requirement_indexes):
+            if not PIN_RE.fullmatch(lines[index]):
+                errors.append(
+                    f"{policy.path}:{index + 1}: requirement must use an exact == pin"
+                )
+                continue
+            next_requirement = (
+                requirement_indexes[offset + 1]
+                if offset + 1 < len(requirement_indexes)
+                else len(lines)
             )
-            if not any(HASH_RE.search(line) for line in lines[index:next_pin]):
+            if not any(
+                HASH_RE.search(line) for line in lines[index:next_requirement]
+            ):
                 errors.append(
                     f"{policy.path}:{index + 1}: pinned requirement has no SHA256 hash"
                 )

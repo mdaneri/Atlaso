@@ -37,6 +37,11 @@ bootstrap tools retain `--allow-unsafe`, and the wrapper refreshes the declarati
 `requirements-appliance.lock`. Pass `--upgrade` only when the intended change should move every eligible package to the
 newest version that satisfies the seven-day cutoff.
 
+The wrapper resolves against the PEP 691/700 JSON API at `https://pypi.org/simple` by default and verifies that the
+index returns upload times before compiling. It ignores pip configuration and environment variables that could add an
+unverified index or find-links source. An approved alternative can be supplied with `--index-url`, but it must use HTTPS,
+must not embed credentials, and must provide complete upload-time metadata or compilation stops before any lock changes.
+
 Do not edit generated pins, hashes, generation-command headers, or the appliance fingerprint manually. Do not remove or
 shorten the upload-time cutoff to obtain a newer dependency, including for a security update. If no eligible version
 satisfies the input declarations, change the input constraint through a reviewed dependency update or wait until the
