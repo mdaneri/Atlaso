@@ -1101,7 +1101,7 @@ async function atlasoGridWizardRequest(url, formData, { expectJson = true } = {}
     method: "POST",
     body: formData,
     credentials: "same-origin",
-    headers: { "X-Atlaso-Grid": "1" },
+    headers: { Accept: "application/json", "X-Atlaso-Grid": "1" },
   });
   const responseText = await response.text();
   if (!response.ok) {
