@@ -6,19 +6,19 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Configure, validate, and operate the signed Atlaso appliance update workflow.">
+        <meta name="description" content="Bounded VCF 9.1 KMIP contract, evidence format, and support-promotion gate.">
       
       
         <meta name="author" content="Atlaso contributors">
       
       
-        <link rel="canonical" href="https://mdaneri.github.io/Atlaso/docs/operate/appliance-update/">
+        <link rel="canonical" href="https://mdaneri.github.io/Atlaso/docs/reference/vsphere-key-provider-protocol/">
       
       
-        <link rel="prev" href="../appliance-console/">
+        <link rel="prev" href="../appliance-console-technical/">
       
       
-        <link rel="next" href="../backup-restore/">
+        <link rel="next" href="../vsphere-key-provider-security/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>Signed Appliance Releases and Photon Updates - Atlaso Documentation</title>
+        <title>vSphere Key Provider protocol contract - Atlaso Documentation</title>
       
     
     
@@ -87,7 +87,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#signed-appliance-releases-and-photon-updates" class="md-skip">
+        <a href="#vsphere-key-provider-protocol-contract" class="md-skip">
           Skip to content
         </a>
       
@@ -122,7 +122,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Signed Appliance Releases and Photon Updates
+              vSphere Key Provider protocol contract
             
           </span>
         </div>
@@ -242,8 +242,6 @@
   
   
   
-    
-  
   
     
       
@@ -282,8 +280,8 @@
     
     
     
-      <li class="md-tabs__item md-tabs__item--active">
-        <a href="../" class="md-tabs__link">
+      <li class="md-tabs__item">
+        <a href="../../operate/" class="md-tabs__link">
           
   
   Operate
@@ -360,6 +358,8 @@
   
   
   
+    
+  
   
     
       
@@ -390,8 +390,8 @@
     
     
     
-      <li class="md-tabs__item">
-        <a href="../../reference/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
           
   
   Reference
@@ -639,8 +639,6 @@
       
   
   
-    
-  
   
   
     
@@ -680,23 +678,20 @@
     
     
       
-        
-        
-      
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../" class="md-nav__link ">
+            <a href="../../operate/" class="md-nav__link ">
               
   
   
@@ -720,13 +715,13 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -745,7 +740,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../dashboard/" class="md-nav__link">
+      <a href="../../operate/dashboard/" class="md-nav__link">
         
   
   
@@ -779,7 +774,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../monitor/" class="md-nav__link">
+      <a href="../../operate/monitor/" class="md-nav__link">
         
   
   
@@ -813,7 +808,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../logs/" class="md-nav__link">
+      <a href="../../operate/logs/" class="md-nav__link">
         
   
   
@@ -847,7 +842,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../audit-log/" class="md-nav__link">
+      <a href="../../operate/audit-log/" class="md-nav__link">
         
   
   
@@ -881,7 +876,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tasks/" class="md-nav__link">
+      <a href="../../operate/tasks/" class="md-nav__link">
         
   
   
@@ -915,7 +910,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../appliance-apply/" class="md-nav__link">
+      <a href="../../operate/appliance-apply/" class="md-nav__link">
         
   
   
@@ -949,7 +944,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../appliance-settings/" class="md-nav__link">
+      <a href="../../operate/appliance-settings/" class="md-nav__link">
         
   
   
@@ -983,7 +978,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../networking/" class="md-nav__link">
+      <a href="../../operate/networking/" class="md-nav__link">
         
   
   
@@ -1017,7 +1012,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../appliance-console/" class="md-nav__link">
+      <a href="../../operate/appliance-console/" class="md-nav__link">
         
   
   
@@ -1048,43 +1043,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Appliance Update
-
-    
-  </span>
-  
-  
-    
-  
-  
-    <span class="md-status md-status--current"></span>
-  
-
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="././" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../operate/appliance-update/" class="md-nav__link">
         
   
   
@@ -1106,143 +1068,6 @@
   
 
       </a>
-      
-        
-
-
-<nav class="md-nav md-nav--secondary" aria-label="On this page">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      On this page
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#interface-overview" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Interface overview
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#update-streams" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Update streams
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#release-sources-and-channels" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Release sources and channels
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#trust-contract" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Trust contract
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#transactional-installation" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Transactional installation
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#photon-os-boundary" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Photon OS boundary
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#signed-lifecycle-fixture" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Signed lifecycle fixture
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#release-operator-workflow" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Release operator workflow
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#additional-verified-states" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Additional verified states
-      </span>
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Additional verified states">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#appliance-update" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Appliance Update
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1255,7 +1080,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../backup-restore/" class="md-nav__link">
+      <a href="../../operate/backup-restore/" class="md-nav__link">
         
   
   
@@ -1289,7 +1114,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../automation/" class="md-nav__link">
+      <a href="../../operate/automation/" class="md-nav__link">
         
   
   
@@ -1323,7 +1148,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../web-terminal/" class="md-nav__link">
+      <a href="../../operate/web-terminal/" class="md-nav__link">
         
   
   
@@ -2052,6 +1877,8 @@
       
   
   
+    
+  
   
   
     
@@ -2083,20 +1910,23 @@
     
     
       
+        
+        
+      
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../reference/" class="md-nav__link ">
+            <a href="../" class="md-nav__link ">
               
   
   
@@ -2120,13 +1950,13 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
@@ -2145,7 +1975,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/api/" class="md-nav__link">
+      <a href="../api/" class="md-nav__link">
         
   
   
@@ -2179,7 +2009,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/interface-gallery/" class="md-nav__link">
+      <a href="../interface-gallery/" class="md-nav__link">
         
   
   
@@ -2213,7 +2043,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/appliance-apply-technical/" class="md-nav__link">
+      <a href="../appliance-apply-technical/" class="md-nav__link">
         
   
   
@@ -2247,7 +2077,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/appliance-console-technical/" class="md-nav__link">
+      <a href="../appliance-console-technical/" class="md-nav__link">
         
   
   
@@ -2278,10 +2108,43 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../reference/vsphere-key-provider-protocol/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  vSphere Key Provider protocol
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--roadmap"></span>
+  
+
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
         
   
   
@@ -2303,6 +2166,82 @@
   
 
       </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#compatibility-statement" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Compatibility statement
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#candidate-allowlist" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Candidate allowlist
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#evidence-capture" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Evidence capture
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#promotion-to-observed" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Promotion to observed
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#authoritative-sources" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Authoritative sources
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2315,7 +2254,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/vsphere-key-provider-security/" class="md-nav__link">
+      <a href="../vsphere-key-provider-security/" class="md-nav__link">
         
   
   
@@ -2349,7 +2288,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/full-technical-reference/" class="md-nav__link">
+      <a href="../full-technical-reference/" class="md-nav__link">
         
   
   
@@ -2383,7 +2322,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/hyperv-lifecycle-testing/" class="md-nav__link">
+      <a href="../hyperv-lifecycle-testing/" class="md-nav__link">
         
   
   
@@ -2417,7 +2356,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/vmware-workstation-lifecycle-testing/" class="md-nav__link">
+      <a href="../vmware-workstation-lifecycle-testing/" class="md-nav__link">
         
   
   
@@ -3010,10 +2949,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#interface-overview" class="md-nav__link">
+  <a href="#compatibility-statement" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Interface overview
+        Compatibility statement
       </span>
     </span>
   </a>
@@ -3021,10 +2960,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#update-streams" class="md-nav__link">
+  <a href="#candidate-allowlist" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Update streams
+        Candidate allowlist
       </span>
     </span>
   </a>
@@ -3032,10 +2971,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#release-sources-and-channels" class="md-nav__link">
+  <a href="#evidence-capture" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Release sources and channels
+        Evidence capture
       </span>
     </span>
   </a>
@@ -3043,10 +2982,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#trust-contract" class="md-nav__link">
+  <a href="#promotion-to-observed" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Trust contract
+        Promotion to observed
       </span>
     </span>
   </a>
@@ -3054,74 +2993,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#transactional-installation" class="md-nav__link">
+  <a href="#authoritative-sources" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Transactional installation
+        Authoritative sources
       </span>
     </span>
   </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#photon-os-boundary" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Photon OS boundary
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#signed-lifecycle-fixture" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Signed lifecycle fixture
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#release-operator-workflow" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Release operator workflow
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#additional-verified-states" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Additional verified states
-      </span>
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Additional verified states">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#appliance-update" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Appliance Update
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -3191,14 +3069,6 @@
       
         
       
-        
-      
-        
-      
-        
-      
-        
-      
     
     
     
@@ -3208,7 +3078,7 @@
           
   
   <span class="md-ellipsis">
-    Operate
+    Reference
   </span>
 
         </a>
@@ -3225,7 +3095,7 @@
                 
                   
   
-    <a href="https://github.com/mdaneri/Atlaso/edit/main/docs/operate/appliance-update.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/mdaneri/Atlaso/edit/main/docs/reference/vsphere-key-provider-protocol.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-pen" viewBox="0 0 24 24"><path d="M12.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v9.34"/><path d="M14 2v5a1 1 0 0 0 1 1h5M10.378 12.622a1 1 0 0 1 3 3.003L8.36 20.637a2 2 0 0 1-.854.506l-2.867.837a.5.5 0 0 1-.62-.62l.836-2.869a2 2 0 0 1 .506-.853z"/></svg>
     </a>
@@ -3234,229 +3104,182 @@
     
       
     
-    <a href="https://github.com/mdaneri/Atlaso/raw/main/docs/operate/appliance-update.md" title="View source of this page" class="md-content__button md-icon">
+    <a href="https://github.com/mdaneri/Atlaso/raw/main/docs/reference/vsphere-key-provider-protocol.md" title="View source of this page" class="md-content__button md-icon">
       
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-code-2" viewBox="0 0 24 24"><path d="M4 12.15V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-3.35"/><path d="M14 2v5a1 1 0 0 0 1 1h5M5 16l-3 3 3 3M9 22l3-3-3-3"/></svg>
     </a>
   
 
 
-<h1 id="signed-appliance-releases-and-photon-updates">Signed Appliance Releases and Photon Updates<a class="headerlink" href="#signed-appliance-releases-and-photon-updates" title="Permanent link">&para;</a></h1>
-<p>Appliance Update is audited runtime maintenance, separate from desired-state enforcement and <code>/appliance-apply</code>. The web
-process queues work, and <code>atlaso-worker.service</code> executes it as a durable <code>appliance-update</code> task. Each manual or
-scheduled check/install is one parent task with an ordered child step for every selected stream. The child owns its
-status, progress, timestamps, compatibility evidence, error, and bounded redacted helper output. The parent retains the
-shared source snapshot and aggregates the selected channel and release, verified key ID, checksums, service checks,
-rollback result, and final outcome.</p>
-<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
-<h2 id="interface-overview">Interface overview<a class="headerlink" href="#interface-overview" title="Permanent link">&para;</a></h2>
-<p>This verified appliance view provides visual orientation before you begin.</p>
-<p><img alt="Atlaso Appliance Update page in the clean-appliance desktop viewport." src="../../assets/screenshots/appliance-update-clean-desktop.webp" /></p>
-<p><em>Figure: Appliance Update in the verified clean-appliance desktop state.</em></p>
-<!-- END GENERATED INTERFACE OVERVIEW -->
-
-<h2 id="update-streams">Update streams<a class="headerlink" href="#update-streams" title="Permanent link">&para;</a></h2>
-<p>Atlaso has three update streams:</p>
+<h1 id="vsphere-key-provider-protocol-contract">vSphere Key Provider protocol contract<a class="headerlink" href="#vsphere-key-provider-protocol-contract" title="Permanent link">&para;</a></h1>
+<p>Atlaso is replacing its broad PyKMIP lab listener with an appliance-native service for one narrow use case: a
+<strong>vSphere Key Provider</strong> consumed by VMware Cloud Foundation (VCF) 9.1. This page defines the candidate protocol boundary
+for implementation. It does not claim that the service is interoperable or supported yet.</p>
+<p>The machine-readable source is
+<a href="../../../atlaso/app/kmip/contracts/vcf_9_1.json"><code>atlaso/app/kmip/contracts/vcf_9_1.json</code></a>. Issue
+<a href="https://github.com/mdaneri/Atlaso/issues/172">#172</a> owns the live acceptance run that may promote its status from
+<code>candidate-unverified</code> to <code>observed</code>.</p>
+<h2 id="compatibility-statement">Compatibility statement<a class="headerlink" href="#compatibility-statement" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Atlaso Release</strong> installs one signed, self-contained application release. It replaces the former independent Atlaso
-  wheel and Python Libraries streams.</li>
-<li><strong>Photon OS</strong> checks or installs packages only after validating the proposed system Python ABI against the active
-  Atlaso release.</li>
-<li><strong>PowerShell Modules</strong> checks or installs the explicitly managed modules from their selected repositories. After
-  installing or updating <code>VCF.PowerCLI</code>, the helper reapplies and verifies the centralized VMware CEIP preference at
-  PowerCLI <code>AllUsers</code> scope. Explicit <code>User</code> and <code>Session</code> overrides remain outside Atlaso ownership. Privileged
-  PowerShell work uses the root-owned home <code>/var/lib/atlaso/powershell</code>, so synchronized repository state persists
-  without depending on the service's read-only <code>/root</code> view.</li>
+<li>The only initial product target is VCF 9.1.</li>
+<li>The service uses KMIP 1.4 TTLV over mutually authenticated TLS on TCP 5696.</li>
+<li>It manages AES-256 symmetric keys in Raw format.</li>
+<li>It is not a general-purpose KMIP implementation, production HSM, or compatibility claim for other vSphere or VCF
+  releases.</li>
+<li>A logical vSphere Key Provider is an isolated key namespace. It may trust multiple vCenter client certificates.</li>
+<li>Atlaso organizations and LDAP identities do not select or cross provider namespaces.</li>
 </ul>
-<p>The appliance never performs a broad runtime <code>pip --upgrade</code> and never contacts PyPI during a Atlaso release update.
-Application dependencies and bootstrap tools are exact, hash-locked wheels inside the release bundle.</p>
-<p>Checks execute every selected child even when another check fails, which keeps diagnostics independent. Installations
-preserve the safety order Atlaso Release, PowerShell Modules, then Photon OS. PowerShell remains independently
-observable after a release failure, while Photon is marked <strong>skipped</strong> with an explicit reason if either earlier
-selected stream failed. The parent succeeds only when every selected child succeeds.</p>
-<h2 id="release-sources-and-channels">Release sources and channels<a class="headerlink" href="#release-sources-and-channels" title="Permanent link">&para;</a></h2>
-<p>GitHub is the default distribution origin:</p>
+<p>The candidate operation list is intentionally allowlisted. The daemon must return a protocol error for every operation,
+object, algorithm, length, format, or attribute outside the checked-in contract. Expanding the list requires recorded
+VCF 9.1 evidence, tests, documentation, and security review.</p>
+<h2 id="candidate-allowlist">Candidate allowlist<a class="headerlink" href="#candidate-allowlist" title="Permanent link">&para;</a></h2>
+<p>The candidate contract allows the operations below for implementation and capture. This list is based on the OASIS
+KMIP 1.4 baseline and symmetric-key lifecycle profiles plus the vSphere <code>CryptoManagerKmip</code> integration surface. It is
+not an observation of a running VCF 9.1 system.</p>
+<table>
+<thead>
+<tr>
+<th>Area</th>
+<th>Candidate boundary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Discovery</td>
+<td>Discover Versions, Query</td>
+</tr>
+<tr>
+<td>Key creation</td>
+<td>Create, Activate</td>
+</tr>
+<tr>
+<td>Key lookup</td>
+<td>Get, Get Attribute List, Get Attributes, Locate</td>
+</tr>
+<tr>
+<td>Object</td>
+<td>Symmetric Key only</td>
+</tr>
+<tr>
+<td>Algorithm</td>
+<td>AES-256 only</td>
+</tr>
+<tr>
+<td>Format</td>
+<td>Raw only</td>
+</tr>
+<tr>
+<td>Transport</td>
+<td>KMIP 1.4 TTLV, TLS 1.2 or newer, mutual TLS, TCP 5696</td>
+</tr>
+</tbody>
+</table>
+<p>The contract explicitly excludes cryptographic execution such as Encrypt, Decrypt, Sign, and MAC; asymmetric or secret
+data objects; key-pair creation; Register; Re-Key; Revoke; Archive; Recover; and every destructive operation. A future
+change may add an operation only after it is shown to be required by the target acceptance scenario.</p>
+<h2 id="evidence-capture">Evidence capture<a class="headerlink" href="#evidence-capture" title="Permanent link">&para;</a></h2>
+<p>Interop evidence is newline-delimited JSON containing metadata only. Each event has exactly these fields:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>schema_version</code></td>
+<td>Trace schema version, currently <code>1</code></td>
+</tr>
+<tr>
+<td><code>timestamp</code></td>
+<td>UTC event time</td>
+</tr>
+<tr>
+<td><code>connection_id</code></td>
+<td>Ephemeral correlation identifier</td>
+</tr>
+<tr>
+<td><code>client_cert_sha256</code></td>
+<td>SHA-256 fingerprint, never certificate private material</td>
+</tr>
+<tr>
+<td><code>provider_id</code></td>
+<td>Logical provider identifier</td>
+</tr>
+<tr>
+<td><code>protocol_version</code></td>
+<td>Negotiated KMIP version</td>
+</tr>
+<tr>
+<td><code>operation</code></td>
+<td>Decoded operation name</td>
+</tr>
+<tr>
+<td><code>object_type</code></td>
+<td>Decoded object type or <code>null</code></td>
+</tr>
+<tr>
+<td><code>algorithm</code></td>
+<td>Contract algorithm such as <code>AES</code>, or <code>null</code> when not applicable</td>
+</tr>
+<tr>
+<td><code>key_length</code></td>
+<td>Contract key length such as <code>256</code>, or <code>null</code> when not applicable</td>
+</tr>
+<tr>
+<td><code>key_format_type</code></td>
+<td>Contract key format such as <code>Raw</code>, or <code>null</code> when not applicable</td>
+</tr>
+<tr>
+<td><code>attribute_names</code></td>
+<td>Attribute names only, never values</td>
+</tr>
+<tr>
+<td><code>result_status</code></td>
+<td>KMIP result status</td>
+</tr>
+<tr>
+<td><code>result_reason</code></td>
+<td>Allowlisted KMIP reason name or <code>null</code>, never free-form diagnostics</td>
+</tr>
+<tr>
+<td><code>request_digest</code></td>
+<td>SHA-256 digest of the canonical request, never the request bytes</td>
+</tr>
+</tbody>
+</table>
+<p>Raw TTLV, request or response bodies, key bytes, credentials, secrets, private keys, and passwords are forbidden. The
+validator rejects secret-bearing field names, unexpected fields, non-contract operations, algorithms, lengths, formats,
+attributes and reasons, and invalid digests. Every Create event must record all three non-secret key-shape values:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">kmip</span><span class="p">/</span><span class="n">validate_interop_trace</span><span class="p">.</span><span class="n">py</span> <span class="p">&lt;</span><span class="n">redacted-trace</span><span class="p">.</span><span class="n">jsonl</span><span class="p">&gt;</span> <span class="p">-</span><span class="n">-output</span> <span class="p">&lt;</span><span class="n">summary</span><span class="p">.</span><span class="n">json</span><span class="p">&gt;</span>
+</span></code></pre></div>
+<p>The summary is safe to attach to an issue only after a human confirms that the source trace followed the same
+metadata-only contract. Neither file should include authenticated URLs or client certificate contents.</p>
+<h2 id="promotion-to-observed">Promotion to observed<a class="headerlink" href="#promotion-to-observed" title="Permanent link">&para;</a></h2>
+<p>The status may become <code>observed</code> only when all of the following are recorded for the exact VCF 9.1 target:</p>
+<ol>
+<li>vCenter registers the provider and completes mutual trust.</li>
+<li>Provider health is green from vCenter and every participating ESXi host.</li>
+<li>VCF creates an AES-256 key and subsequently retrieves it by stable unique identifier.</li>
+<li>A real encrypted workload survives service restart, appliance restart, and a tested restore from the recovery
+   bundle.</li>
+<li>The redacted trace passes the validator without adding permissive fallback behavior.</li>
+<li>All observed operations and attributes are represented by focused protocol tests.</li>
+<li>Security review confirms namespace isolation, fail-closed identity mapping, and absence of secret material from
+   logs, tasks, audits, screenshots, and evidence.</li>
+</ol>
+<p>If a VCF 9.1 client uses an operation outside the candidate list, acceptance fails. Contributors must first determine
+whether the operation is required, document its lifecycle and authorization semantics, and review the threat model
+before changing the allowlist.</p>
+<h2 id="authoritative-sources">Authoritative sources<a class="headerlink" href="#authoritative-sources" title="Permanent link">&para;</a></h2>
 <ul>
-<li>GitHub Releases stores immutable versioned manifests, signatures, and bundles.</li>
-<li>GitHub Pages publishes signed <code>development</code>, <code>preview</code>, and <code>stable</code> channel pointers. Its root serves a small
-  informational release-repository page; appliances continue to use only the signed JSON documents under <code>/updates</code>.</li>
-<li>A successful <code>main</code> CI run publishes the exact successful commit as <code>vX.Y.Z</code> and advances <code>development</code>.</li>
-<li>A protected manual dispatch may recover a failed publication only by naming a full commit that already has a
-  successful <code>main</code> push CI run. The workflow verifies that provenance and that the commit remains on <code>main</code> before
-  rebuilding and signing its deterministic release inputs.</li>
-<li>The manual promotion workflow advances <code>preview</code> or <code>stable</code> to an existing verified release. Promotion never rebuilds
-  the artifact.</li>
+<li><a href="https://docs.oasis-open.org/kmip/spec/v1.4/kmip-spec-v1.4.html">OASIS KMIP Specification Version 1.4</a></li>
+<li><a href="https://docs.oasis-open.org/kmip/profiles/v1.4/kmip-profiles-v1.4.html">OASIS KMIP Profiles Version 1.4</a></li>
+<li><a href="https://developer.broadcom.com/xapis/vsphere-web-services-api/latest/vim.encryption.CryptoManagerKmip.html">Broadcom vSphere <code>CryptoManagerKmip</code> API</a></li>
 </ul>
-<p>The default source is:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>https://mdaneri.github.io/Atlaso/updates
-</span></code></pre></div>
-<p>The human-facing Pages URL is <code>https://mdaneri.github.io/Atlaso/</code>. The repository name is case-sensitive in the
-project-site path. The landing page contains no updater state or trust material and does not replace signature
-verification.</p>
-<p>For the <code>stable</code> channel, the appliance reads:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>https://mdaneri.github.io/Atlaso/updates/channels/stable/manifest.json
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>https://mdaneri.github.io/Atlaso/updates/channels/stable/manifest.json.sig
-</span></code></pre></div>
-<p>Operators may add HTTPS mirrors and failover sources. A mirror copies the original channel pointers, release manifests,
-signatures, and bundles without re-signing them. Every source must satisfy the same signed v2 contract. Credentials
-remain encrypted in the database and move to the privileged helper only in the existing mode-0600 transient file. They
-are not written to manifests, tasks, audits, URLs, or helper output.</p>
-<p>Create a Photon, PowerShell, or Atlaso source from the <strong>+ Repository</strong> launcher in that ecosystem's repository tab
-strip. The guided
-workflow collects repository identity, its endpoint and ecosystem-specific trust policy, desired availability, and a
-final review. Saving the wizard creates desired state only: it does not install packages or change a running package
-client.</p>
-<p>Existing Photon and PowerShell source fields autosave as desired runtime-maintenance configuration. <strong>Synchronize
-repositories</strong> explicitly writes only Atlaso-owned tdnf and PowerShell client configuration. Their source cards show
-whether that synchronization has not run, succeeded, or failed. Signed Atlaso sources are read directly, are checked
-during each update, and do not configure pip or report package-client synchronization state.</p>
-<p>Each source editor presents repository identity first, then its location or discovered runtime data, followed by one
-grouped <strong>Repository behavior</strong> row. Autosave and synchronization state remain together in a separated footer, with
-repository deletion isolated as the destructive action.</p>
-<p>Managed PowerShell module editors follow the same hierarchy: module identity and version policy first, then a grouped
-<strong>Module behavior</strong> switch and a separated autosave/delete footer. The <strong>+ Module</strong> launcher opens a reviewed wizard for
-module identity, version resolution, enablement, and final confirmation; saving it does not install the module. The
-Update Streams workspace keeps the shared Tasks
-grid, server-scoped to Appliance Update tasks. It preserves the standard sorting, filtering, component tree, progress,
-row menu, and detail behavior. Because the embedded endpoint is already scoped to Appliance Update, the Task / Component
-column is fixed there; the full Tasks page retains its editable component filter. The grid expands through the remaining
-Update Streams workspace height rather than using a compact fixed-height embed. This table replaces the former Last
-Update rail and submission-result cards. Checks and installations submit asynchronously: only grid data refreshes, the
-new task is highlighted, and both action buttons remain disabled until that task succeeds, fails, or is cancelled. The
-stream actions use explicit <strong>Check for updates</strong> and <strong>Install updates</strong> labels, with distinct search and install cues
-and visible copy that identifies the check as read-only. The same header links recurring maintenance to the Automation
-Schedules workspace, where operators can schedule Appliance Update checks or installations. The Update Info rail card
-reports whether durable updater evidence is available and opens the full JSON through the shared preview modal, matching
-Validation instead of rendering unbounded output inline.</p>
-<h2 id="trust-contract">Trust contract<a class="headerlink" href="#trust-contract" title="Permanent link">&para;</a></h2>
-<p>Appliances contain named Ed25519 public keys under:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>/etc/atlaso/update-trust.d/&lt;key-id&gt;.pem
-</span></code></pre></div>
-<p>Private signing keys exist only in the protected <code>appliance-release</code> GitHub environment. The updater rejects missing,
-malformed, unknown-key, mismatched, or invalid signatures. A release may add a future public key because its contents
-are already signed by a currently trusted key. Old keys are retained until an overlapping signed release has provisioned
-the replacement.</p>
-<p>Photon image builds stage the checked-in <code>image/common/update-trust</code> directory and fail if it is missing, empty, or
-contains a malformed public key. The development-only VMware <code>deploy-wheel.ps1</code> bridge also synchronizes every
-checked-in <code>.pem</code> public key into the root-owned trust directory. Updating only the application wheel cannot repair a
-missing trust store because the unprivileged application does not write <code>/etc</code>.</p>
-<p>If an appliance reports that a named channel signing key is not trusted, first verify that the matching checked-in
-public key exists on the appliance:</p>
-<div class="language-sh highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>sudo<span class="w"> </span>ls<span class="w"> </span>-l<span class="w"> </span>/etc/atlaso/update-trust.d/
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>sudo<span class="w"> </span>openssl<span class="w"> </span>pkey<span class="w"> </span>-pubin<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>-in<span class="w"> </span>/etc/atlaso/update-trust.d/&lt;key-id&gt;.pem<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span>-noout
-</span></code></pre></div>
-<p>Rebuild or redeploy an affected development appliance with the corrected image or <code>deploy-wheel.ps1</code>. Production
-operators must provision the exact published public key through a trusted out-of-band appliance maintenance path; never
-disable signature verification or copy private signing material to an appliance.</p>
-<p>A signed channel pointer contains its channel, selected version and full commit, immutable release-manifest URL, issue
-time, and signing-key ID. The signed release manifest contains its version and commit, build time, updater protocol,
-database schema version, supported Python ABIs, bundle URL/size/hash, and a hash for every bundled file.</p>
-<p>Atlaso accepts only signed v2 channel pointers and immutable release manifests. The Pages root is informational and is
-not part of the update trust contract.</p>
-<h2 id="transactional-installation">Transactional installation<a class="headerlink" href="#transactional-installation" title="Permanent link">&para;</a></h2>
-<p>The helper verifies the channel and release signatures, URL contract, updater protocol, current Python ABI, bundle
-size/hash, safe archive paths, exact content set, and per-file hashes before it can switch the running release.</p>
-<p>Each candidate is built under:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>/opt/atlaso/releases/&lt;version&gt;
-</span></code></pre></div>
-<p>The helper creates the candidate virtualenv from the ABI-specific retained wheelhouse with <code>PIP_CONFIG_FILE=/dev/null</code>,
-<code>--no-index</code>, <code>--require-hashes</code>, and no network dependency resolution. It then runs <code>pip check</code>, imports the
-web/worker/console modules, and validates the installed entry points. <code>/opt/atlaso/current</code> points at the active
-release, while <code>/opt/atlaso/.venv</code> points through <code>current</code> to its virtual environment.</p>
-<p>Before switching, the helper enables the nginx maintenance response, pauses the web and console services, closes the
-worker's database session, and creates a consistent SQLite backup. It atomically changes <code>current</code>, installs the
-matching privileged helper and systemd definitions, starts the application, and probes internal <code>/openapi.json</code>.</p>
-<p>Any failure restores the previous release link, helper/systemd files, and database snapshot before maintenance mode is
-removed. A root-owned finalizer at <code>/var/lib/atlaso/apply/appliance-update/finalizer-status.json</code> records the definitive
-transaction result so the worker can persist the durable task outcome. Without a matching definitive finalizer, worker
-startup marks an interrupted running parent failed even when every child step committed before the restart; child
-results remain available as recovery evidence. Only the current and previous known-good releases are retained; the UI
-does not expose arbitrary historical downgrades.</p>
-<h2 id="photon-os-boundary">Photon OS boundary<a class="headerlink" href="#photon-os-boundary" title="Permanent link">&para;</a></h2>
-<p>Manual and scheduled Photon checks/installations remain available. Before mutation, the helper records an inspection of
-the proposed tdnf transaction and queries all repository candidates with the Photon-supported <code>tdnf repoquery python3</code>
-interface, then deterministically selects the highest advertised minor ABI. It fails closed if that ABI is not listed in
-the active signed Atlaso bundle.</p>
-<p>If Photon changes Python to another supported ABI, the helper reconstructs the active virtualenv from the retained
-offline wheelhouse before restarting and probing Atlaso. It does not claim automatic RPM rollback and never reboots
-automatically. If OS maintenance leaves the appliance unhealthy, the task records the transaction evidence and manual
-recovery boundary.</p>
-<p>Atlaso 0.9.18 is a clean-break appliance release. It does not migrate databases, schedules, credentials, update sources,
-or installed environments from the retired product. Deploy a fresh Atlaso appliance and configure its signed update
-sources directly.</p>
-<h2 id="signed-lifecycle-fixture">Signed lifecycle fixture<a class="headerlink" href="#signed-lifecycle-fixture" title="Permanent link">&para;</a></h2>
-<p>Hyper-V lifecycle coverage can exercise the complete release transaction with:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>  <span class="n">-SignedReleaseRepositoryUrl</span> <span class="n">https</span><span class="p">://</span><span class="n">release-fixture</span><span class="p">.</span><span class="n">example</span><span class="p">.</span><span class="n">test</span><span class="p">/</span><span class="n">updates</span>
-</span></code></pre></div>
-<p>The fixture must use the appliance's named test trust key. Its signed <code>preview</code> channel must select a healthy release
-newer than the image baseline; its signed <code>development</code> channel must select a candidate that reaches database startup
-and then fails the service-health probe. The lifecycle runner proves that each release task exposes a Atlaso Release
-child step, proves the preview upgrade, expects the development parent and child to fail with <code>rolled_back=true</code>, and
-compares the active release, compatibility virtualenv, database schema hash, and user identities before and after
-rollback. It then rechecks the web, worker, console, internal <code>/openapi.json</code>, and host-facing API. Omitting the URL
-skips only this externally supplied fixture.</p>
-<h2 id="release-operator-workflow">Release operator workflow<a class="headerlink" href="#release-operator-workflow" title="Permanent link">&para;</a></h2>
-<p>The protected workflows use these checked-in inputs:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>requirements-appliance.lock
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>requirements-appliance-bootstrap.in
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>requirements-appliance-bootstrap.lock
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>requirements-release-tools.in
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>requirements-release-tools.lock
-</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>image/common/update-trust/
-</span></code></pre></div>
-<p>These dependency inputs and hash locks are committed public release inputs: they contain package metadata and integrity
-hashes, never credentials or private package-index configuration. The CI declaration fingerprint prevents dependency or
-Python-range changes without a regenerated hash lock. Release CI installs only the hash-locked bootstrap tools, verifies
-every downloaded wheel or source archive against the checked-in lock, builds any missing pure wheel without build
-isolation, and writes an ABI-specific <code>requirements-wheelhouse.lock</code> over the resulting wheel bytes. It does this for
-the appliance's CPython 3.14 runtime before running:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>python<span class="w"> </span>scripts/build_release_bundle.py<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span>--wheelhouses<span class="w"> </span>wheelhouses<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span>--signing-key<span class="w"> </span>/protected/release-key.pem<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span>--signing-key-id<span class="w"> </span>atlaso-release-2026-01<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">  </span>--commit<span class="w"> </span>&lt;successful-main-sha&gt;
-</span></code></pre></div>
-<p>Publication is idempotent. An existing tag or release must identify the same commit and exact asset bytes or the
-workflow fails. Annotated release tags use an explicit GitHub Actions bot identity and do not depend on runner-global
-Git configuration. Each GitHub Release description keeps the exact signed source commit first, then appends GitHub's
-generated changelog. The checked-in release-note configuration groups merged pull requests as new and improved work,
-fixes, documentation, dependency updates, or other changes; dependency updates are excluded from the enhancement group
-so they appear only once.</p>
-<p>To preview generated notes for the current signed-release lineage without changing GitHub, authenticate <code>gh</code> for the
-repository and run:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>python<span class="w"> </span>scripts/backfill_release_notes.py<span class="w"> </span>--start-tag<span class="w"> </span>v0.9.18
-</span></code></pre></div>
-<p>Review every rendered body before adding <code>--apply</code>. The command resolves each release's annotated tag to its exact
-commit, uses the immediately preceding published semantic-version release as its comparison point, and preflights the
-entire range before the first edit. Historical tags predate the checked-in release-note configuration, so the command
-requests GitHub's default merged-pull-request, contributor, and comparison content, then groups those pull requests from
-their current labels using the same Atlaso category precedence. It updates only a legacy provenance-only body, skips
-notes that already match, and refuses unexpected or manually customized text. Immediately before each edit it
-revalidates that the body and release identity still match the preflight snapshot. After every edit it verifies that the
-title, tag, target, publication state, and asset identity remain unchanged. Body verification accepts GitHub CLI
-normalization between LF and CRLF line endings but no other text difference:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>python<span class="w"> </span>scripts/backfill_release_notes.py<span class="w"> </span>--start-tag<span class="w"> </span>v0.9.18<span class="w"> </span>--apply
-</span></code></pre></div>
-<p>Atlaso starts a new signed update lineage at <code>v0.9.18</code>; it does not consume or publish the retired product's update
-bridge. If an otherwise successful <code>main</code> release fails after signing but before publication, run <strong>Publish appliance
-release</strong>, provide the exact successful <code>main</code> commit in <code>release_sha</code>, and verify the recovered tag, release assets,
-signatures, and <code>development</code> pointer. The dispatch refuses commits without a successful <code>main</code> push CI run and
-preserves the normal tag/release mismatch checks. If the tag and release already published but channel advancement
-failed, dispatch the same successful SHA again: publication verifies the existing asset names and bytes before retrying
-the signed pointer update.</p>
-<p>To promote, run <strong>Promote appliance release</strong>, choose <code>preview</code> or <code>stable</code>, and provide an existing version without the
-<code>v</code> prefix.</p>
-<p>Schedules for checks or installs live under <strong>Operations → Automation</strong>. See <a href="../automation/"><code>automation.md</code></a>.</p>
-<!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
-<h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>
-<p>These captures show responsive layouts and useful operational states referenced by this page.</p>
-<h3 id="appliance-update">Appliance Update<a class="headerlink" href="#appliance-update" title="Permanent link">&para;</a></h3>
-<p><img alt="Atlaso Appliance Update page in the clean-appliance responsive viewport." src="../../assets/screenshots/appliance-update-clean-responsive.webp" /></p>
-<p><em>Figure: Appliance Update in the verified clean-appliance responsive state.</em></p>
-<!-- END GENERATED ADDITIONAL SCREENSHOTS -->
+<p>The Broadcom API documents vCenter trust and KMS registration controls. It does not, by itself, prove the on-wire
+operation set used by the VCF 9.1 acceptance scenario; the observed trace remains mandatory.</p>
 
 
 
@@ -3497,7 +3320,7 @@ the signed pointer update.</p>
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../appliance-console/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Local appliance console">
+          <a href="../appliance-console-technical/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Local console technical reference">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -3507,20 +3330,20 @@ the signed pointer update.</p>
                 Previous
               </span>
               <div class="md-ellipsis">
-                Local appliance console
+                Local console technical reference
               </div>
             </div>
           </a>
         
         
           
-          <a href="../backup-restore/" class="md-footer__link md-footer__link--next" aria-label="Next: Backup and restore">
+          <a href="../vsphere-key-provider-security/" class="md-footer__link md-footer__link--next" aria-label="Next: vSphere Key Provider security">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Backup and restore
+                vSphere Key Provider security
               </div>
             </div>
             <div class="md-footer__button md-icon">
