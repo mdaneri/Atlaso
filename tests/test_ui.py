@@ -12007,6 +12007,107 @@ def test_successful_appliance_apply_baseline_uses_post_apply_snapshot(client, mo
         assert stored["summary"] == ["tool version 9.1.0"]
 
 
+def test_successful_esxi_pxe_apply_marks_network_boot_state_in_job_session(
+    client,
+    monkeypatch,
+):
+    import json
+
+    from sqlalchemy import select
+
+    import atlaso.app.ui as ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep, NetworkBootEnvironment
+    from atlaso.app.services.network_boot import ensure_environment_rows
+
+    unit = {
+        "id": "esxi_pxe",
+        "label": "ESXi PXE",
+        "snapshot_hash": "hash-esxi-pxe",
+        "summary": ["boot services enabled"],
+        "validation_errors": [],
+        "validation_warnings": [],
+        "config_path": "/var/lib/atlaso/apply/esxi-pxe/atlaso-esxi-pxe.json",
+        "config_preview": "{}",
+        "config_diff": "",
+        "context": {},
+    }
+    payload = {
+        "selected_units": ["esxi_pxe"],
+        "captured_units": [
+            {
+                "unit_id": "esxi_pxe",
+                "snapshot_hash": unit["snapshot_hash"],
+                "summary": unit["summary"],
+            }
+        ],
+        "skipped_changed_units": [],
+        "units": [],
+        "dry_run": False,
+    }
+    with SessionLocal() as db:
+        states = {row.key: row for row in ensure_environment_rows(db)}
+        states["memtest86plus"].enabled = True
+        states["memtest86plus"].desired_version = "8.10"
+        states["memtest86plus"].active_version = ""
+        job = Job(
+            id="job_network_boot_applied_state",
+            type="appliance-apply",
+            status=JobStatus.PENDING.value,
+            created_by="admin",
+            result=json.dumps(payload),
+        )
+        db.add(job)
+        db.add(
+            JobStep(
+                id=f"{job.id}:esxi_pxe",
+                job=job,
+                component_key="esxi_pxe",
+                label="ESXi PXE",
+                position=1,
+                status=JobStatus.PENDING.value,
+                result="{}",
+            )
+        )
+        db.commit()
+
+    monkeypatch.setattr(ui, "appliance_apply_units", lambda _db, **_kwargs: [unit])
+    monkeypatch.setattr(
+        ui,
+        "execute_appliance_apply_unit",
+        lambda *_args, **_kwargs: {
+            "unit_id": "esxi_pxe",
+            "label": "ESXi PXE",
+            "status": "succeeded",
+            "success": True,
+            "dry_run": False,
+            "commands": [],
+            "summary": unit["summary"],
+            "validation_errors": [],
+            "validation_warnings": [],
+            "config_path": unit["config_path"],
+            "config_preview": unit["config_preview"],
+            "config_diff": "",
+        },
+    )
+    monkeypatch.setattr(ui, "persist_vcf_depot_metadata_from_apply", lambda *_args: None)
+    monkeypatch.setattr(ui, "log_appliance_apply_submission", lambda *_args, **_kwargs: None)
+
+    ui.run_appliance_apply_job("job_network_boot_applied_state")
+
+    with SessionLocal() as db:
+        job = db.get(Job, "job_network_boot_applied_state")
+        state = db.scalar(
+            select(NetworkBootEnvironment).where(
+                NetworkBootEnvironment.key == "memtest86plus"
+            )
+        )
+        assert job is not None
+        assert job.status == JobStatus.SUCCEEDED.value
+        assert state is not None
+        assert state.active_version == "8.10"
+
+
 def test_appliance_apply_parent_cancel_finishes_current_step_and_skips_remaining(client, monkeypatch):
     import json
 

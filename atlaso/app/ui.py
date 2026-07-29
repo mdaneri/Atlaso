@@ -9569,10 +9569,7 @@ def execute_appliance_apply_unit(unit: dict[str, Any], *, adapter: SystemAdapter
             error = "\n".join(result.stderr for result in results if result.stderr).strip() or "Local user OS sync failed."
             mark_local_users_failed(users, error)
     if unit_id == "esxi_pxe" and succeeded and not any(result.dry_run for result in results):
-        from atlaso.app.services.network_boot import mark_network_boot_environments_applied
-
         mark_kickstarts_applied(list(context["esxi_kickstarts"]))
-        mark_network_boot_environments_applied(db)
     if (
         unit_id == "ldap"
         and context["ldap_settings"].enabled
@@ -11408,6 +11405,12 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 job.result = json.dumps({**current_payload, "units": unit_results}, indent=2)
                 persist_vcf_depot_metadata_from_apply(db, [result])
                 if result["success"]:
+                    if unit["id"] == "esxi_pxe" and not result.get("dry_run"):
+                        from atlaso.app.services.network_boot import (
+                            mark_network_boot_environments_applied,
+                        )
+
+                        mark_network_boot_environments_applied(db)
                     if unit["id"] == "esx_storage" and not result.get("dry_run"):
                         inventory_result = SystemAdapter(dry_run=False).esx_storage_inventory()
                         if inventory_result.returncode == 0:

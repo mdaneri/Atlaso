@@ -9,11 +9,17 @@ from urllib.request import Request
 import pytest
 from sqlalchemy import select
 
+from atlaso.app.api.network_boot import (
+    _allowlisted_media_file,
+    _installed_media_directory,
+    _MEDIA_ENVIRONMENT_ROOTS,
+)
 from atlaso.app.models import (
     AuditEvent,
     EsxiPxeHost,
     Job,
     NetworkBootDiscoveredHost,
+    NetworkBootMedia,
     NetworkBootInventoryCommand,
     NetworkBootInventoryReport,
     utcnow,
@@ -635,3 +641,48 @@ def test_inventory_linux_build_enables_reproducible_mode():
     assert 'export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-${source_date_epoch}}"' in (
         build_script
     )
+
+
+def test_installed_media_paths_are_selected_only_from_fixed_environment_root(
+    monkeypatch,
+    tmp_path,
+):
+    environment_root = tmp_path / "memtest86plus"
+    installed = environment_root / "8.10"
+    installed.mkdir(parents=True)
+    media = NetworkBootMedia(
+        environment_key="memtest86plus",
+        version="8.10",
+        installed_path=str(installed.resolve()),
+    )
+    monkeypatch.setitem(
+        _MEDIA_ENVIRONMENT_ROOTS,
+        "memtest86plus",
+        environment_root.resolve(),
+    )
+
+    assert _installed_media_directory(media) == installed.resolve()
+    media.installed_path = str((tmp_path / "outside" / "8.10").resolve())
+    assert _installed_media_directory(media) is None
+
+
+def test_media_file_selection_uses_allowlist_without_following_symlinks(tmp_path):
+    root = tmp_path / "media"
+    nested = root / "live"
+    nested.mkdir(parents=True)
+    kernel = nested / "vmlinuz"
+    kernel.write_bytes(b"kernel")
+
+    assert _allowlisted_media_file(root, "live/vmlinuz", {"live/vmlinuz"}) == (
+        kernel.resolve()
+    )
+    assert _allowlisted_media_file(root, "../vmlinuz", {"../vmlinuz"}) is None
+
+    outside = tmp_path / "outside"
+    outside.write_bytes(b"outside")
+    symlink = nested / "outside"
+    try:
+        symlink.symlink_to(outside)
+    except OSError:
+        return
+    assert _allowlisted_media_file(root, "live/outside", {"live/outside"}) is None

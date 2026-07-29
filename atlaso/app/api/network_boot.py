@@ -58,6 +58,61 @@ router = APIRouter(prefix="/api/v1/network-boot", tags=["network-boot"])
 public_router = APIRouter(tags=["network-boot-public"])
 _rate_lock = threading.Lock()
 _rate_windows: dict[str, deque[float]] = defaultdict(deque)
+_MEDIA_ENVIRONMENT_ROOTS = {
+    key: (NETWORK_BOOT_MEDIA_ROOT / key).resolve()
+    for key in ("inventory", "memtest86plus", "shredos", "gparted", "clonezilla")
+}
+_MAX_MEDIA_FILES = 256
+
+
+def _installed_media_directory(media: NetworkBootMedia) -> Path | None:
+    environment_root = _MEDIA_ENVIRONMENT_ROOTS.get(media.environment_key)
+    if environment_root is None or not environment_root.is_dir():
+        return None
+    try:
+        for candidate in environment_root.iterdir():
+            if candidate.name != media.version or candidate.is_symlink() or not candidate.is_dir():
+                continue
+            resolved = candidate.resolve()
+            if (
+                resolved.is_relative_to(environment_root)
+                and str(resolved) == media.installed_path
+            ):
+                return resolved
+    except OSError:
+        return None
+    return None
+
+
+def _allowlisted_media_file(
+    root: Path,
+    requested_path: str,
+    allowed_paths: set[str],
+) -> Path | None:
+    normalized = requested_path.replace("\\", "/")
+    parts = normalized.split("/")
+    if (
+        normalized not in allowed_paths
+        or not normalized
+        or normalized.startswith("/")
+        or any(part in {"", ".", ".."} for part in parts)
+    ):
+        return None
+    try:
+        for index, candidate in enumerate(root.rglob("*"), start=1):
+            if index > _MAX_MEDIA_FILES:
+                return None
+            if candidate.is_symlink() or not candidate.is_file():
+                continue
+            resolved = candidate.resolve()
+            if (
+                resolved.is_relative_to(root)
+                and candidate.relative_to(root).as_posix() == normalized
+            ):
+                return resolved
+    except OSError:
+        return None
+    return None
 
 
 def _bounded_rate_limit(request: Request, *, bucket: str, limit: int, window: int = 60) -> None:
@@ -220,16 +275,10 @@ def remove_network_boot_media(
             status_code=409,
             detail="Select and apply a different version or disable this environment before removal.",
         )
-    target = Path(media.installed_path).resolve()
-    expected_root = (NETWORK_BOOT_MEDIA_ROOT / environment_key).resolve()
-    if (
-        not target.is_relative_to(expected_root)
-        or target == expected_root
-        or target.name != version
-    ):
+    target = _installed_media_directory(media)
+    if target is None:
         raise HTTPException(status_code=409, detail="Installed media path failed safety validation.")
-    if target.exists():
-        shutil.rmtree(target)
+    shutil.rmtree(target)
     db.delete(media)
     record_audit(
         db,
@@ -477,16 +526,16 @@ def network_boot_media_file(
     ).scalar_one_or_none()
     if media is None:
         raise HTTPException(status_code=404, detail="Network Boot media is not installed.")
-    root = Path(media.installed_path).resolve()
-    target = (root / file_path).resolve()
-    if not target.is_relative_to(root) or not target.is_file():
+    root = _installed_media_directory(media)
+    if root is None:
         raise HTTPException(status_code=404, detail="Network Boot media file not found.")
     try:
         manifest = json.loads(media.manifest_json or "{}")
     except json.JSONDecodeError:
         manifest = {}
     allowed = set(manifest.get("files") or []) | {"manifest.json"}
-    if file_path.replace("\\", "/") not in allowed:
+    target = _allowlisted_media_file(root, file_path, allowed)
+    if target is None:
         raise HTTPException(status_code=404, detail="Network Boot media file is not allowlisted.")
     return FileResponse(
         target,
