@@ -181,7 +181,8 @@ def test_ldap_helper_renders_separate_mdb_acl_overlays_and_configurable_listener
     assert helper._ldap_listener_urls(payload["service"]) == "ldapi:/// ldap://192.168.49.1:1389/"
 
 
-def test_ldap_helper_removes_invalid_apply_payload(monkeypatch, tmp_path, capsys):
+@pytest.mark.parametrize("action", ["validate", "apply"])
+def test_ldap_helper_removes_invalid_apply_payload(monkeypatch, tmp_path, capsys, action):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ldap"
     apply_dir.mkdir(parents=True)
@@ -190,7 +191,7 @@ def test_ldap_helper_removes_invalid_apply_payload(monkeypatch, tmp_path, capsys
 
     monkeypatch.setattr(helper, "LDAP_APPLY_DIR", apply_dir)
 
-    assert helper._handle_ldap("apply", [str(config_path)]) == 2
+    assert helper._handle_ldap(action, [str(config_path)]) == 2
     assert capsys.readouterr().err
     assert not config_path.exists()
 
@@ -2106,7 +2107,8 @@ def test_ca_helper_rejects_key_path_without_private_key(monkeypatch, tmp_path):
     assert "certificate kms.atlaso.internal key_path requires a private key." in errors
 
 
-def test_ca_helper_removes_invalid_apply_payload(monkeypatch, tmp_path, capsys):
+@pytest.mark.parametrize("action", ["validate", "apply"])
+def test_ca_helper_removes_invalid_apply_payload(monkeypatch, tmp_path, capsys, action):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ca"
     managed_root = tmp_path / "etc" / "atlaso"
@@ -2119,7 +2121,7 @@ def test_ca_helper_removes_invalid_apply_payload(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(helper, "CA_APPLY_DIR", apply_dir)
     monkeypatch.setattr(helper, "CA_MANAGED_PATH_BASE", managed_root)
 
-    assert helper._handle_ca("apply", [str(config_path)]) == 2
+    assert helper._handle_ca(action, [str(config_path)]) == 2
     assert "key_path requires a private key" in capsys.readouterr().err
     assert not config_path.exists()
 
@@ -2871,7 +2873,8 @@ def test_local_users_helper_rejects_reserved_username(monkeypatch, tmp_path, cap
     assert "local user root is reserved" in captured.err
 
 
-def test_local_users_helper_removes_invalid_apply_payload(monkeypatch, tmp_path, capsys):
+@pytest.mark.parametrize("action", ["validate", "apply"])
+def test_local_users_helper_removes_invalid_apply_payload(monkeypatch, tmp_path, capsys, action):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "local-users"
     apply_dir.mkdir(parents=True)
@@ -2880,7 +2883,7 @@ def test_local_users_helper_removes_invalid_apply_payload(monkeypatch, tmp_path,
 
     monkeypatch.setattr(helper, "LOCAL_USERS_APPLY_DIR", apply_dir)
 
-    assert helper._handle_local_users("apply", [str(config_path)]) == 2
+    assert helper._handle_local_users(action, [str(config_path)]) == 2
     assert "local user root is reserved" in capsys.readouterr().err
     assert not config_path.exists()
 

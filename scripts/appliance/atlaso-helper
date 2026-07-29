@@ -803,15 +803,17 @@ def _handle_ca_inner(action: str, args: list[str]) -> int:
 
 def _handle_ca(action: str, args: list[str]) -> int:
     config_path: Path | None = None
-    if action == "apply" and len(args) == 1:
+    result: int | None = None
+    if action in {"validate", "apply"} and len(args) == 1:
         try:
             config_path = _validate_ca_config_path(args[0])
         except ValueError:
             pass
     try:
-        return _handle_ca_inner(action, args)
+        result = _handle_ca_inner(action, args)
+        return result
     finally:
-        if config_path is not None:
+        if config_path is not None and (action == "apply" or (action == "validate" and result != 0)):
             config_path.unlink(missing_ok=True)
 
 
@@ -2698,15 +2700,17 @@ def _handle_ldap_inner(action: str, args: list[str]) -> int:
 
 def _handle_ldap(action: str, args: list[str]) -> int:
     config_path: Path | None = None
-    if action == "apply" and len(args) == 1:
+    result: int | None = None
+    if action in {"validate", "apply"} and len(args) == 1:
         try:
             config_path = _validate_ldap_config_path(args[0])
         except ValueError:
             pass
     try:
-        return _handle_ldap_inner(action, args)
+        result = _handle_ldap_inner(action, args)
+        return result
     finally:
-        if config_path is not None:
+        if config_path is not None and (action == "apply" or (action == "validate" and result != 0)):
             config_path.unlink(missing_ok=True)
 
 
@@ -4817,15 +4821,17 @@ def _handle_local_users_inner(action: str, args: list[str]) -> int:
 
 def _handle_local_users(action: str, args: list[str]) -> int:
     config_path: Path | None = None
-    if action == "apply" and len(args) == 1:
+    result: int | None = None
+    if action in {"validate", "apply"} and len(args) == 1:
         try:
             config_path = _validate_local_users_config_path(args[0])
         except ValueError:
             pass
     try:
-        return _handle_local_users_inner(action, args)
+        result = _handle_local_users_inner(action, args)
+        return result
     finally:
-        if config_path is not None:
+        if config_path is not None and (action == "apply" or (action == "validate" and result != 0)):
             config_path.unlink(missing_ok=True)
 
 
