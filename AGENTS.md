@@ -78,6 +78,8 @@ The following cross-cutting boundaries always apply:
 - Keep secret-bearing Local Users, Certificate Authority, and Managed LDAP apply inputs mode `0600` and present only
   for the constrained helper execution window. Remove them on success, validation or apply failure, and startup
   recovery; read-only Local Users status must use a separate short-lived file.
+- Require TLS 1.2 or newer for the KMS compatibility listener and pre-authentication certificate-fingerprint probes.
+  Preserve explicit certificate-fingerprint confirmation as the trust decision for VCF Automation and vSphere probes.
 - Vault passwords are the narrow exception for an explicit administrator eye reveal: keep them masked by default,
   CSRF-protect and audit reveals without values, disable caching, and automatically hide the value again.
 - Browser navigation to a globally disabled Web Terminal must render the authenticated Atlaso unavailable-state page;

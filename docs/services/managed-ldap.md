@@ -89,9 +89,11 @@ used, search bases, bind DN, VCF Automation 9.1 JSON, and operator instructions.
 separate. Generated VCF settings prefer LDAPS whenever it is enabled; plaintext LDAP is used only when LDAPS is disabled
 and LDAP is enabled.
 
-The guided workflow pins the VCF Automation TLS SHA-256 fingerprint, reads current organization LDAP settings, requires
-explicit replacement approval, writes `settingsSource=DEFINED`, tests LDAP, and verifies that VCF can find at least one
-user and group. Administrator credentials are transient and are not stored.
+The guided workflow requires TLS 1.2 or newer while probing and pins the VCF Automation TLS SHA-256 fingerprint. The
+fingerprint confirmation remains the trust decision; Atlaso does not silently replace it with ordinary CA
+verification. The workflow reads current organization LDAP settings, requires explicit replacement approval, writes
+`settingsSource=DEFINED`, tests LDAP, and verifies that VCF can find at least one user and group. Administrator
+credentials are transient and are not stored.
 
 The VCF 9.1 mapping includes:
 

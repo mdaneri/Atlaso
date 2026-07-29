@@ -24,10 +24,11 @@ This verified appliance view provides visual orientation before you begin.
 Administrators can also use **Import passwords into a vault** for VCF 9 SDDC Manager and VCF Installer appliances.
 The wizard chooses vault or manual credentials first, confirms the server second, and then opens a dedicated TLS page.
 Atlaso probes the server without resolving or sending credentials and requires the operator to confirm the observed
-fingerprint before vault or manual authentication can continue. It displays only discovered metadata for selection,
-then re-fetches and encrypts the reviewed VCF/ESX passwords in the selected vault. Source credentials are request-local
-and password values are never included in the discovery response. See [Vaults](vaults.md) for supported entries,
-managed-script and Kickstart access, URI targets, and restore behavior.
+fingerprint before vault or manual authentication can continue. The probe requires TLS 1.2 or newer, and explicit
+fingerprint confirmation remains the trust decision rather than being replaced with ordinary CA verification. It
+displays only discovered metadata for selection, then re-fetches and encrypts the reviewed VCF/ESX passwords in the
+selected vault. Source credentials are request-local and password values are never included in the discovery response.
+See [Vaults](vaults.md) for supported entries, managed-script and Kickstart access, URI targets, and restore behavior.
 
 The helper creates DNS records in Atlaso, deploys SDDC Manager OVAs, and configures VCF 9 appliances to use the applied
 local offline depot. DNS does not reload `dnsmasq` or change the appliance directly. Review and submit the changed
@@ -65,8 +66,9 @@ and OVA appliance passwords remain separate fields and are never filled from thi
 `Deploy SDDC Manager` becomes available when a valid OVA is present beneath
 `/mnt/atlaso-vcf-offline-depot/PROD/COMP/SDDC_MANAGER_VCF`. Atlaso validates the OVA manifest, reads its
 user-configurable OVF properties, confirms the vCenter or ESXi TLS fingerprint, discovers destination inventory, and
-streams the disks through a vSphere NFC lease. It refuses duplicate VM names, powers on the VM, and waits up to 90
-minutes for the VCF API.
+streams the disks through a vSphere NFC lease. The pre-authentication fingerprint probe requires TLS 1.2 or newer while
+preserving explicit fingerprint confirmation as the trust decision. It refuses duplicate VM names, powers on the VM,
+and waits up to 90 minutes for the VCF API.
 
 The form can optionally add managed DNS desired state, deploy Atlaso CA trust, and configure the local offline depot.
 Trust uses the VCF API only and does not require a snapshot acknowledgement.
