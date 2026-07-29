@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 
-from sqlalchemy import delete, desc, select
+from sqlalchemy import delete, desc, func, select
 from sqlalchemy.orm import Session
 
 from atlaso.app.models import (
@@ -43,6 +43,9 @@ NETWORK_BOOT_REPORT_MAX_BYTES = 256 * 1024
 NETWORK_BOOT_MAX_DISKS = 128
 NETWORK_BOOT_MAX_INTERFACES = 64
 NETWORK_BOOT_REPORTS_PER_HOST = 11
+NETWORK_BOOT_MAX_HOSTS = 512
+NETWORK_BOOT_MAX_REPORTS = 2048
+NETWORK_BOOT_MAX_SESSIONS = 4096
 NETWORK_BOOT_SESSION_LIFETIME = timedelta(hours=8)
 NETWORK_BOOT_ONLINE_THRESHOLD = timedelta(seconds=30)
 NETWORK_BOOT_MEDIA_ROOT = Path("/var/lib/atlaso/pxe/media")
@@ -557,6 +560,61 @@ def _macs(row: NetworkBootDiscoveredHost) -> set[str]:
     return {str(value) for value in values if value}
 
 
+def _prune_inventory_storage(
+    db: Session,
+    *,
+    preserve_host_id: int,
+) -> None:
+    host_rows = db.execute(
+        select(
+            NetworkBootDiscoveredHost.id,
+            func.count(NetworkBootInventoryReport.id),
+        )
+        .outerjoin(
+            NetworkBootInventoryReport,
+            NetworkBootInventoryReport.host_id == NetworkBootDiscoveredHost.id,
+        )
+        .group_by(NetworkBootDiscoveredHost.id)
+        .order_by(
+            desc(NetworkBootDiscoveredHost.last_seen_at),
+            desc(NetworkBootDiscoveredHost.id),
+        )
+    ).all()
+    retained_hosts: list[int] = []
+    retained_reports = 0
+    for host_id, report_count in host_rows:
+        count = int(report_count or 0)
+        if host_id == preserve_host_id or (
+            len(retained_hosts) < NETWORK_BOOT_MAX_HOSTS
+            and retained_reports + count <= NETWORK_BOOT_MAX_REPORTS
+        ):
+            retained_hosts.append(host_id)
+            retained_reports += count
+    pruned_hosts = [host_id for host_id, _count in host_rows if host_id not in retained_hosts]
+    if not pruned_hosts:
+        return
+    db.execute(
+        delete(NetworkBootInventoryCommand).where(
+            NetworkBootInventoryCommand.host_id.in_(pruned_hosts)
+        )
+    )
+    db.execute(
+        delete(NetworkBootInventorySession).where(
+            NetworkBootInventorySession.host_id.in_(pruned_hosts)
+        )
+    )
+    db.execute(
+        delete(NetworkBootInventoryReport).where(
+            NetworkBootInventoryReport.host_id.in_(pruned_hosts)
+        )
+    )
+    db.execute(
+        delete(NetworkBootDiscoveredHost).where(
+            NetworkBootDiscoveredHost.id.in_(pruned_hosts)
+        )
+    )
+
+
 def store_inventory_report(
     db: Session,
     *,
@@ -634,6 +692,7 @@ def store_inventory_report(
                 NetworkBootInventoryReport.id.not_in(retained_ids),
             )
         )
+    _prune_inventory_storage(db, preserve_host_id=host.id)
     db.flush()
     return host, stored
 
@@ -641,6 +700,27 @@ def store_inventory_report(
 def issue_inventory_session(db: Session) -> tuple[NetworkBootInventorySession, str]:
     token = secrets.token_urlsafe(32)
     now = utcnow()
+    db.execute(
+        delete(NetworkBootInventorySession).where(
+            NetworkBootInventorySession.expires_at <= now
+        )
+    )
+    retained_ids = db.execute(
+        select(NetworkBootInventorySession.id)
+        .order_by(
+            desc(NetworkBootInventorySession.created_at),
+            desc(NetworkBootInventorySession.id),
+        )
+        .limit(NETWORK_BOOT_MAX_SESSIONS - 1)
+    ).scalars().all()
+    if retained_ids:
+        db.execute(
+            delete(NetworkBootInventorySession).where(
+                NetworkBootInventorySession.id.not_in(retained_ids)
+            )
+        )
+    else:
+        db.execute(delete(NetworkBootInventorySession))
     session = NetworkBootInventorySession(
         id=f"nbs_{uuid.uuid4().hex}",
         token_hash=hashlib.sha256(token.encode()).hexdigest(),
@@ -1414,6 +1494,108 @@ def _media_boot_manifest(
     raise ValueError("Unsupported downloaded environment.")
 
 
+def _enumerated_media_directory(
+    *,
+    environment_key: str,
+    version: str,
+    media_root: Path,
+) -> Path | None:
+    environment_root = (media_root / normalize_environment_key(environment_key)).resolve()
+    if not environment_root.is_dir() or environment_root.is_symlink():
+        return None
+    normalized_version = normalize_version(version)
+    for index, candidate in enumerate(environment_root.iterdir()):
+        if index >= 256:
+            return None
+        if (
+            candidate.name == normalized_version
+            and candidate.is_dir()
+            and not candidate.is_symlink()
+        ):
+            resolved = candidate.resolve()
+            if resolved.is_relative_to(environment_root):
+                return resolved
+    return None
+
+
+def _enumerated_regular_files(root: Path) -> dict[str, Path] | None:
+    files: dict[str, Path] = {}
+    pending = [root]
+    visited = 0
+    while pending:
+        directory = pending.pop()
+        for child in directory.iterdir():
+            visited += 1
+            if visited > 256 or child.is_symlink():
+                return None
+            resolved = child.resolve()
+            if not resolved.is_relative_to(root):
+                return None
+            if child.is_dir():
+                pending.append(resolved)
+            elif child.is_file():
+                files[resolved.relative_to(root).as_posix()] = resolved
+            else:
+                return None
+    return files
+
+
+def _verified_cached_media(
+    media: NetworkBootMedia,
+    *,
+    media_root: Path,
+) -> Path | None:
+    directory = _enumerated_media_directory(
+        environment_key=media.environment_key,
+        version=media.version,
+        media_root=media_root,
+    )
+    if directory is None or str(directory) != media.installed_path:
+        return None
+    files = _enumerated_regular_files(directory)
+    manifest_path = (files or {}).get("manifest.json")
+    if manifest_path is None or manifest_path.stat().st_size > 2 * 1024 * 1024:
+        return None
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("kind") != "atlaso-network-boot-media"
+        or manifest.get("schema_version") != NETWORK_BOOT_SCHEMA_VERSION
+        or manifest.get("environment") != media.environment_key
+        or manifest.get("version") != media.version
+        or manifest.get("sha256") != media.artifact_sha256
+    ):
+        return None
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, dict) or not artifacts:
+        return None
+    for filename, expected_sha256 in artifacts.items():
+        if (
+            not isinstance(filename, str)
+            or not safe_archive_member(filename)
+            or not isinstance(expected_sha256, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256)
+        ):
+            return None
+        artifact = (files or {}).get(PurePosixPath(filename).as_posix())
+        if artifact is None:
+            return None
+        with artifact.open("rb") as artifact_stream:
+            actual_sha256 = hashlib.file_digest(
+                artifact_stream,
+                "sha256",
+            ).hexdigest()
+        if not secrets.compare_digest(
+            actual_sha256,
+            expected_sha256,
+        ):
+            return None
+    return directory
+
+
 def sync_network_boot_media(
     db: Session,
     *,
@@ -1437,7 +1619,29 @@ def sync_network_boot_media(
         )
     ).scalar_one_or_none()
     if existing is not None:
-        return existing
+        if _verified_cached_media(existing, media_root=media_root) is not None:
+            return existing
+        stale_directory = _enumerated_media_directory(
+            environment_key=key,
+            version=version,
+            media_root=media_root,
+        )
+        if stale_directory is not None:
+            shutil.rmtree(stale_directory)
+        db.delete(existing)
+        db.flush()
+    else:
+        orphaned_directory = _enumerated_media_directory(
+            environment_key=key,
+            version=version,
+            media_root=media_root,
+        )
+        if orphaned_directory is not None:
+            shutil.rmtree(orphaned_directory)
+        elif final_dir.exists():
+            raise ValueError(
+                "Boot media cache path is unsafe; remove it manually before retrying."
+            )
     with tempfile.TemporaryDirectory(prefix=f"atlaso-{key}-") as temp_dir:
         temporary = Path(temp_dir)
         artifact = temporary / descriptor["filename"]

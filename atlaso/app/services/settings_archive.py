@@ -134,7 +134,6 @@ RESTORE_DELETE_MODELS = [
     ManagedPackage,
     UpdateSource,
     LdapRecoveryArchive,
-    NetworkBootEnvironment,
     EsxiPxeHost,
     EsxiKickstart,
     EsxNfsShare,
@@ -596,7 +595,13 @@ def restore_settings_archive(db: Session, archive: dict[str, Any]) -> dict[str, 
             exclude={"active_version"},
         )
         payload["active_version"] = ""
-        db.add(NetworkBootEnvironment(**payload))
+        state = db.get(NetworkBootEnvironment, payload["key"])
+        if state is None:
+            state = NetworkBootEnvironment(**payload)
+        else:
+            for field, value in payload.items():
+                setattr(state, field, value)
+        db.add(state)
     db.flush()
     ensure_environment_rows(db)
     counts["network_boot_environments"] = len(
@@ -620,7 +625,11 @@ def factory_reset_desired_state(db: Session) -> dict[str, int]:
 
     _clear_desired_state(db)
     seed_initial_data(db, include_examples=False)
-    ensure_environment_rows(db)
+    for state in ensure_environment_rows(db):
+        state.enabled = False
+        state.desired_version = ""
+        state.active_version = ""
+        db.add(state)
     _disable_startup_example_seed(db)
     _force_services_stopped_unconfigured(db)
     db.commit()

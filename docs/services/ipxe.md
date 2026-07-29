@@ -76,9 +76,12 @@ opens a second menu with no timeout and **Cancel** selected by default; Atlaso
 never supplies `autonuke`, device lists, or unattended erase arguments.
 
 Installed metadata records source, version, license, digest/signature method,
-and verification time. Downloaded media and inventory reports are runtime data
-and are excluded from settings archives; desired environment enablement and
-version selection are included.
+and verification time. A repeated sync revalidates the cached manifest and
+every boot artifact before reporting success; a missing or corrupt cache is
+replaced from the verified upstream release. Downloaded media and inventory
+reports are runtime data and are excluded from settings archives; desired
+environment enablement and version selection are included. Restore and factory
+reset preserve installed-media metadata while clearing active activation state.
 
 ## API and session boundaries
 
@@ -91,7 +94,10 @@ lifetime. Only the token hash is persisted. The bearer token is sent in the
 authorization header, never a URL, audit, or browser UI. Reports bind the
 session to the presented identity; replays and mismatches are rejected.
 Heartbeats run every 10 seconds, and the UI treats a host as offline after 30
-seconds. Reboot is the only remote action.
+seconds. Reboot is the only remote action. Runtime inventory storage retains at
+most 512 discovered hosts, 2,048 reports across all hosts, 11 reports per host,
+and 4,096 sessions; expired sessions and the oldest inactive inventory are
+pruned as new sessions and reports arrive.
 
 ## ESX technical reference
 

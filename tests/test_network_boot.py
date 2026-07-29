@@ -1,3 +1,4 @@
+import hashlib
 import json
 import zipfile
 from datetime import timedelta
@@ -9,6 +10,7 @@ from urllib.request import Request
 import pytest
 from sqlalchemy import select
 
+import atlaso.app.services.network_boot as network_boot
 from atlaso.app.api.network_boot import (
     _allowlisted_media_file,
     _installed_media_directory,
@@ -22,6 +24,7 @@ from atlaso.app.models import (
     NetworkBootMedia,
     NetworkBootInventoryCommand,
     NetworkBootInventoryReport,
+    NetworkBootInventorySession,
     utcnow,
 )
 from atlaso.app.services.network_boot import (
@@ -41,6 +44,7 @@ from atlaso.app.services.network_boot import (
     record_verified_media,
     render_network_boot_menu,
     store_inventory_report,
+    sync_network_boot_media,
     touch_inventory_heartbeat,
     acknowledge_inventory_command,
     verify_signed_checksum,
@@ -289,6 +293,40 @@ def test_inventory_retains_latest_and_ten_previous_reports(db_session):
     assert len(rows) == NETWORK_BOOT_REPORTS_PER_HOST
 
 
+def test_inventory_prunes_global_hosts_reports_and_sessions(db_session, monkeypatch):
+    monkeypatch.setattr(network_boot, "NETWORK_BOOT_MAX_HOSTS", 2)
+    monkeypatch.setattr(network_boot, "NETWORK_BOOT_MAX_REPORTS", 2)
+    monkeypatch.setattr(network_boot, "NETWORK_BOOT_MAX_SESSIONS", 2)
+
+    for index in range(3):
+        session, _token = issue_inventory_session(db_session)
+        store_inventory_report(
+            db_session,
+            session=session,
+            payload=inventory_report(
+                dmi_uuid=f"4c4c4544-004b-4d10-8052-cac04f4c51{index:02d}",
+                boot_mac=f"52:54:00:12:34:{index:02x}",
+            ),
+        )
+        db_session.commit()
+
+    assert len(db_session.execute(select(NetworkBootDiscoveredHost)).scalars().all()) == 2
+    assert len(db_session.execute(select(NetworkBootInventoryReport)).scalars().all()) == 2
+    assert len(db_session.execute(select(NetworkBootInventorySession)).scalars().all()) <= 2
+
+
+def test_issuing_inventory_session_prunes_expired_sessions(db_session):
+    expired, _token = issue_inventory_session(db_session)
+    expired.expires_at = utcnow() - timedelta(seconds=1)
+    db_session.commit()
+
+    current, _token = issue_inventory_session(db_session)
+    db_session.flush()
+
+    assert db_session.get(NetworkBootInventorySession, expired.id) is None
+    assert db_session.get(NetworkBootInventorySession, current.id) is not None
+
+
 def test_public_inventory_session_binds_identity_and_rejects_replay(client):
     session_response = client.post("/pxe/inventory/sessions")
     assert session_response.status_code == 201
@@ -397,6 +435,45 @@ def test_settings_archive_keeps_desired_environment_but_excludes_media_and_histo
     assert "network_boot_media" not in data
     assert "network_boot_inventory_reports" not in data
     assert "network_boot_inventory_sessions" not in data
+
+
+def test_settings_restore_and_factory_reset_preserve_installed_media_metadata(
+    db_session,
+):
+    from atlaso.app.services.settings_archive import (
+        export_settings_archive,
+        factory_reset_desired_state,
+        restore_settings_archive,
+    )
+
+    states = {row.key: row for row in ensure_environment_rows(db_session)}
+    media = record_verified_media(
+        db_session,
+        environment_key="memtest86plus",
+        version="8.10",
+        source_url="https://www.memtest.org/download/v8.10/example.zip",
+        artifact_sha256="a" * 64,
+        installed_path="/var/lib/atlaso/pxe/media/memtest86plus/8.10",
+        manifest={"schema_version": 1},
+    )
+    states["memtest86plus"].enabled = True
+    states["memtest86plus"].desired_version = media.version
+    states["memtest86plus"].active_version = media.version
+    db_session.commit()
+    archive = export_settings_archive(db_session, actor="test")
+
+    restore_settings_archive(db_session, archive)
+    assert db_session.get(NetworkBootMedia, media.id) is not None
+    restored = db_session.get(type(states["memtest86plus"]), "memtest86plus")
+    assert restored.desired_version == "8.10"
+    assert restored.active_version == ""
+
+    factory_reset_desired_state(db_session)
+    assert db_session.get(NetworkBootMedia, media.id) is not None
+    reset = db_session.get(type(states["memtest86plus"]), "memtest86plus")
+    assert reset.enabled is False
+    assert reset.desired_version == ""
+    assert reset.active_version == ""
 
 
 def test_generic_pxe_scopes_do_not_follow_legacy_esxi_scope(client):
@@ -686,3 +763,67 @@ def test_media_file_selection_uses_allowlist_without_following_symlinks(tmp_path
     except OSError:
         return
     assert _allowlisted_media_file(root, "live/outside", {"live/outside"}) is None
+
+
+def test_media_sync_revalidates_and_repairs_corrupt_cached_artifacts(
+    db_session,
+    monkeypatch,
+    tmp_path,
+):
+    media_root = tmp_path / "media"
+    installed = media_root / "shredos" / "2025.11"
+    installed.mkdir(parents=True)
+    artifact = installed / "shredos.img"
+    artifact.write_bytes(b"original")
+    boot_script = installed / "boot.ipxe"
+    boot_script.write_text("#!ipxe\n", encoding="utf-8")
+    manifest = {
+        "kind": "atlaso-network-boot-media",
+        "schema_version": 1,
+        "environment": "shredos",
+        "version": "2025.11",
+        "sha256": "a" * 64,
+        "artifacts": {
+            "shredos.img": hashlib.sha256(b"original").hexdigest(),
+            "boot.ipxe": hashlib.sha256(b"#!ipxe\n").hexdigest(),
+        },
+    }
+    (installed / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    record_verified_media(
+        db_session,
+        environment_key="shredos",
+        version="2025.11",
+        source_url="https://example.test/shredos.img",
+        artifact_sha256="a" * 64,
+        installed_path=str(installed.resolve()),
+        manifest=manifest,
+    )
+    db_session.commit()
+    artifact.write_bytes(b"corrupt")
+
+    replacement = b"replacement"
+    replacement_sha256 = hashlib.sha256(replacement).hexdigest()
+    monkeypatch.setattr(
+        network_boot,
+        "_release_descriptor",
+        lambda _key: {
+            "version": "2025.11",
+            "filename": "shredos.img",
+            "asset_url": "https://example.test/shredos.img",
+            "sha256": replacement_sha256,
+        },
+    )
+
+    def fake_download(_self, url, destination):
+        destination.write_bytes(replacement)
+        return url, replacement_sha256
+
+    monkeypatch.setattr(BoundedHttpsDownloader, "download", fake_download)
+    repaired = sync_network_boot_media(
+        db_session,
+        environment_key="shredos",
+        media_root=media_root,
+    )
+
+    assert repaired.artifact_sha256 == replacement_sha256
+    assert (installed / "shredos.img").read_bytes() == replacement
