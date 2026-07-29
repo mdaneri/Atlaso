@@ -439,6 +439,7 @@ from atlaso.app.services.kms import (
     KMS_STAGED_CONFIG_PATH,
     ensure_kms_provider_id,
     join_csv,
+    kms_client_fingerprints,
     kms_client_to_dict,
     kms_key_to_dict,
     render_kms_config,
@@ -3742,8 +3743,10 @@ def kms_context(db: Session, *, reconcile: bool = True) -> dict:
         fingerprint_changed = False
         for client in clients:
             fingerprint = issued_fingerprints.get(f"kms:client:{client.name}", "")
-            if not client.certificate_fingerprint and fingerprint:
-                client.certificate_fingerprint = fingerprint.casefold()
+            fingerprints = kms_client_fingerprints(client.certificate_fingerprint)
+            normalized = fingerprint.casefold()
+            if normalized and normalized not in fingerprints:
+                client.certificate_fingerprint = join_csv([*fingerprints, normalized])
                 fingerprint_changed = True
         if fingerprint_changed:
             db.commit()
@@ -16274,6 +16277,54 @@ def edit_kms_client_from_ui(
         resource_name="client",
         resource=kms_client_to_dict(client),
     )
+
+
+@router.post("/kms/clients/{client_id}/retire-previous-certificate", response_model=None)
+def retire_previous_kms_client_certificate(
+    request: Request,
+    client_id: int,
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    verify_csrf(request, csrf)
+    client = db.get(KmsClient, client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="KMS client not found")
+    fingerprints = kms_client_fingerprints(client.certificate_fingerprint)
+    if len(fingerprints) < 2:
+        raise HTTPException(
+            status_code=409,
+            detail="KMS client has no previous certificate fingerprint to retire.",
+        )
+    certificate = db.execute(
+        select(CaCertificate).where(
+            CaCertificate.managed_owner == f"kms:client:{client.name}",
+            CaCertificate.status == "issued",
+        )
+    ).scalar_one_or_none()
+    current_fingerprint = (
+        certificate.fingerprint.casefold()
+        if certificate and certificate.fingerprint
+        else ""
+    )
+    if not current_fingerprint or current_fingerprint not in fingerprints:
+        raise HTTPException(
+            status_code=409,
+            detail="The current CA-issued KMS client certificate is not in the trusted overlap.",
+        )
+    client.certificate_fingerprint = current_fingerprint
+    client.updated_at = utcnow()
+    db.commit()
+    record_audit(
+        db,
+        actor=identity.username,
+        action="retire_previous_kms_client_certificate",
+        resource_type="kms_client",
+        resource_id=str(client.id),
+        detail="retired_previous_fingerprints=true",
+    )
+    return JSONResponse({"client": kms_client_to_dict(client)})
 
 
 @router.post("/kms/clients/{client_id}/delete", response_model=None)

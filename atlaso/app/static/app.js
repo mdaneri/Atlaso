@@ -4088,6 +4088,24 @@ function initializeKmsClientsTable() {
     }
     option.textContent = resource.name;
   };
+  const retirePreviousCertificate = async (row) => {
+    const data = row.getData();
+    const confirmed = await requestConfirmation({
+      title: `Retire previous ${data.name} certificate?`,
+      message: "Confirm vCenter is using the current CA-issued certificate. This removes every previous fingerprint from KMS desired state after the next global appliance apply.",
+      confirmLabel: "Retire previous certificate",
+      tone: "danger",
+    });
+    if (!confirmed) return;
+    const body = new FormData();
+    body.set("csrf", element.dataset.csrf || "");
+    const payload = await atlasoGridWizardRequest(
+      `/kms/clients/${data.id}/retire-previous-certificate`,
+      body,
+    );
+    await row.update(payload.client);
+    showTransientGridStatus("Previous certificate retired");
+  };
   initializeAtlasoResourceWizard({
     elementId: "kms-clients-table",
     formSelector: "[data-kms-client-form]",
@@ -4105,6 +4123,13 @@ function initializeKmsClientsTable() {
     updateLabel: "Update KMIP client",
     emptyMessage: "No KMIP clients configured.",
     actionErrorSelector: "#kms-client-error",
+    extraActions: [
+      {
+        label: "Retire previous certificate",
+        disabled: (row) => Number(row.getData().certificate_fingerprint_count || 0) < 2,
+        action: (_event, row) => retirePreviousCertificate(row),
+      },
+    ],
     defaults: newKmsClientRow(),
     steps: [
       { id: "identity", title: "Define the KMIP client", description: "Name the client and bind it to the exact certificate subject used for mutual TLS." },

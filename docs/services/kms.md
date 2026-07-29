@@ -32,9 +32,17 @@ This verified appliance view provides visual orientation before you begin.
 4. Submit the KMS/KMIP unit through [Appliance Apply](../operate/appliance-apply.md).
 
 The apply unit installs `/etc/atlaso/kmip/server.json` and manages `atlaso-kmip.service` as an unprivileged account.
-Wrapped operational keys and the protected KEK envelope remain under `/var/lib/atlaso/kmip` when the service is
-disabled. Keep the listener restricted to intended lab networks. Never publish private keys, plaintext key material,
-or client credentials in documentation, screenshots, task notes, or issues.
+It gives the daemon a root-managed mode-`0600` environment file containing only `ATLASO_SECRETS_KEY`; the daemon does
+not receive the web session key or bootstrap administrator password from the shared appliance environment. On an
+upgraded appliance, the first KMS apply reconciles the `atlaso-kmip` system account and its state directories before
+starting the service. Wrapped operational keys and the protected KEK envelope remain under `/var/lib/atlaso/kmip`
+when the service is disabled. Keep the listener restricted to intended lab networks. Never publish private keys,
+plaintext key material, or client credentials in documentation, screenshots, task notes, or issues.
+
+When the CA issues a replacement client certificate, Atlaso keeps both the prior and current exact fingerprints in
+desired state. Install and verify the replacement in vCenter, then use **Retire previous certificate** from that client
+row's context menu. The audited action removes earlier fingerprints from desired state; submit another global KMS
+apply to enforce the retirement on the appliance.
 
 A nonempty legacy PyKMIP database blocks in-place replacement. Keep the old appliance available while VMware rekeys
 workloads into a newly configured provider; Atlaso does not migrate legacy key rows.

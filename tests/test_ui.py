@@ -7909,6 +7909,89 @@ def test_kms_enable_autocreates_ca_managed_certificate_rows(client):
         assert config["providers"][0]["client_certificate_paths"] == []
 
 
+def test_kms_client_certificate_rotation_overlaps_then_retires_previous_fingerprint(
+    client,
+):
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate, CaSettings, KmsClient, KmsKey, KmsSettings
+    from atlaso.app.services.kms import kms_client_fingerprints, render_kms_config
+
+    login(client)
+    with SessionLocal() as db:
+        ca_settings = db.execute(select(CaSettings)).scalar_one()
+        ca_settings.enabled = True
+        db.commit()
+
+    page = client.get("/kms")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    enabled = client.post(
+        "/kms/settings",
+        data={
+            "enabled": "on",
+            "backend": "atlaso-kmip",
+            "listen_interface": "eth2",
+            "port": "5696",
+            "hostname": "kms.atlaso.internal",
+            "server_certificate": "kms.atlaso.internal",
+            "require_client_cert": "on",
+            "allow_register": "on",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Autosave": "1"},
+    )
+    assert enabled.status_code == 200
+    with SessionLocal() as db:
+        kms_client = db.execute(
+            select(KmsClient).where(KmsClient.name == "vcf-management")
+        ).scalar_one()
+        certificate = db.execute(
+            select(CaCertificate).where(
+                CaCertificate.managed_owner == "kms:client:vcf-management"
+            )
+        ).scalar_one()
+        previous_fingerprint = kms_client.certificate_fingerprint
+        current_fingerprint = "f" * 64
+        assert previous_fingerprint != current_fingerprint
+        certificate.fingerprint = current_fingerprint
+        db.commit()
+
+    rotated_page = client.get("/kms")
+    assert rotated_page.status_code == 200
+    with SessionLocal() as db:
+        kms_client = db.execute(
+            select(KmsClient).where(KmsClient.name == "vcf-management")
+        ).scalar_one()
+        assert kms_client_fingerprints(kms_client.certificate_fingerprint) == [
+            previous_fingerprint,
+            current_fingerprint,
+        ]
+        client_id = kms_client.id
+
+    retired = client.post(
+        f"/kms/clients/{client_id}/retire-previous-certificate",
+        data={"csrf": csrf},
+    )
+
+    assert retired.status_code == 200
+    assert retired.json()["client"]["certificate_fingerprints"] == [
+        current_fingerprint
+    ]
+    with SessionLocal() as db:
+        kms_client = db.get(KmsClient, client_id)
+        assert kms_client is not None
+        assert kms_client.certificate_fingerprint == current_fingerprint
+        settings = db.execute(select(KmsSettings)).scalar_one()
+        keys = db.execute(select(KmsKey)).scalars().all()
+        config = json.loads(
+            render_kms_config(settings=settings, clients=[kms_client], keys=keys)
+        )
+        assert config["providers"][0]["client_fingerprints"] == [
+            current_fingerprint
+        ]
+
+
 def test_kms_apply_task_captures_current_desired_state(client):
     from sqlalchemy import select
 

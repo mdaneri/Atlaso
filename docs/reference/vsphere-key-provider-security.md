@@ -60,9 +60,10 @@ A trusted client record contains a normalized SHA-256 certificate fingerprint an
 Multiple vCenters may be trusted by one provider, but a successful TLS handshake alone grants no key access. Missing,
 disabled, expired, ambiguous, or unmapped identities fail closed. LDAP organization membership is irrelevant.
 
-Certificate replacement uses an overlap window: the administrator adds and verifies the new fingerprint before
-retiring the old one. The service must not automatically trust a renewed certificate merely because its subject or CA
-matches.
+Certificate replacement uses an overlap window. Atlaso adds the exact fingerprint of the current CA-issued managed
+client certificate while retaining the prior exact fingerprint. The administrator installs and verifies the new
+certificate in vCenter, then uses the audited **Retire previous certificate** client action before the next global KMS
+apply. The service never trusts a renewed certificate merely because its subject or CA matches.
 
 ## Key creation and storage
 
@@ -78,10 +79,20 @@ the runtime key-encryption key (KEK). The authenticated additional data binds at
 - lifecycle state.
 
 Replacing a provider ID, moving a wrapped blob into another namespace, editing metadata, or rolling a row backward must
-make decryption fail. Files and database pages use service-only permissions. Successful startup requires both the
-operational store and the KEK protected by the current `ATLASO_SECRETS_KEY`. The store is SQLite with full synchronous
-commits; only wrapped ciphertext, nonce, and authenticated metadata are persisted. The KEK envelope and database use
-mode `0600`, their parent directory uses `0700`, and systemd confines writes to the KMIP state and log directories.
+make decryption fail. Every metadata-only read authenticates the same wrapped ciphertext and additional data as
+`Get`. The encrypted KEK envelope also carries a current store generation and commitment over the complete database.
+Mutations first persist a pending generation, commit SQLite, and then promote it, so restart can distinguish an
+interrupted write from a restored row or database snapshot. A database state matching neither encrypted commitment
+fails closed. Restoring both the database and KEK envelope from the same full-appliance snapshot remains equivalent to
+rolling back the whole appliance and requires an external recovery/acceptance check; the appliance has no external
+monotonic counter.
+
+Files and database pages use service-only permissions. Successful startup requires both the operational store and the
+KEK protected by the current `ATLASO_SECRETS_KEY`. The store is SQLite with full synchronous commits; only wrapped
+ciphertext, nonce, and authenticated metadata are persisted. The KEK envelope and database use mode `0600`, their
+parent directory uses `0700`, and systemd confines writes to the KMIP state and log directories. The daemon receives
+only `ATLASO_SECRETS_KEY` through its dedicated root-managed mode-`0600` environment file; it does not receive the
+shared web-session or bootstrap-administrator secrets.
 
 Atlaso never exports plaintext keys through its UI or management API. KMIP `Get` is the sole plaintext release path
 and is restricted to an authenticated client mapped to the same provider. Mutable buffers are cleared where Python
@@ -113,6 +124,7 @@ Losing both the running store and a valid recovery bundle is unrecoverable. Losi
 There is no PyKMIP key migration. During upgrade:
 
 - an empty or absent legacy `/var/lib/atlaso/kms/pykmip.db` may be replaced;
+- the first KMS apply reconciles the unprivileged `atlaso-kmip` account and state directories on an upgraded appliance;
 - a nonempty legacy store blocks in-place replacement with a clear, secret-free diagnostic;
 - the old appliance must remain available while VMware rekeys workloads into a newly configured provider; and
 - no code may read and rewrite legacy plaintext key rows into the new store.

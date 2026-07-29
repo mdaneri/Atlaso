@@ -583,7 +583,7 @@ class KmsClient(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
     certificate_subject: Mapped[str] = mapped_column(String(240))
-    certificate_fingerprint: Mapped[str] = mapped_column(String(64), default="")
+    certificate_fingerprint: Mapped[str] = mapped_column(Text, default="")
     role: Mapped[str] = mapped_column(String(40), default="service")
     allowed_operations: Mapped[str] = mapped_column(
         Text,

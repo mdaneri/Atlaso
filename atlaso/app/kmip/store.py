@@ -18,8 +18,11 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 
 STORE_SCHEMA_VERSION = 2
-KEK_ENVELOPE_FORMAT = "atlaso-kmip-kek-v1"
-KEK_AAD = b"atlaso-kmip-kek-v1"
+KEK_ENVELOPE_FORMAT = "atlaso-kmip-kek-v2"
+KEK_AAD = b"atlaso-kmip-kek-v2"
+LEGACY_KEK_ENVELOPE_FORMAT = "atlaso-kmip-kek-v1"
+LEGACY_KEK_AAD = b"atlaso-kmip-kek-v1"
+STORE_COMMITMENT_FORMAT = "atlaso-kmip-store-commitment-v1"
 KEY_AAD_FIELDS = (
     "schema_version",
     "provider_id",
@@ -55,6 +58,15 @@ class StoredKey:
     state: str
     created_at: str
     activated_at: str | None
+
+
+@dataclass(frozen=True)
+class _KekEnvelope:
+    kek: bytes
+    generation: int
+    commitment: str
+    pending_generation: int | None = None
+    pending_commitment: str | None = None
 
 
 def _validated_uuid(value: str, *, label: str) -> str:
@@ -96,38 +108,35 @@ def _decode_envelope_value(envelope: dict[str, object], field: str) -> bytes:
         raise KeyStoreError("KMIP KEK envelope is invalid.") from exc
 
 
-def _load_or_create_kek(path: Path, *, secrets_key: str) -> bytes:
-    master = AESGCM(_master_key(secrets_key))
-    if path.exists():
-        try:
-            envelope = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(envelope, dict) or envelope.get("format") != KEK_ENVELOPE_FORMAT:
-                raise KeyStoreError("KMIP KEK envelope format is unsupported.")
-            nonce = _decode_envelope_value(envelope, "nonce")
-            ciphertext = _decode_envelope_value(envelope, "ciphertext")
-            kek = master.decrypt(nonce, ciphertext, KEK_AAD)
-            if len(kek) != 32:
-                raise KeyStoreError("KMIP KEK envelope is invalid.")
-            os.chmod(path, 0o600)
-            return kek
-        except (InvalidTag, json.JSONDecodeError, OSError) as exc:
-            raise KeyStoreError(
-                "KMIP KEK could not be opened with the configured appliance secrets key."
-            ) from exc
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    os.chmod(path.parent, 0o700)
-    kek = os.urandom(32)
+def _write_kek_envelope(
+    path: Path,
+    *,
+    master_key: bytes,
+    envelope: _KekEnvelope,
+) -> None:
+    plaintext = json.dumps(
+        {
+            "kek": base64.b64encode(envelope.kek).decode("ascii"),
+            "generation": envelope.generation,
+            "commitment": envelope.commitment,
+            "pending_generation": envelope.pending_generation,
+            "pending_commitment": envelope.pending_commitment,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
     nonce = os.urandom(12)
-    envelope = {
+    document = {
         "format": KEK_ENVELOPE_FORMAT,
         "nonce": base64.b64encode(nonce).decode("ascii"),
-        "ciphertext": base64.b64encode(master.encrypt(nonce, kek, KEK_AAD)).decode("ascii"),
+        "ciphertext": base64.b64encode(
+            AESGCM(master_key).encrypt(nonce, plaintext, KEK_AAD)
+        ).decode("ascii"),
     }
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     try:
         with temporary.open("x", encoding="utf-8", newline="\n") as stream:
-            json.dump(envelope, stream, separators=(",", ":"), sort_keys=True)
+            json.dump(document, stream, separators=(",", ":"), sort_keys=True)
             stream.write("\n")
             stream.flush()
             os.fsync(stream.fileno())
@@ -141,7 +150,117 @@ def _load_or_create_kek(path: Path, *, secrets_key: str) -> bytes:
                 os.close(directory_fd)
     finally:
         temporary.unlink(missing_ok=True)
-    return kek
+
+
+def _load_or_create_kek(
+    path: Path,
+    *,
+    secrets_key: str,
+) -> tuple[bytes, _KekEnvelope]:
+    master = AESGCM(_master_key(secrets_key))
+    if path.exists():
+        try:
+            envelope = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(envelope, dict) or envelope.get("format") not in {
+                KEK_ENVELOPE_FORMAT,
+                LEGACY_KEK_ENVELOPE_FORMAT,
+            }:
+                raise KeyStoreError("KMIP KEK envelope format is unsupported.")
+            nonce = _decode_envelope_value(envelope, "nonce")
+            ciphertext = _decode_envelope_value(envelope, "ciphertext")
+            if envelope["format"] == LEGACY_KEK_ENVELOPE_FORMAT:
+                kek = master.decrypt(nonce, ciphertext, LEGACY_KEK_AAD)
+                state = _KekEnvelope(kek=kek, generation=0, commitment="")
+            else:
+                plaintext = master.decrypt(nonce, ciphertext, KEK_AAD)
+                payload = json.loads(plaintext)
+                if not isinstance(payload, dict):
+                    raise KeyStoreError("KMIP KEK envelope is invalid.")
+                encoded_kek = payload.get("kek")
+                if not isinstance(encoded_kek, str):
+                    raise KeyStoreError("KMIP KEK envelope is invalid.")
+                kek = base64.b64decode(encoded_kek, validate=True)
+                generation = payload.get("generation")
+                commitment = payload.get("commitment")
+                pending_generation = payload.get("pending_generation")
+                pending_commitment = payload.get("pending_commitment")
+                if (
+                    not isinstance(generation, int)
+                    or isinstance(generation, bool)
+                    or generation < 0
+                    or not isinstance(commitment, str)
+                    or pending_generation is not None
+                    and (
+                        not isinstance(pending_generation, int)
+                        or isinstance(pending_generation, bool)
+                        or pending_generation != generation + 1
+                    )
+                    or pending_commitment is not None
+                    and not isinstance(pending_commitment, str)
+                    or (pending_generation is None) != (pending_commitment is None)
+                ):
+                    raise KeyStoreError("KMIP KEK envelope is invalid.")
+                state = _KekEnvelope(
+                    kek=kek,
+                    generation=generation,
+                    commitment=commitment,
+                    pending_generation=pending_generation,
+                    pending_commitment=pending_commitment,
+                )
+            if len(kek) != 32:
+                raise KeyStoreError("KMIP KEK envelope is invalid.")
+            os.chmod(path, 0o600)
+            return _master_key(secrets_key), state
+        except (InvalidTag, json.JSONDecodeError, OSError, ValueError) as exc:
+            raise KeyStoreError(
+                "KMIP KEK could not be opened with the configured appliance secrets key."
+            ) from exc
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(path.parent, 0o700)
+    kek = os.urandom(32)
+    master_key = _master_key(secrets_key)
+    state = _KekEnvelope(kek=kek, generation=0, commitment="")
+    _write_kek_envelope(path, master_key=master_key, envelope=state)
+    return master_key, state
+
+
+def _store_commitment(connection: sqlite3.Connection) -> str:
+    document = {
+        "format": STORE_COMMITMENT_FORMAT,
+        "metadata": [
+            [row["name"], row["value"]]
+            for row in connection.execute(
+                "SELECT name, value FROM store_metadata ORDER BY name"
+            ).fetchall()
+        ],
+        "keys": [
+            {
+                "provider_id": row["provider_id"],
+                "key_id": row["key_id"],
+                "algorithm": row["algorithm"],
+                "key_length": row["key_length"],
+                "name": row["name"],
+                "state": row["state"],
+                "created_at": row["created_at"],
+                "activated_at": row["activated_at"],
+                "nonce": base64.b64encode(bytes(row["nonce"])).decode("ascii"),
+                "ciphertext": base64.b64encode(bytes(row["ciphertext"])).decode("ascii"),
+                "aad_json": row["aad_json"],
+            }
+            for row in connection.execute(
+                """
+                SELECT provider_id, key_id, algorithm, key_length, name, state,
+                       created_at, activated_at, nonce, ciphertext, aad_json
+                FROM wrapped_keys
+                ORDER BY provider_id, key_id
+                """
+            ).fetchall()
+        ],
+    }
+    return sha256(
+        json.dumps(document, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).hexdigest()
 
 
 class WrappedKeyStore:
@@ -157,7 +276,13 @@ class WrappedKeyStore:
             )
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         os.chmod(self.database_path.parent, 0o700)
-        self._kek = bytearray(_load_or_create_kek(self.kek_path, secrets_key=secrets_key))
+        master_key, envelope = _load_or_create_kek(
+            self.kek_path,
+            secrets_key=secrets_key,
+        )
+        self._master_key = bytearray(master_key)
+        self._kek = bytearray(envelope.kek)
+        self._envelope = envelope
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
@@ -203,7 +328,80 @@ class WrappedKeyStore:
                 )
             elif row["value"] != str(STORE_SCHEMA_VERSION):
                 raise KeyStoreError("KMIP operational store schema version is unsupported.")
+            self._verify_store_commitment(connection)
         os.chmod(self.database_path, 0o600)
+
+    def _write_envelope(self, envelope: _KekEnvelope) -> None:
+        _write_kek_envelope(
+            self.kek_path,
+            master_key=bytes(self._master_key),
+            envelope=envelope,
+        )
+        self._envelope = envelope
+
+    def _verify_store_commitment(self, connection: sqlite3.Connection) -> None:
+        observed = _store_commitment(connection)
+        if not self._envelope.commitment:
+            self._write_envelope(
+                _KekEnvelope(
+                    kek=bytes(self._kek),
+                    generation=self._envelope.generation,
+                    commitment=observed,
+                )
+            )
+            return
+        if observed == self._envelope.commitment:
+            if self._envelope.pending_commitment is not None:
+                self._write_envelope(
+                    _KekEnvelope(
+                        kek=bytes(self._kek),
+                        generation=self._envelope.generation,
+                        commitment=self._envelope.commitment,
+                    )
+                )
+            return
+        if observed == self._envelope.pending_commitment:
+            assert self._envelope.pending_generation is not None
+            self._write_envelope(
+                _KekEnvelope(
+                    kek=bytes(self._kek),
+                    generation=self._envelope.pending_generation,
+                    commitment=observed,
+                )
+            )
+            return
+        raise KeyStoreError(
+            "KMIP operational store rollback or integrity validation failed."
+        )
+
+    def _commit_mutation(self, connection: sqlite3.Connection) -> None:
+        pending = _KekEnvelope(
+            kek=bytes(self._kek),
+            generation=self._envelope.generation,
+            commitment=self._envelope.commitment,
+            pending_generation=self._envelope.generation + 1,
+            pending_commitment=_store_commitment(connection),
+        )
+        self._write_envelope(pending)
+        try:
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            self._write_envelope(
+                _KekEnvelope(
+                    kek=bytes(self._kek),
+                    generation=pending.generation,
+                    commitment=pending.commitment,
+                )
+            )
+            raise
+        self._write_envelope(
+            _KekEnvelope(
+                kek=bytes(self._kek),
+                generation=pending.pending_generation,
+                commitment=pending.pending_commitment,
+            )
+        )
 
     def create_key(self, provider_id: str, *, name: str | None = None) -> StoredKey:
         normalized_provider = _validated_uuid(provider_id, label="provider_id")
@@ -229,6 +427,7 @@ class WrappedKeyStore:
         try:
             ciphertext = AESGCM(bytes(self._kek)).encrypt(nonce, bytes(plaintext), aad)
             with self._lock, self._connect() as connection:
+                self._verify_store_commitment(connection)
                 connection.execute(
                     """
                     INSERT INTO wrapped_keys(
@@ -250,23 +449,28 @@ class WrappedKeyStore:
                         aad.decode("utf-8"),
                     ),
                 )
+                self._commit_mutation(connection)
             return metadata
         finally:
             plaintext[:] = b"\0" * len(plaintext)
 
-    def _row(self, provider_id: str, key_id: str) -> sqlite3.Row:
+    def _row(
+        self,
+        connection: sqlite3.Connection,
+        provider_id: str,
+        key_id: str,
+    ) -> sqlite3.Row:
         normalized_provider = _validated_uuid(provider_id, label="provider_id")
         normalized_key = _validated_uuid(key_id, label="key_id")
-        with self._lock, self._connect() as connection:
-            row = connection.execute(
-                """
-                SELECT provider_id, key_id, algorithm, key_length, name, state,
-                       created_at, activated_at, nonce, ciphertext, aad_json
-                FROM wrapped_keys
-                WHERE provider_id = ? AND key_id = ?
-                """,
-                (normalized_provider, normalized_key),
-            ).fetchone()
+        row = connection.execute(
+            """
+            SELECT provider_id, key_id, algorithm, key_length, name, state,
+                   created_at, activated_at, nonce, ciphertext, aad_json
+            FROM wrapped_keys
+            WHERE provider_id = ? AND key_id = ?
+            """,
+            (normalized_provider, normalized_key),
+        ).fetchone()
         if row is None:
             raise KeyNotFoundError("KMIP key was not found in the authenticated provider.")
         return row
@@ -284,8 +488,7 @@ class WrappedKeyStore:
             activated_at=row["activated_at"],
         )
 
-    def get_key(self, provider_id: str, key_id: str) -> tuple[StoredKey, bytes]:
-        row = self._row(provider_id, key_id)
+    def _decrypt_row(self, row: sqlite3.Row) -> tuple[StoredKey, bytes]:
         metadata = self._metadata(row)
         expected_aad = _canonical_aad(metadata)
         if row["aad_json"].encode("utf-8") != expected_aad:
@@ -302,16 +505,32 @@ class WrappedKeyStore:
             raise KeyStoreError("KMIP wrapped key length is invalid.")
         return metadata, plaintext
 
+    def get_key(self, provider_id: str, key_id: str) -> tuple[StoredKey, bytes]:
+        with self._lock, self._connect() as connection:
+            self._verify_store_commitment(connection)
+            row = self._row(connection, provider_id, key_id)
+            return self._decrypt_row(row)
+
     def get_metadata(self, provider_id: str, key_id: str) -> StoredKey:
-        return self._metadata(self._row(provider_id, key_id))
+        with self._lock, self._connect() as connection:
+            self._verify_store_commitment(connection)
+            row = self._row(connection, provider_id, key_id)
+            metadata, plaintext = self._decrypt_row(row)
+            cleared = bytearray(plaintext)
+            cleared[:] = b"\0" * len(cleared)
+            return metadata
 
     def activate_key(self, provider_id: str, key_id: str) -> StoredKey:
-        with self._lock:
-            row = self._row(provider_id, key_id)
-            metadata = self._metadata(row)
+        with self._lock, self._connect() as connection:
+            self._verify_store_commitment(connection)
+            row = self._row(connection, provider_id, key_id)
+            metadata, decrypted = self._decrypt_row(row)
+            plaintext = bytearray(decrypted)
             if metadata.state == "Active":
+                plaintext[:] = b"\0" * len(plaintext)
                 return metadata
             if metadata.state != "Pre-Active":
+                plaintext[:] = b"\0" * len(plaintext)
                 raise KeyStateError("KMIP key cannot be activated from its current state.")
             updated = StoredKey(
                 provider_id=metadata.provider_id,
@@ -323,42 +542,29 @@ class WrappedKeyStore:
                 created_at=metadata.created_at,
                 activated_at=datetime.now(UTC).isoformat(),
             )
-            old_aad = _canonical_aad(metadata)
-            if row["aad_json"].encode("utf-8") != old_aad:
-                raise KeyStoreError("KMIP key metadata integrity validation failed.")
-            try:
-                plaintext = bytearray(
-                    AESGCM(bytes(self._kek)).decrypt(
-                        bytes(row["nonce"]),
-                        bytes(row["ciphertext"]),
-                        old_aad,
-                    )
-                )
-            except InvalidTag as exc:
-                raise KeyStoreError("KMIP wrapped key integrity validation failed.") from exc
             nonce = os.urandom(12)
             new_aad = _canonical_aad(updated)
             try:
                 ciphertext = AESGCM(bytes(self._kek)).encrypt(nonce, bytes(plaintext), new_aad)
-                with self._connect() as connection:
-                    cursor = connection.execute(
-                        """
-                        UPDATE wrapped_keys
-                        SET state = ?, activated_at = ?, nonce = ?, ciphertext = ?, aad_json = ?
-                        WHERE provider_id = ? AND key_id = ? AND state = 'Pre-Active'
-                        """,
-                        (
-                            updated.state,
-                            updated.activated_at,
-                            nonce,
-                            ciphertext,
-                            new_aad.decode("utf-8"),
-                            updated.provider_id,
-                            updated.key_id,
-                        ),
-                    )
-                    if cursor.rowcount != 1:
-                        raise KeyStateError("KMIP key activation was not applied.")
+                cursor = connection.execute(
+                    """
+                    UPDATE wrapped_keys
+                    SET state = ?, activated_at = ?, nonce = ?, ciphertext = ?, aad_json = ?
+                    WHERE provider_id = ? AND key_id = ? AND state = 'Pre-Active'
+                    """,
+                    (
+                        updated.state,
+                        updated.activated_at,
+                        nonce,
+                        ciphertext,
+                        new_aad.decode("utf-8"),
+                        updated.provider_id,
+                        updated.key_id,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise KeyStateError("KMIP key activation was not applied.")
+                self._commit_mutation(connection)
                 return updated
             finally:
                 plaintext[:] = b"\0" * len(plaintext)
@@ -389,8 +595,11 @@ class WrappedKeyStore:
         sql += " ORDER BY created_at, key_id LIMIT ?"
         parameters += (limit,)
         with self._lock, self._connect() as connection:
+            self._verify_store_commitment(connection)
             return [row["key_id"] for row in connection.execute(sql, parameters).fetchall()]
 
     def close(self) -> None:
+        self._master_key[:] = b"\0" * len(self._master_key)
+        self._master_key = bytearray()
         self._kek[:] = b"\0" * len(self._kek)
         self._kek = bytearray()

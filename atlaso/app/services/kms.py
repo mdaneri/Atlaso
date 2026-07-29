@@ -48,6 +48,15 @@ def join_csv(values: list[str]) -> str:
     return ",".join(split_csv(",".join(values)))
 
 
+def kms_client_fingerprints(value: str | None) -> list[str]:
+    fingerprints: list[str] = []
+    for item in split_csv(value):
+        normalized = item.casefold()
+        if normalized not in fingerprints:
+            fingerprints.append(normalized)
+    return fingerprints
+
+
 def ensure_kms_provider_id(settings: KmsSettings) -> bool:
     try:
         normalized = str(UUID(settings.provider_id))
@@ -59,11 +68,14 @@ def ensure_kms_provider_id(settings: KmsSettings) -> bool:
 
 
 def kms_client_to_dict(client: KmsClient) -> dict:
+    fingerprints = kms_client_fingerprints(client.certificate_fingerprint)
     return {
         "id": client.id,
         "name": client.name,
         "certificate_subject": client.certificate_subject,
         "certificate_fingerprint": client.certificate_fingerprint,
+        "certificate_fingerprints": fingerprints,
+        "certificate_fingerprint_count": len(fingerprints),
         "role": client.role,
         "allowed_operations": client.allowed_operations,
         "enabled": client.enabled,
@@ -103,15 +115,17 @@ def render_kms_config(
         "name": settings.hostname,
         "client_fingerprints": sorted(
             {
-                client.certificate_fingerprint.casefold()
+                fingerprint
                 for client in enabled_clients
-                if client.certificate_fingerprint
+                for fingerprint in kms_client_fingerprints(
+                    client.certificate_fingerprint
+                )
             }
         ),
         "client_certificate_paths": [
             f"{KMS_CLIENT_CERT_BASE}/{safe_certificate_name(client.name)}.crt"
             for client in enabled_clients
-            if not client.certificate_fingerprint
+            if not kms_client_fingerprints(client.certificate_fingerprint)
         ],
     }
     document = {
@@ -189,8 +203,9 @@ def validate_kms_state(
                 f"KMS client {client.name or client.id} operations are outside the bounded contract: "
                 f"{', '.join(unsupported_operations)}."
             )
-        fingerprint = client.certificate_fingerprint.casefold()
-        if fingerprint:
+        for fingerprint in kms_client_fingerprints(
+            client.certificate_fingerprint
+        ):
             if len(fingerprint) != 64 or any(character not in "0123456789abcdef" for character in fingerprint):
                 errors.append(f"KMS client {client.name or client.id} fingerprint must be a SHA-256 digest.")
             elif fingerprint in seen_fingerprints:

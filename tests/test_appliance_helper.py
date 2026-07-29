@@ -2612,6 +2612,8 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path):
     log_dir = tmp_path / "log" / "kmip"
     managed_root = tmp_path / "etc" / "atlaso"
     service_path = tmp_path / "systemd" / "atlaso-kmip.service"
+    appliance_env_path = managed_root / "atlaso.env"
+    kms_env_path = managed_root / "kmip" / "atlaso-kmip.env"
     command_path = tmp_path / "venv" / "bin" / "atlaso-kmip"
     config_path = apply_dir / "server.json"
     cert_path = managed_root / "kmip" / "certs" / "kms.atlaso.internal.crt"
@@ -2628,6 +2630,12 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path):
     key_path.write_text("-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----\n", encoding="utf-8")
     client_path.write_text("-----BEGIN CERTIFICATE-----\nclient\n-----END CERTIFICATE-----\n", encoding="utf-8")
     ca_path.write_text("-----BEGIN CERTIFICATE-----\nroot\n-----END CERTIFICATE-----\n", encoding="utf-8")
+    appliance_env_path.write_text(
+        "ATLASO_SECRET_KEY=web-session-secret\n"
+        "ATLASO_BOOTSTRAP_ADMIN_PASSWORD=bootstrap-secret\n"
+        "ATLASO_SECRETS_KEY=kmip-kek-secret\n",
+        encoding="utf-8",
+    )
     command_path.write_text("#!/bin/sh\n", encoding="utf-8")
     config_path.write_text(kms_config_text(managed_root, database_path=state_dir / "store.db"), encoding="utf-8")
     commands: list[list[str]] = []
@@ -2642,6 +2650,8 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path):
     monkeypatch.setattr(helper, "KMS_LOG_DIR", log_dir)
     monkeypatch.setattr(helper, "KMS_CONFIG_DIR", managed_root / "kmip")
     monkeypatch.setattr(helper, "KMS_CONFIG_PATH", managed_root / "kmip" / "server.json")
+    monkeypatch.setattr(helper, "ATLASO_ENV_PATH", appliance_env_path)
+    monkeypatch.setattr(helper, "KMS_ENV_PATH", kms_env_path)
     monkeypatch.setattr(helper, "KMS_SERVICE_PATH", service_path)
     monkeypatch.setattr(helper, "ATLASO_KMIP_VENV_PATH", command_path)
     monkeypatch.setattr(helper, "CA_MANAGED_PATH_BASE", managed_root)
@@ -2660,6 +2670,8 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path):
     assert (managed_root / "kmip" / "server.json").is_file()
     service = service_path.read_text(encoding="utf-8")
     assert "User=atlaso-kmip" in service
+    assert f"EnvironmentFile={kms_env_path}" in service
+    assert str(appliance_env_path) not in service
     assert f"ExecStart={command_path} --config {managed_root / 'kmip' / 'server.json'}" in service
     assert "ProtectSystem=strict" in service
     assert "CapabilityBoundingSet=" in service
@@ -2671,6 +2683,66 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path):
     assert ["systemctl", "disable", "--now", "atlaso-kms.service"] in commands
     assert ["systemctl", "enable", "atlaso-kmip.service"] in commands
     assert ["systemctl", "restart", "atlaso-kmip.service"] in commands
+    assert kms_env_path.read_text(encoding="utf-8") == "ATLASO_SECRETS_KEY=kmip-kek-secret\n"
+    assert "web-session-secret" not in kms_env_path.read_text(encoding="utf-8")
+    assert "bootstrap-secret" not in kms_env_path.read_text(encoding="utf-8")
+    if os.name != "nt":
+        assert kms_env_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_kms_apply_reconciles_service_identity_for_upgraded_appliance(
+    monkeypatch,
+    tmp_path,
+):
+    helper = load_helper_module()
+    state_dir = tmp_path / "state" / "kmip"
+    commands: list[list[str]] = []
+    identity_created = {"group": False, "account": False}
+
+    def fake_group(name):
+        if name == helper.KMS_SERVICE_USER and identity_created["group"]:
+            return SimpleNamespace(gr_gid=1002)
+        raise KeyError(name)
+
+    def fake_account(name):
+        if name == helper.KMS_SERVICE_USER and identity_created["account"]:
+            return SimpleNamespace(pw_uid=1001)
+        raise KeyError(name)
+
+    def fake_run(command):
+        commands.append(command)
+        if command[0].endswith("groupadd"):
+            identity_created["group"] = True
+        if command[0].endswith("useradd"):
+            identity_created["account"] = True
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "KMS_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper.grp, "getgrnam", fake_group)
+    monkeypatch.setattr(helper.pwd, "getpwnam", fake_account)
+    monkeypatch.setattr(
+        helper,
+        "_command_path",
+        lambda name: f"/usr/sbin/{name}" if name in {"groupadd", "useradd"} else None,
+    )
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    account, group = helper._ensure_kms_service_identity()
+
+    assert account.pw_uid == 1001
+    assert group.gr_gid == 1002
+    assert ["/usr/sbin/groupadd", "--system", "atlaso-kmip"] in commands
+    assert [
+        "/usr/sbin/useradd",
+        "--system",
+        "--gid",
+        "atlaso-kmip",
+        "--home-dir",
+        str(state_dir),
+        "--shell",
+        "/sbin/nologin",
+        "atlaso-kmip",
+    ] in commands
 
 
 def test_dnsmasq_helper_validates_staged_config(monkeypatch, tmp_path):

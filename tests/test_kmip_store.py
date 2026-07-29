@@ -135,6 +135,53 @@ def test_wrapped_key_tamper_is_detected_without_secret_output(tmp_path: Path) ->
     assert plaintext.hex() not in str(raised.value)
 
 
+def test_metadata_only_read_authenticates_wrapped_key_and_metadata(tmp_path: Path) -> None:
+    provider_id = str(uuid.uuid4())
+    operational_store = store(tmp_path)
+    metadata = operational_store.create_key(provider_id, name="vcenter-key")
+    with sqlite3.connect(tmp_path / "store.db") as connection:
+        connection.execute(
+            "UPDATE wrapped_keys SET name = ? WHERE key_id = ?",
+            ("tampered-name", metadata.key_id),
+        )
+
+    operational_store.close()
+    with pytest.raises(KeyStoreError, match="rollback or integrity"):
+        store(tmp_path)
+
+
+def test_earlier_authenticated_row_cannot_be_restored_after_activation(
+    tmp_path: Path,
+) -> None:
+    provider_id = str(uuid.uuid4())
+    operational_store = store(tmp_path)
+    metadata = operational_store.create_key(provider_id)
+    with sqlite3.connect(tmp_path / "store.db") as connection:
+        before = connection.execute(
+            """
+            SELECT state, activated_at, nonce, ciphertext, aad_json
+            FROM wrapped_keys
+            WHERE key_id = ?
+            """,
+            (metadata.key_id,),
+        ).fetchone()
+
+    operational_store.activate_key(provider_id, metadata.key_id)
+    with sqlite3.connect(tmp_path / "store.db") as connection:
+        connection.execute(
+            """
+            UPDATE wrapped_keys
+            SET state = ?, activated_at = ?, nonce = ?, ciphertext = ?, aad_json = ?
+            WHERE key_id = ?
+            """,
+            (*before, metadata.key_id),
+        )
+
+    operational_store.close()
+    with pytest.raises(KeyStoreError, match="rollback or integrity"):
+        store(tmp_path)
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX mode bits are enforced on the Photon appliance")
 def test_kek_and_store_require_service_only_permissions(tmp_path: Path) -> None:
     store(tmp_path)
