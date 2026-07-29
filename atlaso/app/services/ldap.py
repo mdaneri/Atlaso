@@ -704,11 +704,17 @@ def normalize_vcf_target_url(value: str) -> str:
     return f"https://{parsed.hostname}:{port}"
 
 
-def tls_sha256_fingerprint(target_url: str, *, timeout_seconds: float = 10) -> str:
-    parsed = urlsplit(normalize_vcf_target_url(target_url))
+def _fingerprint_tls_context() -> ssl.SSLContext:
     context = ssl.create_default_context()
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE
+    return context
+
+
+def tls_sha256_fingerprint(target_url: str, *, timeout_seconds: float = 10) -> str:
+    parsed = urlsplit(normalize_vcf_target_url(target_url))
+    context = _fingerprint_tls_context()
     try:
         with socket.create_connection((parsed.hostname, parsed.port or 443), timeout=timeout_seconds) as raw_socket:
             with context.wrap_socket(raw_socket, server_hostname=parsed.hostname) as tls_socket:

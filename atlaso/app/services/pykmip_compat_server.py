@@ -5,6 +5,31 @@ import sys
 from typing import Any
 
 
+def _compat_ssl_context(
+    *,
+    server_side: bool,
+    cert_reqs: int,
+    ca_certs: str | None,
+    certfile: str | None,
+    keyfile: str | None,
+    ciphers: str | None,
+) -> ssl.SSLContext:
+    protocol = ssl.PROTOCOL_TLS_SERVER if server_side else ssl.PROTOCOL_TLS_CLIENT
+    context = ssl.SSLContext(protocol)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    if not server_side:
+        # Legacy ssl.wrap_socket did not perform hostname verification.
+        context.check_hostname = False
+    context.verify_mode = cert_reqs
+    if ca_certs:
+        context.load_verify_locations(ca_certs)
+    if certfile:
+        context.load_cert_chain(certfile, keyfile)
+    if ciphers:
+        context.set_ciphers(ciphers)
+    return context
+
+
 def install_ssl_wrap_socket_compat() -> None:
     if hasattr(ssl, "wrap_socket"):
         return
@@ -22,14 +47,17 @@ def install_ssl_wrap_socket_compat() -> None:
         ciphers: str | None = None,
         **_kwargs: Any,
     ):
-        context = ssl.SSLContext(ssl_version)
-        context.verify_mode = cert_reqs
-        if ca_certs:
-            context.load_verify_locations(ca_certs)
-        if certfile:
-            context.load_cert_chain(certfile, keyfile)
-        if ciphers:
-            context.set_ciphers(ciphers)
+        # PyKMIP passes a legacy fixed-version protocol. The compatibility
+        # wrapper deliberately replaces it with a modern context and floor.
+        _ = ssl_version
+        context = _compat_ssl_context(
+            server_side=server_side,
+            cert_reqs=cert_reqs,
+            ca_certs=ca_certs,
+            certfile=certfile,
+            keyfile=keyfile,
+            ciphers=ciphers,
+        )
         return context.wrap_socket(
             sock,
             server_side=server_side,

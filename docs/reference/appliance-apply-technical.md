@@ -416,8 +416,10 @@ validates that the staged config stays under the KMS apply directory, checks the
 certificate/key/CA file paths, PyKMIP availability, and SQLite database path, then installs
 `/etc/atlaso/kms/pykmip.conf`, writes `/etc/pykmip/server.conf`, installs `atlaso-kms.service`, and enables/restarts the
 listener. The service launches PyKMIP through Atlaso's compatibility wrapper so Photon Python streams where legacy
-`ssl.wrap_socket` was removed can still run the lab KMIP server. Disabling KMS stops and disables `atlaso-kms.service`
-while preserving `/var/lib/atlaso/kms/pykmip.db`. Firewall apply owns TCP/5696 access to the selected interface.
+`ssl.wrap_socket` was removed can still run the lab KMIP server. The wrapper uses a modern server context with an
+explicit TLS 1.2 minimum even when PyKMIP supplies its legacy fixed-protocol argument. Disabling KMS stops and disables
+`atlaso-kms.service` while preserving `/var/lib/atlaso/kms/pykmip.db`. Firewall apply owns TCP/5696 access to the
+selected interface.
 
 ## Appliance settings and operations
 

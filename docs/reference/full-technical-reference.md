@@ -380,7 +380,9 @@ Both commands fail closed outside a scoped managed-script run.
 ESXi Kickstarts resolve only the vault explicitly bound to that Kickstart. Dynamic responses support
 `{{vault.<vaultname>.<key>.username}}`, `{{vault.<vaultname>.<key>.password}}`, and `uri1` through `uri9`; previews and
 source downloads retain markers, and resolved responses disable caching. VCF Helper can import supported passwords from
-VCF 9 SDDC Manager and VCF Installer after explicit TLS fingerprint confirmation.
+VCF 9 SDDC Manager and VCF Installer after explicit TLS fingerprint confirmation. VCF Automation and vSphere
+pre-authentication fingerprint probes require TLS 1.2 or newer while retaining fingerprint confirmation, rather than
+ordinary CA verification, as the trust decision.
 
 HTTP and HTTPS URI actions open a separate browser tab. SSH and SFTP actions use a short-lived one-use Web Terminal
 launch, require explicit host-key fingerprint confirmation, recheck the host key, and authenticate server-side without
@@ -678,7 +680,8 @@ IPv4 and IPv6 listen addresses from the selected service interface, manages app-
 hostname, and requires an enabled healthy CA before activation. Real KMS apply stages
 `/var/lib/atlaso/apply/kms/pykmip.conf`, installs `/etc/atlaso/kms/pykmip.conf` and `/etc/pykmip/server.conf`, and
 manages `atlaso-kms.service`; the service launches PyKMIP through Atlaso's compatibility wrapper so current Photon
-Python streams remain supported. Disabling KMS stops the service while preserving `/var/lib/atlaso/kms/pykmip.db`.
+Python streams remain supported and sets an explicit TLS 1.2 minimum. Disabling KMS stops the service while preserving
+`/var/lib/atlaso/kms/pykmip.db`.
 
 Managed LDAP provides an OpenLDAP 2.6 service for VCF Automation 9.1 while Atlaso operator sign-in remains local. Each
 VCF organization receives an isolated suffix and LMDB database, organization-local users and nested groups, and a
@@ -690,7 +693,8 @@ Backup / Restore owns the separate passphrase-encrypted LDAP recovery workflow. 
 with a configurable port; optional plaintext LDAP has its own configurable port and is disabled by default. External
 listeners are limited to addressed non-management access or route interfaces and enabled VLANs, while privileged
 reconciliation uses local `ldapi:///` with SASL EXTERNAL. VCF configuration includes the mandatory `serviceAccount` to
-`employeeType` mapping, but Atlaso does not import groups or assign VCF roles. See
+`employeeType` mapping. The VCF Automation fingerprint probe requires TLS 1.2 or newer and keeps explicit fingerprint
+confirmation as its trust decision, but Atlaso does not import groups or assign VCF roles. See
 [Managed LDAP for VCF Automation 9.1](../services/managed-ldap.md).
 
 The dedicated `/openid-connect` page contains Atlaso's constrained OIDC provider in Provider, Clients, Signing Keys,

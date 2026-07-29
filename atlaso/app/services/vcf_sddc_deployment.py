@@ -226,10 +226,16 @@ def validate_ova_manifest(descriptor: OvaDescriptor, *, progress: Progress | Non
                 raise VcfSddcDeploymentError(f"OVA manifest validation failed for {name}.")
 
 
-def tls_sha256_fingerprint(address: str, port: int = 443, *, timeout: float = 10.0) -> str:
+def _fingerprint_tls_context() -> ssl.SSLContext:
     context = ssl.create_default_context()
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE
+    return context
+
+
+def tls_sha256_fingerprint(address: str, port: int = 443, *, timeout: float = 10.0) -> str:
+    context = _fingerprint_tls_context()
     with socket.create_connection((address, port), timeout=timeout) as sock:
         with context.wrap_socket(sock, server_hostname=address) as wrapped:
             certificate = wrapped.getpeercert(binary_form=True)
