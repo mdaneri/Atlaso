@@ -1071,6 +1071,7 @@ def create_oidc_client(
         row, raw_secret = create_client(
             db,
             name=payload.name,
+            description=payload.description,
             organization_id=payload.organization_id,
             redirect_uris=payload.redirect_uris,
             post_logout_redirect_uris=payload.post_logout_redirect_uris,
@@ -1116,6 +1117,7 @@ def update_oidc_client(
             db,
             row=row,
             name=payload.name,
+            description=payload.description,
             organization_id=payload.organization_id,
             redirect_uris=payload.redirect_uris,
             post_logout_redirect_uris=payload.post_logout_redirect_uris,

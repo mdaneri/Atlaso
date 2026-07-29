@@ -24,8 +24,10 @@ This verified appliance view provides visual orientation before you begin.
 
 ## Configure time service
 
-1. Add reachable, trusted time sources.
-2. Configure NTS only when the source and certificate trust are available.
+1. Select **Add source here** and use the reviewed source wizard to enter the endpoint and a full-width multiline
+   description.
+2. Configure NTS and desired enablement in the wizard only when the source and certificate trust are available.
+   Existing source enablement remains directly editable in the grid.
 3. Review warnings about source reachability or incomplete security settings.
 4. Inspect the rendered NTPsec preview.
 5. Submit the NTPsec unit through [Appliance Apply](../operate/appliance-apply.md).

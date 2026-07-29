@@ -3701,6 +3701,7 @@ function newUserRow() {
   return {
     id: "__new__",
     username: "",
+    description: "",
     role: "viewer",
     roles: ["viewer"],
     roles_label: "viewer",
@@ -3759,6 +3760,7 @@ function initializeUsersTable() {
     ],
     reviewItems: [
       { label: "Username", field: "username" },
+      { label: "Description", field: "description" },
       {
         label: "Roles",
         value: (form) => [...form.querySelectorAll('input[name="roles"]:checked')].map((input) => input.value).join(", "),
@@ -3854,6 +3856,7 @@ function initializeUsersTable() {
           formatter: userRolesFormatter,
           minWidth: 190,
         },
+        { title: "Description", field: "description", minWidth: 220 },
         {
           title: "Shell",
           field: "shell",
@@ -4211,9 +4214,9 @@ function initializeKmsKeysTable() {
     actionErrorSelector: "#kms-key-error",
     defaults: newKmsKeyRow(defaultClientId),
     steps: [
-      { id: "identity", title: "Define the KMS key", description: "Name the staged key and choose its algorithm and length." },
+      { id: "identity", title: "Define the KMS key", description: "Name the staged key, describe its purpose, and choose its algorithm and length." },
       { id: "policy", title: "Set key policy", description: "Choose usage, optional client ownership, and export behavior." },
-      { id: "state", title: "Choose key lifecycle", description: "Set KMIP lifecycle state, enablement, and operator notes." },
+      { id: "state", title: "Choose key lifecycle", description: "Set the KMIP lifecycle state and enablement." },
       { id: "review", title: "Review KMS desired state", description: "Confirm the key and global appliance-apply boundary." },
     ],
     reviewItems: [
@@ -5211,6 +5214,15 @@ function submitNtpUpstreamTableChange(table, hiddenInput) {
   }
 }
 
+async function persistNtpUpstreamTableChange(table, hiddenInput) {
+  syncNTPsecUpstreamsHiddenInput(table);
+  const settingsForm = hiddenInput?.form;
+  if (!(settingsForm instanceof HTMLFormElement) || typeof settingsForm.atlasoSaveNow !== "function") {
+    return { valid: false, message: "NTP settings autosave is unavailable. Reload the page and try again." };
+  }
+  return settingsForm.atlasoSaveNow();
+}
+
 async function deleteNtpUpstreamFromMenu(row, table, hiddenInput) {
   const data = row.getData();
   if (data.is_new) return;
@@ -5228,9 +5240,13 @@ async function deleteNtpUpstreamFromMenu(row, table, hiddenInput) {
 
 function initializeNTPsecUpstreamsTable() {
   const tableElement = document.getElementById("ntp-upstreams-table");
-  if (!(tableElement instanceof HTMLElement)) {
-    return;
-  }
+  const form = document.querySelector("[data-ntp-source-form]");
+  const dialog = document.getElementById("ntp-source-dialog");
+  if (
+    !(tableElement instanceof HTMLElement)
+    || !(form instanceof HTMLFormElement)
+    || !(dialog instanceof HTMLDialogElement)
+  ) return;
   const fallback = document.getElementById(tableElement.dataset.fallbackId || "");
   const hiddenInput = document.querySelector("[data-ntp-upstreams-json]");
   if (typeof Tabulator === "undefined") {
@@ -5244,67 +5260,143 @@ function initializeNTPsecUpstreamsTable() {
     const ntsSupported = tableElement.dataset.ntpNtsSupported !== "false";
     const rows = normalizeNTPsecUpstreamRows(parsedRows);
     rows.push(ntpBlankUpstreamRow());
-    const atlasoGridOptions12 = {
-      data: rows,
-      index: "id",
-      layout: "fitColumns",
-      height: "260px",
-      rowHeight: 34,
-      placeholder: "Add an upstream source.",
-      reactiveData: false,
-      rowContextMenu: [
+    let table;
+    let wizard;
+    const openSource = (data, launcher) => wizard.open({ launcher, context: data?.is_new ? null : data });
+    const grid = window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      fallback: fallback instanceof HTMLElement ? `#${fallback.id}` : undefined,
+      status: "#ntp-settings-autosave-status",
+      pattern: "wizard-backed",
+      emptyMessage: "No upstream sources configured.",
+      onOpenRow: (data, row, event) => openSource(
+        data,
+        event?.currentTarget || row?.getElement?.(),
+      ),
+      rowActions: [
+        {
+          label: "Edit source",
+          disabled: (row) => row.getData().is_new,
+          action: (_event, row) => openSource(row.getData(), row.getElement()),
+        },
         {
           label: "Delete server",
-          action: (event, row) => deleteNtpUpstreamFromMenu(row, table, hiddenInput),
           disabled: (row) => row.getData().is_new,
+          action: (_event, row) => deleteNtpUpstreamFromMenu(row, table, hiddenInput),
         },
       ],
-      columns: lockNewRecordColumns([
-        {
-          title: "Source",
-          field: "source",
-          editor: ntpUpstreamSourceEditor,
-          formatter: ntpUpstreamSourceFormatter,
-          width: 360,
-          minWidth: 230,
-          headerTooltip: "IPv4, IPv6, or fully qualified DNS name. Append :port when the upstream uses a non-default port; use [IPv6]:port for IPv6.",
-        },
-        {
-          title: "NTS",
-          field: "use_nts",
-          formatter: ntsSupported ? ntpNtsTickFormatter : ntpUnsupportedNtsFormatter,
-          editor: ntsSupported ? "tickCross" : false,
-          editable: ntsSupported ? ntpUpstreamRowHasSource : false,
-          width: ntsSupported ? 70 : 105,
-          hozAlign: "center",
-        },
-        { title: "Enabled", field: "enabled", formatter: ntpGuardedTickFormatter, editor: "tickCross", editable: ntpUpstreamRowHasSource, width: 92, hozAlign: "center" },
-        { title: "Description", field: "description", editor: "input", editable: ntpUpstreamRowHasSource, minWidth: 240, widthGrow: 5, formatter: ntpGuardedTextFormatter },
-      ], "source"),
-      rowFormatter: (row) => {
-        markNewRecordRow(row, "source");
+      options: {
+        data: rows,
+        index: "id",
+        layout: "fitColumns",
+        height: "260px",
+        rowHeight: 34,
+        placeholder: "No upstream sources configured.",
+        reactiveData: false,
+        columns: [
+          {
+            title: "Source",
+            field: "source",
+            formatter: (cell) => cell.getRow().getData().is_new
+              ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add source here</button>'
+              : escapeHtml(cell.getValue()),
+            width: 360,
+            minWidth: 230,
+            headerTooltip: "IPv4, IPv6, or fully qualified DNS name. Append :port when the upstream uses a non-default port; use [IPv6]:port for IPv6.",
+          },
+          {
+            title: "NTS",
+            field: "use_nts",
+            formatter: ntsSupported ? ntpNtsTickFormatter : ntpUnsupportedNtsFormatter,
+            width: ntsSupported ? 70 : 105,
+            hozAlign: "center",
+          },
+          {
+            title: "Enabled",
+            field: "enabled",
+            formatter: ntpGuardedTickFormatter,
+            editor: "tickCross",
+            editable: ntpUpstreamRowHasSource,
+            width: 92,
+            hozAlign: "center",
+            cellEdited: () => submitNtpUpstreamTableChange(table, hiddenInput),
+          },
+          {
+            title: "Description",
+            field: "description",
+            minWidth: 240,
+            widthGrow: 5,
+            formatter: ntpGuardedTextFormatter,
+          },
+        ],
+        rowFormatter: (row) => markNewRecordRow(row, "source"),
       },
-    };
-    const table = window.AtlasoUiPatterns.createGrid({
-      element: tableElement,
-      pattern: "direct-edit",
-      options: atlasoGridOptions12,
-    }).table;
+    });
+    table = grid.table;
     if (!table) return;
-    table.on("cellEdited", async (cell) => {
-      const row = cell.getRow();
-      const data = row.getData();
-      if (!data.is_new && cell.getField() === "source" && !String(data.source || "").trim()) {
-        await row.delete();
+    wizard = window.AtlasoUiPatterns.createWizard({
+      form,
+      dialog,
+      steps: [
+        { id: "identity", title: "Define the NTP source", description: "Set the upstream endpoint and its operator-visible purpose." },
+        { id: "enablement", title: "Choose source security and state", description: "Choose NTS authentication and whether the source enters desired state." },
+        { id: "review", title: "Review NTP desired state", description: "Confirm the source and global appliance-apply boundary." },
+      ],
+      onOpen: ({ context }) => {
+        populateAtlasoWizardForm(form, {
+          record_id: context?.id || "",
+          source: context?.source || "",
+          description: context?.description || "",
+          use_nts: Boolean(context?.use_nts),
+          enabled: context ? Boolean(context.enabled) : true,
+        });
+      },
+      validateStep: ({ step }) => {
+        if (step.id === "identity" && !parseNtpUpstreamSource(form.elements.source.value)) {
+          return {
+            valid: false,
+            message: "Enter an IPv4 address, IPv6 address, or FQDN, optionally followed by :port.",
+            field: "source",
+          };
+        }
+        return { valid: true };
+      },
+      prepareReview: () => renderAtlasoWizardReview(form, [
+        { label: "Source", field: "source" },
+        { label: "Description", field: "description" },
+        { label: "NTS", field: "use_nts" },
+        { label: "Enabled", field: "enabled" },
+      ]),
+      onSubmit: async () => {
+        const id = form.elements.record_id.value;
+        const payload = {
+          id: id || `source-${Date.now()}`,
+          source: form.elements.source.value.trim(),
+          description: form.elements.description.value.trim(),
+          use_nts: ntsSupported && form.elements.use_nts.checked,
+          enabled: form.elements.enabled.checked,
+        };
+        const existing = id ? table.getRow(id) : null;
+        const previous = existing ? { ...existing.getData() } : null;
+        const inserted = existing
+          ? null
+          : await table.addRow(payload, true, table.getRows().find((row) => row.getData().is_new));
+        if (existing) await existing.update(payload);
         ensureNTPsecUpstreamAddRow(table);
-        submitNtpUpstreamTableChange(table, hiddenInput);
-        return;
-      }
-      if (data.is_new && String(data.source || "").trim()) {
-        row.update({ is_new: false, id: data.id || `source-${Date.now()}`, enabled: true });
-        ensureNTPsecUpstreamAddRow(table);
-      }
-      submitNtpUpstreamTableChange(table, hiddenInput);
+        const result = await persistNtpUpstreamTableChange(table, hiddenInput);
+        if (result?.valid === false) {
+          if (existing && previous) await existing.update(previous);
+          if (inserted) await inserted.delete();
+          ensureNTPsecUpstreamAddRow(table);
+          syncNTPsecUpstreamsHiddenInput(table);
+          return result;
+        }
+        return { valid: true };
+      },
+    });
+    tableElement.addEventListener("click", (event) => {
+      const launcher = event.target.closest("[data-atlaso-wizard-add]");
+      if (launcher instanceof HTMLButtonElement) openSource(null, launcher);
     });
     syncNTPsecUpstreamsHiddenInput(table);
   } catch (error) {
@@ -7556,6 +7648,7 @@ function initializeApiTokensTable() {
       id: "api-token-new",
       is_new: true,
       name: "",
+      description: "",
       owner_username: "",
       role: "",
       scopes: "",
@@ -7681,6 +7774,7 @@ function initializeOidcClientsTable() {
   const populateForm = (data = null) => {
     form.elements.namedItem("client_record_id").value = data?.id || "";
     form.elements.namedItem("name").value = data?.name || "";
+    form.elements.namedItem("description").value = data?.description || "";
     form.elements.namedItem("organization_id").value = data?.organization_id || "";
     form.elements.namedItem("redirect_uris").value = (data?.redirect_uris || []).join("\n");
     form.elements.namedItem("post_logout_redirect_uris").value = (data?.post_logout_redirect_uris || []).join("\n");
@@ -7768,6 +7862,7 @@ function initializeOidcClientsTable() {
             : escapeHtml(cell.getValue()),
         },
         { title: "Client ID", field: "client_id", minWidth: 230, formatter: (cell) => cell.getRow().getData().is_new ? "" : `<code>${escapeHtml(cell.getValue())}</code>` },
+        { title: "Description", field: "description", minWidth: 220, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || "") },
         { title: "Organization", field: "organization_slug", minWidth: 150, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || "Unbound") },
         { title: "Redirects", field: "redirect_uris", minWidth: 260, formatter: (cell) => cell.getRow().getData().is_new ? "" : (cell.getValue() || []).map((value) => `<code>${escapeHtml(value)}</code>`).join("<br>") },
         { title: "Status", field: "enabled", width: 105, formatter: (cell) => cell.getRow().getData().is_new ? "" : `<span class="status-pill ${cell.getValue() ? "good" : "muted"}">${cell.getValue() ? "enabled" : "disabled"}</span>` },
@@ -7809,10 +7904,11 @@ function initializeOidcClientsTable() {
     prepareReview: () => {
       const review = form.querySelector("[data-oidc-client-review]");
       const name = form.elements.namedItem("name").value.trim();
+      const description = form.elements.namedItem("description").value.trim();
       const organization = form.elements.namedItem("organization_id").selectedOptions[0]?.textContent || "Unbound";
       const redirects = form.elements.namedItem("redirect_uris").value.split(/\r?\n/).filter(Boolean).length;
       const enabled = form.elements.namedItem("enabled").checked;
-      review.innerHTML = `<div><span>Client</span><strong>${escapeHtml(name)}</strong></div><div><span>Identity source</span><strong>${escapeHtml(organization)}</strong></div><div><span>Scopes</span><strong>${escapeHtml(checkedScopes().join(" "))}</strong></div><div><span>Exact redirects</span><strong>${redirects}</strong></div><div><span>State</span><strong>${enabled ? "Enabled" : "Disabled"}</strong></div>`;
+      review.innerHTML = `<div><span>Client</span><strong>${escapeHtml(name)}</strong></div><div><span>Description</span><strong>${escapeHtml(description || "Not provided")}</strong></div><div><span>Identity source</span><strong>${escapeHtml(organization)}</strong></div><div><span>Scopes</span><strong>${escapeHtml(checkedScopes().join(" "))}</strong></div><div><span>Exact redirects</span><strong>${redirects}</strong></div><div><span>State</span><strong>${enabled ? "Enabled" : "Disabled"}</strong></div>`;
     },
     onSubmit: async () => {
       const body = new FormData(form);
@@ -8095,10 +8191,11 @@ function initializeDnsDomainWizard() {
       { id: "enablement", title: "Choose domain enablement", description: "Choose whether the domain enters rendered dnsmasq desired state." },
       { id: "review", title: "Review DNS desired state", description: "Confirm the domain and global appliance-apply boundary." },
     ],
-    onOpen: () => populateAtlasoWizardForm(form, { domain: "", enabled: true }),
+    onOpen: () => populateAtlasoWizardForm(form, { domain: "", description: "", enabled: true }),
     validateStep: validateAtlasoWizardStep,
     prepareReview: () => renderAtlasoWizardReview(form, [
       { label: "Domain", field: "domain" },
+      { label: "Description", field: "description" },
       { label: "Enabled", field: "enabled" },
     ]),
     onSubmit: async () => {
@@ -8247,6 +8344,30 @@ function initializeDhcpScopesTable() {
     { overwrite: true },
   );
   const form = document.querySelector("[data-dhcp-scope-form]");
+  const parseLeaseTime = (value) => {
+    const original = String(value || "").trim();
+    const match = original.match(/^([1-9]\d*)([mhd])$/i);
+    return match
+      ? { duration: match[1], unit: match[2].toLowerCase(), original, supported: true }
+      : { duration: "", unit: "h", original, supported: false };
+  };
+  const syncLeaseTime = () => {
+    if (!(form instanceof HTMLFormElement)) return;
+    const duration = form.elements.lease_duration;
+    const unit = form.elements.lease_unit;
+    const leaseTime = form.elements.lease_time;
+    if (duration instanceof HTMLInputElement && unit instanceof HTMLSelectElement && leaseTime instanceof HTMLInputElement) {
+      leaseTime.value = duration.value
+        ? `${duration.value}${unit.value}`
+        : leaseTime.dataset.atlasoOriginalLeaseTime || "";
+    }
+  };
+  const leaseTimeLabel = () => {
+    if (!(form instanceof HTMLFormElement)) return "";
+    const duration = form.elements.lease_duration.value;
+    const unit = form.elements.lease_unit.selectedOptions[0]?.textContent || "";
+    return `${duration} ${unit}`.trim();
+  };
   const refreshDerivedRange = (force = false) => {
     if (!(form instanceof HTMLFormElement)) return;
     const range = form.elements.range_expression;
@@ -8288,6 +8409,8 @@ function initializeDhcpScopesTable() {
   form?.elements.address_family?.addEventListener("change", refreshNetworkDefaults);
   form?.elements.site_address?.addEventListener("input", () => refreshDerivedRange());
   form?.elements.prefix_length?.addEventListener("input", () => refreshDerivedRange());
+  form?.elements.lease_duration?.addEventListener("input", syncLeaseTime);
+  form?.elements.lease_unit?.addEventListener("change", syncLeaseTime);
   initializeAtlasoResourceWizard({
     elementId: "dhcp-scopes-table",
     formSelector: "[data-dhcp-scope-form]",
@@ -8319,16 +8442,42 @@ function initializeDhcpScopesTable() {
       { label: "Interface", field: "interface_name" },
       { label: "Network", value: (form) => `${form.elements.site_address.value}/${form.elements.prefix_length.value}` },
       { label: "Range", field: "range_expression" },
-      { label: "Lease", field: "lease_time" },
+      { label: "Lease", value: leaseTimeLabel },
       { label: "Domain", field: "domain_name" },
       { label: "Enabled", field: "enabled" },
     ],
     onOpen: ({ form, context }) => {
       const family = form.elements.address_family;
       if (family instanceof HTMLSelectElement) family.disabled = Boolean(context);
+      const lease = parseLeaseTime(context?.lease_time || defaults.lease_time);
+      form.elements.lease_time.dataset.atlasoOriginalLeaseTime = lease.original;
+      form.elements.lease_duration.value = lease.duration;
+      form.elements.lease_unit.value = lease.unit;
+      form.elements.lease_duration.placeholder = lease.supported
+        ? ""
+        : `Replace unsupported value: ${lease.original || "empty"}`;
+      syncLeaseTime();
       if (!context) refreshDerivedRange(true);
     },
-    prepareFormData: ({ body, form }) => body.set("address_family", form.elements.address_family.value),
+    validateStep: ({ form, step }) => {
+      if (
+        step.id === "services"
+        && (!/^[1-9]\d*$/.test(form.elements.lease_duration.value)
+          || !["m", "h", "d"].includes(form.elements.lease_unit.value))
+      ) {
+        return {
+          valid: false,
+          message: "Enter a positive whole-number lease duration and choose Minutes, Hours, or Days.",
+          field: "lease_duration",
+        };
+      }
+      return { valid: true };
+    },
+    prepareFormData: ({ body, form }) => {
+      syncLeaseTime();
+      body.set("address_family", form.elements.address_family.value);
+      body.set("lease_time", form.elements.lease_time.value);
+    },
     deleteConfirmation: (data) => ({
       title: `Delete ${data.name} IP zone?`,
       message: "This removes the DHCP IP zone and its scoped options from Atlaso desired state. It will not touch the appliance until global appliance apply runs.",
@@ -9154,19 +9303,23 @@ function initializeAutosaveForms(root = document) {
           inFlightRequest = null;
         }
         resetUploadProgress();
+        return { valid: true, payload };
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
-          return;
+          return { valid: false, message: "Save was superseded by a newer change." };
         }
         inFlightRequest = null;
         resetUploadProgress();
-        setAutosaveStatus(statusElement, error instanceof Error ? error.message : "Settings could not be saved.", "error");
+        const message = error instanceof Error ? error.message : "Settings could not be saved.";
+        setAutosaveStatus(statusElement, message, "error");
+        return { valid: false, message };
       } finally {
         if (!hasFiles) {
           resetUploadProgress();
         }
       }
     };
+    form.atlasoSaveNow = save;
 
     const scheduleSave = () => {
       window.clearTimeout(timer);

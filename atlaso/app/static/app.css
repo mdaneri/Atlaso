@@ -6122,8 +6122,30 @@ textarea {
   font-size: 20px;
 }
 
-.vcf-sddc-step-page {
+.vcf-sddc-step-page,
+.vcf-sddc-wizard-body [data-atlaso-wizard-step] {
   display: grid;
+  gap: 16px;
+}
+
+.vcf-sddc-step-page > .form-stack,
+.vcf-sddc-wizard-body [data-atlaso-wizard-step] > .form-stack {
+  gap: 16px;
+}
+
+.vcf-sddc-step-page > label,
+.vcf-sddc-step-page .form-stack > label,
+.vcf-sddc-wizard-body [data-atlaso-wizard-step] > label,
+.vcf-sddc-wizard-body [data-atlaso-wizard-step] .form-stack > label {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+}
+
+.vcf-sddc-step-page > .form-grid,
+.vcf-sddc-step-page .form-stack > .form-grid,
+.vcf-sddc-wizard-body [data-atlaso-wizard-step] > .form-grid,
+.vcf-sddc-wizard-body [data-atlaso-wizard-step] .form-stack > .form-grid {
   gap: 16px;
 }
 

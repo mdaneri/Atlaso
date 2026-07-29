@@ -127,6 +127,39 @@ def init_db() -> None:
                         "ADD COLUMN disabled_domains VARCHAR(500) NOT NULL DEFAULT ''"
                     )
                 )
+            if "domain_descriptions_json" not in dns_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE dns_settings "
+                        "ADD COLUMN domain_descriptions_json TEXT NOT NULL DEFAULT '{}'"
+                    )
+                )
+            user_columns = {
+                row[1]
+                for row in connection.execute(
+                    text("PRAGMA table_info(users)")
+                ).all()
+            }
+            if "description" not in user_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE users "
+                        "ADD COLUMN description TEXT NOT NULL DEFAULT ''"
+                    )
+                )
+            oidc_client_columns = {
+                row[1]
+                for row in connection.execute(
+                    text("PRAGMA table_info(oidc_clients)")
+                ).all()
+            }
+            if "description" not in oidc_client_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE oidc_clients "
+                        "ADD COLUMN description TEXT NOT NULL DEFAULT ''"
+                    )
+                )
             ldap_organization_columns = {
                 row[1]
                 for row in connection.execute(

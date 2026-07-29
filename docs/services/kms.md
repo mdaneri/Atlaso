@@ -31,6 +31,9 @@ This verified appliance view provides visual orientation before you begin.
 3. Resolve Validation-card errors and inspect the rendered service configuration.
 4. Submit the KMS/KMIP unit through [Appliance Apply](../operate/appliance-apply.md).
 
+The managed-key wizard keeps the key name, algorithm, length, and full-width multiline purpose description together in
+its first identity step. Policy and lifecycle choices remain in their dedicated steps before review.
+
 The apply unit installs `/etc/atlaso/kmip/server.json` and manages `atlaso-kmip.service` as an unprivileged account.
 It gives systemd a root-managed mode-`0600`, machine-encrypted credential containing only `ATLASO_SECRETS_KEY`;
 systemd decrypts it into the service's private runtime credential directory, and the daemon does not receive the web

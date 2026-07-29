@@ -34,6 +34,7 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     username: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
     role: Mapped[str] = mapped_column(String(50), default=Role.ADMIN.value)
     roles_json: Mapped[str] = mapped_column(Text, default="")
     auth_provider: Mapped[str] = mapped_column(String(40), default="local")
@@ -378,6 +379,7 @@ class DnsSettings(Base):
     listen_address: Mapped[str | None] = mapped_column(String(240), nullable=True)
     domain: Mapped[str] = mapped_column(String(500), default="atlaso.internal")
     disabled_domains: Mapped[str] = mapped_column(String(500), default="")
+    domain_descriptions_json: Mapped[str] = mapped_column(Text, default="{}")
     upstream_servers: Mapped[str] = mapped_column(Text, default="1.1.1.1\n9.9.9.9")
     cache_size: Mapped[int] = mapped_column(Integer, default=1000)
     expand_hosts: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -786,6 +788,7 @@ class OidcClient(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(160))
+    description: Mapped[str] = mapped_column(Text, default="")
     client_id: Mapped[str] = mapped_column(String(160), unique=True, index=True)
     client_secret_hash: Mapped[str] = mapped_column(Text)
     organization_id: Mapped[int | None] = mapped_column(

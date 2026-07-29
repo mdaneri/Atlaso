@@ -36,8 +36,9 @@ and never expose private keys in documentation, screenshots, tasks, or logs.
 
 Use **Certificate Requests** to identify the requester, requested names, intended use, and current status before
 approving or rejecting enrollment. Confirm that every requested name belongs to the intended lab boundary.
-The request wizard presents the common name, profile, DNS SANs, and IP SANs on separate rows so long names and
-multi-value SAN lists remain readable before review. Descriptions stay with request identity, while enablement has a
+The request wizard presents the common name, profile, multiline description, DNS SANs, and IP SANs on separate rows so
+long names, operator notes, and multi-value SAN lists remain readable before review. Descriptions stay with request
+identity, while enablement has a
 dedicated step for both certificate profiles and requests. **CSR Intake** uses the same guided pattern to separate
 metadata, SANs, PEM content, and final review.
 

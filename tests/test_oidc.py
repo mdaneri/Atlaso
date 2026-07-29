@@ -406,6 +406,7 @@ def test_oidc_confidential_client_secret_is_argon2_and_shown_only_once(client):
         headers=headers,
         json={
             "name": "VCF 9.1",
+            "description": "VCF identity broker",
             "redirect_uris": ["https://vcf.example.test/identity/callback?case=A%2Fb"],
             "post_logout_redirect_uris": [],
             "allowed_scopes": ["openid", "profile", "email", "groups"],
@@ -422,6 +423,7 @@ def test_oidc_confidential_client_secret_is_argon2_and_shown_only_once(client):
     listed = client.get("/api/v1/oidc/clients", headers=headers)
     assert listed.status_code == 200
     assert plaintext not in listed.text
+    assert listed.json()[0]["description"] == "VCF identity broker"
     assert listed.json()[0]["redirect_uris"] == [
         "https://vcf.example.test/identity/callback?case=A%2Fb"
     ]
@@ -457,6 +459,7 @@ def test_oidc_client_update_preserves_generated_identity_and_export_is_redacted(
         headers=headers,
         json={
             "name": "Lifecycle client",
+            "description": "Original relying party",
             "redirect_uris": ["https://rp.example.test/callback"],
             "allowed_scopes": ["openid", "profile"],
         },
@@ -471,6 +474,7 @@ def test_oidc_client_update_preserves_generated_identity_and_export_is_redacted(
         headers=headers,
         json={
             "name": "Lifecycle client updated",
+            "description": "Updated relying party",
             "redirect_uris": ["https://rp.example.test/callback-2"],
             "post_logout_redirect_uris": ["https://rp.example.test/signed-out"],
             "allowed_scopes": ["openid", "email"],
@@ -479,6 +483,7 @@ def test_oidc_client_update_preserves_generated_identity_and_export_is_redacted(
     )
     assert updated.status_code == 200, updated.text
     assert updated.json()["client_id"] == row["client_id"]
+    assert updated.json()["description"] == "Updated relying party"
     assert updated.json()["redirect_uris"] == ["https://rp.example.test/callback-2"]
     assert "client_secret_hash" not in updated.text
     assert original_secret not in updated.text
@@ -890,6 +895,11 @@ def test_openid_connect_page_exposes_authorization_code_oidc_ui(client):
     assert "<noscript>" in page.text
     assert "server-rendered client, signing-key, mapping, and subject tables remain readable" in page.text
     assert 'id="oidc-clients-table"' in page.text
+    oidc_client_wizard = page.text.split('id="oidc-client-dialog"', 1)[1].split("</dialog>", 1)[0]
+    oidc_identity = oidc_client_wizard.split('data-atlaso-wizard-step="identity"', 1)[1].split(
+        "</section>", 1
+    )[0]
+    assert '<textarea name="description" rows="3" maxlength="1000">' in oidc_identity
     assert 'id="oidc-keys-table"' in page.text
     assert 'id="oidc-subjects-table"' in page.text
     assert page.text.count("data-atlaso-wizard") >= 2

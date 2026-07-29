@@ -24,7 +24,9 @@ This verified appliance view provides visual orientation before you begin.
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
 Select **+ Domain** to create a forward domain through the guided identity, enablement, and review steps. Each domain
-tab exposes a direct enablement switch. Disabling a domain retains the domain and all scoped records in Atlaso's
+identity includes a full-width multiline description. The selected domain tab presents that description as its heading
+and keeps the DNS suffix in the supporting line. Each domain tab exposes a direct enablement switch. Disabling a domain
+retains the domain and all scoped records in Atlaso's
 database while excluding that zone from rendered dnsmasq desired state; at least one domain must remain enabled.
 
 ## Local and authoritative modes

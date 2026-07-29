@@ -813,9 +813,9 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/codemirror/atlaso-codemirror.min.js?v=atlaso-codemirror-20260728-1" in service_worker.text
-    assert "/static/app.css?v=atlaso-ui-foundation-20260728-5" in service_worker.text
+    assert "/static/app.css?v=atlaso-wizard-layout-20260729-10" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in service_worker.text
-    assert "/static/app.js?v=atlaso-complex-wizards-20260728-13" in service_worker.text
+    assert "/static/app.js?v=atlaso-wizard-layout-20260729-15" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -835,8 +835,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=atlaso-complex-wizards-20260728-13"),
-        (public_base, "/static/app.js?v=atlaso-complex-wizards-20260728-13"),
+        (base, "/static/app.js?v=atlaso-wizard-layout-20260729-15"),
+        (public_base, "/static/app.js?v=atlaso-wizard-layout-20260729-15"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4"
@@ -880,6 +880,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert "height: min(720px, calc(100vh - 48px));" in app_css.text
+    assert ".vcf-sddc-wizard-body [data-atlaso-wizard-step] {" in app_css.text
+    assert ".vcf-sddc-wizard-body [data-atlaso-wizard-step] > .form-stack {" in app_css.text
 
 
 def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
@@ -889,9 +891,9 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     create_grid = "window.AtlasoUiPatterns.createGrid({"
 
     assert app_js.count(create_grid) == 28
-    assert app_js.count('pattern: "direct-edit"') == 13
+    assert app_js.count('pattern: "direct-edit"') == 12
     assert app_js.count('pattern: "read-only"') == 7
-    assert app_js.count('pattern: "wizard-backed"') == 8
+    assert app_js.count('pattern: "wizard-backed"') == 9
     assert "new Tabulator(" not in app_js
     assert "new window.Tabulator(" not in app_js
     assert "atlaso-legacy-tabulator: #117" not in app_js
@@ -906,7 +908,7 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
         "initializeDhcpLeasesTable": "read-only",
         "initializeManagedFirewallRulesTable": "direct-edit",
         "initializeServicesTable": "direct-edit",
-        "initializeNTPsecUpstreamsTable": "direct-edit",
+        "initializeNTPsecUpstreamsTable": "wizard-backed",
         "initializeRoutesWanRoutingTable": "direct-edit",
         "initializeRoutesWanNatTable": "direct-edit",
         "initializeRoutesWanRoutesTable": "direct-edit",
@@ -1273,9 +1275,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=atlaso-vaults-20260728-9" in page.text
+    assert "/static/app.css?v=atlaso-wizard-layout-20260729-10" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in page.text
-    assert "/static/app.js?v=atlaso-complex-wizards-20260728-13" in page.text
+    assert "/static/app.js?v=atlaso-wizard-layout-20260729-15" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -2392,6 +2394,11 @@ def test_ntp_page_autosave_updates_desired_state_and_preview(client, monkeypatch
     assert "ntp-source-health-modal" in page.text
     assert "Check source health" not in page.text
     assert "ntp-upstreams-table" in page.text
+    assert 'id="ntp-source-dialog"' in page.text
+    assert "data-ntp-source-form" in page.text
+    ntp_source_wizard = page.text.split('id="ntp-source-dialog"', 1)[1].split("</dialog>", 1)[0]
+    ntp_source_identity = ntp_source_wizard.split('data-atlaso-wizard-step="identity"', 1)[1].split("</section>", 1)[0]
+    assert '<textarea name="description" rows="3" maxlength="1000">' in ntp_source_identity
     assert "ntp-main-panel" in page.text
     assert '"source": "0.pool.ntp.org"' in page.text
     assert '"source": "ptbtime1.ptb.de"' in page.text
@@ -2461,6 +2468,13 @@ def test_ntp_page_autosave_updates_desired_state_and_preview(client, monkeypatch
     assert js.status_code == 200
     assert "initializeNtpSettings" in js.text
     assert "initializeNTPsecUpstreamsTable" in js.text
+    ntp_table_js = js.text.split("function initializeNTPsecUpstreamsTable()", 1)[1].split(
+        "function updateNtpSettingsPreview", 1
+    )[0]
+    assert 'pattern: "wizard-backed"' in ntp_table_js
+    assert "window.AtlasoUiPatterns.createWizard({" in ntp_table_js
+    assert "await persistNtpUpstreamTableChange(table, hiddenInput)" in ntp_table_js
+    assert "table.addRow(payload, true" in ntp_table_js
     assert "ntpUpstreamRowHasSource" in js.text
     assert "editable: ntpUpstreamRowHasSource" in js.text
     assert "rowContextMenu" in js.text
@@ -4666,6 +4680,11 @@ def test_routes_wan_autosave_endpoints_and_apply_task(client):
 def test_api_token_create_and_revoke_ui(client):
     login(client)
     page = client.get("/authentication")
+    token_wizard = page.text.split('id="api-token-dialog"', 1)[1].split("</dialog>", 1)[0]
+    token_identity = token_wizard.split('data-atlaso-wizard-step="identity"', 1)[1].split(
+        "</section>", 1
+    )[0]
+    assert '<textarea name="description" rows="3" maxlength="1000">' in token_identity
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     created = client.post(
         "/authentication/api-tokens",
@@ -4696,6 +4715,11 @@ def test_local_users_page_separates_ldap_authentication(client):
     assert 'id="user-account-dialog"' in users.text
     assert "data-user-account-form" in users.text
     assert "data-atlaso-resource-review" in users.text
+    user_wizard = users.text.split('id="user-account-dialog"', 1)[1].split("</dialog>", 1)[0]
+    user_identity = user_wizard.split('data-atlaso-wizard-step="identity"', 1)[1].split(
+        "</section>", 1
+    )[0]
+    assert '<textarea name="description" rows="3" maxlength="1000">' in user_identity
     assert "user-password-modal" in users.text
     assert "data-password-toggle" in users.text
     assert "Password Reset" not in users.text
@@ -4715,7 +4739,14 @@ def test_local_users_page_separates_ldap_authentication(client):
     csrf = users.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     created = client.post(
         "/users",
-        data={"username": "operator", "role": "viewer", "shell": "/bin/bash", "web_terminal_access": "true", "csrf": csrf},
+        data={
+            "username": "operator",
+            "description": "Lab operator",
+            "role": "viewer",
+            "shell": "/bin/bash",
+            "web_terminal_access": "true",
+            "csrf": csrf,
+        },
         follow_redirects=True,
     )
     assert created.status_code == 200
@@ -4757,6 +4788,7 @@ def test_local_users_page_separates_ldap_authentication(client):
 
     with SessionLocal() as db:
         operator = db.execute(select(User).where(User.username == "operator")).scalar_one()
+        assert operator.description == "Lab operator"
         assert operator.web_terminal_access is True
         multi_role_user = db.execute(select(User).where(User.username == "multi-role")).scalar_one()
         assert multi_role_user.roles_json == '["service-admin", "certificate-operator"]'
@@ -5897,6 +5929,11 @@ def test_dns_and_dhcp_pages_render(client):
     assert "<strong>Avoid .local for VCF.</strong>" not in dns.text
     assert "+ Domain" in dns.text
     assert "Define the DNS domain" in dns.text
+    dns_domain_wizard = dns.text.split('id="dns-domain-dialog"', 1)[1].split("</dialog>", 1)[0]
+    dns_domain_identity = dns_domain_wizard.split('data-atlaso-wizard-step="identity"', 1)[1].split(
+        "</section>", 1
+    )[0]
+    assert '<textarea name="description" rows="3" maxlength="1000"' in dns_domain_identity
     assert "data-dns-domain-wizard-add" in dns.text
     assert "data-dns-domain-enabled-form" in dns.text
     assert "Import Hosts" in dns.text
@@ -6043,7 +6080,8 @@ def test_dns_and_dhcp_pages_render(client):
     assert 'formSelector: "[data-dhcp-scope-form]"' in app_js.text
     assert 'dialogId: "dhcp-scope-dialog"' in app_js.text
     assert 'resourceName: "scope"' in app_js.text
-    assert 'prepareFormData: ({ body, form }) => body.set("address_family"' in app_js.text
+    assert 'body.set("address_family", form.elements.address_family.value);' in app_js.text
+    assert 'body.set("lease_time", form.elements.lease_time.value);' in app_js.text
     assert 'title: "Family"' in app_js.text
     assert "address_family" in app_js.text
     assert 'title: "NTP"' in app_js.text
@@ -6713,6 +6751,7 @@ def test_certificate_authority_page_renders(client):
     assert 'data-atlaso-wizard-step="enablement"' in certificate_wizard
     certificate_identity = certificate_wizard.split('data-atlaso-wizard-step="identity"', 1)[1].split("</section>", 1)[0]
     assert 'name="description"' in certificate_identity
+    assert '<textarea name="description" rows="3" maxlength="1000">' in certificate_identity
     certificate_enablement = certificate_wizard.split('data-atlaso-wizard-step="enablement"', 1)[1].split("</section>", 1)[0]
     assert 'name="description"' not in certificate_enablement
     profile_wizard = ca.text.split('id="ca-profile-dialog"', 1)[1].split("</dialog>", 1)[0]
@@ -7747,6 +7786,15 @@ def test_kms_page_renders(client):
     assert 'name="database_path"' not in kms.text
     assert 'name="config_path"' not in kms.text
     assert "data-confirm-modal" in kms.text
+    key_wizard = kms.text.split('id="kms-key-dialog"', 1)[1].split("</dialog>", 1)[0]
+    key_identity = key_wizard.split('data-atlaso-wizard-step="identity"', 1)[1].split(
+        "</section>", 1
+    )[0]
+    key_state = key_wizard.split('data-atlaso-wizard-step="state"', 1)[1].split(
+        "</section>", 1
+    )[0]
+    assert '<textarea name="description" rows="3" maxlength="1000">' in key_identity
+    assert 'name="description"' not in key_state
 
     app_js = client.get("/static/app.js")
     assert app_js.status_code == 200
@@ -12899,6 +12947,21 @@ def test_dhcp_scope_edit_form_updates_ip_zone(client):
     import json
 
     payload = page.text.split("data-scopes='", 1)[1].split("'", 1)[0]
+    scope_wizard = page.text.split('id="dhcp-scope-dialog"', 1)[1].split("</dialog>", 1)[0]
+    identity_step = scope_wizard.split('data-atlaso-wizard-step="identity"', 1)[1].split(
+        "</section>", 1
+    )[0]
+    services_step = scope_wizard.split('data-atlaso-wizard-step="services"', 1)[1].split(
+        "</section>", 1
+    )[0]
+    assert '<textarea name="description" rows="3" maxlength="1000">' in identity_step
+    assert 'name="lease_duration"' in services_step
+    assert '<option value="m">Minutes</option>' in services_step
+    assert '<option value="h">Hours</option>' in services_step
+    assert '<option value="d">Days</option>' in services_step
+    app_js = Path("atlaso/app/static/app.js").read_text(encoding="utf-8")
+    assert "leaseTime.dataset.atlasoOriginalLeaseTime" in app_js
+    assert "Replace unsupported value:" in app_js
     rows = json.loads(html.unescape(payload))
     scope_id = next(row["id"] for row in rows if row["name"] == "SiteA")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -13138,13 +13201,14 @@ def test_dns_zone_create_adds_domain_tab(client):
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
         "/dns/zones",
-        data={"domain": "sitea.internal", "csrf": csrf},
+        data={"domain": "sitea.internal", "description": "Site A services", "csrf": csrf},
         follow_redirects=False,
     )
     assert response.status_code == 303
 
     refreshed = client.get("/dns")
     assert "sitea.internal" in refreshed.text
+    assert "Site A services" in refreshed.text
     assert 'data-domain="sitea.internal"' in refreshed.text
 
 
@@ -13197,7 +13261,11 @@ def test_dns_zone_disable_keeps_database_records_but_excludes_rendered_state(cli
         headers={"X-Atlaso-Grid": "1"},
     )
     assert created.status_code == 200
-    assert created.json()["domain"] == {"name": "stored.internal", "enabled": True}
+    assert created.json()["domain"] == {
+        "name": "stored.internal",
+        "description": "",
+        "enabled": True,
+    }
     record = client.post(
         "/dns/records",
         data={
