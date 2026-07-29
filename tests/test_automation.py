@@ -169,6 +169,7 @@ def test_managed_script_revision_is_immutable_enabled_and_run_by_worker(client):
     assert '<textarea name="description" rows="3" maxlength="500"></textarea>' in page.text
     assert '<div class="form-grid automation-script-identity-grid">' in page.text
     assert ".automation-script-identity-grid > .full" in Path("atlaso/app/static/app.css").read_text()
+    assert "align-content: start;" in Path("atlaso/app/static/app.css").read_text()
     assert "data-automation-script-source-confirm" in page.text
     assert 'id="automation-script-grid-status"' in page.text
     assert "Import script file" in page.text

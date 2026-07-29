@@ -588,7 +588,7 @@ def test_remote_vault_uri_launch_uses_one_use_server_side_ticket(client, monkeyp
     assert "sidebar" not in remote_page.text
     assert "Primary" not in remote_page.text
     assert "/static/terminal.js?v=atlaso-vault-uri-20260727-2" in remote_page.text
-    assert "/static/app.css?v=atlaso-monaco-expand-20260729-2" in remote_page.text
+    assert "/static/app.css?v=atlaso-monaco-expand-20260729-3" in remote_page.text
 
     ticket_response = client.post(
         "/terminal/tickets",

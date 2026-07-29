@@ -4887,6 +4887,10 @@ textarea {
   grid-column: 1 / -1;
 }
 
+.automation-script-identity-grid {
+  align-content: start;
+}
+
 @media (max-width: 760px) {
   .source-editor-grid {
     grid-template-columns: 1fr;
