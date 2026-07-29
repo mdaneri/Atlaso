@@ -10,6 +10,7 @@ status: current
 # Contribute
 
 - [Contributing workflow](https://github.com/mdaneri/Atlaso/blob/main/CONTRIBUTING.md)
+- [Dependency management](dependency-management.md)
 - [Documentation authoring](documentation-authoring.md)
 - [Atlaso UI Design Guide](ui-design-guide.md)
 - [Detailed agent policies](agent-policies.md)
