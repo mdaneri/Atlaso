@@ -53,6 +53,17 @@
     "Success",
     "Operation Failed"
   ],
+  "result_reasons": [
+    "Item Not Found",
+    "Invalid Message",
+    "Operation Not Supported",
+    "Missing Data",
+    "Invalid Field",
+    "Key Format Type Not Supported",
+    "Cryptographic Failure",
+    "Permission Denied",
+    "General Failure"
+  ],
   "explicitly_unsupported": {
     "operations": [
       "Archive",

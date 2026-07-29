@@ -22,6 +22,9 @@ REQUIRED_FIELDS = {
     "protocol_version",
     "operation",
     "object_type",
+    "algorithm",
+    "key_length",
+    "key_format_type",
     "attribute_names",
     "result_status",
     "result_reason",
@@ -50,6 +53,7 @@ CONTRACT_FIELDS = {
     "candidate_operations",
     "candidate_attributes",
     "result_statuses",
+    "result_reasons",
     "explicitly_unsupported",
     "sources",
 }
@@ -103,6 +107,7 @@ def validate_contract(contract: dict[str, Any]) -> dict[str, Any]:
         "candidate_operations",
         "candidate_attributes",
         "result_statuses",
+        "result_reasons",
     ):
         values = contract.get(field)
         if (
@@ -114,6 +119,31 @@ def validate_contract(contract: dict[str, Any]) -> dict[str, Any]:
             raise TraceValidationError(
                 f"KMIP contract {field} must be a non-empty list of unique names."
             )
+    algorithms = contract.get("algorithms")
+    if not isinstance(algorithms, dict) or not algorithms:
+        raise TraceValidationError("KMIP contract algorithms must be a non-empty object.")
+    for name, algorithm in algorithms.items():
+        if (
+            not isinstance(name, str)
+            or not name.strip()
+            or not isinstance(algorithm, dict)
+            or set(algorithm) != {"lengths", "key_format_types"}
+            or not isinstance(algorithm["lengths"], list)
+            or not algorithm["lengths"]
+            or not all(
+                isinstance(length, int) and not isinstance(length, bool) and length > 0
+                for length in algorithm["lengths"]
+            )
+            or len(algorithm["lengths"]) != len(set(algorithm["lengths"]))
+            or not isinstance(algorithm["key_format_types"], list)
+            or not algorithm["key_format_types"]
+            or not all(
+                isinstance(key_format, str) and key_format.strip()
+                for key_format in algorithm["key_format_types"]
+            )
+            or len(algorithm["key_format_types"]) != len(set(algorithm["key_format_types"]))
+        ):
+            raise TraceValidationError(f"KMIP contract algorithm {name!r} is invalid.")
     transport = contract.get("transport")
     if (
         not isinstance(transport, dict)
@@ -181,6 +211,32 @@ def _validate_event(
     object_type = event["object_type"]
     if object_type is not None and object_type not in contract["objects"]:
         raise TraceValidationError(f"line {line}: object_type is outside the contract.")
+    algorithm = event["algorithm"]
+    key_length = event["key_length"]
+    key_format_type = event["key_format_type"]
+    if event["operation"] == "Create" and (
+        algorithm is None or key_length is None or key_format_type is None
+    ):
+        raise TraceValidationError(
+            f"line {line}: Create must record algorithm, key_length, and key_format_type."
+        )
+    if algorithm is None:
+        if key_length is not None or key_format_type is not None:
+            raise TraceValidationError(
+                f"line {line}: key_length and key_format_type require an algorithm."
+            )
+    else:
+        algorithm_contract = contract["algorithms"].get(algorithm)
+        if not isinstance(algorithm_contract, dict):
+            raise TraceValidationError(f"line {line}: algorithm is outside the contract.")
+        if (
+            isinstance(key_length, bool)
+            or not isinstance(key_length, int)
+            or key_length not in algorithm_contract["lengths"]
+        ):
+            raise TraceValidationError(f"line {line}: key_length is outside the contract.")
+        if key_format_type not in algorithm_contract["key_format_types"]:
+            raise TraceValidationError(f"line {line}: key_format_type is outside the contract.")
     attributes = event["attribute_names"]
     if not isinstance(attributes, list) or not all(isinstance(item, str) for item in attributes):
         raise TraceValidationError(f"line {line}: attribute_names must be a list of names.")
@@ -195,8 +251,13 @@ def _validate_event(
     for field in ("timestamp", "connection_id", "provider_id", "operation"):
         if not isinstance(event[field], str) or not event[field].strip():
             raise TraceValidationError(f"line {line}: {field} must be a non-empty string.")
-    if event["result_reason"] is not None and not isinstance(event["result_reason"], str):
-        raise TraceValidationError(f"line {line}: result_reason must be a string or null.")
+    if (
+        event["result_reason"] is not None
+        and event["result_reason"] not in contract["result_reasons"]
+    ):
+        raise TraceValidationError(
+            f"line {line}: result_reason must be null or an allowlisted KMIP reason."
+        )
 
 
 def validate_trace(

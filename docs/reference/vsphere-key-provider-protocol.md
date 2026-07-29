@@ -66,14 +66,17 @@ Interop evidence is newline-delimited JSON containing metadata only. Each event 
 | `protocol_version` | Negotiated KMIP version |
 | `operation` | Decoded operation name |
 | `object_type` | Decoded object type or `null` |
+| `algorithm` | Contract algorithm such as `AES`, or `null` when not applicable |
+| `key_length` | Contract key length such as `256`, or `null` when not applicable |
+| `key_format_type` | Contract key format such as `Raw`, or `null` when not applicable |
 | `attribute_names` | Attribute names only, never values |
 | `result_status` | KMIP result status |
-| `result_reason` | Non-secret protocol reason or `null` |
+| `result_reason` | Allowlisted KMIP reason name or `null`, never free-form diagnostics |
 | `request_digest` | SHA-256 digest of the canonical request, never the request bytes |
 
 Raw TTLV, request or response bodies, key bytes, credentials, secrets, private keys, and passwords are forbidden. The
-validator rejects secret-bearing field names, unexpected fields, non-contract operations, non-contract attributes, and
-invalid digests:
+validator rejects secret-bearing field names, unexpected fields, non-contract operations, algorithms, lengths, formats,
+attributes and reasons, and invalid digests. Every Create event must record all three non-secret key-shape values:
 
 ```powershell
 python scripts/kmip/validate_interop_trace.py <redacted-trace.jsonl> --output <summary.json>

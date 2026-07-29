@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -25,6 +28,9 @@ def event(**overrides: object) -> str:
         "protocol_version": "1.4",
         "operation": "Create",
         "object_type": "Symmetric Key",
+        "algorithm": "AES",
+        "key_length": 256,
+        "key_format_type": "Raw",
         "attribute_names": [
             "Cryptographic Algorithm",
             "Cryptographic Length",
@@ -57,6 +63,9 @@ def test_trace_validator_summarizes_only_allowlisted_metadata() -> None:
             event(),
             event(
                 operation="Get",
+                algorithm=None,
+                key_length=None,
+                key_format_type=None,
                 attribute_names=["Unique Identifier"],
                 request_digest="c" * 64,
             ),
@@ -77,6 +86,11 @@ def test_trace_validator_summarizes_only_allowlisted_metadata() -> None:
         ({"protocol_version": "2.0"}, "protocol_version is outside"),
         ({"object_type": "Private Key"}, "object_type is outside"),
         ({"attribute_names": ["Key Material"]}, "attributes are outside"),
+        ({"algorithm": "DES"}, "algorithm is outside"),
+        ({"key_length": 128}, "key_length is outside"),
+        ({"key_format_type": "Transparent Symmetric Key"}, "key_format_type is outside"),
+        ({"algorithm": None}, "Create must record"),
+        ({"result_reason": "password=secret"}, "allowlisted KMIP reason"),
         ({"client_cert_sha256": "not-a-digest"}, "lowercase SHA-256"),
         ({"raw_payload": "redacted"}, "forbidden secret-bearing field"),
         ({"key_material": "redacted"}, "forbidden secret-bearing field"),
@@ -106,3 +120,24 @@ def test_contract_validator_rejects_duplicate_allowlist_values() -> None:
 
     with pytest.raises(TraceValidationError, match="unique names"):
         validate_contract(contract)
+
+
+def test_documented_validator_runs_from_outside_the_checkout(tmp_path: Path) -> None:
+    root = Path(__file__).resolve().parents[1]
+    trace = tmp_path / "trace.jsonl"
+    trace.write_text(event(), encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(root / "scripts" / "kmip" / "validate_interop_trace.py"),
+            str(trace),
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["event_count"] == 1
