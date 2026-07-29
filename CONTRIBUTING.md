@@ -65,12 +65,15 @@ normal version bump, CI, maintainer review, and squash-merge gates.
 
 Dependabot can update Atlaso's Python input manifests, but Atlaso's custom
 `.lock` filenames and appliance declaration fingerprint are stricter than the
-standard pip-compile lock pairing. Before merging a Python update, regenerate
-every affected lock with Python 3.14 and pip-tools 7.6.0, preserving hashes and
-`--allow-unsafe`; refresh the declaration fingerprint in
-`requirements-appliance.lock`; then run the appliance lock and Photon
-compatibility checks. Never merge a bot PR that leaves inputs and generated
-locks out of sync.
+standard pip-compile lock pairing. Python distributions must be available for
+at least seven full days before they enter any generated lock, including direct,
+transitive, and security updates. Before merging a Python update, use Python
+3.14 and pip-tools 7.6.0 to run `python scripts/compile_requirements.py`; the
+wrapper applies pip's `--uploaded-prior-to=P7D` candidate cutoff, preserves
+hashes and required `--allow-unsafe` behavior, and refreshes the appliance
+declaration fingerprint. Then run the dependency-policy, appliance-lock, and
+Photon compatibility checks. Never merge a bot PR that leaves inputs and
+generated locks out of sync or bypasses the minimum-age policy.
 
 ## User-interface contributions
 

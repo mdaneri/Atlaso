@@ -19,6 +19,8 @@ New Tabulators must use `window.AtlasoUiPatterns.createGrid(...)`; every new or 
 
 - create or link the labeled issue before implementation;
 - update relevant documentation and validation in the same change;
+- regenerate Python locks only through `python scripts/compile_requirements.py` so every package satisfies the
+  seven-day upload-time cutoff;
 - use `Closes #<issue>` in the pull request;
 - follow the security and conduct policies; and
 - never commit directly to `main`.

@@ -57,8 +57,10 @@ status: current
   pre-existing issue and per-update documentation requirements. They must carry the `enhancement` type label plus
   `dependencies`, remain subject to the normal version, CI, review, and squash-merge gates, and must not weaken
   Atlaso's generated-lock or release boundaries. Before merging a Python update, regenerate every affected `.lock`
-  file with Python 3.14 and pip-tools 7.6.0, preserve hashes and `--allow-unsafe`, refresh the appliance declaration
-  fingerprint, and run the lock and Photon compatibility checks.
+  file through `python scripts/compile_requirements.py` with Python 3.14 and pip-tools 7.6.0. The wrapper must retain
+  pip's `--uploaded-prior-to=P7D` cutoff for every direct, transitive, and security update, preserve hashes and required
+  `--allow-unsafe` behavior, refresh the appliance declaration fingerprint, and run the dependency-policy, lock, and
+  Photon compatibility checks. Do not admit a Python distribution uploaded less than seven full days ago.
 
 ## Data Classification And Redaction
 

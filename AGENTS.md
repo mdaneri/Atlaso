@@ -34,6 +34,8 @@ GitHub-managed version-update pull requests from `.github/dependabot.yml` are th
 issue and per-update documentation requirements. They still require the `enhancement` and `dependencies` labels, the
 normal version, CI, review, and squash-merge gates, and synchronized generated locks. See
 [Detailed agent policies](docs/contribute/agent-policies.md) for the complete dependency-update contract.
+Every Python lock must be generated through `python scripts/compile_requirements.py`, which excludes distributions
+uploaded less than seven full days ago. Do not bypass the upload-time cutoff for direct, transitive, or security updates.
 
 Use `python scripts/version.py bump` or `.\scripts\version.ps1` to increment and synchronize the current patch version.
 When an explicit target is required, pass the current version or exact next patch through `--version X.Y.Z` to Python or
