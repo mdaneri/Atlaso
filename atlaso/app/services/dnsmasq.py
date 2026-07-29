@@ -1152,6 +1152,7 @@ def render_dnsmasq_config(
                     {
                         "prefix": f"tag:{scope_tag}," if scope_tag else "",
                         "address": str(scope_payload.get("site_address") or "").strip(),
+                        "interface": str(scope_payload.get("interface_name") or "").strip(),
                     }
                 )
             if not pxe_scope_entries:
@@ -1161,11 +1162,46 @@ def render_dnsmasq_config(
                     pxe_scope_tag = scope_tags.get(pxe_scope_id, "")
                 elif str(pxe_scope_id or "").isdigit():
                     pxe_scope_tag = scope_tags.get(int(pxe_scope_id), "")
+                selected_scope = next(
+                    (
+                        scope
+                        for scope in scopes
+                        if scope.id
+                        == (
+                            pxe_scope_id
+                            if isinstance(pxe_scope_id, int)
+                            else int(pxe_scope_id)
+                            if str(pxe_scope_id or "").isdigit()
+                            else None
+                        )
+                    ),
+                    None,
+                )
                 tftp_address = next(
                     (line.strip() for line in str(esxi_pxe_boot.get("listen_address") or "").replace(",", "\n").splitlines() if line.strip()),
                     "",
                 )
-                pxe_scope_entries.append({"prefix": f"tag:{pxe_scope_tag}," if pxe_scope_tag else "", "address": tftp_address})
+                tftp_interface = next(
+                    (
+                        line.strip()
+                        for line in str(
+                            esxi_pxe_boot.get("listen_interface") or ""
+                        )
+                        .replace(",", "\n")
+                        .splitlines()
+                        if line.strip()
+                    ),
+                    selected_scope.interface_name.strip()
+                    if selected_scope is not None
+                    else "",
+                )
+                pxe_scope_entries.append(
+                    {
+                        "prefix": f"tag:{pxe_scope_tag}," if pxe_scope_tag else "",
+                        "address": tftp_address,
+                        "interface": tftp_interface,
+                    }
+                )
             host_bootfiles = list(esxi_pxe_boot.get("host_bootfiles") or [])
             host_exclusion_tags = []
             for host_bootfile in host_bootfiles:
@@ -1196,9 +1232,18 @@ def render_dnsmasq_config(
                 if native_lines:
                     lines.extend(["dhcp-vendorclass=set:uefi-http,HTTPClient", "dhcp-match=set:uefi-http-x64,option:client-arch,16", *native_lines])
         if esxi_pxe_boot and esxi_pxe_boot.get("enabled"):
+            tftp_interfaces = list(
+                dict.fromkeys(
+                    entry["interface"]
+                    for entry in pxe_scope_entries
+                    if entry.get("interface")
+                )
+            )
             lines.extend(
                 [
-                    "enable-tftp",
+                    f"enable-tftp={','.join(tftp_interfaces)}"
+                    if tftp_interfaces
+                    else "enable-tftp",
                     f"tftp-root={esxi_pxe_boot.get('tftp_root')}",
                     "dhcp-userclass=set:ipxe,iPXE",
                     "dhcp-match=set:ipxe,175",

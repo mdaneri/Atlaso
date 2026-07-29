@@ -746,7 +746,7 @@ def test_dnsmasq_renderer_adds_esxi_pxe_boot_options():
         },
     )
 
-    assert "enable-tftp" in config
+    assert "enable-tftp=eth1" in config
     assert "tftp-root=/var/lib/atlaso/pxe/tftp" in config
     assert "dhcp-userclass=set:ipxe,iPXE" in config
     assert "dhcp-match=set:ipxe,175" in config

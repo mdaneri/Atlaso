@@ -36,6 +36,9 @@ image. A known MAC assigned to an enabled ESXi profile defaults to that ESXi
 entry instead. An undefined-MAC ESXi profile is manual-only and cannot replace
 the safe inventory default. Both legacy BIOS and UEFI use the bundled
 `undionly.kpxe` or `snponly.efi` first stage; Secure Boot is not supported.
+Atlaso binds dnsmasq TFTP explicitly to every selected IPv4 DHCP IP-zone
+interface so VMware Workstation firmware can retrieve that first stage over
+UDP/69 before iPXE switches to HTTP.
 
 Inventory Linux runs from an initramfs in RAM. It does not mount filesystems or
 write target disks. It submits a bounded report containing DMI, CPU, memory,
