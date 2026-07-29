@@ -29,7 +29,7 @@ This verified appliance view provides visual orientation before you begin.
 4. Submit the KMS/KMIP unit through [Appliance Apply](../operate/appliance-apply.md).
 
 Keep the listener restricted to intended lab networks. Never publish private keys or client credentials in
-documentation, screenshots, task notes, or issues.
+documentation, screenshots, task notes, or issues. The compatibility listener requires TLS 1.2 or newer.
 
 ## Verify
 
