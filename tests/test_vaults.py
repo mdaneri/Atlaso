@@ -209,7 +209,7 @@ def test_vault_cli_fails_closed_and_reads_only_scoped_credential(tmp_path, monke
     assert capsys.readouterr().out == "VMware1!"
 
 
-def test_dynamic_kickstart_resolves_assigned_vault_without_caching(client):
+def test_dynamic_kickstart_derives_exact_vault_scope_without_caching(client):
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import EsxiKickstart, EsxiKickstartVaultBinding, EsxiPxeHost, Vault
     from atlaso.app.services.esxi_pxe import content_hash
@@ -238,6 +238,9 @@ def test_dynamic_kickstart_resolves_assigned_vault_without_caching(client):
             ),
             actor="admin",
         )
+        legacy_vault = Vault(name="Legacy Ignored", description="", created_by="admin")
+        db.add(legacy_vault)
+        db.flush()
         kickstart = EsxiKickstart(
             name="Vaulted ESX",
             content=content,
@@ -246,7 +249,7 @@ def test_dynamic_kickstart_resolves_assigned_vault_without_caching(client):
         )
         db.add(kickstart)
         db.flush()
-        db.add(EsxiKickstartVaultBinding(kickstart_id=kickstart.id, vault_id=vault.id))
+        db.add(EsxiKickstartVaultBinding(kickstart_id=kickstart.id, vault_id=legacy_vault.id))
         db.add(
             EsxiPxeHost(
                 hostname="esx01",
@@ -258,6 +261,13 @@ def test_dynamic_kickstart_resolves_assigned_vault_without_caching(client):
         db.commit()
         path = f"/pxe/esxi/ks/{kickstart.content_hash[:12]}.cfg?mac=005056aabbcc"
 
+    login(client)
+    editor_page = client.get("/esxi-pxe")
+    assert "vault.esx.esx.host.root.username" in editor_page.text
+    assert "vault.esx.esx.host.root.password" in editor_page.text
+    assert "vault.esx.esx.host.root.uri1" in editor_page.text
+    assert "VMware1!" not in editor_page.text
+
     response = client.get(path)
     assert response.status_code == 200
     assert "network --hostname=root" in response.text
@@ -265,6 +275,95 @@ def test_dynamic_kickstart_resolves_assigned_vault_without_caching(client):
     assert "%include https://config.example.internal/esx01.cfg" in response.text
     assert "{{vault." not in response.text
     assert "no-store" in response.headers["cache-control"]
+
+    with SessionLocal() as db:
+        vault = db.execute(select(Vault).where(Vault.name == "ESX")).scalar_one()
+        vault.name = "Renamed ESX"
+        db.add(vault)
+        db.commit()
+
+    missing_at_request_time = client.get(path)
+    assert missing_at_request_time.status_code == 400
+    assert "vault.esx.esx.host.root.password" in missing_at_request_time.text
+    assert "VMware1!" not in missing_at_request_time.text
+
+
+@pytest.mark.parametrize(
+    ("marker", "message"),
+    [
+        ("{{vault.missing.key.password}}", "is not available"),
+        ("{{vault.missing.key.token}}", "is not available"),
+        ("{{vault.missing.key.password", "unclosed"),
+        ("vault.missing.key.password}}", "unmatched"),
+    ],
+)
+def test_kickstart_save_rejects_missing_unsupported_and_malformed_vault_markers(client, marker, message):
+    login(client)
+    page = client.get("/esxi-pxe")
+    csrf = csrf_from_page(page.text)
+    response = client.post(
+        "/esxi-pxe/kickstarts",
+        headers={"Accept": "application/json"},
+        data={
+            "csrf": csrf,
+            "name": f"Rejected {message}",
+            "description": "",
+            "content": f"vmaccepteula\nrootpw {marker}\n",
+            "enabled": "on",
+        },
+    )
+    assert response.status_code == 400
+    assert message in response.json()["detail"]
+
+
+def test_kickstart_completion_and_save_validate_metadata_without_decrypting(client, monkeypatch):
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Vault
+    from atlaso.app.services.vaults import VaultEntryInput, upsert_vault_entry
+
+    with SessionLocal() as db:
+        vault = Vault(name="No Browser Secret", description="", created_by="admin")
+        db.add(vault)
+        db.flush()
+        upsert_vault_entry(
+            db,
+            vault=vault,
+            entry=VaultEntryInput(
+                key="esx.root",
+                secret_type="esx_password",
+                value="Never-Decrypted-For-Editing!",
+                username="root",
+            ),
+            actor="admin",
+        )
+        db.commit()
+
+    import atlaso.app.services.vaults as vault_service
+
+    monkeypatch.setattr(
+        vault_service,
+        "decrypt_secret",
+        lambda *_args: pytest.fail("Editor completion and save validation must not decrypt vault values."),
+    )
+    login(client)
+    page = client.get("/esxi-pxe")
+    assert page.status_code == 200
+    assert "vault.no_browser_secret.esx.root.password" in page.text
+    assert "Never-Decrypted-For-Editing!" not in page.text
+    csrf = csrf_from_page(page.text)
+    saved = client.post(
+        "/esxi-pxe/kickstarts",
+        headers={"Accept": "application/json"},
+        data={
+            "csrf": csrf,
+            "name": "Metadata only",
+            "description": "",
+            "content": "vmaccepteula\nrootpw {{vault.no_browser_secret.esx.root.password}}\n",
+            "enabled": "on",
+        },
+    )
+    assert saved.status_code == 200
+    assert "Never-Decrypted-For-Editing!" not in saved.text
 
 
 def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
@@ -335,7 +434,7 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert 'id="confirm-modal-detail"' in base_template
     assert ".confirm-modal.has-confirm-detail" in css
     assert "overflow-wrap: anywhere;" in css[css.index(".confirm-modal-detail-group"):css.index(".confirm-modal.wide-modal")]
-    assert "atlaso-complex-wizards-20260728-13" in base_template
+    assert "atlaso-monaco-kickstarts-20260729-1" in base_template
     trust_template = Path("atlaso/app/templates/partials/vcf_trust_modal.html").read_text()
     import_template = Path("atlaso/app/templates/partials/vcf_vault_import_modal.html").read_text()
     depot_template = Path("atlaso/app/templates/partials/vcf_target_depot_modal.html").read_text()

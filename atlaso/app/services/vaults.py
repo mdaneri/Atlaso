@@ -253,20 +253,67 @@ def decrypted_vault_values(db: Session, vault_id: int) -> dict[str, str]:
     return {entry.key: decrypt_secret(entry.encrypted_value) for entry in entries}
 
 
-def kickstart_vault_values(db: Session, vault_id: int) -> dict[str, str]:
-    vault = db.get(Vault, vault_id)
-    if vault is None:
-        raise ValueError("The selected vault does not exist.")
-    prefix = vault_marker_name(vault.name)
-    entries = db.execute(
-        select(VaultEntry).where(VaultEntry.vault_id == vault_id).order_by(VaultEntry.key)
-    ).scalars()
+def _kickstart_vault_marker_sources(
+    db: Session,
+) -> tuple[dict[str, tuple[VaultEntry, str, str, str]], set[str]]:
+    available: dict[str, tuple[VaultEntry, str, str, str]] = {}
+    ambiguous: set[str] = set()
+    for vault in list_vaults(db):
+        vault_name = vault_marker_name(vault.name)
+        for entry in vault.entries:
+            prefix = f"vault.{vault_name}.{entry.key}"
+            candidates = [
+                (f"{prefix}.username", (entry, "username", "", f"Username from {vault.name} / {entry.key}")),
+                (f"{prefix}.password", (entry, "password", "", f"Password from {vault.name} / {entry.key}")),
+                *[
+                    (f"{prefix}.uri{index}", (entry, "uri", uri, f"URI {index} from {vault.name} / {entry.key}"))
+                    for index, uri in enumerate(vault_entry_uris(entry), start=1)
+                ],
+            ]
+            for marker, source in candidates:
+                if marker in available:
+                    ambiguous.add(marker)
+                else:
+                    available[marker] = source
+    return available, ambiguous
+
+
+def validate_kickstart_vault_markers(db: Session, marker_names: set[str]) -> None:
+    requested = {name for name in marker_names if name.startswith("vault.")}
+    if not requested:
+        return
+    available, ambiguous = _kickstart_vault_marker_sources(db)
+    ambiguous_requested = sorted(requested & ambiguous)
+    if ambiguous_requested:
+        raise ValueError(f"Kickstart vault marker {ambiguous_requested[0]} is ambiguous.")
+    missing = sorted(requested - available.keys())
+    if missing:
+        raise ValueError(f"Kickstart vault marker {missing[0]} is not available.")
+
+
+def kickstart_vault_marker_catalog(db: Session) -> list[list[str]]:
+    available, ambiguous = _kickstart_vault_marker_sources(db)
+    return [
+        [marker, source[3]]
+        for marker, source in sorted(available.items())
+        if marker not in ambiguous
+    ]
+
+
+def kickstart_vault_values_for_markers(db: Session, marker_names: set[str]) -> dict[str, str]:
+    requested = {name for name in marker_names if name.startswith("vault.")}
+    validate_kickstart_vault_markers(db, requested)
+    available, _ambiguous = _kickstart_vault_marker_sources(db)
     values: dict[str, str] = {}
-    for entry in entries:
-        values[f"{prefix}.{entry.key}.username"] = entry.username or ""
-        values[f"{prefix}.{entry.key}.password"] = decrypt_secret(entry.encrypted_value)
-        for index, uri in enumerate(vault_entry_uris(entry), start=1):
-            values[f"{prefix}.{entry.key}.uri{index}"] = uri
+    for marker in requested:
+        entry, subkey, uri, _detail = available[marker]
+        if subkey == "password":
+            value = decrypt_secret(entry.encrypted_value)
+        elif subkey == "username":
+            value = entry.username or ""
+        else:
+            value = uri
+        values[marker.removeprefix("vault.")] = value
     return values
 
 

@@ -1,6 +1,6 @@
 {
   "vendored_components": [
-    {"name": "CodeMirror", "version": "bundled", "license": "MIT", "source": "https://codemirror.net/", "notice_path": "atlaso/app/static/vendor/codemirror/LICENSE"},
+    {"name": "Monaco Editor", "version": "0.52.2", "license": "MIT", "source": "https://microsoft.github.io/monaco-editor/", "notice_path": "atlaso/app/static/vendor/monaco/LICENSE"},
     {"name": "Prism", "version": "bundled", "license": "MIT", "source": "https://prismjs.com/", "notice_path": "atlaso/app/static/vendor/prism/LICENSE"},
     {"name": "Tabulator", "version": "bundled", "license": "MIT", "source": "https://tabulator.info/", "notice_path": "atlaso/app/static/vendor/tabulator/LICENSE"},
     {"name": "xterm.js", "version": "bundled", "license": "MIT", "source": "https://xtermjs.org/", "notice_path": "atlaso/app/static/vendor/xterm/LICENSE"},

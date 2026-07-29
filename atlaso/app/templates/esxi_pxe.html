@@ -111,134 +111,69 @@
 
     <div class="tab-buttons tool-tabs" role="tablist" aria-label="ESXi PXE views" data-tab-storage-key="atlaso:esxi-pxe:active-tab">
       <button class="tab-button active" type="button" role="tab" data-tab-target="esxi-pxe-hosts-panel" aria-controls="esxi-pxe-hosts-panel" aria-selected="true">Host References</button>
-      <button class="tab-button" type="button" role="tab" data-tab-target="esxi-pxe-editor-panel" aria-controls="esxi-pxe-editor-panel" aria-selected="false">Kickstart Editor</button>
+      <button class="tab-button" type="button" role="tab" data-tab-target="esxi-pxe-editor-panel" aria-controls="esxi-pxe-editor-panel" aria-selected="false">Kickstarts</button>
       <button class="tab-button" type="button" role="tab" data-tab-target="esxi-pxe-isos-panel" aria-controls="esxi-pxe-isos-panel" aria-selected="false">Installer ISOs</button>
       <button class="tab-button" type="button" role="tab" data-tab-target="esxi-pxe-preview-panel" aria-controls="esxi-pxe-preview-panel" aria-selected="false">Preview</button>
     </div>
 
     <div class="tab-panels">
+      <noscript><style>#esxi-pxe-editor-panel { display: block !important; }</style></noscript>
       <div id="esxi-pxe-editor-panel" class="tab-panel" role="tabpanel" hidden>
-        <div class="kickstart-layout">
-          <aside class="kickstart-list">
+        <div id="esxi-kickstarts-table" class="tabulator-shell" data-rows='{{ esxi_kickstart_grid_rows | tojson }}' data-csrf="{{ csrf_token }}" data-can-write="{{ 'true' if esxi_can_write else 'false' }}" data-fallback-id="esxi-kickstarts-fallback"></div>
+        <table id="esxi-kickstarts-fallback" class="data-table compact">
+          <thead><tr><th>Name</th><th>Description</th><th>Content hash</th><th>Drift</th><th>Updated</th><th>Enabled</th><th>Actions</th></tr></thead>
+          <tbody>
             {% for row in esxi_kickstart_rows %}
-              <a class="kickstart-list-item {{ 'active' if esxi_selected_kickstart and row.id == esxi_selected_kickstart.id else '' }}" href="/esxi-pxe?kickstart_id={{ row.id }}">
-                <strong>{{ row.name }}</strong>
-                <span class="status-pill {{ 'good' if row.drift_state == 'in_sync' else 'warn' }}">{{ row.drift_state.replace("_", " ") }}</span>
-                <small>{{ row.content_hash[:12] }}</small>
-              </a>
+              <tr>
+                <td>{{ row.name }}</td><td>{{ row.description }}</td><td><code>{{ row.content_hash[:12] }}</code></td>
+                <td>{{ row.drift_state.replace("_", " ") }}</td><td>{{ row.updated_at }}</td>
+                <td>{{ "Yes" if row.enabled else "No" }}</td>
+                <td>
+                  {% if esxi_can_write %}
+                    <button type="button" data-kickstart-edit-id="{{ row.id }}">Edit</button>
+                    <noscript>
+                      <a href="/esxi-pxe?kickstart_id={{ row.id }}#kickstart-fallback-editor">Edit source</a>
+                      <a href="/esxi-pxe/kickstarts/{{ row.id }}/download">Download</a>
+                      <form class="inline-form" action="/esxi-pxe/kickstarts/{{ row.id }}/duplicate" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">Duplicate</button></form>
+                      <form class="inline-form" action="/esxi-pxe/kickstarts/{{ row.id }}/validate" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">Validate</button></form>
+                      <form class="inline-form" action="/esxi-pxe/kickstarts/{{ row.id }}/delete" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">Delete</button></form>
+                    </noscript>
+                  {% endif %}
+                </td>
+              </tr>
             {% endfor %}
-            {% if not esxi_kickstart_rows %}
-              <div class="empty-state compact-empty"><h2>No Kickstarts</h2><p class="muted">Create or upload a Kickstart to begin.</p></div>
-            {% endif %}
-          </aside>
-
-          <div class="kickstart-editor-pane">
-            {% if esxi_selected_kickstart and esxi_can_write %}
-              <form class="form-stack kickstart-editor-form" action="/esxi-pxe/kickstarts/{{ esxi_selected_kickstart.id }}" method="post" data-kickstart-editor-form>
+            {% if esxi_can_write %}<tr class="new-record-row"><td colspan="7"><button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add Kickstart</button><noscript><a href="#kickstart-fallback-create">+ Add Kickstart</a></noscript></td></tr>{% endif %}
+          </tbody>
+        </table>
+        {% for row in esxi_kickstart_rows %}
+          <form id="kickstart-duplicate-{{ row.id }}" action="/esxi-pxe/kickstarts/{{ row.id }}/duplicate" method="post" hidden><input type="hidden" name="csrf" value="{{ csrf_token }}"></form>
+          <form id="kickstart-delete-{{ row.id }}" action="/esxi-pxe/kickstarts/{{ row.id }}/delete" method="post" hidden><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit" data-confirm-modal data-confirm-title="Delete {{ row.name }}?" data-confirm-message="The database source is removed now. Generated runtime files change only after global appliance apply." data-confirm-action="Delete Kickstart">Delete</button></form>
+        {% endfor %}
+        {% if esxi_can_write %}
+          <noscript>
+            <style>[data-atlaso-wizard-add], [data-kickstart-edit-id] { display: none !important; }</style>
+            {% if esxi_selected_kickstart %}
+              <form id="kickstart-fallback-editor" class="form-stack" action="/esxi-pxe/kickstarts/{{ esxi_selected_kickstart.id }}" method="post">
+                <h3>Edit {{ esxi_selected_kickstart.name }}</h3>
                 <input type="hidden" name="csrf" value="{{ csrf_token }}">
-                <div class="form-grid">
-                  <label>
-                    <span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Operator-facing name stored in the database. The stable generated URL still uses the Kickstart database ID.">i</button></span>
-                    <input name="name" value="{{ esxi_selected_kickstart.name }}">
-                  </label>
-                  <label class="switch-field">
-                    <span class="field-label"><span>Enabled</span><button class="help-icon" type="button" data-help="Enabled Kickstarts are written to the PXE HTTP root during global ESXi PXE appliance apply. Disabled files are removed from the generated runtime directory.">i</button></span>
-                    <input class="switch-input" type="checkbox" name="enabled" {{ "checked" if esxi_selected_kickstart.enabled else "" }}><span class="switch-track" aria-hidden="true"></span>
-                  </label>
-                </div>
-                <label>
-                  <span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Short database note for operators. It is not written into the generated Kickstart unless it is also present in the source content.">i</button></span>
-                  <input name="description" value="{{ esxi_selected_kickstart.description or '' }}">
-                </label>
-                <label>
-                  <span class="field-label"><span>Vault</span><button class="help-icon" type="button" data-help="Makes one vault available only while an assigned host dynamically retrieves this Kickstart.">i</button></span>
-                  <select name="vault_id"><option value="">No vault</option>{% for vault in esxi_vaults %}<option value="{{ vault.id }}" {{ "selected" if esxi_kickstart_vault_ids.get(esxi_selected_kickstart.id) == vault.id else "" }}>{{ vault.name }}</option>{% endfor %}</select>
-                </label>
-                <div class="form-field">
-                  <span class="field-label"><span>Source content</span><button class="help-icon" type="button" data-help="Editable database source of truth. Use host.*, dhcp.*, pxe.*, custom.*, and vault.* markers for dynamic host rendering.">i</button></span>
-                  <textarea class="monospace-textarea kickstart-code-editor" name="content" rows="22" data-codemirror-editor data-codemirror-language="atlaso-kickstart" aria-label="Kickstart source content">{{ esxi_selected_kickstart.content }}</textarea>
-                </div>
-                <div class="editor-action-row">
-                  <span class="dirty-state-indicator" data-kickstart-dirty-state>Saved</span>
-                  <button class="button primary" type="submit">Save Kickstart</button>
-                  <button class="button secondary" type="submit" formaction="/esxi-pxe/kickstarts/{{ esxi_selected_kickstart.id }}/validate">Validate</button>
-                  <a class="button secondary" href="/esxi-pxe/kickstarts/{{ esxi_selected_kickstart.id }}/download">Download</a>
-                </div>
+                <label>Name <input name="name" value="{{ esxi_selected_kickstart.name }}" required maxlength="120"></label>
+                <label>Description <input name="description" value="{{ esxi_selected_kickstart.description or '' }}"></label>
+                <label>Kickstart source <textarea name="content" rows="24" required>{{ esxi_selected_kickstart.content }}</textarea></label>
+                <label><input type="checkbox" name="enabled" {{ "checked" if esxi_selected_kickstart.enabled else "" }}> Enabled</label>
+                <button class="button primary" type="submit">Save Kickstart</button>
               </form>
-            {% elif esxi_selected_kickstart %}
-              <div class="terminal-note">
-                <strong>Redacted preview</strong>
-                <code data-esxi-pxe-preview>{{ esxi_selected_kickstart_json.redacted_preview }}</code>
-              </div>
             {% endif %}
-
-            <details class="terminal-note" open>
-              <summary>Kickstart variables</summary>
-              <div class="settings-list compact-settings-list">
-                <div><span>Host</span><strong><code>{{ "{{host.hostname}}" }}</code> <code>{{ "{{host.mac}}" }}</code> <code>{{ "{{host.ip_address}}" }}</code></strong></div>
-                <div><span>DHCP</span><strong><code>{{ "{{dhcp.gateway}}" }}</code> <code>{{ "{{dhcp.netmask}}" }}</code> <code>{{ "{{dhcp.prefix}}" }}</code> <code>{{ "{{dhcp.dns_servers}}" }}</code> <code>{{ "{{dhcp.ntp_servers}}" }}</code> <code>{{ "{{dhcp.domain}}" }}</code></strong></div>
-                <div><span>PXE</span><strong><code>{{ "{{pxe.http_base_url}}" }}</code></strong></div>
-                <div><span>Custom</span><strong><code>{{ "{{custom.install_disk}}" }}</code></strong></div>
-                <div><span>Vault username</span><strong><code>{{ "{{vault.<vaultname>.<key>.username}}" }}</code></strong></div>
-                <div><span>Vault password</span><strong><code>{{ "{{vault.<vaultname>.<key>.password}}" }}</code></strong></div>
-                <div><span>Vault URI 1-9</span><strong><code>{{ "{{vault.<vaultname>.<key>.uri1}}" }}</code> … <code>{{ "{{vault.<vaultname>.<key>.uri9}}" }}</code></strong></div>
-              </div>
-              <p class="muted">Custom values come from Host References variables JSON, for example <code>{"install_disk":"mpx.vmhba0:C0:T0:L0"}</code>. Unresolved or invalid markers fail validation and the dynamic Kickstart request.</p>
-            </details>
-
-            {% if esxi_can_write %}
-              <details class="create-kickstart-panel" {% if not esxi_selected_kickstart %}open{% endif %}>
-                <summary>Create Kickstart</summary>
-                <form class="form-stack" action="/esxi-pxe/kickstarts" method="post">
-                  <input type="hidden" name="csrf" value="{{ csrf_token }}">
-                  <div class="form-grid">
-                    <label>
-                      <span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Unique database name for the new Kickstart. The generated HTTP path uses the assigned ID.">i</button></span>
-                      <input name="name" value="{{ esxi_default_kickstart_name }}">
-                    </label>
-                    <label class="switch-field">
-                      <span class="field-label"><span>Enabled</span><button class="help-icon" type="button" data-help="When enabled, global ESXi PXE apply writes this Kickstart to the generated HTTP boot directory.">i</button></span>
-                      <input class="switch-input" type="checkbox" name="enabled" checked><span class="switch-track" aria-hidden="true"></span>
-                    </label>
-                  </div>
-                  <label>
-                    <span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Optional database note for operators.">i</button></span>
-                    <input name="description" value="">
-                  </label>
-                  <label><span class="field-label"><span>Vault</span><button class="help-icon" type="button" data-help="Optional vault available to dynamic vault.&lt;vaultname&gt;.&lt;key&gt;.username and vault.&lt;vaultname&gt;.&lt;key&gt;.password markers.">i</button></span><select name="vault_id"><option value="">No vault</option>{% for vault in esxi_vaults %}<option value="{{ vault.id }}">{{ vault.name }}</option>{% endfor %}</select></label>
-                  <div class="form-field">
-                    <span class="field-label"><span>Source content</span><button class="help-icon" type="button" data-help="Initial Kickstart source saved in the database. It may include &#123;&#123;host.*&#125;&#125;, &#123;&#123;dhcp.*&#125;&#125;, &#123;&#123;pxe.*&#125;&#125;, and &#123;&#123;custom.*&#125;&#125; markers for host-specific rendering. Generated files are created later through global appliance apply.">i</button></span>
-                    <textarea class="monospace-textarea" name="content" rows="10" data-codemirror-editor data-codemirror-language="atlaso-kickstart">{{ esxi_default_kickstart_content }}</textarea>
-                  </div>
-                  <button class="button secondary" type="submit">Create Kickstart</button>
-                </form>
-              </details>
-
-              <details class="create-kickstart-panel">
-                <summary>Upload Kickstart</summary>
-                <form class="form-stack" action="/esxi-pxe/kickstarts/upload" method="post" enctype="multipart/form-data">
-                  <input type="hidden" name="csrf" value="{{ csrf_token }}">
-                  <label>
-                    <span class="field-label"><span>Kickstart file</span><button class="help-icon" type="button" data-help="Loads a UTF-8 Kickstart file into the database. It does not edit the filesystem copy directly.">i</button></span>
-                    <span class="file-upload-control">
-                      <input class="file-upload-input" type="file" name="kickstart_file" accept=".cfg,.ks,.txt,text/plain" data-file-upload-input>
-                      <span class="file-upload-surface"><span class="file-upload-copy"><strong>Choose Kickstart file</strong><small data-file-upload-name>ks.cfg</small></span></span>
-                    </span>
-                  </label>
-                  <label>
-                    <span class="field-label"><span>Name override</span><button class="help-icon" type="button" data-help="Optional database name. If blank, Atlaso uses the uploaded filename stem.">i</button></span>
-                    <input name="name" value="">
-                  </label>
-                  <label class="switch-field">
-                    <span class="field-label"><span>Enabled</span><button class="help-icon" type="button" data-help="Enabled uploaded Kickstarts are generated during the next ESXi PXE appliance apply.">i</button></span>
-                    <input class="switch-input" type="checkbox" name="enabled" checked><span class="switch-track" aria-hidden="true"></span>
-                  </label>
-                  <button class="button secondary" type="submit">Upload into database</button>
-                </form>
-              </details>
-            {% endif %}
-          </div>
-        </div>
+            <form id="kickstart-fallback-create" class="form-stack" action="/esxi-pxe/kickstarts" method="post">
+              <h3>Add Kickstart</h3>
+              <input type="hidden" name="csrf" value="{{ csrf_token }}">
+              <label>Name <input name="name" required maxlength="120"></label>
+              <label>Description <input name="description"></label>
+              <label>Kickstart source <textarea name="content" rows="24" required>{{ esxi_default_kickstart_content }}</textarea></label>
+              <label><input type="checkbox" name="enabled" checked> Enabled</label>
+              <button class="button primary" type="submit">Save Kickstart</button>
+            </form>
+          </noscript>
+        {% endif %}
       </div>
 
       <div id="esxi-pxe-hosts-panel" class="tab-panel active" role="tabpanel">
@@ -399,33 +334,6 @@
   <aside class="side-stack">
     {% include "partials/appliance_apply_status.html" %}
 
-    {% if esxi_selected_kickstart and esxi_can_write %}
-      <div class="panel detail-panel">
-        <div class="panel-head"><h2>Actions</h2></div>
-        <div class="settings-list">
-          <div><span>HTTP path</span><strong>{{ esxi_selected_kickstart.http_path }}</strong></div>
-          <div><span>Content hash</span><strong>{{ esxi_selected_kickstart.content_hash[:16] }}</strong></div>
-          <div><span>Last updated</span><strong>{{ esxi_selected_kickstart.updated_at }}</strong></div>
-          <div><span>Last rendered</span><strong>{{ esxi_selected_kickstart.last_rendered_at or "not rendered" }}</strong></div>
-          <div><span>Last applied</span><strong>{{ esxi_selected_kickstart.last_applied_at or "not applied" }}</strong></div>
-        </div>
-        <form action="/esxi-pxe/kickstarts/{{ esxi_selected_kickstart.id }}/duplicate" method="post">
-          <input type="hidden" name="csrf" value="{{ csrf_token }}">
-          <button class="button secondary full-width" type="submit">Duplicate Kickstart</button>
-        </form>
-        {% if esxi_selected_kickstart_json.drift_state == "filesystem_modified" %}
-          <form action="/esxi-pxe/kickstarts/{{ esxi_selected_kickstart.id }}/import-filesystem" method="post" data-confirm-modal data-confirm-title="Import filesystem copy?" data-confirm-message="This replaces the database source Kickstart with the generated filesystem copy and records an audit event. The appliance is not otherwise changed until global appliance apply runs.">
-            <input type="hidden" name="csrf" value="{{ csrf_token }}">
-            <button class="button secondary full-width" type="submit">Import filesystem copy into database</button>
-          </form>
-        {% endif %}
-        <form action="/esxi-pxe/kickstarts/{{ esxi_selected_kickstart.id }}/delete" method="post" data-confirm-modal data-confirm-title="Delete {{ esxi_selected_kickstart.name }}?" data-confirm-message="This removes the Kickstart from Atlaso desired state and clears host references. The generated runtime file is removed only after the ESXi PXE apply unit runs.">
-          <input type="hidden" name="csrf" value="{{ csrf_token }}">
-          <button class="button danger full-width" type="submit">Delete Kickstart</button>
-        </form>
-      </div>
-    {% endif %}
-
     <div class="panel">
       <div class="panel-head">
         <h2>Validation</h2>
@@ -461,4 +369,39 @@
     </div>
   </aside>
 </section>
+{% if esxi_can_write %}
+<dialog id="kickstart-wizard-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="kickstart-wizard-title">
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="/esxi-pxe/kickstarts" method="post" data-kickstart-wizard data-atlaso-wizard>
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="record_id" value="">
+    <aside class="vcf-sddc-wizard-rail" aria-label="Kickstart steps">
+      <p class="kicker">ESXi PXE</p><h2 id="kickstart-wizard-title" data-kickstart-modal-title>Add Kickstart</h2>
+      <ol class="vcf-sddc-step-list">
+        <li><button class="vcf-sddc-step-button active" type="button" data-atlaso-wizard-nav="identity"><span>1</span><strong>Identity</strong><small>Name and description</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="source" disabled><span>2</span><strong>Source</strong><small>Kickstart script</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="state" disabled><span>3</span><strong>State</strong><small>Desired availability</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="review" disabled><span>4</span><strong>Review</strong><small>Confirm desired state</small></button></li>
+      </ol>
+    </aside>
+    <div class="vcf-sddc-wizard-main">
+      <div class="confirm-modal-body vcf-sddc-wizard-body">
+        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 4</p><h3 data-atlaso-wizard-title>Identify the Kickstart</h3><p class="muted" data-atlaso-wizard-description>Name and describe the database-owned source.</p></div>
+        <div class="alert error hidden" data-atlaso-wizard-error></div>
+        <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity">
+          <label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Unique operator-facing name for this database-owned Kickstart.">i</button></span><input name="name" required maxlength="120"></label>
+          <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Optional operator note; it is not added to generated source.">i</button></span><input name="description"></label>
+        </section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="source">
+          <div class="automation-script-editor-head"><span class="field-label"><span>Kickstart source</span><button class="help-icon" type="button" data-help="ESXi Kickstart source of truth. Type two opening braces for Atlaso variable suggestions.">i</button></span><label class="file-upload-control compact-file-upload"><input class="file-upload-input" type="file" accept=".cfg,.ks" data-kickstart-import><span class="file-upload-surface"><span class="file-upload-copy"><strong>Import .cfg or .ks</strong></span></span></label></div>
+          <textarea name="content" rows="24" data-monaco-editor data-monaco-language="atlaso-kickstart" data-monaco-completions='{{ esxi_kickstart_completions | tojson }}' aria-label="ESXi Kickstart source">{{ esxi_default_kickstart_content }}</textarea>
+          <p class="muted">{% raw %}Vault access is declared only with <code>{{vault.<vaultname>.<key>.username}}</code>, <code>{{vault.<vaultname>.<key>.password}}</code>, or <code>{{vault.<vaultname>.<key>.uri1}}</code> through <code>{{vault.<vaultname>.<key>.uri9}}</code>.{% endraw %} Values never enter browser completion data.</p>
+        </section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="state"><label class="switch-field"><span class="field-label"><span>Enabled</span><button class="help-icon" type="button" data-help="Enabled Kickstarts are generated only through global appliance apply.">i</button></span><input class="switch-input" type="checkbox" name="enabled" checked><span class="switch-track" aria-hidden="true"></span></label></section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review"><div class="settings-list"><div><span>Name</span><strong data-kickstart-review="name"></strong></div><div><span>Description</span><strong data-kickstart-review="description"></strong></div><div><span>State</span><strong data-kickstart-review="state"></strong></div><div><span>Variables</span><code data-kickstart-review="variables"></code></div></div><p class="muted">Saving changes desired state only. Runtime files change through global ESXi PXE appliance apply.</p></section>
+      </div>
+      <div class="confirm-modal-actions vcf-sddc-wizard-actions"><button class="button secondary" type="button" data-atlaso-wizard-cancel>Cancel</button><button class="button secondary hidden" type="button" data-atlaso-wizard-back>Back</button><button class="button primary" type="button" data-atlaso-wizard-next>Next</button><button class="button primary hidden" type="submit" data-atlaso-wizard-submit>Save Kickstart</button></div>
+    </div>
+  </form>
+</dialog>
+{% endif %}
 {% endblock %}

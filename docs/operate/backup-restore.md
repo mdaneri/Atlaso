@@ -31,8 +31,9 @@ This verified appliance view provides visual orientation before you begin.
    without it.
 
 Backups can contain operational configuration and encrypted sensitive material. Do not attach them to public issues.
-VCF/ESX password vault entries are not included in settings archives. Restore clears vaults and Kickstart bindings;
-recreate or reimport vault entries before re-enabling dependent scripts or PXE workflows.
+VCF/ESX password vault entries are not included in settings archives. Restore clears vaults and the unused legacy
+Kickstart-binding compatibility table; recreate or reimport vault entries before re-enabling dependent scripts or PXE
+workflows.
 
 ## Restore safely
 

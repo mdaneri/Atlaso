@@ -50,8 +50,9 @@ job to different credentials.
 
 ## ESXi Kickstarts
 
-Choose one vault in the Kickstart editor. The vault-name segment is the selected vault name normalized to lowercase,
-with spaces and punctuation replaced by underscores. Reference the entry username and password explicitly:
+Kickstarts do not select or bind a vault. Declare each required value directly in Kickstart source. The vault-name
+segment is the vault name normalized to lowercase, with spaces and punctuation replaced by underscores. Reference the
+entry username and password explicitly:
 
 ```text
 network --hostname={{vault.management.esx.esx01.root.username}}
@@ -67,9 +68,12 @@ URIs use their one-based position in the entry:
 Markers are available from `uri1` through `uri9` when that position is configured. Removing or reordering an entry URI
 changes its marker position.
 
-Atlaso resolves vault markers only for an enabled host assigned to that Kickstart. Source, preview, and download views
-retain the marker; the dynamic response is not persisted and is returned with `Cache-Control: no-store`. A marker naming
-a vault other than the vault selected for the Kickstart fails validation.
+The Kickstart Monaco Editor suggests authorized vault, key, and supported subkey names after `{{`; completion metadata
+contains names and descriptions only, never credential values. Saving or validating source parses every vault marker
+and rejects malformed markers, missing or renamed vaults and keys, unsupported subkeys, and inaccessible references.
+Atlaso resolves only the exact referenced values for an enabled host assigned to that Kickstart and revalidates them at
+request time. Source, preview, and download views retain the marker; the dynamic response is not persisted and is
+returned with `Cache-Control: no-store`.
 
 ## Remote URI security
 

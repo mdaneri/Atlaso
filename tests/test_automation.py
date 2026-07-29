@@ -158,13 +158,13 @@ def test_managed_script_revision_is_immutable_enabled_and_run_by_worker(client):
     assert 'data-automation-script-arguments' in page.text
     assert "automation-option-grid" in page.text
     assert 'id="automation-script-content"' in page.text
-    assert "data-codemirror-editor" in page.text
+    assert "data-monaco-editor" in page.text
     assert "data-automation-script-file" in page.text
     assert "data-automation-script-create-file" in page.text
     assert "data-automation-script-create-fullscreen" in page.text
     assert 'id="automation-script-create-fullscreen-dialog"' in page.text
     assert 'id="automation-script-create-fullscreen-content"' in page.text
-    assert 'data-codemirror-language="shell"' in page.text
+    assert 'data-monaco-language="shell"' in page.text
     assert "data-automation-script-source-confirm" in page.text
     assert 'id="automation-script-grid-status"' in page.text
     assert "Import script file" in page.text
@@ -173,12 +173,12 @@ def test_managed_script_revision_is_immutable_enabled_and_run_by_worker(client):
     app_js = Path("atlaso/app/static/app.js").read_text(encoding="utf-8")
     assert "scriptCreateWizard = window.AtlasoUiPatterns.createWizard({" in app_js
     assert "data-automation-script-wizard-open" in app_js
-    assert "AtlasoCodeMirror.setLanguage" in app_js
+    assert "AtlasoMonaco.setLanguage" in app_js
     assert 'bash: "shell", powershell: "powershell", python: "python"' in app_js
-    codemirror_source = Path("scripts/codemirror-entry.js").read_text(encoding="utf-8")
-    assert '@codemirror/legacy-modes/mode/shell' in codemirror_source
-    assert '@codemirror/legacy-modes/mode/powershell' in codemirror_source
-    assert '@codemirror/legacy-modes/mode/python' in codemirror_source
+    monaco_source = Path("scripts/monaco-entry.js").read_text(encoding="utf-8")
+    assert "basic-languages/shell/shell.contribution" in monaco_source
+    assert "basic-languages/powershell/powershell.contribution" in monaco_source
+    assert "basic-languages/python/python.contribution" in monaco_source
     assert '"X-Atlaso-Wizard": "1"' in app_js
     csrf = csrf_from_page(page.text)
     wizard_response = client.post(

@@ -297,6 +297,7 @@ from atlaso.app.services.esxi_pxe import (
     installer_iso_inventory,
     kickstart_to_dict,
     kickstart_validation,
+    validate_kickstart_vault_references,
     normalize_host_mac,
     normalize_installer_iso_path,
     normalize_kickstart_name,
@@ -2957,7 +2958,11 @@ def create_esxi_kickstart(
     db.flush()
     _assign_kickstart_payload(kickstart, payload, settings.esxi_kickstart_max_bytes)
     try:
+        validate_kickstart_vault_references(db, kickstart.content)
         db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=f"Kickstart {payload.name} already exists.") from exc
@@ -3002,7 +3007,11 @@ def update_esxi_kickstart(
     _assign_kickstart_payload(kickstart, payload, settings.esxi_kickstart_max_bytes)
     db.add(kickstart)
     try:
+        validate_kickstart_vault_references(db, kickstart.content)
         db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=f"Kickstart {payload.name} already exists.") from exc
@@ -3093,6 +3102,10 @@ def validate_esxi_kickstart(
         strict=strict_validation_enabled(db),
         max_bytes=settings.esxi_kickstart_max_bytes,
     )
+    try:
+        validate_kickstart_vault_references(db, kickstart.content)
+    except ValueError as exc:
+        errors.append(str(exc))
     record_audit(db, actor=identity.username, action="validate_esxi_kickstart", resource_type="esxi_kickstart", resource_id=str(kickstart.id), detail=f"errors={len(errors)} warnings={len(warnings)}")
     return EsxiKickstartValidationResponse(valid=not errors, errors=errors, warnings=warnings, redacted_preview=redacted_kickstart_preview(kickstart.content))
 
@@ -3161,7 +3174,11 @@ async def upload_esxi_kickstart(
     db.flush()
     kickstart.http_path = canonical_http_path(kickstart.id, kickstart.content_hash)
     try:
+        validate_kickstart_vault_references(db, kickstart.content)
         db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=f"Kickstart {candidate_name} already exists.") from exc

@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from atlaso.app.models import DhcpReservation, DhcpScope, DnsRecord, EsxiKickstart, EsxiPxeHost, Setting, utcnow
 from atlaso.app.services.dnsmasq import reservation_dns_record
+from atlaso.app.services.vaults import validate_kickstart_vault_markers
 
 ESXI_PXE_UNIT_ID = "esxi_pxe"
 ESXI_PXE_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/esxi-pxe/atlaso-esxi-pxe.json"
@@ -207,13 +208,26 @@ def host_variables(host: EsxiPxeHost) -> dict[str, str]:
 
 
 def kickstart_template_variables(content: str) -> tuple[set[str], list[str]]:
-    names = set(KICKSTART_VARIABLE_PATTERN.findall(content or ""))
+    source = content or ""
+    names = set(KICKSTART_VARIABLE_PATTERN.findall(source))
     invalid = [
         match.group(1).strip()
-        for match in KICKSTART_TEMPLATE_EXPRESSION_PATTERN.finditer(content or "")
+        for match in KICKSTART_TEMPLATE_EXPRESSION_PATTERN.finditer(source)
         if not KICKSTART_VARIABLE_PATTERN.fullmatch(match.group(0))
     ]
+    unmatched = KICKSTART_TEMPLATE_EXPRESSION_PATTERN.sub("", source)
+    if "{{" in unmatched:
+        invalid.append("unclosed {{ marker")
+    if "}}" in unmatched:
+        invalid.append("unmatched }} marker")
     return names, invalid
+
+
+def validate_kickstart_vault_references(db: Session, content: str) -> None:
+    names, invalid = kickstart_template_variables(content)
+    if invalid:
+        raise ValueError(f"Kickstart contains invalid variable marker: {invalid[0]}")
+    validate_kickstart_vault_markers(db, names)
 
 
 def kickstart_has_variables(content: str) -> bool:
