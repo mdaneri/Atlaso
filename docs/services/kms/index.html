@@ -3140,7 +3140,9 @@
 
 
 <h1 id="kms-and-kmip">KMS and KMIP<a class="headerlink" href="#kms-and-kmip" title="Permanent link">&para;</a></h1>
-<p>Open <strong>KMS and KMIP</strong> to configure the appliance-managed key service, listener binding, and client trust material.</p>
+<p>Open <strong>KMS and KMIP</strong> to configure the appliance-managed key service, listener binding, and client trust material.
+Atlaso's appliance-native <code>atlaso-kmip</code> daemon implements only the bounded VCF 9.1 candidate contract. Treat the
+service as experimental until the live interoperability and recovery gate in issue #172 passes.</p>
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 <h2 id="interface-overview">Interface overview<a class="headerlink" href="#interface-overview" title="Permanent link">&para;</a></h2>
 <p>This verified appliance view provides visual orientation before you begin.</p>
@@ -3151,16 +3153,31 @@
 <h2 id="configure-the-service">Configure the service<a class="headerlink" href="#configure-the-service" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Select only the interfaces that should accept KMIP traffic.</li>
-<li>Review certificate and client identity requirements.</li>
+<li>Enable the CA-managed server certificate and at least one client whose exact SHA-256 certificate fingerprint maps
+   to the provider.</li>
 <li>Resolve Validation-card errors and inspect the rendered service configuration.</li>
 <li>Submit the KMS/KMIP unit through <a href="../../operate/appliance-apply/">Appliance Apply</a>.</li>
 </ol>
-<p>Keep the listener restricted to intended lab networks. Never publish private keys or client credentials in
-documentation, screenshots, task notes, or issues. The compatibility listener requires TLS 1.2 or newer.</p>
+<p>The apply unit installs <code>/etc/atlaso/kmip/server.json</code> and manages <code>atlaso-kmip.service</code> as an unprivileged account.
+It gives systemd a root-managed mode-<code>0600</code>, machine-encrypted credential containing only <code>ATLASO_SECRETS_KEY</code>;
+systemd decrypts it into the service's private runtime credential directory, and the daemon does not receive the web
+session key or bootstrap administrator password from the shared appliance environment. On an upgraded appliance, the
+first KMS apply reconciles the <code>atlaso-kmip</code> system account and its state directories before
+starting the service. Wrapped operational keys and the protected KEK envelope remain under <code>/var/lib/atlaso/kmip</code>
+when the service is disabled. Keep the listener restricted to intended lab networks. Never publish private keys,
+plaintext key material, or client credentials in documentation, screenshots, task notes, or issues.</p>
+<p>When the CA issues a replacement client certificate, Atlaso keeps both the prior and current exact fingerprints in
+desired state. Install and verify the replacement in vCenter, then use <strong>Retire previous certificate</strong> from that client
+row's context menu. The audited action removes earlier fingerprints from desired state; submit another global KMS
+apply to enforce the retirement on the appliance.</p>
+<p>A nonempty legacy PyKMIP database blocks in-place replacement. Keep the old appliance available while VMware rekeys
+workloads into a newly configured provider; Atlaso does not migrate legacy key rows.
+The appliance-native listener requires TLS 1.2 or newer.</p>
 <h2 id="verify">Verify<a class="headerlink" href="#verify" title="Permanent link">&para;</a></h2>
-<p>Confirm the apply task succeeded, the service is healthy, and an approved client can establish the expected trusted
-connection. If validation or client negotiation fails, restore the prior desired state and submit a new apply rather
-than editing appliance files directly.</p>
+<p>Confirm the apply task succeeded, <code>atlaso-kmip.service</code> is healthy, and an approved client can complete a bounded KMIP
+operation over mutual TLS. A successful TLS handshake is insufficient unless the exact client fingerprint maps to the
+provider. If validation or negotiation fails, restore the prior desired state and submit a new apply rather than
+editing appliance files directly.</p>
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 <h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>
 <p>These captures show responsive layouts and useful operational states referenced by this page.</p>
