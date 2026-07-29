@@ -13,6 +13,9 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - [Getting started](docs/getting-started/index.md) — choose an appliance path and complete initial setup.
 - [Operations](docs/operate/index.md) — run the appliance and review desired-state changes.
 - [Services](docs/services/index.md) — configure DNS, identity, storage, network boot, and VCF integrations.
+- [Network Boot](docs/services/ipxe.md) — discover unassigned hardware with
+  read-only Inventory Linux, activate verified interactive maintenance media,
+  and retain the ESX scripted-install workflow.
 - [Vaults](docs/services/vaults.md) — scope encrypted VCF and ESX passwords to managed scripts and exact Kickstart
   source markers.
 - [OpenID Connect provider](docs/services/oidc-provider.md) — use the dedicated tabbed administration page for

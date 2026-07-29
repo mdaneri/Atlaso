@@ -53,6 +53,8 @@ data/
 /image/vmware-workstation/clients
 /image/vmware-workstation/ovf
 /image/vmware-workstation/test-vms
+/image/inventory-linux/.build
+/image/inventory-linux/output
 /dist
 
 # VCF tooling downloaded or staged locally

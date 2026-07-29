@@ -110,6 +110,9 @@ def test_public_services_nginx_config_contains_per_ip_scoped_locations():
     assert "\n  location = /login {" not in config
     assert "\n  location = /logout {" not in config
     assert "location /pxe/esxi/ks/" in config
+    assert "location = /pxe/boot.ipxe" in config
+    assert "location /pxe/inventory/" in config
+    assert "location /pxe/media/" in config
     assert "location = /pxe/esxi/boot.ipxe" in config
     assert "location = /pxe/esxi {" in config
     assert "return 301 /pxe/esxi/;" in config

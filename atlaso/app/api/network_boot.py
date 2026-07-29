@@ -1,0 +1,629 @@
+from __future__ import annotations
+
+import json
+import shutil
+import threading
+import time
+from collections import defaultdict, deque
+from ipaddress import ip_address
+from pathlib import Path
+from typing import Annotated, Any
+from uuid import uuid4
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.responses import FileResponse
+from sqlalchemy import desc, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from atlaso.app.audit import record_audit
+from atlaso.app.database import get_db
+from atlaso.app.models import (
+    EsxiPxeHost,
+    Job,
+    JobStatus,
+    NetworkBootDiscoveredHost,
+    NetworkBootEnvironment,
+    NetworkBootInventoryCommand,
+    NetworkBootInventorySession,
+    NetworkBootMedia,
+    utcnow,
+)
+from atlaso.app.security import Identity, require_api_or_session_scope
+from atlaso.app.services.esxi_pxe import (
+    esxi_pxe_boot_settings,
+    host_variables_json,
+    normalize_installer_iso_path,
+    normalize_pxe_mac,
+    sync_esxi_pxe_host_network_records,
+)
+from atlaso.app.services.network_boot import (
+    acknowledge_inventory_command,
+    NETWORK_BOOT_MEDIA_ROOT,
+    catalog_rows,
+    host_to_dict,
+    inventory_session_for_token,
+    issue_inventory_session,
+    poll_inventory_command,
+    queue_reboot_command,
+    render_network_boot_menu,
+    report_history,
+    set_environment_desired_state,
+    store_inventory_report,
+    touch_inventory_heartbeat,
+)
+
+
+router = APIRouter(prefix="/api/v1/network-boot", tags=["network-boot"])
+public_router = APIRouter(tags=["network-boot-public"])
+_rate_lock = threading.Lock()
+_rate_windows: dict[str, deque[float]] = defaultdict(deque)
+
+
+def _bounded_rate_limit(request: Request, *, bucket: str, limit: int, window: int = 60) -> None:
+    remote = request.client.host if request.client else "unknown"
+    try:
+        if ip_address(remote).is_loopback:
+            forwarded = request.headers.get("X-Real-IP", "").strip()
+            if forwarded:
+                remote = str(ip_address(forwarded))
+    except ValueError:
+        remote = "unknown"
+    key = f"{bucket}:{remote}"
+    now = time.monotonic()
+    with _rate_lock:
+        values = _rate_windows[key]
+        while values and values[0] <= now - window:
+            values.popleft()
+        if len(values) >= limit:
+            raise HTTPException(status_code=429, detail="Network Boot request rate limit exceeded.")
+        values.append(now)
+
+
+def _bearer_token(request: Request) -> str:
+    authorization = request.headers.get("Authorization", "")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise HTTPException(status_code=401, detail="Inventory bearer token required.")
+    return token
+
+
+def _inventory_session(
+    request: Request,
+    db: Session,
+    *,
+    require_report: bool = False,
+) -> NetworkBootInventorySession:
+    try:
+        return inventory_session_for_token(
+            db,
+            _bearer_token(request),
+            require_report=require_report,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
+@router.get("/environments")
+def list_network_boot_environments(
+    _identity: Annotated[Identity, Depends(require_api_or_session_scope("read:pxe"))],
+    db: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    return catalog_rows(db)
+
+
+@router.patch("/environments/{environment_key}")
+def update_network_boot_environment(
+    environment_key: str,
+    payload: dict[str, Any],
+    request: Request,
+    identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    if not isinstance(payload.get("enabled"), bool):
+        raise HTTPException(status_code=422, detail="enabled must be a boolean.")
+    try:
+        state = set_environment_desired_state(
+            db,
+            environment_key=environment_key,
+            enabled=payload["enabled"],
+            desired_version=str(payload.get("desired_version") or ""),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    record_audit(
+        db,
+        actor=identity.username,
+        action="update_network_boot_environment",
+        resource_type="network_boot_environment",
+        resource_id=state.key,
+        detail=f"enabled={state.enabled}; desired_version={state.desired_version}",
+        request_id=request.state.request_id,
+    )
+    db.commit()
+    return next(row for row in catalog_rows(db) if row["key"] == state.key)
+
+
+@router.post("/environments/{environment_key}/sync", status_code=status.HTTP_202_ACCEPTED)
+def sync_network_boot_environment(
+    environment_key: str,
+    request: Request,
+    identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    rows = {row["key"]: row for row in catalog_rows(db)}
+    if environment_key not in rows or environment_key == "inventory":
+        raise HTTPException(
+            status_code=422,
+            detail="Select one of the four downloadable maintenance environments.",
+        )
+    active = db.execute(
+        select(Job).where(
+            Job.type == "pxe-media-sync",
+            Job.status.in_((JobStatus.PENDING.value, JobStatus.RUNNING.value)),
+        )
+    ).scalars().first()
+    if active is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Network Boot media task {active.id} is already active.",
+        )
+    job = Job(
+        id=f"job_{uuid4().hex}",
+        type="pxe-media-sync",
+        status=JobStatus.PENDING.value,
+        created_by=identity.username,
+        progress_percent=0,
+        task_config_json=json.dumps(
+            {
+                "environment": environment_key,
+                "request_id": request.state.request_id,
+            },
+            sort_keys=True,
+        ),
+    )
+    db.add(job)
+    record_audit(
+        db,
+        actor=identity.username,
+        action="queue_pxe_media_sync",
+        resource_type="job",
+        resource_id=job.id,
+        detail=f"environment={environment_key}",
+        request_id=request.state.request_id,
+    )
+    db.commit()
+    return {"job_id": job.id, "status": job.status, "environment": environment_key}
+
+
+@router.delete("/environments/{environment_key}/media/{version}")
+def remove_network_boot_media(
+    environment_key: str,
+    version: str,
+    request: Request,
+    identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    if environment_key == "inventory":
+        raise HTTPException(status_code=422, detail="Bundled Inventory Linux cannot be removed.")
+    state = db.get(NetworkBootEnvironment, environment_key)
+    media = db.execute(
+        select(NetworkBootMedia).where(
+            NetworkBootMedia.environment_key == environment_key,
+            NetworkBootMedia.version == version,
+        )
+    ).scalar_one_or_none()
+    if state is None or media is None:
+        raise HTTPException(status_code=404, detail="Installed Network Boot media not found.")
+    if version in {state.desired_version, state.active_version}:
+        raise HTTPException(
+            status_code=409,
+            detail="Select and apply a different version or disable this environment before removal.",
+        )
+    target = Path(media.installed_path).resolve()
+    expected_root = (NETWORK_BOOT_MEDIA_ROOT / environment_key).resolve()
+    if (
+        not target.is_relative_to(expected_root)
+        or target == expected_root
+        or target.name != version
+    ):
+        raise HTTPException(status_code=409, detail="Installed media path failed safety validation.")
+    if target.exists():
+        shutil.rmtree(target)
+    db.delete(media)
+    record_audit(
+        db,
+        actor=identity.username,
+        action="remove_network_boot_media",
+        resource_type="network_boot_media",
+        resource_id=f"{environment_key}:{version}",
+        detail="inactive immutable cache version removed",
+        request_id=request.state.request_id,
+    )
+    db.commit()
+    return {"environment": environment_key, "version": version, "removed": True}
+
+
+@router.get("/hosts")
+def list_discovered_hosts(
+    _identity: Annotated[Identity, Depends(require_api_or_session_scope("read:pxe"))],
+    db: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    rows = db.execute(
+        select(NetworkBootDiscoveredHost).order_by(
+            desc(NetworkBootDiscoveredHost.last_seen_at),
+            NetworkBootDiscoveredHost.id,
+        )
+    ).scalars().all()
+    return [host_to_dict(db, row) for row in rows]
+
+
+@router.get("/hosts/{host_id}")
+def get_discovered_host(
+    host_id: int,
+    _identity: Annotated[Identity, Depends(require_api_or_session_scope("read:pxe"))],
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    host = db.get(NetworkBootDiscoveredHost, host_id)
+    if host is None:
+        raise HTTPException(status_code=404, detail="Discovered host not found.")
+    return host_to_dict(db, host, include_report=True)
+
+
+@router.get("/hosts/{host_id}/history")
+def get_discovered_host_history(
+    host_id: int,
+    _identity: Annotated[Identity, Depends(require_api_or_session_scope("read:pxe"))],
+    db: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    if db.get(NetworkBootDiscoveredHost, host_id) is None:
+        raise HTTPException(status_code=404, detail="Discovered host not found.")
+    return report_history(db, host_id)
+
+
+@router.post("/hosts/{host_id}/reboot", status_code=status.HTTP_202_ACCEPTED)
+def reboot_discovered_host(
+    host_id: int,
+    request: Request,
+    identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    host = db.get(NetworkBootDiscoveredHost, host_id)
+    if host is None:
+        raise HTTPException(status_code=404, detail="Discovered host not found.")
+    try:
+        command = queue_reboot_command(
+            db,
+            host=host,
+            requested_by=identity.username,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    record_audit(
+        db,
+        actor=identity.username,
+        action="queue_inventory_reboot",
+        resource_type="network_boot_inventory_command",
+        resource_id=command.id,
+        detail=f"host_id={host.id}",
+        request_id=request.state.request_id,
+    )
+    db.commit()
+    return {
+        "id": command.id,
+        "action": command.action,
+        "status": command.status,
+        "expires_at": command.expires_at.isoformat(),
+    }
+
+
+@router.get("/commands/{command_id}")
+def get_inventory_command_status(
+    command_id: str,
+    _identity: Annotated[Identity, Depends(require_api_or_session_scope("read:pxe"))],
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    command = db.get(NetworkBootInventoryCommand, command_id)
+    if command is None:
+        raise HTTPException(status_code=404, detail="Inventory command not found.")
+    return {
+        "id": command.id,
+        "host_id": command.host_id,
+        "action": command.action,
+        "status": command.status,
+        "created_at": command.created_at.isoformat(),
+        "delivered_at": command.delivered_at.isoformat() if command.delivered_at else None,
+        "acknowledged_at": (
+            command.acknowledged_at.isoformat() if command.acknowledged_at else None
+        ),
+        "expires_at": command.expires_at.isoformat(),
+    }
+
+
+@router.post("/hosts/{host_id}/promote", status_code=status.HTTP_201_CREATED)
+def promote_discovered_host(
+    host_id: int,
+    payload: dict[str, Any],
+    request: Request,
+    identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    discovered = db.get(NetworkBootDiscoveredHost, host_id)
+    if discovered is None:
+        raise HTTPException(status_code=404, detail="Discovered host not found.")
+    required = {
+        "hostname",
+        "mac_address",
+        "ip_address",
+        "kickstart_id",
+        "installer_iso_path",
+        "variables",
+        "enabled",
+    }
+    missing = sorted(required - set(payload))
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Promotion requires explicit review of {missing[0]}.",
+        )
+    mac_address = str(payload.get("mac_address") or "").strip().lower().replace("-", ":")
+    if mac_address not in set(json.loads(discovered.macs_json or "[]")):
+        raise HTTPException(
+            status_code=422,
+            detail="Promotion MAC must be one of the discovered permanent or boot MACs.",
+        )
+    if not normalize_pxe_mac(mac_address):
+        raise HTTPException(status_code=422, detail="Promotion MAC is invalid.")
+    if db.execute(
+        select(EsxiPxeHost).where(EsxiPxeHost.mac_address == mac_address)
+    ).scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="An ESXi profile already uses this MAC.")
+    hostname = str(payload.get("hostname") or "").strip()
+    if any(
+        row.hostname.lower() == hostname.lower()
+        for row in db.execute(select(EsxiPxeHost)).scalars().all()
+    ):
+        raise HTTPException(status_code=409, detail="An ESXi profile already uses this hostname.")
+    if not isinstance(payload.get("enabled"), bool):
+        raise HTTPException(status_code=422, detail="Promotion enabled state must be a boolean.")
+    kickstart_id = payload.get("kickstart_id")
+    try:
+        host = EsxiPxeHost(
+            hostname=hostname,
+            mac_address=mac_address,
+            ip_address=str(payload.get("ip_address") or "").strip(),
+            kickstart_id=int(kickstart_id) if kickstart_id not in (None, "") else None,
+            installer_iso_path=normalize_installer_iso_path(
+                str(payload.get("installer_iso_path") or "")
+            ),
+            variables_json=host_variables_json(payload.get("variables")),
+            enabled=payload["enabled"],
+        )
+        if not host.hostname:
+            raise ValueError("Promotion hostname is required.")
+        db.add(host)
+        db.flush()
+        sync_esxi_pxe_host_network_records(db, host, esxi_pxe_boot_settings(db))
+        record_audit(
+            db,
+            actor=identity.username,
+            action="promote_inventory_host_to_esxi",
+            resource_type="esxi_pxe_host",
+            resource_id=str(host.id),
+            detail=f"discovered_host_id={discovered.id}; mac={mac_address}",
+            request_id=request.state.request_id,
+        )
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="ESXi promotion conflicts with an existing profile.") from exc
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "id": host.id,
+        "hostname": host.hostname,
+        "mac_address": host.mac_address,
+        "enabled": host.enabled,
+    }
+
+
+@public_router.get("/pxe/boot.ipxe")
+def network_boot_ipxe(
+    request: Request,
+    mac: str = "",
+    firmware: str = "",
+    db: Session = Depends(get_db),
+) -> Response:
+    _bounded_rate_limit(request, bucket="menu", limit=120)
+    try:
+        content = render_network_boot_menu(
+            db,
+            mac_address=mac,
+            firmware=firmware,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return Response(
+        content,
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Cache-Control": "no-store, max-age=0",
+            "Pragma": "no-cache",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@public_router.get("/pxe/media/{environment_key}/{version}/{file_path:path}")
+def network_boot_media_file(
+    environment_key: str,
+    version: str,
+    file_path: str,
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    state = db.get(NetworkBootEnvironment, environment_key)
+    if (
+        state is None
+        or not state.enabled
+        or state.active_version != version
+    ):
+        raise HTTPException(status_code=404, detail="Network Boot media is not active.")
+    media = db.execute(
+        select(NetworkBootMedia).where(
+            NetworkBootMedia.environment_key == environment_key,
+            NetworkBootMedia.version == version,
+        )
+    ).scalar_one_or_none()
+    if media is None:
+        raise HTTPException(status_code=404, detail="Network Boot media is not installed.")
+    root = Path(media.installed_path).resolve()
+    target = (root / file_path).resolve()
+    if not target.is_relative_to(root) or not target.is_file():
+        raise HTTPException(status_code=404, detail="Network Boot media file not found.")
+    try:
+        manifest = json.loads(media.manifest_json or "{}")
+    except json.JSONDecodeError:
+        manifest = {}
+    allowed = set(manifest.get("files") or []) | {"manifest.json"}
+    if file_path.replace("\\", "/") not in allowed:
+        raise HTTPException(status_code=404, detail="Network Boot media file is not allowlisted.")
+    return FileResponse(
+        target,
+        media_type="application/octet-stream",
+        headers={
+            "Cache-Control": "public, max-age=31536000, immutable",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@public_router.post("/pxe/inventory/sessions", status_code=status.HTTP_201_CREATED)
+def create_inventory_session(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    _bounded_rate_limit(request, bucket="session", limit=30)
+    session, token = issue_inventory_session(db)
+    db.commit()
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "session_id": session.id,
+        "access_token": token,
+        "token_type": "Bearer",
+        "expires_at": session.expires_at.isoformat(),
+        "heartbeat_interval_seconds": 10,
+    }
+
+
+@public_router.post("/pxe/inventory/report", status_code=status.HTTP_201_CREATED)
+def submit_inventory_report(
+    payload: dict[str, Any],
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    _bounded_rate_limit(request, bucket="report", limit=60)
+    session = _inventory_session(request, db)
+    try:
+        host, report = store_inventory_report(
+            db,
+            session=session,
+            payload=payload,
+        )
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        message = str(exc)
+        code = 409 if "already submitted" in message or "does not match" in message else 422
+        raise HTTPException(status_code=code, detail=message) from exc
+    return {
+        "host_id": host.id,
+        "report_id": report.id,
+        "identity_key": host.identity_key,
+        "collision": bool(host.collision),
+    }
+
+
+@public_router.post("/pxe/inventory/heartbeat")
+def inventory_heartbeat(
+    payload: dict[str, Any],
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    _bounded_rate_limit(request, bucket="heartbeat", limit=360)
+    session = _inventory_session(request, db, require_report=True)
+    try:
+        touch_inventory_heartbeat(
+            session,
+            identity_key=str(payload.get("identity_key") or ""),
+        )
+        db.add(session)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"status": "online", "server_time": utcnow().isoformat()}
+
+
+@public_router.get("/pxe/inventory/commands")
+def inventory_commands(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    _bounded_rate_limit(request, bucket="commands", limit=360)
+    session = _inventory_session(request, db, require_report=True)
+    command = poll_inventory_command(db, session=session)
+    if command is not None:
+        record_audit(
+            db,
+            actor="inventory-session",
+            action="deliver_inventory_command",
+            resource_type="network_boot_inventory_command",
+            resource_id=command.id,
+            detail=f"host_id={command.host_id}; action={command.action}",
+            request_id=request.state.request_id,
+        )
+    db.commit()
+    return {
+        "command": (
+            {
+                "id": command.id,
+                "action": command.action,
+                "expires_at": command.expires_at.isoformat(),
+            }
+            if command
+            else None
+        )
+    }
+
+
+@public_router.post("/pxe/inventory/commands/{command_id}/acknowledge")
+def acknowledge_inventory_command_route(
+    command_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    _bounded_rate_limit(request, bucket="ack", limit=120)
+    session = _inventory_session(request, db, require_report=True)
+    try:
+        command = acknowledge_inventory_command(
+            db,
+            session=session,
+            command_id=command_id,
+        )
+        record_audit(
+            db,
+            actor="inventory-session",
+            action="acknowledge_inventory_command",
+            resource_type="network_boot_inventory_command",
+            resource_id=command.id,
+            detail=f"host_id={command.host_id}; action={command.action}",
+            request_id=request.state.request_id,
+        )
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"id": command.id, "status": command.status}

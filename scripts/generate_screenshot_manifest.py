@@ -106,7 +106,7 @@ ROUTES = {
     "dhcp": ("/dhcp", "DHCP"),
     "dns": ("/dns", "DNS"),
     "esx-storage": ("/esx-storage", "ESX Storage"),
-    "esxi-pxe": ("/esxi-pxe", "ESXi PXE"),
+    "esxi-pxe": ("/network-boot", "Network Boot"),
     "firewall": ("/firewall", "Firewall"),
     "kms": ("/kms", "KMS and KMIP"),
     "ldap": ("/ldap", "Managed LDAP"),

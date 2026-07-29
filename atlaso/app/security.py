@@ -1,7 +1,7 @@
 import json
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
-from secrets import token_urlsafe
+from secrets import compare_digest, token_urlsafe
 from typing import Annotated
 
 import jwt
@@ -44,6 +44,8 @@ ALL_SCOPES = {
     "write:repository",
     "read:esxi-pxe",
     "write:esxi-pxe",
+    "read:pxe",
+    "write:pxe",
     "read:esx-storage",
     "write:esx-storage",
     "read:vcf-registry",
@@ -93,6 +95,8 @@ ROLE_SCOPES = {
         "write:repository",
         "read:esxi-pxe",
         "write:esxi-pxe",
+        "read:pxe",
+        "write:pxe",
         "read:esx-storage",
         "write:esx-storage",
         "read:vcf-registry",
@@ -118,6 +122,7 @@ ROLE_SCOPES = {
         "read:kms",
         "read:repository",
         "read:esxi-pxe",
+        "read:pxe",
         "read:esx-storage",
         "read:vcf-registry",
         "read:vcf-backups",
@@ -166,6 +171,7 @@ UI_PATH_SCOPES = [
     ("/ldap", "read:ldap", "write:ldap"),
     ("/ntp", "read:services", "write:services"),
     ("/esxi-pxe", "read:esxi-pxe", "write:esxi-pxe"),
+    ("/network-boot", "read:pxe", "write:pxe"),
     ("/esx-storage", "read:esx-storage", "write:esx-storage"),
     ("/vcf-trust/root-ca", "read:ca", "write:ca"),
     ("/vcf-trust", "read:dashboard", "write:ca"),
@@ -333,6 +339,34 @@ def scopes_from_string(scopes: str) -> set[str]:
 
 def require_scope(scope: str):
     def dependency(identity: Annotated[Identity, Depends(get_current_api_identity)]) -> Identity:
+        if not identity.can(scope):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Missing required scope: {scope}",
+            )
+        return identity
+
+    return dependency
+
+
+def require_api_or_session_scope(scope: str):
+    def dependency(
+        request: Request,
+        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+        db: Annotated[Session, Depends(get_db)],
+        settings: Annotated[Settings, Depends(get_settings)],
+    ) -> Identity:
+        if credentials is not None:
+            identity = get_current_api_identity(credentials, db, settings)
+        else:
+            identity = get_session_identity(request, db)
+            if identity is None:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+            if request.method not in {"GET", "HEAD", "OPTIONS"}:
+                supplied = request.headers.get("X-CSRF-Token", "")
+                expected = str(request.session.get("csrf_token") or "")
+                if not supplied or not expected or not compare_digest(supplied, expected):
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid CSRF token")
         if not identity.can(scope):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

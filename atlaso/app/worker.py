@@ -29,7 +29,12 @@ LOGGER = logging.getLogger("atlaso.worker")
 POLL_SECONDS = 5
 AUTOMATION_STAGE_DIR = Path("/var/lib/atlaso/automation/scripts")
 AUTOMATION_VAULT_STAGE_DIR = Path("/run/atlaso-automation-vaults")
-WORKER_JOB_TYPES = {"appliance-update", "vcf-depot-download", "managed-script"}
+WORKER_JOB_TYPES = {
+    "appliance-update",
+    "vcf-depot-download",
+    "managed-script",
+    "pxe-media-sync",
+}
 _stop_requested = False
 
 
@@ -450,6 +455,41 @@ def _run_managed_script(db: Session, job: Job) -> None:
     db.commit()
 
 
+def _run_pxe_media_sync(db: Session, job: Job) -> None:
+    from atlaso.app.services.network_boot import media_to_dict, sync_network_boot_media
+
+    config = _job_config(job)
+    environment = str(config.get("environment") or "")
+    media = sync_network_boot_media(db, environment_key=environment)
+    payload = {
+        "status": JobStatus.SUCCEEDED.value,
+        "success": True,
+        "environment": environment,
+        "media": media_to_dict(media),
+        "activation": "pending desired state; global appliance apply is required",
+    }
+    job.status = JobStatus.SUCCEEDED.value
+    job.finished_at = utcnow()
+    job.progress_percent = 100
+    job.error = None
+    job.result = json.dumps(payload, indent=2, sort_keys=True)
+    db.add(job)
+    db.add(
+        AuditEvent(
+            actor=job.created_by,
+            action="sync_network_boot_media",
+            resource_type="network_boot_media",
+            resource_id=f"{environment}:{media.version}",
+            success=True,
+            detail=(
+                f"sha256={media.artifact_sha256}; "
+                f"verification={media.verification_method}"
+            ),
+        )
+    )
+    db.commit()
+
+
 def run_worker_once() -> str | None:
     with SessionLocal() as db:
         enqueue_due_schedules(db)
@@ -482,6 +522,11 @@ def run_worker_once() -> str | None:
                 job = db.get(Job, job_id)
                 if job is not None:
                     _run_managed_script(db, job)
+        elif job_type == "pxe-media-sync":
+            with SessionLocal() as db:
+                job = db.get(Job, job_id)
+                if job is not None:
+                    _run_pxe_media_sync(db, job)
         else:
             raise ValueError(f"No worker handler is registered for job type {job_type}.")
     except Exception as exc:  # noqa: BLE001 - the worker must survive individual job failures.

@@ -1,6 +1,128 @@
 {% extends "base.html" %}
-{% block page_title %}ESXi PXE{% endblock %}
+{% block page_title %}Network Boot{% endblock %}
 {% block content %}
+<section class="panel wide-panel network-boot-overview">
+  <div class="panel-head">
+    <div>
+      <h2>Network Boot</h2>
+      <p class="muted">Discover hardware safely, activate verified maintenance media, and retain the ESXi installation workflow.</p>
+    </div>
+    <span class="status-pill {{ esxi_pxe_service_status.pill }}">{{ esxi_pxe_service_status.label }}</span>
+  </div>
+  <div class="tab-buttons tool-tabs" role="tablist" aria-label="Network Boot views" data-tab-storage-key="atlaso:network-boot:active-tab">
+    <button class="tab-button active" type="button" role="tab" data-tab-target="network-boot-discovered-panel" aria-controls="network-boot-discovered-panel" aria-selected="true">Discovered Hosts</button>
+    <button class="tab-button" type="button" role="tab" data-tab-target="network-boot-environments-panel" aria-controls="network-boot-environments-panel" aria-selected="false">Boot Environments</button>
+    <button class="tab-button" type="button" role="tab" data-tab-target="network-boot-settings-panel" aria-controls="network-boot-settings-panel" aria-selected="false">Settings</button>
+  </div>
+  <div class="tab-panels">
+    <div id="network-boot-discovered-panel" class="tab-panel active" role="tabpanel">
+      <div id="network-boot-discovered-table" class="tabulator-shell"
+           data-rows='{{ network_boot_discovered_hosts | tojson }}'
+           data-can-write="{{ 'true' if network_boot_can_write else 'false' }}"
+           data-fallback-id="network-boot-discovered-fallback"></div>
+      <table id="network-boot-discovered-fallback" class="data-table compact">
+        <thead><tr><th>UUID</th><th>MACs</th><th>CPU</th><th>Memory</th><th>Disks</th><th>NICs</th><th>Last seen</th><th>Session</th></tr></thead>
+        <tbody>
+          {% for row in network_boot_discovered_hosts %}
+            <tr><td><code>{{ row.dmi_uuid or "MAC fallback" }}</code></td><td>{{ row.macs | join(", ") }}</td><td>{{ row.cpu_model }}</td><td>{{ row.total_memory_bytes }}</td><td>{{ row.disk_count }}</td><td>{{ row.interface_count }}</td><td>{{ row.last_seen_at }}</td><td>{{ row.session_state }}</td></tr>
+          {% else %}
+            <tr><td colspan="8">No inventory reports received.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p class="muted">Double-click a row, or focus it and press Enter, to inspect its latest bounded report and history. Promotion and reboot actions require Network Boot write access.</p>
+    </div>
+    <div id="network-boot-environments-panel" class="tab-panel" role="tabpanel" hidden>
+      <div id="network-boot-environments-table" class="tabulator-shell"
+           data-rows='{{ network_boot_environments | tojson }}'
+           data-can-write="{{ 'true' if network_boot_can_write else 'false' }}"
+           data-fallback-id="network-boot-environments-fallback"></div>
+      <table id="network-boot-environments-fallback" class="data-table compact">
+        <thead><tr><th>Environment</th><th>Enabled</th><th>Desired</th><th>Newest installed</th><th>Active</th><th>Ready</th><th>Verification</th><th>Risk</th></tr></thead>
+        <tbody>
+          {% for row in network_boot_environments %}
+            <tr><td>{{ row.label }}</td><td>{{ "Yes" if row.enabled else "No" }}</td><td>{{ row.desired_version or "Not selected" }}</td><td>{{ row.installed_versions[0].version if row.installed_versions else "Not installed" }}</td><td>{{ row.active_version or "Not active" }}</td><td>{{ "Ready" if row.ready else "Pending" }}</td><td>{{ row.verification_method }}</td><td>{{ row.risk }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p class="muted">Downloads create immutable verified cache entries. Enablement and version selection remain pending until global appliance apply.</p>
+    </div>
+    <div id="network-boot-settings-panel" class="tab-panel" role="tabpanel" hidden>
+      <div class="settings-list compact-settings-list">
+        <div><span>PXE/TFTP bootstrap</span><strong>{{ "Enabled" if esxi_pxe_boot.enabled else "Disabled" }}</strong></div>
+        <div><span>Interface binding</span><strong>{{ esxi_pxe_bind_label }}</strong></div>
+        <div><span>HTTP menu</span><strong><code>/pxe/boot.ipxe</code></strong></div>
+        <div><span>Inventory default</span><strong>10 seconds for unknown hosts</strong></div>
+        <div><span>Apply unit</span><strong><code>esxi_pxe</code> (compatibility retained)</strong></div>
+      </div>
+      {% if esxi_pxe_validation_errors %}
+        <div class="alert error"><strong>Validation blocks apply.</strong><p>{{ esxi_pxe_validation_errors | join(" ") }}</p></div>
+      {% elif esxi_pxe_validation_warnings %}
+        <div class="alert warn"><strong>Review pending state.</strong><p>{{ esxi_pxe_validation_warnings | join(" ") }}</p></div>
+      {% endif %}
+    </div>
+  </div>
+</section>
+<dialog id="network-boot-host-dialog" class="confirm-modal wide-modal task-modal" aria-labelledby="network-boot-host-title">
+  <div class="confirm-modal-panel form-stack">
+    <div class="confirm-modal-body">
+      <p class="kicker">Network Boot inventory</p>
+      <h2 id="network-boot-host-title">Discovered Host</h2>
+      <p class="muted">Latest bounded report and retained session history.</p>
+      <div class="terminal-note task-result-preview" data-terminal-note-open="false"><code class="language-json" data-network-boot-host-detail></code></div>
+    </div>
+    <div class="confirm-modal-actions">
+      {% if network_boot_can_write %}
+        <button class="button primary" type="button" data-network-boot-promote-open>Promote to ESXi</button>
+        <button class="button danger" type="button" data-network-boot-reboot>Reboot inventory session</button>
+      {% endif %}
+      <button class="button ghost" type="button" data-network-boot-host-close>Close</button>
+    </div>
+  </div>
+</dialog>
+{% if network_boot_can_write %}
+<dialog id="network-boot-promote-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="network-boot-promote-title">
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" data-network-boot-promote-form data-atlaso-wizard novalidate>
+    <input type="hidden" name="host_id">
+    <aside class="vcf-sddc-wizard-rail" aria-label="ESXi promotion steps">
+      <p class="kicker">Network Boot</p><h2 id="network-boot-promote-title">Promote discovered host</h2>
+      <ol class="vcf-sddc-step-list">
+        <li><button class="vcf-sddc-step-button active" type="button" data-atlaso-wizard-nav="identity"><span>1</span><strong>Identity</strong><small>Hostname, MAC, and address</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="installer" disabled><span>2</span><strong>Installer</strong><small>Kickstart and ISO</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="enablement" disabled><span>3</span><strong>Enabled</strong><small>Desired-state enablement</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="review" disabled><span>4</span><strong>Review</strong><small>Confirm promotion</small></button></li>
+      </ol>
+    </aside>
+    <div class="vcf-sddc-wizard-main">
+      <div class="confirm-modal-body vcf-sddc-wizard-body">
+        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 4</p><h3 data-atlaso-wizard-title>Review host identity</h3><p class="muted" data-atlaso-wizard-description>Choose the explicit ESXi hostname, discovered MAC, and address.</p></div>
+        <div class="alert error hidden" data-atlaso-wizard-error></div>
+        <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity"><div class="form-grid">
+          <label><span>Hostname</span><input name="hostname" required maxlength="255"></label>
+          <label><span>Selected MAC</span><select name="mac_address" required></select></label>
+          <label><span>IP address</span><input name="ip_address" required></label>
+        </div></section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="installer"><div class="form-stack">
+          <label><span>Kickstart</span><select name="kickstart_id">{% for option in esxi_pxe_host_kickstart_options %}<option value="{{ option.id }}">{{ option.label }}</option>{% endfor %}</select></label>
+          <label><span>Installer ISO</span><select name="installer_iso_path" required>{% for option in esxi_pxe_host_iso_options %}<option value="{{ option.id }}">{{ option.label }}</option>{% endfor %}</select></label>
+          <label><span>Variables JSON</span><textarea name="variables" rows="6">{}</textarea></label>
+        </div></section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="enablement">
+          <label class="switch-field"><span>Enabled</span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
+          <p class="muted">Promotion creates desired state only. The global apply workflow remains the sole host-mutation path.</p>
+        </section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review"><div data-atlaso-wizard-review></div></section>
+      </div>
+      <div class="confirm-modal-actions vcf-sddc-wizard-actions">
+        <button class="button secondary" type="button" data-atlaso-wizard-cancel>Cancel</button>
+        <button class="button secondary hidden" type="button" data-atlaso-wizard-back>Back</button>
+        <button class="button primary" type="button" data-atlaso-wizard-next>Next</button>
+        <button class="button primary hidden" type="submit" data-atlaso-wizard-submit>Promote host</button>
+      </div>
+    </div>
+  </form>
+</dialog>
+{% endif %}
 <section class="split-workspace esxi-pxe-workspace">
   <div class="left-stack">
   <div class="panel esxi-boot-service-panel">

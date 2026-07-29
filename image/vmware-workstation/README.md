@@ -9,7 +9,7 @@ only by root, while every local `/usr/bin/pwsh` user can read and import its mod
 
 This target builds a Photon OS 5.0 VMware Workstation VMX/VMDK appliance with the same Atlaso control plane provisioning
 used by the Hyper-V image. Fresh appliances enable the integrated CA on deployed-VM first boot, serve the management
-console/API over CA-backed HTTPS/443, and keep management HTTP/80 redirect-only. ESXi PXE remains the only served HTTP
+console/API over CA-backed HTTPS/443, and keep management HTTP/80 redirect-only. Network Boot remains the only served HTTP
 payload.
 
 ## Prerequisites

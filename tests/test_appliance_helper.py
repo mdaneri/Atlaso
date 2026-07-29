@@ -974,6 +974,76 @@ def esxi_pxe_manifest(http_root: Path, *, enabled: bool = True, stale_id: int = 
     }
 
 
+def test_esxi_pxe_helper_validates_network_boot_media_hashes(monkeypatch, tmp_path):
+    helper = load_helper_module()
+    media_root = tmp_path / "media"
+    http_root = tmp_path / "http"
+    installed = media_root / "memtest86plus" / "8.10"
+    installed.mkdir(parents=True)
+    artifact = installed / "memtest"
+    artifact.write_bytes(b"verified memtest payload")
+    manifest = {
+        "schema_version": 1,
+        "environment": "memtest86plus",
+        "artifacts": {"memtest": hashlib.sha256(artifact.read_bytes()).hexdigest()},
+    }
+    (installed / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setattr(helper, "NETWORK_BOOT_MEDIA_ROOT", media_root)
+    monkeypatch.setattr(helper, "NETWORK_BOOT_HTTP_ROOT", http_root)
+    payload = {
+        "boot": {"enabled": False},
+        "network_boot": {
+            "media_root": str(media_root),
+            "http_root": str(http_root),
+            "environments": [
+                {
+                    "key": "memtest86plus",
+                    "enabled": True,
+                    "desired_version": "8.10",
+                    "installed_path": str(installed),
+                    "manifest": manifest,
+                }
+            ],
+        },
+        "kickstarts": [],
+        "hosts": [],
+        "artifacts": [],
+    }
+
+    errors = helper._esxi_pxe_manifest_errors(payload)
+    assert not [error for error in errors if error.startswith("Network Boot")]
+
+    artifact.write_bytes(b"tampered")
+    errors = helper._esxi_pxe_manifest_errors(payload)
+    assert any("failed SHA-256 verification" in error for error in errors)
+
+
+def test_esxi_pxe_helper_activates_and_disables_network_boot_media(monkeypatch, tmp_path):
+    helper = load_helper_module()
+    media_root = tmp_path / "media"
+    http_root = tmp_path / "http"
+    installed = media_root / "inventory" / "0.9.51"
+    installed.mkdir(parents=True)
+    monkeypatch.setattr(helper, "NETWORK_BOOT_MEDIA_ROOT", media_root)
+    monkeypatch.setattr(helper, "NETWORK_BOOT_HTTP_ROOT", http_root)
+    environment = {
+        "key": "inventory",
+        "enabled": True,
+        "desired_version": "0.9.51",
+        "installed_path": str(installed),
+    }
+    payload = {"network_boot": {"environments": [environment]}}
+
+    assert helper._activate_network_boot_media(payload) == ["inventory"]
+    active = http_root / "inventory"
+    assert active.is_symlink()
+    assert active.resolve() == installed.resolve()
+
+    environment["enabled"] = False
+    assert helper._activate_network_boot_media(payload) == []
+    assert not active.exists()
+
+
 def ca_payload_text(root_dir: Path) -> str:
     root_cert = "-----BEGIN CERTIFICATE-----\nroot\n-----END CERTIFICATE-----\n"
     cert = "-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----\n"

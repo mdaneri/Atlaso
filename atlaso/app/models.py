@@ -1341,6 +1341,128 @@ class EsxiPxeHost(Base):
     kickstart: Mapped[EsxiKickstart | None] = relationship()
 
 
+class NetworkBootEnvironment(Base):
+    __tablename__ = "network_boot_environments"
+
+    key: Mapped[str] = mapped_column(String(40), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    desired_version: Mapped[str] = mapped_column(String(120), default="")
+    active_version: Mapped[str] = mapped_column(String(120), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class NetworkBootMedia(Base):
+    __tablename__ = "network_boot_media"
+    __table_args__ = (
+        UniqueConstraint("environment_key", "version", name="uq_network_boot_media_environment_version"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    environment_key: Mapped[str] = mapped_column(
+        ForeignKey("network_boot_environments.key", ondelete="CASCADE"),
+        index=True,
+    )
+    version: Mapped[str] = mapped_column(String(120))
+    source_url: Mapped[str] = mapped_column(String(1000))
+    license_name: Mapped[str] = mapped_column(String(160), default="")
+    artifact_sha256: Mapped[str] = mapped_column(String(64))
+    verification_method: Mapped[str] = mapped_column(String(240))
+    installed_path: Mapped[str] = mapped_column(String(1000))
+    manifest_json: Mapped[str] = mapped_column(Text, default="{}")
+    verified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    installed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class NetworkBootDiscoveredHost(Base):
+    __tablename__ = "network_boot_discovered_hosts"
+    __table_args__ = (
+        UniqueConstraint("identity_key", name="uq_network_boot_discovered_host_identity"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    identity_key: Mapped[str] = mapped_column(String(160), index=True)
+    dmi_uuid: Mapped[str] = mapped_column(String(40), default="", index=True)
+    boot_mac: Mapped[str] = mapped_column(String(32), default="", index=True)
+    macs_json: Mapped[str] = mapped_column(Text, default="[]")
+    manufacturer: Mapped[str] = mapped_column(String(240), default="")
+    product_name: Mapped[str] = mapped_column(String(240), default="")
+    serial_number: Mapped[str] = mapped_column(String(240), default="")
+    cpu_model: Mapped[str] = mapped_column(String(500), default="")
+    total_memory_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    disk_count: Mapped[int] = mapped_column(Integer, default=0)
+    interface_count: Mapped[int] = mapped_column(Integer, default=0)
+    collision: Mapped[bool] = mapped_column(Boolean, default=False)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    latest_report_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    reports: Mapped[list["NetworkBootInventoryReport"]] = relationship(
+        back_populates="host",
+        cascade="all, delete-orphan",
+        foreign_keys="NetworkBootInventoryReport.host_id",
+        order_by="NetworkBootInventoryReport.received_at.desc()",
+    )
+
+
+class NetworkBootInventoryReport(Base):
+    __tablename__ = "network_boot_inventory_reports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    host_id: Mapped[int] = mapped_column(
+        ForeignKey("network_boot_discovered_hosts.id", ondelete="CASCADE"),
+        index=True,
+    )
+    session_id: Mapped[str] = mapped_column(String(40), index=True)
+    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    payload_json: Mapped[str] = mapped_column(Text)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    host: Mapped[NetworkBootDiscoveredHost] = relationship(
+        back_populates="reports",
+        foreign_keys=[host_id],
+    )
+
+
+class NetworkBootInventorySession(Base):
+    __tablename__ = "network_boot_inventory_sessions"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    bound_identity_key: Mapped[str] = mapped_column(String(160), default="", index=True)
+    host_id: Mapped[int | None] = mapped_column(
+        ForeignKey("network_boot_discovered_hosts.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    report_submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class NetworkBootInventoryCommand(Base):
+    __tablename__ = "network_boot_inventory_commands"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("network_boot_inventory_sessions.id", ondelete="CASCADE"),
+        index=True,
+    )
+    host_id: Mapped[int] = mapped_column(
+        ForeignKey("network_boot_discovered_hosts.id", ondelete="CASCADE"),
+        index=True,
+    )
+    action: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(40), default="queued")
+    requested_by: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class Job(Base):
     __tablename__ = "jobs"
 

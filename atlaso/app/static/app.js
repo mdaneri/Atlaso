@@ -17344,6 +17344,23 @@ function initializeEsxStorageTables() {
             if (form instanceof HTMLFormElement) form.requestSubmit();
           },
         },
+        {
+          label: "Remove newest inactive version",
+          disabled: (_event, row) => !(row.getData().installed_versions || []).some((item) => item.version !== row.getData().active_version && item.version !== row.getData().desired_version),
+          action: async (_event, row) => {
+            const data = row.getData();
+            const candidate = (data.installed_versions || []).find((item) => item.version !== data.active_version && item.version !== data.desired_version);
+            if (!candidate) return;
+            const confirmed = await requestConfirmation({
+              title: `Remove ${data.label} ${candidate.version}?`,
+              message: "This permanently removes the selected inactive immutable cache version. Active and desired versions cannot be removed.",
+              label: "Remove media",
+            });
+            if (!confirmed) return;
+            await networkBootRequest(`/api/v1/network-boot/environments/${data.key}/media/${encodeURIComponent(candidate.version)}`, { method: "DELETE" });
+            window.location.reload();
+          },
+        },
       ] : [],
       rowDblClick: (_event, row) => editRow(row),
       columns: [
@@ -18120,7 +18137,193 @@ function initializeVcfVaultImport() {
   document.querySelectorAll("[data-vcf-vault-import-open]").forEach((button) => button.addEventListener("click", () => wizard.open({ launcher: button })));
 }
 
+async function networkBootRequest(url, options = {}) {
+  const csrf = document.querySelector("input[name='csrf']")?.value || "";
+  const response = await fetch(url, {
+    credentials: "same-origin",
+    cache: "no-store",
+    headers: {
+      Accept: "application/json",
+      ...(options.body ? { "Content-Type": "application/json" } : {}),
+      ...(csrf ? { "X-CSRF-Token": csrf } : {}),
+    },
+    ...options,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.detail || "The Network Boot request failed.");
+  return payload;
+}
+
+function initializeNetworkBootPage() {
+  const hostsElement = document.getElementById("network-boot-discovered-table");
+  const environmentsElement = document.getElementById("network-boot-environments-table");
+  if (!(hostsElement instanceof HTMLElement) || !(environmentsElement instanceof HTMLElement)) return;
+  const canWrite = hostsElement.dataset.canWrite === "true";
+  const hostDialog = document.getElementById("network-boot-host-dialog");
+  const detailElement = hostDialog?.querySelector("[data-network-boot-host-detail]");
+  let selectedHost = null;
+  const openHost = async (row) => {
+    try {
+      selectedHost = await networkBootRequest(`/api/v1/network-boot/hosts/${row.id}`);
+      const history = await networkBootRequest(`/api/v1/network-boot/hosts/${row.id}/history`);
+      if (detailElement) detailElement.textContent = JSON.stringify({ host: selectedHost, history }, null, 2);
+      hostDialog?.showModal();
+    } catch (error) {
+      showTransientGridStatus(error instanceof Error ? error.message : "The inventory report could not be loaded.");
+    }
+  };
+  window.AtlasoUiPatterns.createGrid({
+    element: hostsElement,
+    fallback: `#${hostsElement.dataset.fallbackId}`,
+    pattern: "read-only",
+    onOpenRow: openHost,
+    emptyMessage: "No inventory reports received.",
+    options: {
+      data: JSON.parse(hostsElement.dataset.rows || "[]"),
+      index: "id",
+      height: "360px",
+      columns: [
+        { title: "UUID", field: "dmi_uuid", minWidth: 220, formatter: (cell) => escapeHtml(cell.getValue() || "MAC fallback") },
+        { title: "MACs", field: "macs", minWidth: 190, formatter: (cell) => escapeHtml((cell.getValue() || []).join(", ")) },
+        { title: "CPU", field: "cpu_model", minWidth: 180 },
+        { title: "Memory", field: "total_memory_bytes", width: 120, formatter: (cell) => formatMonitorBytes(cell.getValue()) },
+        { title: "Disks", field: "disk_count", width: 80, hozAlign: "right" },
+        { title: "NICs", field: "interface_count", width: 75, hozAlign: "right" },
+        { title: "Last seen", field: "last_seen_at", minWidth: 170 },
+        { title: "Session", field: "session_state", width: 100 },
+      ],
+    },
+  });
+  hostDialog?.querySelector("[data-network-boot-host-close]")?.addEventListener("click", () => hostDialog.close());
+  hostDialog?.querySelector("[data-network-boot-reboot]")?.addEventListener("click", async () => {
+    if (!selectedHost) return;
+    const confirmed = await requestConfirmation({
+      title: "Reboot inventory session?",
+      message: "Atlaso will deliver one audited reboot command to this host's live Inventory Linux session.",
+      label: "Queue reboot",
+    });
+    if (!confirmed) return;
+    await networkBootRequest(`/api/v1/network-boot/hosts/${selectedHost.id}/reboot`, { method: "POST" });
+    hostDialog.close();
+  });
+  const updateEnvironment = async (cell) => {
+    const row = cell.getRow();
+    const data = row.getData();
+    try {
+      const updated = await networkBootRequest(`/api/v1/network-boot/environments/${data.key}`, {
+        method: "PATCH",
+        body: JSON.stringify({ enabled: Boolean(data.enabled), desired_version: data.desired_version || "" }),
+      });
+      await row.update(updated);
+    } catch (error) {
+      cell.restoreOldValue();
+      showTransientGridStatus(error instanceof Error ? error.message : "Network Boot desired state could not be saved.");
+    }
+  };
+  window.AtlasoUiPatterns.createGrid({
+    element: environmentsElement,
+    fallback: `#${environmentsElement.dataset.fallbackId}`,
+    pattern: "direct-edit",
+    emptyMessage: "The fixed Network Boot catalog is unavailable.",
+    options: {
+      data: JSON.parse(environmentsElement.dataset.rows || "[]"),
+      index: "key",
+      height: "360px",
+      rowContextMenu: canWrite ? [
+        {
+          label: "Download latest stable",
+          disabled: (_event, row) => row.getData().key === "inventory",
+          action: async (_event, row) => {
+            const data = row.getData();
+            const confirmed = await requestConfirmation({
+              title: `Download latest ${data.label}?`,
+              message: "Atlaso will resolve, verify, and install one immutable upstream release. The active boot menu will not change.",
+              label: "Queue download",
+            });
+            if (confirmed) await networkBootRequest(`/api/v1/network-boot/environments/${data.key}/sync`, { method: "POST" });
+          },
+        },
+      ] : [],
+      columns: [
+        { title: "Environment", field: "label", minWidth: 180, frozen: true },
+        { title: "Enabled", field: "enabled", width: 95, formatter: "tickCross", editor: canWrite ? "tickCross" : false, cellEdited: updateEnvironment },
+        {
+          title: "Desired version",
+          field: "desired_version",
+          minWidth: 150,
+          editor: canWrite ? "list" : false,
+          editorParams: (cell) => ({ values: Object.fromEntries((cell.getRow().getData().installed_versions || []).map((item) => [item.version, item.version])), clearable: true }),
+          cellEdited: updateEnvironment,
+        },
+        {
+          title: "Newest installed",
+          field: "installed_versions",
+          minWidth: 150,
+          formatter: (cell) => escapeHtml(cell.getValue()?.[0]?.version || "Not installed"),
+        },
+        { title: "Active version", field: "active_version", minWidth: 140 },
+        { title: "Ready", field: "ready", width: 85, formatter: "tickCross" },
+        { title: "Verification", field: "verification_method", minWidth: 220 },
+        { title: "Risk", field: "risk", minWidth: 240 },
+      ],
+    },
+  });
+  const promoteDialog = document.getElementById("network-boot-promote-dialog");
+  const promoteForm = promoteDialog?.querySelector("[data-network-boot-promote-form]");
+  if (!(promoteDialog instanceof HTMLDialogElement) || !(promoteForm instanceof HTMLFormElement)) return;
+  const promoteWizard = window.AtlasoUiPatterns.createWizard({
+    form: promoteForm,
+    dialog: promoteDialog,
+    steps: [
+      { id: "identity", title: "Review host identity", description: "Choose the explicit ESXi hostname, discovered MAC, and address." },
+      { id: "installer", title: "Choose installer inputs", description: "Select the Kickstart, installer ISO, and reviewed variables." },
+      { id: "enablement", title: "Choose desired-state enablement", description: "Enabled is reviewed last before the summary." },
+      { id: "review", title: "Review ESXi promotion", description: "Promotion creates desired state only and does not run appliance apply." },
+    ],
+    validateStep: validateAtlasoWizardStep,
+    onOpen: ({ context }) => {
+      if (!context) return;
+      promoteForm.elements.host_id.value = context.id;
+      promoteForm.elements.hostname.value = context.product_name
+        ? context.product_name.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-|-$/g, "")
+        : "";
+      promoteForm.elements.mac_address.replaceChildren(...context.macs.map((mac) => new Option(mac, mac)));
+      const assignedAddress = context.latest_report?.assigned_addresses?.[0] || "";
+      promoteForm.elements.ip_address.value = assignedAddress.split("/")[0];
+    },
+    prepareReview: () => renderAtlasoWizardReview(promoteForm, [
+      { label: "Hostname", field: "hostname" }, { label: "MAC", field: "mac_address" },
+      { label: "Address", field: "ip_address" }, { label: "Kickstart", field: "kickstart_id" },
+      { label: "Installer ISO", field: "installer_iso_path" }, { label: "Enabled", field: "enabled" },
+    ]),
+    onSubmit: async () => {
+      let variables;
+      try { variables = JSON.parse(promoteForm.elements.variables.value || "{}"); } catch { return { ok: false, message: "Variables must be a JSON object." }; }
+      await networkBootRequest(`/api/v1/network-boot/hosts/${promoteForm.elements.host_id.value}/promote`, {
+        method: "POST",
+        body: JSON.stringify({
+          hostname: promoteForm.elements.hostname.value,
+          mac_address: promoteForm.elements.mac_address.value,
+          ip_address: promoteForm.elements.ip_address.value,
+          kickstart_id: promoteForm.elements.kickstart_id.value,
+          installer_iso_path: promoteForm.elements.installer_iso_path.value,
+          variables,
+          enabled: promoteForm.elements.enabled.checked,
+        }),
+      });
+      window.location.reload();
+      return { ok: true };
+    },
+  });
+  hostDialog?.querySelector("[data-network-boot-promote-open]")?.addEventListener("click", (event) => {
+    if (!selectedHost) return;
+    hostDialog.close();
+    promoteWizard.open({ launcher: event.currentTarget, context: selectedHost });
+  });
+}
+
 document.addEventListener("DOMContentLoaded", initializeDashboard);
+document.addEventListener("DOMContentLoaded", initializeNetworkBootPage);
 document.addEventListener("DOMContentLoaded", initializeVaultsPage);
 document.addEventListener("DOMContentLoaded", initializeVcfVaultCredentialPickers);
 document.addEventListener("DOMContentLoaded", initializeVcfVaultImport);

@@ -199,18 +199,6 @@ Figure: ESX Storage in the verified clean-appliance desktop state.
 
 Figure: ESX Storage in the verified clean-appliance responsive state.
 
-## Esxi Pxe
-
-Route: `/esxi-pxe`
-
-![Atlaso ESXi PXE page in the clean-appliance desktop viewport.](../assets/screenshots/esxi-pxe-clean-desktop.webp)
-
-Figure: ESXi PXE in the verified clean-appliance desktop state.
-
-![Atlaso ESXi PXE page in the clean-appliance responsive viewport.](../assets/screenshots/esxi-pxe-clean-responsive.webp)
-
-Figure: ESXi PXE in the verified clean-appliance responsive state.
-
 ## Firewall
 
 Route: `/firewall`
@@ -286,6 +274,18 @@ Figure: Monitor in the verified clean-appliance desktop state.
 ![Atlaso Monitor page in the clean-appliance responsive viewport.](../assets/screenshots/monitor-clean-responsive.webp)
 
 Figure: Monitor in the verified clean-appliance responsive state.
+
+## Network Boot
+
+Route: `/network-boot`
+
+![Atlaso Network Boot page in the clean-appliance desktop viewport.](../assets/screenshots/esxi-pxe-clean-desktop.webp)
+
+Figure: Network Boot in the verified clean-appliance desktop state.
+
+![Atlaso Network Boot page in the clean-appliance responsive viewport.](../assets/screenshots/esxi-pxe-clean-responsive.webp)
+
+Figure: Network Boot in the verified clean-appliance responsive state.
 
 ## Ntp
 

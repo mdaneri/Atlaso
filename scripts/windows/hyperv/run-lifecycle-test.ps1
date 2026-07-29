@@ -339,7 +339,8 @@ function New-LifecyclePxeVm {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
         [string]$Name,
-        [string]$SwitchName
+        [string]$SwitchName,
+        [string]$DiskPath
     )
 
     Assert-SafeLifecycleName -Name $Name
@@ -354,6 +355,8 @@ function New-LifecyclePxeVm {
         New-VM -Name $Name -Generation 2 -MemoryStartupBytes 1GB -SwitchName $SwitchName | Out-Null
         Set-VMProcessor -VMName $Name -Count 1
         Set-VMFirmware -VMName $Name -EnableSecureBoot Off
+        New-VHD -Path $DiskPath -Dynamic -SizeBytes 1GB | Out-Null
+        Add-VMHardDiskDrive -VMName $Name -Path $DiskPath
         if (-not $createdVms.Contains($Name)) {
             $createdVms.Add($Name)
         }
@@ -471,6 +474,39 @@ function Invoke-PxeBootSmoke {
         observed_at      = (Get-Date).ToUniversalTime().ToString('o')
     } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $OutputPath -Encoding UTF8
     Write-Host "PXE boot smoke result: $OutputPath"
+}
+
+function Invoke-NetworkBootInventoryProof {
+    param(
+        [string]$Name,
+        [string]$MacAddress,
+        [string]$OutputPath
+    )
+
+    $before = (Get-VM -Name $Name).Uptime
+    try {
+        $env:ATLASO_LIFECYCLE_ADMIN_PASSWORD = $AdminPassword
+        python (Join-Path $repoRoot 'scripts\interop\network_boot_lifecycle.py') `
+            --appliance-url $ApplianceUrl `
+            --username $AdminUsername `
+            --mac $MacAddress `
+            --output $OutputPath
+        if ($LASTEXITCODE -ne 0) {
+            throw "Network Boot inventory proof failed with exit code $LASTEXITCODE."
+        }
+    } finally {
+        Remove-Item Env:\ATLASO_LIFECYCLE_ADMIN_PASSWORD -ErrorAction SilentlyContinue
+    }
+    $deadline = (Get-Date).AddSeconds(90)
+    do {
+        Start-Sleep -Seconds 2
+        $current = (Get-VM -Name $Name).Uptime
+        if ($current -lt $before) {
+            Write-Host "Inventory Linux reboot proof: VM uptime reset from $before to $current."
+            return
+        }
+    } while ((Get-Date) -lt $deadline)
+    throw "Inventory Linux acknowledged reboot, but Hyper-V VM uptime did not reset."
 }
 
 function Get-NeighborIPv4ForAdapter {
@@ -729,7 +765,7 @@ try {
     New-LifecycleVm -Name $applianceName -VhdxPath $applianceDisk -SwitchName 'Atlaso-Mgmt' -MemoryStartupBytes $ApplianceMemoryStartupBytes -ProcessorCount $ApplianceProcessorCount
     New-LifecycleVm -Name $clientAName -VhdxPath $clientADisk -SwitchName $ClientManagementSwitch -MemoryStartupBytes $ClientMemoryStartupBytes -ProcessorCount $ClientProcessorCount
     New-LifecycleVm -Name $clientBName -VhdxPath $clientBDisk -SwitchName $ClientManagementSwitch -MemoryStartupBytes $ClientMemoryStartupBytes -ProcessorCount $ClientProcessorCount
-    New-LifecyclePxeVm -Name $pxeClientName -SwitchName 'Atlaso-SiteA'
+    New-LifecyclePxeVm -Name $pxeClientName -SwitchName 'Atlaso-SiteA' -DiskPath (Join-Path $diskRoot 'pxe-inventory.vhdx')
 
     Ensure-DvdDrive -VMName $clientAName -Path $clientASeedIso
     Ensure-DvdDrive -VMName $clientBName -Path $clientBSeedIso
@@ -822,6 +858,9 @@ try {
             throw "Lifecycle interop runner failed with exit code $LASTEXITCODE"
         }
         Invoke-PxeBootSmoke -Name $pxeClientName -MacAddress $pxeClientMac -OutputPath (Join-Path $resultRoot 'pxe-boot-smoke.json')
+        if (-not $EsxIsoPath) {
+            Invoke-NetworkBootInventoryProof -Name $pxeClientName -MacAddress $pxeClientMac -OutputPath (Join-Path $resultRoot 'network-boot-inventory.json')
+        }
         if (-not $SkipBackupRestoreTest) {
             if (-not (Test-Path -LiteralPath $backupArchivePath)) {
                 throw "Lifecycle backup archive was not created: $backupArchivePath"

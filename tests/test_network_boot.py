@@ -1,0 +1,616 @@
+import json
+import zipfile
+from datetime import timedelta
+from email.message import Message
+from subprocess import CompletedProcess
+from urllib.request import Request
+
+import pytest
+from sqlalchemy import select
+
+from atlaso.app.models import (
+    AuditEvent,
+    EsxiPxeHost,
+    Job,
+    NetworkBootDiscoveredHost,
+    NetworkBootInventoryCommand,
+    NetworkBootInventoryReport,
+    utcnow,
+)
+from atlaso.app.services.network_boot import (
+    _extract_zip_allowlist,
+    _BoundedHttpsRedirectHandler,
+    _release_descriptor,
+    BoundedHttpsDownloader,
+    NETWORK_BOOT_MAX_DISKS,
+    NETWORK_BOOT_REPORTS_PER_HOST,
+    ensure_environment_rows,
+    issue_inventory_session,
+    inventory_session_for_token,
+    latest_live_session,
+    normalize_inventory_report,
+    poll_inventory_command,
+    queue_reboot_command,
+    record_verified_media,
+    render_network_boot_menu,
+    store_inventory_report,
+    touch_inventory_heartbeat,
+    acknowledge_inventory_command,
+    verify_signed_checksum,
+)
+
+
+@pytest.fixture()
+def db_session(client):
+    from atlaso.app.database import SessionLocal
+
+    with SessionLocal() as db:
+        yield db
+
+
+def create_api_token(client, scopes):
+    response = client.post(
+        "/api/v1/auth/login?username=admin&password=atlaso-admin",
+        json={"name": "network boot tests", "scopes": scopes},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["raw_token"]
+
+
+def login_session(client):
+    page = client.get("/login")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/login",
+        data={"username": "admin", "password": "atlaso-admin", "csrf": csrf},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    page = client.get("/network-boot")
+    assert page.status_code == 200
+    return page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+
+def inventory_report(
+    *,
+    dmi_uuid="4c4c4544-004b-4d10-8052-cac04f4c5132",
+    boot_mac="52:54:00:12:34:56",
+):
+    return {
+        "schema_version": 1,
+        "boot_interface": "eth0",
+        "boot_mac": boot_mac,
+        "assigned_addresses": ["192.0.2.10/24"],
+        "firmware_mode": "uefi",
+        "system": {
+            "dmi_uuid": dmi_uuid,
+            "manufacturer": "Atlaso Test",
+            "product_name": "Inventory VM",
+            "serial_number": "SERIAL-1",
+            "bios_vendor": "Example Firmware",
+            "bios_version": "1.0",
+            "bios_date": "2026-07-29",
+        },
+        "cpu": {
+            "architecture": "x86_64",
+            "vendor": "GenuineIntel",
+            "model": "Example CPU",
+            "sockets": 1,
+            "cores": 4,
+            "threads": 8,
+        },
+        "memory": {"total_bytes": 8 * 1024**3},
+        "disks": [
+            {
+                "device": "/dev/sda",
+                "model": "Example Disk",
+                "serial": "DISK-1",
+                "wwn": "0x5000",
+                "transport": "sata",
+                "size_bytes": 100 * 1024**3,
+                "rotational": False,
+                "removable": False,
+                "read_only": False,
+            }
+        ],
+        "interfaces": [
+            {
+                "name": "eth0",
+                "permanent_mac": boot_mac,
+                "current_mac": boot_mac,
+                "driver": "virtio_net",
+                "link_state": "up",
+                "speed_mbps": 10000,
+                "addresses": ["192.0.2.10/24"],
+                "boot_interface": True,
+            }
+        ],
+    }
+
+
+def test_network_boot_api_accepts_scoped_ui_session_and_requires_csrf(client):
+    csrf = login_session(client)
+
+    assert client.get("/api/v1/network-boot/environments").status_code == 200
+    payload = {"enabled": False, "desired_version": ""}
+    denied = client.patch("/api/v1/network-boot/environments/memtest86plus", json=payload)
+    assert denied.status_code == 403
+    assert denied.json()["detail"] == "Invalid CSRF token"
+
+    updated = client.patch(
+        "/api/v1/network-boot/environments/memtest86plus",
+        json=payload,
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["enabled"] is False
+    persisted = {
+        row["key"]: row
+        for row in client.get("/api/v1/network-boot/environments").json()
+    }
+    assert persisted["memtest86plus"]["enabled"] is False
+
+
+def test_network_boot_mutation_endpoints_persist_jobs_commands_profiles_and_audits(client):
+    raw_token = create_api_token(client, ["read:pxe", "write:pxe"])
+    api_headers = {"Authorization": f"Bearer {raw_token}"}
+
+    sync = client.post(
+        "/api/v1/network-boot/environments/gparted/sync",
+        headers=api_headers,
+    )
+    assert sync.status_code == 202, sync.text
+
+    inventory_session = client.post("/pxe/inventory/sessions").json()
+    report = client.post(
+        "/pxe/inventory/report",
+        json=inventory_report(),
+        headers={"Authorization": f"Bearer {inventory_session['access_token']}"},
+    )
+    assert report.status_code == 201, report.text
+    host_id = report.json()["host_id"]
+
+    reboot = client.post(
+        f"/api/v1/network-boot/hosts/{host_id}/reboot",
+        headers=api_headers,
+    )
+    assert reboot.status_code == 202, reboot.text
+    command_id = reboot.json()["id"]
+    inventory_headers = {
+        "Authorization": f"Bearer {inventory_session['access_token']}"
+    }
+    delivered = client.get("/pxe/inventory/commands", headers=inventory_headers)
+    assert delivered.status_code == 200
+    assert delivered.json()["command"]["id"] == command_id
+    acknowledged = client.post(
+        f"/pxe/inventory/commands/{command_id}/acknowledge",
+        headers=inventory_headers,
+    )
+    assert acknowledged.status_code == 200
+    assert acknowledged.json()["status"] == "acknowledged"
+
+    promotion = client.post(
+        f"/api/v1/network-boot/hosts/{host_id}/promote",
+        headers=api_headers,
+        json={
+            "hostname": "esxi-inventory-01",
+            "mac_address": "52:54:00:12:34:56",
+            "ip_address": "192.0.2.10",
+            "kickstart_id": None,
+            "installer_iso_path": "",
+            "variables": {},
+            "enabled": False,
+        },
+    )
+    assert promotion.status_code == 201, promotion.text
+
+    from atlaso.app.database import SessionLocal
+
+    with SessionLocal() as db:
+        assert db.get(Job, sync.json()["job_id"]) is not None
+        assert db.get(NetworkBootInventoryCommand, command_id) is not None
+        assert db.get(EsxiPxeHost, promotion.json()["id"]) is not None
+        actions = set(
+            db.execute(
+                select(AuditEvent.action).where(
+                    AuditEvent.action.in_(
+                        {
+                            "queue_pxe_media_sync",
+                            "queue_inventory_reboot",
+                            "deliver_inventory_command",
+                            "acknowledge_inventory_command",
+                            "promote_inventory_host_to_esxi",
+                        }
+                    )
+                )
+            ).scalars()
+        )
+    assert actions == {
+        "queue_pxe_media_sync",
+        "queue_inventory_reboot",
+        "deliver_inventory_command",
+        "acknowledge_inventory_command",
+        "promote_inventory_host_to_esxi",
+    }
+
+
+def test_inventory_report_is_bounded_and_uses_mac_for_placeholder_uuid():
+    payload = inventory_report(dmi_uuid="00000000-0000-0000-0000-000000000000")
+    normalized = normalize_inventory_report(payload)
+    assert normalized["system"]["dmi_uuid"] == ""
+    assert normalized["boot_mac"] == "52:54:00:12:34:56"
+
+    payload["disks"] = [{}] * (NETWORK_BOOT_MAX_DISKS + 1)
+    with pytest.raises(ValueError, match="at most 128 disks"):
+        normalize_inventory_report(payload)
+
+
+def test_uuid_with_disjoint_macs_is_flagged_as_collision(db_session):
+    first_session, _token = issue_inventory_session(db_session)
+    first, _report = store_inventory_report(
+        db_session,
+        session=first_session,
+        payload=inventory_report(boot_mac="52:54:00:12:34:56"),
+    )
+    second_session, _token = issue_inventory_session(db_session)
+    second, _report = store_inventory_report(
+        db_session,
+        session=second_session,
+        payload=inventory_report(boot_mac="52:54:00:aa:bb:cc"),
+    )
+    assert first.id != second.id
+    assert first.collision is True
+    assert second.collision is True
+
+
+def test_inventory_retains_latest_and_ten_previous_reports(db_session):
+    host_id = None
+    for index in range(NETWORK_BOOT_REPORTS_PER_HOST + 3):
+        session, _token = issue_inventory_session(db_session)
+        host, _report = store_inventory_report(
+            db_session,
+            session=session,
+            payload=inventory_report(),
+        )
+        host_id = host.id
+        db_session.commit()
+    rows = db_session.execute(
+        select(NetworkBootInventoryReport).where(
+            NetworkBootInventoryReport.host_id == host_id
+        )
+    ).scalars().all()
+    assert len(rows) == NETWORK_BOOT_REPORTS_PER_HOST
+
+
+def test_public_inventory_session_binds_identity_and_rejects_replay(client):
+    session_response = client.post("/pxe/inventory/sessions")
+    assert session_response.status_code == 201
+    assert session_response.headers["cache-control"] == "no-store"
+    token = session_response.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    submitted = client.post(
+        "/pxe/inventory/report",
+        headers=headers,
+        json=inventory_report(),
+    )
+    assert submitted.status_code == 201, submitted.text
+    assert submitted.json()["identity_key"].startswith("uuid:")
+    replay = client.post(
+        "/pxe/inventory/report",
+        headers=headers,
+        json=inventory_report(),
+    )
+    assert replay.status_code == 409
+
+
+def test_inventory_session_stores_only_token_hash_and_expires(db_session):
+    session, token = issue_inventory_session(db_session)
+    assert token not in session.token_hash
+    assert len(session.token_hash) == 64
+    assert inventory_session_for_token(db_session, token).id == session.id
+    session.expires_at = utcnow() - timedelta(seconds=1)
+    db_session.flush()
+    with pytest.raises(ValueError, match="invalid or expired"):
+        inventory_session_for_token(db_session, token)
+
+
+def test_inventory_identity_heartbeat_and_one_time_reboot(db_session):
+    session, token = issue_inventory_session(db_session)
+    host, _report = store_inventory_report(
+        db_session,
+        session=session,
+        payload=inventory_report(),
+    )
+    touch_inventory_heartbeat(session, identity_key=host.identity_key)
+    with pytest.raises(ValueError, match="does not match"):
+        touch_inventory_heartbeat(session, identity_key="mac:52:54:00:ff:ff:ff")
+    command = queue_reboot_command(db_session, host=host, requested_by="admin")
+    assert latest_live_session(db_session, host.id).id == session.id
+    delivered = poll_inventory_command(db_session, session=session)
+    assert delivered.id == command.id
+    assert delivered.status == "delivered"
+    assert poll_inventory_command(db_session, session=session) is None
+    acknowledged = acknowledge_inventory_command(
+        db_session,
+        session=session,
+        command_id=command.id,
+    )
+    assert acknowledged.status == "acknowledged"
+    with pytest.raises(ValueError, match="missing, expired, or was not delivered"):
+        acknowledge_inventory_command(
+            db_session,
+            session=session,
+            command_id=command.id,
+        )
+
+
+def test_stale_inventory_session_is_offline_and_reboot_conflicts(db_session):
+    session, _token = issue_inventory_session(db_session)
+    host, _report = store_inventory_report(
+        db_session,
+        session=session,
+        payload=inventory_report(),
+    )
+    session.heartbeat_at = utcnow() - timedelta(seconds=31)
+    db_session.flush()
+    assert latest_live_session(db_session, host.id) is None
+    with pytest.raises(ValueError, match="does not have a live"):
+        queue_reboot_command(db_session, host=host, requested_by="admin")
+
+
+def test_settings_archive_keeps_desired_environment_but_excludes_media_and_history(
+    db_session,
+):
+    from atlaso.app.services.settings_archive import export_settings_archive
+
+    states = {row.key: row for row in ensure_environment_rows(db_session)}
+    media = record_verified_media(
+        db_session,
+        environment_key="memtest86plus",
+        version="8.10",
+        source_url="https://www.memtest.org/download/v8.10/example.zip",
+        artifact_sha256="a" * 64,
+        installed_path="/var/lib/atlaso/pxe/media/memtest86plus/8.10",
+        manifest={"schema_version": 1},
+    )
+    states["memtest86plus"].enabled = True
+    states["memtest86plus"].desired_version = media.version
+    states["memtest86plus"].active_version = media.version
+    session, _token = issue_inventory_session(db_session)
+    store_inventory_report(db_session, session=session, payload=inventory_report())
+    archive = export_settings_archive(db_session, actor="test")
+    data = archive["data"]
+    environment = next(
+        row for row in data["network_boot_environments"] if row["key"] == "memtest86plus"
+    )
+    assert environment["enabled"] is True
+    assert environment["desired_version"] == "8.10"
+    assert "active_version" not in environment
+    assert "network_boot_media" not in data
+    assert "network_boot_inventory_reports" not in data
+    assert "network_boot_inventory_sessions" not in data
+
+
+def test_generic_pxe_scopes_do_not_follow_legacy_esxi_scope(client):
+    legacy = create_api_token(client, ["read:esxi-pxe"])
+    denied = client.get(
+        "/api/v1/network-boot/hosts",
+        headers={"Authorization": f"Bearer {legacy}"},
+    )
+    assert denied.status_code == 403
+
+    generic = create_api_token(client, ["read:pxe"])
+    allowed = client.get(
+        "/api/v1/network-boot/hosts",
+        headers={"Authorization": f"Bearer {generic}"},
+    )
+    assert allowed.status_code == 200
+
+
+def test_unknown_host_defaults_to_inventory_and_shredos_has_cancel_guard(db_session):
+    states = {row.key: row for row in ensure_environment_rows(db_session)}
+    inventory = record_verified_media(
+        db_session,
+        environment_key="inventory",
+        version="2026.05.1",
+        source_url="https://buildroot.org/downloads/buildroot-2026.05.1.tar.xz",
+        artifact_sha256="a" * 64,
+        installed_path="/var/lib/atlaso/pxe/media/inventory/2026.05.1",
+        manifest={
+            "boot": {
+                "kernel": "http://192.0.2.1/pxe/media/inventory/2026.05.1/bzImage",
+                "initrd": "http://192.0.2.1/pxe/media/inventory/2026.05.1/rootfs.cpio.gz",
+            }
+        },
+    )
+    shredos = record_verified_media(
+        db_session,
+        environment_key="shredos",
+        version="2025.11_30_x86-64_0.41",
+        source_url="https://github.com/PartialVolume/shredos.x86_64/releases/download/example/shredos.img",
+        artifact_sha256="b" * 64,
+        installed_path="/var/lib/atlaso/pxe/media/shredos/2025.11_30_x86-64_0.41",
+        manifest={"boot": {"script": "http://192.0.2.1/pxe/media/shredos/boot.ipxe"}},
+    )
+    states["inventory"].active_version = inventory.version
+    states["shredos"].enabled = True
+    states["shredos"].active_version = shredos.version
+    db_session.commit()
+
+    menu = render_network_boot_menu(
+        db_session,
+        mac_address="52:54:00:de:ad:be",
+    )
+    assert "choose --timeout 10000 --default inventory" in menu
+    assert "menu ShredOS can permanently erase selected disks" in menu
+    assert "choose --default cancel" in menu
+    assert "--timeout" not in menu.split(
+        "menu ShredOS can permanently erase selected disks",
+        1,
+    )[1].split("iseq ${shred_choice}", 1)[0]
+    assert "autonuke" not in menu.lower()
+
+
+def test_known_enabled_esxi_mac_becomes_timed_default(db_session):
+    db_session.add(
+        EsxiPxeHost(
+            hostname="esx01.atlaso.internal",
+            mac_address="52:54:00:12:34:56",
+            installer_iso_path="/mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST/esxi.iso",
+            enabled=True,
+        )
+    )
+    db_session.commit()
+    menu = render_network_boot_menu(
+        db_session,
+        mac_address="52:54:00:12:34:56",
+    )
+    assert "choose --timeout 10000 --default esxi_assigned" in menu
+
+
+@pytest.mark.parametrize(
+    ("environment", "source", "expected_version"),
+    [
+        (
+            "memtest86plus",
+            '<a href="/download/v8.10/mt86plus_8.10.binaries.zip">binaries</a>',
+            "8.10",
+        ),
+        (
+            "gparted",
+            '<a href="gparted-live-1.8.1-3-amd64.iso">stable</a>',
+            "1.8.1-3",
+        ),
+        (
+            "clonezilla",
+            (
+                '<a href="?branch=alternative"><b>alternative stable</b> - '
+                '<font>20260705-resolute</font></a>'
+                '<a href="?branch=stable"><b>stable</b> - '
+                '<font color=red>3.3.3-15</font></a>'
+            ),
+            "3.3.3-15",
+        ),
+    ],
+)
+def test_fixed_catalog_resolves_expected_stable_branch(
+    monkeypatch,
+    environment,
+    source,
+    expected_version,
+):
+    monkeypatch.setattr(
+        "atlaso.app.services.network_boot._fetch_https_text",
+        lambda *_args, **_kwargs: source,
+    )
+    assert _release_descriptor(environment)["version"] == expected_version
+
+
+def test_shredos_requires_published_full_image_digest(monkeypatch):
+    payload = {
+        "tag_name": "v2025.11_31_x86-64_0.42",
+        "draft": False,
+        "prerelease": False,
+        "assets": [
+            {
+                "name": "shredos-2025.11_31_x86-64_v0.42.img",
+                "browser_download_url": "https://github.com/example/shredos.img",
+                "digest": "sha256:" + ("a" * 64),
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        "atlaso.app.services.network_boot._fetch_https_text",
+        lambda *_args, **_kwargs: json.dumps(payload),
+    )
+    descriptor = _release_descriptor("shredos")
+    assert descriptor["sha256"] == "a" * 64
+    payload["assets"][0]["digest"] = ""
+    with pytest.raises(ValueError, match="does not publish"):
+        _release_descriptor("shredos")
+
+
+def test_boot_media_archive_rejects_traversal(tmp_path):
+    archive = tmp_path / "media.zip"
+    with zipfile.ZipFile(archive, "w") as rows:
+        rows.writestr("../escape", b"bad")
+        rows.writestr("live/vmlinuz", b"kernel")
+    with pytest.raises(ValueError, match="unsafe path"):
+        _extract_zip_allowlist(
+            archive,
+            tmp_path / "extract",
+            allowed_names={"live/vmlinuz": "vmlinuz"},
+        )
+
+
+def test_boot_media_downloader_rejects_https_downgrade_redirect():
+    handler = _BoundedHttpsRedirectHandler(max_redirects=5)
+    with pytest.raises(ValueError, match="redirected away from HTTPS"):
+        handler.redirect_request(
+            Request("https://example.test/media"),
+            None,
+            302,
+            "Found",
+            Message(),
+            "http://example.test/media",
+        )
+
+
+def test_boot_media_downloader_rejects_declared_oversize(monkeypatch, tmp_path):
+    class FakeResponse:
+        headers = {"Content-Length": "11"}
+
+        def geturl(self):
+            return "https://example.test/media"
+
+        def close(self):
+            return None
+
+    class FakeOpener:
+        def open(self, *_args, **_kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        "atlaso.app.services.network_boot.urllib.request.build_opener",
+        lambda *_args: FakeOpener(),
+    )
+    with pytest.raises(ValueError, match="exceeds the size limit"):
+        BoundedHttpsDownloader(max_bytes=10).download(
+            "https://example.test/media",
+            tmp_path / "media",
+        )
+
+
+def test_signed_checksum_rejects_wrong_fingerprint(monkeypatch, tmp_path):
+    files = []
+    for name in ("checksums", "signature", "key"):
+        path = tmp_path / name
+        path.write_text(name, encoding="utf-8")
+        files.append(path)
+    monkeypatch.setattr(
+        "atlaso.app.services.network_boot.shutil.which",
+        lambda command: "/usr/bin/gpg" if command == "gpg" else None,
+    )
+    results = iter(
+        [
+            CompletedProcess(["gpg"], 0, "", ""),
+            CompletedProcess(
+                ["gpg"],
+                0,
+                "[GNUPG:] VALIDSIG " + ("B" * 40) + " 2026-07-29\n",
+                "",
+            ),
+        ]
+    )
+    monkeypatch.setattr(
+        "atlaso.app.services.network_boot.subprocess.run",
+        lambda *_args, **_kwargs: next(results),
+    )
+    with pytest.raises(ValueError, match="did not match the pinned"):
+        verify_signed_checksum(
+            files[0],
+            files[1],
+            files[2],
+            fingerprint="A" * 40,
+        )

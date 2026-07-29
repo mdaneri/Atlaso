@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
 from atlaso import __version__
+from atlaso.app.api.network_boot import public_router as network_boot_public_router
+from atlaso.app.api.network_boot import router as network_boot_api_router
 from atlaso.app.api.v1 import router as api_v1_router
 from atlaso.app.config import get_settings
 from atlaso.app.database import SessionLocal, init_db
@@ -21,6 +23,10 @@ from atlaso.app.problem import install_problem_handlers
 from atlaso.app.seed import seed_initial_data
 from atlaso.app.services.monitoring import start_monitor_sampler
 from atlaso.app.services.networking import sync_host_physical_interfaces
+from atlaso.app.services.network_boot import (
+    ensure_environment_rows,
+    register_bundled_inventory_media,
+)
 from atlaso.app.services.oidc import validate_enabled_provider_at_startup
 from atlaso.app.ui import (
     active_appliance_apply_job,
@@ -67,6 +73,9 @@ async def lifespan(app: FastAPI):
         configure_logging(db)
         appliance_mode = settings.environment == "appliance"
         seed_initial_data(db, include_examples=not appliance_mode, appliance_mode=appliance_mode)
+        ensure_environment_rows(db)
+        register_bundled_inventory_media(db)
+        db.commit()
         recover_interrupted_appliance_apply_jobs(db)
         recover_interrupted_vcf_helper_jobs(db)
         refresh_startup_host_inventory(db, environment=settings.environment)
@@ -111,7 +120,11 @@ def create_app() -> FastAPI:
             with SessionLocal() as db:
                 active_job = active_appliance_apply_job(db)
                 cancellation_path = f"/tasks/{active_job.id}/cancel" if active_job is not None else ""
-                exempt = request.url.path in APPLIANCE_LOCK_EXEMPT_PATHS or request.url.path == cancellation_path
+                exempt = (
+                    request.url.path in APPLIANCE_LOCK_EXEMPT_PATHS
+                    or request.url.path.startswith("/pxe/inventory/")
+                    or request.url.path == cancellation_path
+                )
                 if active_job is not None and not exempt:
                     return JSONResponse(
                         {
@@ -145,6 +158,8 @@ def create_app() -> FastAPI:
     install_problem_handlers(app)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     app.include_router(api_v1_router)
+    app.include_router(network_boot_api_router)
+    app.include_router(network_boot_public_router)
     app.include_router(oidc_admin_router)
     app.include_router(oidc_public_router)
     app.include_router(web_terminal_router)

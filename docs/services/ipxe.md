@@ -1,27 +1,102 @@
 ---
-title: ESX 9.1 Scripted Installation and Network Boot Notes
-description: Configure and troubleshoot Atlaso network boot and scripted ESX installation workflows.
+title: Network Boot and ESX scripted installation
+description: Discover hardware, manage verified maintenance media, and operate Atlaso ESX installation workflows.
 audience:
   - operator
   - maintainer
 status: current
 ---
 
-# ESX 9.1 Scripted Installation and Network Boot Notes
+# Network Boot and ESX scripted installation
 
-Cleaned Markdown copy of the Broadcom Tech Docs content for ESX installation, kickstart, `boot.cfg`, PXELINUX, iPXE, and
-native UEFI HTTP boot.
+Atlaso Network Boot provides safe hardware discovery, verified interactive
+maintenance environments, and the existing ESX installation workflow from one
+service. The detailed Broadcom-aligned ESX reference remains later in this page.
 
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 
 This verified appliance view provides visual orientation before you begin.
 
-![Atlaso ESXi PXE page in the clean-appliance desktop viewport.](../assets/screenshots/esxi-pxe-clean-desktop.webp)
+![Atlaso Network Boot page in the clean-appliance desktop viewport.](../assets/screenshots/esxi-pxe-clean-desktop.webp)
 
-*Figure: ESXi PXE in the verified clean-appliance desktop state.*
+*Figure: Network Boot in the verified clean-appliance desktop state.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
+
+## Operate Network Boot
+
+Open **Network Boot** at `/network-boot`. The former `/esxi-pxe` browser route
+redirects here; existing ESXi API paths, the `esxi_pxe` apply unit, staged
+configuration paths, and helper commands remain compatible.
+
+An unknown or unassigned x86-64 machine receives a per-host iPXE menu from
+`/pxe/boot.ipxe`. After 10 seconds it boots the bundled Atlaso Inventory Linux
+image. A known MAC assigned to an enabled ESXi profile defaults to that ESXi
+entry instead. An undefined-MAC ESXi profile is manual-only and cannot replace
+the safe inventory default. Both legacy BIOS and UEFI use the bundled
+`undionly.kpxe` or `snponly.efi` first stage; Secure Boot is not supported.
+
+Inventory Linux runs from an initramfs in RAM. It does not mount filesystems or
+write target disks. It submits a bounded report containing DMI, CPU, memory,
+block-device, and network-interface metadata, displays a local summary, and
+waits for either the local `R` key or one audited remote reboot command. Atlaso
+retains the latest report and ten previous reports. A repeated valid DMI UUID
+with disjoint MAC identities is shown as a collision and is not silently
+merged.
+
+The **Discovered Hosts** grid is read-only. Open a host to review its latest
+report and history, queue a reboot while its Inventory Linux heartbeat is
+online, or use **Promote to ESXi**. Promotion requires explicit hostname, a
+discovered MAC, address, Kickstart, installer ISO, variables, and enabled-state
+review. It creates desired state only.
+
+## Maintenance media and activation
+
+The fixed catalog contains Memtest86+, ShredOS, GParted Live, and Clonezilla
+Live. They are disabled and uninstalled by default. **Download latest stable**
+queues a durable `pxe-media-sync` task that:
+
+1. resolves one concrete stable release from the fixed upstream;
+2. downloads over HTTPS with redirect, timeout, and size limits;
+3. verifies the published SHA-256 digest or signed checksum with the pinned
+   project fingerprint;
+4. rejects unsafe archive paths and extracts only required boot files; and
+5. atomically installs an immutable cache under
+   `/var/lib/atlaso/pxe/media/<environment>/<version>`.
+
+Downloading never changes the active menu. Editing **Enabled** or **Desired
+version** creates pending state; global **Appliance Apply** is the only
+activation boundary. A failed download, verification, extraction, or apply
+leaves the previous active version available.
+
+All maintenance environments are interactive. Atlaso does not automatically
+run memory tests, partitioning, imaging, restoration, or disk erasure. ShredOS
+opens a second menu with no timeout and **Cancel** selected by default; Atlaso
+never supplies `autonuke`, device lists, or unattended erase arguments.
+
+Installed metadata records source, version, license, digest/signature method,
+and verification time. Downloaded media and inventory reports are runtime data
+and are excluded from settings archives; desired environment enablement and
+version selection are included.
+
+## API and session boundaries
+
+Generic automation uses `/api/v1/network-boot` with `read:pxe` or `write:pxe`.
+Viewer has read access; service-admin and admin have read/write access. Legacy
+`read:esxi-pxe` does not grant access to discovered hosts or maintenance media.
+
+Inventory Linux receives a one-use report session with an eight-hour maximum
+lifetime. Only the token hash is persisted. The bearer token is sent in the
+authorization header, never a URL, audit, or browser UI. Reports bind the
+session to the presented identity; replays and mismatches are rejected.
+Heartbeats run every 10 seconds, and the UI treats a host as offline after 30
+seconds. Reboot is the only remote action.
+
+## ESX technical reference
+
+The remainder is a cleaned Markdown copy of Broadcom Tech Docs content for ESX
+installation, Kickstart, `boot.cfg`, PXELINUX, iPXE, and native UEFI HTTP boot.
 
 Atlaso note: ESXi PXE host-specific `boot.cfg` artifacts should pass Kickstart URLs as
 `/pxe/esxi/ks/<file>.cfg?mac=<normalized-mac>`. The MAC query parameter is required so Atlaso can render restricted
@@ -1164,10 +1239,10 @@ That allows the installer to receive the PXELINUX `BOOTIF` information.
 
 These captures show responsive layouts and useful operational states referenced by this page.
 
-### ESXi PXE
+### Network Boot
 
-![Atlaso ESXi PXE page in the clean-appliance responsive viewport.](../assets/screenshots/esxi-pxe-clean-responsive.webp)
+![Atlaso Network Boot page in the clean-appliance responsive viewport.](../assets/screenshots/esxi-pxe-clean-responsive.webp)
 
-*Figure: ESXi PXE in the verified clean-appliance responsive state.*
+*Figure: Network Boot in the verified clean-appliance responsive state.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->

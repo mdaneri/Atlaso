@@ -68,7 +68,7 @@ def test_login_and_dashboard_render(client):
         "/ldap",
         "/certificate-authority",
         "/kms",
-        "/esxi-pxe",
+        "/network-boot",
         "/esx-storage",
         "/vcf-helper",
         "/vcf-offline-depot",
@@ -813,9 +813,9 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6" in service_worker.text
-    assert "/static/app.css?v=atlaso-wizard-monaco-20260729-11" in service_worker.text
+    assert "/static/app.css?v=atlaso-network-boot-20260729-12" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in service_worker.text
-    assert "/static/app.js?v=atlaso-kickstart-variables-20260729-16" in service_worker.text
+    assert "/static/app.js?v=atlaso-network-boot-20260729-18" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -835,8 +835,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=atlaso-kickstart-variables-20260729-16"),
-        (public_base, "/static/app.js?v=atlaso-kickstart-variables-20260729-16"),
+        (base, "/static/app.js?v=atlaso-network-boot-20260729-18"),
+        (public_base, "/static/app.js?v=atlaso-network-boot-20260729-18"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5"
@@ -890,9 +890,9 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     app_js = client.get("/static/app.js").text
     create_grid = "window.AtlasoUiPatterns.createGrid({"
 
-    assert app_js.count(create_grid) == 30
-    assert app_js.count('pattern: "direct-edit"') == 13
-    assert app_js.count('pattern: "read-only"') == 8
+    assert app_js.count(create_grid) == 32
+    assert app_js.count('pattern: "direct-edit"') == 14
+    assert app_js.count('pattern: "read-only"') == 9
     assert app_js.count('pattern: "wizard-backed"') == 9
     assert "new Tabulator(" not in app_js
     assert "new window.Tabulator(" not in app_js
@@ -928,6 +928,11 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
         block = function_block(name)
         assert block.count(create_grid) == 1, name
         assert block.count(f'pattern: "{pattern}"') == 1, name
+
+    network_boot = function_block("initializeNetworkBootPage")
+    assert network_boot.count(create_grid) == 2
+    assert network_boot.count('pattern: "direct-edit"') == 1
+    assert network_boot.count('pattern: "read-only"') == 1
 
     adapter_block = function_block("initializeAtlasoResourceWizard")
     assert adapter_block.count(create_grid) == 1
@@ -1280,9 +1285,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=atlaso-wizard-monaco-20260729-11" in page.text
+    assert "/static/app.css?v=atlaso-network-boot-20260729-12" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in page.text
-    assert "/static/app.js?v=atlaso-kickstart-variables-20260729-16" in page.text
+    assert "/static/app.js?v=atlaso-network-boot-20260729-18" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
