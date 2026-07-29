@@ -35,6 +35,12 @@ This verified appliance view provides visual orientation before you begin.
 Do not treat an assigned IP address, a running VM, or a green service alone as application readiness. Verify the
 host-facing `/openapi.json` endpoint before beginning configuration.
 
+## Installed web app behavior
+
+Atlaso can be installed as a standalone web app. Successful sign-in continues in the current browser context, and
+supporting browsers reuse the most recently active Atlaso app window for later launches instead of creating duplicate
+windows. Browsers that do not support launch handling continue to use their platform default.
+
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states
 

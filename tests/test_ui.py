@@ -788,6 +788,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert manifest_json["start_url"] == "/dashboard"
     assert manifest_json["scope"] == "/"
     assert manifest_json["display"] == "standalone"
+    assert manifest_json["launch_handler"] == {"client_mode": "navigate-existing"}
     assert manifest_json["background_color"] == "#071A3A"
     assert manifest_json["theme_color"] == "#1769E0"
     assert manifest_json["icons"][0]["src"] == "/static/brand/atlaso-app-icon-dark-192.png"
@@ -1362,8 +1363,23 @@ def test_login_page_includes_pwa_metadata(client):
     response = client.get("/login")
     assert response.status_code == 200
     assert '<link rel="manifest" href="/manifest.webmanifest">' in response.text
+    assert '<meta name="mobile-web-app-capable" content="yes">' in response.text
+    assert '<meta name="apple-mobile-web-app-capable" content="yes">' in response.text
+    assert '<form class="form-stack" action="/login" method="post" target="_self">' in response.text
     assert '<meta name="theme-color"' not in response.text
     assert "/static/pwa.js?v=atlaso-brand-20260725-1" in response.text
+
+
+def test_shared_shells_use_current_mobile_web_app_metadata(client):
+    login(client)
+
+    management = client.get("/dashboard")
+    public = client.get("/ca", headers={"host": "192.168.87.32"})
+
+    assert management.status_code == 200
+    assert public.status_code == 200
+    for response in (management, public):
+        assert '<meta name="mobile-web-app-capable" content="yes">' in response.text
 
 
 def test_unauthenticated_ui_request_redirects_to_login(client):
@@ -7123,7 +7139,7 @@ def test_public_ca_root_page_is_unauthenticated(client):
     assert login_page.status_code == 200
     assert "Sign in to user portal" in login_page.text
     assert "Use your Atlaso user account to continue." in login_page.text
-    assert 'action="/ca/login"' in login_page.text
+    assert 'action="/ca/login" method="post" target="_self"' in login_page.text
     assert 'name="next" value="/ca"' in login_page.text
     assert 'data-history-back' in login_page.text
     assert ">Cancel<" in login_page.text
@@ -7369,7 +7385,7 @@ def test_public_service_home_is_scoped_to_called_ip(client, tmp_path, monkeypatc
     requests_direct = client.get("/requests", headers={"host": "192.168.87.32"})
     assert requests_direct.status_code == 200
     assert "Sign in to user portal" in requests_direct.text
-    assert 'action="/requests/login"' in requests_direct.text
+    assert 'action="/requests/login" method="post" target="_self"' in requests_direct.text
 
     management_ip_home = client.get("/", headers={"host": "192.168.167.10"}, follow_redirects=False)
     assert management_ip_home.status_code == 303
@@ -7393,7 +7409,7 @@ def test_public_service_home_is_scoped_to_called_ip(client, tmp_path, monkeypatc
     assert "Sign in to user portal" in depot_login.text
     assert "Use your Atlaso user account to continue." in depot_login.text
     assert ">Cancel<" in depot_login.text
-    assert 'action="/PROD/login"' in depot_login.text
+    assert 'action="/PROD/login" method="post" target="_self"' in depot_login.text
     assert 'name="next" value="/PROD/"' in depot_login.text
 
     from atlaso.app.adapters.system import AdapterResult
@@ -7585,7 +7601,7 @@ def test_certificate_operator_uses_request_page_without_console_access(client):
     assert "Sign in to user portal" in login_page.text
     assert "Use your Atlaso user account to continue." in login_page.text
     assert "Sign in to the appliance" not in login_page.text
-    assert 'action="/requests/login"' in login_page.text
+    assert 'action="/requests/login" method="post" target="_self"' in login_page.text
     assert 'action="/login"' not in login_page.text
     assert 'name="next" value="/requests"' in login_page.text
     assert 'data-history-back' in login_page.text
