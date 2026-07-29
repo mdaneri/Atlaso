@@ -814,7 +814,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/vendor/codemirror/atlaso-codemirror.min.js?v=atlaso-codemirror-20260728-1" in service_worker.text
     assert "/static/app.css?v=atlaso-ui-foundation-20260728-5" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in service_worker.text
-    assert "/static/app.js?v=atlaso-complex-wizards-20260728-12" in service_worker.text
+    assert "/static/app.js?v=atlaso-complex-wizards-20260728-13" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -834,8 +834,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=atlaso-complex-wizards-20260728-12"),
-        (public_base, "/static/app.js?v=atlaso-complex-wizards-20260728-12"),
+        (base, "/static/app.js?v=atlaso-complex-wizards-20260728-13"),
+        (public_base, "/static/app.js?v=atlaso-complex-wizards-20260728-13"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4"
@@ -1274,7 +1274,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=atlaso-vaults-20260728-9" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in page.text
-    assert "/static/app.js?v=atlaso-complex-wizards-20260728-12" in page.text
+    assert "/static/app.js?v=atlaso-complex-wizards-20260728-13" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
