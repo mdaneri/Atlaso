@@ -309,7 +309,7 @@ status: current
 - Managed scripts are immutable revisions executed as the unprivileged `atlaso-automation` account through the
   constrained helper and transient systemd units. Creation uses the shared four-step wizard for identity, runtime,
   initial source, and review, and stores revision 1 disabled. Grid edits to revision-owned fields create a new disabled
-  revision. Existing-script source editing uses the large CodeMirror modal with local-file import. The revision cell
+  revision. Existing-script source editing uses the large Monaco Editor modal with local-file import. The revision cell
   opens a near-full-window, two-column comparison when at least two revisions exist; use the light Atlaso modal style,
   list every revision with its creation date and state in base/comparison selectors, keep corresponding rows and line
   numbers aligned, collapse long unchanged runs, color additions/removals, and use a Prism grammar selected from the
@@ -425,7 +425,7 @@ status: current
   appliance-local resolution, not only the UI preview.
 - Real ESXi PXE apply stages JSON under `/var/lib/atlaso/apply/esxi-pxe/atlaso-esxi-pxe.json` as the `atlaso` service
   user before invoking the root helper. Kickstart source content lives in the database and is edited through the
-  built-in CodeMirror editor; generated files under `/var/lib/atlaso/pxe/http/esxi/ks/<id>.cfg` are derived runtime
+  built-in Monaco Editor; generated files under `/var/lib/atlaso/pxe/http/esxi/ks/<id>.cfg` are derived runtime
   copies only. Saving a Kickstart must not write runtime files. Installer ISO choices are discovered from
   `/mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST`, the VCFDT ESX host component folder; Atlaso may create that folder
   and upload additional operator-provided `.iso` files there. Host PXE definitions can reference both a database
@@ -433,6 +433,11 @@ status: current
   numeric `.cfg` files, writes HTTP `boot.ipxe` even without host profiles, validates selected ISO paths stay under the
   ESX_HOST folder, updates rendered/applied timestamps, and redacts root passwords, tokens, keys, licenses, and other
   secret-looking values from previews, diffs, jobs, logs, audit events, and final responses.
+- Kickstart vault access is declared only through exact
+  `{{vault.<vaultname>.<key>.<username|password|uri1..uri9>}}` markers. Saving and request-time rendering must validate
+  every named vault, key, and subkey, resolve only those exact values, and fail closed without exposing secret values.
+- Code and configuration editors use the locally bundled `window.AtlasoMonaco` integration with synchronized textarea
+  form sources. Do not add another editor package, parallel initializer, or incompatible rendered attribute.
 - Photon image provisioning must upload `third_party/ipxe` into the Packer source tree and stage bundled `undionly.kpxe`
   and `snponly.efi` under `/var/lib/atlaso/pxe/bootloaders`; fail the image build rather than silently producing an
   appliance where ESXi PXE validation cannot find first-stage boot files.
@@ -563,7 +568,7 @@ status: current
   status from the process exit code; missing profile credentials should disable only the profile Start button and must
   not block applying or disabling the depot service. Enabled VCF Offline Depot profiles are selectable in the real
   Automation scheduler and execute as the same durable `vcf-depot-download` jobs as manual starts. The application
-  properties editor saves desired-state text and syncs CodeMirror before submit; global apply writes the runtime
+  properties editor saves desired-state text and syncs Monaco Editor before submit; global apply writes the runtime
   properties used by the active tool. Depot private keys, HTTP user passwords/hashes, and VCFDT credential contents must
   remain path references or presence flags only; never print key contents, token values, activation-code values, private
   keys, passwords, or password hashes in previews, jobs, logs, docs, or final responses.
@@ -860,8 +865,8 @@ status: current
   reset, only `eth0` should be desired admin up; other physical NICs should be desired admin down until an operator
   enables them. Disabled service settings should have blank listen interfaces and addresses until an operator selects a
   valid bind target.
-- Settings archives must not include vault entries or Kickstart-to-vault bindings. Restore and factory reset clear both;
-  operators reimport or recreate vault contents afterward.
+- Settings archives must not include vault entries. Restore and factory reset clear vaults and the unused legacy
+  Kickstart-binding compatibility table; operators reimport or recreate vault contents afterward.
 - Documentation updates are required for every major product, architecture, workflow, safety-boundary, or
   operator-experience change. In the same change, update `README.md`, `AGENTS.md`, and any topic-specific file under
   `docs/` whose behavior or operator guidance is affected; do not treat the work as complete while those documents

@@ -13,7 +13,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - [Getting started](docs/getting-started/index.md) — choose an appliance path and complete initial setup.
 - [Operations](docs/operate/index.md) — run the appliance and review desired-state changes.
 - [Services](docs/services/index.md) — configure DNS, identity, storage, network boot, and VCF integrations.
-- [Vaults](docs/services/vaults.md) — scope encrypted VCF and ESX passwords to managed scripts and Kickstarts.
+- [Vaults](docs/services/vaults.md) — scope encrypted VCF and ESX passwords to managed scripts and exact Kickstart
+  source markers.
 - [OpenID Connect provider](docs/services/oidc-provider.md) — use the dedicated tabbed administration page for
   confidential clients, exact redirects, key rotation, explicit identity sources, and privacy-safe scoped claims.
 - [vSphere Key Provider protocol](docs/reference/vsphere-key-provider-protocol.md) — review the appliance-native
@@ -44,3 +45,6 @@ certificate-fingerprint confirmation as their trust decision.
 
 The repository documentation describes the latest supported Atlaso release. Roadmaps and historical design records are
 clearly labeled and are not statements of current behavior.
+
+Atlaso code and configuration editing uses the locally bundled Monaco Editor. ESXi Kickstarts use a dedicated language
+with completion for built-in, discovered custom, and authorized vault markers; credential values remain server-side.

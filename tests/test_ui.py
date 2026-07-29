@@ -801,7 +801,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v190" in service_worker.text
+    assert "atlaso-pwa-v203" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -812,10 +812,10 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert 'url.pathname.startsWith("/api/")' in service_worker.text
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
-    assert "/static/vendor/codemirror/atlaso-codemirror.min.js?v=atlaso-codemirror-20260728-1" in service_worker.text
-    assert "/static/app.css?v=atlaso-wizard-layout-20260729-10" in service_worker.text
-    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in service_worker.text
-    assert "/static/app.js?v=atlaso-wizard-layout-20260729-15" in service_worker.text
+    assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6" in service_worker.text
+    assert "/static/app.css?v=atlaso-wizard-monaco-20260729-11" in service_worker.text
+    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in service_worker.text
+    assert "/static/app.js?v=atlaso-kickstart-variables-20260729-16" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -824,7 +824,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=atlaso-ui-foundation-20260728-5" in offline.text
+    assert "/static/app.css?v=atlaso-monaco-expand-20260729-4" in offline.text
 
 
 def test_shared_ui_pattern_shell_and_wizard_contracts(client):
@@ -835,14 +835,14 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=atlaso-wizard-layout-20260729-15"),
-        (public_base, "/static/app.js?v=atlaso-wizard-layout-20260729-15"),
+        (base, "/static/app.js?v=atlaso-kickstart-variables-20260729-16"),
+        (public_base, "/static/app.js?v=atlaso-kickstart-variables-20260729-16"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
-            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4"
+            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5"
         )
         assert shell.index(
-            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4"
+            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5"
         ) < shell.index(app_asset)
 
     wizard_templates = [
@@ -890,9 +890,9 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     app_js = client.get("/static/app.js").text
     create_grid = "window.AtlasoUiPatterns.createGrid({"
 
-    assert app_js.count(create_grid) == 28
-    assert app_js.count('pattern: "direct-edit"') == 12
-    assert app_js.count('pattern: "read-only"') == 7
+    assert app_js.count(create_grid) == 30
+    assert app_js.count('pattern: "direct-edit"') == 13
+    assert app_js.count('pattern: "read-only"') == 8
     assert app_js.count('pattern: "wizard-backed"') == 9
     assert "new Tabulator(" not in app_js
     assert "new window.Tabulator(" not in app_js
@@ -971,6 +971,11 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     storage_block = function_block("initializeEsxStorageTables")
     assert storage_block.count(create_grid) == 2
     assert storage_block.count('pattern: "wizard-backed"') == 2
+
+    kickstart_block = function_block("initializeKickstartCollection")
+    assert kickstart_block.count(create_grid) == 1
+    assert kickstart_block.count('pattern: "read-only"') == 1
+    assert "initializeAtlasoResourceWizard({" in kickstart_block
 
     tasks_block = function_block("initializeTasksPage")
     assert "atlasoTasksReopenSelected = shouldOpenSelected;" in tasks_block
@@ -1275,9 +1280,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=atlaso-wizard-layout-20260729-10" in page.text
-    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in page.text
-    assert "/static/app.js?v=atlaso-wizard-layout-20260729-15" in page.text
+    assert "/static/app.css?v=atlaso-wizard-monaco-20260729-11" in page.text
+    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in page.text
+    assert "/static/app.js?v=atlaso-kickstart-variables-20260729-16" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -1830,6 +1835,36 @@ def test_local_user_status_uses_isolated_short_lived_staging(monkeypatch, tmp_pa
     assert len(seen_status_paths) == 1
     assert not seen_status_paths[0].exists()
     assert active_apply_path.read_text(encoding="utf-8") == '{"password":"ActiveApplySecret1!"}'
+
+
+def test_appliance_apply_status_tolerates_duplicate_managed_certificate_owners(client):
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate
+
+    login(client)
+    with SessionLocal() as db:
+        db.add_all(
+            [
+                CaCertificate(
+                    common_name="older-kms.atlaso.internal",
+                    managed_owner="kms:server",
+                    status="planned",
+                ),
+                CaCertificate(
+                    common_name="newer-kms.atlaso.internal",
+                    managed_owner="kms:server",
+                    status="issued",
+                    certificate_pem="test-certificate",
+                    private_key_encrypted="test-encrypted-key",
+                ),
+            ]
+        )
+        db.commit()
+
+    response = client.get("/appliance-apply/status")
+
+    assert response.status_code == 200
+    assert response.json()["units"]
 
 
 def test_appliance_apply_status_api_tracks_autosaved_desired_state(client):
@@ -3326,6 +3361,71 @@ def test_esxi_kickstart_api_hides_raw_content_from_read_only_tokens(client):
     assert download.status_code == 403
 
 
+def test_esxi_custom_variable_api_supports_catalog_management(client):
+    token = create_api_token(client, ["read:esxi-pxe", "write:esxi-pxe"])
+    created = client.post(
+        "/api/v1/esxi-pxe/custom-variables",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "name": "install_disk",
+            "description": "Preferred installation disk",
+            "default_value": "firstdisk",
+        },
+    )
+    assert created.status_code == 201, created.text
+    assert created.json() == {
+        "id": "install_disk",
+        "name": "install_disk",
+        "description": "Preferred installation disk",
+        "default_value": "firstdisk",
+    }
+
+    listed = client.get(
+        "/api/v1/esxi-pxe/custom-variables",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert listed.status_code == 200
+    assert listed.json() == [created.json()]
+
+    kickstart = client.post(
+        "/api/v1/esxi-pxe/kickstarts",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "name": "API catalog variable",
+            "content": "install --firstdisk={{custom.install_disk}}\nnetwork --bootproto=dhcp\nrootpw --iscrypted placeholder\n",
+            "enabled": True,
+        },
+    )
+    assert kickstart.status_code == 201, kickstart.text
+
+    updated = client.put(
+        "/api/v1/esxi-pxe/custom-variables/install_disk",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "name": "install_disk",
+            "description": "Updated installation disk",
+            "default_value": "nvme0",
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["default_value"] == "nvme0"
+
+    read_token = create_api_token(client, ["read:esxi-pxe"])
+    forbidden = client.post(
+        "/api/v1/esxi-pxe/custom-variables",
+        headers={"Authorization": f"Bearer {read_token}"},
+        json={"name": "forbidden"},
+    )
+    assert forbidden.status_code == 403
+
+    deleted = client.delete(
+        "/api/v1/esxi-pxe/custom-variables/install_disk",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert deleted.status_code == 200
+    assert deleted.json() == {"deleted": True}
+
+
 def test_esxi_pxe_ui_create_apply_and_job_redaction(client):
     import json
 
@@ -3338,11 +3438,25 @@ def test_esxi_pxe_ui_create_apply_and_job_redaction(client):
     page = client.get("/esxi-pxe")
     assert page.status_code == 200
     assert "ESXi Kickstarts" in page.text
-    assert 'data-codemirror-language="atlaso-kickstart"' in page.text
+    assert 'id="esxi-kickstarts-table"' in page.text
+    assert 'data-fallback-id="esxi-kickstarts-fallback"' in page.text
+    assert "+ Add Kickstart" in page.text
+    assert 'data-atlaso-wizard-nav="identity"' in page.text
+    assert 'data-atlaso-wizard-nav="source"' in page.text
+    assert 'data-atlaso-wizard-nav="state"' in page.text
+    assert 'data-atlaso-wizard-nav="review"' in page.text
+    assert 'accept=".cfg,.ks"' in page.text
+    assert 'name="vault_id"' not in page.text
+    assert 'data-monaco-language="atlaso-kickstart"' in page.text
+    assert '<textarea name="description" rows="3" maxlength="500"></textarea>' in page.text
     host_tab = page.text.index('data-tab-target="esxi-pxe-hosts-panel"')
     kickstart_tab = page.text.index('data-tab-target="esxi-pxe-editor-panel"')
+    custom_variables_tab = page.text.index('data-tab-target="esxi-pxe-custom-variables-panel"')
     iso_tab = page.text.index('data-tab-target="esxi-pxe-isos-panel"')
-    assert host_tab < kickstart_tab < iso_tab
+    assert host_tab < kickstart_tab < custom_variables_tab < iso_tab
+    assert 'id="esxi-custom-variables-table"' in page.text
+    assert "Custom variable name" in page.text
+    assert "Default value, if any" in page.text
     assert '<button class="tab-button active" type="button" role="tab" data-tab-target="esxi-pxe-hosts-panel"' in page.text
     assert 'id="esxi-pxe-hosts-panel" class="tab-panel active" role="tabpanel">' in page.text
     assert 'id="esxi-pxe-editor-panel" class="tab-panel" role="tabpanel" hidden' in page.text
@@ -3351,7 +3465,8 @@ def test_esxi_pxe_ui_create_apply_and_job_redaction(client):
     assert 'aria-label="Enable default ESXi PXE host"' in page.text
     assert "# Sample scripted installation file" in page.text
     assert "vmaccepteula" in page.text
-    assert "rootpw vmware01!" in page.text
+    assert "rootpw --iscrypted $6$REPLACE_WITH_SHA512_CRYPT_HASH" in page.text
+    assert "rootpw vmware01!" not in page.text
     assert "install --firstdisk --overwritevmfs" in page.text
     assert "# install --firstdisk --overwritevmfs --dpupcislots=&lt;PCIeSlotID&gt;" in page.text
     assert "network --bootproto=dhcp --device=vmnic0" in page.text
@@ -3397,6 +3512,157 @@ def test_esxi_pxe_ui_create_apply_and_job_redaction(client):
         assert "atlaso-helper esxi-pxe apply" in (job.result or "")
         event = db.execute(select(AuditEvent).where(AuditEvent.action == "create_esxi_kickstart")).scalar_one()
         assert "SuperSecret!" not in (event.detail or "")
+
+
+def test_monaco_is_the_only_bundled_editor_and_kickstart_uses_shared_collection():
+    package = Path("package.json").read_text(encoding="utf-8")
+    lock = Path("package-lock.json").read_text(encoding="utf-8")
+    base = Path("atlaso/app/templates/base.html").read_text(encoding="utf-8")
+    app_css = Path("atlaso/app/static/app.css").read_text(encoding="utf-8")
+    app_js = Path("atlaso/app/static/app.js").read_text(encoding="utf-8")
+    monaco_source = Path("scripts/monaco-entry.js").read_text(encoding="utf-8")
+    templates = "\n".join(
+        Path(path).read_text(encoding="utf-8")
+        for path in (
+            "atlaso/app/templates/automation.html",
+            "atlaso/app/templates/dns.html",
+            "atlaso/app/templates/esxi_pxe.html",
+            "atlaso/app/templates/vcf_offline_depot.html",
+        )
+    )
+
+    assert '"monaco-editor": "0.52.2"' in package
+    assert "build:monaco" in package
+    assert "codemirror" not in package.lower()
+    assert "codemirror" not in lock.lower()
+    assert "codemirror" not in app_js.lower()
+    assert "codemirror" not in templates.lower()
+    assert not Path("atlaso/app/static/vendor/codemirror").exists()
+    assert not Path("scripts/build_codemirror.mjs").exists()
+    assert "/static/vendor/monaco/atlaso-monaco.min.js" in base
+    monaco_bundle = Path("atlaso/app/static/vendor/monaco/atlaso-monaco.min.js").read_text(encoding="utf-8")
+    assert "editor.contrib.suggestController" in monaco_bundle
+    assert Path("atlaso/app/static/vendor/monaco/editor.worker.js").is_file()
+    assert "initializeAtlasoResourceWizard" in app_js
+    kickstart_js = app_js.split("function initializeKickstartCollection()", 1)[1].split("function initializeZoneEditors()", 1)[0]
+    assert 'resourceName: "kickstart"' in kickstart_js
+    assert 'label: "Duplicate Kickstart"' in kickstart_js
+    assert 'label: "Validate Kickstart"' in kickstart_js
+    assert 'label: "Download Kickstart"' in kickstart_js
+    assert "deleteResource: true" in kickstart_js
+    assert 'document.querySelector("[data-esxi-pxe-summary]")' in kickstart_js
+    assert "onSaved: ({ table }) => updateSummary(table)" in kickstart_js
+    assert "onDeleted: ({ table }) => updateSummary(table)" in kickstart_js
+    assert "atlaso-kickstart" in monaco_source
+    assert "vs/editor/editor.all.js" in monaco_source
+    assert 'triggerCharacters: ["{"]' in monaco_source
+    assert 'linePrefix.endsWith("{{")' in monaco_source
+    assert "requestAnimationFrame(() => editor.trigger" in monaco_source
+    assert '"editor.action.triggerSuggest"' in monaco_source
+    assert "modelCompletions" in monaco_source
+    assert 'headers: { Accept: "application/json", "X-Atlaso-Grid": "1" }' in app_js
+    assert '"atlaso-monaco-expand-button"' in monaco_source
+    assert '"has-expanded-monaco"' in monaco_source
+    assert 'event.key === "Escape"' in monaco_source
+    assert ".atlaso-monaco-shell.is-expanded" in app_css
+    assert "python.contribution" in monaco_source
+    assert "shell.contribution" in monaco_source
+    assert "powershell.contribution" in monaco_source
+
+
+def test_esxi_custom_variable_collection_drives_kickstart_completion_and_validation(client):
+    login(client)
+    page = client.get("/esxi-pxe")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    created = client.post(
+        "/esxi-pxe/custom-variables",
+        headers={"Accept": "application/json"},
+        data={
+            "csrf": csrf,
+            "name": "install_disk",
+            "description": "Preferred ESXi installation disk",
+            "default_value": "firstdisk",
+        },
+    )
+
+    assert created.status_code == 200, created.text
+    assert created.json()["variable"] == {
+        "id": "install_disk",
+        "name": "install_disk",
+        "description": "Preferred ESXi installation disk",
+        "default_value": "firstdisk",
+    }
+    refreshed = client.get("/esxi-pxe")
+    assert "custom.install_disk" in refreshed.text
+    assert "Preferred ESXi installation disk" in refreshed.text
+
+    kickstart = client.post(
+        "/esxi-pxe/kickstarts",
+        headers={"Accept": "application/json"},
+        data={
+            "csrf": csrf,
+            "name": "Catalog variable",
+            "description": "",
+            "content": "install --firstdisk={{custom.install_disk}}\nnetwork --bootproto=dhcp\nrootpw --iscrypted placeholder\n",
+            "enabled": "on",
+        },
+    )
+    assert kickstart.status_code == 200, kickstart.text
+
+    deleted = client.post(
+        "/esxi-pxe/custom-variables/install_disk/delete",
+        headers={"Accept": "application/json"},
+        data={"csrf": csrf},
+    )
+    assert deleted.status_code == 200
+    rejected = client.post(
+        "/esxi-pxe/kickstarts",
+        headers={"Accept": "application/json"},
+        data={
+            "csrf": csrf,
+            "name": "Undefined catalog variable",
+            "description": "",
+            "content": "install --firstdisk={{custom.install_disk}}\nnetwork --bootproto=dhcp\nrootpw --iscrypted placeholder\n",
+        },
+    )
+    assert rejected.status_code == 400
+
+
+def test_esxi_custom_variable_errors_do_not_expose_exception_details(client, monkeypatch):
+    import atlaso.app.ui as ui_module
+
+    login(client)
+    page = client.get("/esxi-pxe")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    created = client.post(
+        "/esxi-pxe/custom-variables",
+        headers={"Accept": "application/json"},
+        data={"csrf": csrf, "name": "safe_name", "description": "", "default_value": ""},
+    )
+    assert created.status_code == 200
+
+    def reject_definition(*_args, **_kwargs):
+        raise ValueError("database details that must not reach the browser")
+
+    monkeypatch.setattr(ui_module, "save_custom_variable_definition", reject_definition)
+    create_error = client.post(
+        "/esxi-pxe/custom-variables",
+        headers={"Accept": "application/json"},
+        data={"csrf": csrf, "name": "another_name", "description": "", "default_value": ""},
+    )
+    update_error = client.post(
+        "/esxi-pxe/custom-variables/safe_name",
+        headers={"Accept": "application/json"},
+        data={"csrf": csrf, "name": "safe_name", "description": "", "default_value": ""},
+    )
+
+    assert create_error.status_code == 400
+    assert update_error.status_code == 400
+    assert create_error.json() == {"detail": "Custom variable definition is invalid."}
+    assert update_error.json() == {"detail": "Custom variable definition is invalid."}
+    assert "database details" not in create_error.text
+    assert "database details" not in update_error.text
 
 
 def test_esxi_pxe_iso_upload_and_host_selection(client, monkeypatch, tmp_path):
@@ -3681,6 +3947,7 @@ def test_esxi_kickstart_host_variables_render_from_mac_endpoint(client):
         esxi_pxe_boot_settings,
         esxi_pxe_host_artifacts,
         host_variables_json,
+        save_custom_variable_definition,
         save_esxi_pxe_boot_settings,
     )
 
@@ -3705,6 +3972,12 @@ def test_esxi_kickstart_host_variables_render_from_mac_endpoint(client):
             enabled=True,
         )
         db.add(host)
+        save_custom_variable_definition(
+            db,
+            name="disk",
+            description="Installation disk",
+            default_value="fallbackdisk",
+        )
         save_esxi_pxe_boot_settings(
             db,
             enabled=True,
@@ -3772,8 +4045,8 @@ def test_esxi_kickstart_host_variables_render_from_mac_endpoint(client):
         db.add(host)
         db.commit()
     unresolved = client.get(f"/pxe/esxi/ks/{kickstart_file}?mac=01-00-50-56-aa-bb-cc")
-    assert unresolved.status_code == 400
-    assert "custom.disk" in unresolved.text
+    assert unresolved.status_code == 200
+    assert "install --firstdisk=fallbackdisk" in unresolved.text
 
 
 def test_esxi_pxe_host_variables_api_and_manifest(client):
@@ -3847,15 +4120,18 @@ def test_esxi_pxe_boot_settings_update_dnsmasq_and_apply_manifest(client):
     assert "PXE HTTP port" in page.text
     assert "HTTP endpoint" in page.text
     host_tab = 'data-tab-target="esxi-pxe-hosts-panel" aria-controls="esxi-pxe-hosts-panel" aria-selected="true">Host References</button>'
-    kickstart_tab = 'data-tab-target="esxi-pxe-editor-panel" aria-controls="esxi-pxe-editor-panel" aria-selected="false">Kickstart Editor</button>'
+    kickstart_tab = 'data-tab-target="esxi-pxe-editor-panel" aria-controls="esxi-pxe-editor-panel" aria-selected="false">Kickstarts</button>'
     iso_tab = 'data-tab-target="esxi-pxe-isos-panel" aria-controls="esxi-pxe-isos-panel" aria-selected="false">Installer ISOs</button>'
     assert page.text.index(host_tab) < page.text.index(kickstart_tab) < page.text.index(iso_tab)
     assert 'id="esxi-pxe-hosts-panel" class="tab-panel active" role="tabpanel"' in page.text
     assert 'id="esxi-pxe-editor-panel" class="tab-panel" role="tabpanel" hidden' in page.text
-    assert "Kickstart variables" in page.text
-    assert "{{host.hostname}}" in page.text
-    assert "{{dhcp.ntp_servers}}" in page.text
-    assert "{{custom.install_disk}}" in page.text
+    assert "Type two opening braces for Atlaso variable suggestions." in page.text
+    monaco_source = Path("scripts/monaco-entry.js").read_text()
+    assert '"host.hostname"' in monaco_source
+    assert '"dhcp.ntp_servers"' in monaco_source
+    assert '"custom.<variable>"' in monaco_source
+    assert '"custom.${1:variable}}}"' in monaco_source
+    assert "modelCompletions" in monaco_source
     assert 'class="left-stack"' in page.text
     assert page.text.index("<h2>Boot Service</h2>") < page.text.index("<h2>ESXi Kickstarts</h2>")
     css = client.get("/static/app.css").text
@@ -4070,7 +4346,7 @@ def test_esxi_pxe_multi_zone_host_reservations_and_grid_menu(client):
     assert 'data-tag-name="dhcp_scope_ids"' in refreshed.text
     assert "SiteB - eth3 / 10.1.1.1/24" in refreshed.text
     app_js = client.get("/static/app.js").text
-    host_grid_js = app_js.split("function initializeEsxiPxeHostsTable()", 1)[1].split("function initializeVcfBackupSettings(", 1)[0]
+    host_grid_js = app_js.split("function initializeEsxiPxeHostsTable()", 1)[1].split("function initializeKickstartCollection()", 1)[0]
     assert "rowContextMenu" in host_grid_js
     assert "Delete host reference" in host_grid_js
     assert 'field: "ip_address"' in host_grid_js
@@ -4105,15 +4381,26 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client):
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import EsxiKickstart, EsxiPxeHost
+    from atlaso.app.models import EsxiKickstart, EsxiPxeHost, Setting
+    from atlaso.app.services.esxi_pxe import (
+        ESXI_PXE_CUSTOM_VARIABLES_KEY,
+        custom_variable_definitions,
+        save_custom_variable_definition,
+    )
 
     login(client)
     with SessionLocal() as db:
+        save_custom_variable_definition(
+            db,
+            name="install_disk",
+            description="Preferred installation disk",
+            default_value="firstdisk",
+        )
         kickstart = EsxiKickstart(
             name="Archive ESXi",
-            content="install\nnetwork --bootproto=dhcp\nrootpw ArchiveSecret\nreboot\n%firstboot\n%end\n",
+            content="install --firstdisk={{custom.install_disk}}\nnetwork --bootproto=dhcp\nrootpw ArchiveSecret\nreboot\n%firstboot\n%end\n",
             content_hash="",
-            rendered_content="install\nnetwork --bootproto=dhcp\nrootpw ArchiveSecret\nreboot\n%firstboot\n%end\n",
+            rendered_content="install --firstdisk={{custom.install_disk}}\nnetwork --bootproto=dhcp\nrootpw ArchiveSecret\nreboot\n%firstboot\n%end\n",
             enabled=True,
         )
         db.add(kickstart)
@@ -4145,10 +4432,17 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client):
     assert payload["data"]["esxi_pxe_hosts"][0]["ip_address"] == "192.168.50.150"
     assert payload["data"]["esxi_pxe_hosts"][0]["installer_iso_path"].endswith("/archive.iso")
     assert payload["data"]["esxi_pxe_hosts"][0]["variables"] == {"rack": "r42"}
+    assert payload["data"]["settings"] == [
+        {
+            "key": ESXI_PXE_CUSTOM_VARIABLES_KEY,
+            "value": '[{"default_value":"firstdisk","description":"Preferred installation disk","id":"install_disk","name":"install_disk"}]',
+        }
+    ]
 
     with SessionLocal() as db:
         db.query(EsxiPxeHost).delete()
         db.query(EsxiKickstart).delete()
+        db.query(Setting).filter(Setting.key == ESXI_PXE_CUSTOM_VARIABLES_KEY).delete()
         db.commit()
 
     restored = client.post(
@@ -4165,6 +4459,14 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client):
         assert restored_host.ip_address == "192.168.50.150"
         assert restored_host.installer_iso_path.endswith("/archive.iso")
         assert restored_host.variables_json == '{"rack": "r42"}'
+        assert custom_variable_definitions(db) == [
+            {
+                "id": "install_disk",
+                "name": "install_disk",
+                "description": "Preferred installation disk",
+                "default_value": "firstdisk",
+            }
+        ]
 
 
 def test_esxi_pxe_drift_detection_uses_generated_filesystem_copy(client, monkeypatch, tmp_path):
@@ -5944,9 +6246,9 @@ def test_dns_and_dhcp_pages_render(client):
     assert "zone-file-editor" in dns.text
     assert "dns-import-form" in dns.text
     assert "dns-import-controls" in dns.text
-    assert "data-codemirror-editor" in dns.text
-    assert 'data-codemirror-language="atlaso-hosts"' in dns.text
-    assert 'data-codemirror-language="atlaso-zone"' in dns.text
+    assert "data-monaco-editor" in dns.text
+    assert 'data-monaco-language="atlaso-hosts"' in dns.text
+    assert 'data-monaco-language="atlaso-zone"' in dns.text
     assert "Import zone file into atlaso.internal" in dns.text
     assert "relative hostnames are saved inside this domain" in dns.text
     assert 'data-domain="atlaso.internal"' in dns.text
@@ -6010,18 +6312,17 @@ def test_dns_and_dhcp_pages_render(client):
     assert 'data.record_type !== "A" && data.address === data.suggested_ipv4' in app_js.text
     assert 'cell.getField() === "host_label"' in app_js.text
     assert "DNS_ACTIVE_ZONE_STORAGE_KEY" in app_js.text
-    assert "initializeCodeMirrorEditors" in app_js.text
+    assert "initializeMonacoEditors" in app_js.text
     assert "const atlasoDnsRecordTables = new WeakMap()" in app_js.text
     assert "function redrawDnsRecordTables" in app_js.text
     assert "atlasoDnsRecordTables.set(tableElement, table)" in app_js.text
     assert "redrawDnsRecordTables(panel)" in app_js.text
-    assert "installCodeMirrorPlainTextFallback" in app_js.text
-    assert 'textarea.dataset.codemirrorLanguage !== "atlaso-kickstart"' in app_js.text
-    assert 'addEventListener("keydown"' in app_js.text
-    assert "event.stopPropagation()" in app_js.text
+    assert "window.AtlasoMonaco" in app_js.text
+    assert "enhanceTextarea" in app_js.text
+    assert 'data-monaco-language="atlaso-kickstart"' in Path("atlaso/app/templates/esxi_pxe.html").read_text()
     assert "data-tag-empty" in app_js.text
     assert "No options available." in app_js.text
-    assert "AtlasoCodeMirror.setValue" in app_js.text
+    assert "AtlasoMonaco.setValue" in app_js.text
     assert "rememberDnsActiveZone(data.domain)" in app_js.text
     assert "dnsZoneTabButtonForDomain(storedDomain)" in app_js.text
     assert "initializeTagEditors" in app_js.text
@@ -8602,7 +8903,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert ".software-depot-id-value" in app_css.text
     assert ".icon-button" in app_css.text
     assert ".code-editor-textarea" in app_css.text
-    assert ".code-editor-textarea + .cm-editor" in app_css.text
+    assert ".code-editor-textarea + .atlaso-monaco-shell .atlaso-monaco-editor" in app_css.text
     assert "#vcf-depot-properties-modal .confirm-modal-panel" in app_css.text
     assert "#vcf-depot-task-log-modal .confirm-modal-panel" in app_css.text
     assert ".vcfdt-task-log-preview code" in app_css.text
@@ -8610,7 +8911,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert ".vcfdt-tool-manager" in app_css.text
     assert ".compact-file-upload" in app_css.text
     assert 'software-depot-id-value' in page.text
-    assert 'data-codemirror-editor data-codemirror-language="atlaso-hosts" data-vcf-depot-properties-textarea' in page.text
+    assert 'data-monaco-editor data-monaco-language="ini" data-vcf-depot-properties-textarea' in page.text
 
     archive_path = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
     make_vcfdt_archive(archive_path)
@@ -11125,9 +11426,9 @@ def test_firewall_settings_autosave_updates_desired_state_preview(client):
     assert page.status_code == 200
     assert "data-firewall-enabled-status" in page.text
     assert "atlaso-brand-20260725-1" in page.text
-    codemirror = client.get("/static/vendor/codemirror/atlaso-codemirror.min.js")
-    assert codemirror.status_code == 200
-    assert "AtlasoCodeMirror" in codemirror.text
+    monaco = client.get("/static/vendor/monaco/atlaso-monaco.min.js")
+    assert monaco.status_code == 200
+    assert "AtlasoMonaco" in monaco.text
     assert "initializeSwitchFields" in client.get("/static/app.js").text
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 

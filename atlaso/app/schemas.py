@@ -473,6 +473,20 @@ class LdapRecoveryImportResponse(BaseModel):
     created_at: datetime
 
 
+class EsxiCustomVariableCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    description: str = Field(default="", max_length=500)
+    default_value: str = Field(default="", max_length=2048)
+
+
+class EsxiCustomVariableUpdate(EsxiCustomVariableCreate):
+    pass
+
+
+class EsxiCustomVariableResponse(EsxiCustomVariableCreate):
+    id: str
+
+
 class EsxiKickstartCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     description: str | None = None

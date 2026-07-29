@@ -450,7 +450,7 @@
       <p class="muted">Saving updates desired state. Global appliance apply stages this file at <code>/var/lib/atlaso/apply/vcf-offline-depot/application-prodv2.properties</code>, then installs it into the active VCF Download Tool conf directory.</p>
       <div>
         <span class="field-label"><span>Properties content</span><button class="help-icon" type="button" data-help="Desired application-prodv2.properties content for VCFDT. The editor starts from the staged VCFDT package when available, then falls back to the Atlaso default.">i</button></span>
-        <textarea class="code-editor-textarea" name="application_properties" rows="22" spellcheck="false" data-codemirror-editor data-codemirror-language="atlaso-hosts" data-vcf-depot-properties-textarea>{{ vcf_depot_application_properties.content }}</textarea>
+        <textarea class="code-editor-textarea" name="application_properties" rows="22" spellcheck="false" data-monaco-editor data-monaco-language="ini" data-vcf-depot-properties-textarea>{{ vcf_depot_application_properties.content }}</textarea>
       </div>
       <small class="muted" data-vcf-depot-properties-save-status aria-live="polite">Source: {{ vcf_depot_application_properties.source }}{% if vcf_depot_application_properties.updated_at %} · saved {{ vcf_depot_application_properties.updated_at }}{% endif %}</small>
     </div>

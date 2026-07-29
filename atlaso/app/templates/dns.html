@@ -183,7 +183,7 @@
                 </div>
                 <label>
                   <span class="field-label"><span>Entries</span><button class="help-icon" type="button" data-help="Hosts-file syntax: IP address followed by one or more hostnames. Relative names are scoped to this domain.">i</button></span>
-                  <textarea id="hosts-editor-{{ loop.index }}" class="monospace-textarea" name="hosts_text" rows="9" data-codemirror-editor data-codemirror-language="atlaso-hosts">{{ group.hosts_editor_text }}</textarea>
+                  <textarea id="hosts-editor-{{ loop.index }}" class="monospace-textarea" name="hosts_text" rows="9" data-monaco-editor data-monaco-language="atlaso-hosts">{{ group.hosts_editor_text }}</textarea>
                 </label>
                 <button class="button primary" type="submit">Import into {{ group.domain }}</button>
               </form>
@@ -208,7 +208,7 @@
                 </div>
                 <label>
                     <span class="field-label"><span>Zone contents</span><button class="help-icon" type="button" data-help="Paste BIND-style zone records. Atlaso imports A, AAAA, CNAME, TXT, SRV, MX, CAA, and PTR records into this managed domain.">i</button></span>
-                  <textarea id="zone-file-editor-{{ loop.index }}" class="monospace-textarea" name="zone_text" rows="12" data-codemirror-editor data-codemirror-language="atlaso-zone">{{ zone_editor_text if active_zone_import_domain == group.domain else group.zone_file_text }}</textarea>
+                  <textarea id="zone-file-editor-{{ loop.index }}" class="monospace-textarea" name="zone_text" rows="12" data-monaco-editor data-monaco-language="atlaso-zone">{{ zone_editor_text if active_zone_import_domain == group.domain else group.zone_file_text }}</textarea>
                 </label>
                 <button class="button primary" type="submit">Import zone file into {{ group.domain }}</button>
               </form>

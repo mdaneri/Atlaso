@@ -85,6 +85,9 @@ from atlaso.app.schemas import (
     DnsSettingsResponse,
     DnsSettingsUpdate,
     DnsStatusResponse,
+    EsxiCustomVariableCreate,
+    EsxiCustomVariableResponse,
+    EsxiCustomVariableUpdate,
     EsxiKickstartCreate,
     EsxiKickstartDuplicateRequest,
     EsxiKickstartPreviewResponse,
@@ -244,7 +247,7 @@ from atlaso.app.services.appliance_settings import (
     web_terminal_interfaces_to_json,
 )
 from atlaso.app.services.ntp import default_ntp_upstream_fields
-from atlaso.app.services.ca import ca_service_state
+from atlaso.app.services.ca import ca_service_state, managed_certificate_for_owner
 from atlaso.app.services.firewall import (
     FIREWALL_ACTIONS,
     FIREWALL_DIRECTIONS,
@@ -291,16 +294,21 @@ from atlaso.app.services.esxi_pxe import (
     assign_kickstart_content,
     canonical_http_path,
     content_hash,
+    custom_variable_definitions,
     decode_kickstart_upload,
+    delete_custom_variable_definition,
     esxi_pxe_boot_settings,
     esxi_pxe_service_state_from_boot,
     installer_iso_inventory,
     kickstart_to_dict,
     kickstart_validation,
+    validate_kickstart_custom_references,
+    validate_kickstart_vault_references,
     normalize_host_mac,
     normalize_installer_iso_path,
     normalize_kickstart_name,
     redacted_kickstart_preview,
+    save_custom_variable_definition,
     store_installer_iso_upload,
     strict_validation_enabled,
     host_to_dict,
@@ -526,7 +534,7 @@ def get_appliance_settings(db: Session) -> ApplianceSettings:
 
 
 def ca_managed_certificate_available(db: Session, owner: str) -> tuple[bool, str, str]:
-    certificate = db.execute(select(CaCertificate).where(CaCertificate.managed_owner == owner)).scalar_one_or_none()
+    certificate = managed_certificate_for_owner(db, owner)
     if certificate is None or certificate.status != "issued":
         return False, "", ""
     available = bool(certificate.certificate_pem and certificate.private_key_encrypted and certificate.cert_path and certificate.key_path)
@@ -2926,6 +2934,116 @@ def _assign_kickstart_payload(kickstart: EsxiKickstart, payload: EsxiKickstartCr
 
 
 @router.get(
+    "/esxi-pxe/custom-variables",
+    response_model=list[EsxiCustomVariableResponse],
+    tags=["ESXi PXE"],
+    operation_id="listEsxiCustomVariables",
+)
+def list_esxi_custom_variables(
+    identity: Annotated[Identity, Depends(require_scope("read:esxi-pxe"))],
+    db: Session = Depends(get_db),
+) -> list[EsxiCustomVariableResponse]:
+    return [EsxiCustomVariableResponse(**row) for row in custom_variable_definitions(db)]
+
+
+@router.post(
+    "/esxi-pxe/custom-variables",
+    response_model=EsxiCustomVariableResponse,
+    status_code=201,
+    tags=["ESXi PXE"],
+    operation_id="createEsxiCustomVariable",
+)
+def create_esxi_custom_variable(
+    payload: EsxiCustomVariableCreate,
+    identity: Annotated[Identity, Depends(require_scope("write:esxi-pxe"))],
+    db: Session = Depends(get_db),
+) -> EsxiCustomVariableResponse:
+    try:
+        variable = save_custom_variable_definition(
+            db,
+            name=payload.name,
+            description=payload.description,
+            default_value=payload.default_value,
+        )
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        status_code = 409 if "already exists" in str(exc).lower() else 422
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    record_audit(
+        db,
+        actor=identity.username,
+        action="create_esxi_custom_variable",
+        resource_type="esxi_custom_variable",
+        resource_id=variable["name"],
+        detail=f"name={variable['name']}",
+    )
+    return EsxiCustomVariableResponse(**variable)
+
+
+@router.put(
+    "/esxi-pxe/custom-variables/{variable_name}",
+    response_model=EsxiCustomVariableResponse,
+    tags=["ESXi PXE"],
+    operation_id="updateEsxiCustomVariable",
+)
+def update_esxi_custom_variable(
+    variable_name: str,
+    payload: EsxiCustomVariableUpdate,
+    identity: Annotated[Identity, Depends(require_scope("write:esxi-pxe"))],
+    db: Session = Depends(get_db),
+) -> EsxiCustomVariableResponse:
+    if variable_name not in {row["name"] for row in custom_variable_definitions(db)}:
+        raise HTTPException(status_code=404, detail="Custom variable not found")
+    try:
+        variable = save_custom_variable_definition(
+            db,
+            name=payload.name,
+            description=payload.description,
+            default_value=payload.default_value,
+            original_name=variable_name,
+        )
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        status_code = 409 if "already exists" in str(exc).lower() else 422
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    record_audit(
+        db,
+        actor=identity.username,
+        action="update_esxi_custom_variable",
+        resource_type="esxi_custom_variable",
+        resource_id=variable["name"],
+        detail=f"previous_name={variable_name} name={variable['name']}",
+    )
+    return EsxiCustomVariableResponse(**variable)
+
+
+@router.delete(
+    "/esxi-pxe/custom-variables/{variable_name}",
+    response_model=dict,
+    tags=["ESXi PXE"],
+    operation_id="deleteEsxiCustomVariable",
+)
+def delete_esxi_custom_variable(
+    variable_name: str,
+    identity: Annotated[Identity, Depends(require_scope("write:esxi-pxe"))],
+    db: Session = Depends(get_db),
+) -> dict:
+    if not delete_custom_variable_definition(db, variable_name):
+        raise HTTPException(status_code=404, detail="Custom variable not found")
+    db.commit()
+    record_audit(
+        db,
+        actor=identity.username,
+        action="delete_esxi_custom_variable",
+        resource_type="esxi_custom_variable",
+        resource_id=variable_name,
+    )
+    return {"deleted": True}
+
+
+@router.get(
     "/esxi-pxe/kickstarts",
     response_model=list[EsxiKickstartResponse],
     tags=["ESXi PXE"],
@@ -2957,7 +3075,12 @@ def create_esxi_kickstart(
     db.flush()
     _assign_kickstart_payload(kickstart, payload, settings.esxi_kickstart_max_bytes)
     try:
+        validate_kickstart_custom_references(db, kickstart.content)
+        validate_kickstart_vault_references(db, kickstart.content)
         db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=f"Kickstart {payload.name} already exists.") from exc
@@ -3002,7 +3125,12 @@ def update_esxi_kickstart(
     _assign_kickstart_payload(kickstart, payload, settings.esxi_kickstart_max_bytes)
     db.add(kickstart)
     try:
+        validate_kickstart_custom_references(db, kickstart.content)
+        validate_kickstart_vault_references(db, kickstart.content)
         db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=f"Kickstart {payload.name} already exists.") from exc
@@ -3093,6 +3221,11 @@ def validate_esxi_kickstart(
         strict=strict_validation_enabled(db),
         max_bytes=settings.esxi_kickstart_max_bytes,
     )
+    try:
+        validate_kickstart_custom_references(db, kickstart.content)
+        validate_kickstart_vault_references(db, kickstart.content)
+    except ValueError as exc:
+        errors.append(str(exc))
     record_audit(db, actor=identity.username, action="validate_esxi_kickstart", resource_type="esxi_kickstart", resource_id=str(kickstart.id), detail=f"errors={len(errors)} warnings={len(warnings)}")
     return EsxiKickstartValidationResponse(valid=not errors, errors=errors, warnings=warnings, redacted_preview=redacted_kickstart_preview(kickstart.content))
 
@@ -3161,7 +3294,12 @@ async def upload_esxi_kickstart(
     db.flush()
     kickstart.http_path = canonical_http_path(kickstart.id, kickstart.content_hash)
     try:
+        validate_kickstart_custom_references(db, kickstart.content)
+        validate_kickstart_vault_references(db, kickstart.content)
         db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=f"Kickstart {candidate_name} already exists.") from exc

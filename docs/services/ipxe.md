@@ -28,12 +28,24 @@ Atlaso note: ESXi PXE host-specific `boot.cfg` artifacts should pass Kickstart U
 `{{variable}}` Kickstart markers from the database source and the selected host's custom variable map. Atlaso
 intentionally does not infer the host MAC from request source IP or dnsmasq leases.
 
-A Kickstart may bind one VCF/ESX password vault and reference
-`{{vault.<vaultname>.<key>.username}}`, `{{vault.<vaultname>.<key>.password}}`, or a configured URI from
-`{{vault.<vaultname>.<key>.uri1}}` through `{{vault.<vaultname>.<key>.uri9}}`. Atlaso resolves those markers only in the
-dynamic response for an enabled host assigned to that Kickstart. Source downloads and previews retain the marker,
-markers cannot name a vault other than the bound vault, and dynamic responses disable caching. See
-[Vaults](vaults.md) for marker examples, URI ordering, and secret-handling boundaries.
+Kickstarts declare vault access directly in source with `{{vault.<vaultname>.<key>.username}}`,
+`{{vault.<vaultname>.<key>.password}}`, or a configured URI from `{{vault.<vaultname>.<key>.uri1}}` through
+`{{vault.<vaultname>.<key>.uri9}}`. The Monaco Editor suggests authorized exact markers after `{{` without loading
+credential values. Atlaso validates every referenced vault, key, and subkey when source is saved and again when an
+enabled assigned host requests the dynamic response. Source downloads and previews retain the marker, missing or
+renamed references fail closed, and dynamic responses disable caching. See [Vaults](vaults.md) for marker examples,
+URI ordering, and secret-handling boundaries.
+
+Define non-secret custom values in the **Custom Variables** tab before **Installer ISOs**. Each row records the variable
+name, operator description, and an optional default. Monaco offers those rows as concrete `{{custom.<name>}}`
+completions. A matching value in a Host References variables JSON object overrides the default for that host; when no
+override exists, Atlaso renders the configured default. Deleting a referenced definition makes the Kickstart invalid
+until the definition is restored or the marker is removed. Use vault markers instead of custom-variable defaults for
+credentials or other secrets.
+
+Token-based automation can manage the same non-secret catalog through
+`/api/v1/esxi-pxe/custom-variables` before creating or updating Kickstarts that use `{{custom.*}}` markers. Catalog
+definitions and defaults are included in settings archives so restored Kickstarts retain their required definitions.
 
 > Terminology note: Broadcom documentation uses **ESX** in these 9.x installation pages. Older VMware material often
 > used **ESXi**.
@@ -163,8 +175,8 @@ ESX on the DPUs.
 # Accept the VMware End User License Agreement
 vmaccepteula
 
-# Set the root password for the DCUI and Tech Support Mode
-rootpw myp@ssw0rd
+# Replace this placeholder with a SHA-512 crypt hash before deployment
+rootpw --iscrypted $6$REPLACE_WITH_SHA512_CRYPT_HASH
 
 # Install on the first local disk available on the machine
 install --firstdisk --overwritevmfs

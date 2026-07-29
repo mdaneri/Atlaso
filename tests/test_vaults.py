@@ -85,6 +85,64 @@ def test_vault_ui_encrypts_masks_and_explicitly_reveals_password(client):
         assert "Correct-Horse-Battery-Staple!" not in (event.detail or "")
 
 
+def test_vault_delete_blocks_enabled_kickstart_marker_dependencies(client):
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import EsxiKickstart, Vault
+    from atlaso.app.services.esxi_pxe import content_hash
+    from atlaso.app.services.vaults import VaultEntryInput, upsert_vault_entry
+
+    login(client)
+    page = client.get("/vaults")
+    csrf = csrf_from_page(page.text)
+    with SessionLocal() as db:
+        vault = Vault(name="Kickstart", description="", created_by="admin")
+        db.add(vault)
+        db.flush()
+        upsert_vault_entry(
+            db,
+            vault=vault,
+            entry=VaultEntryInput(
+                key="esx.root",
+                secret_type="esx_password",
+                value="DeleteGuardSecret!",
+            ),
+            actor="admin",
+        )
+        source = "rootpw {{vault.kickstart.esx.root.password}}\n"
+        kickstart = EsxiKickstart(
+            name="Dependent ESXi",
+            content=source,
+            content_hash=content_hash(source),
+            enabled=True,
+        )
+        db.add(kickstart)
+        db.commit()
+        vault_id = vault.id
+        kickstart_id = kickstart.id
+
+    blocked = client.post(
+        f"/vaults/{vault_id}/delete",
+        data={"csrf": csrf},
+    )
+    assert blocked.status_code == 409
+    assert "Remove this vault from these enabled Kickstarts first: Dependent ESXi." in blocked.text
+    assert "DeleteGuardSecret!" not in blocked.text
+    with SessionLocal() as db:
+        assert db.get(Vault, vault_id) is not None
+        kickstart = db.get(EsxiKickstart, kickstart_id)
+        kickstart.enabled = False
+        db.commit()
+
+    deleted = client.post(
+        f"/vaults/{vault_id}/delete",
+        data={"csrf": csrf},
+        follow_redirects=False,
+    )
+    assert deleted.status_code == 303
+    with SessionLocal() as db:
+        assert db.get(Vault, vault_id) is None
+
+
 def test_vault_ui_copies_entry_without_returning_plaintext(client):
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AuditEvent, Vault, VaultEntry
@@ -209,7 +267,7 @@ def test_vault_cli_fails_closed_and_reads_only_scoped_credential(tmp_path, monke
     assert capsys.readouterr().out == "VMware1!"
 
 
-def test_dynamic_kickstart_resolves_assigned_vault_without_caching(client):
+def test_dynamic_kickstart_derives_exact_vault_scope_without_caching(client):
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import EsxiKickstart, EsxiKickstartVaultBinding, EsxiPxeHost, Vault
     from atlaso.app.services.esxi_pxe import content_hash
@@ -238,6 +296,9 @@ def test_dynamic_kickstart_resolves_assigned_vault_without_caching(client):
             ),
             actor="admin",
         )
+        legacy_vault = Vault(name="Legacy Ignored", description="", created_by="admin")
+        db.add(legacy_vault)
+        db.flush()
         kickstart = EsxiKickstart(
             name="Vaulted ESX",
             content=content,
@@ -246,7 +307,7 @@ def test_dynamic_kickstart_resolves_assigned_vault_without_caching(client):
         )
         db.add(kickstart)
         db.flush()
-        db.add(EsxiKickstartVaultBinding(kickstart_id=kickstart.id, vault_id=vault.id))
+        db.add(EsxiKickstartVaultBinding(kickstart_id=kickstart.id, vault_id=legacy_vault.id))
         db.add(
             EsxiPxeHost(
                 hostname="esx01",
@@ -258,6 +319,13 @@ def test_dynamic_kickstart_resolves_assigned_vault_without_caching(client):
         db.commit()
         path = f"/pxe/esxi/ks/{kickstart.content_hash[:12]}.cfg?mac=005056aabbcc"
 
+    login(client)
+    editor_page = client.get("/esxi-pxe")
+    assert "vault.esx.esx.host.root.username" in editor_page.text
+    assert "vault.esx.esx.host.root.password" in editor_page.text
+    assert "vault.esx.esx.host.root.uri1" in editor_page.text
+    assert "VMware1!" not in editor_page.text
+
     response = client.get(path)
     assert response.status_code == 200
     assert "network --hostname=root" in response.text
@@ -265,6 +333,126 @@ def test_dynamic_kickstart_resolves_assigned_vault_without_caching(client):
     assert "%include https://config.example.internal/esx01.cfg" in response.text
     assert "{{vault." not in response.text
     assert "no-store" in response.headers["cache-control"]
+
+    with SessionLocal() as db:
+        vault = db.execute(select(Vault).where(Vault.name == "ESX")).scalar_one()
+        vault.name = "Renamed ESX"
+        db.add(vault)
+        db.commit()
+
+    missing_at_request_time = client.get(path)
+    assert missing_at_request_time.status_code == 400
+    assert "vault.esx.esx.host.root.password" in missing_at_request_time.text
+    assert "VMware1!" not in missing_at_request_time.text
+
+
+@pytest.mark.parametrize(
+    ("marker", "case_name"),
+    [
+        ("{{vault.missing.key.password}}", "missing"),
+        ("{{vault.missing.key.token}}", "unsupported"),
+        ("{{vault.missing.key.password", "unclosed"),
+        ("vault.missing.key.password}}", "unmatched"),
+    ],
+)
+def test_kickstart_save_rejects_missing_unsupported_and_malformed_vault_markers(client, marker, case_name):
+    login(client)
+    page = client.get("/esxi-pxe")
+    csrf = csrf_from_page(page.text)
+    response = client.post(
+        "/esxi-pxe/kickstarts",
+        headers={"Accept": "application/json"},
+        data={
+            "csrf": csrf,
+            "name": f"Rejected {case_name}",
+            "description": "",
+            "content": f"vmaccepteula\nrootpw {marker}\n",
+            "enabled": "on",
+        },
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Kickstart source is invalid. Review its variable and vault markers."
+    assert marker not in response.text
+
+
+def test_kickstart_marker_parser_handles_adversarial_braces_without_regex_backtracking():
+    from atlaso.app.services.esxi_pxe import kickstart_template_variables
+
+    names, invalid = kickstart_template_variables("{{{{" + (" " * 100_000) + "}}}}")
+
+    assert names == set()
+    assert invalid
+
+
+def test_kickstart_json_errors_do_not_expose_database_exception_details(client):
+    login(client)
+    page = client.get("/esxi-pxe")
+    csrf = csrf_from_page(page.text)
+    payload = {
+        "csrf": csrf,
+        "name": "Duplicate-safe Kickstart",
+        "description": "",
+        "content": "vmaccepteula\nrootpw --iscrypted placeholder\n",
+    }
+
+    created = client.post("/esxi-pxe/kickstarts", headers={"Accept": "application/json"}, data=payload)
+    duplicate = client.post("/esxi-pxe/kickstarts", headers={"Accept": "application/json"}, data=payload)
+
+    assert created.status_code == 200
+    assert duplicate.status_code == 400
+    assert duplicate.json()["detail"] == "A Kickstart with that name already exists."
+    assert "sql" not in duplicate.text.lower()
+    assert "integrityerror" not in duplicate.text.lower()
+
+
+def test_kickstart_completion_and_save_validate_metadata_without_decrypting(client, monkeypatch):
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Vault
+    from atlaso.app.services.vaults import VaultEntryInput, upsert_vault_entry
+
+    with SessionLocal() as db:
+        vault = Vault(name="No Browser Secret", description="", created_by="admin")
+        db.add(vault)
+        db.flush()
+        upsert_vault_entry(
+            db,
+            vault=vault,
+            entry=VaultEntryInput(
+                key="esx.root",
+                secret_type="esx_password",
+                value="Never-Decrypted-For-Editing!",
+                username="root",
+            ),
+            actor="admin",
+        )
+        db.commit()
+
+    import atlaso.app.services.vaults as vault_service
+
+    monkeypatch.setattr(
+        vault_service,
+        "decrypt_secret",
+        lambda *_args: pytest.fail("Editor completion and save validation must not decrypt vault values."),
+    )
+    login(client)
+    page = client.get("/esxi-pxe")
+    assert page.status_code == 200
+    assert "vault.no_browser_secret.esx.root.password" in page.text
+    assert "Never-Decrypted-For-Editing!" not in page.text
+    csrf = csrf_from_page(page.text)
+    saved = client.post(
+        "/esxi-pxe/kickstarts",
+        headers={"Accept": "application/json"},
+        data={
+            "csrf": csrf,
+            "name": "Metadata only",
+            "description": "",
+            "content": "vmaccepteula\nrootpw {{vault.no_browser_secret.esx.root.password}}\n",
+            "enabled": "on",
+        },
+    )
+    assert saved.status_code == 200
+    assert "Never-Decrypted-For-Editing!" not in saved.text
 
 
 def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
@@ -335,7 +523,7 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert 'id="confirm-modal-detail"' in base_template
     assert ".confirm-modal.has-confirm-detail" in css
     assert "overflow-wrap: anywhere;" in css[css.index(".confirm-modal-detail-group"):css.index(".confirm-modal.wide-modal")]
-    assert "atlaso-wizard-layout-20260729-15" in base_template
+    assert "atlaso-kickstart-variables-20260729-16" in base_template
     trust_template = Path("atlaso/app/templates/partials/vcf_trust_modal.html").read_text()
     import_template = Path("atlaso/app/templates/partials/vcf_vault_import_modal.html").read_text()
     depot_template = Path("atlaso/app/templates/partials/vcf_target_depot_modal.html").read_text()
@@ -375,8 +563,9 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert 'return state === "ready" ? "selection" : state === "tls" ? "tls" : false;' in source
     assert 'return hasSelectedVcfVaultCredential(form) ? "depot" : "api";' in source
     pxe_template = Path("atlaso/app/templates/esxi_pxe.html").read_text()
-    assert "{{vault.<vaultname>.<key>.uri1}}" in pxe_template
-    assert "{{vault.<vaultname>.<key>.uri9}}" in pxe_template
+    assert "Vault access is declared only with" not in pxe_template
+    assert "{{vault.<vaultname>.<key>.uri1}}" not in pxe_template
+    assert "{{vault.<vaultname>.<key>.uri9}}" not in pxe_template
 
 
 def test_vmware_wheel_deploy_exposes_fail_closed_vault_shell_commands():
@@ -489,7 +678,7 @@ def test_remote_vault_uri_launch_uses_one_use_server_side_ticket(client, monkeyp
     assert "sidebar" not in remote_page.text
     assert "Primary" not in remote_page.text
     assert "/static/terminal.js?v=atlaso-vault-uri-20260727-2" in remote_page.text
-    assert "/static/app.css?v=atlaso-wizard-layout-20260729-10" in remote_page.text
+    assert "/static/app.css?v=atlaso-wizard-monaco-20260729-11" in remote_page.text
 
     ticket_response = client.post(
         "/terminal/tickets",

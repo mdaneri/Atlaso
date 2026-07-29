@@ -2,19 +2,14 @@
   "name": "atlaso-documentation",
   "private": true,
   "scripts": {
-    "build:codemirror": "node scripts/build_codemirror.mjs",
+    "build:monaco": "node scripts/build_monaco.mjs",
     "lint:markdown": "markdownlint-cli2",
     "test:javascript": "node --test tests/javascript/*.test.js"
   },
   "devDependencies": {
-    "@codemirror/commands": "^6.10.4",
-    "@codemirror/language": "^6.12.4",
-    "@codemirror/legacy-modes": "^6.5.3",
-    "@codemirror/state": "^6.7.1",
-    "@codemirror/view": "^6.43.7",
-    "@lezer/highlight": "^1.2.3",
     "esbuild": "^0.28.1",
-    "markdownlint-cli2": "0.23.1"
+    "markdownlint-cli2": "0.23.1",
+    "monaco-editor": "0.52.2"
   },
   "overrides": {
     "js-yaml": "5.2.2"

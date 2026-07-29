@@ -1252,7 +1252,7 @@ textarea {
 .esxi-boot-service-panel label,
 .esxi-boot-service-panel .service-bind-editor,
 .esxi-boot-service-panel .tag-editor,
-.esxi-boot-service-panel .cm-editor,
+.esxi-boot-service-panel .atlaso-monaco-editor,
 .esxi-boot-service-panel .settings-list {
   min-width: 0;
   max-width: 100%;
@@ -1304,13 +1304,9 @@ textarea {
   white-space: nowrap;
 }
 
-.esxi-boot-service-panel .cm-editor {
+.esxi-boot-service-panel .atlaso-monaco-editor {
   width: 100%;
   overflow-x: hidden;
-}
-
-.esxi-boot-service-panel .cm-scroller {
-  overflow: auto;
 }
 
 .esxi-boot-service-panel .compact-settings-list {
@@ -4887,6 +4883,14 @@ textarea {
   grid-column: 1 / -1;
 }
 
+.automation-script-identity-grid > .full {
+  grid-column: 1 / -1;
+}
+
+.automation-script-identity-grid {
+  align-content: start;
+}
+
 @media (max-width: 760px) {
   .source-editor-grid {
     grid-template-columns: 1fr;
@@ -5094,15 +5098,11 @@ textarea {
   flex: 0 0 auto;
 }
 
-.automation-script-editor .code-editor-textarea + .cm-editor {
+.automation-script-editor .code-editor-textarea + .atlaso-monaco-shell .atlaso-monaco-editor {
   height: 100%;
   min-height: 280px;
   max-height: none;
   overflow: hidden;
-}
-
-.automation-script-editor .cm-scroller {
-  overflow: auto;
 }
 
 .automation-script-import-status {
@@ -5163,7 +5163,7 @@ textarea {
   padding: 12px;
 }
 
-.automation-script-fullscreen-editor .code-editor-textarea + .cm-editor {
+.automation-script-fullscreen-editor .code-editor-textarea + .atlaso-monaco-shell .atlaso-monaco-editor {
   min-height: 0;
 }
 
@@ -6612,17 +6612,9 @@ textarea {
   overflow: hidden;
 }
 
-.code-editor-textarea + .cm-editor {
+.code-editor-textarea + .atlaso-monaco-shell .atlaso-monaco-editor {
   height: min(520px, 52vh);
   max-height: min(520px, 52vh);
-}
-
-.code-editor-textarea + .cm-editor .cm-scroller {
-  overflow: auto;
-}
-
-.code-editor-textarea + .cm-editor .cm-content {
-  min-height: 100%;
 }
 
 .preview-modal {
@@ -6847,66 +6839,9 @@ textarea {
   line-height: 1.45;
 }
 
-.kickstart-layout {
-  display: grid;
-  grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
-  gap: 16px;
-  align-items: start;
-}
-
-.kickstart-list {
-  display: grid;
-  gap: 8px;
-}
-
-.kickstart-list-item {
-  display: grid;
-  gap: 6px;
-  padding: 10px;
-  border: 1px solid #dbe3ef;
-  border-radius: 6px;
-  color: inherit;
-  text-decoration: none;
-  background: #f8fafc;
-}
-
-.kickstart-list-item.active {
-  border-color: #1769e0;
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.14);
-}
-
-.kickstart-editor-pane,
-.kickstart-editor-form {
-  min-width: 0;
-}
-
-.editor-action-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-}
-
-.dirty-state-indicator {
-  color: #64748b;
-  font-size: 12px;
-  margin-right: auto;
-}
-
-.dirty-state-indicator.dirty {
-  color: #b45309;
-  font-weight: 700;
-}
-
 .create-kickstart-panel,
 .host-create-form {
   margin-top: 16px;
-}
-
-@media (max-width: 960px) {
-  .kickstart-layout {
-    grid-template-columns: 1fr;
-  }
 }
 
 .dns-import-controls {
@@ -6920,17 +6855,103 @@ textarea {
   width: fit-content;
 }
 
-.dns-import-form .cm-editor,
-.dns-import-form .cm-content {
+.dns-import-form .atlaso-monaco-editor {
   min-height: clamp(360px, 50vh, 640px) !important;
 }
 
-.cm-editor {
+.atlaso-monaco-editor {
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
 }
 
-.cm-editor .cm-content {
-  caret-color: #111827;
+.atlaso-monaco-editor:focus-within {
+  border-color: #1769e0;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.14);
+}
+
+.atlaso-monaco-shell {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.atlaso-monaco-toolbar {
+  position: absolute;
+  z-index: 20;
+  top: 7px;
+  right: 18px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.atlaso-monaco-expand-button {
+  display: inline-grid;
+  width: 30px;
+  min-width: 30px;
+  height: 28px;
+  min-height: 28px;
+  place-items: center;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 0;
+  background: rgba(248, 250, 252, 0.96);
+  color: #334155;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 750;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.atlaso-monaco-expand-button:hover,
+.atlaso-monaco-expand-button:focus-visible {
+  border-color: #1769e0;
+  color: #1769e0;
+  outline: none;
+}
+
+body.atlaso-monaco-expanded-open {
+  overflow: hidden;
+}
+
+dialog.has-expanded-monaco,
+dialog.has-expanded-monaco .confirm-modal-panel {
+  overflow: visible;
+}
+
+.atlaso-monaco-shell.is-expanded {
+  position: fixed;
+  z-index: 10000;
+  inset: 24px;
+  width: auto !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.32);
+}
+
+.atlaso-monaco-shell.is-expanded .atlaso-monaco-editor {
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: none !important;
+}
+
+@media (max-width: 700px) {
+  .atlaso-monaco-shell.is-expanded {
+    inset: 8px;
+  }
 }
 
 .terminal-note {

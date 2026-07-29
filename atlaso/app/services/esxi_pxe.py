@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from atlaso.app.models import DhcpReservation, DhcpScope, DnsRecord, EsxiKickstart, EsxiPxeHost, Setting, utcnow
 from atlaso.app.services.dnsmasq import reservation_dns_record
+from atlaso.app.services.vaults import validate_kickstart_vault_markers
 
 ESXI_PXE_UNIT_ID = "esxi_pxe"
 ESXI_PXE_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/esxi-pxe/atlaso-esxi-pxe.json"
@@ -43,6 +44,7 @@ ESXI_PXE_IPXE_SCRIPT_KEY = "esxi_pxe.boot.ipxe_script"
 ESXI_PXE_DEFAULT_HOST_ENABLED_KEY = "esxi_pxe.default_host.enabled"
 ESXI_PXE_DEFAULT_HOST_KICKSTART_ID_KEY = "esxi_pxe.default_host.kickstart_id"
 ESXI_PXE_DEFAULT_HOST_INSTALLER_ISO_KEY = "esxi_pxe.default_host.installer_iso_path"
+ESXI_PXE_CUSTOM_VARIABLES_KEY = "esxi_pxe.custom_variables.v1"
 ESXI_PXE_IPXE_SCRIPT_NAME = "esxi.ipxe"
 ESXI_PXE_DEFAULT_HOSTNAME = "esxi-pxe.atlaso.internal"
 ESXI_PXE_HTTP_PORT = 8080
@@ -62,8 +64,8 @@ DEFAULT_ESXI_KICKSTART_CONTENT = """#
 # Accept the VMware End User License Agreement
 vmaccepteula
 
-# Set the root password for the DCUI and Tech Support Mode
-rootpw vmware01!
+# Replace this placeholder with a SHA-512 crypt hash before deployment
+rootpw --iscrypted $6$REPLACE_WITH_SHA512_CRYPT_HASH
 
 # Install on the first local disk available on machine
 install --firstdisk --overwritevmfs
@@ -81,8 +83,7 @@ stampFile.write(time.asctime())
 """
 SECRET_KEYWORD_PATTERN = re.compile(r"(rootpw|password|passwd|token|secret|key|license|activation|credential)", re.IGNORECASE)
 UNSUPPORTED_TEMPLATE_PATTERN = re.compile(r"({[%#].*?[}%]}|\$\{[^}]+\})")
-KICKSTART_VARIABLE_PATTERN = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*\}\}")
-KICKSTART_TEMPLATE_EXPRESSION_PATTERN = re.compile(r"\{\{\s*(.*?)\s*\}\}")
+KICKSTART_VARIABLE_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
 CUSTOM_VARIABLE_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SAFE_ISO_UPLOAD_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]*\.iso$", re.IGNORECASE)
 
@@ -206,14 +207,153 @@ def host_variables(host: EsxiPxeHost) -> dict[str, str]:
         return {}
 
 
+def normalize_custom_variable_definition(name: str, description: str = "", default_value: str = "") -> dict[str, str]:
+    normalized_name = (name or "").strip()
+    if not CUSTOM_VARIABLE_NAME_PATTERN.fullmatch(normalized_name):
+        raise ValueError("Custom variable name must start with a letter or underscore and use only letters, numbers, and underscores.")
+    if len(normalized_name) > 80:
+        raise ValueError("Custom variable name must be 80 characters or fewer.")
+    normalized_description = (description or "").strip()
+    if len(normalized_description) > 500:
+        raise ValueError("Custom variable description must be 500 characters or fewer.")
+    normalized_default = str(default_value or "")
+    if len(normalized_default) > 2048:
+        raise ValueError("Custom variable default value must be 2048 characters or fewer.")
+    return {
+        "id": normalized_name,
+        "name": normalized_name,
+        "description": normalized_description,
+        "default_value": normalized_default,
+    }
+
+
+def custom_variable_definitions(db: Session) -> list[dict[str, str]]:
+    row = db.execute(select(Setting).where(Setting.key == ESXI_PXE_CUSTOM_VARIABLES_KEY)).scalar_one_or_none()
+    if row is None:
+        return []
+    try:
+        raw_definitions = json.loads(row.value)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    if not isinstance(raw_definitions, list):
+        return []
+    definitions: list[dict[str, str]] = []
+    for item in raw_definitions:
+        if not isinstance(item, dict):
+            continue
+        try:
+            definitions.append(
+                normalize_custom_variable_definition(
+                    str(item.get("name") or ""),
+                    str(item.get("description") or ""),
+                    str(item.get("default_value") or ""),
+                )
+            )
+        except ValueError:
+            continue
+    return sorted(definitions, key=lambda item: item["name"].lower())
+
+
+def custom_variable_defaults(db: Session) -> dict[str, str]:
+    return {item["name"]: item["default_value"] for item in custom_variable_definitions(db)}
+
+
+def save_custom_variable_definition(
+    db: Session,
+    *,
+    name: str,
+    description: str = "",
+    default_value: str = "",
+    original_name: str | None = None,
+) -> dict[str, str]:
+    definition = normalize_custom_variable_definition(name, description, default_value)
+    definitions = custom_variable_definitions(db)
+    original = (original_name or "").strip()
+    if any(item["name"] == definition["name"] and item["name"] != original for item in definitions):
+        raise ValueError("A custom variable with that name already exists.")
+    updated = [item for item in definitions if item["name"] != original and item["name"] != definition["name"]]
+    updated.append(definition)
+    if len(updated) > 64:
+        raise ValueError("Custom variables are limited to 64 entries.")
+    row = db.execute(select(Setting).where(Setting.key == ESXI_PXE_CUSTOM_VARIABLES_KEY)).scalar_one_or_none()
+    serialized = json.dumps(sorted(updated, key=lambda item: item["name"].lower()), separators=(",", ":"), sort_keys=True)
+    if row is None:
+        db.add(Setting(key=ESXI_PXE_CUSTOM_VARIABLES_KEY, value=serialized))
+    else:
+        row.value = serialized
+        row.updated_at = utcnow()
+        db.add(row)
+    db.flush()
+    return definition
+
+
+def delete_custom_variable_definition(db: Session, name: str) -> bool:
+    normalized_name = (name or "").strip()
+    definitions = custom_variable_definitions(db)
+    updated = [item for item in definitions if item["name"] != normalized_name]
+    if len(updated) == len(definitions):
+        return False
+    row = db.execute(select(Setting).where(Setting.key == ESXI_PXE_CUSTOM_VARIABLES_KEY)).scalar_one_or_none()
+    if row is not None:
+        row.value = json.dumps(updated, separators=(",", ":"), sort_keys=True)
+        row.updated_at = utcnow()
+        db.add(row)
+    db.flush()
+    return True
+
+
+def kickstart_template_markers(content: str) -> tuple[list[tuple[int, int, str]], list[str]]:
+    source = content or ""
+    markers: list[tuple[int, int, str]] = []
+    invalid: list[str] = []
+    cursor = 0
+    while cursor < len(source):
+        opening = source.find("{{", cursor)
+        closing = source.find("}}", cursor)
+        if closing >= 0 and (opening < 0 or closing < opening):
+            invalid.append("unmatched }} marker")
+            cursor = closing + 2
+            continue
+        if opening < 0:
+            break
+        closing = source.find("}}", opening + 2)
+        if closing < 0:
+            invalid.append("unclosed {{ marker")
+            break
+        name = source[opening + 2 : closing].strip()
+        if not KICKSTART_VARIABLE_NAME_PATTERN.fullmatch(name):
+            invalid.append("invalid {{ marker")
+        else:
+            markers.append((opening, closing + 2, name))
+        cursor = closing + 2
+    return markers, invalid
+
+
 def kickstart_template_variables(content: str) -> tuple[set[str], list[str]]:
-    names = set(KICKSTART_VARIABLE_PATTERN.findall(content or ""))
-    invalid = [
-        match.group(1).strip()
-        for match in KICKSTART_TEMPLATE_EXPRESSION_PATTERN.finditer(content or "")
-        if not KICKSTART_VARIABLE_PATTERN.fullmatch(match.group(0))
-    ]
+    markers, invalid = kickstart_template_markers(content)
+    names = {name for _start, _end, name in markers}
     return names, invalid
+
+
+def validate_kickstart_vault_references(db: Session, content: str) -> None:
+    names, invalid = kickstart_template_variables(content)
+    if invalid:
+        raise ValueError(f"Kickstart contains invalid variable marker: {invalid[0]}")
+    validate_kickstart_vault_markers(db, names)
+
+
+def validate_kickstart_custom_references(db: Session, content: str) -> None:
+    names, invalid = kickstart_template_variables(content)
+    if invalid:
+        raise ValueError(f"Kickstart contains invalid variable marker: {invalid[0]}")
+    available = set(custom_variable_defaults(db))
+    missing = sorted(
+        name.removeprefix("custom.")
+        for name in names
+        if name.startswith("custom.") and name.removeprefix("custom.") not in available
+    )
+    if missing:
+        raise ValueError(f"Kickstart custom variable {missing[0]} is not defined.")
 
 
 def kickstart_has_variables(content: str) -> bool:
@@ -352,6 +492,7 @@ def kickstart_variable_values(
     host: EsxiPxeHost,
     boot_settings: dict[str, Any],
     vault_values: dict[str, str] | None = None,
+    custom_defaults: dict[str, str] | None = None,
 ) -> dict[str, str]:
     mac_key = normalize_pxe_mac(host.mac_address)
     scope = _dhcp_scope_for_host(host, boot_settings)
@@ -370,8 +511,11 @@ def kickstart_variable_values(
         "dhcp.domain": str(scope.get("domain_name") or ""),
         "pxe.http_base_url": esxi_http_base_url(boot_settings),
     }
-    for key, value in host_variables(host).items():
+    for key, value in (custom_defaults or {}).items():
         values[f"custom.{key}"] = value
+    for key, value in host_variables(host).items():
+        if custom_defaults is None or key in custom_defaults:
+            values[f"custom.{key}"] = value
     for key, value in (vault_values or {}).items():
         values[f"vault.{key}"] = value
     return values
@@ -382,19 +526,24 @@ def render_kickstart_for_host(
     host: EsxiPxeHost,
     boot_settings: dict[str, Any],
     vault_values: dict[str, str] | None = None,
+    custom_defaults: dict[str, str] | None = None,
 ) -> str:
     names, invalid = kickstart_template_variables(content)
     if invalid:
         raise ValueError(f"Kickstart contains invalid variable marker: {invalid[0]}")
-    values = kickstart_variable_values(host, boot_settings, vault_values)
+    values = kickstart_variable_values(host, boot_settings, vault_values, custom_defaults)
     missing = sorted(name for name in names if name not in values)
     if missing:
         raise ValueError(f"Kickstart variable {missing[0]} is not defined for host {host.hostname or host.mac_address}.")
 
-    def replace(match: re.Match[str]) -> str:
-        return values[match.group(1)]
-
-    return KICKSTART_VARIABLE_PATTERN.sub(replace, content)
+    markers, _invalid = kickstart_template_markers(content)
+    rendered: list[str] = []
+    cursor = 0
+    for start, end, name in markers:
+        rendered.extend((content[cursor:start], values[name]))
+        cursor = end
+    rendered.append(content[cursor:])
+    return "".join(rendered)
 
 
 def kickstart_template_validation_errors(
@@ -402,6 +551,7 @@ def kickstart_template_validation_errors(
     hosts: list[EsxiPxeHost],
     boot_settings: dict[str, Any],
     default_host: dict[str, Any] | None = None,
+    custom_defaults: dict[str, str] | None = None,
 ) -> list[str]:
     errors: list[str] = []
     kickstart_by_id = {row.id: row for row in kickstarts if row.id is not None}
@@ -430,7 +580,7 @@ def kickstart_template_validation_errors(
                 for name in marker_names
                 if name.startswith("vault.")
             }
-            render_kickstart_for_host(kickstart.content, host, boot_settings, validation_vault_values)
+            render_kickstart_for_host(kickstart.content, host, boot_settings, validation_vault_values, custom_defaults)
         except ValueError as exc:
             errors.append(str(exc))
     return list(dict.fromkeys(errors))
@@ -1215,7 +1365,13 @@ def esxi_pxe_host_artifacts(
     return artifacts
 
 
-def render_esxi_pxe_manifest(kickstarts: list[EsxiKickstart], hosts: list[EsxiPxeHost], boot_settings: dict[str, Any] | None = None, default_host: dict[str, Any] | None = None) -> str:
+def render_esxi_pxe_manifest(
+    kickstarts: list[EsxiKickstart],
+    hosts: list[EsxiPxeHost],
+    boot_settings: dict[str, Any] | None = None,
+    default_host: dict[str, Any] | None = None,
+    custom_variables: list[dict[str, str]] | None = None,
+) -> str:
     iso_error = ""
     try:
         installer_isos = installer_iso_inventory()
@@ -1290,6 +1446,7 @@ def render_esxi_pxe_manifest(kickstarts: list[EsxiKickstart], hosts: list[EsxiPx
         "installer_isos": installer_isos,
         "installer_iso_error": iso_error,
         "boot": boot_manifest,
+        "custom_variables": custom_variables or [],
         "kickstarts": [
             {
                 "id": row.id,
@@ -1329,13 +1486,23 @@ def render_esxi_pxe_manifest(kickstarts: list[EsxiKickstart], hosts: list[EsxiPx
     return json.dumps(payload, indent=2, sort_keys=True)
 
 
-def render_esxi_pxe_preview(kickstarts: list[EsxiKickstart], hosts: list[EsxiPxeHost], boot_settings: dict[str, Any] | None = None, default_host: dict[str, Any] | None = None) -> str:
-    payload = json.loads(render_esxi_pxe_manifest(kickstarts, hosts, boot_settings, default_host))
+def render_esxi_pxe_preview(
+    kickstarts: list[EsxiKickstart],
+    hosts: list[EsxiPxeHost],
+    boot_settings: dict[str, Any] | None = None,
+    default_host: dict[str, Any] | None = None,
+    custom_variables: list[dict[str, str]] | None = None,
+) -> str:
+    payload = json.loads(render_esxi_pxe_manifest(kickstarts, hosts, boot_settings, default_host, custom_variables))
     for row in payload["kickstarts"]:
         row["content"] = redacted_kickstart_preview(str(row["content"]))
     for host in payload.get("hosts", []):
         if isinstance(host.get("variables"), dict):
             host["variables"] = redacted_host_variables(host["variables"])
+    for variable in payload.get("custom_variables", []):
+        if isinstance(variable, dict):
+            name = str(variable.get("name") or "")
+            variable["default_value"] = redacted_host_variables({name: variable.get("default_value", "")}).get(name, "")
     return json.dumps(payload, indent=2, sort_keys=True)
 
 

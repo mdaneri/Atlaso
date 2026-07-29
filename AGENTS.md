@@ -82,5 +82,8 @@ The following cross-cutting boundaries always apply:
   Preserve explicit certificate-fingerprint confirmation as the trust decision for VCF Automation and vSphere probes.
 - Vault passwords are the narrow exception for an explicit administrator eye reveal: keep them masked by default,
   CSRF-protect and audit reveals without values, disable caching, and automatically hide the value again.
+- Use the locally bundled `window.AtlasoMonaco` integration for code or configuration editing. ESXi Kickstarts use the
+  dedicated Kickstart language and derive vault scope only from exact source markers; never restore an explicit
+  Kickstart-to-vault selector or expose resolved values in browser state or completion metadata.
 - Browser navigation to a globally disabled Web Terminal must render the authenticated Atlaso unavailable-state page;
   reserve JSON and protocol errors for ticket, API, and WebSocket consumers.

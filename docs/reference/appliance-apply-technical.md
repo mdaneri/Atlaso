@@ -262,12 +262,19 @@ lease file at `/var/lib/atlaso/dnsmasq/dhcp.leases`; live lease readback goes th
 
 ### ESXi PXE apply
 
-The ESXi PXE apply unit owns generated installer boot artifacts. Operators edit Kickstart source in the database through
-the built-in CodeMirror editor; filesystem copies are derived artifacts, not desired state. Saving a Kickstart updates
-the database source hash and marks `esxi_pxe` changed, but does not write `/var/lib/atlaso/pxe/http/esxi/ks/<id>.cfg`.
+The ESXi PXE apply unit owns generated installer boot artifacts. Operators manage Kickstarts in a wizard-backed
+Tabulator collection and edit database source through the built-in Monaco Editor; filesystem copies are derived
+artifacts, not desired state. Saving a Kickstart updates the database source hash and marks `esxi_pxe` changed, but does
+not write `/var/lib/atlaso/pxe/http/esxi/ks/<id>.cfg`.
 Boot-time Kickstart requests use `/pxe/esxi/ks/<file>.cfg?mac=<normalized-mac>` so Atlaso can render `{{variable}}`
 markers for the selected host. The endpoint requires an explicit valid MAC and does not infer MAC identity from source
 IP or DHCP leases.
+
+Kickstart vault scope is derived only from exact
+`{{vault.<vaultname>.<key>.<username|password|uri1..uri9>}}` source markers. Save and validation reject malformed,
+missing, renamed, inaccessible, or unsupported references. Boot-time rendering revalidates the references and resolves
+only the exact requested values. Vault values never enter editor completion metadata, page state, previews, diffs,
+jobs, logs, or audits.
 
 #### Installer images
 
@@ -282,7 +289,9 @@ are reconciled on the next global `esxi_pxe` apply.
 Host references are edited in a Tabulator grid. Each host can select a database Kickstart and installer ISO and can
 define custom Kickstart variables as JSON. Built-in variables include host identity, selected DHCP scope values such as
 `{{dhcp.gateway}}`, `{{dhcp.dns_servers}}`, and `{{dhcp.ntp_servers}}`, and the PXE HTTP base URL; custom values are
-referenced as `{{custom.<name>}}`. The grid also has a default profile for undefined MAC addresses; when enabled with an
+referenced as `{{custom.<name>}}`. The Custom Variables collection defines the available names and optional non-secret
+defaults; a host-specific Variables JSON value overrides its matching default. The grid also has a default profile for
+undefined MAC addresses; when enabled with an
 installer ISO, Atlaso generates the top-level default `boot.cfg`, HTTP `boot.cfg`, and `pxelinux.cfg/default` artifacts
 from that profile instead of falling back to the first host reference. The default profile cannot use a Kickstart
 because dynamic Kickstart rendering requires a defined host MAC.
@@ -574,7 +583,7 @@ or activation-code file, but missing profile credentials do not block applying t
 creates a durable `vcf-depot-download` task, writes runtime token or activation-code files under the VCFDT working tree,
 runs VCFDT as the Atlaso service user, and keeps credential bodies out of task output. Enabled profiles can also be
 scheduled under Operations → Automation. The application properties editor saves desired-state text and syncs the
-CodeMirror value before submit; global apply writes the runtime `application-prodv2.properties` used by the active tool.
+Monaco Editor value before submit; global apply writes the runtime `application-prodv2.properties` used by the active tool.
 Through
 `atlaso-helper vcf-offline-depot validate|stage-tool|apply-properties|generate-software-depot-id|sync-intent|apply-https`,
 the helper validates the staged site, rejects broad depot-root exposure and duplicate hostname/listener combinations,

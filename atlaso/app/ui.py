@@ -51,7 +51,6 @@ from atlaso.app.models import (
     DnsRecord,
     DnsSettings,
     EsxiKickstart,
-    EsxiKickstartVaultBinding,
     EsxiPxeHost,
     EsxNfsShare,
     EsxStorageSettings,
@@ -100,13 +99,15 @@ from atlaso.app.models import (
 from atlaso.app.services.vaults import (
     VaultEntryInput,
     create_vault,
-    kickstart_vault_values,
+    kickstart_vault_marker_catalog,
+    kickstart_vault_values_for_markers,
     list_vaults,
     parse_vault_uris_json,
     redact_secret_values,
     update_vault_entry,
     upsert_vault_entry,
     vault_entry_metadata,
+    vault_marker_name,
     vault_scope_identity,
 )
 from atlaso.app.operational_logging import (
@@ -253,6 +254,7 @@ from atlaso.app.services.ca import (
     ensure_managed_certificate_rows,
     ensure_root_ca_material,
     join_multiline,
+    managed_certificate_for_owner,
     render_ca_apply_payload,
     render_ca_config,
     safe_certificate_name,
@@ -594,8 +596,11 @@ from atlaso.app.services.esxi_pxe import (
     assign_kickstart_content,
     canonical_http_path,
     content_hash,
+    custom_variable_defaults,
+    custom_variable_definitions,
     decode_kickstart_upload,
     default_host_to_dict,
+    delete_custom_variable_definition,
     esxi_pxe_boot_settings,
     esxi_pxe_default_host_settings,
     esxi_pxe_host_artifacts,
@@ -610,6 +615,8 @@ from atlaso.app.services.esxi_pxe import (
     kickstart_template_validation_errors,
     kickstart_to_dict,
     kickstart_validation,
+    validate_kickstart_custom_references,
+    validate_kickstart_vault_references,
     mark_kickstarts_applied,
     normalize_host_mac,
     normalize_kickstart_content,
@@ -619,6 +626,7 @@ from atlaso.app.services.esxi_pxe import (
     render_kickstart_for_host,
     render_esxi_pxe_manifest,
     render_esxi_pxe_preview,
+    save_custom_variable_definition,
     save_esxi_pxe_default_host_settings,
     save_esxi_pxe_boot_settings,
     store_installer_iso_upload,
@@ -1126,12 +1134,12 @@ def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
 
 
 def ca_certificate_available(db: Session, owner: str) -> bool:
-    certificate = db.execute(select(CaCertificate).where(CaCertificate.managed_owner == owner)).scalar_one_or_none()
+    certificate = managed_certificate_for_owner(db, owner)
     return bool(certificate and certificate.status == "issued" and certificate.certificate_pem and certificate.private_key_encrypted)
 
 
 def ca_managed_certificate_paths(db: Session, owner: str) -> tuple[str, str, str]:
-    certificate = db.execute(select(CaCertificate).where(CaCertificate.managed_owner == owner)).scalar_one_or_none()
+    certificate = managed_certificate_for_owner(db, owner)
     if certificate is None or certificate.status != "issued":
         return "", "", ""
     return certificate.cert_path or "", certificate.key_path or "", certificate.chain_path or ""
@@ -7127,10 +7135,6 @@ def local_users_apply_context(db: Session, baseline: dict[str, Any] | None = Non
 
 def esxi_pxe_context(db: Session) -> dict[str, Any]:
     kickstarts = db.execute(select(EsxiKickstart).order_by(EsxiKickstart.name)).scalars().all()
-    kickstart_vault_ids = {
-        row.kickstart_id: row.vault_id
-        for row in db.execute(select(EsxiKickstartVaultBinding)).scalars().all()
-    }
     hosts = db.execute(select(EsxiPxeHost).options(selectinload(EsxiPxeHost.kickstart)).order_by(EsxiPxeHost.hostname)).scalars().all()
     dhcp_scopes = db.execute(select(DhcpScope).order_by(DhcpScope.name)).scalars().all()
     default_host = esxi_pxe_default_host_settings(db)
@@ -7192,30 +7196,27 @@ def esxi_pxe_context(db: Session) -> dict[str, Any]:
             validation_warnings.append(f"ESXi PXE hostname {boot_settings['hostname']} is not present in managed DNS records.")
         if not esxi_pxe_host_artifacts(hosts, boot_settings, default_host):
             validation_warnings.append("ESXi PXE bootstrap is enabled, but no enabled host reference or default profile has an installer ISO selected.")
-    validation_errors.extend(kickstart_template_validation_errors(kickstarts, hosts, boot_settings, default_host))
+    custom_variables = custom_variable_definitions(db)
+    custom_defaults = {item["name"]: item["default_value"] for item in custom_variables}
+    validation_errors.extend(kickstart_template_validation_errors(kickstarts, hosts, boot_settings, default_host, custom_defaults))
     for kickstart in kickstarts:
-        marker_names = kickstart_template_variables(kickstart.content)[0]
-        vault_keys = sorted(name.removeprefix("vault.") for name in marker_names if name.startswith("vault."))
-        if not vault_keys:
-            continue
-        vault_id = kickstart_vault_ids.get(kickstart.id)
-        if not vault_id:
-            validation_errors.append(f"{kickstart.name}: select a vault before using vault markers.")
-            continue
         try:
-            available_keys = kickstart_vault_values(db, vault_id)
-        except ValueError:
-            validation_errors.append(f"{kickstart.name}: the selected vault cannot be decrypted.")
-            continue
-        missing_keys = [key for key in vault_keys if key not in available_keys]
-        if missing_keys:
-            validation_errors.append(f"{kickstart.name}: vault key {missing_keys[0]} is not defined.")
+            validate_kickstart_custom_references(db, kickstart.content)
+            validate_kickstart_vault_references(db, kickstart.content)
+        except ValueError as exc:
+            validation_errors.append(f"{kickstart.name}: {exc}")
     esxi_service_state = esxi_pxe_service_state_from_boot(boot_settings)
     return {
         "esxi_kickstarts": kickstarts,
-        "esxi_vaults": db.execute(select(Vault).order_by(Vault.name)).scalars().all(),
-        "esxi_kickstart_vault_ids": kickstart_vault_ids,
-        "esxi_kickstart_rows": [kickstart_to_dict(row, include_content=True) for row in kickstarts],
+        "esxi_kickstart_completions": [
+            *[
+                [f"custom.{item['name']}", item["description"] or "Custom ESXi Kickstart variable"]
+                for item in custom_variables
+            ],
+            *kickstart_vault_marker_catalog(db),
+        ],
+        "esxi_custom_variables": custom_variables,
+        "esxi_kickstart_rows": [kickstart_to_dict(row) for row in kickstarts],
         "esxi_pxe_hosts": hosts,
         "esxi_pxe_host_rows": [default_host_to_dict(default_host), *[host_to_dict(row) for row in hosts]],
         "esxi_pxe_host_kickstart_options": [{"id": "", "label": "No Kickstart"}, *[{"id": row.id, "label": row.name} for row in kickstarts]],
@@ -7251,8 +7252,8 @@ def esxi_pxe_context(db: Session) -> dict[str, Any]:
         "esxi_pxe_validation_errors": validation_errors,
         "esxi_pxe_validation_warnings": list(dict.fromkeys(validation_warnings)),
         "esxi_pxe_validation_by_id": validation_by_id,
-        "esxi_pxe_manifest": render_esxi_pxe_manifest(kickstarts, hosts, boot_settings, default_host),
-        "esxi_pxe_preview": render_esxi_pxe_preview(kickstarts, hosts, boot_settings, default_host),
+        "esxi_pxe_manifest": render_esxi_pxe_manifest(kickstarts, hosts, boot_settings, default_host, custom_variables),
+        "esxi_pxe_preview": render_esxi_pxe_preview(kickstarts, hosts, boot_settings, default_host, custom_variables),
         "esxi_pxe_config_path": ESXI_PXE_STAGED_CONFIG_PATH,
         "esxi_pxe_strict_validation": strict,
         "esxi_default_kickstart_name": DEFAULT_ESXI_KICKSTART_NAME,
@@ -7298,23 +7299,6 @@ def parse_optional_esxi_kickstart_id(db: Session, kickstart_id: str, *, label: s
     if db.get(EsxiKickstart, normalized_id) is None:
         raise HTTPException(status_code=404, detail=f"{label} not found")
     return normalized_id
-
-
-def set_esxi_kickstart_vault_binding(db: Session, kickstart_id: int, vault_id: str) -> None:
-    binding = db.get(EsxiKickstartVaultBinding, kickstart_id)
-    normalized = str(vault_id or "").strip()
-    if not normalized:
-        if binding is not None:
-            db.delete(binding)
-        return
-    if not normalized.isdigit() or db.get(Vault, int(normalized)) is None:
-        raise ValueError("Select an available vault.")
-    if binding is None:
-        binding = EsxiKickstartVaultBinding(kickstart_id=kickstart_id, vault_id=int(normalized))
-    else:
-        binding.vault_id = int(normalized)
-        binding.updated_at = utcnow()
-    db.add(binding)
 
 
 def esx_storage_context(db: Session, *, reconcile: bool = True) -> dict[str, Any]:
@@ -8545,17 +8529,6 @@ def delete_vault_from_ui(
     vault = db.get(Vault, vault_id)
     if vault is None:
         raise HTTPException(status_code=404, detail="Vault not found.")
-    binding = db.execute(
-        select(EsxiKickstartVaultBinding).where(EsxiKickstartVaultBinding.vault_id == vault.id)
-    ).scalar_one_or_none()
-    if binding is not None:
-        return _vaults_render_error(
-            request,
-            identity,
-            db,
-            "Remove this vault from its Kickstart before deleting it.",
-            status_code=409,
-        )
     dependent_schedules: list[str] = []
     for schedule in db.execute(select(Schedule).where(Schedule.task_type == "managed_script")).scalars():
         try:
@@ -8569,6 +8542,22 @@ def delete_vault_from_ui(
             identity,
             db,
             f"Remove this vault from these schedules first: {', '.join(dependent_schedules)}.",
+            status_code=409,
+        )
+    marker_prefix = f"vault.{vault_marker_name(vault.name)}."
+    dependent_kickstarts = [
+        kickstart.name
+        for kickstart in db.execute(
+            select(EsxiKickstart).where(EsxiKickstart.enabled.is_(True)).order_by(EsxiKickstart.name)
+        ).scalars()
+        if any(name.startswith(marker_prefix) for name in kickstart_template_variables(kickstart.content)[0])
+    ]
+    if dependent_kickstarts:
+        return _vaults_render_error(
+            request,
+            identity,
+            db,
+            f"Remove this vault from these enabled Kickstarts first: {', '.join(dependent_kickstarts)}.",
             status_code=409,
         )
     name = vault.name
@@ -20135,15 +20124,28 @@ def esxi_pxe_page_context(
     selected_validation = {"valid": True, "errors": [], "warnings": []}
     if selected is not None:
         selected_validation = context["esxi_pxe_validation_by_id"].get(selected.id, selected_validation)
+    grid_rows = [
+        esxi_kickstart_grid_payload(row, include_content=identity.can("write:esxi-pxe"))
+        for row in kickstarts
+    ]
     return {
         **context,
         "esxi_selected_kickstart": selected,
         "esxi_selected_kickstart_json": kickstart_to_dict(selected, include_content=identity.can("write:esxi-pxe")) if selected else None,
         "esxi_selected_validation": selected_validation,
         "esxi_can_write": identity.can("write:esxi-pxe"),
+        "esxi_kickstart_grid_rows": grid_rows,
         "esxi_pxe_result": result,
         "esxi_pxe_error": error,
     }
+
+
+def esxi_kickstart_grid_payload(kickstart: EsxiKickstart, *, include_content: bool) -> dict[str, Any]:
+    payload = kickstart_to_dict(kickstart, include_content=include_content)
+    for field in ("created_at", "updated_at", "last_rendered_at", "last_applied_at"):
+        value = payload[field]
+        payload[field] = value.isoformat() if value else ""
+    return payload
 
 
 @router.post("/services/{service}/{action}", response_model=None)
@@ -20499,15 +20501,13 @@ def serve_esxi_kickstart_file(kickstart_file: str, mac: str = "", db: Session = 
     try:
         vault_values: dict[str, str] = {}
         if any(name.startswith("vault.") for name in names):
-            binding = db.get(EsxiKickstartVaultBinding, kickstart.id)
-            if binding is None:
-                raise ValueError("Kickstart vault markers require a selected vault.")
-            vault_values = kickstart_vault_values(db, binding.vault_id)
+            vault_values = kickstart_vault_values_for_markers(db, names)
         rendered = render_kickstart_for_host(
             kickstart.content,
             host,
             esxi_pxe_boot_settings(db),
             vault_values,
+            custom_variable_defaults(db),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -20641,7 +20641,6 @@ def create_esxi_kickstart_from_ui(
     description: str = Form(""),
     content: str = Form(...),
     enabled: bool = Form(False),
-    vault_id: str = Form(""),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
@@ -20653,21 +20652,31 @@ def create_esxi_kickstart_from_ui(
         db.add(kickstart)
         db.flush()
         assign_kickstart_content(kickstart, content, max_bytes=get_settings().esxi_kickstart_max_bytes)
-        set_esxi_kickstart_vault_binding(db, kickstart.id, vault_id)
+        validate_kickstart_custom_references(db, kickstart.content)
+        validate_kickstart_vault_references(db, kickstart.content)
         db.commit()
     except (ValueError, IntegrityError) as exc:
         db.rollback()
+        detail = (
+            "A Kickstart with that name already exists."
+            if isinstance(exc, IntegrityError)
+            else "Kickstart source is invalid. Review its variable and vault markers."
+        )
+        if "application/json" in request.headers.get("accept", ""):
+            return JSONResponse({"detail": detail}, status_code=400)
         return render(
             request,
             "esxi_pxe.html",
             {
                 "identity": identity,
-                **esxi_pxe_page_context(db, identity, error=str(exc)),
+                **esxi_pxe_page_context(db, identity, error=detail),
                 "appliance_apply_status": appliance_apply_status(db, "esxi_pxe"),
             },
             status_code=400,
         )
     record_audit(db, actor=identity.username, action="create_esxi_kickstart", resource_type="esxi_kickstart", resource_id=str(kickstart.id), detail=f"name={kickstart.name} hash={kickstart.content_hash}", request_id=request.state.request_id)
+    if "application/json" in request.headers.get("accept", ""):
+        return JSONResponse({"kickstart": esxi_kickstart_grid_payload(kickstart, include_content=True)})
     return RedirectResponse(f"/esxi-pxe?kickstart_id={kickstart.id}", status_code=303)
 
 
@@ -20679,11 +20688,10 @@ def update_esxi_kickstart_from_ui(
     description: str = Form(""),
     content: str = Form(...),
     enabled: bool = Form(False),
-    vault_id: str = Form(""),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse:
+) -> RedirectResponse | HTMLResponse | JSONResponse:
     require_esxi_pxe_write(identity)
     verify_csrf(request, csrf)
     kickstart = db.get(EsxiKickstart, kickstart_id)
@@ -20694,22 +20702,32 @@ def update_esxi_kickstart_from_ui(
         kickstart.description = description or None
         kickstart.enabled = enabled
         assign_kickstart_content(kickstart, content, max_bytes=get_settings().esxi_kickstart_max_bytes)
-        set_esxi_kickstart_vault_binding(db, kickstart.id, vault_id)
+        validate_kickstart_custom_references(db, kickstart.content)
+        validate_kickstart_vault_references(db, kickstart.content)
         db.add(kickstart)
         db.commit()
     except (ValueError, IntegrityError) as exc:
         db.rollback()
+        detail = (
+            "A Kickstart with that name already exists."
+            if isinstance(exc, IntegrityError)
+            else "Kickstart source is invalid. Review its variable and vault markers."
+        )
+        if "application/json" in request.headers.get("accept", ""):
+            return JSONResponse({"detail": detail}, status_code=400)
         return render(
             request,
             "esxi_pxe.html",
             {
                 "identity": identity,
-                **esxi_pxe_page_context(db, identity, selected_id=kickstart_id, error=str(exc)),
+                **esxi_pxe_page_context(db, identity, selected_id=kickstart_id, error=detail),
                 "appliance_apply_status": appliance_apply_status(db, "esxi_pxe"),
             },
             status_code=400,
         )
     record_audit(db, actor=identity.username, action="update_esxi_kickstart", resource_type="esxi_kickstart", resource_id=str(kickstart.id), detail=f"name={kickstart.name} hash={kickstart.content_hash}", request_id=request.state.request_id)
+    if "application/json" in request.headers.get("accept", ""):
+        return JSONResponse({"kickstart": esxi_kickstart_grid_payload(kickstart, include_content=True)})
     return RedirectResponse(f"/esxi-pxe?kickstart_id={kickstart.id}", status_code=303)
 
 
@@ -20737,9 +20755,6 @@ def duplicate_esxi_kickstart_from_ui(
     db.add(duplicate)
     db.flush()
     duplicate.http_path = canonical_http_path(duplicate.id, duplicate.content_hash)
-    source_binding = db.get(EsxiKickstartVaultBinding, source.id)
-    if source_binding is not None:
-        db.add(EsxiKickstartVaultBinding(kickstart_id=duplicate.id, vault_id=source_binding.vault_id))
     db.commit()
     record_audit(db, actor=identity.username, action="duplicate_esxi_kickstart", resource_type="esxi_kickstart", resource_id=str(duplicate.id), detail=f"source_id={source.id} name={duplicate.name}", request_id=request.state.request_id)
     return RedirectResponse(f"/esxi-pxe?kickstart_id={duplicate.id}", status_code=303)
@@ -20762,9 +20777,6 @@ def delete_esxi_kickstart_from_ui(
         host.kickstart_id = None
         host.updated_at = utcnow()
         db.add(host)
-    binding = db.get(EsxiKickstartVaultBinding, kickstart.id)
-    if binding is not None:
-        db.delete(binding)
     db.delete(kickstart)
     db.commit()
     record_audit(db, actor=identity.username, action="delete_esxi_kickstart", resource_type="esxi_kickstart", resource_id=str(kickstart_id), request_id=request.state.request_id)
@@ -20784,6 +20796,11 @@ def validate_esxi_kickstart_from_ui(
     if not kickstart:
         raise HTTPException(status_code=404, detail="Kickstart not found")
     errors, warnings = kickstart_validation(kickstart.content, strict=strict_validation_enabled(db), max_bytes=get_settings().esxi_kickstart_max_bytes)
+    try:
+        validate_kickstart_custom_references(db, kickstart.content)
+        validate_kickstart_vault_references(db, kickstart.content)
+    except ValueError as exc:
+        errors.append(str(exc))
     record_audit(db, actor=identity.username, action="validate_esxi_kickstart", resource_type="esxi_kickstart", resource_id=str(kickstart.id), detail=f"errors={len(errors)} warnings={len(warnings)}", request_id=request.state.request_id)
     return render(
         request,
@@ -20815,6 +20832,110 @@ def download_esxi_kickstart_from_ui(
     return Response(kickstart.content, media_type="text/plain; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="{filename}.cfg"'})
 
 
+@router.post("/esxi-pxe/custom-variables", response_model=None)
+def create_esxi_custom_variable_from_ui(
+    request: Request,
+    name: str = Form(...),
+    description: str = Form(""),
+    default_value: str = Form(""),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> RedirectResponse | JSONResponse:
+    require_esxi_pxe_write(identity)
+    verify_csrf(request, csrf)
+    try:
+        variable = save_custom_variable_definition(
+            db,
+            name=name,
+            description=description,
+            default_value=default_value,
+        )
+        db.commit()
+    except ValueError:
+        db.rollback()
+        return JSONResponse({"detail": "Custom variable definition is invalid."}, status_code=400)
+    record_audit(
+        db,
+        actor=identity.username,
+        action="create_esxi_custom_variable",
+        resource_type="esxi_custom_variable",
+        resource_id=variable["name"],
+        detail=f"name={variable['name']}",
+        request_id=request.state.request_id,
+    )
+    if "application/json" in request.headers.get("accept", ""):
+        return JSONResponse({"variable": variable})
+    return RedirectResponse("/esxi-pxe#esxi-pxe-custom-variables-panel", status_code=303)
+
+
+@router.post("/esxi-pxe/custom-variables/{variable_name}", response_model=None)
+def update_esxi_custom_variable_from_ui(
+    variable_name: str,
+    request: Request,
+    name: str = Form(...),
+    description: str = Form(""),
+    default_value: str = Form(""),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> RedirectResponse | JSONResponse:
+    require_esxi_pxe_write(identity)
+    verify_csrf(request, csrf)
+    if variable_name not in {item["name"] for item in custom_variable_definitions(db)}:
+        raise HTTPException(status_code=404, detail="Custom variable not found")
+    try:
+        variable = save_custom_variable_definition(
+            db,
+            name=name,
+            description=description,
+            default_value=default_value,
+            original_name=variable_name,
+        )
+        db.commit()
+    except ValueError:
+        db.rollback()
+        return JSONResponse({"detail": "Custom variable definition is invalid."}, status_code=400)
+    record_audit(
+        db,
+        actor=identity.username,
+        action="update_esxi_custom_variable",
+        resource_type="esxi_custom_variable",
+        resource_id=variable["name"],
+        detail=f"previous_name={variable_name} name={variable['name']}",
+        request_id=request.state.request_id,
+    )
+    if "application/json" in request.headers.get("accept", ""):
+        return JSONResponse({"variable": variable})
+    return RedirectResponse("/esxi-pxe#esxi-pxe-custom-variables-panel", status_code=303)
+
+
+@router.post("/esxi-pxe/custom-variables/{variable_name}/delete", response_model=None)
+def delete_esxi_custom_variable_from_ui(
+    variable_name: str,
+    request: Request,
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> RedirectResponse | JSONResponse:
+    require_esxi_pxe_write(identity)
+    verify_csrf(request, csrf)
+    if not delete_custom_variable_definition(db, variable_name):
+        raise HTTPException(status_code=404, detail="Custom variable not found")
+    db.commit()
+    record_audit(
+        db,
+        actor=identity.username,
+        action="delete_esxi_custom_variable",
+        resource_type="esxi_custom_variable",
+        resource_id=variable_name,
+        request_id=request.state.request_id,
+    )
+    if "application/json" in request.headers.get("accept", ""):
+        return JSONResponse({"deleted": variable_name})
+    return RedirectResponse("/esxi-pxe#esxi-pxe-custom-variables-panel", status_code=303)
+
+
 @router.post("/esxi-pxe/kickstarts/upload", response_model=None)
 async def upload_esxi_kickstart_from_ui(
     request: Request,
@@ -20840,6 +20961,8 @@ async def upload_esxi_kickstart_from_ui(
         )
         db.add(kickstart)
         db.flush()
+        validate_kickstart_custom_references(db, kickstart.content)
+        validate_kickstart_vault_references(db, kickstart.content)
         kickstart.http_path = canonical_http_path(kickstart.id, kickstart.content_hash)
         db.commit()
     except (ValueError, IntegrityError) as exc:

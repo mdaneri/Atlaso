@@ -1101,7 +1101,7 @@ async function atlasoGridWizardRequest(url, formData, { expectJson = true } = {}
     method: "POST",
     body: formData,
     credentials: "same-origin",
-    headers: { "X-Atlaso-Grid": "1" },
+    headers: { Accept: "application/json", "X-Atlaso-Grid": "1" },
   });
   const responseText = await response.text();
   if (!response.ok) {
@@ -1330,7 +1330,6 @@ function initializeAtlasoResourceWizard(config) {
     columns: configuredColumns,
     data: rows,
     index: "id",
-    rowDblClick: (_event, row) => openResource(row.getData(), row.getElement()),
   };
   const grid = window.AtlasoUiPatterns.createGrid({
     element,
@@ -8812,6 +8811,138 @@ function initializeEsxiPxeHostsTable() {
   }
 }
 
+function showEsxiCustomVariableError(message) {
+  const element = document.getElementById("esxi-custom-variables-error");
+  if (!element) return;
+  element.textContent = message;
+  element.classList.remove("hidden");
+}
+
+function clearEsxiCustomVariableError() {
+  const element = document.getElementById("esxi-custom-variables-error");
+  if (!element) return;
+  element.textContent = "";
+  element.classList.add("hidden");
+}
+
+async function postEsxiCustomVariableAction(url, data, csrf) {
+  const body = new FormData();
+  body.set("csrf", csrf);
+  for (const field of ["name", "description", "default_value"]) {
+    if (field in data) body.set(field, data[field] ?? "");
+  }
+  const response = await fetch(url, {
+    method: "POST",
+    body,
+    credentials: "same-origin",
+    headers: { Accept: "application/json" },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.detail || "The custom variable could not be saved.");
+  }
+  return payload;
+}
+
+async function autoSaveEsxiCustomVariable(cell, csrf) {
+  clearEsxiCustomVariableError();
+  const data = cell.getRow().getData();
+  if (data.is_new && !(data.name || "").trim()) {
+    reformatPendingNewRecord(cell);
+    return;
+  }
+  const url = data.is_new
+    ? "/esxi-pxe/custom-variables"
+    : `/esxi-pxe/custom-variables/${encodeURIComponent(data.id)}`;
+  try {
+    await postEsxiCustomVariableAction(url, data, csrf);
+    showTransientGridStatus(data.is_new ? "Added" : "Saved");
+    window.location.reload();
+  } catch (error) {
+    showEsxiCustomVariableError(error instanceof Error ? error.message : "The custom variable could not be saved.");
+    if (typeof cell.restoreOldValue === "function") cell.restoreOldValue();
+  }
+}
+
+async function deleteEsxiCustomVariable(row, csrf) {
+  const data = row.getData();
+  if (data.is_new) return;
+  const confirmed = await requestConfirmation({
+    title: `Delete custom variable ${data.name}?`,
+    message: `Kickstarts using {{custom.${data.name}}} will fail validation unless the variable is restored or the marker is removed.`,
+    label: "Delete custom variable",
+  });
+  if (!confirmed) return;
+  try {
+    await postEsxiCustomVariableAction(`/esxi-pxe/custom-variables/${encodeURIComponent(data.id)}/delete`, {}, csrf);
+    window.location.reload();
+  } catch (error) {
+    showEsxiCustomVariableError(error instanceof Error ? error.message : "The custom variable could not be deleted.");
+  }
+}
+
+function initializeEsxiCustomVariablesTable() {
+  const element = document.getElementById("esxi-custom-variables-table");
+  if (!(element instanceof HTMLElement)) return;
+  const rows = JSON.parse(element.dataset.rows || "[]");
+  const canWrite = element.dataset.canWrite === "true";
+  if (canWrite) rows.push({ id: "__new__", name: "", description: "", default_value: "", is_new: true });
+  const columns = [
+    {
+      title: "Custom variable name",
+      field: "name",
+      editor: canWrite ? "input" : false,
+      formatter: (cell) => cell.getRow().getData().is_new
+        ? dnsAddRowHintFormatter(cell, "+ Add custom variable")
+        : `<code>custom.${escapeHtml(cell.getValue())}</code>`,
+      minWidth: 220,
+      cellEdited: (cell) => autoSaveEsxiCustomVariable(cell, element.dataset.csrf || ""),
+    },
+    {
+      title: "Description",
+      field: "description",
+      editor: canWrite ? "input" : false,
+      editable: (cell) => canWrite && !cell.getRow().getData().is_new,
+      minWidth: 260,
+      widthGrow: 1.5,
+      cellEdited: (cell) => autoSaveEsxiCustomVariable(cell, element.dataset.csrf || ""),
+    },
+    {
+      title: "Default value, if any",
+      field: "default_value",
+      editor: canWrite ? "input" : false,
+      editable: (cell) => canWrite && !cell.getRow().getData().is_new,
+      minWidth: 260,
+      widthGrow: 1.2,
+      cellEdited: (cell) => autoSaveEsxiCustomVariable(cell, element.dataset.csrf || ""),
+    },
+  ];
+  window.AtlasoUiPatterns.createGrid({
+    element,
+    pattern: "direct-edit",
+    permission: {
+      allowed: canWrite,
+      message: "You have read-only access to ESXi Kickstart custom variables.",
+    },
+    options: {
+      data: rows,
+      index: "id",
+      layout: "fitColumns",
+      height: "360px",
+      placeholder: "No custom Kickstart variables configured.",
+      columns,
+      rowContextMenu: canWrite ? [
+        {
+          label: "Delete custom variable",
+          disabled: (_event, row) => row.getData().is_new,
+          action: (_event, row) => deleteEsxiCustomVariable(row, element.dataset.csrf || ""),
+        },
+      ] : false,
+      rowFormatter: (row) => markNewRecordRow(row, "name"),
+    },
+  });
+}
+
 function initializeHostsFileEditor() {
   document.querySelectorAll(".hosts-file-input").forEach((input) => {
     if (!(input instanceof HTMLInputElement)) {
@@ -8827,9 +8958,9 @@ function initializeHostsFileEditor() {
         return;
       }
       const fileText = await file.text();
-      if (window.AtlasoCodeMirror && typeof window.AtlasoCodeMirror.setValue === "function") {
-        window.AtlasoCodeMirror.setValue(editor, fileText);
-        window.AtlasoCodeMirror.focus(editor);
+      if (window.AtlasoMonaco && typeof window.AtlasoMonaco.setValue === "function") {
+        window.AtlasoMonaco.setValue(editor, fileText);
+        window.AtlasoMonaco.focus(editor);
         return;
       }
       editor.value = fileText;
@@ -8839,98 +8970,156 @@ function initializeHostsFileEditor() {
   });
 }
 
-function initializeCodeMirrorEditors() {
-  if (!window.AtlasoCodeMirror || typeof window.AtlasoCodeMirror.enhanceTextarea !== "function") {
+function initializeMonacoEditors() {
+  if (!window.AtlasoMonaco || typeof window.AtlasoMonaco.enhanceTextarea !== "function") {
     return;
   }
-  document.querySelectorAll("textarea[data-codemirror-editor]").forEach((textarea) => {
+  document.querySelectorAll("textarea[data-monaco-editor]").forEach((textarea) => {
     if (!(textarea instanceof HTMLTextAreaElement)) {
       return;
     }
-    const view = window.AtlasoCodeMirror.enhanceTextarea(textarea, {
-      language: textarea.dataset.codemirrorLanguage || "atlaso-hosts",
+    window.AtlasoMonaco.enhanceTextarea(textarea, {
+      language: textarea.dataset.monacoLanguage || "atlaso-hosts",
     });
-    installCodeMirrorPlainTextFallback(textarea, view);
   });
 }
 
-function installCodeMirrorPlainTextFallback(textarea, view) {
-  if (!(textarea instanceof HTMLTextAreaElement) || !view || textarea.dataset.codemirrorLanguage !== "atlaso-kickstart") {
-    return;
-  }
-  const editorDom = view.dom instanceof HTMLElement ? view.dom : null;
-  const contentDom = view.contentDOM instanceof HTMLElement ? view.contentDOM : editorDom?.querySelector?.(".cm-content");
-  const eventTarget = editorDom || contentDom;
-  if (!(eventTarget instanceof HTMLElement) || !(contentDom instanceof HTMLElement) || eventTarget.dataset.atlasoPlainTextFallback === "1") {
-    return;
-  }
-  eventTarget.dataset.atlasoPlainTextFallback = "1";
-  const insertTextAtSelection = (text) => {
-    const selection = view.state?.selection?.main;
-    if (!selection || typeof selection.from !== "number" || typeof selection.to !== "number") {
-      return false;
-    }
-    const cursor = selection.from + text.length;
-    view.dispatch({
-      changes: { from: selection.from, to: selection.to, insert: text },
-      selection: { anchor: cursor },
-      scrollIntoView: true,
-      userEvent: "input.type",
+function initializeKickstartCollection() {
+  const element = document.getElementById("esxi-kickstarts-table");
+  if (!(element instanceof HTMLElement)) return;
+  const rows = JSON.parse(element.dataset.rows || "[]");
+  const columns = [
+    {
+      title: "Name",
+      field: "name",
+      formatter: (cell) => cell.getRow().getData().is_new
+        ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add Kickstart</button>'
+        : escapeHtml(cell.getValue()),
+      minWidth: 180,
+    },
+    { title: "Description", field: "description", minWidth: 220, widthGrow: 1.4 },
+    { title: "Content hash", field: "content_hash", formatter: (cell) => cell.getRow().getData().is_new ? "" : `<code>${escapeHtml(String(cell.getValue() || "").slice(0, 12))}</code>`, minWidth: 140 },
+    { title: "Drift", field: "drift_state", formatter: (cell) => escapeHtml(String(cell.getValue() || "").replaceAll("_", " ")), minWidth: 175 },
+    { title: "Updated", field: "updated_at", minWidth: 180 },
+    { title: "Enabled", field: "enabled", formatter: atlasoBooleanFormatter, width: 95, hozAlign: "center" },
+  ];
+  if (element.dataset.canWrite !== "true") {
+    window.AtlasoUiPatterns.createGrid({
+      element,
+      pattern: "read-only",
+      permission: { allowed: false, message: "You have read-only access to Kickstarts." },
+      options: { data: rows, index: "id", layout: "fitColumns", height: "360px", columns },
     });
-    view.focus();
-    return true;
+    return;
+  }
+  const form = document.querySelector("[data-kickstart-wizard]");
+  if (!(element instanceof HTMLElement) || !(form instanceof HTMLFormElement)) return;
+  const source = form.elements.namedItem("content");
+  if (!(source instanceof HTMLTextAreaElement)) return;
+  const updateSummary = (table) => {
+    const summary = document.querySelector("[data-esxi-pxe-summary]");
+    if (!(summary instanceof HTMLElement) || !table) return;
+    const kickstartCount = table.getData().filter((row) => !row.is_new).length;
+    const isoCount = Number(summary.dataset.isoCount || 0);
+    summary.textContent = `${kickstartCount} Kickstarts / ${isoCount} ISOs`;
   };
-  eventTarget.addEventListener("pointerdown", () => view.focus());
-  eventTarget.addEventListener("click", (event) => {
-    event.stopPropagation();
-    view.focus();
+  const submitAction = (action, id) => {
+    const actionForm = document.createElement("form");
+    actionForm.method = "post";
+    actionForm.action = `/esxi-pxe/kickstarts/${id}/${action}`;
+    actionForm.innerHTML = `<input type="hidden" name="csrf" value="${escapeHtml(element.dataset.csrf || "")}">`;
+    document.body.append(actionForm);
+    actionForm.submit();
+  };
+  const collection = initializeAtlasoResourceWizard({
+    elementId: "esxi-kickstarts-table",
+    formSelector: "[data-kickstart-wizard]",
+    dialogId: "kickstart-wizard-dialog",
+    rows,
+    newRow: { id: "__new__", is_new: true, name: "" },
+    resourceName: "kickstart",
+    recordField: "record_id",
+    createUrl: "/esxi-pxe/kickstarts",
+    editUrl: (id) => `/esxi-pxe/kickstarts/${id}`,
+    deleteUrl: (id) => `/esxi-pxe/kickstarts/${id}/delete`,
+    deleteResource: true,
+    deleteConfirmation: (data) => ({
+      title: `Delete ${data.name}?`,
+      message: "This removes the Kickstart from desired state and clears host references. Generated runtime files change only after global appliance apply.",
+      confirmLabel: "Delete Kickstart",
+      tone: "danger",
+    }),
+    editLabel: "Edit Kickstart",
+    deleteLabel: "Delete Kickstart",
+    createLabel: "Save Kickstart",
+    updateLabel: "Save Kickstart",
+    emptyMessage: "No Kickstarts configured.",
+    gridError: "Kickstart changes are unavailable because the interactive grid could not initialize.",
+    steps: [
+      { id: "identity", title: "Identify the Kickstart", description: "Name and describe the database-owned source." },
+      { id: "source", title: "Edit Kickstart source", description: "Use the ESXi Kickstart language and Atlaso variables." },
+      { id: "state", title: "Choose desired availability", description: "Enabled source is generated during global appliance apply." },
+      { id: "review", title: "Review the Kickstart", description: "Confirm source variables and desired state." },
+    ],
+    extraActions: [
+      {
+        label: "Duplicate Kickstart",
+        disabled: (row) => row.getData().is_new,
+        action: (_event, row) => document.getElementById(`kickstart-duplicate-${row.getData().id}`)?.requestSubmit(),
+      },
+      {
+        label: "Validate Kickstart",
+        disabled: (row) => row.getData().is_new,
+        action: (_event, row) => submitAction("validate", row.getData().id),
+      },
+      {
+        label: "Download Kickstart",
+        disabled: (row) => row.getData().is_new,
+        action: (_event, row) => { window.location.href = `/esxi-pxe/kickstarts/${row.getData().id}/download`; },
+      },
+    ],
+    onOpen: ({ context }) => {
+      form.querySelector("[data-kickstart-modal-title]").textContent = context ? "Edit Kickstart" : "Add Kickstart";
+      window.AtlasoMonaco.setValue(source, context?.content ?? source.defaultValue);
+      collection?.wizard?.markClean();
+    },
+    validateStep: ({ step }) => {
+      if (step?.id === "source" && !window.AtlasoMonaco.getValue(source).trim()) {
+        return { valid: false, field: source, message: "Kickstart source is required." };
+      }
+      return { valid: true };
+    },
+    prepareFormData: ({ body }) => body.set("content", window.AtlasoMonaco.getValue(source)),
+    prepareReview: () => {
+      form.querySelector('[data-kickstart-review="name"]').textContent = form.elements.name.value;
+      form.querySelector('[data-kickstart-review="description"]').textContent = form.elements.description.value || "None";
+      form.querySelector('[data-kickstart-review="state"]').textContent = form.elements.enabled.checked ? "Enabled" : "Disabled";
+      form.querySelector('[data-kickstart-review="variables"]').textContent = [...window.AtlasoMonaco.getValue(source).matchAll(/\{\{\s*([^}]+)\s*\}\}/g)]
+        .map((match) => match[1].trim()).join(", ") || "None";
+    },
+    onSaved: ({ table }) => updateSummary(table),
+    onDeleted: ({ table }) => updateSummary(table),
+    options: {
+      layout: "fitColumns",
+      height: "360px",
+      rowHeight: 30,
+      placeholder: "No Kickstarts configured.",
+      columns,
+      rowFormatter: (row) => markNewRecordRow(row, "name"),
+    },
   });
-  eventTarget.addEventListener(
-    "beforeinput",
-    (event) => {
-      if (event.defaultPrevented || event.isComposing || event.inputType !== "insertText" || typeof event.data !== "string" || event.data.length === 0) {
-        return;
-      }
-      event.preventDefault();
-      insertTextAtSelection(event.data);
-    },
-    true
-  );
-  eventTarget.addEventListener(
-    "keydown",
-    (event) => {
-      if (event.defaultPrevented || event.isComposing || event.ctrlKey || event.metaKey || event.altKey || event.key.length !== 1) {
-        return;
-      }
-      event.preventDefault();
-      insertTextAtSelection(event.key);
-    },
-    true
-  );
-}
-
-function initializeKickstartEditorDirtyState() {
-  document.querySelectorAll("[data-kickstart-editor-form]").forEach((form) => {
-    if (!(form instanceof HTMLFormElement)) {
-      return;
+  form.querySelector("[data-kickstart-import]")?.addEventListener("change", async (event) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      window.AtlasoMonaco.setValue(source, await file.text());
+      window.AtlasoMonaco.focus(source);
     }
-    const status = form.querySelector("[data-kickstart-dirty-state]");
-    const editor = form.querySelector("textarea[name='content']");
-    if (!(status instanceof HTMLElement) || !(editor instanceof HTMLTextAreaElement)) {
-      return;
-    }
-    let initialValue = editor.value;
-    const refresh = () => {
-      const dirty = editor.value !== initialValue;
-      status.textContent = dirty ? "Unsaved changes" : "Saved";
-      status.classList.toggle("dirty", dirty);
-    };
-    editor.addEventListener("input", refresh);
-    form.addEventListener("submit", () => {
-      initialValue = editor.value;
-      refresh();
-    });
-    refresh();
+  });
+  document.addEventListener("click", (event) => {
+    const trigger = event.target instanceof Element ? event.target.closest("[data-kickstart-edit-id]") : null;
+    if (!trigger || !collection?.wizard) return;
+    const row = rows.find((item) => String(item.id) === trigger.dataset.kickstartEditId);
+    if (row) collection.wizard.open({ context: row, launcher: trigger });
   });
 }
 
@@ -12683,8 +12872,8 @@ function initializeVcfDepotPropertiesEditor() {
       if (modal instanceof HTMLDialogElement) {
         modal.showModal();
         const textarea = modal.querySelector("[data-vcf-depot-properties-textarea]");
-        if (window.AtlasoCodeMirror && typeof window.AtlasoCodeMirror.focus === "function" && textarea instanceof HTMLTextAreaElement) {
-          window.AtlasoCodeMirror.focus(textarea);
+        if (window.AtlasoMonaco && typeof window.AtlasoMonaco.focus === "function" && textarea instanceof HTMLTextAreaElement) {
+          window.AtlasoMonaco.focus(textarea);
         }
       }
     });
@@ -12708,9 +12897,7 @@ function initializeVcfDepotPropertiesEditor() {
     const status = form.querySelector("[data-vcf-depot-properties-save-status]");
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      if (textarea instanceof HTMLTextAreaElement && textarea.atlasoCodeMirrorView?.state?.doc) {
-        textarea.value = textarea.atlasoCodeMirrorView.state.doc.toString();
-      }
+      if (textarea instanceof HTMLTextAreaElement && window.AtlasoMonaco) textarea.value = window.AtlasoMonaco.getValue(textarea);
       if (!(textarea instanceof HTMLTextAreaElement) || !textarea.value.trim()) {
         if (status instanceof HTMLElement) {
           status.textContent = "application-prodv2.properties cannot be empty.";
@@ -15827,8 +16014,8 @@ function initializeAutomationTables() {
     const scriptConfirm = scriptModal.querySelector("[data-automation-script-source-confirm]");
     const setScriptEditorValue = (value) => {
       if (!(scriptTextarea instanceof HTMLTextAreaElement)) return;
-      if (window.AtlasoCodeMirror && typeof window.AtlasoCodeMirror.setValue === "function") {
-        window.AtlasoCodeMirror.setValue(scriptTextarea, value);
+      if (window.AtlasoMonaco && typeof window.AtlasoMonaco.setValue === "function") {
+        window.AtlasoMonaco.setValue(scriptTextarea, value);
       } else {
         scriptTextarea.value = value;
         scriptTextarea.dispatchEvent(new Event("input", { bubbles: true }));
@@ -15836,7 +16023,7 @@ function initializeAutomationTables() {
     };
     const scriptEditorValue = () => {
       if (!(scriptTextarea instanceof HTMLTextAreaElement)) return "";
-      return scriptTextarea.atlasoCodeMirrorView?.state?.doc?.toString() ?? scriptTextarea.value;
+      return window.AtlasoMonaco?.getValue(scriptTextarea) ?? scriptTextarea.value;
     };
     const updateScriptLanguage = (interpreter) => {
       activeScriptInterpreter = ["bash", "powershell", "python"].includes(interpreter) ? interpreter : "bash";
@@ -15864,7 +16051,7 @@ function initializeAutomationTables() {
       }
       scriptModal.showModal();
       window.requestAnimationFrame(() => {
-        if (window.AtlasoCodeMirror && typeof window.AtlasoCodeMirror.focus === "function") window.AtlasoCodeMirror.focus(scriptTextarea);
+        if (window.AtlasoMonaco && typeof window.AtlasoMonaco.focus === "function") window.AtlasoMonaco.focus(scriptTextarea);
         else scriptTextarea.focus({ preventScroll: true });
       });
     };
@@ -15887,7 +16074,7 @@ function initializeAutomationTables() {
         if (inferredInterpreter) updateScriptLanguage(inferredInterpreter);
         const fileText = await file.text();
         setScriptEditorValue(fileText);
-        if (window.AtlasoCodeMirror && typeof window.AtlasoCodeMirror.focus === "function") window.AtlasoCodeMirror.focus(scriptTextarea);
+        if (window.AtlasoMonaco && typeof window.AtlasoMonaco.focus === "function") window.AtlasoMonaco.focus(scriptTextarea);
         else scriptTextarea.focus();
         if (scriptImportStatus instanceof HTMLElement) {
           const interpreterNote = inferredInterpreter ? `; interpreter set to ${inferredInterpreter}` : "";
@@ -15936,8 +16123,8 @@ function initializeAutomationTables() {
     );
     const setScriptCreateEditorValue = (value) => {
       if (!(scriptCreateContent instanceof HTMLTextAreaElement)) return;
-      if (window.AtlasoCodeMirror && typeof window.AtlasoCodeMirror.setValue === "function") {
-        window.AtlasoCodeMirror.setValue(scriptCreateContent, value);
+      if (window.AtlasoMonaco && typeof window.AtlasoMonaco.setValue === "function") {
+        window.AtlasoMonaco.setValue(scriptCreateContent, value);
       } else {
         scriptCreateContent.value = value;
         scriptCreateContent.dispatchEvent(new Event("input", { bubbles: true }));
@@ -15945,7 +16132,7 @@ function initializeAutomationTables() {
     };
     const scriptCreateEditorValue = () => {
       if (!(scriptCreateContent instanceof HTMLTextAreaElement)) return "";
-      return scriptCreateContent.atlasoCodeMirrorView?.state?.doc?.toString() ?? scriptCreateContent.value;
+      return window.AtlasoMonaco?.getValue(scriptCreateContent) ?? scriptCreateContent.value;
     };
     const updateScriptCreateLanguage = (value) => {
       const interpreter = normalizedScriptInterpreter(value);
@@ -15955,18 +16142,18 @@ function initializeAutomationTables() {
       if (scriptCreateFullscreenLanguage instanceof HTMLElement) scriptCreateFullscreenLanguage.textContent = interpreter;
       if (scriptCreateContent instanceof HTMLTextAreaElement) {
         scriptCreateContent.dataset.scriptInterpreter = interpreter;
-        scriptCreateContent.dataset.codemirrorLanguage = editorLanguage;
+        scriptCreateContent.dataset.monacoLanguage = editorLanguage;
         scriptCreateContent.setAttribute("aria-label", `${interpreter} managed script source code`);
-        if (typeof window.AtlasoCodeMirror?.setLanguage === "function") {
-          window.AtlasoCodeMirror.setLanguage(scriptCreateContent, editorLanguage);
+        if (typeof window.AtlasoMonaco?.setLanguage === "function") {
+          window.AtlasoMonaco.setLanguage(scriptCreateContent, editorLanguage);
         }
       }
       if (scriptCreateFullscreenContent instanceof HTMLTextAreaElement) {
         scriptCreateFullscreenContent.dataset.scriptInterpreter = interpreter;
-        scriptCreateFullscreenContent.dataset.codemirrorLanguage = editorLanguage;
+        scriptCreateFullscreenContent.dataset.monacoLanguage = editorLanguage;
         scriptCreateFullscreenContent.setAttribute("aria-label", `Full-screen ${interpreter} managed script source code`);
-        if (typeof window.AtlasoCodeMirror?.setLanguage === "function") {
-          window.AtlasoCodeMirror.setLanguage(scriptCreateFullscreenContent, editorLanguage);
+        if (typeof window.AtlasoMonaco?.setLanguage === "function") {
+          window.AtlasoMonaco.setLanguage(scriptCreateFullscreenContent, editorLanguage);
         }
       }
     };
@@ -16006,7 +16193,7 @@ function initializeAutomationTables() {
     ) {
       let fullscreenCommitted = true;
       const fullScreenEditorValue = () => (
-        scriptCreateFullscreenContent.atlasoCodeMirrorView?.state?.doc?.toString()
+        window.AtlasoMonaco?.getValue(scriptCreateFullscreenContent)
         ?? scriptCreateFullscreenContent.value
       );
       const commitFullscreenValue = () => {
@@ -16016,8 +16203,8 @@ function initializeAutomationTables() {
       };
       scriptCreateFullscreenButton.addEventListener("click", () => {
         setScriptCreateEditorValue(scriptCreateEditorValue());
-        if (window.AtlasoCodeMirror && typeof window.AtlasoCodeMirror.setValue === "function") {
-          window.AtlasoCodeMirror.setValue(scriptCreateFullscreenContent, scriptCreateEditorValue());
+        if (window.AtlasoMonaco && typeof window.AtlasoMonaco.setValue === "function") {
+          window.AtlasoMonaco.setValue(scriptCreateFullscreenContent, scriptCreateEditorValue());
         } else {
           scriptCreateFullscreenContent.value = scriptCreateEditorValue();
         }
@@ -16025,8 +16212,8 @@ function initializeAutomationTables() {
         fullscreenCommitted = false;
         scriptCreateFullscreenDialog.showModal();
         window.requestAnimationFrame(() => {
-          if (typeof window.AtlasoCodeMirror?.focus === "function") {
-            window.AtlasoCodeMirror.focus(scriptCreateFullscreenContent);
+          if (typeof window.AtlasoMonaco?.focus === "function") {
+            window.AtlasoMonaco.focus(scriptCreateFullscreenContent);
           } else {
             scriptCreateFullscreenContent.focus();
           }
@@ -16036,8 +16223,8 @@ function initializeAutomationTables() {
         commitFullscreenValue();
         scriptCreateFullscreenDialog.close();
         window.requestAnimationFrame(() => {
-          if (typeof window.AtlasoCodeMirror?.focus === "function") {
-            window.AtlasoCodeMirror.focus(scriptCreateContent);
+          if (typeof window.AtlasoMonaco?.focus === "function") {
+            window.AtlasoMonaco.focus(scriptCreateContent);
           }
         });
       });
@@ -16817,7 +17004,7 @@ function initializeAutomationTables() {
           formatter: (cell) => {
             const data = cell.getRow().getData();
             if (data.is_new) return "";
-            return '<button class="automation-source-button" type="button" aria-label="Open script source" title="Open CodeMirror source editor">…</button>';
+            return '<button class="automation-source-button" type="button" aria-label="Open script source" title="Open Monaco source editor">…</button>';
           },
           cellClick: (_event, cell) => {
             const data = cell.getRow().getData();
@@ -17949,6 +18136,7 @@ document.addEventListener("DOMContentLoaded", initializeDhcpReservationsTable);
 document.addEventListener("DOMContentLoaded", initializeDhcpLeasesTable);
 document.addEventListener("DOMContentLoaded", initializeDhcpLeaseReservationActions);
 document.addEventListener("DOMContentLoaded", initializeEsxiPxeHostsTable);
+document.addEventListener("DOMContentLoaded", initializeEsxiCustomVariablesTable);
 document.addEventListener("DOMContentLoaded", initializeCaProfilesTable);
 document.addEventListener("DOMContentLoaded", initializeCaCertificatesTable);
 document.addEventListener("DOMContentLoaded", () => initializeCaSettings());
@@ -17993,8 +18181,8 @@ document.addEventListener("DOMContentLoaded", initializeOidcKeysTable);
 document.addEventListener("DOMContentLoaded", initializeOidcGroupMappingsTable);
 document.addEventListener("DOMContentLoaded", initializeOidcSubjectsTable);
 document.addEventListener("DOMContentLoaded", initializeVlanInterfacesTable);
-document.addEventListener("DOMContentLoaded", initializeCodeMirrorEditors);
-document.addEventListener("DOMContentLoaded", initializeKickstartEditorDirtyState);
+document.addEventListener("DOMContentLoaded", initializeMonacoEditors);
+document.addEventListener("DOMContentLoaded", initializeKickstartCollection);
 document.addEventListener("DOMContentLoaded", initializeHostsFileEditor);
 document.addEventListener("DOMContentLoaded", initializeZoneEditors);
 document.addEventListener("DOMContentLoaded", initializeAccountMenu);

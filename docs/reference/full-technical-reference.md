@@ -377,17 +377,20 @@ before decrypting, stages values as a transient systemd credential, and removes 
 `Get-AtlasoVault -Key <key>` is the PowerShell interface; `atlaso-vault get --key <key>` is the Bash/Python interface.
 Both commands fail closed outside a scoped managed-script run.
 
-ESXi Kickstarts resolve only the vault explicitly bound to that Kickstart. Dynamic responses support
-`{{vault.<vaultname>.<key>.username}}`, `{{vault.<vaultname>.<key>.password}}`, and `uri1` through `uri9`; previews and
-source downloads retain markers, and resolved responses disable caching. VCF Helper can import supported passwords from
-VCF 9 SDDC Manager and VCF Installer after explicit TLS fingerprint confirmation. VCF Automation and vSphere
+ESXi Kickstarts derive vault scope exclusively from exact source markers. Dynamic responses support
+`{{vault.<vaultname>.<key>.username}}`, `{{vault.<vaultname>.<key>.password}}`, and `uri1` through `uri9`; save,
+validation, and request-time rendering fail closed for malformed, missing, renamed, inaccessible, or unsupported
+references. Completion metadata contains names only, resolution is limited to exact referenced values, previews and
+source downloads retain markers, and resolved responses disable caching. VCF Helper can import supported passwords
+from VCF 9 SDDC Manager and VCF Installer after explicit TLS fingerprint confirmation. VCF Automation and vSphere
 pre-authentication fingerprint probes require TLS 1.2 or newer while retaining fingerprint confirmation, rather than
 ordinary CA verification, as the trust decision.
 
 HTTP and HTTPS URI actions open a separate browser tab. SSH and SFTP actions use a short-lived one-use Web Terminal
 launch, require explicit host-key fingerprint confirmation, recheck the host key, and authenticate server-side without
-placing the password in browser state. Settings archives exclude vault entries and Kickstart bindings; restore clears
-them. See [Vaults](../services/vaults.md) for operator procedures and recovery guidance.
+placing the password in browser state. Settings archives exclude vault entries; restore also clears the unused legacy
+Kickstart-binding compatibility table. See [Vaults](../services/vaults.md) for operator procedures and recovery
+guidance.
 
 ## VCF Helper
 
@@ -619,8 +622,13 @@ Kickstart responses are rendered dynamically by Atlaso from `/pxe/esxi/ks/<file>
 templates may use restricted `{{variable}}` markers such as `{{host.hostname}}`, `{{host.ip_address}}`,
 `{{dhcp.gateway}}`, `{{dhcp.netmask}}`, `{{dhcp.dns_servers}}`, `{{dhcp.ntp_servers}}`, `{{dhcp.domain}}`,
 `{{pxe.http_base_url}}`, and per-host custom values under `{{custom.<name>}}`. Missing, invalid, disabled, or unknown
-MAC selectors return an error; Atlaso does not infer MAC addresses from source IP or leases. Saving in the CodeMirror
-editor updates desired state and marks the `esxi_pxe` apply unit changed. ESXi PXE boot settings select one or more IPv4
+MAC selectors return an error; Atlaso does not infer MAC addresses from source IP or leases. Kickstarts are managed in
+a wizard-backed Tabulator collection with direct Enabled editing and a four-step Monaco Editor wizard. Completion
+suggests built-in variables, custom definitions from the direct-edit **Custom Variables** collection, the editable
+`{{custom.<variable>}}` template, and authorized exact vault markers after `{{` without loading vault values. Custom
+definitions carry a description and optional non-secret default; per-host Host References JSON values take precedence
+over that default.
+Saving updates desired state and marks the `esxi_pxe` apply unit changed. ESXi PXE boot settings select one or more IPv4
 DHCP IP zones instead of a freeform interface/IP pair; Atlaso derives the PXE interfaces, TFTP server addresses, DNS
 records, firewall bind targets, and dnsmasq scope tags from those zones. Native UEFI HTTP URLs are generated per
 selected IPv4 zone unless an operator supplies a manual absolute URL. Installer ISO choices are discovered from
