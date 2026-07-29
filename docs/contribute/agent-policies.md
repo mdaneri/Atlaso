@@ -529,6 +529,17 @@ status: current
   `atlaso-kms.service`; the service launches PyKMIP through Atlaso's compatibility wrapper for current Photon Python
   streams; disabling KMS stops the service while preserving `/var/lib/atlaso/kms/pykmip.db`. Never print KMS private
   keys in previews, jobs, logs, docs, or final responses.
+- Issue #162 replaces the PyKMIP lab listener in ordered phases. The replacement is a Python `atlaso-kmip` service
+  implementing only the candidate VCF 9.1 contract in
+  `atlaso/app/kmip/contracts/vcf_9_1.json`; keep the implementation experimental until issue #172 records the live
+  VCF 9.1 acceptance and recovery evidence required to promote the contract to `observed`. A provider UUID defines an
+  isolated key namespace and may trust multiple exact vCenter certificate fingerprints. LDAP organizations do not
+  select providers. Generate only AES-256 keys, wrap operational keys with AES-256-GCM under a KEK protected by
+  `ATLASO_SECRETS_KEY`, and never expose plaintext keys outside the authorized KMIP `Get` response. Reject operations,
+  objects, algorithms, formats, and attributes outside the contract. Interop traces contain metadata only and must pass
+  `scripts/kmip/validate_interop_trace.py`; raw TTLV and secret-bearing fields are forbidden. Recovery uses a separate
+  passphrase-encrypted bundle. There is no legacy key migration: a nonempty PyKMIP database must block in-place
+  replacement while the old appliance remains available for VMware rekey.
 - Real VCF Offline Depot apply stages nginx config under
   `/var/lib/atlaso/apply/vcf-offline-depot/atlaso-vcf-offline-depot.conf` as the `atlaso` service user before invoking
   the root helper. Uploading `vcf-download-tool-*.tar.gz` is desired-state only: validate/store the package and clear

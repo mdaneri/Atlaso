@@ -16,6 +16,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - [Vaults](docs/services/vaults.md) — scope encrypted VCF and ESX passwords to managed scripts and Kickstarts.
 - [OpenID Connect provider](docs/services/oidc-provider.md) — use the dedicated tabbed administration page for
   confidential clients, exact redirects, key rotation, explicit identity sources, and privacy-safe scoped claims.
+- [vSphere Key Provider protocol](docs/reference/vsphere-key-provider-protocol.md) — review the bounded, currently
+  unverified VCF 9.1 KMIP contract and its live-evidence promotion gate.
 - [Technical reference](docs/reference/index.md) — API, image building, lifecycle testing, and detailed behavior.
 - [Contributing](CONTRIBUTING.md) — issue, version, validation, and pull-request requirements.
 - [UI Design Guide](docs/contribute/ui-design-guide.md) — approved Atlaso patterns and the shared

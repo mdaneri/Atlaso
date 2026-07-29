@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "contract_id": "atlaso-vcf-9.1-kmip-candidate-v1",
+  "target": {
+    "product": "VMware Cloud Foundation",
+    "version": "9.1"
+  },
+  "status": "candidate-unverified",
+  "promotion_gate": "A redacted VCF 9.1 acceptance trace must pass this contract and the recovery drill in issue #172.",
+  "transport": {
+    "port": 5696,
+    "encoding": "TTLV",
+    "tls_minimum": "TLSv1.2",
+    "mutual_tls_required": true
+  },
+  "protocol_versions": [
+    "1.4"
+  ],
+  "objects": [
+    "Symmetric Key"
+  ],
+  "algorithms": {
+    "AES": {
+      "lengths": [
+        256
+      ],
+      "key_format_types": [
+        "Raw"
+      ]
+    }
+  },
+  "candidate_operations": [
+    "Discover Versions",
+    "Query",
+    "Create",
+    "Activate",
+    "Get",
+    "Get Attribute List",
+    "Get Attributes",
+    "Locate"
+  ],
+  "candidate_attributes": [
+    "Activation Date",
+    "Cryptographic Algorithm",
+    "Cryptographic Length",
+    "Cryptographic Usage Mask",
+    "Name",
+    "Object Type",
+    "State",
+    "Unique Identifier"
+  ],
+  "result_statuses": [
+    "Success",
+    "Operation Failed"
+  ],
+  "result_reasons": [
+    "Item Not Found",
+    "Invalid Message",
+    "Operation Not Supported",
+    "Missing Data",
+    "Invalid Field",
+    "Key Format Type Not Supported",
+    "Cryptographic Failure",
+    "Permission Denied",
+    "General Failure"
+  ],
+  "explicitly_unsupported": {
+    "operations": [
+      "Archive",
+      "Certify",
+      "Create Key Pair",
+      "Decrypt",
+      "Derive Key",
+      "Encrypt",
+      "MAC",
+      "MAC Verify",
+      "Obtain Lease",
+      "Poll",
+      "Re-Key",
+      "Re-Key Key Pair",
+      "Recover",
+      "Register",
+      "Revoke",
+      "Sign",
+      "Signature Verify"
+    ],
+    "objects": [
+      "Certificate",
+      "Opaque Object",
+      "Private Key",
+      "Public Key",
+      "Secret Data",
+      "Split Key",
+      "Template"
+    ]
+  },
+  "sources": [
+    {
+      "title": "OASIS KMIP Specification Version 1.4",
+      "url": "https://docs.oasis-open.org/kmip/spec/v1.4/kmip-spec-v1.4.html"
+    },
+    {
+      "title": "OASIS KMIP Profiles Version 1.4",
+      "url": "https://docs.oasis-open.org/kmip/profiles/v1.4/kmip-profiles-v1.4.html"
+    },
+    {
+      "title": "Broadcom vSphere Web Services API CryptoManagerKmip",
+      "url": "https://developer.broadcom.com/xapis/vsphere-web-services-api/latest/vim.encryption.CryptoManagerKmip.html"
+    }
+  ]
+}

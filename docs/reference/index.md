@@ -14,6 +14,8 @@ status: current
 - [Verified interface gallery](interface-gallery.md)
 - [Appliance Apply technical reference](appliance-apply-technical.md)
 - [Local console technical reference](appliance-console-technical.md)
+- [vSphere Key Provider protocol contract](vsphere-key-provider-protocol.md)
+- [vSphere Key Provider security architecture](vsphere-key-provider-security.md)
 - [Full technical reference](full-technical-reference.md)
 - [Hyper-V lifecycle testing](hyperv-lifecycle-testing.md)
 - [VMware Workstation lifecycle testing](vmware-workstation-lifecycle-testing.md)
