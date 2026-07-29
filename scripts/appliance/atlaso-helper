@@ -742,7 +742,7 @@ def _grant_ldap_private_key_read(key_path: Path) -> None:
 
 
 def _grant_kms_private_key_read(key_path: Path) -> None:
-    group = grp.getgrnam(KMS_SERVICE_USER)
+    _account, group = _ensure_kms_service_identity()
     os.chown(key_path, 0, group.gr_gid)
     os.chmod(key_path, 0o640)
 
@@ -898,7 +898,7 @@ def _handle_ca_inner(action: str, args: list[str]) -> int:
             if key_path.is_relative_to((KMS_CONFIG_DIR / "certs").resolve()):
                 try:
                     _grant_kms_private_key_read(key_path)
-                except (LookupError, OSError) as exc:
+                except (LookupError, OSError, ValueError) as exc:
                     print(f"Could not preserve atlaso-kmip access to the KMIP private key: {exc}", file=sys.stderr)
                     return 1
             written.append(str(key_path))
@@ -3132,7 +3132,7 @@ def _handle_kms(action: str, args: list[str]) -> int:
     KMS_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
     if not enabled:
-        KMS_ENV_PATH.unlink(missing_ok=True)
+        KMS_CREDENTIAL_PATH.unlink(missing_ok=True)
         for service in ("atlaso-kmip.service", "atlaso-kms.service"):
             disable = _run(["systemctl", "disable", "--now", service])
             print(disable.stdout, end="")
@@ -3160,6 +3160,7 @@ def _handle_kms(action: str, args: list[str]) -> int:
         os.chmod(directory, mode)
         os.chown(directory, account.pw_uid, group.gr_gid)
     os.chmod(KMS_CONFIG_DIR, 0o750)
+    os.chown(KMS_CONFIG_DIR, 0, group.gr_gid)
     shutil.copy2(config_path, KMS_CONFIG_PATH)
     os.chmod(KMS_CONFIG_PATH, 0o640)
     os.chown(KMS_CONFIG_PATH, 0, group.gr_gid)

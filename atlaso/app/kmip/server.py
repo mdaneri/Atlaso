@@ -14,6 +14,7 @@ import threading
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +30,7 @@ from atlaso.app.kmip.protocol import (
     Tag,
 )
 from atlaso.app.kmip.store import KeyStoreError, WrappedKeyStore
-from atlaso.app.kmip.trace import validate_trace
+from atlaso.app.kmip.trace import TraceValidationError, validate_trace
 from atlaso.app.kmip.ttlv import MAX_MESSAGE_BYTES, Ttlv, TtlvError, TtlvType, decode, encode
 
 
@@ -435,8 +436,14 @@ class InteropTraceWriter:
                 "result_reason": reason,
                 "request_digest": hashlib.sha256(request_bytes).hexdigest(),
             }
-            events.append(json.dumps(event, separators=(",", ":"), sort_keys=True))
-        validate_trace(events)
+            rendered = json.dumps(event, separators=(",", ":"), sort_keys=True)
+            try:
+                validate_trace([rendered])
+            except TraceValidationError:
+                continue
+            events.append(rendered)
+        if not events:
+            return
         with self._lock, self.path.open("a", encoding="utf-8", newline="\n") as stream:
             for event in events:
                 stream.write(event)
@@ -531,6 +538,7 @@ class KmipTcpServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
             else None
         )
         self._connection_slots = threading.BoundedSemaphore(config.limits.max_connections)
+        self.address_family = socket.AF_INET6 if ip_address(config.host).version == 6 else socket.AF_INET
         super().__init__((config.host, config.port), KmipRequestHandler)
 
     def get_request(self) -> tuple[ssl.SSLSocket, Any]:

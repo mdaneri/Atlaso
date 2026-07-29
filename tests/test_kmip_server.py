@@ -3,10 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 import socket
+import socketserver
 import ssl
 import threading
 import time
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from ipaddress import ip_address
 from pathlib import Path
@@ -28,6 +30,7 @@ from atlaso.app.kmip.protocol import (
 from atlaso.app.kmip.server import (
     ConfigurationError,
     InteropTraceWriter,
+    KmipTcpServer,
     Provider,
     ServiceConfig,
     ServiceLimits,
@@ -560,3 +563,63 @@ def test_trace_records_create_parameters_from_request(tmp_path: Path) -> None:
     assert event["key_length"] == 256
     assert event["key_format_type"] == "Raw"
     assert validate_trace([json.dumps(event)]).event_count == 1
+
+
+def test_trace_skips_invalid_create_without_suppressing_failed_response(tmp_path: Path) -> None:
+    provider_id = str(uuid.uuid4())
+    store = WrappedKeyStore(
+        tmp_path / "store.db",
+        tmp_path / "kek.json",
+        secrets_key="appliance-secrets-key",
+    )
+    dispatcher = KmipDispatcher(store)
+    request = structure(
+        Tag.REQUEST_MESSAGE,
+        structure(
+            Tag.REQUEST_HEADER,
+            structure(
+                Tag.PROTOCOL_VERSION,
+                integer(Tag.PROTOCOL_VERSION_MAJOR, 1),
+                integer(Tag.PROTOCOL_VERSION_MINOR, 4),
+            ),
+            integer(Tag.BATCH_COUNT, 1),
+        ),
+        structure(
+            Tag.BATCH_ITEM,
+            enumeration(Tag.OPERATION, Operation.CREATE),
+            structure(Tag.REQUEST_PAYLOAD),
+        ),
+    )
+    request_bytes = encode(request)
+    response = dispatcher.dispatch(provider_id, request)
+    response_item = response.child(Tag.BATCH_ITEM)
+    assert response_item.child(Tag.RESULT_STATUS).value == ResultStatus.OPERATION_FAILED
+    trace_path = tmp_path / "trace.jsonl"
+
+    InteropTraceWriter(trace_path).record(
+        connection_id=str(uuid.uuid4()),
+        client_cert_sha256="ab" * 32,
+        provider_id=provider_id,
+        request=request,
+        response=response,
+        request_bytes=request_bytes,
+    )
+
+    assert not trace_path.exists()
+
+
+def test_tcp_server_selects_ipv6_address_family_before_binding(monkeypatch, tmp_path: Path) -> None:
+    observed: dict[str, object] = {}
+
+    def fake_init(server, address, handler):
+        observed["family"] = server.address_family
+        observed["address"] = address
+        observed["handler"] = handler
+
+    monkeypatch.setattr(socketserver.TCPServer, "__init__", fake_init)
+    config = replace(service_config(tmp_path, material(tmp_path)), host="::1", interop_trace_path=None)
+
+    KmipTcpServer(config, object(), object())  # type: ignore[arg-type]
+
+    assert observed["family"] == socket.AF_INET6
+    assert observed["address"] == ("::1", 0)

@@ -394,6 +394,50 @@ def test_ldap_private_key_is_group_readable_only_for_slapd(monkeypatch, tmp_path
     assert modes == [(key_path, 0o640)]
 
 
+def test_kms_private_key_reconciles_upgrade_identity_before_granting_access(monkeypatch, tmp_path):
+    helper = load_helper_module()
+    key_path = tmp_path / "server.key"
+    key_path.write_text("private", encoding="utf-8")
+    identity_created = {"group": False, "account": False}
+    commands: list[list[str]] = []
+    ownership: list[tuple[Path, int, int]] = []
+
+    def fake_group(_name):
+        if not identity_created["group"]:
+            raise KeyError
+        return SimpleNamespace(gr_gid=1002)
+
+    def fake_account(_name):
+        if not identity_created["account"]:
+            raise KeyError
+        return SimpleNamespace(pw_uid=1001)
+
+    def fake_run(command):
+        commands.append(command)
+        if str(command[0]).endswith("groupadd"):
+            identity_created["group"] = True
+        if str(command[0]).endswith("useradd"):
+            identity_created["account"] = True
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper.grp, "getgrnam", fake_group)
+    monkeypatch.setattr(helper.pwd, "getpwnam", fake_account)
+    monkeypatch.setattr(helper, "_command_path", lambda name: Path("/usr/sbin") / name)
+    monkeypatch.setattr(helper, "_run", fake_run)
+    monkeypatch.setattr(
+        helper.os,
+        "chown",
+        lambda path, uid, gid: ownership.append((Path(path), uid, gid)),
+        raising=False,
+    )
+
+    helper._grant_kms_private_key_read(key_path)
+
+    assert commands[0][:3] == [Path("/usr/sbin") / "groupadd", "--system", "atlaso-kmip"]
+    assert commands[1][0] == Path("/usr/sbin") / "useradd"
+    assert ownership == [(key_path, 0, 1002)]
+
+
 def test_ldap_directory_queries_disable_ldif_wrapping(monkeypatch):
     helper = load_helper_module()
     commands: list[list[str]] = []
@@ -2687,6 +2731,7 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path):
     assert f"StandardOutput=append:{log_dir / 'server.log'}" in service
     assert (state_dir, 1001, 1002) in ownership
     assert (log_dir, 1001, 1002) in ownership
+    assert (managed_root / "kmip", 0, 1002) in ownership
     assert ["systemctl", "daemon-reload"] in commands
     assert ["systemctl", "disable", "--now", "atlaso-kms.service"] in commands
     assert ["systemctl", "enable", "atlaso-kmip.service"] in commands
