@@ -1663,6 +1663,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#apply-and-status-staging" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Apply and status staging
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#verify" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -2901,6 +2912,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#apply-and-status-staging" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Apply and status staging
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#verify" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3085,6 +3107,13 @@ can also serve as explicitly selected identity sources where a service supports 
 </ol>
 <p>Passwords are never displayed again or stored in audit details. Do not reuse the Photon build password or publish test
 credentials in screenshots.</p>
+<h2 id="apply-and-status-staging">Apply and status staging<a class="headerlink" href="#apply-and-status-staging" title="Permanent link">&para;</a></h2>
+<p>A real Local Users apply writes its secret-bearing helper input with mode <code>0600</code> only for the validate-and-apply
+execution window. Atlaso and <code>atlaso-helper</code> both remove that file after success, validation failure, or apply failure;
+application startup also removes a stale input left by an interrupted process. Previews, baselines, task results, logs,
+audits, and test output never receive the raw password.</p>
+<p>Read-only Photon account status uses a different uniquely named, short-lived file containing no password values. It
+cannot replace an active apply payload and is removed as soon as the status request finishes.</p>
 <h2 id="verify">Verify<a class="headerlink" href="#verify" title="Permanent link">&para;</a></h2>
 <p>Test the account in a separate private browser session and confirm that its permissions match the assigned role.
 Maintain at least one verified administrator before disabling or deleting another administrative account.</p>

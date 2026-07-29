@@ -3218,8 +3218,10 @@ values are emitted when the client receives the <code>groups</code> scope. Raw L
 disabled groups, and unmapped groups remain private.</p>
 <h2 id="apply-and-recovery">Apply and recovery<a class="headerlink" href="#apply-and-recovery" title="Permanent link">&para;</a></h2>
 <p>The <code>ldap</code> apply unit stages secret-bearing JSON at <code>/var/lib/atlaso/apply/ldap/atlaso-ldap.json</code> with mode <code>0600</code>. The
-file is excluded from previews and task payloads and removed after helper processing. When LDAP-related CA, DNS, or
-firewall desired state changes, global appliance apply submits the changed dependency units together.</p>
+file exists only for the constrained helper execution window. Atlaso and <code>atlaso-helper</code> remove it after success,
+validation failure, or apply failure, and application startup removes stale input after an interrupted process. Raw
+secrets remain excluded from previews, baselines, task payloads, logs, audits, and test output. When LDAP-related CA,
+DNS, or firewall desired state changes, global appliance apply submits the changed dependency units together.</p>
 <p>Normal settings backup contains LDAP metadata but no bind secrets or password hashes. Use the separate
 passphrase-encrypted LDAP recovery export to preserve <code>slapcat</code> data. Recovery import decrypts and validates the archive
 in memory, then stages it for the next global LDAP apply. A restart before apply requires the archive and passphrase

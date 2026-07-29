@@ -3258,6 +3258,10 @@ prevents a queued task from applying state that the administrator did not inspec
 <li>Only one Appliance Apply master can be pending or running.</li>
 <li>Photon mutations use constrained <code>atlaso-helper</code> actions; the web process does not receive broad root access.</li>
 <li>Previews, diffs, task results, logs, and audit details redact sensitive-looking values.</li>
+<li>Secret-bearing Local Users, Certificate Authority, and Managed LDAP inputs use mode <code>0600</code> only during their helper
+  execution window. Both the control plane and helper remove them on terminal outcomes, and startup removes stale
+  inputs after interruption.</li>
+<li>Read-only Local Users status uses an isolated short-lived input and cannot overwrite a pending apply payload.</li>
 <li>A successful component updates only that component's last-applied baseline.</li>
 <li>Fresh-appliance baseline initialization records comparison metadata only; it does not run helper commands.</li>
 </ul>
