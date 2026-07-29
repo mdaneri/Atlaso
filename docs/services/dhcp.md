@@ -29,6 +29,8 @@ This verified appliance view provides visual orientation before you begin.
    non-overlapping range.
 4. Configure the lease as a positive whole-number duration with an explicit **Minutes**, **Hours**, or **Days** unit,
    then set DNS, NTP, and domain options and choose the zone's desired enablement in its dedicated step.
+   Existing lease strings outside those supported units remain unchanged until the operator supplies a supported
+   duration and unit.
 5. Add reservations with unique client identity and address values.
 6. Resolve Validation-card errors and inspect the rendered dnsmasq preview.
 7. Submit `DNS/DHCP (dnsmasq)` through [Appliance Apply](../operate/appliance-apply.md).

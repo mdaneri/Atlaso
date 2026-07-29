@@ -813,9 +813,9 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/codemirror/atlaso-codemirror.min.js?v=atlaso-codemirror-20260728-1" in service_worker.text
-    assert "/static/app.css?v=atlaso-ui-foundation-20260728-5" in service_worker.text
+    assert "/static/app.css?v=atlaso-wizard-layout-20260729-10" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in service_worker.text
-    assert "/static/app.js?v=atlaso-wizard-layout-20260729-14" in service_worker.text
+    assert "/static/app.js?v=atlaso-wizard-layout-20260729-15" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -835,8 +835,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=atlaso-wizard-layout-20260729-14"),
-        (public_base, "/static/app.js?v=atlaso-wizard-layout-20260729-14"),
+        (base, "/static/app.js?v=atlaso-wizard-layout-20260729-15"),
+        (public_base, "/static/app.js?v=atlaso-wizard-layout-20260729-15"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4"
@@ -1277,7 +1277,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=atlaso-wizard-layout-20260729-10" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in page.text
-    assert "/static/app.js?v=atlaso-wizard-layout-20260729-14" in page.text
+    assert "/static/app.js?v=atlaso-wizard-layout-20260729-15" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -2473,6 +2473,8 @@ def test_ntp_page_autosave_updates_desired_state_and_preview(client, monkeypatch
     )[0]
     assert 'pattern: "wizard-backed"' in ntp_table_js
     assert "window.AtlasoUiPatterns.createWizard({" in ntp_table_js
+    assert "await persistNtpUpstreamTableChange(table, hiddenInput)" in ntp_table_js
+    assert "table.addRow(payload, true" in ntp_table_js
     assert "ntpUpstreamRowHasSource" in js.text
     assert "editable: ntpUpstreamRowHasSource" in js.text
     assert "rowContextMenu" in js.text
@@ -12957,6 +12959,9 @@ def test_dhcp_scope_edit_form_updates_ip_zone(client):
     assert '<option value="m">Minutes</option>' in services_step
     assert '<option value="h">Hours</option>' in services_step
     assert '<option value="d">Days</option>' in services_step
+    app_js = Path("atlaso/app/static/app.js").read_text(encoding="utf-8")
+    assert "leaseTime.dataset.atlasoOriginalLeaseTime" in app_js
+    assert "Replace unsupported value:" in app_js
     rows = json.loads(html.unescape(payload))
     scope_id = next(row["id"] for row in rows if row["name"] == "SiteA")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]

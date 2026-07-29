@@ -5214,6 +5214,15 @@ function submitNtpUpstreamTableChange(table, hiddenInput) {
   }
 }
 
+async function persistNtpUpstreamTableChange(table, hiddenInput) {
+  syncNTPsecUpstreamsHiddenInput(table);
+  const settingsForm = hiddenInput?.form;
+  if (!(settingsForm instanceof HTMLFormElement) || typeof settingsForm.atlasoSaveNow !== "function") {
+    return { valid: false, message: "NTP settings autosave is unavailable. Reload the page and try again." };
+  }
+  return settingsForm.atlasoSaveNow();
+}
+
 async function deleteNtpUpstreamFromMenu(row, table, hiddenInput) {
   const data = row.getData();
   if (data.is_new) return;
@@ -5368,10 +5377,20 @@ function initializeNTPsecUpstreamsTable() {
           enabled: form.elements.enabled.checked,
         };
         const existing = id ? table.getRow(id) : null;
+        const previous = existing ? { ...existing.getData() } : null;
+        const inserted = existing
+          ? null
+          : await table.addRow(payload, true, table.getRows().find((row) => row.getData().is_new));
         if (existing) await existing.update(payload);
-        else await table.addRow(payload, false, table.getRows().find((row) => row.getData().is_new));
         ensureNTPsecUpstreamAddRow(table);
-        submitNtpUpstreamTableChange(table, hiddenInput);
+        const result = await persistNtpUpstreamTableChange(table, hiddenInput);
+        if (result?.valid === false) {
+          if (existing && previous) await existing.update(previous);
+          if (inserted) await inserted.delete();
+          ensureNTPsecUpstreamAddRow(table);
+          syncNTPsecUpstreamsHiddenInput(table);
+          return result;
+        }
         return { valid: true };
       },
     });
@@ -8326,8 +8345,11 @@ function initializeDhcpScopesTable() {
   );
   const form = document.querySelector("[data-dhcp-scope-form]");
   const parseLeaseTime = (value) => {
-    const match = String(value || "").trim().match(/^([1-9]\d*)([mhd])$/i);
-    return match ? { duration: match[1], unit: match[2].toLowerCase() } : { duration: "12", unit: "h" };
+    const original = String(value || "").trim();
+    const match = original.match(/^([1-9]\d*)([mhd])$/i);
+    return match
+      ? { duration: match[1], unit: match[2].toLowerCase(), original, supported: true }
+      : { duration: "", unit: "h", original, supported: false };
   };
   const syncLeaseTime = () => {
     if (!(form instanceof HTMLFormElement)) return;
@@ -8335,7 +8357,9 @@ function initializeDhcpScopesTable() {
     const unit = form.elements.lease_unit;
     const leaseTime = form.elements.lease_time;
     if (duration instanceof HTMLInputElement && unit instanceof HTMLSelectElement && leaseTime instanceof HTMLInputElement) {
-      leaseTime.value = `${duration.value}${unit.value}`;
+      leaseTime.value = duration.value
+        ? `${duration.value}${unit.value}`
+        : leaseTime.dataset.atlasoOriginalLeaseTime || "";
     }
   };
   const leaseTimeLabel = () => {
@@ -8426,8 +8450,12 @@ function initializeDhcpScopesTable() {
       const family = form.elements.address_family;
       if (family instanceof HTMLSelectElement) family.disabled = Boolean(context);
       const lease = parseLeaseTime(context?.lease_time || defaults.lease_time);
+      form.elements.lease_time.dataset.atlasoOriginalLeaseTime = lease.original;
       form.elements.lease_duration.value = lease.duration;
       form.elements.lease_unit.value = lease.unit;
+      form.elements.lease_duration.placeholder = lease.supported
+        ? ""
+        : `Replace unsupported value: ${lease.original || "empty"}`;
       syncLeaseTime();
       if (!context) refreshDerivedRange(true);
     },
@@ -9275,19 +9303,23 @@ function initializeAutosaveForms(root = document) {
           inFlightRequest = null;
         }
         resetUploadProgress();
+        return { valid: true, payload };
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
-          return;
+          return { valid: false, message: "Save was superseded by a newer change." };
         }
         inFlightRequest = null;
         resetUploadProgress();
-        setAutosaveStatus(statusElement, error instanceof Error ? error.message : "Settings could not be saved.", "error");
+        const message = error instanceof Error ? error.message : "Settings could not be saved.";
+        setAutosaveStatus(statusElement, message, "error");
+        return { valid: false, message };
       } finally {
         if (!hasFiles) {
           resetUploadProgress();
         }
       }
     };
+    form.atlasoSaveNow = save;
 
     const scheduleSave = () => {
       window.clearTimeout(timer);
