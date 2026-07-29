@@ -6,6 +6,9 @@
   "start_url": "/dashboard",
   "scope": "/",
   "display": "standalone",
+  "launch_handler": {
+    "client_mode": "navigate-existing"
+  },
   "background_color": "#071A3A",
   "theme_color": "#1769E0",
   "orientation": "any",
