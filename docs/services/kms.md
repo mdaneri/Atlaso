@@ -46,6 +46,7 @@ apply to enforce the retirement on the appliance.
 
 A nonempty legacy PyKMIP database blocks in-place replacement. Keep the old appliance available while VMware rekeys
 workloads into a newly configured provider; Atlaso does not migrate legacy key rows.
+The appliance-native listener requires TLS 1.2 or newer.
 
 ## Verify
 

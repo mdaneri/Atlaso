@@ -419,9 +419,10 @@ confines the staged file, validates its exact schema, derived listen address, CA
 unique SHA-256 client fingerprints, store paths, and resource limits, then installs `/etc/atlaso/kmip/server.json` and
 manages `atlaso-kmip.service`. The daemon runs as the non-login `atlaso-kmip` account with a hardened systemd sandbox.
 Its SQLite store and KEK envelope live under `/var/lib/atlaso/kmip` with service-only permissions; the KEK is protected
-by `ATLASO_SECRETS_KEY`. Disabling KMS stops both the current and retired service names while preserving the new store.
-Firewall apply owns TCP/5696 access to the selected interface. The bounded KMIP operation and evidence contract is
-documented in [vSphere Key Provider protocol contract](vsphere-key-provider-protocol.md).
+by `ATLASO_SECRETS_KEY`. The listener requires TLS 1.2 or newer. Disabling KMS stops both the current and retired
+service names while preserving the new store. Firewall apply owns TCP/5696 access to the selected interface. The
+bounded KMIP operation and evidence contract is documented in
+[vSphere Key Provider protocol contract](vsphere-key-provider-protocol.md).
 
 ## Appliance settings and operations
 
