@@ -31,6 +31,7 @@ from atlaso.app.kmip.server import (
     Provider,
     ServiceConfig,
     ServiceLimits,
+    _load_secrets_key,
     build_server,
     certificate_sha256,
     parse_config,
@@ -38,6 +39,22 @@ from atlaso.app.kmip.server import (
 from atlaso.app.kmip.store import WrappedKeyStore
 from atlaso.app.kmip.ttlv import decode, encode, enumeration, integer, structure, text_string
 from atlaso.app.kmip.trace import validate_trace
+
+
+def test_load_secrets_key_from_systemd_credential(monkeypatch, tmp_path):
+    credential = tmp_path / "atlaso-secrets-key"
+    credential.write_text("credential-secret\n", encoding="utf-8")
+    monkeypatch.setenv("ATLASO_SECRETS_KEY", "shared-environment-secret")
+    monkeypatch.setenv("ATLASO_SECRETS_KEY_FILE", str(credential))
+
+    assert _load_secrets_key() == "credential-secret"
+
+
+def test_load_secrets_key_rejects_missing_systemd_credential(monkeypatch, tmp_path):
+    monkeypatch.setenv("ATLASO_SECRETS_KEY_FILE", str(tmp_path / "missing"))
+
+    with pytest.raises(ConfigurationError, match="runtime credential is unavailable"):
+        _load_secrets_key()
 
 
 def certificate(

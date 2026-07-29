@@ -599,6 +599,16 @@ def check_config(config: ServiceConfig, *, secrets_key: str) -> None:
         store.close()
 
 
+def _load_secrets_key() -> str:
+    credential_path = os.environ.get("ATLASO_SECRETS_KEY_FILE", "").strip()
+    if not credential_path:
+        return os.environ.get("ATLASO_SECRETS_KEY", "")
+    try:
+        return Path(credential_path).read_text(encoding="utf-8").rstrip("\r\n")
+    except OSError as exc:
+        raise ConfigurationError("KMIP runtime credential is unavailable.") from exc
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
@@ -610,7 +620,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     try:
         config = load_config(args.config)
-        secrets_key = os.environ.get("ATLASO_SECRETS_KEY", "")
+        secrets_key = _load_secrets_key()
         if args.check:
             check_config(config, secrets_key=secrets_key)
             print(json.dumps({"atlaso_kmip": "configuration valid"}, sort_keys=True))

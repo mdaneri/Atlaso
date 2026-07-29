@@ -2613,7 +2613,7 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path):
     managed_root = tmp_path / "etc" / "atlaso"
     service_path = tmp_path / "systemd" / "atlaso-kmip.service"
     appliance_env_path = managed_root / "atlaso.env"
-    kms_env_path = managed_root / "kmip" / "atlaso-kmip.env"
+    kms_credential_path = managed_root / "kmip" / "atlaso-secrets-key.cred"
     command_path = tmp_path / "venv" / "bin" / "atlaso-kmip"
     config_path = apply_dir / "server.json"
     cert_path = managed_root / "kmip" / "certs" / "kms.atlaso.internal.crt"
@@ -2639,11 +2639,16 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path):
     command_path.write_text("#!/bin/sh\n", encoding="utf-8")
     config_path.write_text(kms_config_text(managed_root, database_path=state_dir / "store.db"), encoding="utf-8")
     commands: list[list[str]] = []
+    credential_inputs: list[tuple[list[str], str]] = []
     ownership: list[tuple[Path, int, int]] = []
 
     def fake_run(command):
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
+
+    def fake_run_with_input(command, input_text):
+        credential_inputs.append((command, input_text))
+        return subprocess.CompletedProcess(command, 0, "encrypted-machine-credential\n", "")
 
     monkeypatch.setattr(helper, "KMS_APPLY_DIR", apply_dir)
     monkeypatch.setattr(helper, "KMS_STATE_DIR", state_dir)
@@ -2651,11 +2656,13 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path):
     monkeypatch.setattr(helper, "KMS_CONFIG_DIR", managed_root / "kmip")
     monkeypatch.setattr(helper, "KMS_CONFIG_PATH", managed_root / "kmip" / "server.json")
     monkeypatch.setattr(helper, "ATLASO_ENV_PATH", appliance_env_path)
-    monkeypatch.setattr(helper, "KMS_ENV_PATH", kms_env_path)
+    monkeypatch.setattr(helper, "KMS_CREDENTIAL_PATH", kms_credential_path)
     monkeypatch.setattr(helper, "KMS_SERVICE_PATH", service_path)
     monkeypatch.setattr(helper, "ATLASO_KMIP_VENV_PATH", command_path)
     monkeypatch.setattr(helper, "CA_MANAGED_PATH_BASE", managed_root)
     monkeypatch.setattr(helper, "_run", fake_run)
+    monkeypatch.setattr(helper, "_run_with_input", fake_run_with_input)
+    monkeypatch.setattr(helper, "_command_path", lambda name: Path("/usr/bin") / name)
     monkeypatch.setattr(helper.pwd, "getpwnam", lambda _name: SimpleNamespace(pw_uid=1001))
     monkeypatch.setattr(helper.grp, "getgrnam", lambda _name: SimpleNamespace(gr_gid=1002))
     monkeypatch.setattr(
@@ -2670,7 +2677,8 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path):
     assert (managed_root / "kmip" / "server.json").is_file()
     service = service_path.read_text(encoding="utf-8")
     assert "User=atlaso-kmip" in service
-    assert f"EnvironmentFile={kms_env_path}" in service
+    assert f"LoadCredentialEncrypted=atlaso-secrets-key:{kms_credential_path}" in service
+    assert "Environment=ATLASO_SECRETS_KEY_FILE=%d/atlaso-secrets-key" in service
     assert str(appliance_env_path) not in service
     assert f"ExecStart={command_path} --config {managed_root / 'kmip' / 'server.json'}" in service
     assert "ProtectSystem=strict" in service
@@ -2683,11 +2691,19 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path):
     assert ["systemctl", "disable", "--now", "atlaso-kms.service"] in commands
     assert ["systemctl", "enable", "atlaso-kmip.service"] in commands
     assert ["systemctl", "restart", "atlaso-kmip.service"] in commands
-    assert kms_env_path.read_text(encoding="utf-8") == "ATLASO_SECRETS_KEY=kmip-kek-secret\n"
-    assert "web-session-secret" not in kms_env_path.read_text(encoding="utf-8")
-    assert "bootstrap-secret" not in kms_env_path.read_text(encoding="utf-8")
+    assert credential_inputs == [
+        (
+            [str(Path("/usr/bin") / "systemd-creds"), "encrypt", "--name=atlaso-secrets-key", "-", "-"],
+            "kmip-kek-secret",
+        )
+    ]
+    credential_text = kms_credential_path.read_text(encoding="utf-8")
+    assert credential_text == "encrypted-machine-credential\n"
+    assert "kmip-kek-secret" not in credential_text
+    assert "web-session-secret" not in credential_text
+    assert "bootstrap-secret" not in credential_text
     if os.name != "nt":
-        assert kms_env_path.stat().st_mode & 0o777 == 0o600
+        assert kms_credential_path.stat().st_mode & 0o777 == 0o600
 
 
 def test_kms_apply_reconciles_service_identity_for_upgraded_appliance(

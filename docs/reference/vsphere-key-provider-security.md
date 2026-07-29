@@ -91,8 +91,9 @@ Files and database pages use service-only permissions. Successful startup requir
 KEK protected by the current `ATLASO_SECRETS_KEY`. The store is SQLite with full synchronous commits; only wrapped
 ciphertext, nonce, and authenticated metadata are persisted. The KEK envelope and database use mode `0600`, their
 parent directory uses `0700`, and systemd confines writes to the KMIP state and log directories. The daemon receives
-only `ATLASO_SECRETS_KEY` through its dedicated root-managed mode-`0600` environment file; it does not receive the
-shared web-session or bootstrap-administrator secrets.
+only `ATLASO_SECRETS_KEY` through a dedicated root-managed mode-`0600`, machine-encrypted systemd credential. Systemd
+decrypts it into the service's private runtime credential directory; the daemon does not receive the shared web-session
+or bootstrap-administrator secrets.
 
 Atlaso never exports plaintext keys through its UI or management API. KMIP `Get` is the sole plaintext release path
 and is restricted to an authenticated client mapped to the same provider. Mutable buffers are cleared where Python

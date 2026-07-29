@@ -681,8 +681,9 @@ manages app-owned A and/or AAAA records for the KMS hostname, and requires an en
 Real KMS apply stages `/var/lib/atlaso/apply/kms/server.json`, installs `/etc/atlaso/kmip/server.json`, and manages the
 hardened, unprivileged `atlaso-kmip.service`. The daemon exposes only the checked-in KMIP 1.4 AES-256 symmetric-key
 contract, maps exact client-certificate fingerprints to UUID provider namespaces, and stores only AES-GCM-wrapped keys
-under `/var/lib/atlaso/kmip`. The listener requires TLS 1.2 or newer. Disabling KMS stops the service while preserving
-the operational store.
+under `/var/lib/atlaso/kmip`. `systemd-creds` stores the daemon's `ATLASO_SECRETS_KEY` input as a machine-encrypted
+credential and exposes its plaintext only in the service's private runtime credential directory. The listener requires
+TLS 1.2 or newer. Disabling KMS stops the service while preserving the operational store.
 
 Managed LDAP provides an OpenLDAP 2.6 service for VCF Automation 9.1 while Atlaso operator sign-in remains local. Each
 VCF organization receives an isolated suffix and LMDB database, organization-local users and nested groups, and a

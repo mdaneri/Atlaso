@@ -214,7 +214,8 @@ NGINX_ACCESS_LOG_PATH = Path("/var/log/nginx/access.log")
 NGINX_ERROR_LOG_PATH = Path("/var/log/nginx/error.log")
 KMS_CONFIG_DIR = Path("/etc/atlaso/kmip")
 KMS_CONFIG_PATH = KMS_CONFIG_DIR / "server.json"
-KMS_ENV_PATH = KMS_CONFIG_DIR / "atlaso-kmip.env"
+KMS_CREDENTIAL_PATH = KMS_CONFIG_DIR / "atlaso-secrets-key.cred"
+KMS_CREDENTIAL_NAME = "atlaso-secrets-key"
 KMS_SERVICE_PATH = Path("/etc/systemd/system/atlaso-kmip.service")
 KMS_SERVICE_USER = "atlaso-kmip"
 KMS_LEGACY_DATABASE_PATH = Path("/var/lib/atlaso/kms/pykmip.db")
@@ -794,27 +795,48 @@ def _ensure_kms_service_identity() -> tuple[object, object]:
         raise ValueError("KMS service-account reconciliation did not create a usable identity.") from exc
 
 
-def _install_kms_environment() -> None:
+def _install_kms_credential() -> None:
     try:
         source_lines = ATLASO_ENV_PATH.read_text(encoding="utf-8").splitlines()
     except OSError as exc:
         raise ValueError("Atlaso appliance environment is unavailable.") from exc
-    secret_line = ""
+    secret_value = ""
     for raw_line in source_lines:
         candidate = raw_line.strip()
         if candidate.startswith("export "):
             candidate = candidate.removeprefix("export ").lstrip()
         if candidate.startswith("ATLASO_SECRETS_KEY="):
-            secret_line = candidate
+            secret_value = candidate.partition("=")[2].strip()
+            if (
+                len(secret_value) >= 2
+                and secret_value[0] == secret_value[-1]
+                and secret_value[0] in {'"', "'"}
+            ):
+                secret_value = secret_value[1:-1]
             break
-    if not secret_line or not secret_line.partition("=")[2].strip():
+    if not secret_value:
         raise ValueError("ATLASO_SECRETS_KEY is missing from the Atlaso appliance environment.")
-    KMS_ENV_PATH.parent.mkdir(parents=True, exist_ok=True)
-    temporary = KMS_ENV_PATH.with_suffix(".tmp")
-    temporary.write_text(f"{secret_line}\n", encoding="utf-8")
+    systemd_creds = _command_path("systemd-creds")
+    if systemd_creds is None:
+        raise ValueError("systemd-creds is required to protect the KMS runtime credential.")
+    encrypted = _run_with_input(
+        [
+            str(systemd_creds),
+            "encrypt",
+            f"--name={KMS_CREDENTIAL_NAME}",
+            "-",
+            "-",
+        ],
+        secret_value,
+    )
+    if encrypted.returncode != 0 or not encrypted.stdout.strip():
+        raise ValueError("Could not encrypt the KMS runtime credential.")
+    KMS_CREDENTIAL_PATH.parent.mkdir(parents=True, exist_ok=True)
+    temporary = KMS_CREDENTIAL_PATH.with_suffix(".tmp")
+    temporary.write_text(encrypted.stdout, encoding="utf-8")
     os.chmod(temporary, 0o600)
     os.chown(temporary, 0, 0)
-    os.replace(temporary, KMS_ENV_PATH)
+    os.replace(temporary, KMS_CREDENTIAL_PATH)
 
 
 def _handle_ca_inner(action: str, args: list[str]) -> int:
@@ -3003,6 +3025,8 @@ def _kms_config_errors(path: Path) -> list[str]:
 
     if enabled and not ATLASO_KMIP_VENV_PATH.is_file():
         errors.append("atlaso-kmip command not found")
+    if enabled and _command_path("systemd-creds") is None:
+        errors.append("systemd-creds is required to protect the KMS runtime credential.")
     if enabled and KMS_LEGACY_DATABASE_PATH.is_file() and KMS_LEGACY_DATABASE_PATH.stat().st_size:
         errors.append(
             "A nonempty legacy PyKMIP database blocks in-place replacement; "
@@ -3031,7 +3055,8 @@ def _install_kms_service(config_path: Path) -> None:
                 "Type=simple",
                 f"User={KMS_SERVICE_USER}",
                 f"Group={KMS_SERVICE_USER}",
-                f"EnvironmentFile={KMS_ENV_PATH}",
+                f"LoadCredentialEncrypted={KMS_CREDENTIAL_NAME}:{KMS_CREDENTIAL_PATH}",
+                f"Environment=ATLASO_SECRETS_KEY_FILE=%d/{KMS_CREDENTIAL_NAME}",
                 f"ExecStart={ATLASO_KMIP_VENV_PATH} --config {config_path}",
                 "Restart=on-failure",
                 "RestartSec=5",
@@ -3139,7 +3164,7 @@ def _handle_kms(action: str, args: list[str]) -> int:
     os.chmod(KMS_CONFIG_PATH, 0o640)
     os.chown(KMS_CONFIG_PATH, 0, group.gr_gid)
     try:
-        _install_kms_environment()
+        _install_kms_credential()
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
