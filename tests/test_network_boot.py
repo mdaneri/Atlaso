@@ -2,6 +2,7 @@ import json
 import zipfile
 from datetime import timedelta
 from email.message import Message
+from pathlib import Path
 from subprocess import CompletedProcess
 from urllib.request import Request
 
@@ -614,3 +615,23 @@ def test_signed_checksum_rejects_wrong_fingerprint(monkeypatch, tmp_path):
             files[2],
             fingerprint="A" * 40,
         )
+
+
+def test_inventory_linux_build_enables_reproducible_mode():
+    repository_root = Path(__file__).resolve().parents[1]
+    defconfig = (
+        repository_root
+        / "image"
+        / "inventory-linux"
+        / "external"
+        / "configs"
+        / "atlaso_inventory_x86_64_defconfig"
+    ).read_text(encoding="utf-8")
+    build_script = (
+        repository_root / "image" / "inventory-linux" / "build.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "BR2_REPRODUCIBLE=y" in defconfig
+    assert 'export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-${source_date_epoch}}"' in (
+        build_script
+    )
