@@ -24,6 +24,7 @@ from atlaso.app.services.networking import sync_host_physical_interfaces
 from atlaso.app.services.oidc import validate_enabled_provider_at_startup
 from atlaso.app.ui import (
     active_appliance_apply_job,
+    cleanup_transient_secret_staging_files,
     ensure_ca_state,
     initialize_factory_appliance_apply_baseline,
     recover_interrupted_appliance_apply_jobs,
@@ -59,6 +60,7 @@ def refresh_startup_host_inventory(db: Session, *, environment: str) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+    cleanup_transient_secret_staging_files()
     configure_logging()
     init_db()
     with SessionLocal() as db:

@@ -744,7 +744,7 @@ def _grant_kms_private_key_read(key_path: Path) -> None:
     os.chmod(key_path, 0o640)
 
 
-def _handle_ca(action: str, args: list[str]) -> int:
+def _handle_ca_inner(action: str, args: list[str]) -> int:
     try:
         config_path = _validate_ca_config_path(args[0])
     except (IndexError, ValueError) as exc:
@@ -809,6 +809,22 @@ def _handle_ca(action: str, args: list[str]) -> int:
             written.append(str(key_path))
     print(json.dumps({"ca": "apply complete", "config_path": str(config_path), "written_files": written, "removed_files": removed}, sort_keys=True))
     return 0
+
+
+def _handle_ca(action: str, args: list[str]) -> int:
+    config_path: Path | None = None
+    result: int | None = None
+    if action in {"validate", "apply"} and len(args) == 1:
+        try:
+            config_path = _validate_ca_config_path(args[0])
+        except ValueError:
+            pass
+    try:
+        result = _handle_ca_inner(action, args)
+        return result
+    finally:
+        if config_path is not None and (action == "apply" or (action == "validate" and result != 0)):
+            config_path.unlink(missing_ok=True)
 
 
 
@@ -2488,7 +2504,7 @@ def _apply_ldap_config(payload: dict) -> int:
     return 0
 
 
-def _handle_ldap(action: str, args: list[str]) -> int:
+def _handle_ldap_inner(action: str, args: list[str]) -> int:
     if action == "authenticate":
         if len(args) != 1:
             return 1
@@ -2675,27 +2691,37 @@ def _handle_ldap(action: str, args: list[str]) -> int:
         )
         return 0
     if action == "apply":
-        try:
-            returncode = _apply_ldap_config(payload)
-            if returncode == 0:
-                print(
-                    json.dumps(
-                        {
-                            "ldap": "apply complete",
-                            "organizations": len(payload["organizations"]),
-                            "ldaps_only": bool(payload["service"].get("ldaps_enabled", True) and not payload["service"].get("ldap_enabled", False)),
-                        },
-                        sort_keys=True,
-                    )
+        returncode = _apply_ldap_config(payload)
+        if returncode == 0:
+            print(
+                json.dumps(
+                    {
+                        "ldap": "apply complete",
+                        "organizations": len(payload["organizations"]),
+                        "ldaps_only": bool(payload["service"].get("ldaps_enabled", True) and not payload["service"].get("ldap_enabled", False)),
+                    },
+                    sort_keys=True,
                 )
-            return returncode
-        finally:
-            try:
-                config_path.unlink(missing_ok=True)
-            except OSError:
-                pass
+            )
+        return returncode
     print(f"unsupported ldap action: {action}", file=sys.stderr)
     return 2
+
+
+def _handle_ldap(action: str, args: list[str]) -> int:
+    config_path: Path | None = None
+    result: int | None = None
+    if action in {"validate", "apply"} and len(args) == 1:
+        try:
+            config_path = _validate_ldap_config_path(args[0])
+        except ValueError:
+            pass
+    try:
+        result = _handle_ldap_inner(action, args)
+        return result
+    finally:
+        if config_path is not None and (action == "apply" or (action == "validate" and result != 0)):
+            config_path.unlink(missing_ok=True)
 
 
 def _kms_config_enabled(path: Path) -> bool:
@@ -4855,7 +4881,7 @@ def _local_user_status_rows(users: list[dict]) -> list[dict[str, object]]:
     return rows
 
 
-def _handle_local_users(action: str, args: list[str]) -> int:
+def _handle_local_users_inner(action: str, args: list[str]) -> int:
     if action == "authenticate":
         if len(args) != 1 or not LOCAL_USERS_USERNAME_PATTERN.fullmatch(args[0]):
             return 1
@@ -4969,6 +4995,22 @@ def _handle_local_users(action: str, args: list[str]) -> int:
         )
     )
     return 0
+
+
+def _handle_local_users(action: str, args: list[str]) -> int:
+    config_path: Path | None = None
+    result: int | None = None
+    if action in {"validate", "apply"} and len(args) == 1:
+        try:
+            config_path = _validate_local_users_config_path(args[0])
+        except ValueError:
+            pass
+    try:
+        result = _handle_local_users_inner(action, args)
+        return result
+    finally:
+        if config_path is not None and (action == "apply" or (action == "validate" and result != 0)):
+            config_path.unlink(missing_ok=True)
 
 
 def _validate_network_config_path(path_value: str) -> Path:

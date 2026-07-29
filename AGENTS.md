@@ -75,6 +75,9 @@ The following cross-cutting boundaries always apply:
   Keep it experimental until the live acceptance and recovery gate promotes that contract to observed. Provider UUIDs
   are isolated key namespaces, client access uses exact certificate fingerprints, and LDAP organizations never select
   a provider. Do not restore a general-purpose KMIP backend or migrate keys from a nonempty PyKMIP store.
+- Keep secret-bearing Local Users, Certificate Authority, and Managed LDAP apply inputs mode `0600` and present only
+  for the constrained helper execution window. Remove them on success, validation or apply failure, and startup
+  recovery; read-only Local Users status must use a separate short-lived file.
 - Vault passwords are the narrow exception for an explicit administrator eye reveal: keep them masked by default,
   CSRF-protect and audit reveals without values, disable caching, and automatically hide the value again.
 - Browser navigation to a globally disabled Web Terminal must render the authenticated Atlaso unavailable-state page;

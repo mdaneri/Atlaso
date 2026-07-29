@@ -122,8 +122,10 @@ disabled groups, and unmapped groups remain private.
 ## Apply and recovery
 
 The `ldap` apply unit stages secret-bearing JSON at `/var/lib/atlaso/apply/ldap/atlaso-ldap.json` with mode `0600`. The
-file is excluded from previews and task payloads and removed after helper processing. When LDAP-related CA, DNS, or
-firewall desired state changes, global appliance apply submits the changed dependency units together.
+file exists only for the constrained helper execution window. Atlaso and `atlaso-helper` remove it after success,
+validation failure, or apply failure, and application startup removes stale input after an interrupted process. Raw
+secrets remain excluded from previews, baselines, task payloads, logs, audits, and test output. When LDAP-related CA,
+DNS, or firewall desired state changes, global appliance apply submits the changed dependency units together.
 
 Normal settings backup contains LDAP metadata but no bind secrets or password hashes. Use the separate
 passphrase-encrypted LDAP recovery export to preserve `slapcat` data. Recovery import decrypts and validates the archive

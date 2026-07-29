@@ -29,7 +29,9 @@ Photon OS 5.0 is the appliance operating system. VMware Workstation is the defau
 authoritative lifecycle interoperability environment for exact access and trunk VLAN behavior.
 
 Development appliances keep host-mutating adapters in dry-run mode by default. Atlaso applies selected desired state
-only through the global appliance-change workflow and its constrained privileged helper.
+only through the global appliance-change workflow and its constrained privileged helper. Secret-bearing Local Users,
+Certificate Authority, and Managed LDAP inputs are staged with mode `0600` only for the helper execution window and
+removed after every terminal outcome and during application startup recovery.
 
 ## Project
 
