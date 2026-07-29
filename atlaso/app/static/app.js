@@ -1330,7 +1330,6 @@ function initializeAtlasoResourceWizard(config) {
     columns: configuredColumns,
     data: rows,
     index: "id",
-    rowDblClick: (_event, row) => openResource(row.getData(), row.getElement()),
   };
   const grid = window.AtlasoUiPatterns.createGrid({
     element,

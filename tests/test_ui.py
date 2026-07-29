@@ -800,7 +800,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v199" in service_worker.text
+    assert "atlaso-pwa-v200" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -813,7 +813,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-5" in service_worker.text
     assert "/static/app.css?v=atlaso-monaco-expand-20260729-4" in service_worker.text
-    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in service_worker.text
+    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in service_worker.text
     assert "/static/app.js?v=atlaso-monaco-kickstarts-20260729-2" in service_worker.text
 
     registration = client.get("/static/pwa.js")
@@ -838,10 +838,10 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
         (public_base, "/static/app.js?v=atlaso-monaco-kickstarts-20260729-2"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
-            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4"
+            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5"
         )
         assert shell.index(
-            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4"
+            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5"
         ) < shell.index(app_asset)
 
     wizard_templates = [
@@ -1278,7 +1278,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=atlaso-monaco-expand-20260729-4" in page.text
-    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in page.text
+    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in page.text
     assert "/static/app.js?v=atlaso-monaco-kickstarts-20260729-2" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200

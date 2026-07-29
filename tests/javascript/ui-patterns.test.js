@@ -171,8 +171,8 @@ class TabulatorStub {
     this.listeners.set(type, handler);
   }
 
-  emit(type, value) {
-    this.listeners.get(type)?.(value);
+  emit(type, ...values) {
+    this.listeners.get(type)?.(...values);
   }
 
   getDataCount() {
@@ -397,6 +397,9 @@ test("createGrid applies permission state and keyboard context-menu behavior", a
     },
   });
   TabulatorStub.last.options.rowFormatter(editableRow);
+  await TabulatorStub.last.emit("rowDblClick", { type: "dblclick" }, editableRow);
+  assert.deepEqual(openedRow, { id: 2 });
+  openedRow = null;
   await editableRowElement.emit("keydown", { key: "Enter" });
   assert.deepEqual(openedRow, { id: 2 });
   await editableRowElement.emit("keydown", { key: "F10", shiftKey: true });

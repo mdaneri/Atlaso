@@ -160,6 +160,11 @@
     try {
       if (typeof global.Tabulator !== "function") throw new Error("Tabulator is unavailable.");
       table = new global.Tabulator(element, options);
+      if (openRow) {
+        table.on?.("rowDblClick", (event, row) => {
+          openRow(row?.getData?.(), row, event);
+        });
+      }
       table.on?.("tableBuilt", () => {
         tableBuilt = true;
         if (!loadFailed) {
