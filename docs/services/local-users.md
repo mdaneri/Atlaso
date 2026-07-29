@@ -36,6 +36,16 @@ This verified appliance view provides visual orientation before you begin.
 Passwords are never displayed again or stored in audit details. Do not reuse the Photon build password or publish test
 credentials in screenshots.
 
+## Apply and status staging
+
+A real Local Users apply writes its secret-bearing helper input with mode `0600` only for the validate-and-apply
+execution window. Atlaso and `atlaso-helper` both remove that file after success, validation failure, or apply failure;
+application startup also removes a stale input left by an interrupted process. Previews, baselines, task results, logs,
+audits, and test output never receive the raw password.
+
+Read-only Photon account status uses a different uniquely named, short-lived file containing no password values. It
+cannot replace an active apply payload and is removed as soon as the status request finishes.
+
 ## Verify
 
 Test the account in a separate private browser session and confirm that its permissions match the assigned role.

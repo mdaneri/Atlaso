@@ -1,3 +1,6 @@
+import os
+
+
 def login(client):
     page = client.get("/login")
     assert page.status_code == 200
@@ -1682,6 +1685,131 @@ def test_stage_appliance_apply_config_repairs_staging_permission(monkeypatch, tm
     assert repairs == [str(config_path)]
     assert attempts["count"] == 2
     assert config_path.read_text(encoding="utf-8") == "config"
+
+
+def test_secret_staging_is_mode_0600_and_removed_after_adapter_failures(monkeypatch, tmp_path):
+    import json
+    import stat
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from atlaso.app import ui
+    from atlaso.app.adapters.system import AdapterResult
+
+    cases = [
+        (
+            "local_users",
+            "LOCAL_USERS_STAGED_CONFIG_PATH",
+            "validate_local_users_config",
+            "apply_local_users_config",
+            {"local_users": []},
+        ),
+        (
+            "ca",
+            "CA_STAGED_CONFIG_PATH",
+            "validate_ca_config",
+            "apply_ca_config",
+            {"ca_settings": object(), "ca_certificates": []},
+        ),
+        (
+            "ldap",
+            "LDAP_STAGED_CONFIG_PATH",
+            "validate_ldap_config",
+            "apply_ldap_config",
+            {"ldap_settings": SimpleNamespace(enabled=False), "ldap_organizations": []},
+        ),
+    ]
+
+    for unit_id, path_attribute, validate_name, apply_name, context in cases:
+        for failure_phase in ("validate", "apply"):
+            staged_path = tmp_path / unit_id / failure_phase / f"atlaso-{unit_id}.json"
+            secret = f"{unit_id}-{failure_phase}-Secret1!"
+            calls: list[str] = []
+
+            def run_step(phase: str, path: str) -> AdapterResult:
+                path_value = Path(path)
+                calls.append(phase)
+                assert path_value == staged_path
+                if os.name != "nt":
+                    assert stat.S_IMODE(path_value.stat().st_mode) == 0o600
+                assert secret in path_value.read_text(encoding="utf-8")
+                failed = phase == failure_phase
+                return AdapterResult(
+                    command=["atlaso-helper", unit_id, phase, path],
+                    dry_run=False,
+                    stderr="sanitized failure" if failed else "",
+                    returncode=1 if failed else 0,
+                )
+
+            adapter = SimpleNamespace(dry_run=False)
+            setattr(adapter, validate_name, lambda path, phase="validate": run_step(phase, path))
+            setattr(adapter, apply_name, lambda path, phase="apply": run_step(phase, path))
+            monkeypatch.setattr(ui, path_attribute, str(staged_path))
+            if unit_id == "ca":
+                monkeypatch.setattr(
+                    ui,
+                    "render_ca_apply_payload",
+                    lambda *_args, **_kwargs: json.dumps({"private_key_pem": secret}),
+                )
+
+            unit = {
+                "id": unit_id,
+                "label": unit_id,
+                "context": context,
+                "raw_config_preview": json.dumps({"password": secret}),
+                "summary": ["test"],
+                "validation_errors": [],
+                "validation_warnings": [],
+                "config_path": str(staged_path),
+                "config_preview": '{"password":"[redacted]"}',
+                "config_diff": "",
+            }
+
+            result = ui.execute_appliance_apply_unit(unit, adapter=adapter)
+
+            assert result["success"] is False
+            assert calls == (["validate"] if failure_phase == "validate" else ["validate", "apply"])
+            assert not staged_path.exists()
+            assert secret not in json.dumps(result)
+
+
+def test_local_user_status_uses_isolated_short_lived_staging(monkeypatch, tmp_path):
+    import stat
+    from pathlib import Path
+
+    from atlaso.app import ui
+    from atlaso.app.adapters.system import AdapterResult
+
+    active_apply_path = tmp_path / "local-users" / "atlaso-users.json"
+    active_apply_path.parent.mkdir(parents=True)
+    active_apply_path.write_text('{"password":"ActiveApplySecret1!"}', encoding="utf-8")
+    active_apply_path.chmod(0o600)
+    seen_status_paths: list[Path] = []
+
+    class StatusAdapter:
+        dry_run = False
+
+        def local_users_status(self, config_path: str) -> AdapterResult:
+            status_path = Path(config_path)
+            seen_status_paths.append(status_path)
+            assert status_path != active_apply_path
+            assert status_path.is_file()
+            if os.name != "nt":
+                assert stat.S_IMODE(status_path.stat().st_mode) == 0o600
+            assert "ActiveApplySecret1!" not in status_path.read_text(encoding="utf-8")
+            return AdapterResult(
+                command=["atlaso-helper", "local-users", "status", config_path],
+                dry_run=False,
+                stdout='{"local_users":"status ok","users":[]}',
+            )
+
+    monkeypatch.setattr(ui, "LOCAL_USERS_STAGED_CONFIG_PATH", str(active_apply_path))
+    monkeypatch.setattr(ui, "SystemAdapter", StatusAdapter)
+
+    assert ui.local_user_os_statuses([], {}) == {}
+    assert len(seen_status_paths) == 1
+    assert not seen_status_paths[0].exists()
+    assert active_apply_path.read_text(encoding="utf-8") == '{"password":"ActiveApplySecret1!"}'
 
 
 def test_appliance_apply_status_api_tracks_autosaved_desired_state(client):
@@ -5338,7 +5466,7 @@ def test_real_local_users_apply_clears_pending_passwords_and_baselines_post_appl
     csrf = apply_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     applied = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "local_users"})
     assert applied.status_code == 200
-    assert staged_path.is_file()
+    assert not staged_path.exists()
     assert "BridgeStrong1!" not in applied.text
 
     with SessionLocal() as db:
@@ -9809,7 +9937,7 @@ def test_appliance_apply_unit_separates_secret_staging_from_snapshot_change_mark
     assert _redact_task_value({"payload_b64": "c2xhcGNhdC1wYXNzd29yZC1oYXNoZXM="}) == {"payload_b64": "[redacted]"}
 
 
-def test_disabled_ldap_apply_keeps_staged_user_password_pending(monkeypatch):
+def test_disabled_ldap_apply_keeps_staged_user_password_pending(monkeypatch, tmp_path):
     from types import SimpleNamespace
 
     from atlaso.app.adapters.system import AdapterResult
@@ -9832,7 +9960,8 @@ def test_disabled_ldap_apply_keeps_staged_user_password_pending(monkeypatch):
         def apply_ldap_config(path):
             return AdapterResult(["ldap", "apply", path], False)
 
-    monkeypatch.setattr("atlaso.app.ui.stage_appliance_apply_config", lambda _path, _preview: "disabled-ldap.json")
+    staged_path = tmp_path / "ldap" / "atlaso-ldap.json"
+    monkeypatch.setattr("atlaso.app.ui.LDAP_STAGED_CONFIG_PATH", str(staged_path))
     unit = {
         "id": "ldap",
         "label": "Managed LDAP",
@@ -9850,6 +9979,7 @@ def test_disabled_ldap_apply_keeps_staged_user_password_pending(monkeypatch):
         assert result["success"] is True
         assert user.password_status == "pending_apply"
         assert has_pending_ldap_password(user) is True
+        assert not staged_path.exists()
     finally:
         clear_pending_ldap_password(user)
 
@@ -11476,6 +11606,68 @@ def test_appliance_apply_parent_cancel_finishes_current_step_and_skips_remaining
         assert json.loads(job.result or "{}")["state"] == "cancelled"
 
 
+def test_application_restart_removes_stale_secret_staging_inputs(client, monkeypatch, tmp_path):
+    from starlette.testclient import TestClient
+
+    from atlaso.app import ui
+    from atlaso.app.main import create_app
+
+    local_users_path = tmp_path / "apply" / "local-users" / "atlaso-users.json"
+    ca_path = tmp_path / "apply" / "ca" / "atlaso-ca.json"
+    ldap_path = tmp_path / "apply" / "ldap" / "atlaso-ldap.json"
+    status_path = local_users_path.with_name(".atlaso-users.status-stale.json")
+    atomic_temp_paths = [
+        path.with_name(f".{path.name}.stale.tmp")
+        for path in (local_users_path, ca_path, ldap_path, status_path)
+    ]
+    stale_paths = [local_users_path, ca_path, ldap_path, status_path, *atomic_temp_paths]
+    for path in stale_paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{"password":"RestartSecret1!"}', encoding="utf-8")
+        path.chmod(0o600)
+
+    monkeypatch.setattr(ui, "LOCAL_USERS_STAGED_CONFIG_PATH", str(local_users_path))
+    monkeypatch.setattr(ui, "CA_STAGED_CONFIG_PATH", str(ca_path))
+    monkeypatch.setattr(ui, "LDAP_STAGED_CONFIG_PATH", str(ldap_path))
+
+    with TestClient(create_app()) as restarted_client:
+        assert restarted_client.get("/openapi.json").status_code == 200
+
+    assert all(not path.exists() for path in stale_paths)
+
+
+def test_secret_staging_cleanup_repairs_ownership_before_unlink(monkeypatch, tmp_path):
+    from atlaso.app import ui
+    from atlaso.app.adapters.system import AdapterResult
+
+    staged_paths = [
+        tmp_path / "apply" / "local-users" / "atlaso-users.json",
+        tmp_path / "apply" / "ca" / "atlaso-ca.json",
+        tmp_path / "apply" / "ldap" / "atlaso-ldap.json",
+    ]
+    for path in staged_paths:
+        path.parent.mkdir(parents=True)
+        path.write_text("{}", encoding="utf-8")
+    repairs: list[str] = []
+
+    class RepairingAdapter:
+        dry_run = False
+
+        def prepare_apply_staging_path(self, path: str) -> AdapterResult:
+            repairs.append(path)
+            return AdapterResult(["atlaso-helper", "staging", "prepare", path], False)
+
+    monkeypatch.setattr(ui, "LOCAL_USERS_STAGED_CONFIG_PATH", str(staged_paths[0]))
+    monkeypatch.setattr(ui, "CA_STAGED_CONFIG_PATH", str(staged_paths[1]))
+    monkeypatch.setattr(ui, "LDAP_STAGED_CONFIG_PATH", str(staged_paths[2]))
+    monkeypatch.setattr(ui, "SystemAdapter", RepairingAdapter)
+
+    ui.cleanup_transient_secret_staging_files()
+
+    assert repairs == [str(path) for path in staged_paths]
+    assert all(not path.exists() for path in staged_paths)
+
+
 def test_appliance_startup_initializes_factory_apply_baseline(monkeypatch, tmp_path):
     from sqlalchemy import select
     from starlette.testclient import TestClient
@@ -12323,6 +12515,7 @@ def test_ca_live_apply_stages_decrypted_private_keys_without_leaking_job_output(
     assert captured["validate_payload"] == captured["apply_payload"]
     assert "BEGIN PRIVATE KEY" in captured["apply_payload"]
     assert "[redacted]" not in captured["apply_payload"]
+    assert not staged_path.exists()
 
     with SessionLocal() as db:
         job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()

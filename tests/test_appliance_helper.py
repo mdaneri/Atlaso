@@ -181,6 +181,21 @@ def test_ldap_helper_renders_separate_mdb_acl_overlays_and_configurable_listener
     assert helper._ldap_listener_urls(payload["service"]) == "ldapi:/// ldap://192.168.49.1:1389/"
 
 
+@pytest.mark.parametrize("action", ["validate", "apply"])
+def test_ldap_helper_removes_invalid_apply_payload(monkeypatch, tmp_path, capsys, action):
+    helper = load_helper_module()
+    apply_dir = tmp_path / "apply" / "ldap"
+    apply_dir.mkdir(parents=True)
+    config_path = apply_dir / "atlaso-ldap.json"
+    config_path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(helper, "LDAP_APPLY_DIR", apply_dir)
+
+    assert helper._handle_ldap(action, [str(config_path)]) == 2
+    assert capsys.readouterr().err
+    assert not config_path.exists()
+
+
 def test_plaintext_only_ldap_validation_does_not_require_tls_files(monkeypatch):
     helper = load_helper_module()
     payload = ldap_payload(enabled=True)
@@ -1982,6 +1997,7 @@ def test_ca_helper_validates_and_writes_managed_files(monkeypatch, tmp_path):
     assert root_ca.read_text(encoding="utf-8").startswith("-----BEGIN CERTIFICATE-----")
     assert crl_path.read_text(encoding="utf-8").startswith("-----BEGIN X509 CRL-----")
     assert key_path.read_text(encoding="utf-8").startswith("-----BEGIN PRIVATE KEY-----")
+    assert not config_path.exists()
     if os.name != "nt":
         assert oct(key_path.stat().st_mode & 0o777) == "0o600"
 
@@ -2089,6 +2105,25 @@ def test_ca_helper_rejects_key_path_without_private_key(monkeypatch, tmp_path):
     errors = helper._ca_payload_errors(config_path)
 
     assert "certificate kms.atlaso.internal key_path requires a private key." in errors
+
+
+@pytest.mark.parametrize("action", ["validate", "apply"])
+def test_ca_helper_removes_invalid_apply_payload(monkeypatch, tmp_path, capsys, action):
+    helper = load_helper_module()
+    apply_dir = tmp_path / "apply" / "ca"
+    managed_root = tmp_path / "etc" / "atlaso"
+    apply_dir.mkdir(parents=True)
+    payload = json.loads(ca_payload_text(managed_root))
+    payload["certificates"][0]["private_key_pem"] = ""
+    config_path = apply_dir / "atlaso-ca.json"
+    config_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    monkeypatch.setattr(helper, "CA_APPLY_DIR", apply_dir)
+    monkeypatch.setattr(helper, "CA_MANAGED_PATH_BASE", managed_root)
+
+    assert helper._handle_ca(action, [str(config_path)]) == 2
+    assert "key_path requires a private key" in capsys.readouterr().err
+    assert not config_path.exists()
 
 
 def test_wan_helper_apply_routes_nat_and_netem(monkeypatch, tmp_path):
@@ -2838,6 +2873,21 @@ def test_local_users_helper_rejects_reserved_username(monkeypatch, tmp_path, cap
     assert "local user root is reserved" in captured.err
 
 
+@pytest.mark.parametrize("action", ["validate", "apply"])
+def test_local_users_helper_removes_invalid_apply_payload(monkeypatch, tmp_path, capsys, action):
+    helper = load_helper_module()
+    apply_dir = tmp_path / "apply" / "local-users"
+    apply_dir.mkdir(parents=True)
+    config_path = apply_dir / "atlaso-users.json"
+    config_path.write_text(local_users_json(username="root"), encoding="utf-8")
+
+    monkeypatch.setattr(helper, "LOCAL_USERS_APPLY_DIR", apply_dir)
+
+    assert helper._handle_local_users(action, [str(config_path)]) == 2
+    assert "local user root is reserved" in capsys.readouterr().err
+    assert not config_path.exists()
+
+
 def test_local_users_helper_creates_deletes_and_sets_password_without_leaking(monkeypatch, tmp_path, capsys):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "local-users"
@@ -2898,6 +2948,7 @@ def test_local_users_helper_creates_deletes_and_sets_password_without_leaking(mo
     assert "BridgeStrong1!" not in captured.err
     assert "pam_pwquality.so" in pam_path.read_text(encoding="utf-8")
     assert "minlen = 12" in pwquality_path.read_text(encoding="utf-8")
+    assert not config_path.exists()
 
 
 def test_local_users_helper_authenticates_shadow_password_without_leaking(monkeypatch, capsys):
