@@ -3564,6 +3564,42 @@ def test_esxi_custom_variable_collection_drives_kickstart_completion_and_validat
     assert rejected.status_code == 400
 
 
+def test_esxi_custom_variable_errors_do_not_expose_exception_details(client, monkeypatch):
+    import atlaso.app.ui as ui_module
+
+    login(client)
+    page = client.get("/esxi-pxe")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    created = client.post(
+        "/esxi-pxe/custom-variables",
+        headers={"Accept": "application/json"},
+        data={"csrf": csrf, "name": "safe_name", "description": "", "default_value": ""},
+    )
+    assert created.status_code == 200
+
+    def reject_definition(*_args, **_kwargs):
+        raise ValueError("database details that must not reach the browser")
+
+    monkeypatch.setattr(ui_module, "save_custom_variable_definition", reject_definition)
+    create_error = client.post(
+        "/esxi-pxe/custom-variables",
+        headers={"Accept": "application/json"},
+        data={"csrf": csrf, "name": "another_name", "description": "", "default_value": ""},
+    )
+    update_error = client.post(
+        "/esxi-pxe/custom-variables/safe_name",
+        headers={"Accept": "application/json"},
+        data={"csrf": csrf, "name": "safe_name", "description": "", "default_value": ""},
+    )
+
+    assert create_error.status_code == 400
+    assert update_error.status_code == 400
+    assert create_error.json() == {"detail": "Custom variable definition is invalid."}
+    assert update_error.json() == {"detail": "Custom variable definition is invalid."}
+    assert "database details" not in create_error.text
+    assert "database details" not in update_error.text
+
+
 def test_esxi_pxe_iso_upload_and_host_selection(client, monkeypatch, tmp_path):
     import json
     from types import SimpleNamespace

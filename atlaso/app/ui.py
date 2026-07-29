@@ -20835,9 +20835,9 @@ def create_esxi_custom_variable_from_ui(
             default_value=default_value,
         )
         db.commit()
-    except ValueError as exc:
+    except ValueError:
         db.rollback()
-        return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"detail": "Custom variable definition is invalid."}, status_code=400)
     record_audit(
         db,
         actor=identity.username,
@@ -20876,9 +20876,9 @@ def update_esxi_custom_variable_from_ui(
             original_name=variable_name,
         )
         db.commit()
-    except ValueError as exc:
+    except ValueError:
         db.rollback()
-        return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"detail": "Custom variable definition is invalid."}, status_code=400)
     record_audit(
         db,
         actor=identity.username,
