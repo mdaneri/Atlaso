@@ -9260,8 +9260,14 @@ def stage_appliance_apply_config(config_path: str, config_preview: str) -> str:
 
 
 def cleanup_transient_secret_staging_files() -> None:
+    adapter = SystemAdapter()
     for path_value in (LOCAL_USERS_STAGED_CONFIG_PATH, CA_STAGED_CONFIG_PATH, LDAP_STAGED_CONFIG_PATH):
         staged_path = Path(path_value)
+        if not adapter.dry_run:
+            repair = adapter.prepare_apply_staging_path(str(staged_path))
+            if repair.returncode != 0:
+                detail = (repair.stderr or repair.stdout or "apply staging ownership repair failed").strip()
+                raise PermissionError(f"Unable to prepare transient staging cleanup for {staged_path}: {detail}")
         staged_path.unlink(missing_ok=True)
         for temp_path in staged_path.parent.glob(f".{staged_path.name}.*.tmp"):
             temp_path.unlink(missing_ok=True)

@@ -11636,6 +11636,38 @@ def test_application_restart_removes_stale_secret_staging_inputs(client, monkeyp
     assert all(not path.exists() for path in stale_paths)
 
 
+def test_secret_staging_cleanup_repairs_ownership_before_unlink(monkeypatch, tmp_path):
+    from atlaso.app import ui
+    from atlaso.app.adapters.system import AdapterResult
+
+    staged_paths = [
+        tmp_path / "apply" / "local-users" / "atlaso-users.json",
+        tmp_path / "apply" / "ca" / "atlaso-ca.json",
+        tmp_path / "apply" / "ldap" / "atlaso-ldap.json",
+    ]
+    for path in staged_paths:
+        path.parent.mkdir(parents=True)
+        path.write_text("{}", encoding="utf-8")
+    repairs: list[str] = []
+
+    class RepairingAdapter:
+        dry_run = False
+
+        def prepare_apply_staging_path(self, path: str) -> AdapterResult:
+            repairs.append(path)
+            return AdapterResult(["atlaso-helper", "staging", "prepare", path], False)
+
+    monkeypatch.setattr(ui, "LOCAL_USERS_STAGED_CONFIG_PATH", str(staged_paths[0]))
+    monkeypatch.setattr(ui, "CA_STAGED_CONFIG_PATH", str(staged_paths[1]))
+    monkeypatch.setattr(ui, "LDAP_STAGED_CONFIG_PATH", str(staged_paths[2]))
+    monkeypatch.setattr(ui, "SystemAdapter", RepairingAdapter)
+
+    ui.cleanup_transient_secret_staging_files()
+
+    assert repairs == [str(path) for path in staged_paths]
+    assert all(not path.exists() for path in staged_paths)
+
+
 def test_appliance_startup_initializes_factory_apply_baseline(monkeypatch, tmp_path):
     from sqlalchemy import select
     from starlette.testclient import TestClient
