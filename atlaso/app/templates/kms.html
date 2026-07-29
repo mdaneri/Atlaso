@@ -7,7 +7,7 @@
     <div class="panel-head">
       <div>
         <h2>KMS / KMIP</h2>
-        <p class="muted">Manage KMIP desired state for a lab KMS backend, clients, and staged keys.</p>
+        <p class="muted">Manage the appliance-native KMIP provider, trusted clients, and key metadata.</p>
       </div>
       <span class="status-pill {{ 'good' if kms_settings.enabled else 'muted' }}">{{ "enabled" if kms_settings.enabled else "disabled" }}</span>
     </div>
@@ -80,7 +80,7 @@
         <div class="section-head">
           <div>
             <h2>KMIP Clients</h2>
-            <p class="muted">Clients represent certificate subjects allowed to talk to the lab KMIP endpoint.</p>
+            <p class="muted">Clients map exact certificate fingerprints to this isolated provider.</p>
           </div>
           <span class="status-pill muted">{{ kms_clients|length }} clients</span>
         </div>
@@ -134,7 +134,7 @@
       </div>
       <form class="form-stack" action="/kms/settings" method="post" data-autosave-form data-kms-settings data-autosave-status-id="kms-settings-autosave-status">
         <input type="hidden" name="csrf" value="{{ csrf_token }}">
-        <label class="switch-field"><span class="field-label"><span>Service enabled</span><button class="help-icon" type="button" data-help="Controls whether Atlaso treats the KMIP service as enabled desired state. It does not start PyKMIP until global appliance apply runs.">i</button></span><input class="switch-input" type="checkbox" name="enabled" {{ "checked" if kms_settings.enabled else "" }}><span class="switch-track" aria-hidden="true"></span></label>
+        <label class="switch-field"><span class="field-label"><span>Service enabled</span><button class="help-icon" type="button" data-help="Controls whether Atlaso treats the appliance-native KMIP service as enabled desired state. It starts only after global appliance apply.">i</button></span><input class="switch-input" type="checkbox" name="enabled" {{ "checked" if kms_settings.enabled else "" }}><span class="switch-track" aria-hidden="true"></span></label>
         <input type="hidden" name="backend" value="{{ kms_settings.backend }}">
         <label class="compact-service-field">
           <span class="field-label"><span>Hostname</span><button class="help-icon" type="button" data-help="DNS name clients should use for the KMIP endpoint. Atlaso uses this same name for the CA-issued server certificate.">i</button></span>
@@ -143,7 +143,7 @@
         <input type="hidden" name="listen_interfaces_present" value="1">
         <div class="service-bind-editor stacked-service-bind-editor" data-service-bind>
           <div class="form-field">
-            <span class="field-label"><span>Listen interfaces</span><button class="help-icon" type="button" data-help="One or more access-mode physical interfaces and VLAN interfaces where KMIP should be reachable. Management is reserved for the Atlaso UI; PyKMIP binds to the first selected address.">i</button></span>
+            <span class="field-label"><span>Listen interfaces</span><button class="help-icon" type="button" data-help="One or more access-mode physical interfaces and VLAN interfaces where KMIP should be reachable. Management is reserved for the Atlaso UI; the KMIP daemon binds to the first selected address.">i</button></span>
             <div class="tag-editor" data-tag-editor data-tag-name="listen_interfaces" data-service-bind-interface>
               <div class="tag-editor-tags" data-tag-list>
                 {% for interface_name in selected_kms_interfaces %}
@@ -172,7 +172,7 @@
             </datalist>
           </div>
           <div class="form-field">
-            <span class="field-label"><span>Listen addresses</span><button class="help-icon" type="button" data-help="Read-only addresses resolved from selected interface IPv4 and IPv6 CIDRs. The first address is the PyKMIP bind host.">i</button></span>
+            <span class="field-label"><span>Listen addresses</span><button class="help-icon" type="button" data-help="Read-only addresses resolved from selected interface IPv4 and IPv6 CIDRs. The first address is the KMIP daemon bind host.">i</button></span>
             <div class="derived-field fixed-value-field">
               <strong data-derived-listen-addresses>{{ selected_kms_addresses|join(", ") if selected_kms_addresses else "No interface address selected" }}</strong>
             </div>
@@ -186,9 +186,10 @@
           <span class="field-label"><span>Client CA path</span><button class="help-icon" type="button" data-help="Appliance-owned path to the CA certificate used to verify KMIP client certificates. This path is informational in the web UI.">i</button></span>
           <strong>{{ kms_settings.ca_certificate_path }}</strong>
         </div>
-        <label class="switch-field"><span class="field-label"><span>Require client certificates</span><button class="help-icon" type="button" data-help="Requires mutual TLS for KMIP clients. Keep this enabled for VCF-style labs.">i</button></span><input class="switch-input" type="checkbox" name="require_client_cert" {{ "checked" if kms_settings.require_client_cert else "" }}><span class="switch-track" aria-hidden="true"></span></label>
-        <label class="switch-field"><span class="field-label"><span>Allow register</span><button class="help-icon" type="button" data-help="Allows clients to register keys or objects through KMIP when the backend supports it.">i</button></span><input class="switch-input" type="checkbox" name="allow_register" {{ "checked" if kms_settings.allow_register else "" }}><span class="switch-track" aria-hidden="true"></span></label>
-        <label class="switch-field"><span class="field-label"><span>Allow destroy</span><button class="help-icon" type="button" data-help="Allows destructive KMIP destroy operations. Leave disabled unless a lab workflow explicitly needs it.">i</button></span><input class="switch-input" type="checkbox" name="allow_destroy" {{ "checked" if kms_settings.allow_destroy else "" }}><span class="switch-track" aria-hidden="true"></span></label>
+        <div class="derived-field fixed-value-field">
+          <span class="field-label"><span>Client authentication</span><button class="help-icon" type="button" data-help="The appliance-native provider always requires a CA-valid client certificate whose exact SHA-256 fingerprint maps to this provider.">i</button></span>
+          <strong>Mutual TLS and exact fingerprint</strong>
+        </div>
         <p id="kms-settings-autosave-status" class="autosave-status" aria-live="polite">Changes save automatically.</p>
       </form>
     </div>
@@ -208,9 +209,9 @@
         </div>
       {% endif %}
       {% if not kms_validation_errors %}
-        <p class="muted" data-kms-validation-message>The desired KMS state passes Atlaso validation. Appliance validation still runs through the allowlisted KMS helper before PyKMIP changes are applied.</p>
+        <p class="muted" data-kms-validation-message>The desired KMS state passes Atlaso validation. Appliance validation still runs through the allowlisted KMS helper before atlaso-kmip changes are applied.</p>
       {% endif %}
-      {% set preview_label = "PyKMIP config" %}
+      {% set preview_label = "atlaso-kmip config" %}
       {% set preview_path = kms_settings.config_path %}
       {% set preview_path_attr = "data-kms-config-path" %}
       {% set preview_title = "KMS rendered config" %}
@@ -257,7 +258,7 @@
   </section>
   <section class="hidden" data-atlaso-wizard-step="review">
     <div class="settings-list" data-atlaso-resource-review></div>
-    <div class="alert warning">Saving changes KMS desired state. Client certificate issuance and PyKMIP enforcement remain controlled by global appliance apply.</div>
+    <div class="alert warning">Saving changes KMS desired state. Client certificate issuance and atlaso-kmip enforcement remain controlled by global appliance apply.</div>
   </section>
 {% endcall %}
 
@@ -301,7 +302,7 @@
   </section>
   <section class="hidden" data-atlaso-wizard-step="review">
     <div class="settings-list" data-atlaso-resource-review></div>
-    <div class="alert warning">Saving stages key desired state only. PyKMIP mutation remains controlled by the global KMS appliance-apply unit.</div>
+    <div class="alert warning">This row is desired-state metadata only. Operational AES-256 keys are generated by an authenticated vSphere KMIP Create request and are never pre-provisioned from the UI.</div>
   </section>
 {% endcall %}
 {% endblock %}

@@ -437,7 +437,9 @@ from atlaso.app.services.kms import (
     KMS_KEY_ALGORITHMS,
     KMS_KEY_STATES,
     KMS_STAGED_CONFIG_PATH,
+    ensure_kms_provider_id,
     join_csv,
+    kms_client_fingerprints,
     kms_client_to_dict,
     kms_key_to_dict,
     render_kms_config,
@@ -631,7 +633,7 @@ TEMPLATES_DIR = APP_DIR / "templates"
 VCF_DEPOT_VDT_LOG_PATH = PurePosixPath("/var/lib/atlaso/vcfDownloadTool/active-tool/log/vdt.log")
 VCF_DEPOT_TASK_LOG_DIR = PurePosixPath("/var/lib/atlaso/vcfDownloadTool/task-logs")
 ATLASO_APP_LOG_PATH = get_settings().app_log_path
-KMS_SERVER_LOG_PATH = Path("/var/log/atlaso/kms/server.log")
+KMS_SERVER_LOG_PATH = Path("/var/log/atlaso/kmip/server.log")
 APPLY_LOGGER = logging.getLogger("atlaso.appliance_apply")
 APPLIANCE_UPDATE_LOGGER = logging.getLogger("atlaso.appliance_update")
 NETWORK_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/network/atlaso-network.conf"
@@ -1016,13 +1018,13 @@ def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
 
     kms_settings = get_kms_settings_row(db)
     if kms_settings.enabled:
-        cert_path, key_path, chain_path = ca_service_cert_paths("kms", kms_settings.server_certificate or kms_settings.hostname)
+        cert_path, key_path, chain_path = ca_service_cert_paths("kmip", kms_settings.server_certificate or kms_settings.hostname)
         specs.append(
             ManagedCertificateSpec(
                 owner="kms:server",
                 common_name=kms_settings.hostname,
                 dns_names=[kms_settings.hostname],
-                ip_addresses=[kms_settings.listen_address] if kms_settings.listen_address else [],
+                ip_addresses=split_addresses(kms_settings.listen_address),
                 profile_name=CA_SERVER_PROFILE_NAME,
                 description="Managed KMS/KMIP server TLS certificate.",
                 cert_path=cert_path,
@@ -1032,7 +1034,7 @@ def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
         )
         for client in db.execute(select(KmsClient).where(KmsClient.enabled.is_(True)).order_by(KmsClient.name)).scalars().all():
             common_name = kms_client_common_name(client)
-            cert_path, key_path, chain_path = ca_service_cert_paths("kms/clients", client.name)
+            cert_path, key_path, chain_path = ca_service_cert_paths("kmip/clients", client.name)
             specs.append(
                 ManagedCertificateSpec(
                     owner=f"kms:client:{client.name}",
@@ -1171,6 +1173,8 @@ def get_kms_settings_row(db: Session) -> KmsSettings:
         db.add(settings)
         db.commit()
         db.refresh(settings)
+    elif ensure_kms_provider_id(settings):
+        db.commit()
     return settings
 
 
@@ -3723,6 +3727,29 @@ def kms_context(db: Session, *, reconcile: bool = True) -> dict:
         db.refresh(settings)
     ca_state_errors = ensure_ca_state(db) if reconcile else []
     clients = db.execute(select(KmsClient).order_by(KmsClient.name)).scalars().all()
+    if reconcile:
+        issued_fingerprints = {
+            certificate.managed_owner: certificate.fingerprint
+            for certificate in db.execute(
+                select(CaCertificate).where(
+                    CaCertificate.managed_owner.in_(
+                        [f"kms:client:{client.name}" for client in clients]
+                    ),
+                    CaCertificate.status == "issued",
+                )
+            ).scalars()
+            if certificate.fingerprint
+        }
+        fingerprint_changed = False
+        for client in clients:
+            fingerprint = issued_fingerprints.get(f"kms:client:{client.name}", "")
+            fingerprints = kms_client_fingerprints(client.certificate_fingerprint)
+            normalized = fingerprint.casefold()
+            if normalized and normalized not in fingerprints:
+                client.certificate_fingerprint = join_csv([*fingerprints, normalized])
+                fingerprint_changed = True
+        if fingerprint_changed:
+            db.commit()
     keys = db.execute(select(KmsKey).options(selectinload(KmsKey.owner_client)).order_by(KmsKey.name)).scalars().all()
     config_preview = render_kms_config(settings=settings, clients=clients, keys=keys)
     validation_errors = [*ca_state_errors, *validate_kms_state(settings=settings, clients=clients, keys=keys)]
@@ -3766,8 +3793,9 @@ def kms_context(db: Session, *, reconcile: bool = True) -> dict:
         "kms_validation_errors": validation_errors,
         "kms_service_status": service_runtime_status(db, "kms"),
         "kms_lab_notice": (
-            "PyKMIP is useful for KMIP lab and compatibility testing. Treat this backend as a lab KMS, "
-            "not a production HSM or hardened enterprise key manager."
+            "The appliance-native atlaso-kmip service implements the bounded candidate VCF 9.1 profile. "
+            "Treat it as experimental until the observed interoperability and recovery gate in issue #172 passes; "
+            "it is not a production HSM or hardened enterprise key manager."
         ),
     }
 
@@ -15909,7 +15937,7 @@ def kms_page(
 def update_kms_settings_from_ui(
     request: Request,
     enabled: str | None = Form(None),
-    backend: str = Form("pykmip"),
+    backend: str = Form("atlaso-kmip"),
     listen_interfaces: list[str] = Form(default_factory=list),
     listen_addresses: list[str] = Form(default_factory=list),
     listen_interfaces_present: str | None = Form(None),
@@ -15939,7 +15967,7 @@ def update_kms_settings_from_ui(
         listen_addresses_present=listen_addresses_present,
     )
     settings.enabled = enabled == "on"
-    settings.backend = backend.strip().lower() or "pykmip"
+    settings.backend = "atlaso-kmip"
     settings.listen_interface = selected_interfaces
     settings.listen_address = selected_addresses
     settings.port = port
@@ -15948,9 +15976,9 @@ def update_kms_settings_from_ui(
     settings.ca_certificate_path = settings.ca_certificate_path.strip() or "/etc/atlaso/ca/root.crt"
     settings.database_path = KMS_DEFAULT_DATABASE_PATH
     settings.config_path = KMS_DEFAULT_CONFIG_PATH
-    settings.require_client_cert = require_client_cert == "on"
-    settings.allow_register = allow_register == "on"
-    settings.allow_destroy = allow_destroy == "on"
+    settings.require_client_cert = True
+    settings.allow_register = False
+    settings.allow_destroy = False
     settings.updated_at = utcnow()
     if settings.enabled:
         ensure_dns_for_kms(db, settings, identity.username, previous_hostname=previous_hostname)
@@ -16163,7 +16191,9 @@ def create_kms_client_from_ui(
     name: str = Form(...),
     certificate_subject: str = Form(...),
     role: str = Form("service"),
-    allowed_operations: str = Form("locate,get,register,create"),
+    allowed_operations: str = Form(
+        "locate,get,create,activate,get-attributes,get-attribute-list,query,discover-versions"
+    ),
     description: str = Form(""),
     enabled: str | None = Form(None),
     csrf: str = Form(...),
@@ -16208,7 +16238,9 @@ def edit_kms_client_from_ui(
     name: str = Form(...),
     certificate_subject: str = Form(...),
     role: str = Form("service"),
-    allowed_operations: str = Form("locate,get,register,create"),
+    allowed_operations: str = Form(
+        "locate,get,create,activate,get-attributes,get-attribute-list,query,discover-versions"
+    ),
     description: str = Form(""),
     enabled: str | None = Form(None),
     csrf: str = Form(...),
@@ -16245,6 +16277,54 @@ def edit_kms_client_from_ui(
         resource_name="client",
         resource=kms_client_to_dict(client),
     )
+
+
+@router.post("/kms/clients/{client_id}/retire-previous-certificate", response_model=None)
+def retire_previous_kms_client_certificate(
+    request: Request,
+    client_id: int,
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    verify_csrf(request, csrf)
+    client = db.get(KmsClient, client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="KMS client not found")
+    fingerprints = kms_client_fingerprints(client.certificate_fingerprint)
+    if len(fingerprints) < 2:
+        raise HTTPException(
+            status_code=409,
+            detail="KMS client has no previous certificate fingerprint to retire.",
+        )
+    certificate = db.execute(
+        select(CaCertificate).where(
+            CaCertificate.managed_owner == f"kms:client:{client.name}",
+            CaCertificate.status == "issued",
+        )
+    ).scalar_one_or_none()
+    current_fingerprint = (
+        certificate.fingerprint.casefold()
+        if certificate and certificate.fingerprint
+        else ""
+    )
+    if not current_fingerprint or current_fingerprint not in fingerprints:
+        raise HTTPException(
+            status_code=409,
+            detail="The current CA-issued KMS client certificate is not in the trusted overlap.",
+        )
+    client.certificate_fingerprint = current_fingerprint
+    client.updated_at = utcnow()
+    db.commit()
+    record_audit(
+        db,
+        actor=identity.username,
+        action="retire_previous_kms_client_certificate",
+        resource_type="kms_client",
+        resource_id=str(client.id),
+        detail="retired_previous_fingerprints=true",
+    )
+    return JSONResponse({"client": kms_client_to_dict(client)})
 
 
 @router.post("/kms/clients/{client_id}/delete", response_model=None)

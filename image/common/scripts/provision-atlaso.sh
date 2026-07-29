@@ -159,6 +159,12 @@ fi
 if ! id atlaso-automation >/dev/null 2>&1; then
   useradd --system --gid atlaso-automation --home-dir "$ATLASO_STATE/automation" --shell /sbin/nologin atlaso-automation
 fi
+if ! getent group atlaso-kmip >/dev/null 2>&1; then
+  groupadd --system atlaso-kmip
+fi
+if ! id atlaso-kmip >/dev/null 2>&1; then
+  useradd --system --gid atlaso-kmip --home-dir "$ATLASO_STATE/kmip" --shell /sbin/nologin atlaso-kmip
+fi
 usermod -a -G atlaso-automation atlaso
 
 install -d -o root -g root -m 0755 "$ATLASO_HOME"
@@ -175,7 +181,7 @@ install -d -o atlaso -g atlaso -m 0750 "$ATLASO_STATE/apply/vcf-offline-depot"
 install -d -o atlaso -g atlaso -m 0750 "$ATLASO_STATE/vcfDownloadTool/active-tool"
 install -d -o atlaso -g atlaso -m 0700 "$ATLASO_STATE/vcfDownloadTool/active-tool/secrets"
 install -d -o atlaso -g atlaso -m 0750 "$ATLASO_STATE/dnsmasq"
-install -d -o atlaso -g atlaso -m 0750 "$ATLASO_STATE/kms"
+install -d -o atlaso-kmip -g atlaso-kmip -m 0700 "$ATLASO_STATE/kmip"
 install -d -o atlaso -g atlaso -m 0700 "$ATLASO_STATE/ldap/recovery"
 install -d -o root -g root -m 0755 "$ATLASO_STATE/users"
 install -d -o atlaso -g atlaso-automation -m 0750 "$ATLASO_STATE/automation"
@@ -183,13 +189,13 @@ install -d -o atlaso -g atlaso-automation -m 0750 "$ATLASO_STATE/automation/scri
 install -d -o atlaso-automation -g atlaso-automation -m 0750 "$ATLASO_STATE/automation/runs"
 install -d -o atlaso -g atlaso -m 0750 "$ATLASO_LOG"
 install -d -o root -g root -m 0755 /mnt/atlaso-esx-storage /srv/atlaso/esx-storage /etc/exports.d /etc/nfs.conf.d
-install -d -o atlaso -g atlaso -m 0750 "$ATLASO_LOG/kms"
+install -d -o atlaso-kmip -g atlaso-kmip -m 0700 "$ATLASO_LOG/kmip"
 install -d -o root -g root -m 0755 /etc/atlaso
 install -d -o root -g root -m 0755 /etc/atlaso/dnsmasq.d
-install -d -o root -g root -m 0755 /etc/atlaso/kms
-install -d -o root -g root -m 0755 /etc/atlaso/kms/policies
+install -d -o root -g atlaso-kmip -m 0750 /etc/atlaso/kmip
+install -d -o root -g atlaso-kmip -m 0750 /etc/atlaso/kmip/certs
+install -d -o root -g root -m 0755 /etc/atlaso/kmip/clients/certs
 install -d -o root -g root -m 0755 /etc/atlaso/ldap/tls
-install -d -o root -g root -m 0755 /etc/pykmip
 install -d -o root -g root -m 0755 /etc/atlaso/nginx/sites.d
 install -d -o root -g root -m 0755 /etc/atlaso/ssh/authorized_keys
 install -d -o root -g root -m 0755 /etc/ssh/sshd_config.d

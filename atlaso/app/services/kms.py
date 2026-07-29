@@ -1,23 +1,35 @@
 from __future__ import annotations
 
+import json
 from ipaddress import ip_address
+from uuid import UUID, uuid4
 
 from atlaso.app.models import KmsClient, KmsKey, KmsSettings
 from atlaso.app.services.ca import safe_certificate_name
 from atlaso.app.services.dnsmasq import split_addresses, split_interfaces
 
 
-KMS_BACKENDS = ["pykmip"]
+KMS_BACKENDS = ["atlaso-kmip"]
 KMS_CLIENT_ROLES = ["admin", "service", "readonly"]
-KMS_KEY_ALGORITHMS = ["AES", "RSA", "ECDSA"]
-KMS_KEY_STATES = ["pre-active", "active", "deactivated", "compromised", "destroyed"]
-KMS_DEFAULT_OPERATIONS = ["locate", "get", "register", "create"]
-KMS_DEFAULT_DATABASE_PATH = "/var/lib/atlaso/kms/pykmip.db"
-KMS_DEFAULT_CONFIG_PATH = "/etc/atlaso/kms/pykmip.conf"
-KMS_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/kms/pykmip.conf"
-KMS_POLICY_PATH = "/etc/atlaso/kms/policies"
-KMS_LOG_PATH = "/var/log/atlaso/kms/server.log"
-KMS_SERVER_CERT_BASE = "/etc/atlaso/kms/certs"
+KMS_KEY_ALGORITHMS = ["AES"]
+KMS_KEY_STATES = ["pre-active", "active"]
+KMS_DEFAULT_OPERATIONS = [
+    "locate",
+    "get",
+    "create",
+    "activate",
+    "get-attributes",
+    "get-attribute-list",
+    "query",
+    "discover-versions",
+]
+KMS_DEFAULT_DATABASE_PATH = "/var/lib/atlaso/kmip/store.db"
+KMS_DEFAULT_KEK_PATH = "/var/lib/atlaso/kmip/kek.json"
+KMS_DEFAULT_CONFIG_PATH = "/etc/atlaso/kmip/server.json"
+KMS_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/kms/server.json"
+KMS_LOG_PATH = "/var/log/atlaso/kmip/server.log"
+KMS_SERVER_CERT_BASE = "/etc/atlaso/kmip/certs"
+KMS_CLIENT_CERT_BASE = "/etc/atlaso/kmip/clients/certs"
 KMS_DNS_RECORD_DESCRIPTION = "Atlaso app-owned KMS/KMIP endpoint record."
 
 
@@ -36,11 +48,34 @@ def join_csv(values: list[str]) -> str:
     return ",".join(split_csv(",".join(values)))
 
 
+def kms_client_fingerprints(value: str | None) -> list[str]:
+    fingerprints: list[str] = []
+    for item in split_csv(value):
+        normalized = item.casefold()
+        if normalized not in fingerprints:
+            fingerprints.append(normalized)
+    return fingerprints
+
+
+def ensure_kms_provider_id(settings: KmsSettings) -> bool:
+    try:
+        normalized = str(UUID(settings.provider_id))
+    except (AttributeError, TypeError, ValueError):
+        normalized = str(uuid4())
+    changed = settings.provider_id != normalized
+    settings.provider_id = normalized
+    return changed
+
+
 def kms_client_to_dict(client: KmsClient) -> dict:
+    fingerprints = kms_client_fingerprints(client.certificate_fingerprint)
     return {
         "id": client.id,
         "name": client.name,
         "certificate_subject": client.certificate_subject,
+        "certificate_fingerprint": client.certificate_fingerprint,
+        "certificate_fingerprints": fingerprints,
+        "certificate_fingerprint_count": len(fingerprints),
         "role": client.role,
         "allowed_operations": client.allowed_operations,
         "enabled": client.enabled,
@@ -70,63 +105,52 @@ def render_kms_config(
     clients: list[KmsClient],
     keys: list[KmsKey],
 ) -> str:
+    ensure_kms_provider_id(settings)
     certificate_name = safe_certificate_name(settings.server_certificate or settings.hostname)
     listen_addresses = split_addresses(settings.listen_address)
     host = listen_addresses[0] if settings.enabled and listen_addresses else "127.0.0.1"
-    lines = [
-        "# Managed by Atlaso. Local changes may be overwritten.",
-        f"# Atlaso KMS enabled: {str(bool(settings.enabled)).lower()}",
-        f"# Atlaso KMS endpoint hostname: {settings.hostname}",
-        f"# Atlaso KMS listen interfaces: {', '.join(split_interfaces(settings.listen_interface)) or 'none'}",
-        f"# Atlaso KMS listen addresses: {', '.join(listen_addresses) or 'none'}",
-        "# PyKMIP accepts one bind host; Atlaso uses the first selected listen address.",
-        "# Backend: PyKMIP lab KMIP server desired state.",
-        "[server]",
-        f"hostname={host}",
-        f"port={settings.port}",
-        f"certificate_path={KMS_SERVER_CERT_BASE}/{certificate_name}.crt",
-        f"key_path={KMS_SERVER_CERT_BASE}/{certificate_name}.key",
-        f"ca_path={settings.ca_certificate_path}",
-        "auth_suite=TLS1.2",
-        f"policy_path={KMS_POLICY_PATH}",
-        f"enable_tls_client_auth={str(bool(settings.require_client_cert))}",
-        "logging_level=INFO",
-        f"database_path={settings.database_path}",
-        "",
-        "# Atlaso policy intent:",
-        f"# allow_register={'yes' if settings.allow_register else 'no'}",
-        f"# allow_destroy={'yes' if settings.allow_destroy else 'no'}",
-        "",
-        "# Atlaso KMIP clients:",
-    ]
-    for client in clients:
-        if not client.enabled:
-            continue
-        lines.extend(
-            [
-                f"# client={client.name}",
-                f"#   subject={client.certificate_subject}",
-                f"#   role={client.role}",
-                f"#   operations={join_csv(split_csv(client.allowed_operations))}",
-            ]
-        )
-    lines.extend(["", "# Atlaso staged KMS keys:"])
-    for key in keys:
-        if not key.enabled:
-            continue
-        owner = key.owner_client.name if key.owner_client else "unassigned"
-        lines.extend(
-            [
-                f"# key={key.name}",
-                f"#   algorithm={key.algorithm}",
-                f"#   length={key.length}",
-                f"#   usage={join_csv(split_csv(key.usage))}",
-                f"#   state={key.state}",
-                f"#   owner={owner}",
-                f"#   exportable={'yes' if key.exportable else 'no'}",
-            ]
-        )
-    return "\n".join(lines).strip() + "\n"
+    enabled_clients = [client for client in clients if client.enabled]
+    provider = {
+        "id": settings.provider_id,
+        "name": settings.hostname,
+        "client_fingerprints": sorted(
+            {
+                fingerprint
+                for client in enabled_clients
+                for fingerprint in kms_client_fingerprints(
+                    client.certificate_fingerprint
+                )
+            }
+        ),
+        "client_certificate_paths": [
+            f"{KMS_CLIENT_CERT_BASE}/{safe_certificate_name(client.name)}.crt"
+            for client in enabled_clients
+            if not kms_client_fingerprints(client.certificate_fingerprint)
+        ],
+    }
+    document = {
+        "schema_version": 1,
+        "enabled": bool(settings.enabled),
+        "listen": {"host": host, "port": settings.port},
+        "tls": {
+            "certificate_path": f"{KMS_SERVER_CERT_BASE}/{certificate_name}.crt",
+            "private_key_path": f"{KMS_SERVER_CERT_BASE}/{certificate_name}.key",
+            "ca_path": settings.ca_certificate_path,
+        },
+        "store": {
+            "database_path": KMS_DEFAULT_DATABASE_PATH,
+            "kek_path": KMS_DEFAULT_KEK_PATH,
+        },
+        "limits": {
+            "max_request_bytes": 1_048_576,
+            "max_connections": 32,
+            "idle_timeout_seconds": 30,
+            "max_requests_per_connection": 128,
+        },
+        "providers": [provider] if enabled_clients else [],
+        "interop_trace_path": "",
+    }
+    return json.dumps(document, indent=2, sort_keys=True) + "\n"
 
 
 def validate_kms_state(
@@ -137,7 +161,7 @@ def validate_kms_state(
 ) -> list[str]:
     errors: list[str] = []
     if settings.backend not in KMS_BACKENDS:
-        errors.append("KMS backend must be pykmip for the MVP scaffold.")
+        errors.append("KMS backend must be atlaso-kmip.")
     if settings.enabled:
         if not split_interfaces(settings.listen_interface):
             errors.append("KMS listen interface is required.")
@@ -161,6 +185,7 @@ def validate_kms_state(
         errors.append("KMS database path is required.")
 
     client_ids = {client.id for client in clients}
+    seen_fingerprints: set[str] = set()
     for client in clients:
         if not client.name.strip():
             errors.append("KMS client name is required.")
@@ -170,6 +195,23 @@ def validate_kms_state(
             errors.append(f"KMS client {client.name or client.id} requires a certificate subject.")
         if not split_csv(client.allowed_operations):
             errors.append(f"KMS client {client.name or client.id} needs at least one allowed operation.")
+        unsupported_operations = sorted(
+            set(split_csv(client.allowed_operations)) - set(KMS_DEFAULT_OPERATIONS)
+        )
+        if unsupported_operations:
+            errors.append(
+                f"KMS client {client.name or client.id} operations are outside the bounded contract: "
+                f"{', '.join(unsupported_operations)}."
+            )
+        for fingerprint in kms_client_fingerprints(
+            client.certificate_fingerprint
+        ):
+            if len(fingerprint) != 64 or any(character not in "0123456789abcdef" for character in fingerprint):
+                errors.append(f"KMS client {client.name or client.id} fingerprint must be a SHA-256 digest.")
+            elif fingerprint in seen_fingerprints:
+                errors.append(f"KMS client {client.name or client.id} fingerprint is already trusted.")
+            else:
+                seen_fingerprints.add(fingerprint)
 
     for key in keys:
         label = key.name or str(key.id)
@@ -177,12 +219,8 @@ def validate_kms_state(
             errors.append("KMS key name is required.")
         if key.algorithm not in KMS_KEY_ALGORITHMS:
             errors.append(f"KMS key {label} has an unsupported algorithm.")
-        if key.algorithm == "AES" and key.length not in {128, 192, 256}:
-            errors.append(f"KMS key {label} AES length must be 128, 192, or 256 bits.")
-        if key.algorithm == "RSA" and key.length < 2048:
-            errors.append(f"KMS key {label} RSA length must be at least 2048 bits.")
-        if key.algorithm == "ECDSA" and key.length not in {256, 384, 521}:
-            errors.append(f"KMS key {label} ECDSA length must be 256, 384, or 521.")
+        if key.algorithm == "AES" and key.length != 256:
+            errors.append(f"KMS key {label} AES length must be 256 bits.")
         if key.state not in KMS_KEY_STATES:
             errors.append(f"KMS key {label} has an unsupported lifecycle state.")
         if key.owner_client_id is not None and key.owner_client_id not in client_ids:

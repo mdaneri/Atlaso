@@ -21,7 +21,6 @@ DEPENDENCY_IMPORTS = [
     "jinja2",
     "joserfc",
     "jwt",
-    "kmip",
     "multipart",
     "pydantic_settings",
     "sqlalchemy",

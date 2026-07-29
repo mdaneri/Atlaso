@@ -3112,7 +3112,7 @@ function newKmsClientRow() {
     name: "",
     certificate_subject: "",
     role: "service",
-    allowed_operations: "locate,get,register,create",
+    allowed_operations: "locate,get,create,activate,get-attributes,get-attribute-list,query,discover-versions",
     enabled: true,
     description: "",
     is_new: true,
@@ -4088,6 +4088,24 @@ function initializeKmsClientsTable() {
     }
     option.textContent = resource.name;
   };
+  const retirePreviousCertificate = async (row) => {
+    const data = row.getData();
+    const confirmed = await requestConfirmation({
+      title: `Retire previous ${data.name} certificate?`,
+      message: "Confirm vCenter is using the current CA-issued certificate. This removes every previous fingerprint from KMS desired state after the next global appliance apply.",
+      confirmLabel: "Retire previous certificate",
+      tone: "danger",
+    });
+    if (!confirmed) return;
+    const body = new FormData();
+    body.set("csrf", element.dataset.csrf || "");
+    const payload = await atlasoGridWizardRequest(
+      `/kms/clients/${data.id}/retire-previous-certificate`,
+      body,
+    );
+    await row.update(payload.client);
+    showTransientGridStatus("Previous certificate retired");
+  };
   initializeAtlasoResourceWizard({
     elementId: "kms-clients-table",
     formSelector: "[data-kms-client-form]",
@@ -4105,6 +4123,13 @@ function initializeKmsClientsTable() {
     updateLabel: "Update KMIP client",
     emptyMessage: "No KMIP clients configured.",
     actionErrorSelector: "#kms-client-error",
+    extraActions: [
+      {
+        label: "Retire previous certificate",
+        disabled: (row) => Number(row.getData().certificate_fingerprint_count || 0) < 2,
+        action: (_event, row) => retirePreviousCertificate(row),
+      },
+    ],
     defaults: newKmsClientRow(),
     steps: [
       { id: "identity", title: "Define the KMIP client", description: "Name the client and bind it to the exact certificate subject used for mutual TLS." },
@@ -4377,7 +4402,7 @@ function updateKmsValidation(payload = {}) {
       const message = document.createElement("p");
       message.className = "muted";
       message.setAttribute("data-kms-validation-message", "");
-      message.textContent = "The desired KMS state passes Atlaso validation. Appliance validation still runs through the allowlisted KMS helper before PyKMIP changes are applied.";
+      message.textContent = "The desired KMS state passes Atlaso validation. Appliance validation still runs through the allowlisted KMS helper before atlaso-kmip changes are applied.";
       validationPanel.insertBefore(message, previewAnchor);
     }
     return;
@@ -17773,11 +17798,11 @@ document.addEventListener("DOMContentLoaded", initializeDhcpLeaseReservationActi
 document.addEventListener("DOMContentLoaded", initializeEsxiPxeHostsTable);
 document.addEventListener("DOMContentLoaded", initializeCaProfilesTable);
 document.addEventListener("DOMContentLoaded", initializeCaCertificatesTable);
-document.addEventListener("DOMContentLoaded", initializeCaSettings);
+document.addEventListener("DOMContentLoaded", () => initializeCaSettings());
 document.addEventListener("DOMContentLoaded", initializeCaCsrWizard);
 document.addEventListener("DOMContentLoaded", initializeKmsClientsTable);
 document.addEventListener("DOMContentLoaded", initializeKmsKeysTable);
-document.addEventListener("DOMContentLoaded", initializeKmsSettings);
+document.addEventListener("DOMContentLoaded", () => initializeKmsSettings());
 document.addEventListener("DOMContentLoaded", initializeLdapOrganizationWizard);
 document.addEventListener("DOMContentLoaded", initializeLdapPageState);
 document.addEventListener("DOMContentLoaded", initializeLdapDirectoryTables);
@@ -17787,7 +17812,7 @@ document.addEventListener("DOMContentLoaded", initializeAutomationTables);
 document.addEventListener("DOMContentLoaded", initializeManagedPackagePolicies);
 document.addEventListener("DOMContentLoaded", initializeApplianceUpdateSourceWizard);
 document.addEventListener("DOMContentLoaded", initializeManagedPackageWizard);
-document.addEventListener("DOMContentLoaded", initializeNtpSettings);
+document.addEventListener("DOMContentLoaded", () => initializeNtpSettings());
 document.addEventListener("DOMContentLoaded", initializeNTPsecUpstreamsTable);
 document.addEventListener("DOMContentLoaded", initializeNTPsecSourceHealthModal);
 document.addEventListener("DOMContentLoaded", initializeVcfRegistryBundlesTable);
@@ -17809,7 +17834,7 @@ document.addEventListener("DOMContentLoaded", initializeRoutesWanNatTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanPoliciesTable);
 document.addEventListener("DOMContentLoaded", initializePhysicalInterfacesTable);
 document.addEventListener("DOMContentLoaded", initializeApiTokensTable);
-document.addEventListener("DOMContentLoaded", initializeOidcProviderSettings);
+document.addEventListener("DOMContentLoaded", () => initializeOidcProviderSettings());
 document.addEventListener("DOMContentLoaded", initializeOidcClientsTable);
 document.addEventListener("DOMContentLoaded", initializeOidcKeysTable);
 document.addEventListener("DOMContentLoaded", initializeOidcGroupMappingsTable);
@@ -17826,19 +17851,19 @@ document.addEventListener("DOMContentLoaded", () => initializeCopyValueButtons()
 document.addEventListener("DOMContentLoaded", () => initializeDownloadValueButtons());
 document.addEventListener("DOMContentLoaded", initializeNonTabbableHelperControls);
 document.addEventListener("DOMContentLoaded", initializeSecretToggles);
-document.addEventListener("DOMContentLoaded", initializeSwitchFields);
-document.addEventListener("DOMContentLoaded", initializeAutosaveForms);
+document.addEventListener("DOMContentLoaded", () => initializeSwitchFields());
+document.addEventListener("DOMContentLoaded", () => initializeAutosaveForms());
 document.addEventListener("DOMContentLoaded", initializeApplianceSettings);
-document.addEventListener("DOMContentLoaded", initializeFirewallSettings);
-document.addEventListener("DOMContentLoaded", initializeDnsSettings);
+document.addEventListener("DOMContentLoaded", () => initializeFirewallSettings());
+document.addEventListener("DOMContentLoaded", () => initializeDnsSettings());
 document.addEventListener("DOMContentLoaded", initializeVcfFqdnGenerator);
 document.addEventListener("DOMContentLoaded", initializeVcfTrustForm);
 document.addEventListener("DOMContentLoaded", initializeVcfSddcDeployment);
 document.addEventListener("DOMContentLoaded", initializeVcfTargetDepotHelper);
 document.addEventListener("DOMContentLoaded", initializeVcfLdapHelper);
-document.addEventListener("DOMContentLoaded", initializeVcfBackupSettings);
-document.addEventListener("DOMContentLoaded", initializeVcfRegistrySettings);
-document.addEventListener("DOMContentLoaded", initializeVcfDepotSettings);
+document.addEventListener("DOMContentLoaded", () => initializeVcfBackupSettings());
+document.addEventListener("DOMContentLoaded", () => initializeVcfRegistrySettings());
+document.addEventListener("DOMContentLoaded", () => initializeVcfDepotSettings());
 document.addEventListener("DOMContentLoaded", initializeVcfDepotSoftwareDepotIdGenerator);
 document.addEventListener("DOMContentLoaded", initializeVcfDepotToolResetModal);
 document.addEventListener("DOMContentLoaded", initializeVcfDepotTokenPaste);
@@ -17847,8 +17872,8 @@ document.addEventListener("DOMContentLoaded", initializeVcfDepotCredentialsPaste
 document.addEventListener("DOMContentLoaded", initializeVcfDepotPropertiesEditor);
 document.addEventListener("DOMContentLoaded", initializeFileUploadControls);
 document.addEventListener("DOMContentLoaded", initializeEsxiIsoUploadForms);
-document.addEventListener("DOMContentLoaded", initializeTagEditors);
-document.addEventListener("DOMContentLoaded", initializeServiceBindEditors);
+document.addEventListener("DOMContentLoaded", () => initializeTagEditors());
+document.addEventListener("DOMContentLoaded", () => initializeServiceBindEditors());
 document.addEventListener("DOMContentLoaded", initializeTabs);
 document.addEventListener("DOMContentLoaded", initializeLogsPage);
 document.addEventListener("DOMContentLoaded", initializeAuditEventsTable);

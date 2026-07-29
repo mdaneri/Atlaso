@@ -704,7 +704,7 @@ def test_console_appliance_services_use_full_catalog_and_optional_units(monkeypa
         "_systemd_unit_states",
         lambda units: {
             unit: {
-                "LoadState": "not-found" if unit == "atlaso-kms.service" else "loaded",
+                "LoadState": "not-found" if unit == "atlaso-kmip.service" else "loaded",
                 "UnitFileState": "enabled",
                 "ActiveState": "failed" if unit == "slapd.service" else "active",
             }
@@ -741,7 +741,7 @@ def test_console_service_rows_fit_normal_tty_and_compact_summary_reports_excepti
     services = (
         ServiceStatus("Atlaso", "atlaso.service", "loaded", "enabled", "active"),
         ServiceStatus("LDAP", "slapd.service", "loaded", "enabled", "failed"),
-        ServiceStatus("KMS", "atlaso-kms.service", "not-found", "", "inactive"),
+        ServiceStatus("KMS", "atlaso-kmip.service", "not-found", "", "inactive"),
         ServiceStatus("Firewall", "atlaso-firewall.service", "loaded", "enabled", "active", False),
     )
 
