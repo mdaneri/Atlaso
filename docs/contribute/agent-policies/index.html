@@ -2464,6 +2464,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#data-classification-and-redaction" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Data Classification And Redaction
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#ui-defaults" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3071,6 +3082,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#data-classification-and-redaction" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Data Classification And Redaction
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#ui-defaults" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3404,6 +3426,19 @@
   Atlaso's generated-lock or release boundaries. Before merging a Python update, regenerate every affected <code>.lock</code>
   file with Python 3.14 and pip-tools 7.6.0, preserve hashes and <code>--allow-unsafe</code>, refresh the appliance declaration
   fingerprint, and run the lock and Photon compatibility checks.</li>
+</ul>
+<h2 id="data-classification-and-redaction">Data Classification And Redaction<a class="headerlink" href="#data-classification-and-redaction" title="Permanent link">&para;</a></h2>
+<ul>
+<li>IP addresses, MAC addresses, hostnames, and account names are non-sensitive operational identifiers when they appear
+  by themselves. Their presence alone is not a reason to suppress a useful operational log or audit record.</li>
+<li>Passwords, tokens, authenticated URLs, session material, private keys, password hashes, credential verifiers, and
+  other secret-bearing data are sensitive and must remain out of public issues, pull requests, previews, baselines,
+  tasks, logs, audits, screenshots, test output, and final responses. Content-integrity hashes of non-secret material
+  and one-way change-detection hashes of encrypted-at-rest ciphertext are not sensitive by themselves.</li>
+<li>Treat an operational identifier as sensitive when it is embedded in or paired with authentication or cryptographic
+  material. Review the complete context before recording, rendering, or sharing it.</li>
+<li>This classification does not relax authentication, authorization, access control, least-privilege, or an operator's
+  site or organization handling requirements. Preserve those controls even when a value is not sensitive by itself.</li>
 </ul>
 <h2 id="ui-defaults">UI Defaults<a class="headerlink" href="#ui-defaults" title="Permanent link">&para;</a></h2>
 <ul>
