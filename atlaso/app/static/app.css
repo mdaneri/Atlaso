@@ -6839,6 +6839,9 @@ textarea {
 
 .atlaso-monaco-editor {
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -6853,6 +6856,9 @@ textarea {
 .atlaso-monaco-shell {
   position: relative;
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .atlaso-monaco-toolbar {

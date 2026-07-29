@@ -63,8 +63,8 @@ DEFAULT_ESXI_KICKSTART_CONTENT = """#
 # Accept the VMware End User License Agreement
 vmaccepteula
 
-# Set the root password for the DCUI and Tech Support Mode
-rootpw vmware01!
+# Replace this placeholder with a SHA-512 crypt hash before deployment
+rootpw --iscrypted $6$REPLACE_WITH_SHA512_CRYPT_HASH
 
 # Install on the first local disk available on machine
 install --firstdisk --overwritevmfs
