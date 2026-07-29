@@ -34,8 +34,9 @@ URLs, or other secret-bearing values.
 
 IP addresses, MAC addresses, hostnames, and account names are not sensitive by themselves in Atlaso and may remain in
 an audit event when they identify the affected resource. Passwords, tokens, authenticated URLs, session material,
-private keys, hashes, and other secret-bearing data remain sensitive. An identifier must also be treated as sensitive
-when it is embedded in or paired with authentication or cryptographic material.
+private keys, password-, credential-, or secret-derived hashes, and other secret-bearing data remain sensitive;
+content-integrity hashes of non-secret material do not. An identifier must also be treated as sensitive when it is
+embedded in or paired with authentication or cryptographic material.
 
 ## Verify and escalate
 

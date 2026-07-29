@@ -10,8 +10,9 @@ prepared.
 Atlaso treats IP addresses, MAC addresses, hostnames, and account names as non-sensitive operational identifiers when
 they appear by themselves.
 
-Passwords, tokens, authenticated URLs, session material, private keys, hashes, and other secret-bearing data are
-sensitive. An operational identifier becomes sensitive when it is embedded in or paired with authentication or
+Passwords, tokens, authenticated URLs, session material, private keys, password-, credential-, or secret-derived
+hashes, and other secret-bearing data are sensitive. Content-integrity hashes of non-secret material are not sensitive
+by themselves. An operational identifier becomes sensitive when it is embedded in or paired with authentication or
 cryptographic material.
 
 This classification does not make authenticated or access-restricted data public, bypass authorization, or override an
