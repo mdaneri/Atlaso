@@ -82,8 +82,7 @@ stampFile.write(time.asctime())
 """
 SECRET_KEYWORD_PATTERN = re.compile(r"(rootpw|password|passwd|token|secret|key|license|activation|credential)", re.IGNORECASE)
 UNSUPPORTED_TEMPLATE_PATTERN = re.compile(r"({[%#].*?[}%]}|\$\{[^}]+\})")
-KICKSTART_VARIABLE_PATTERN = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*\}\}")
-KICKSTART_TEMPLATE_EXPRESSION_PATTERN = re.compile(r"\{\{\s*(.*?)\s*\}\}")
+KICKSTART_VARIABLE_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
 CUSTOM_VARIABLE_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SAFE_ISO_UPLOAD_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]*\.iso$", re.IGNORECASE)
 
@@ -207,19 +206,36 @@ def host_variables(host: EsxiPxeHost) -> dict[str, str]:
         return {}
 
 
-def kickstart_template_variables(content: str) -> tuple[set[str], list[str]]:
+def kickstart_template_markers(content: str) -> tuple[list[tuple[int, int, str]], list[str]]:
     source = content or ""
-    names = set(KICKSTART_VARIABLE_PATTERN.findall(source))
-    invalid = [
-        match.group(1).strip()
-        for match in KICKSTART_TEMPLATE_EXPRESSION_PATTERN.finditer(source)
-        if not KICKSTART_VARIABLE_PATTERN.fullmatch(match.group(0))
-    ]
-    unmatched = KICKSTART_TEMPLATE_EXPRESSION_PATTERN.sub("", source)
-    if "{{" in unmatched:
-        invalid.append("unclosed {{ marker")
-    if "}}" in unmatched:
-        invalid.append("unmatched }} marker")
+    markers: list[tuple[int, int, str]] = []
+    invalid: list[str] = []
+    cursor = 0
+    while cursor < len(source):
+        opening = source.find("{{", cursor)
+        closing = source.find("}}", cursor)
+        if closing >= 0 and (opening < 0 or closing < opening):
+            invalid.append("unmatched }} marker")
+            cursor = closing + 2
+            continue
+        if opening < 0:
+            break
+        closing = source.find("}}", opening + 2)
+        if closing < 0:
+            invalid.append("unclosed {{ marker")
+            break
+        name = source[opening + 2 : closing].strip()
+        if not KICKSTART_VARIABLE_NAME_PATTERN.fullmatch(name):
+            invalid.append("invalid {{ marker")
+        else:
+            markers.append((opening, closing + 2, name))
+        cursor = closing + 2
+    return markers, invalid
+
+
+def kickstart_template_variables(content: str) -> tuple[set[str], list[str]]:
+    markers, invalid = kickstart_template_markers(content)
+    names = {name for _start, _end, name in markers}
     return names, invalid
 
 
@@ -405,10 +421,14 @@ def render_kickstart_for_host(
     if missing:
         raise ValueError(f"Kickstart variable {missing[0]} is not defined for host {host.hostname or host.mac_address}.")
 
-    def replace(match: re.Match[str]) -> str:
-        return values[match.group(1)]
-
-    return KICKSTART_VARIABLE_PATTERN.sub(replace, content)
+    markers, _invalid = kickstart_template_markers(content)
+    rendered: list[str] = []
+    cursor = 0
+    for start, end, name in markers:
+        rendered.extend((content[cursor:start], values[name]))
+        cursor = end
+    rendered.append(content[cursor:])
+    return "".join(rendered)
 
 
 def kickstart_template_validation_errors(

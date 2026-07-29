@@ -20582,14 +20582,19 @@ def create_esxi_kickstart_from_ui(
         db.commit()
     except (ValueError, IntegrityError) as exc:
         db.rollback()
+        detail = (
+            "A Kickstart with that name already exists."
+            if isinstance(exc, IntegrityError)
+            else "Kickstart source is invalid. Review its variable and vault markers."
+        )
         if "application/json" in request.headers.get("accept", ""):
-            return JSONResponse({"detail": str(exc)}, status_code=400)
+            return JSONResponse({"detail": detail}, status_code=400)
         return render(
             request,
             "esxi_pxe.html",
             {
                 "identity": identity,
-                **esxi_pxe_page_context(db, identity, error=str(exc)),
+                **esxi_pxe_page_context(db, identity, error=detail),
                 "appliance_apply_status": appliance_apply_status(db, "esxi_pxe"),
             },
             status_code=400,
@@ -20627,14 +20632,19 @@ def update_esxi_kickstart_from_ui(
         db.commit()
     except (ValueError, IntegrityError) as exc:
         db.rollback()
+        detail = (
+            "A Kickstart with that name already exists."
+            if isinstance(exc, IntegrityError)
+            else "Kickstart source is invalid. Review its variable and vault markers."
+        )
         if "application/json" in request.headers.get("accept", ""):
-            return JSONResponse({"detail": str(exc)}, status_code=400)
+            return JSONResponse({"detail": detail}, status_code=400)
         return render(
             request,
             "esxi_pxe.html",
             {
                 "identity": identity,
-                **esxi_pxe_page_context(db, identity, selected_id=kickstart_id, error=str(exc)),
+                **esxi_pxe_page_context(db, identity, selected_id=kickstart_id, error=detail),
                 "appliance_apply_status": appliance_apply_status(db, "esxi_pxe"),
             },
             status_code=400,

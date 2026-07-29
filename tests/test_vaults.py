@@ -289,15 +289,15 @@ def test_dynamic_kickstart_derives_exact_vault_scope_without_caching(client):
 
 
 @pytest.mark.parametrize(
-    ("marker", "message"),
+    ("marker", "case_name"),
     [
-        ("{{vault.missing.key.password}}", "is not available"),
-        ("{{vault.missing.key.token}}", "is not available"),
+        ("{{vault.missing.key.password}}", "missing"),
+        ("{{vault.missing.key.token}}", "unsupported"),
         ("{{vault.missing.key.password", "unclosed"),
         ("vault.missing.key.password}}", "unmatched"),
     ],
 )
-def test_kickstart_save_rejects_missing_unsupported_and_malformed_vault_markers(client, marker, message):
+def test_kickstart_save_rejects_missing_unsupported_and_malformed_vault_markers(client, marker, case_name):
     login(client)
     page = client.get("/esxi-pxe")
     csrf = csrf_from_page(page.text)
@@ -306,14 +306,45 @@ def test_kickstart_save_rejects_missing_unsupported_and_malformed_vault_markers(
         headers={"Accept": "application/json"},
         data={
             "csrf": csrf,
-            "name": f"Rejected {message}",
+            "name": f"Rejected {case_name}",
             "description": "",
             "content": f"vmaccepteula\nrootpw {marker}\n",
             "enabled": "on",
         },
     )
     assert response.status_code == 400
-    assert message in response.json()["detail"]
+    assert response.json()["detail"] == "Kickstart source is invalid. Review its variable and vault markers."
+    assert marker not in response.text
+
+
+def test_kickstart_marker_parser_handles_adversarial_braces_without_regex_backtracking():
+    from atlaso.app.services.esxi_pxe import kickstart_template_variables
+
+    names, invalid = kickstart_template_variables("{{{{" + (" " * 100_000) + "}}}}")
+
+    assert names == set()
+    assert invalid
+
+
+def test_kickstart_json_errors_do_not_expose_database_exception_details(client):
+    login(client)
+    page = client.get("/esxi-pxe")
+    csrf = csrf_from_page(page.text)
+    payload = {
+        "csrf": csrf,
+        "name": "Duplicate-safe Kickstart",
+        "description": "",
+        "content": "vmaccepteula\nrootpw --iscrypted placeholder\n",
+    }
+
+    created = client.post("/esxi-pxe/kickstarts", headers={"Accept": "application/json"}, data=payload)
+    duplicate = client.post("/esxi-pxe/kickstarts", headers={"Accept": "application/json"}, data=payload)
+
+    assert created.status_code == 200
+    assert duplicate.status_code == 400
+    assert duplicate.json()["detail"] == "A Kickstart with that name already exists."
+    assert "sql" not in duplicate.text.lower()
+    assert "integrityerror" not in duplicate.text.lower()
 
 
 def test_kickstart_completion_and_save_validate_metadata_without_decrypting(client, monkeypatch):
