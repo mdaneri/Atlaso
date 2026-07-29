@@ -73,7 +73,8 @@ contains names and descriptions only, never credential values. Saving or validat
 and rejects malformed markers, missing or renamed vaults and keys, unsupported subkeys, and inaccessible references.
 Atlaso resolves only the exact referenced values for an enabled host assigned to that Kickstart and revalidates them at
 request time. Source, preview, and download views retain the marker; the dynamic response is not persisted and is
-returned with `Cache-Control: no-store`.
+returned with `Cache-Control: no-store`. Atlaso blocks deletion of a vault while an enabled Kickstart references one of
+its markers; remove or replace those marker dependencies first.
 
 ## Remote URI security
 

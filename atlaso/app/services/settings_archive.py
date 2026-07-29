@@ -71,7 +71,12 @@ from atlaso.app.models import (
 )
 from atlaso.app.seed import SEED_EXAMPLES_SETTING_KEY, seed_initial_data, seed_update_sources
 from atlaso.app.services.dnsmasq import DNS_CONDITIONAL_FORWARDERS_SETTING_KEY
-from atlaso.app.services.esxi_pxe import host_variables_json, normalize_host_mac, normalize_host_variables
+from atlaso.app.services.esxi_pxe import (
+    ESXI_PXE_CUSTOM_VARIABLES_KEY,
+    host_variables_json,
+    normalize_host_mac,
+    normalize_host_variables,
+)
 from atlaso.app.services.firewall import FIREWALL_SOURCE_GROUPS_SETTING_KEY
 from atlaso.app.services.local_users import LOCAL_USERS_PASSWORD_POLICY_KEY
 from atlaso.app.services.ldap import clear_ldap_recovery_payload, ensure_organization_bind_secret
@@ -82,6 +87,7 @@ ARCHIVE_SCHEMA_VERSION = 1
 ARCHIVE_KIND = "atlaso-settings-archive"
 SAFE_SETTING_KEYS = {
     DNS_CONDITIONAL_FORWARDERS_SETTING_KEY,
+    ESXI_PXE_CUSTOM_VARIABLES_KEY,
     FIREWALL_SOURCE_GROUPS_SETTING_KEY,
     LOCAL_USERS_PASSWORD_POLICY_KEY,
 }

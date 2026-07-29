@@ -3361,6 +3361,71 @@ def test_esxi_kickstart_api_hides_raw_content_from_read_only_tokens(client):
     assert download.status_code == 403
 
 
+def test_esxi_custom_variable_api_supports_catalog_management(client):
+    token = create_api_token(client, ["read:esxi-pxe", "write:esxi-pxe"])
+    created = client.post(
+        "/api/v1/esxi-pxe/custom-variables",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "name": "install_disk",
+            "description": "Preferred installation disk",
+            "default_value": "firstdisk",
+        },
+    )
+    assert created.status_code == 201, created.text
+    assert created.json() == {
+        "id": "install_disk",
+        "name": "install_disk",
+        "description": "Preferred installation disk",
+        "default_value": "firstdisk",
+    }
+
+    listed = client.get(
+        "/api/v1/esxi-pxe/custom-variables",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert listed.status_code == 200
+    assert listed.json() == [created.json()]
+
+    kickstart = client.post(
+        "/api/v1/esxi-pxe/kickstarts",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "name": "API catalog variable",
+            "content": "install --firstdisk={{custom.install_disk}}\nnetwork --bootproto=dhcp\nrootpw --iscrypted placeholder\n",
+            "enabled": True,
+        },
+    )
+    assert kickstart.status_code == 201, kickstart.text
+
+    updated = client.put(
+        "/api/v1/esxi-pxe/custom-variables/install_disk",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "name": "install_disk",
+            "description": "Updated installation disk",
+            "default_value": "nvme0",
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["default_value"] == "nvme0"
+
+    read_token = create_api_token(client, ["read:esxi-pxe"])
+    forbidden = client.post(
+        "/api/v1/esxi-pxe/custom-variables",
+        headers={"Authorization": f"Bearer {read_token}"},
+        json={"name": "forbidden"},
+    )
+    assert forbidden.status_code == 403
+
+    deleted = client.delete(
+        "/api/v1/esxi-pxe/custom-variables/install_disk",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert deleted.status_code == 200
+    assert deleted.json() == {"deleted": True}
+
+
 def test_esxi_pxe_ui_create_apply_and_job_redaction(client):
     import json
 
@@ -4316,15 +4381,26 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client):
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import EsxiKickstart, EsxiPxeHost
+    from atlaso.app.models import EsxiKickstart, EsxiPxeHost, Setting
+    from atlaso.app.services.esxi_pxe import (
+        ESXI_PXE_CUSTOM_VARIABLES_KEY,
+        custom_variable_definitions,
+        save_custom_variable_definition,
+    )
 
     login(client)
     with SessionLocal() as db:
+        save_custom_variable_definition(
+            db,
+            name="install_disk",
+            description="Preferred installation disk",
+            default_value="firstdisk",
+        )
         kickstart = EsxiKickstart(
             name="Archive ESXi",
-            content="install\nnetwork --bootproto=dhcp\nrootpw ArchiveSecret\nreboot\n%firstboot\n%end\n",
+            content="install --firstdisk={{custom.install_disk}}\nnetwork --bootproto=dhcp\nrootpw ArchiveSecret\nreboot\n%firstboot\n%end\n",
             content_hash="",
-            rendered_content="install\nnetwork --bootproto=dhcp\nrootpw ArchiveSecret\nreboot\n%firstboot\n%end\n",
+            rendered_content="install --firstdisk={{custom.install_disk}}\nnetwork --bootproto=dhcp\nrootpw ArchiveSecret\nreboot\n%firstboot\n%end\n",
             enabled=True,
         )
         db.add(kickstart)
@@ -4356,10 +4432,17 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client):
     assert payload["data"]["esxi_pxe_hosts"][0]["ip_address"] == "192.168.50.150"
     assert payload["data"]["esxi_pxe_hosts"][0]["installer_iso_path"].endswith("/archive.iso")
     assert payload["data"]["esxi_pxe_hosts"][0]["variables"] == {"rack": "r42"}
+    assert payload["data"]["settings"] == [
+        {
+            "key": ESXI_PXE_CUSTOM_VARIABLES_KEY,
+            "value": '[{"default_value":"firstdisk","description":"Preferred installation disk","id":"install_disk","name":"install_disk"}]',
+        }
+    ]
 
     with SessionLocal() as db:
         db.query(EsxiPxeHost).delete()
         db.query(EsxiKickstart).delete()
+        db.query(Setting).filter(Setting.key == ESXI_PXE_CUSTOM_VARIABLES_KEY).delete()
         db.commit()
 
     restored = client.post(
@@ -4376,6 +4459,14 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client):
         assert restored_host.ip_address == "192.168.50.150"
         assert restored_host.installer_iso_path.endswith("/archive.iso")
         assert restored_host.variables_json == '{"rack": "r42"}'
+        assert custom_variable_definitions(db) == [
+            {
+                "id": "install_disk",
+                "name": "install_disk",
+                "description": "Preferred installation disk",
+                "default_value": "firstdisk",
+            }
+        ]
 
 
 def test_esxi_pxe_drift_detection_uses_generated_filesystem_copy(client, monkeypatch, tmp_path):

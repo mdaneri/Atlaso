@@ -107,6 +107,7 @@ from atlaso.app.services.vaults import (
     update_vault_entry,
     upsert_vault_entry,
     vault_entry_metadata,
+    vault_marker_name,
     vault_scope_identity,
 )
 from atlaso.app.operational_logging import (
@@ -8541,6 +8542,22 @@ def delete_vault_from_ui(
             identity,
             db,
             f"Remove this vault from these schedules first: {', '.join(dependent_schedules)}.",
+            status_code=409,
+        )
+    marker_prefix = f"vault.{vault_marker_name(vault.name)}."
+    dependent_kickstarts = [
+        kickstart.name
+        for kickstart in db.execute(
+            select(EsxiKickstart).where(EsxiKickstart.enabled.is_(True)).order_by(EsxiKickstart.name)
+        ).scalars()
+        if any(name.startswith(marker_prefix) for name in kickstart_template_variables(kickstart.content)[0])
+    ]
+    if dependent_kickstarts:
+        return _vaults_render_error(
+            request,
+            identity,
+            db,
+            f"Remove this vault from these enabled Kickstarts first: {', '.join(dependent_kickstarts)}.",
             status_code=409,
         )
     name = vault.name

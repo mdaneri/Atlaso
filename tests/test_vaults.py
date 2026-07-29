@@ -85,6 +85,64 @@ def test_vault_ui_encrypts_masks_and_explicitly_reveals_password(client):
         assert "Correct-Horse-Battery-Staple!" not in (event.detail or "")
 
 
+def test_vault_delete_blocks_enabled_kickstart_marker_dependencies(client):
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import EsxiKickstart, Vault
+    from atlaso.app.services.esxi_pxe import content_hash
+    from atlaso.app.services.vaults import VaultEntryInput, upsert_vault_entry
+
+    login(client)
+    page = client.get("/vaults")
+    csrf = csrf_from_page(page.text)
+    with SessionLocal() as db:
+        vault = Vault(name="Kickstart", description="", created_by="admin")
+        db.add(vault)
+        db.flush()
+        upsert_vault_entry(
+            db,
+            vault=vault,
+            entry=VaultEntryInput(
+                key="esx.root",
+                secret_type="esx_password",
+                value="DeleteGuardSecret!",
+            ),
+            actor="admin",
+        )
+        source = "rootpw {{vault.kickstart.esx.root.password}}\n"
+        kickstart = EsxiKickstart(
+            name="Dependent ESXi",
+            content=source,
+            content_hash=content_hash(source),
+            enabled=True,
+        )
+        db.add(kickstart)
+        db.commit()
+        vault_id = vault.id
+        kickstart_id = kickstart.id
+
+    blocked = client.post(
+        f"/vaults/{vault_id}/delete",
+        data={"csrf": csrf},
+    )
+    assert blocked.status_code == 409
+    assert "Remove this vault from these enabled Kickstarts first: Dependent ESXi." in blocked.text
+    assert "DeleteGuardSecret!" not in blocked.text
+    with SessionLocal() as db:
+        assert db.get(Vault, vault_id) is not None
+        kickstart = db.get(EsxiKickstart, kickstart_id)
+        kickstart.enabled = False
+        db.commit()
+
+    deleted = client.post(
+        f"/vaults/{vault_id}/delete",
+        data={"csrf": csrf},
+        follow_redirects=False,
+    )
+    assert deleted.status_code == 303
+    with SessionLocal() as db:
+        assert db.get(Vault, vault_id) is None
+
+
 def test_vault_ui_copies_entry_without_returning_plaintext(client):
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AuditEvent, Vault, VaultEntry

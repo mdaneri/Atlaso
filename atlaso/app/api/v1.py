@@ -85,6 +85,9 @@ from atlaso.app.schemas import (
     DnsSettingsResponse,
     DnsSettingsUpdate,
     DnsStatusResponse,
+    EsxiCustomVariableCreate,
+    EsxiCustomVariableResponse,
+    EsxiCustomVariableUpdate,
     EsxiKickstartCreate,
     EsxiKickstartDuplicateRequest,
     EsxiKickstartPreviewResponse,
@@ -291,7 +294,9 @@ from atlaso.app.services.esxi_pxe import (
     assign_kickstart_content,
     canonical_http_path,
     content_hash,
+    custom_variable_definitions,
     decode_kickstart_upload,
+    delete_custom_variable_definition,
     esxi_pxe_boot_settings,
     esxi_pxe_service_state_from_boot,
     installer_iso_inventory,
@@ -303,6 +308,7 @@ from atlaso.app.services.esxi_pxe import (
     normalize_installer_iso_path,
     normalize_kickstart_name,
     redacted_kickstart_preview,
+    save_custom_variable_definition,
     store_installer_iso_upload,
     strict_validation_enabled,
     host_to_dict,
@@ -2925,6 +2931,116 @@ def _assign_kickstart_payload(kickstart: EsxiKickstart, payload: EsxiKickstartCr
     kickstart.description = payload.description or None
     kickstart.enabled = payload.enabled
     assign_kickstart_content(kickstart, payload.content, max_bytes=max_bytes)
+
+
+@router.get(
+    "/esxi-pxe/custom-variables",
+    response_model=list[EsxiCustomVariableResponse],
+    tags=["ESXi PXE"],
+    operation_id="listEsxiCustomVariables",
+)
+def list_esxi_custom_variables(
+    identity: Annotated[Identity, Depends(require_scope("read:esxi-pxe"))],
+    db: Session = Depends(get_db),
+) -> list[EsxiCustomVariableResponse]:
+    return [EsxiCustomVariableResponse(**row) for row in custom_variable_definitions(db)]
+
+
+@router.post(
+    "/esxi-pxe/custom-variables",
+    response_model=EsxiCustomVariableResponse,
+    status_code=201,
+    tags=["ESXi PXE"],
+    operation_id="createEsxiCustomVariable",
+)
+def create_esxi_custom_variable(
+    payload: EsxiCustomVariableCreate,
+    identity: Annotated[Identity, Depends(require_scope("write:esxi-pxe"))],
+    db: Session = Depends(get_db),
+) -> EsxiCustomVariableResponse:
+    try:
+        variable = save_custom_variable_definition(
+            db,
+            name=payload.name,
+            description=payload.description,
+            default_value=payload.default_value,
+        )
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        status_code = 409 if "already exists" in str(exc).lower() else 422
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    record_audit(
+        db,
+        actor=identity.username,
+        action="create_esxi_custom_variable",
+        resource_type="esxi_custom_variable",
+        resource_id=variable["name"],
+        detail=f"name={variable['name']}",
+    )
+    return EsxiCustomVariableResponse(**variable)
+
+
+@router.put(
+    "/esxi-pxe/custom-variables/{variable_name}",
+    response_model=EsxiCustomVariableResponse,
+    tags=["ESXi PXE"],
+    operation_id="updateEsxiCustomVariable",
+)
+def update_esxi_custom_variable(
+    variable_name: str,
+    payload: EsxiCustomVariableUpdate,
+    identity: Annotated[Identity, Depends(require_scope("write:esxi-pxe"))],
+    db: Session = Depends(get_db),
+) -> EsxiCustomVariableResponse:
+    if variable_name not in {row["name"] for row in custom_variable_definitions(db)}:
+        raise HTTPException(status_code=404, detail="Custom variable not found")
+    try:
+        variable = save_custom_variable_definition(
+            db,
+            name=payload.name,
+            description=payload.description,
+            default_value=payload.default_value,
+            original_name=variable_name,
+        )
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        status_code = 409 if "already exists" in str(exc).lower() else 422
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    record_audit(
+        db,
+        actor=identity.username,
+        action="update_esxi_custom_variable",
+        resource_type="esxi_custom_variable",
+        resource_id=variable["name"],
+        detail=f"previous_name={variable_name} name={variable['name']}",
+    )
+    return EsxiCustomVariableResponse(**variable)
+
+
+@router.delete(
+    "/esxi-pxe/custom-variables/{variable_name}",
+    response_model=dict,
+    tags=["ESXi PXE"],
+    operation_id="deleteEsxiCustomVariable",
+)
+def delete_esxi_custom_variable(
+    variable_name: str,
+    identity: Annotated[Identity, Depends(require_scope("write:esxi-pxe"))],
+    db: Session = Depends(get_db),
+) -> dict:
+    if not delete_custom_variable_definition(db, variable_name):
+        raise HTTPException(status_code=404, detail="Custom variable not found")
+    db.commit()
+    record_audit(
+        db,
+        actor=identity.username,
+        action="delete_esxi_custom_variable",
+        resource_type="esxi_custom_variable",
+        resource_id=variable_name,
+    )
+    return {"deleted": True}
 
 
 @router.get(

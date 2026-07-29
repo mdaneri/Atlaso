@@ -43,6 +43,10 @@ override exists, Atlaso renders the configured default. Deleting a referenced de
 until the definition is restored or the marker is removed. Use vault markers instead of custom-variable defaults for
 credentials or other secrets.
 
+Token-based automation can manage the same non-secret catalog through
+`/api/v1/esxi-pxe/custom-variables` before creating or updating Kickstarts that use `{{custom.*}}` markers. Catalog
+definitions and defaults are included in settings archives so restored Kickstarts retain their required definitions.
+
 > Terminology note: Broadcom documentation uses **ESX** in these 9.x installation pages. Older VMware material often
 > used **ESXi**.
 

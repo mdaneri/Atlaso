@@ -42,6 +42,7 @@ def test_initial_api_resources_are_documented(client):
         "/api/v1/firewall/rules",
         "/api/v1/vcf-offline-depot/status",
         "/api/v1/repository/status",
+        "/api/v1/esxi-pxe/custom-variables",
         "/api/v1/esxi-pxe/kickstarts",
         "/api/v1/esxi-pxe/isos",
         "/api/v1/esxi-pxe/hosts",
@@ -62,6 +63,19 @@ def test_initial_api_resources_are_documented(client):
     ]
     for path in expected:
         assert path in paths
+
+
+def test_esxi_custom_variable_openapi_contract(client):
+    schema = client.get("/openapi.json").json()
+    collection = schema["paths"]["/api/v1/esxi-pxe/custom-variables"]
+    item = schema["paths"]["/api/v1/esxi-pxe/custom-variables/{variable_name}"]
+    assert collection["get"]["operationId"] == "listEsxiCustomVariables"
+    assert collection["post"]["operationId"] == "createEsxiCustomVariable"
+    assert item["put"]["operationId"] == "updateEsxiCustomVariable"
+    assert item["delete"]["operationId"] == "deleteEsxiCustomVariable"
+    assert "EsxiCustomVariableCreate" in schema["components"]["schemas"]
+    assert "EsxiCustomVariableResponse" in schema["components"]["schemas"]
+    assert "EsxiCustomVariableUpdate" in schema["components"]["schemas"]
 
 
 def test_oidc_group_mapping_openapi_contract(client):
