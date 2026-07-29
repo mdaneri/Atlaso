@@ -5090,7 +5090,7 @@ textarea {
   flex: 0 0 auto;
 }
 
-.automation-script-editor .code-editor-textarea + .atlaso-monaco-editor {
+.automation-script-editor .code-editor-textarea + .atlaso-monaco-shell .atlaso-monaco-editor {
   height: 100%;
   min-height: 280px;
   max-height: none;
@@ -5155,7 +5155,7 @@ textarea {
   padding: 12px;
 }
 
-.automation-script-fullscreen-editor .code-editor-textarea + .atlaso-monaco-editor {
+.automation-script-fullscreen-editor .code-editor-textarea + .atlaso-monaco-shell .atlaso-monaco-editor {
   min-height: 0;
 }
 
@@ -6582,7 +6582,7 @@ textarea {
   overflow: hidden;
 }
 
-.code-editor-textarea + .atlaso-monaco-editor {
+.code-editor-textarea + .atlaso-monaco-shell .atlaso-monaco-editor {
   height: min(520px, 52vh);
   max-height: min(520px, 52vh);
 }
@@ -6830,7 +6830,6 @@ textarea {
 }
 
 .atlaso-monaco-editor {
-  position: relative;
   width: 100%;
   overflow: hidden;
   border: 1px solid var(--border);
@@ -6843,20 +6842,36 @@ textarea {
   box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.14);
 }
 
-.atlaso-monaco-expand-button {
+.atlaso-monaco-shell {
+  position: relative;
+  width: 100%;
+}
+
+.atlaso-monaco-toolbar {
   position: absolute;
   z-index: 20;
   top: 7px;
   right: 18px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.atlaso-monaco-expand-button {
+  display: inline-grid;
+  width: 30px;
+  min-width: 30px;
+  height: 28px;
   min-height: 28px;
+  place-items: center;
   border: 1px solid #cbd5e1;
   border-radius: 6px;
-  padding: 4px 9px;
+  padding: 0;
   background: rgba(248, 250, 252, 0.96);
   color: #334155;
   font: inherit;
-  font-size: 11px;
+  font-size: 16px;
   font-weight: 750;
+  line-height: 1;
   cursor: pointer;
 }
 
@@ -6876,7 +6891,7 @@ dialog.has-expanded-monaco .confirm-modal-panel {
   overflow: visible;
 }
 
-.atlaso-monaco-editor.is-expanded {
+.atlaso-monaco-shell.is-expanded {
   position: fixed;
   z-index: 10000;
   inset: 24px;
@@ -6884,12 +6899,21 @@ dialog.has-expanded-monaco .confirm-modal-panel {
   height: auto !important;
   min-height: 0 !important;
   max-height: none !important;
+  border: 1px solid var(--border);
   border-radius: 10px;
+  padding: 12px;
+  background: #fff;
   box-shadow: 0 24px 70px rgba(15, 23, 42, 0.32);
 }
 
+.atlaso-monaco-shell.is-expanded .atlaso-monaco-editor {
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: none !important;
+}
+
 @media (max-width: 700px) {
-  .atlaso-monaco-editor.is-expanded {
+  .atlaso-monaco-shell.is-expanded {
     inset: 8px;
   }
 }

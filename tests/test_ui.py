@@ -800,7 +800,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v191" in service_worker.text
+    assert "atlaso-pwa-v192" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -811,7 +811,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert 'url.pathname.startsWith("/api/")' in service_worker.text
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
-    assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-2" in service_worker.text
+    assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-3" in service_worker.text
     assert "/static/app.css?v=atlaso-ui-foundation-20260728-5" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in service_worker.text
     assert "/static/app.js?v=atlaso-monaco-kickstarts-20260729-1" in service_worker.text
@@ -3426,7 +3426,7 @@ def test_monaco_is_the_only_bundled_editor_and_kickstart_uses_shared_collection(
     assert '"atlaso-monaco-expand-button"' in monaco_source
     assert '"has-expanded-monaco"' in monaco_source
     assert 'event.key === "Escape"' in monaco_source
-    assert ".atlaso-monaco-editor.is-expanded" in app_css
+    assert ".atlaso-monaco-shell.is-expanded" in app_css
     assert "python.contribution" in monaco_source
     assert "shell.contribution" in monaco_source
     assert "powershell.contribution" in monaco_source
@@ -8601,7 +8601,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert ".software-depot-id-value" in app_css.text
     assert ".icon-button" in app_css.text
     assert ".code-editor-textarea" in app_css.text
-    assert ".code-editor-textarea + .atlaso-monaco-editor" in app_css.text
+    assert ".code-editor-textarea + .atlaso-monaco-shell .atlaso-monaco-editor" in app_css.text
     assert "#vcf-depot-properties-modal .confirm-modal-panel" in app_css.text
     assert "#vcf-depot-task-log-modal .confirm-modal-panel" in app_css.text
     assert ".vcfdt-task-log-preview code" in app_css.text

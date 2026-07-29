@@ -106,13 +106,26 @@ function enhanceTextarea(textarea, options = {}) {
     return textarea?.atlasoMonacoEditor || null;
   }
   const minimumHeight = Math.max((textarea.rows || 8) * 18 + 22, 140);
+  const shell = document.createElement("div");
+  shell.className = "atlaso-monaco-shell";
+  const toolbar = document.createElement("div");
+  toolbar.className = "atlaso-monaco-toolbar";
+  const expandButton = document.createElement("button");
+  expandButton.className = "atlaso-monaco-expand-button";
+  expandButton.type = "button";
+  expandButton.textContent = "⛶";
+  expandButton.setAttribute("aria-label", "Expand editor");
+  expandButton.title = "Expand editor";
+  expandButton.setAttribute("aria-pressed", "false");
+  toolbar.append(expandButton);
   const container = document.createElement("div");
   container.className = "atlaso-monaco-editor";
   container.style.minHeight = `${minimumHeight}px`;
   container.style.height = `${minimumHeight}px`;
+  shell.append(toolbar, container);
   textarea.classList.add("monaco-source-textarea");
   textarea.hidden = true;
-  textarea.insertAdjacentElement("afterend", container);
+  textarea.insertAdjacentElement("afterend", shell);
 
   const editor = monaco.editor.create(container, {
     value: textarea.value,
@@ -132,35 +145,29 @@ function enhanceTextarea(textarea, options = {}) {
     accessibilitySupport: "auto",
     tabSize: 2,
   });
-  const expandButton = document.createElement("button");
-  expandButton.className = "atlaso-monaco-expand-button";
-  expandButton.type = "button";
-  expandButton.textContent = "Expand editor";
-  expandButton.setAttribute("aria-label", "Expand editor");
-  expandButton.setAttribute("aria-pressed", "false");
-  container.append(expandButton);
-  const hostDialog = container.closest("dialog");
+  const hostDialog = shell.closest("dialog");
   const setExpanded = (expanded, { restoreFocus = false } = {}) => {
-    document.querySelectorAll(".atlaso-monaco-editor.is-expanded").forEach((other) => {
-      if (other !== container) other.atlasoMonacoRestore?.();
+    document.querySelectorAll(".atlaso-monaco-shell.is-expanded").forEach((other) => {
+      if (other !== shell) other.atlasoMonacoRestore?.();
     });
-    container.classList.toggle("is-expanded", expanded);
+    shell.classList.toggle("is-expanded", expanded);
     hostDialog?.classList.toggle("has-expanded-monaco", expanded);
     document.body.classList.toggle("atlaso-monaco-expanded-open", expanded);
-    expandButton.textContent = expanded ? "Restore editor" : "Expand editor";
-    expandButton.setAttribute("aria-label", expandButton.textContent);
+    expandButton.textContent = expanded ? "⤢" : "⛶";
+    expandButton.setAttribute("aria-label", expanded ? "Restore editor" : "Expand editor");
+    expandButton.title = expandButton.getAttribute("aria-label");
     expandButton.setAttribute("aria-pressed", String(expanded));
     requestAnimationFrame(() => editor.layout());
     if (restoreFocus) expandButton.focus();
   };
-  container.atlasoMonacoRestore = () => setExpanded(false, { restoreFocus: true });
+  shell.atlasoMonacoRestore = () => setExpanded(false, { restoreFocus: true });
   expandButton.addEventListener("click", () => {
-    setExpanded(!container.classList.contains("is-expanded"));
+    setExpanded(!shell.classList.contains("is-expanded"));
   });
   document.addEventListener("keydown", (event) => {
     if (
       event.key === "Escape"
-      && container.classList.contains("is-expanded")
+      && shell.classList.contains("is-expanded")
       && !document.querySelector(".suggest-widget.visible")
     ) {
       event.preventDefault();
@@ -177,6 +184,7 @@ function enhanceTextarea(textarea, options = {}) {
   editor.onDidChangeModelContent(() => updateTextarea(textarea, editor.getValue()));
   textarea.atlasoMonacoEditor = editor;
   textarea.atlasoMonacoContainer = container;
+  textarea.atlasoMonacoShell = shell;
   return editor;
 }
 
@@ -207,7 +215,7 @@ function focus(textarea) {
 
 window.MonacoEnvironment = {
   getWorker() {
-    return new Worker("/static/vendor/monaco/editor.worker.js?v=atlaso-monaco-20260729-2");
+    return new Worker("/static/vendor/monaco/editor.worker.js?v=atlaso-monaco-20260729-3");
   },
 };
 window.AtlasoMonaco = { enhanceTextarea, focus, getValue, setLanguage, setValue };
