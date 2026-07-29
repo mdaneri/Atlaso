@@ -145,6 +145,7 @@ from atlaso.app.schemas import (
     WanPolicyResponse,
     WanStatusResponse,
 )
+from atlaso.app.services.kms import ensure_kms_provider_id
 from atlaso.app.services.firewall import FIREWALL_SOURCE_GROUPS_SETTING_KEY, firewall_interface_networks, firewall_source_group_state
 from atlaso.app.services.esx_storage import (
     ESX_STORAGE_MOUNT_ROOT,
@@ -495,6 +496,8 @@ def get_kms_settings_row(db: Session) -> KmsSettings:
         db.add(settings)
         db.commit()
         db.refresh(settings)
+    elif ensure_kms_provider_id(settings):
+        db.commit()
     return settings
 
 

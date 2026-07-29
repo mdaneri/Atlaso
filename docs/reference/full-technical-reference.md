@@ -673,12 +673,13 @@ and adds TCP/4460 when NTS server mode is enabled. Moving a DHCP scope, service 
 VLAN such as `eth2.50` also changes the Firewall apply unit. In development, system adapters remain dry-run by default
 and record command intent instead of mutating host services directly.
 
-KMS / KMIP is PyKMIP-backed and intended for lab compatibility testing, not production HSM use. The KMS page derives
-IPv4 and IPv6 listen addresses from the selected service interface, manages app-owned A and/or AAAA records for the KMS
-hostname, and requires an enabled healthy CA before activation. Real KMS apply stages
-`/var/lib/atlaso/apply/kms/pykmip.conf`, installs `/etc/atlaso/kms/pykmip.conf` and `/etc/pykmip/server.conf`, and
-manages `atlaso-kms.service`; the service launches PyKMIP through Atlaso's compatibility wrapper so current Photon
-Python streams remain supported. Disabling KMS stops the service while preserving `/var/lib/atlaso/kms/pykmip.db`.
+KMS / KMIP uses Atlaso's appliance-native provider and remains experimental until the VCF 9.1 acceptance and recovery
+gate in issue #172 passes. The KMS page derives IPv4 and IPv6 listen addresses from the selected service interface,
+manages app-owned A and/or AAAA records for the KMS hostname, and requires an enabled healthy CA before activation.
+Real KMS apply stages `/var/lib/atlaso/apply/kms/server.json`, installs `/etc/atlaso/kmip/server.json`, and manages the
+hardened, unprivileged `atlaso-kmip.service`. The daemon exposes only the checked-in KMIP 1.4 AES-256 symmetric-key
+contract, maps exact client-certificate fingerprints to UUID provider namespaces, and stores only AES-GCM-wrapped keys
+under `/var/lib/atlaso/kmip`. Disabling KMS stops the service while preserving the operational store.
 
 Managed LDAP provides an OpenLDAP 2.6 service for VCF Automation 9.1 while Atlaso operator sign-in remains local. Each
 VCF organization receives an isolated suffix and LMDB database, organization-local users and nested groups, and a

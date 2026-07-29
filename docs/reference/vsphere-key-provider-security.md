@@ -11,13 +11,13 @@ status: roadmap
 
 This design record defines the security contract for the appliance-native vSphere Key Provider. It applies to the
 implementation tracked by issues [#169](https://github.com/mdaneri/Atlaso/issues/169) through
-[#172](https://github.com/mdaneri/Atlaso/issues/172). Until the VCF 9.1 promotion gate is complete, current PyKMIP
-behavior remains lab-only and the new provider must be described as experimental.
+[#172](https://github.com/mdaneri/Atlaso/issues/172). The appliance-native daemon and wrapped store are implemented,
+but they must remain described as experimental until the VCF 9.1 promotion gate is complete.
 
 ## Architecture decision
 
-Atlaso will implement a small Python service with an internal, bounded KMIP 1.4 TTLV codec and operation dispatcher.
-It will not embed the PyKMIP server, request engine, policy engine, storage model, or compatibility wrapper.
+Atlaso implements a small Python service with an internal, bounded KMIP 1.4 TTLV codec and operation dispatcher.
+It does not embed the PyKMIP server, request engine, policy engine, storage model, or compatibility wrapper.
 
 Python keeps the service inside Atlaso's existing build, packaging, logging, testing, and Photon lifecycle. The
 security boundary comes from the narrow checked-in protocol allowlist rather than the language. The adapter must:
@@ -73,15 +73,20 @@ the runtime key-encryption key (KEK). The authenticated additional data binds at
 - provider UUID;
 - key UUID;
 - algorithm and length;
-- creation time; and
+- optional bounded KMIP name;
+- creation and activation times; and
 - lifecycle state.
 
 Replacing a provider ID, moving a wrapped blob into another namespace, editing metadata, or rolling a row backward must
 make decryption fail. Files and database pages use service-only permissions. Successful startup requires both the
-operational store and the KEK protected by the current `ATLASO_SECRETS_KEY`.
+operational store and the KEK protected by the current `ATLASO_SECRETS_KEY`. The store is SQLite with full synchronous
+commits; only wrapped ciphertext, nonce, and authenticated metadata are persisted. The KEK envelope and database use
+mode `0600`, their parent directory uses `0700`, and systemd confines writes to the KMIP state and log directories.
 
-Atlaso never exports plaintext keys through its UI or management API. KMIP `Get` is the sole planned plaintext release
-path and is restricted to an authenticated client mapped to the same provider.
+Atlaso never exports plaintext keys through its UI or management API. KMIP `Get` is the sole plaintext release path
+and is restricted to an authenticated client mapped to the same provider. Mutable buffers are cleared where Python
+permits, but encoded protocol bytes and immutable Python objects cannot be guaranteed to be overwritten in place; the
+unprivileged process and short request lifetime are part of the memory-exposure boundary.
 
 ## Recovery and disaster recovery
 

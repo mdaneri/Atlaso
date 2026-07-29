@@ -517,20 +517,20 @@ status: current
   final responses. The public CA portal defaults to `ca.atlaso.internal`: `/` shows public trust material and
   `/requests` is the authenticated certificate request/revocation workflow. Do not put Certificate Requests in the
   primary Atlaso sidebar; link it from CA-associated surfaces instead.
-- Real KMS apply stages PyKMIP config under `/var/lib/atlaso/apply/kms/pykmip.conf` as the `atlaso` service user before
+- Real KMS apply stages strict JSON under `/var/lib/atlaso/apply/kms/server.json` as the `atlaso` service user before
   invoking the root helper. KMS can be activated only when CA desired state is enabled and healthy; the page derives
   IPv4 and IPv6 listen addresses from the selected access interface or enabled VLAN, creates app-owned DNS records for
-  the derived address families, and auto-ensures KMS server/client CA rows. KMS v1 supports only the PyKMIP backend, so
-  do not show a backend selector; keep backend as hidden desired state if needed for form compatibility. The KMS
-  settings rail should show hostname near the top, stack listen interfaces and derived listen addresses on separate
-  rows, keep port as a compact field, and derive the CA-managed server certificate name from the hostname instead of
-  exposing a separate server-certificate input. The helper validates staged paths, PyKMIP availability, CA-managed
-  certificate/key paths, and installs `/etc/atlaso/kms/pykmip.conf`, `/etc/pykmip/server.conf`, and
-  `atlaso-kms.service`; the service launches PyKMIP through Atlaso's compatibility wrapper for current Photon Python
-  streams; disabling KMS stops the service while preserving `/var/lib/atlaso/kms/pykmip.db`. Never print KMS private
-  keys in previews, jobs, logs, docs, or final responses.
-- Issue #162 replaces the PyKMIP lab listener in ordered phases. The replacement is a Python `atlaso-kmip` service
-  implementing only the candidate VCF 9.1 contract in
+  the derived address families, and auto-ensures KMS server/client CA rows. The only backend is `atlaso-kmip`, so do not
+  show a backend selector; keep backend as hidden desired state if needed for form compatibility. The KMS settings rail
+  should show hostname near the top, stack listen interfaces and derived listen addresses on separate rows, keep port
+  as a compact field, and derive the CA-managed server certificate name from the hostname instead of exposing a
+  separate server-certificate input. The helper validates the exact JSON schema, fixed paths, CA-managed material,
+  provider UUIDs, client fingerprints, and resource limits; installs `/etc/atlaso/kmip/server.json`; and manages the
+  hardened, unprivileged `atlaso-kmip.service`. Disabling KMS stops the new and retired service names while preserving
+  `/var/lib/atlaso/kmip`. Never print KMS private keys or plaintext key material in previews, jobs, logs, docs, or final
+  responses.
+- Issue #162 replaces the PyKMIP lab listener in ordered phases. The Python `atlaso-kmip` service implements only the
+  candidate VCF 9.1 contract in
   `atlaso/app/kmip/contracts/vcf_9_1.json`; keep the implementation experimental until issue #172 records the live
   VCF 9.1 acceptance and recovery evidence required to promote the contract to `observed`. A provider UUID defines an
   isolated key namespace and may trust multiple exact vCenter certificate fingerprints. LDAP organizations do not

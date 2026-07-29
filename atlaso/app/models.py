@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from enum import StrEnum
+from uuid import uuid4
 
 from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -560,17 +561,18 @@ class KmsSettings(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    backend: Mapped[str] = mapped_column(String(40), default="pykmip")
+    backend: Mapped[str] = mapped_column(String(40), default="atlaso-kmip")
+    provider_id: Mapped[str] = mapped_column(String(36), default=lambda: str(uuid4()), unique=True)
     listen_interface: Mapped[str] = mapped_column(String(240), default="")
     listen_address: Mapped[str] = mapped_column(String(240), default="")
     port: Mapped[int] = mapped_column(Integer, default=5696)
     hostname: Mapped[str] = mapped_column(String(180), default="kms.atlaso.internal")
     server_certificate: Mapped[str] = mapped_column(String(180), default="kms.atlaso.internal")
     ca_certificate_path: Mapped[str] = mapped_column(String(240), default="/etc/atlaso/ca/root.crt")
-    database_path: Mapped[str] = mapped_column(String(240), default="/var/lib/atlaso/kms/pykmip.db")
-    config_path: Mapped[str] = mapped_column(String(240), default="/etc/atlaso/kms/pykmip.conf")
+    database_path: Mapped[str] = mapped_column(String(240), default="/var/lib/atlaso/kmip/store.db")
+    config_path: Mapped[str] = mapped_column(String(240), default="/etc/atlaso/kmip/server.json")
     require_client_cert: Mapped[bool] = mapped_column(Boolean, default=True)
-    allow_register: Mapped[bool] = mapped_column(Boolean, default=True)
+    allow_register: Mapped[bool] = mapped_column(Boolean, default=False)
     allow_destroy: Mapped[bool] = mapped_column(Boolean, default=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -581,8 +583,12 @@ class KmsClient(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
     certificate_subject: Mapped[str] = mapped_column(String(240))
+    certificate_fingerprint: Mapped[str] = mapped_column(String(64), default="")
     role: Mapped[str] = mapped_column(String(40), default="service")
-    allowed_operations: Mapped[str] = mapped_column(Text, default="locate,get,register,create")
+    allowed_operations: Mapped[str] = mapped_column(
+        Text,
+        default="locate,get,create,activate,get-attributes,get-attribute-list,query,discover-versions",
+    )
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

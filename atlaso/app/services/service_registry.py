@@ -17,7 +17,7 @@ SERVICE_STATE_DEFAULTS = [
         "running": False,
         "enabled": False,
         "health": "planned",
-        "detail": "PyKMIP lab backend",
+        "detail": "Bounded experimental VCF 9.1 provider",
     },
     {
         "service": "repository",
@@ -75,7 +75,7 @@ SERVICE_STATE_IDS = frozenset(row["service"] for row in SERVICE_STATE_DEFAULTS)
 RETIRED_SERVICE_IDS = frozenset({"chronyd"})
 SERVICE_SYSTEMD_UNITS = {
     "ntpd": "ntpd.service",
-    "kms": "atlaso-kms.service",
+    "kms": "atlaso-kmip.service",
     "ldap": "slapd.service",
     "esx-storage": "nfs-server.service",
 }

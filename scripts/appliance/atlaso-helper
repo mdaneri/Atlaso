@@ -22,8 +22,8 @@ import sys
 import tarfile
 import tempfile
 import time
-import configparser
 import hashlib
+import uuid
 from datetime import datetime, timezone
 from ipaddress import ip_address, ip_interface, ip_network
 from pathlib import Path, PurePosixPath
@@ -151,7 +151,7 @@ CONSOLE_MANAGED_SERVICE_UNITS = (
     "dnsmasq.service",
     "ntpd.service",
     "slapd.service",
-    "atlaso-kms.service",
+    "atlaso-kmip.service",
     "rpcbind.service",
     "nfs-server.service",
 )
@@ -207,14 +207,15 @@ PXE_BOOT_BINARY_DIRS = [
     Path("/boot/ipxe"),
 ]
 KMS_APPLY_DIR = Path("/var/lib/atlaso/apply/kms")
-KMS_STATE_DIR = Path("/var/lib/atlaso/kms")
-KMS_LOG_DIR = Path("/var/log/atlaso/kms")
+KMS_STATE_DIR = Path("/var/lib/atlaso/kmip")
+KMS_LOG_DIR = Path("/var/log/atlaso/kmip")
 NGINX_ACCESS_LOG_PATH = Path("/var/log/nginx/access.log")
 NGINX_ERROR_LOG_PATH = Path("/var/log/nginx/error.log")
-KMS_CONFIG_DIR = Path("/etc/atlaso/kms")
-KMS_CONFIG_PATH = KMS_CONFIG_DIR / "pykmip.conf"
-KMS_POLICY_DIR = KMS_CONFIG_DIR / "policies"
-KMS_SERVICE_PATH = Path("/etc/systemd/system/atlaso-kms.service")
+KMS_CONFIG_DIR = Path("/etc/atlaso/kmip")
+KMS_CONFIG_PATH = KMS_CONFIG_DIR / "server.json"
+KMS_SERVICE_PATH = Path("/etc/systemd/system/atlaso-kmip.service")
+KMS_SERVICE_USER = "atlaso-kmip"
+KMS_LEGACY_DATABASE_PATH = Path("/var/lib/atlaso/kms/pykmip.db")
 LDAP_APPLY_DIR = Path("/var/lib/atlaso/apply/ldap")
 LDAP_STATE_DIR = Path("/var/lib/openldap/atlaso")
 LDAP_RECOVERY_DIR = Path("/var/lib/atlaso/ldap/recovery")
@@ -228,11 +229,8 @@ LDAP_CERT_PATH = Path("/etc/atlaso/ldap/tls/server.crt")
 LDAP_KEY_PATH = Path("/etc/atlaso/ldap/tls/server.key")
 LDAP_CHAIN_PATH = Path("/etc/atlaso/ldap/tls/server-chain.crt")
 LDAP_ROOT_CA_PATH = Path("/etc/atlaso/ca/root.crt")
-PYKMIP_CONFIG_DIR = Path("/etc/pykmip")
-PYKMIP_CONFIG_PATH = PYKMIP_CONFIG_DIR / "server.conf"
-PYKMIP_SERVER_VENV_PATH = Path("/opt/atlaso/.venv/bin/pykmip-server")
 ATLASO_VENV_PYTHON_PATH = Path("/opt/atlaso/.venv/bin/python")
-PYKMIP_COMPAT_SCRIPT_PATH = Path("/opt/atlaso/atlaso/app/services/pykmip_compat_server.py")
+ATLASO_KMIP_VENV_PATH = Path("/opt/atlaso/.venv/bin/atlaso-kmip")
 NTP_APPLY_DIR = Path("/var/lib/atlaso/apply/ntpd")
 NTP_CONFIG_PATH = Path("/etc/ntp.conf")
 NTP_STATE_DIR = Path("/var/lib/ntp")
@@ -563,8 +561,8 @@ def _validate_dnsmasq_config_path(path_value: str) -> Path:
 
 def _validate_kms_config_path(path_value: str) -> Path:
     path = Path(_validate_path(path_value)).resolve()
-    if path.suffix != ".conf":
-        raise ValueError("KMS config path must end with .conf")
+    if path.suffix != ".json":
+        raise ValueError("KMS config path must end with .json")
     if not path.is_relative_to(KMS_APPLY_DIR):
         raise ValueError(f"KMS config must be staged under {KMS_APPLY_DIR}")
     if not path.is_file():
@@ -740,6 +738,12 @@ def _grant_ldap_private_key_read(key_path: Path) -> None:
     os.chmod(key_path, 0o640)
 
 
+def _grant_kms_private_key_read(key_path: Path) -> None:
+    group = grp.getgrnam(KMS_SERVICE_USER)
+    os.chown(key_path, 0, group.gr_gid)
+    os.chmod(key_path, 0o640)
+
+
 def _handle_ca(action: str, args: list[str]) -> int:
     try:
         config_path = _validate_ca_config_path(args[0])
@@ -795,6 +799,12 @@ def _handle_ca(action: str, args: list[str]) -> int:
                     _grant_ldap_private_key_read(key_path)
                 except (LookupError, OSError) as exc:
                     print(f"Could not preserve slapd access to the LDAP private key: {exc}", file=sys.stderr)
+                    return 1
+            if key_path.is_relative_to((KMS_CONFIG_DIR / "certs").resolve()):
+                try:
+                    _grant_kms_private_key_read(key_path)
+                except (LookupError, OSError) as exc:
+                    print(f"Could not preserve atlaso-kmip access to the KMIP private key: {exc}", file=sys.stderr)
                     return 1
             written.append(str(key_path))
     print(json.dumps({"ca": "apply complete", "config_path": str(config_path), "written_files": written, "removed_files": removed}, sort_keys=True))
@@ -2689,72 +2699,102 @@ def _handle_ldap(action: str, args: list[str]) -> int:
 
 
 def _kms_config_enabled(path: Path) -> bool:
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        stripped = raw_line.strip().lower()
-        if stripped.startswith("# atlaso kms enabled:"):
-            return stripped.rsplit(":", 1)[1].strip() == "true"
-    return False
+    payload = _read_kms_config(path)
+    return payload.get("enabled") is True
 
 
-def _read_kms_config(path: Path) -> configparser.ConfigParser:
-    parser = configparser.ConfigParser()
-    parser.read(path)
-    return parser
+def _read_kms_config(path: Path) -> dict:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("KMS configuration must be valid JSON.") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("KMS configuration must be an object.")
+    return payload
 
 
 def _kms_config_errors(path: Path) -> list[str]:
     errors: list[str] = []
     try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as exc:
+        payload = _read_kms_config(path)
+    except ValueError as exc:
         return [str(exc)]
-    if not text.startswith("# Managed by Atlaso."):
-        errors.append("KMS config must be rendered by Atlaso.")
-    parser = _read_kms_config(path)
-    if not parser.has_section("server"):
-        return [*errors, "KMS config must include a [server] section."]
     required = {
-        "hostname",
-        "port",
-        "certificate_path",
-        "key_path",
-        "ca_path",
-        "auth_suite",
-        "policy_path",
-        "enable_tls_client_auth",
-        "logging_level",
-        "database_path",
+        "schema_version",
+        "enabled",
+        "listen",
+        "tls",
+        "store",
+        "limits",
+        "providers",
+        "interop_trace_path",
     }
-    server_options = {option.lower() for option in parser.options("server")}
-    missing = sorted(required - server_options)
-    errors.extend(f"KMS config is missing {option}." for option in missing)
-    if missing:
+    if set(payload) != required:
+        missing = sorted(required - payload.keys())
+        extra = sorted(payload.keys() - required)
+        errors.extend(f"KMS config is missing {field}." for field in missing)
+        errors.extend(f"KMS config has unsupported field {field}." for field in extra)
         return errors
-    host = parser.get("server", "hostname").strip()
+    if (
+        isinstance(payload["schema_version"], bool)
+        or not isinstance(payload["schema_version"], int)
+        or payload["schema_version"] != 1
+    ):
+        errors.append("KMS config schema_version must be 1.")
+    if not isinstance(payload["enabled"], bool):
+        errors.append("KMS enabled must be true or false.")
+    enabled = payload["enabled"] is True
+
+    listen = payload["listen"]
+    tls = payload["tls"]
+    store = payload["store"]
+    limits = payload["limits"]
+    providers = payload["providers"]
+    if not isinstance(listen, dict) or set(listen) != {"host", "port"}:
+        errors.append("KMS listen must contain only host and port.")
+        listen = {}
+    if not isinstance(tls, dict) or set(tls) != {
+        "certificate_path",
+        "private_key_path",
+        "ca_path",
+    }:
+        errors.append("KMS TLS settings are invalid.")
+        tls = {}
+    if not isinstance(store, dict) or set(store) != {"database_path", "kek_path"}:
+        errors.append("KMS store settings are invalid.")
+        store = {}
+    if not isinstance(limits, dict) or set(limits) != {
+        "max_request_bytes",
+        "max_connections",
+        "idle_timeout_seconds",
+        "max_requests_per_connection",
+    }:
+        errors.append("KMS limits are invalid.")
+        limits = {}
+    if not isinstance(providers, list):
+        errors.append("KMS providers must be a list.")
+        providers = []
+    if enabled and not providers:
+        errors.append("Enabled KMS config requires at least one provider.")
+
+    host_value = listen.get("host", "")
+    host = host_value.strip() if isinstance(host_value, str) else ""
     try:
         ip_address(host)
     except ValueError:
-        errors.append("KMS hostname must be the derived listen IP address.")
-    try:
-        port = parser.getint("server", "port")
-        if port < 1 or port > 65535:
-            errors.append("KMS port must be between 1 and 65535.")
-    except ValueError:
+        errors.append("KMS listen host must be the derived listen IP address.")
+    port = listen.get("port", 0)
+    if isinstance(port, bool) or not isinstance(port, int):
         errors.append("KMS port must be an integer.")
-    if parser.get("server", "auth_suite").strip() != "TLS1.2":
-        errors.append("KMS auth_suite must be TLS1.2.")
-    try:
-        parser.getboolean("server", "enable_tls_client_auth")
-    except ValueError:
-        errors.append("KMS enable_tls_client_auth must be true or false.")
+    elif port < 1 or port > 65535:
+        errors.append("KMS port must be between 1 and 65535.")
 
-    enabled = _kms_config_enabled(path)
-    for option, label, private in [
+    for option, label, private in (
         ("certificate_path", "KMS server certificate", False),
-        ("key_path", "KMS server private key", True),
+        ("private_key_path", "KMS server private key", True),
         ("ca_path", "KMS CA certificate", False),
-    ]:
-        value = parser.get("server", option).strip()
+    ):
+        value = str(tls.get(option, "")).strip()
         try:
             managed_path = _ca_managed_path(value, option)
         except ValueError as exc:
@@ -2769,46 +2809,154 @@ def _kms_config_errors(path: Path) -> list[str]:
             except OSError as exc:
                 errors.append(str(exc))
 
-    database_path = Path(parser.get("server", "database_path").strip()).resolve()
-    if not database_path.is_relative_to(KMS_STATE_DIR):
-        errors.append(f"KMS database path must stay under {KMS_STATE_DIR}.")
-    policy_path = Path(parser.get("server", "policy_path").strip()).resolve()
-    if not policy_path.is_relative_to(KMS_CONFIG_DIR):
-        errors.append(f"KMS policy path must stay under {KMS_CONFIG_DIR}.")
-    if enabled and _pykmip_server_path() is None:
-        errors.append("pykmip-server command not found")
+    for field, label in (
+        ("database_path", "KMS database"),
+        ("kek_path", "KMS KEK envelope"),
+    ):
+        state_path = Path(str(store.get(field, ""))).resolve()
+        if not state_path.is_relative_to(KMS_STATE_DIR.resolve()):
+            errors.append(f"{label} path must stay under {KMS_STATE_DIR}.")
+
+    limit_ranges = {
+        "max_request_bytes": (1024, 1_048_576),
+        "max_connections": (1, 256),
+        "idle_timeout_seconds": (1, 300),
+        "max_requests_per_connection": (1, 1024),
+    }
+    for field, (minimum, maximum) in limit_ranges.items():
+        value = limits.get(field)
+        if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+            errors.append(f"KMS {field} must be between {minimum} and {maximum}.")
+
+    provider_ids: set[str] = set()
+    fingerprints: set[str] = set()
+    for provider in providers:
+        if not isinstance(provider, dict) or set(provider) != {
+            "id",
+            "name",
+            "client_fingerprints",
+            "client_certificate_paths",
+        }:
+            errors.append("KMS provider fields are invalid.")
+            continue
+        try:
+            if not isinstance(provider["id"], str):
+                raise ValueError
+            provider_id = str(uuid.UUID(provider["id"]))
+            if provider_id in provider_ids:
+                errors.append("KMS provider IDs must be unique.")
+            provider_ids.add(provider_id)
+        except (TypeError, ValueError):
+            errors.append("KMS provider ID must be a UUID.")
+        if not isinstance(provider["name"], str) or not provider["name"].strip():
+            errors.append("KMS provider name is required.")
+        configured_fingerprints = provider["client_fingerprints"]
+        client_paths = provider["client_certificate_paths"]
+        if not isinstance(configured_fingerprints, list) or not isinstance(client_paths, list):
+            errors.append("KMS provider client identities must be lists.")
+            continue
+        if enabled and not configured_fingerprints and not client_paths:
+            errors.append("Enabled KMS provider requires a trusted client identity.")
+        for value in configured_fingerprints:
+            normalized = (
+                value.replace(":", "").strip().lower()
+                if isinstance(value, str)
+                else ""
+            )
+            if not re.fullmatch(r"[0-9a-f]{64}", normalized):
+                errors.append("KMS client fingerprint must be a SHA-256 digest.")
+            elif normalized in fingerprints:
+                errors.append("KMS client fingerprint cannot map to multiple providers.")
+            else:
+                fingerprints.add(normalized)
+        for value in client_paths:
+            try:
+                certificate_path = _ca_managed_path(str(value), "client_certificate_path")
+            except ValueError as exc:
+                errors.append(str(exc))
+                continue
+            if enabled:
+                if not certificate_path.is_file():
+                    errors.append(f"KMS client certificate does not exist: {certificate_path}")
+                else:
+                    try:
+                        errors.extend(
+                            _pem_errors(
+                                certificate_path.read_text(encoding="utf-8"),
+                                "KMS client certificate",
+                                private_key=False,
+                            )
+                        )
+                    except OSError as exc:
+                        errors.append(str(exc))
+
+    trace_value = (
+        payload["interop_trace_path"].strip()
+        if isinstance(payload["interop_trace_path"], str)
+        else ""
+    )
+    if not isinstance(payload["interop_trace_path"], str):
+        errors.append("KMS interop trace path must be a string.")
+    if trace_value:
+        trace_path = Path(trace_value).resolve()
+        if not trace_path.is_relative_to(KMS_STATE_DIR.resolve()):
+            errors.append(f"KMS interop trace path must stay under {KMS_STATE_DIR}.")
+
+    if enabled and not ATLASO_KMIP_VENV_PATH.is_file():
+        errors.append("atlaso-kmip command not found")
+    if enabled and KMS_LEGACY_DATABASE_PATH.is_file() and KMS_LEGACY_DATABASE_PATH.stat().st_size:
+        errors.append(
+            "A nonempty legacy PyKMIP database blocks in-place replacement; "
+            "keep the old appliance available while VMware rekeys into a new provider."
+        )
+    if enabled:
+        try:
+            pwd.getpwnam(KMS_SERVICE_USER)
+            grp.getgrnam(KMS_SERVICE_USER)
+        except KeyError:
+            errors.append(f"KMS service account {KMS_SERVICE_USER} is unavailable.")
     return errors
 
 
-def _pykmip_server_path() -> str | None:
-    discovered = shutil.which("pykmip-server")
-    if discovered:
-        return discovered
-    if PYKMIP_SERVER_VENV_PATH.exists():
-        return str(PYKMIP_SERVER_VENV_PATH)
-    return None
-
-
 def _install_kms_service(config_path: Path) -> None:
-    python_path = str(ATLASO_VENV_PYTHON_PATH if ATLASO_VENV_PYTHON_PATH.exists() else sys.executable)
     KMS_SERVICE_PATH.parent.mkdir(parents=True, exist_ok=True)
     KMS_SERVICE_PATH.write_text(
         "\n".join(
             [
                 "[Unit]",
-                "Description=Atlaso PyKMIP lab KMS",
+                "Description=Atlaso vSphere Key Provider",
                 "After=network-online.target",
                 "Wants=network-online.target",
                 "",
                 "[Service]",
                 "Type=simple",
-                f"ExecStart={python_path} {PYKMIP_COMPAT_SCRIPT_PATH} -f {config_path} -l {KMS_LOG_DIR / 'server.log'} -o {KMS_POLICY_DIR} -d {KMS_STATE_DIR / 'pykmip.db'}",
+                f"User={KMS_SERVICE_USER}",
+                f"Group={KMS_SERVICE_USER}",
+                "EnvironmentFile=/etc/atlaso/atlaso.env",
+                f"ExecStart={ATLASO_KMIP_VENV_PATH} --config {config_path}",
                 "Restart=on-failure",
                 "RestartSec=5",
+                f"StandardOutput=append:{KMS_LOG_DIR / 'server.log'}",
+                f"StandardError=append:{KMS_LOG_DIR / 'server.log'}",
+                "UMask=0077",
                 "NoNewPrivileges=true",
+                "CapabilityBoundingSet=",
+                "AmbientCapabilities=",
                 "PrivateTmp=true",
-                "ProtectSystem=full",
+                "PrivateDevices=true",
+                "ProtectSystem=strict",
                 "ProtectHome=true",
+                "ProtectClock=true",
+                "ProtectHostname=true",
+                "ProtectKernelTunables=true",
+                "ProtectKernelModules=true",
+                "ProtectControlGroups=true",
+                "RestrictAddressFamilies=AF_INET AF_INET6",
+                "RestrictSUIDSGID=true",
+                "RestrictRealtime=true",
+                "LockPersonality=true",
+                "MemoryDenyWriteExecute=true",
+                "SystemCallArchitectures=native",
                 f"ReadWritePaths={KMS_STATE_DIR} {KMS_LOG_DIR}",
                 "",
                 "[Install]",
@@ -2837,40 +2985,70 @@ def _handle_kms(action: str, args: list[str]) -> int:
         return 2
     enabled = _kms_config_enabled(config_path)
     if action == "validate":
-        print(json.dumps({"kms": "validation ok", "enabled": enabled, "scope": "PyKMIP lab KMIP server"}, sort_keys=True))
+        print(
+            json.dumps(
+                {
+                    "kms": "validation ok",
+                    "enabled": enabled,
+                    "scope": "bounded VCF 9.1 atlaso-kmip service",
+                },
+                sort_keys=True,
+            )
+        )
         return 0
 
     KMS_STATE_DIR.mkdir(parents=True, exist_ok=True)
     KMS_LOG_DIR.mkdir(parents=True, exist_ok=True)
     KMS_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    KMS_POLICY_DIR.mkdir(parents=True, exist_ok=True)
-    PYKMIP_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
     if not enabled:
-        disable = _run(["systemctl", "disable", "--now", "atlaso-kms.service"])
-        print(disable.stdout, end="")
-        print(disable.stderr, end="", file=sys.stderr)
-        if disable.returncode not in {0, 1}:
-            return disable.returncode
-        print(json.dumps({"kms": "apply complete", "enabled": False, "database_path": str(KMS_STATE_DIR / "pykmip.db")}, sort_keys=True))
+        for service in ("atlaso-kmip.service", "atlaso-kms.service"):
+            disable = _run(["systemctl", "disable", "--now", service])
+            print(disable.stdout, end="")
+            print(disable.stderr, end="", file=sys.stderr)
+            if disable.returncode not in {0, 1}:
+                return disable.returncode
+        print(
+            json.dumps(
+                {
+                    "kms": "apply complete",
+                    "enabled": False,
+                    "database_path": str(KMS_STATE_DIR / "store.db"),
+                },
+                sort_keys=True,
+            )
+        )
         return 0
 
+    account = pwd.getpwnam(KMS_SERVICE_USER)
+    group = grp.getgrnam(KMS_SERVICE_USER)
+    for directory, mode in (
+        (KMS_STATE_DIR, 0o700),
+        (KMS_LOG_DIR, 0o700),
+    ):
+        os.chmod(directory, mode)
+        os.chown(directory, account.pw_uid, group.gr_gid)
+    os.chmod(KMS_CONFIG_DIR, 0o750)
     shutil.copy2(config_path, KMS_CONFIG_PATH)
-    shutil.copy2(config_path, PYKMIP_CONFIG_PATH)
-    os.chmod(KMS_CONFIG_PATH, 0o644)
-    os.chmod(PYKMIP_CONFIG_PATH, 0o644)
+    os.chmod(KMS_CONFIG_PATH, 0o640)
+    os.chown(KMS_CONFIG_PATH, 0, group.gr_gid)
     _install_kms_service(KMS_CONFIG_PATH)
+    retire_legacy = _run(["systemctl", "disable", "--now", "atlaso-kms.service"])
+    print(retire_legacy.stdout, end="")
+    print(retire_legacy.stderr, end="", file=sys.stderr)
+    if retire_legacy.returncode not in {0, 1}:
+        return retire_legacy.returncode
     daemon_reload = _run(["systemctl", "daemon-reload"])
     print(daemon_reload.stdout, end="")
     print(daemon_reload.stderr, end="", file=sys.stderr)
     if daemon_reload.returncode != 0:
         return daemon_reload.returncode
-    enable = _run(["systemctl", "enable", "atlaso-kms.service"])
+    enable = _run(["systemctl", "enable", "atlaso-kmip.service"])
     print(enable.stdout, end="")
     print(enable.stderr, end="", file=sys.stderr)
     if enable.returncode != 0:
         return enable.returncode
-    restart = _run(["systemctl", "restart", "atlaso-kms.service"])
+    restart = _run(["systemctl", "restart", "atlaso-kmip.service"])
     print(restart.stdout, end="")
     print(restart.stderr, end="", file=sys.stderr)
     if restart.returncode != 0:
@@ -2881,8 +3059,8 @@ def _handle_kms(action: str, args: list[str]) -> int:
                 "kms": "apply complete",
                 "enabled": True,
                 "config_path": str(KMS_CONFIG_PATH),
-                "database_path": str(KMS_STATE_DIR / "pykmip.db"),
-                "service": "atlaso-kms.service",
+                "database_path": str(KMS_STATE_DIR / "store.db"),
+                "service": "atlaso-kmip.service",
             },
             sort_keys=True,
         )

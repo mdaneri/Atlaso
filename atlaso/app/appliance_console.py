@@ -60,7 +60,7 @@ SERVICE_CATALOG = (
     ("ESXi PXE", "esxi-pxe", None),
     ("ESX Storage NFS", "esx-storage", "nfs-server.service"),
     ("Firewall", "firewall", "atlaso-firewall.service"),
-    ("KMS / KMIP", "kms", "atlaso-kms.service"),
+    ("KMS / KMIP", "kms", "atlaso-kmip.service"),
     ("Managed LDAP", "ldap", "slapd.service"),
     ("NTP / NTS", "ntpd", "ntpd.service"),
     ("Routing", "routing", None),

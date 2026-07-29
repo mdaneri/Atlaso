@@ -1,3 +1,7 @@
+import json
+from pathlib import Path
+
+
 def login(client):
     page = client.get("/login")
     assert page.status_code == 200
@@ -795,7 +799,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v187" in service_worker.text
+    assert "atlaso-pwa-v189" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -809,7 +813,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/vendor/codemirror/atlaso-codemirror.min.js?v=atlaso-codemirror-20260728-1" in service_worker.text
     assert "/static/app.css?v=atlaso-ui-foundation-20260728-5" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in service_worker.text
-    assert "/static/app.js?v=atlaso-complex-wizards-20260728-10" in service_worker.text
+    assert "/static/app.js?v=atlaso-complex-wizards-20260728-12" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -829,8 +833,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=atlaso-complex-wizards-20260728-10"),
-        (public_base, "/static/app.js?v=atlaso-complex-wizards-20260728-10"),
+        (base, "/static/app.js?v=atlaso-complex-wizards-20260728-12"),
+        (public_base, "/static/app.js?v=atlaso-complex-wizards-20260728-12"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4"
@@ -1269,7 +1273,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=atlaso-vaults-20260728-9" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-4" in page.text
-    assert "/static/app.js?v=atlaso-complex-wizards-20260728-10" in page.text
+    assert "/static/app.js?v=atlaso-complex-wizards-20260728-12" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -7564,8 +7568,8 @@ def test_kms_page_renders(client):
     kms = client.get("/kms")
     assert kms.status_code == 200
     assert "KMS / KMIP" in kms.text
-    assert "PyKMIP" in kms.text
-    assert "lab KMIP server" in kms.text
+    assert "appliance-native atlaso-kmip service" in kms.text
+    assert "bounded candidate VCF 9.1 profile" in kms.text
     assert "kms-keys-table" in kms.text
     assert "kms-clients-table" in kms.text
     assert "vcf-management" in kms.text
@@ -7576,7 +7580,7 @@ def test_kms_page_renders(client):
     assert "service-bind-editor" in kms.text
     assert "service-bind-editor stacked-service-bind-editor" in kms.text
     assert '<select name="backend"' not in kms.text
-    assert 'type="hidden" name="backend" value="pykmip"' in kms.text
+    assert 'type="hidden" name="backend" value="atlaso-kmip"' in kms.text
     assert kms.text.index('name="hostname"') < kms.text.index('data-tag-name="listen_interfaces"')
     assert kms.text.index('data-tag-name="listen_interfaces"') < kms.text.index('data-derived-listen-addresses')
     assert kms.text.index('data-derived-listen-addresses') < kms.text.index('name="port"')
@@ -7590,8 +7594,8 @@ def test_kms_page_renders(client):
     assert "Changes save automatically." in kms.text
     assert 'href="/dashboard#appliance-apply-review"' in kms.text
     assert "Review appliance changes" in kms.text
-    assert "pykmip.conf" in kms.text
-    assert "/var/lib/atlaso/kms/pykmip.db" in kms.text
+    assert "server.json" in kms.text
+    assert "/var/lib/atlaso/kmip/store.db" in kms.text
     assert "<span>Database path</span>" not in kms.text
     assert "<span>Config path</span>" not in kms.text
     assert "<span>Client CA path</span>" in kms.text
@@ -7617,6 +7621,35 @@ def test_kms_page_renders(client):
     assert "initializeTerminalNoteActions" in app_js.text
 
 
+def test_root_aware_initializers_do_not_receive_dom_content_loaded_event():
+    source = Path("atlaso/app/static/app.js").read_text(encoding="utf-8")
+    initializers = (
+        "initializeCaSettings",
+        "initializeKmsSettings",
+        "initializeNtpSettings",
+        "initializeOidcProviderSettings",
+        "initializeSwitchFields",
+        "initializeAutosaveForms",
+        "initializeFirewallSettings",
+        "initializeDnsSettings",
+        "initializeVcfBackupSettings",
+        "initializeVcfRegistrySettings",
+        "initializeVcfDepotSettings",
+        "initializeTagEditors",
+        "initializeServiceBindEditors",
+    )
+
+    for initializer in initializers:
+        assert (
+            f'document.addEventListener("DOMContentLoaded", () => {initializer}());'
+            in source
+        )
+        assert (
+            f'document.addEventListener("DOMContentLoaded", {initializer});'
+            not in source
+        )
+
+
 def test_kms_settings_autosave_returns_json(client):
     from sqlalchemy import select
 
@@ -7630,7 +7663,7 @@ def test_kms_settings_autosave_returns_json(client):
         "/kms/settings",
         data={
             "enabled": "on",
-            "backend": "pykmip",
+            "backend": "atlaso-kmip",
             "listen_interface": "eth2",
             "listen_address": "10.0.0.99",
             "port": "5696",
@@ -7659,8 +7692,8 @@ def test_kms_settings_autosave_returns_json(client):
     assert "/tmp/rogue-kms.conf" not in refreshed.text
     assert "/tmp/rogue-client-ca.crt" not in refreshed.text
     assert "/etc/atlaso/ca/root.crt" in refreshed.text
-    assert "/var/lib/atlaso/kms/pykmip.db" in refreshed.text
-    assert "/etc/atlaso/kms/pykmip.conf" in refreshed.text
+    assert "/var/lib/atlaso/kmip/store.db" in refreshed.text
+    assert "/etc/atlaso/kmip/server.json" in refreshed.text
     assert "10.0.0.99" not in refreshed.text
 
     with SessionLocal() as db:
@@ -7679,7 +7712,7 @@ def test_kms_settings_accept_multiple_listen_targets(client):
         "/kms/settings",
         data={
             "enabled": "on",
-            "backend": "pykmip",
+            "backend": "atlaso-kmip",
             "listen_interfaces_present": "1",
             "listen_addresses_present": "1",
             "listen_interfaces": ["eth2", "eth0"],
@@ -7698,15 +7731,16 @@ def test_kms_settings_accept_multiple_listen_targets(client):
     payload = response.json()
     assert payload["listen_interfaces"] == ["eth2"]
     assert payload["listen_addresses"] == ["192.168.50.1"]
-    assert "# Atlaso KMS listen interfaces: eth2" in payload["config_preview"]
-    assert "# Atlaso KMS listen addresses: 192.168.50.1" in payload["config_preview"]
+    config_preview = json.loads(payload["config_preview"])
+    assert config_preview["listen"] == {"host": "192.168.50.1", "port": 5696}
+    assert config_preview["schema_version"] == 1
 
 
 def test_kms_enable_autocreates_ca_managed_certificate_rows(client):
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import CaCertificate, CaSettings
+    from atlaso.app.models import CaCertificate, CaSettings, KmsClient
 
     login(client)
     with SessionLocal() as db:
@@ -7720,7 +7754,7 @@ def test_kms_enable_autocreates_ca_managed_certificate_rows(client):
         "/kms/settings",
         data={
             "enabled": "on",
-            "backend": "pykmip",
+            "backend": "atlaso-kmip",
             "listen_interface": "eth2",
             "port": "5696",
             "hostname": "kms.atlaso.internal",
@@ -7734,14 +7768,19 @@ def test_kms_enable_autocreates_ca_managed_certificate_rows(client):
 
     assert response.status_code == 200
     assert response.json()["validation_errors"] == []
+    config = json.loads(response.json()["config_preview"])
 
     with SessionLocal() as db:
         server_cert = db.execute(select(CaCertificate).where(CaCertificate.managed_owner == "kms:server")).scalar_one()
         client_cert = db.execute(select(CaCertificate).where(CaCertificate.managed_owner == "kms:client:vcf-management")).scalar_one()
+        kms_client = db.execute(select(KmsClient).where(KmsClient.name == "vcf-management")).scalar_one()
         assert server_cert.status == "issued"
         assert server_cert.ip_addresses == "192.168.50.1"
-        assert server_cert.cert_path == "/etc/atlaso/kms/certs/kms.atlaso.internal.crt"
+        assert server_cert.cert_path == "/etc/atlaso/kmip/certs/kms.atlaso.internal.crt"
         assert client_cert.status == "issued"
+        assert kms_client.certificate_fingerprint == client_cert.fingerprint
+        assert config["providers"][0]["client_fingerprints"] == [client_cert.fingerprint]
+        assert config["providers"][0]["client_certificate_paths"] == []
 
 
 def test_kms_apply_task_captures_current_desired_state(client):
@@ -7761,9 +7800,8 @@ def test_kms_apply_task_captures_current_desired_state(client):
         job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()
         assert job.status == "succeeded"
         assert "atlaso-helper" in (job.result or "")
-        assert "/var/lib/atlaso/apply/kms/pykmip.conf" in (job.result or "")
-        assert "pykmip" in (job.result or "")
-        assert "vcf-sddc-manager-aes" in (job.result or "")
+        assert "/var/lib/atlaso/apply/kms/server.json" in (job.result or "")
+        assert "atlaso-helper kms" in (job.result or "")
 
 
 def test_vcf_backups_page_uses_local_user_for_sftp(client):

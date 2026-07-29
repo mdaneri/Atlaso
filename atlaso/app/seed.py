@@ -420,17 +420,17 @@ def seed_initial_data(db: Session, *, include_examples: bool = True, appliance_m
         db.add(
             KmsSettings(
                 enabled=False,
-                backend="pykmip",
+                backend="atlaso-kmip",
                 listen_interface="eth2" if include_examples else "",
                 listen_address="192.168.50.1" if include_examples else "",
                 port=5696,
                 hostname="kms.atlaso.internal",
                 server_certificate="kms.atlaso.internal",
                 ca_certificate_path="/etc/atlaso/ca/root.crt",
-                database_path="/var/lib/atlaso/kms/pykmip.db",
-                config_path="/etc/atlaso/kms/pykmip.conf",
+                database_path="/var/lib/atlaso/kmip/store.db",
+                config_path="/etc/atlaso/kmip/server.json",
                 require_client_cert=True,
-                allow_register=True,
+                allow_register=False,
                 allow_destroy=False,
             )
         )
@@ -440,7 +440,7 @@ def seed_initial_data(db: Session, *, include_examples: bool = True, appliance_m
             name="vcf-management",
             certificate_subject="CN=vcf-management.atlaso.internal,O=Atlaso",
             role="service",
-            allowed_operations="locate,get,register,create,activate",
+            allowed_operations="locate,get,create,activate,get-attributes,get-attribute-list,query,discover-versions",
             description="Sample VCF management KMIP client.",
             enabled=True,
         )
