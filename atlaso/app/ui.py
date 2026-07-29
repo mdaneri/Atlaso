@@ -253,6 +253,7 @@ from atlaso.app.services.ca import (
     ensure_managed_certificate_rows,
     ensure_root_ca_material,
     join_multiline,
+    managed_certificate_for_owner,
     render_ca_apply_payload,
     render_ca_config,
     safe_certificate_name,
@@ -802,6 +803,7 @@ def user_to_dict(user: User, current_user_id: int | None = None, os_status: dict
     return {
         "id": user.id,
         "username": user.username,
+        "description": user.description or "",
         "role": primary_role(user_roles(user)),
         "roles": user_roles(user),
         "roles_label": role_label(user_roles(user)),
@@ -1131,12 +1133,12 @@ def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
 
 
 def ca_certificate_available(db: Session, owner: str) -> bool:
-    certificate = db.execute(select(CaCertificate).where(CaCertificate.managed_owner == owner)).scalar_one_or_none()
+    certificate = managed_certificate_for_owner(db, owner)
     return bool(certificate and certificate.status == "issued" and certificate.certificate_pem and certificate.private_key_encrypted)
 
 
 def ca_managed_certificate_paths(db: Session, owner: str) -> tuple[str, str, str]:
-    certificate = db.execute(select(CaCertificate).where(CaCertificate.managed_owner == owner)).scalar_one_or_none()
+    certificate = managed_certificate_for_owner(db, owner)
     if certificate is None or certificate.status != "issued":
         return "", "", ""
     return certificate.cert_path or "", certificate.key_path or "", certificate.chain_path or ""
@@ -4132,8 +4134,10 @@ def dnsmasq_context(db: Session, *, reconcile: bool = True) -> dict:
     dns_domains = dns_domains_for_settings(dns_settings)
     dns_warnings = dns_domain_warnings(dns_domains)
     dns_record_groups = dns_records_by_domain(dns_records, dns_domains, dns_settings)
+    domain_descriptions = dns_domain_descriptions(dns_settings)
     for group in dns_record_groups:
         group["enabled"] = group["domain"] in active_dns_domains
+        group["description"] = domain_descriptions.get(group["domain"], "")
         if not group["enabled"]:
             group["authority"] = None
         group["suggested_ipv4"] = dns_record_suggested_ipv4(dns_records, group["domain"], dhcp_scopes, dhcp_reservations)
@@ -5360,6 +5364,35 @@ def normalize_dns_hostname(hostname: str, domain: str | None = None) -> str:
 def dns_domains_for_settings(settings: DnsSettings) -> list[str]:
     active = split_domains(settings.domain) or ["atlaso.internal"]
     return split_domains("\n".join([*active, *split_domains(settings.disabled_domains)]))
+
+
+def dns_domain_descriptions(settings: DnsSettings) -> dict[str, str]:
+    try:
+        payload = json.loads(settings.domain_descriptions_json or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        str(domain).strip().strip(".").lower(): str(description).strip()
+        for domain, description in payload.items()
+        if str(domain).strip() and str(description).strip()
+    }
+
+
+def save_dns_domain_description(settings: DnsSettings, domain: str, description: str) -> None:
+    descriptions = dns_domain_descriptions(settings)
+    normalized_domain = domain.strip().strip(".").lower()
+    normalized_description = description.strip()
+    if normalized_description:
+        descriptions[normalized_domain] = normalized_description
+    else:
+        descriptions.pop(normalized_domain, None)
+    settings.domain_descriptions_json = json.dumps(
+        descriptions,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def save_dns_domains(settings: DnsSettings, domains: list[str]) -> None:
@@ -13118,6 +13151,7 @@ def update_dns_from_ui(
 def create_dns_zone_from_ui(
     request: Request,
     domain: str = Form(...),
+    description: str = Form(""),
     enabled: str | None = Form(None),
     enabled_present: str | None = Form(None),
     csrf: str = Form(...),
@@ -13151,6 +13185,7 @@ def create_dns_zone_from_ui(
         save_disabled_dns_domains(settings, [item for item in disabled_domains if item != new_domain])
     else:
         save_disabled_dns_domains(settings, [*disabled_domains, new_domain])
+    save_dns_domain_description(settings, new_domain, description)
     settings.updated_at = utcnow()
     db.commit()
     record_audit(db, actor=identity.username, action="create_dns_zone", resource_type="dns_zone", resource_id=new_domain)
@@ -13158,7 +13193,11 @@ def create_dns_zone_from_ui(
         request,
         redirect_url="/dns",
         resource_name="domain",
-        resource={"name": new_domain, "enabled": next_enabled},
+        resource={
+            "name": new_domain,
+            "description": description.strip(),
+            "enabled": next_enabled,
+        },
     )
 
 
@@ -13235,6 +13274,7 @@ def delete_dns_zone_from_ui(
         db.delete(record)
     save_dns_domains(settings, [item for item in split_domains(settings.domain) if item != deleted_domain])
     save_disabled_dns_domains(settings, [item for item in split_domains(settings.disabled_domains) if item != deleted_domain])
+    save_dns_domain_description(settings, deleted_domain, "")
     settings.updated_at = utcnow()
     db.commit()
     record_audit(
@@ -18973,6 +19013,7 @@ def update_oidc_provider_from_ui(
 def create_oidc_client_from_ui(
     request: Request,
     name: str = Form(...),
+    description: str = Form(""),
     organization_id: str = Form(""),
     redirect_uris: str = Form(...),
     post_logout_redirect_uris: str = Form(""),
@@ -18994,6 +19035,7 @@ def create_oidc_client_from_ui(
         row, raw_secret = create_oidc_client_record(
             db,
             name=name,
+            description=description,
             organization_id=int(organization_id) if organization_id.strip() else None,
             redirect_uris=[value.strip() for value in redirect_uris.splitlines() if value.strip()],
             post_logout_redirect_uris=[
@@ -19057,6 +19099,7 @@ def update_oidc_client_from_ui(
     request: Request,
     client_record_id: int,
     name: str = Form(...),
+    description: str = Form(""),
     organization_id: str = Form(""),
     redirect_uris: str = Form(...),
     post_logout_redirect_uris: str = Form(""),
@@ -19075,6 +19118,7 @@ def update_oidc_client_from_ui(
             db,
             row=row,
             name=name,
+            description=description,
             organization_id=int(organization_id) if organization_id.strip() else None,
             redirect_uris=[value.strip() for value in redirect_uris.splitlines() if value.strip()],
             post_logout_redirect_uris=[
@@ -19602,6 +19646,7 @@ def update_users_password_policy(
 def create_user_from_ui(
     request: Request,
     username: str = Form(...),
+    description: str = Form(""),
     role: str = Form(Role.VIEWER.value),
     roles: list[str] = Form(default=[]),
     roles_text: str = Form(""),
@@ -19639,6 +19684,7 @@ def create_user_from_ui(
         raise HTTPException(status_code=400, detail="Set a Photon password before enabling a new local user.")
     user = User(
         username=username,
+        description=description.strip(),
         role=primary_role(next_roles),
         roles_json=roles_to_json(next_roles),
         shell=shell,
@@ -19664,6 +19710,7 @@ def update_user_from_ui(
     user_id: int,
     request: Request,
     username: str = Form(...),
+    description: str = Form(""),
     role: str = Form(Role.VIEWER.value),
     roles: list[str] = Form(default=[]),
     roles_text: str = Form(""),
@@ -19709,6 +19756,7 @@ def update_user_from_ui(
     old_username = user.username
     had_web_terminal_access = bool(user.web_terminal_access)
     user.username = username
+    user.description = description.strip()
     user.role = primary_role(next_roles)
     user.roles_json = roles_to_json(next_roles)
     user.web_terminal_access = bool(web_terminal_access)

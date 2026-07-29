@@ -244,7 +244,7 @@ from atlaso.app.services.appliance_settings import (
     web_terminal_interfaces_to_json,
 )
 from atlaso.app.services.ntp import default_ntp_upstream_fields
-from atlaso.app.services.ca import ca_service_state
+from atlaso.app.services.ca import ca_service_state, managed_certificate_for_owner
 from atlaso.app.services.firewall import (
     FIREWALL_ACTIONS,
     FIREWALL_DIRECTIONS,
@@ -528,7 +528,7 @@ def get_appliance_settings(db: Session) -> ApplianceSettings:
 
 
 def ca_managed_certificate_available(db: Session, owner: str) -> tuple[bool, str, str]:
-    certificate = db.execute(select(CaCertificate).where(CaCertificate.managed_owner == owner)).scalar_one_or_none()
+    certificate = managed_certificate_for_owner(db, owner)
     if certificate is None or certificate.status != "issued":
         return False, "", ""
     available = bool(certificate.certificate_pem and certificate.private_key_encrypted and certificate.cert_path and certificate.key_path)

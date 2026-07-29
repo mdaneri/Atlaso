@@ -23,12 +23,13 @@
     ></div>
     <table id="users-fallback" class="data-table compact dns-fallback-table">
       <thead>
-        <tr><th>Username</th><th>Roles</th><th>Shell</th><th>Web SSH</th><th>Enabled</th><th>OS account</th><th>Created</th><th>Actions</th></tr>
+        <tr><th>Username</th><th>Description</th><th>Roles</th><th>Shell</th><th>Web SSH</th><th>Enabled</th><th>OS account</th><th>Created</th><th>Actions</th></tr>
       </thead>
       <tbody>
         {% for user in users %}
           <tr>
             <td>{{ user.username }}</td>
+            <td>{{ user.description or "" }}</td>
             <td>{{ user.roles_json|replace("[", "")|replace("]", "")|replace('"', "") if user.roles_json else user.role }}</td>
             <td>{{ user.shell }}</td>
             <td><span class="status-pill {{ 'good' if user.web_terminal_access else 'muted' }}">{{ "allowed" if user.web_terminal_access else "denied" }}</span></td>
@@ -157,10 +158,16 @@
   <input type="hidden" name="record_id" value="">
   <input type="hidden" name="enabled_present" value="1">
   <section data-atlaso-wizard-step="identity">
-    <label>
-      <span class="field-label"><span>Username</span><button class="help-icon" type="button" data-help="Lowercase local identity used by Atlaso and, after Local Users apply, Photon OS.">i</button></span>
-      <input name="username" required maxlength="120" autocomplete="off">
-    </label>
+    <div class="form-stack">
+      <label>
+        <span class="field-label"><span>Username</span><button class="help-icon" type="button" data-help="Lowercase local identity used by Atlaso and, after Local Users apply, Photon OS.">i</button></span>
+        <input name="username" required maxlength="120" autocomplete="off">
+      </label>
+      <label>
+        <span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Optional operator note describing this account's purpose.">i</button></span>
+        <textarea name="description" rows="3" maxlength="1000"></textarea>
+      </label>
+    </div>
     <fieldset class="scope-choice-fieldset user-wizard-roles">
       <legend>Atlaso roles</legend>
       <div class="scope-choice-grid">

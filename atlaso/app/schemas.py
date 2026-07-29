@@ -954,6 +954,7 @@ class OidcProviderSettingsResponse(OidcProviderSettingsUpdate):
 
 class OidcClientCreate(BaseModel):
     name: str = Field(min_length=1, max_length=160)
+    description: str = Field(default="", max_length=1000)
     organization_id: int | None = None
     redirect_uris: list[str] = Field(min_length=1)
     post_logout_redirect_uris: list[str] = Field(default_factory=list)
@@ -977,6 +978,7 @@ class OidcClientUpdate(OidcClientCreate):
 class OidcClientResponse(BaseModel):
     id: int
     name: str
+    description: str
     client_id: str
     organization_id: int | None
     organization_slug: str | None

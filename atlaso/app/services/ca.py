@@ -51,6 +51,21 @@ def split_multiline(value: str | None) -> list[str]:
     return items
 
 
+def managed_certificate_for_owner(db: Session, owner: str) -> CaCertificate | None:
+    """Return the newest managed certificate row for an owner.
+
+    Older appliances can contain duplicate owner rows. Treat the newest row as
+    canonical so read-only status and preview paths remain available while the
+    managed-certificate reconciliation converges the desired state.
+    """
+
+    return db.execute(
+        select(CaCertificate)
+        .where(CaCertificate.managed_owner == owner)
+        .order_by(CaCertificate.id.desc())
+    ).scalars().first()
+
+
 def join_multiline(values: list[str]) -> str:
     return "\n".join(split_multiline("\n".join(values)))
 

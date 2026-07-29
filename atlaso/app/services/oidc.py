@@ -697,6 +697,7 @@ def create_client(
     db: Session,
     *,
     name: str,
+    description: str = "",
     organization_id: int | None,
     redirect_uris: list[str],
     post_logout_redirect_uris: list[str],
@@ -729,6 +730,7 @@ def create_client(
     raw_secret = generate_client_secret()
     row = OidcClient(
         name=normalized_name,
+        description=description.strip(),
         client_id=generate_client_id(),
         client_secret_hash=hash_client_secret(raw_secret),
         organization_id=organization.id if organization else None,
@@ -757,6 +759,7 @@ def update_client(
     *,
     row: OidcClient,
     name: str,
+    description: str = "",
     organization_id: int | None,
     redirect_uris: list[str],
     post_logout_redirect_uris: list[str],
@@ -796,6 +799,7 @@ def update_client(
         )
     )
     row.name = normalized_name
+    row.description = description.strip()
     row.organization_id = organization.id if organization else None
     row.allowed_scopes = " ".join(scopes)
     row.access_token_lifetime_seconds = access_token_lifetime_seconds
@@ -832,6 +836,7 @@ def oidc_client_to_dict(row: OidcClient) -> dict[str, object]:
     return {
         "id": row.id,
         "name": row.name,
+        "description": row.description or "",
         "client_id": row.client_id,
         "organization_id": row.organization_id,
         "organization_slug": row.organization.slug if row.organization else None,

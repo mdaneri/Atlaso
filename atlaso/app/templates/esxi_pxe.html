@@ -428,8 +428,10 @@
         <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 4</p><h3 data-atlaso-wizard-title>Identify the Kickstart</h3><p class="muted" data-atlaso-wizard-description>Name and describe the database-owned source.</p></div>
         <div class="alert error hidden" data-atlaso-wizard-error></div>
         <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity">
-          <label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Unique operator-facing name for this database-owned Kickstart.">i</button></span><input name="name" required maxlength="120"></label>
-          <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Optional operator note; it is not added to generated source.">i</button></span><textarea name="description" rows="3" maxlength="500"></textarea></label>
+          <div class="form-grid">
+            <label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Unique operator-facing name for this database-owned Kickstart.">i</button></span><input name="name" required maxlength="120"></label>
+            <label class="full"><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Optional operator note; it is not added to generated source.">i</button></span><textarea name="description" rows="3" maxlength="500"></textarea></label>
+          </div>
         </section>
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="source">
           <div class="automation-script-editor-head"><span class="field-label"><span>Kickstart source</span><button class="help-icon" type="button" data-help="ESXi Kickstart source of truth. Type two opening braces for Atlaso variable suggestions.">i</button></span><label class="file-upload-control compact-file-upload"><input class="file-upload-input" type="file" accept=".cfg,.ks" data-kickstart-import><span class="file-upload-surface"><span class="file-upload-copy"><strong>Import .cfg or .ks</strong></span></span></label></div>

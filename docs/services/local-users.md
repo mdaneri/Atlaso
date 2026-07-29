@@ -25,7 +25,8 @@ This verified appliance view provides visual orientation before you begin.
 
 ## Manage an account
 
-1. Select **Add user here**, create a unique username, and choose the least-privileged suitable roles.
+1. Select **Add user here**, create a unique username, record the account purpose in the multiline description row,
+   and choose the least-privileged suitable roles.
 2. Choose Photon shell and Web SSH access as separate decisions.
 3. Set a policy-compliant Photon password in the guided workflow, or leave both password fields blank to postpone and
    keep the new account disabled.
