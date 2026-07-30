@@ -57,7 +57,10 @@ write target disks. It submits a bounded report containing DMI, CPU, memory,
 block-device, and network-interface metadata, displays a local summary, and
 waits for either the local `R` key or one audited remote reboot command. Its
 startup service first obtains DHCP configuration and confirms a default route;
-the Linux kernel does not inherit iPXE's network state. Atlaso
+the Linux kernel does not inherit iPXE's network state. Optional interface MAC
+fields reported as all-zero or broadcast placeholders are ignored; malformed
+MACs remain invalid, and host identity still requires a valid DMI UUID or
+usable MAC. Atlaso
 retains the latest report and ten previous reports. A repeated valid DMI UUID
 with disjoint MAC identities is shown as a collision and is not silently
 merged.

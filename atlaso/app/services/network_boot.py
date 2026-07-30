@@ -398,6 +398,13 @@ def normalize_mac(value: Any, *, required: bool = False) -> str:
     return raw
 
 
+def _normalize_optional_inventory_mac(value: Any) -> str:
+    raw = str(value or "").strip().lower().replace("-", ":")
+    if raw.replace(":", "") in {"000000000000", "ffffffffffff"}:
+        return ""
+    return normalize_mac(raw)
+
+
 def normalize_dmi_uuid(value: Any) -> str:
     raw = str(value or "").strip().lower()
     if not raw:
@@ -465,8 +472,8 @@ def normalize_inventory_report(payload: Any) -> dict[str, Any]:
     for index, row in enumerate(interfaces):
         if not isinstance(row, dict):
             raise ValueError(f"interfaces[{index}] must be an object.")
-        permanent_mac = normalize_mac(row.get("permanent_mac"))
-        current_mac = normalize_mac(row.get("current_mac"))
+        permanent_mac = _normalize_optional_inventory_mac(row.get("permanent_mac"))
+        current_mac = _normalize_optional_inventory_mac(row.get("current_mac"))
         normalized_interfaces.append(
             {
                 "name": _bounded_string(row.get("name"), f"interfaces[{index}].name", maximum=64),
@@ -491,7 +498,7 @@ def normalize_inventory_report(payload: Any) -> dict[str, Any]:
     boot_rows = [row for row in normalized_interfaces if row["boot_interface"]]
     if len(boot_rows) > 1:
         raise ValueError("Only one interface may be marked as the boot interface.")
-    boot_mac = normalize_mac(payload.get("boot_mac"))
+    boot_mac = _normalize_optional_inventory_mac(payload.get("boot_mac"))
     if not boot_mac and boot_rows:
         boot_mac = boot_rows[0]["permanent_mac"] or boot_rows[0]["current_mac"]
     macs = sorted(

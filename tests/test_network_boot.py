@@ -401,6 +401,28 @@ def test_inventory_report_is_bounded_and_uses_mac_for_placeholder_uuid():
         normalize_inventory_report(payload)
 
 
+def test_inventory_report_ignores_optional_placeholder_interface_macs():
+    payload = inventory_report()
+    payload["interfaces"].append(
+        {
+            "name": "eth1",
+            "permanent_mac": "00:00:00:00:00:00",
+            "current_mac": "ff:ff:ff:ff:ff:ff",
+            "driver": "placeholder",
+            "link_state": "down",
+            "speed_mbps": 0,
+            "addresses": [],
+            "boot_interface": False,
+        }
+    )
+
+    normalized = normalize_inventory_report(payload)
+
+    assert normalized["interfaces"][1]["permanent_mac"] == ""
+    assert normalized["interfaces"][1]["current_mac"] == ""
+    assert normalized["boot_mac"] == "52:54:00:12:34:56"
+
+
 def test_uuid_with_disjoint_macs_is_flagged_as_collision(db_session):
     first_session, _token = issue_inventory_session(db_session)
     first, _report = store_inventory_report(
