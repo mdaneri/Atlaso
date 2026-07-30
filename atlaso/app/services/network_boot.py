@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -162,26 +161,38 @@ class DeferredNetworkBootMediaSync:
     backup_dir: Path | None
     journal_path: Path | None = None
     filesystem_changed: bool = True
+    recovery_lock: _MediaSwapRecoveryLock | None = None
 
     def commit_filesystem(self) -> None:
-        if self.backup_dir is not None and self.backup_dir.exists():
-            shutil.rmtree(self.backup_dir)
-        _fsync_directory(self.final_dir.parent)
-        if self.journal_path is not None:
-            self.journal_path.unlink(missing_ok=True)
+        try:
+            if self.backup_dir is not None and self.backup_dir.exists():
+                shutil.rmtree(self.backup_dir)
             _fsync_directory(self.final_dir.parent)
+            if self.journal_path is not None:
+                self.journal_path.unlink(missing_ok=True)
+                _fsync_directory(self.final_dir.parent)
+        finally:
+            self._release_recovery_lock()
 
     def rollback_filesystem(self) -> None:
-        if not self.filesystem_changed:
-            return
-        if self.final_dir.exists():
-            shutil.rmtree(self.final_dir)
-        if self.backup_dir is not None and self.backup_dir.exists():
-            self.backup_dir.replace(self.final_dir)
-        _fsync_directory(self.final_dir.parent)
-        if self.journal_path is not None:
-            self.journal_path.unlink(missing_ok=True)
+        try:
+            if not self.filesystem_changed:
+                return
+            if self.final_dir.exists():
+                shutil.rmtree(self.final_dir)
+            if self.backup_dir is not None and self.backup_dir.exists():
+                self.backup_dir.replace(self.final_dir)
             _fsync_directory(self.final_dir.parent)
+            if self.journal_path is not None:
+                self.journal_path.unlink(missing_ok=True)
+                _fsync_directory(self.final_dir.parent)
+        finally:
+            self._release_recovery_lock()
+
+    def _release_recovery_lock(self) -> None:
+        if self.recovery_lock is not None:
+            self.recovery_lock.release()
+            self.recovery_lock = None
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -1969,11 +1980,16 @@ def _write_media_swap_journal(
     environment_key: str,
     version: str,
     transaction_id: str,
+    staging_directory: str,
 ) -> Path:
     journal_path = environment_root / f".atlaso-media-sync-{transaction_id}.json"
     with journal_path.open("x", encoding="utf-8") as journal:
         json.dump(
-            {"environment": environment_key, "version": version},
+            {
+                "environment": environment_key,
+                "staging_directory": staging_directory,
+                "version": version,
+            },
             journal,
             sort_keys=True,
         )
@@ -2021,30 +2037,65 @@ def _fsync_media_tree(root: Path) -> None:
         _fsync_directory(directory)
 
 
-@contextmanager
-def _media_swap_recovery_lock(media_root: Path):
-    lock_path = media_root / ".atlaso-media-swap-recovery.lock"
-    flags = (
-        os.O_CREAT
-        | os.O_RDWR
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-    )
-    with _MEDIA_SWAP_THREAD_LOCK:
-        lock_fd = os.open(lock_path, flags, 0o600)
+class _MediaSwapRecoveryLock:
+    def __init__(self, media_root: Path):
+        self.lock_path = media_root / ".atlaso-media-swap-recovery.lock"
+        self.lock_fd: int | None = None
+        self.thread_acquired = False
+        self.process_acquired = False
+
+    def acquire(self) -> None:
+        _MEDIA_SWAP_THREAD_LOCK.acquire()
+        self.thread_acquired = True
         lock_acquired = False
         try:
-            metadata = os.fstat(lock_fd)
+            flags = (
+                os.O_CREAT
+                | os.O_RDWR
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+            )
+            self.lock_fd = os.open(self.lock_path, flags, 0o600)
+            metadata = os.fstat(self.lock_fd)
             if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
                 raise ValueError("Network Boot media recovery lock is unsafe.")
             if fcntl is not None:
-                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+                fcntl.flock(self.lock_fd, fcntl.LOCK_EX)
                 lock_acquired = True
-            yield
-        finally:
-            if fcntl is not None and lock_acquired:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
-            os.close(lock_fd)
+                self.process_acquired = True
+        except Exception:
+            if fcntl is not None and lock_acquired and self.lock_fd is not None:
+                fcntl.flock(self.lock_fd, fcntl.LOCK_UN)
+            if self.lock_fd is not None:
+                os.close(self.lock_fd)
+                self.lock_fd = None
+            self._release_thread()
+            raise
+
+    def release(self) -> None:
+        if (
+            fcntl is not None
+            and self.process_acquired
+            and self.lock_fd is not None
+        ):
+            fcntl.flock(self.lock_fd, fcntl.LOCK_UN)
+            self.process_acquired = False
+        if self.lock_fd is not None:
+            os.close(self.lock_fd)
+            self.lock_fd = None
+        self._release_thread()
+
+    def _release_thread(self) -> None:
+        if self.thread_acquired:
+            self.thread_acquired = False
+            _MEDIA_SWAP_THREAD_LOCK.release()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, _exc_type, _exc_value, _traceback):
+        self.release()
 
 
 def recover_interrupted_network_boot_media_swaps(
@@ -2054,7 +2105,7 @@ def recover_interrupted_network_boot_media_swaps(
 ) -> int:
     if media_root.is_symlink() or not media_root.is_dir():
         return 0
-    with _media_swap_recovery_lock(media_root):
+    with _MediaSwapRecoveryLock(media_root):
         return _recover_interrupted_network_boot_media_swaps(
             db,
             media_root=media_root,
@@ -2090,6 +2141,23 @@ def _recover_interrupted_network_boot_media_swaps(
             if journal.get("environment") != entry.key:
                 continue
             transaction_id = match.group(1)
+            staging_name = journal.get("staging_directory")
+            staging_dir: Path | None = None
+            if staging_name is not None:
+                expected_staging = re.compile(
+                    rf"^\.atlaso-{re.escape(entry.key)}-{transaction_id}-"
+                    r"[A-Za-z0-9_-]{1,64}$"
+                )
+                if (
+                    not isinstance(staging_name, str)
+                    or expected_staging.fullmatch(staging_name) is None
+                ):
+                    continue
+                staging_dir = environment_root / staging_name
+                if staging_dir.is_symlink() or (
+                    staging_dir.exists() and not staging_dir.is_dir()
+                ):
+                    continue
             final_dir = environment_root / version
             backup_dir = (
                 environment_root / f".{version}.replacement-{transaction_id}"
@@ -2110,6 +2178,8 @@ def _recover_interrupted_network_boot_media_swaps(
                     and backup_dir.is_dir()
                 ):
                     shutil.rmtree(backup_dir)
+                if staging_dir is not None and staging_dir.exists():
+                    shutil.rmtree(staging_dir)
                 _fsync_directory(environment_root)
                 journal_path.unlink(missing_ok=True)
                 _fsync_directory(environment_root)
@@ -2133,6 +2203,8 @@ def _recover_interrupted_network_boot_media_swaps(
                 shutil.rmtree(installed)
             if backup_present:
                 backup_dir.replace(final_dir)
+            if staging_dir is not None and staging_dir.exists():
+                shutil.rmtree(staging_dir)
             _fsync_directory(environment_root)
             journal_path.unlink(missing_ok=True)
             _fsync_directory(environment_root)
@@ -2235,8 +2307,10 @@ def sync_network_boot_media(
     environment_root.mkdir(exist_ok=True)
     if not environment_root_exists:
         _fsync_directory(media_root_path)
+    transaction_id = uuid.uuid4().hex
+    media_swap_lock: _MediaSwapRecoveryLock | None = None
     with tempfile.TemporaryDirectory(
-        prefix=f".atlaso-{key}-",
+        prefix=f".atlaso-{key}-{transaction_id}-",
         dir=environment_root,
     ) as temp_dir:
         temporary = Path(temp_dir)
@@ -2400,14 +2474,22 @@ def sync_network_boot_media(
         raise_if_cancelled()
         _fsync_media_tree(staging)
         final_dir.parent.mkdir(parents=True, exist_ok=True)
-        transaction_id = uuid.uuid4().hex
-        journal_path = _write_media_swap_journal(
-            final_dir.parent,
-            environment_key=key,
-            version=version,
-            transaction_id=transaction_id,
-        )
+        media_swap_lock = _MediaSwapRecoveryLock(media_root_path)
+        media_swap_lock.acquire()
+        try:
+            journal_path = _write_media_swap_journal(
+                final_dir.parent,
+                environment_key=key,
+                version=version,
+                transaction_id=transaction_id,
+                staging_directory=temporary.name,
+            )
+        except Exception:
+            media_swap_lock.release()
+            raise
         backup_dir: Path | None = None
+        backup_moved = False
+        replacement_published = False
         try:
             if replaced_directory is not None:
                 backup_dir = (
@@ -2415,22 +2497,21 @@ def sync_network_boot_media(
                     / f".{version}.replacement-{transaction_id}"
                 )
                 replaced_directory.replace(backup_dir)
+                backup_moved = True
             staging.replace(final_dir)
+            replacement_published = True
+            _fsync_directory(final_dir.parent)
         except OSError as exc:
-            if backup_dir is not None and backup_dir.exists() and not final_dir.exists():
+            if replacement_published and final_dir.exists():
+                shutil.rmtree(final_dir)
+            if backup_moved and backup_dir is not None and backup_dir.exists():
                 backup_dir.replace(final_dir)
+            _fsync_directory(final_dir.parent)
             journal_path.unlink(missing_ok=True)
-            if final_dir.exists():
+            _fsync_directory(final_dir.parent)
+            media_swap_lock.release()
+            if replacement_published or final_dir.exists():
                 raise ValueError("Immutable boot media version already exists.") from exc
-            raise
-        try:
-            _fsync_directory(final_dir.parent)
-        except OSError:
-            shutil.rmtree(final_dir)
-            if backup_dir is not None and backup_dir.exists():
-                backup_dir.replace(final_dir)
-            journal_path.unlink(missing_ok=True)
-            _fsync_directory(final_dir.parent)
             raise
     filesystem_sync: DeferredNetworkBootMediaSync | None = None
     try:
@@ -2451,15 +2532,26 @@ def sync_network_boot_media(
             final_dir=final_dir,
             backup_dir=backup_dir,
             journal_path=journal_path,
+            recovery_lock=media_swap_lock,
         )
     except Exception:
         if final_dir.exists():
             shutil.rmtree(final_dir)
         if backup_dir is not None and backup_dir.exists():
             backup_dir.replace(final_dir)
+        _fsync_directory(final_dir.parent)
         journal_path.unlink(missing_ok=True)
+        _fsync_directory(final_dir.parent)
+        if media_swap_lock is not None:
+            media_swap_lock.release()
         raise
     if defer_filesystem_commit:
         return filesystem_sync
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        filesystem_sync.rollback_filesystem()
+        raise
     filesystem_sync.commit_filesystem()
     return media

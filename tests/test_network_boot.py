@@ -1965,6 +1965,10 @@ def test_interrupted_media_swap_recovery_restores_database_version(
     environment_root = media_root / environment
     final_dir = environment_root / version
     backup_dir = environment_root / f".{version}.replacement-{transaction_id}"
+    staging_dir = (
+        environment_root
+        / f".atlaso-{environment}-{transaction_id}-staging"
+    )
     old_sha256 = "a" * 64
     _write_test_media_cache(
         final_dir,
@@ -1980,6 +1984,8 @@ def test_interrupted_media_swap_recovery_restores_database_version(
         content=b"committed media",
         artifact_sha256=old_sha256,
     )
+    staging_dir.mkdir()
+    (staging_dir / "source.img").write_bytes(b"interrupted source artifact")
     record_verified_media(
         db_session,
         environment_key=environment,
@@ -1992,7 +1998,13 @@ def test_interrupted_media_swap_recovery_restores_database_version(
     db_session.commit()
     journal = environment_root / f".atlaso-media-sync-{transaction_id}.json"
     journal.write_text(
-        json.dumps({"environment": environment, "version": version}),
+        json.dumps(
+            {
+                "environment": environment,
+                "staging_directory": staging_dir.name,
+                "version": version,
+            }
+        ),
         encoding="utf-8",
     )
     synced_directories: list[Path] = []
@@ -2009,6 +2021,7 @@ def test_interrupted_media_swap_recovery_restores_database_version(
 
     assert (final_dir / "artifact.bin").read_bytes() == b"committed media"
     assert not backup_dir.exists()
+    assert not staging_dir.exists()
     assert not journal.exists()
     assert synced_directories == [environment_root, environment_root]
 
@@ -2138,13 +2151,13 @@ def test_media_swap_recovery_lock_serializes_callers(tmp_path):
     second_acquired = Event()
 
     def first_caller():
-        with network_boot._media_swap_recovery_lock(media_root):
+        with network_boot._MediaSwapRecoveryLock(media_root):
             first_acquired.set()
             assert release_first.wait(timeout=2)
 
     def second_caller():
         assert first_acquired.wait(timeout=2)
-        with network_boot._media_swap_recovery_lock(media_root):
+        with network_boot._MediaSwapRecoveryLock(media_root):
             second_acquired.set()
 
     first = Thread(target=first_caller)
@@ -2173,6 +2186,20 @@ def test_media_sync_fsyncs_tree_and_published_directory_before_database_record(
     digest = hashlib.sha256(content).hexdigest()
     events: list[str] = []
     original_record = network_boot.record_verified_media
+    original_commit = db_session.commit
+
+    class RecordingLock:
+        def __init__(self, _media_root):
+            self.held = False
+
+        def acquire(self):
+            self.held = True
+            events.append("lock:acquire")
+
+        def release(self):
+            assert self.held
+            events.append("lock:release")
+            self.held = False
 
     monkeypatch.setattr(
         network_boot,
@@ -2193,6 +2220,10 @@ def test_media_sync_fsyncs_tree_and_published_directory_before_database_record(
         events.append("record")
         return original_record(db, **kwargs)
 
+    def commit():
+        events.append("commit")
+        return original_commit()
+
     monkeypatch.setattr(BoundedHttpsDownloader, "download", fake_download)
     monkeypatch.setattr(
         network_boot,
@@ -2204,7 +2235,9 @@ def test_media_sync_fsyncs_tree_and_published_directory_before_database_record(
         "_fsync_directory",
         lambda root: events.append(f"directory:{root.name}"),
     )
+    monkeypatch.setattr(network_boot, "_MediaSwapRecoveryLock", RecordingLock)
     monkeypatch.setattr(network_boot, "record_verified_media", record)
+    monkeypatch.setattr(db_session, "commit", commit)
 
     synced = sync_network_boot_media(
         db_session,
@@ -2213,13 +2246,16 @@ def test_media_sync_fsyncs_tree_and_published_directory_before_database_record(
     )
 
     assert synced.version == "2025.11"
-    assert events[:5] == [
+    assert events[:7] == [
         "directory:media",
         "tree",
+        "lock:acquire",
         "directory:shredos",
         "directory:shredos",
         "record",
+        "commit",
     ]
+    assert events[-1] == "lock:release"
 
 
 def test_media_sync_revalidates_and_repairs_corrupt_cached_artifacts(

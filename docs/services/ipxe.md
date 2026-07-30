@@ -113,7 +113,10 @@ synchronizes its media-root parent. A fixed-root transaction journal lets
 application startup finish or roll back an interrupted swap before it exposes
 PXE routes; recovery persists its filesystem decision before removing the
 journal. An interprocess lock serializes application and worker startup
-recovery, while worker startup retains the check as an idempotent fallback.
+recovery and remains held from publication through the database outcome and
+filesystem cleanup. The journal also identifies the bounded transaction staging
+directory so recovery removes any interrupted source artifact and extracted
+content. Worker startup retains the recovery check as an idempotent fallback.
 
 Each catalog row exposes **Download**, **Upload**, and **Delete newest inactive
 media** through its row context menu.
