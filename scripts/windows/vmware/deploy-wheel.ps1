@@ -656,6 +656,27 @@ for runtime_dependency_path in $runtime_dependency_paths; do
 done
 IFS="$old_ifs"
 "$python" -m pip install --force-reinstall --no-deps "$wheel"
+atlaso_was_active=false
+worker_was_active=false
+if systemctl is-active --quiet atlaso.service; then
+    atlaso_was_active=true
+fi
+if systemctl is-active --quiet atlaso-worker.service; then
+    worker_was_active=true
+fi
+restore_services_on_exit() {
+    exit_status=$?
+    trap - EXIT
+    set +e
+    if [ "$atlaso_was_active" = "true" ]; then
+        systemctl restart atlaso.service
+    fi
+    if [ "$worker_was_active" = "true" ]; then
+        systemctl restart atlaso-worker.service
+    fi
+    exit "$exit_status"
+}
+trap restore_services_on_exit EXIT
 systemctl stop atlaso-worker.service atlaso.service
 "$python" - <<'PY'
 import pathlib
@@ -882,6 +903,7 @@ systemctl is-active atlaso
 systemctl enable atlaso-worker.service
 systemctl restart atlaso-worker.service
 systemctl is-active atlaso-worker.service
+trap - EXIT
 deadline=$(( $(date +%s) + timeout_seconds ))
 while ! curl -fsS http://127.0.0.1:8000/openapi.json >/dev/null; do
     if [ "$(date +%s)" -ge "$deadline" ]; then

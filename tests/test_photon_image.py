@@ -87,6 +87,7 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
         "install -d -o atlaso -g atlaso -m 0755 "
         "/var/lib/atlaso/pxe/media /var/lib/atlaso/pxe/uploads"
     ) in deploy
+    restore_trap = deploy.index("trap restore_services_on_exit EXIT")
     stop_writers = deploy.index("systemctl stop atlaso-worker.service atlaso.service")
     media_preflight = deploy.index("Atlaso media path must not be a symlink")
     media_install = deploy.index(
@@ -96,7 +97,12 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     inventory_install = deploy.index(
         'if [ -n "$inventory_linux_package" ]; then'
     )
-    assert stop_writers < media_preflight < media_install < inventory_install
+    disarm_trap = deploy.rindex("trap - EXIT")
+    worker_active = deploy.index("systemctl is-active atlaso-worker.service")
+    assert restore_trap < stop_writers < media_preflight < media_install < inventory_install
+    assert worker_active < disarm_trap
+    assert 'if [ "$atlaso_was_active" = "true" ]; then' in deploy
+    assert 'if [ "$worker_was_active" = "true" ]; then' in deploy
     assert "target.parent.is_symlink()" in deploy
     assert "target.is_symlink()" in deploy
     assert "installed_artifact.is_symlink()" in deploy
