@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Configure and troubleshoot Atlaso network boot and scripted ESX installation workflows.">
+        <meta name="description" content="Discover hardware, manage verified maintenance media, and operate Atlaso ESX installation workflows.">
       
       
         <meta name="author" content="Atlaso contributors">
@@ -29,7 +29,7 @@
     
     
       
-        <title>ESX 9.1 Scripted Installation and Network Boot Notes - Atlaso Documentation</title>
+        <title>Network Boot and ESX scripted installation - Atlaso Documentation</title>
       
     
     
@@ -87,7 +87,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#esx-91-scripted-installation-and-network-boot-notes" class="md-skip">
+        <a href="#network-boot-and-esx-scripted-installation" class="md-skip">
           Skip to content
         </a>
       
@@ -122,7 +122,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ESX 9.1 Scripted Installation and Network Boot Notes
+              Network Boot and ESX scripted installation
             
           </span>
         </div>
@@ -1590,6 +1590,50 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#operate-network-boot" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Operate Network Boot
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#boot-media-packages-and-activation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Boot media packages and activation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api-and-session-boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        API and session boundaries
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#esx-technical-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        ESX technical reference
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#table-of-contents" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -2367,10 +2411,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#esxi-pxe" class="md-nav__link">
+  <a href="#network-boot" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        ESXi PXE
+        Network Boot
       </span>
     </span>
   </a>
@@ -3747,6 +3791,50 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#operate-network-boot" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Operate Network Boot
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#boot-media-packages-and-activation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Boot media packages and activation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api-and-session-boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        API and session boundaries
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#esx-technical-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        ESX technical reference
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#table-of-contents" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4524,10 +4612,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#esxi-pxe" class="md-nav__link">
+  <a href="#network-boot" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        ESXi PXE
+        Network Boot
       </span>
     </span>
   </a>
@@ -4663,16 +4751,169 @@
   
 
 
-<h1 id="esx-91-scripted-installation-and-network-boot-notes">ESX 9.1 Scripted Installation and Network Boot Notes<a class="headerlink" href="#esx-91-scripted-installation-and-network-boot-notes" title="Permanent link">&para;</a></h1>
-<p>Cleaned Markdown copy of the Broadcom Tech Docs content for ESX installation, kickstart, <code>boot.cfg</code>, PXELINUX, iPXE, and
-native UEFI HTTP boot.</p>
+<h1 id="network-boot-and-esx-scripted-installation">Network Boot and ESX scripted installation<a class="headerlink" href="#network-boot-and-esx-scripted-installation" title="Permanent link">&para;</a></h1>
+<p>Atlaso Network Boot provides safe hardware discovery, verified interactive
+maintenance environments, and the existing ESX installation workflow from one
+service. The detailed Broadcom-aligned ESX reference remains later in this page.</p>
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 <h2 id="interface-overview">Interface overview<a class="headerlink" href="#interface-overview" title="Permanent link">&para;</a></h2>
 <p>This verified appliance view provides visual orientation before you begin.</p>
-<p><img alt="Atlaso ESXi PXE page in the clean-appliance desktop viewport." src="../../assets/screenshots/esxi-pxe-clean-desktop.webp" /></p>
-<p><em>Figure: ESXi PXE in the verified clean-appliance desktop state.</em></p>
+<p><img alt="Atlaso Network Boot page in the clean-appliance desktop viewport." src="../../assets/screenshots/esxi-pxe-clean-desktop.webp" /></p>
+<p><em>Figure: Network Boot in the verified clean-appliance desktop state.</em></p>
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+<h2 id="operate-network-boot">Operate Network Boot<a class="headerlink" href="#operate-network-boot" title="Permanent link">&para;</a></h2>
+<p>Open <strong>Network Boot</strong> at <code>/network-boot</code>. The former <code>/esxi-pxe</code> browser route
+redirects here; existing ESXi API paths, the <code>esxi_pxe</code> apply unit, staged
+configuration paths, and helper commands remain compatible.</p>
+<p>An unknown or unassigned x86-64 machine receives a per-host iPXE menu from
+<code>/pxe/boot.ipxe</code>. After 10 seconds it boots Atlaso Inventory Linux when that
+environment is active; otherwise it exits to local disk or firmware. A known
+MAC assigned to an enabled ESXi profile defaults to that ESXi entry instead. An
+undefined-MAC ESXi profile is manual-only and cannot replace the safe inventory
+default. All PXE and native UEFI HTTP clients load iPXE before resolving this
+menu; DHCP never returns <code>mboot.efi</code> or PXELINUX directly. This prevents an
+unassigned machine from inheriting the default ESXi installer profile. Each
+menu uses the selected listener address through which that client connected, so
+isolated secondary DHCP IP zones do not redirect boot artifacts
+through the primary zone. Both legacy BIOS and UEFI use the bundled
+<code>undionly.kpxe</code> or <code>snponly.efi</code> first stage; Secure Boot is not supported.
+Atlaso binds dnsmasq TFTP explicitly to every selected IPv4 DHCP IP-zone
+interface so VMware Workstation firmware can retrieve that first stage over
+UDP/69 before iPXE switches to HTTP.</p>
+<p>For an enabled ESXi Host Reference, right-click and choose <strong>Boot Inventory
+Linux once</strong> to override that exact MAC's next menu default for 30 minutes. The
+first claim retains a five-minute retry window so firmware retries remain on
+Inventory Linux; later boots return to the normal ESXi assignment. The request
+is audited and does not change the host's permanent ESXi desired state.</p>
+<p>Inventory Linux is a purpose-built Buildroot environment that runs from an
+initramfs in RAM; it is not an Ubuntu, Debian, or Photon OS installation. It
+does not mount filesystems or write target disks. It submits a bounded report
+containing DMI, CPU, memory, block-device, and network-interface metadata,
+displays a local summary, and waits for either the local <code>R</code> key or one audited
+remote reboot command. Its startup service first obtains DHCP configuration
+and confirms a default route; the Linux kernel does not inherit iPXE's network
+state. The image includes a broad compatibility profile for physical NIC and
+storage-controller families used by ESXi-capable x86-64 hosts and virtual
+devices from VMware, Hyper-V, KVM/Proxmox/QEMU, and Xen. Exact device support
+still depends on an available upstream Linux driver and redistributable
+firmware; the ESXi hardware compatibility list remains a separate vendor
+certification matrix. Optional interface MAC
+fields reported as all-zero or broadcast placeholders are ignored; malformed
+MACs remain invalid, and host identity still requires a valid DMI UUID or
+usable MAC. Atlaso
+retains the latest report and ten previous reports. A repeated valid DMI UUID
+with disjoint MAC identities is shown as a collision and is not silently
+merged; later reports for that UUID must include a usable MAC so Atlaso does
+not attach DMI-only history to an arbitrary collision record.</p>
+<p>The <strong>Discovered Hosts</strong> grid is read-only. Open a host to review its latest
+report and history, queue a reboot while its Inventory Linux heartbeat is
+online, or use <strong>Promote to ESXi</strong>. Promotion requires explicit hostname, a
+discovered MAC, address, Kickstart, installer ISO, variables, and enabled-state
+review. It creates desired state only.</p>
+<h2 id="boot-media-packages-and-activation">Boot media packages and activation<a class="headerlink" href="#boot-media-packages-and-activation" title="Permanent link">&para;</a></h2>
+<p>The fixed catalog contains Atlaso Inventory Linux, Memtest86+, ShredOS, GParted
+Live, and Clonezilla Live. Full appliance images preinstall the independently
+versioned <code>atlaso-inventory-linux-&lt;version&gt;.zip</code> package. The same package is a
+GitHub release asset, so an operator can download or upload a newer verified
+Inventory Linux build without updating the Atlaso Python wheel. The other
+environments are disabled and uninstalled by default. Full appliance images
+include GnuPG for signed checksum verification; the development VMware wheel
+deployment bridge repairs that dependency on older test appliances before
+installing the new wheel. The <strong>Source</strong> column
+names and links to the authoritative release page from which Atlaso resolves
+each download. <strong>Download latest stable</strong> queues a durable <code>pxe-media-sync</code>
+task that:</p>
+<ol>
+<li>resolves one concrete stable release from the fixed upstream;</li>
+<li>downloads over HTTPS with bounded retries for transient connection failures
+   plus redirect, timeout, and size limits, or accepts the same release asset
+   through the visible <strong>Upload</strong> action;</li>
+<li>verifies the published SHA-256 digest or signed checksum with the pinned
+   project fingerprint;</li>
+<li>rejects unsafe archive paths and extracts only required boot files; and</li>
+<li>atomically installs an immutable cache under
+   <code>/var/lib/atlaso/pxe/media/&lt;environment&gt;/&lt;version&gt;</code>.</li>
+</ol>
+<p>The verified cache is owned by the Atlaso worker account so same-version repair
+can atomically swap and remove its temporary backup without leaving root-owned
+stale media. Before the task commits its database row, Atlaso synchronizes the
+staged artifacts, their directories, and the environment directory containing
+the published rename to stable storage. First-time environment creation also
+synchronizes its media-root parent. A fixed-root transaction journal lets
+application startup finish or roll back an interrupted swap before it exposes
+PXE routes; recovery persists its filesystem decision before removing the
+journal. An interprocess lock serializes application and worker startup
+recovery and remains held from publication through the database outcome and
+filesystem cleanup. The journal also identifies the bounded transaction staging
+directory so recovery removes any interrupted source artifact and extracted
+content. A separately fsynced staging lease exists before acquisition begins;
+startup safely skips a live lease and removes validated orphan transaction
+directories even when interruption happened before journal publication. Worker
+startup retains the recovery check as an idempotent fallback.</p>
+<p>Each catalog row exposes <strong>Download</strong>, <strong>Upload</strong>, and <strong>Delete newest inactive
+media</strong> through its row context menu.
+Upload is limited to 2 GiB and stages the file only for the durable verification
+task. Atlaso still resolves the authoritative stable release metadata and
+checks the uploaded bytes against the same upstream digest or signed checksum;
+the operator cannot substitute an unverified checksum. Cancelling a pending
+upload removes its staged artifact immediately, and worker-startup recovery
+removes staged uploads left by an interrupted running task.
+Deleting an inactive media version also removes terminal staged-upload
+artifacts for that environment. Cleanup is blocked while an environment media
+task is pending or running, and active, desired, and bundled Inventory Linux
+versions cannot be removed.
+The <strong>Boot media tasks</strong> panel reuses the Tasks grid and detail dialogs while
+scoping live refresh, filtering, logs, and cancellation to Network Boot media
+downloads and uploads. The Network Boot and ESXi Kickstarts workspaces scroll
+inside the main panel so the Boot Service rail remains fixed on the right.
+The same menu provides a state-aware <strong>Enable</strong> or <strong>Disable</strong> action. Enable
+remains unavailable until that environment has verified installed media.
+<strong>Media ready</strong> indicates that verified media is installed; <strong>Active version</strong>
+remains empty until the desired version is enabled and submitted through global
+appliance apply.</p>
+<p>The Network Boot page separates <strong>Network Boot</strong> and <strong>ESXi Kickstarts</strong> into
+primary tabs. Each primary view retains its own task-specific subtabs, while
+the shared <strong>Boot Service</strong> settings and apply status remain in the right rail.</p>
+<p>Downloading never changes the active menu. Editing <strong>Enabled</strong> or <strong>Desired
+version</strong> creates pending state; global <strong>Appliance Apply</strong> is the only
+activation boundary. A failed download, verification, extraction, or apply
+leaves the previous active version available. Replacement media is verified
+completely before Atlaso swaps the version directory. The public iPXE menu
+reads host assignments, boot listeners, and default-profile artifacts from the
+last successfully applied snapshot. Pending host edits and pending media
+disablement therefore cannot change or interrupt the running boot service.</p>
+<p>All maintenance environments are interactive. Atlaso does not automatically
+run memory tests, partitioning, imaging, restoration, or disk erasure. ShredOS
+opens a second menu with no timeout and <strong>Cancel</strong> selected by default; Atlaso
+never supplies <code>autonuke</code>, device lists, or unattended erase arguments.</p>
+<p>Installed metadata records source, version, license, digest/signature method,
+and verification time. A repeated sync revalidates the cached manifest and
+every boot artifact before reporting success; a missing or corrupt cache is
+replaced from the verified upstream release. Downloaded media and inventory
+reports are runtime data and are excluded from settings archives; desired
+environment enablement and version selection are included. Restore and factory
+reset preserve installed-media metadata while clearing active activation state.</p>
+<h2 id="api-and-session-boundaries">API and session boundaries<a class="headerlink" href="#api-and-session-boundaries" title="Permanent link">&para;</a></h2>
+<p>Generic automation uses <code>/api/v1/network-boot</code> with <code>read:pxe</code> or <code>write:pxe</code>.
+Viewer has read access; service-admin and admin have read/write access. Legacy
+<code>read:esxi-pxe</code> does not grant access to discovered hosts or maintenance media.</p>
+<p>Inventory Linux receives a one-use report session with an eight-hour maximum
+lifetime. Only the token hash is persisted. The bearer token is sent in the
+authorization header, never a URL, audit, or browser UI. Reports bind the
+session to the presented identity; replays and mismatches are rejected.
+Reboot-command acknowledgment is idempotent so the client can retry an
+uncertain response before rebooting. Public endpoint rate-limit state expires
+inactive client entries and remains bounded across address-rotating clients.
+Heartbeats run every 10 seconds, and the UI treats a host as offline after 30
+seconds. Reboot is the only remote action. Runtime inventory storage retains at
+most 512 discovered hosts, 2,048 reports across all hosts, 11 reports per host,
+and 4,096 sessions; expired sessions and the oldest inactive inventory are
+pruned as new sessions and reports arrive. Hosts with a recent heartbeat or an
+unacknowledged command are never selected for storage eviction.</p>
+<h2 id="esx-technical-reference">ESX technical reference<a class="headerlink" href="#esx-technical-reference" title="Permanent link">&para;</a></h2>
+<p>The remainder is a cleaned Markdown copy of Broadcom Tech Docs content for ESX
+installation, Kickstart, <code>boot.cfg</code>, PXELINUX, iPXE, and native UEFI HTTP boot.</p>
 <p>Atlaso note: ESXi PXE host-specific <code>boot.cfg</code> artifacts should pass Kickstart URLs as
 <code>/pxe/esxi/ks/&lt;file&gt;.cfg?mac=&lt;normalized-mac&gt;</code>. The MAC query parameter is required so Atlaso can render restricted
 <code>{{variable}}</code> Kickstart markers from the database source and the selected host's custom variable map. Atlaso
@@ -4684,12 +4925,14 @@ credential values. Atlaso validates every referenced vault, key, and subkey when
 enabled assigned host requests the dynamic response. Source downloads and previews retain the marker, missing or
 renamed references fail closed, and dynamic responses disable caching. See <a href="../vaults/">Vaults</a> for marker examples,
 URI ordering, and secret-handling boundaries.</p>
-<p>Define non-secret custom values in the <strong>Custom Variables</strong> tab before <strong>Installer ISOs</strong>. Each row records the variable
-name, operator description, and an optional default. Monaco offers those rows as concrete <code>{{custom.&lt;name&gt;}}</code>
-completions. A matching value in a Host References variables JSON object overrides the default for that host; when no
-override exists, Atlaso renders the configured default. Deleting a referenced definition makes the Kickstart invalid
-until the definition is restored or the marker is removed. Use vault markers instead of custom-variable defaults for
-credentials or other secrets.</p>
+<p>Define non-secret custom values in the <strong>Custom Variables</strong> tab before <strong>Installer ISOs</strong>. The final <strong>+ Add custom
+variable</strong> control in the ESXi PXE tablist opens a two-step Definition and Review wizard; double-clicking an existing
+row or choosing <strong>Edit</strong> from its context menu opens the same wizard, while <strong>Remove</strong> deletes the definition after
+confirmation. Each row records the variable name, operator description, and an optional default. Monaco offers those
+rows as concrete <code>{{custom.&lt;name&gt;}}</code> completions. A matching value in a Host References variables JSON object overrides
+the default for that host; when no override exists, Atlaso renders the configured default. Removing a referenced
+definition makes the Kickstart invalid until the definition is restored or the marker is removed. Use vault markers
+instead of custom-variable defaults for credentials or other secrets.</p>
 <p>Token-based automation can manage the same non-secret catalog through
 <code>/api/v1/esxi-pxe/custom-variables</code> before creating or updating Kickstarts that use <code>{{custom.*}}</code> markers. Catalog
 definitions and defaults are included in settings archives so restored Kickstarts retain their required definitions.</p>
@@ -6295,9 +6538,9 @@ default <code>boot.cfg</code>. Host-specific MAC artifacts should still override
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 <h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>
 <p>These captures show responsive layouts and useful operational states referenced by this page.</p>
-<h3 id="esxi-pxe">ESXi PXE<a class="headerlink" href="#esxi-pxe" title="Permanent link">&para;</a></h3>
-<p><img alt="Atlaso ESXi PXE page in the clean-appliance responsive viewport." src="../../assets/screenshots/esxi-pxe-clean-responsive.webp" /></p>
-<p><em>Figure: ESXi PXE in the verified clean-appliance responsive state.</em></p>
+<h3 id="network-boot">Network Boot<a class="headerlink" href="#network-boot" title="Permanent link">&para;</a></h3>
+<p><img alt="Atlaso Network Boot page in the clean-appliance responsive viewport." src="../../assets/screenshots/esxi-pxe-clean-responsive.webp" /></p>
+<p><em>Figure: Network Boot in the verified clean-appliance responsive state.</em></p>
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
 
 

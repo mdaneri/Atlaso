@@ -4141,7 +4141,8 @@ over that default.
 Saving updates desired state and marks the <code>esxi_pxe</code> apply unit changed. ESXi PXE boot settings select one or more IPv4
 DHCP IP zones instead of a freeform interface/IP pair; Atlaso derives the PXE interfaces, TFTP server addresses, DNS
 records, firewall bind targets, and dnsmasq scope tags from those zones. Native UEFI HTTP URLs are generated per
-selected IPv4 zone unless an operator supplies a manual absolute URL. Installer ISO choices are discovered from
+selected IPv4 zone and always load <code>snponly.efi</code>; every iPXE second request loads <code>/pxe/boot.ipxe</code> so exact host
+assignment and one-time Inventory Linux overrides are resolved in one place. Installer ISO choices are discovered from
 <code>/mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST</code>, the VCFDT ESX host component folder; Atlaso creates that folder when
 needed, marks VCFDT-discovered images separately from user-uploaded images with dates, and lets operators upload or
 delete <code>.iso</code> files from the Installer ISOs tab. Deleting an ISO clears host/default PXE references to that image;
@@ -4576,7 +4577,8 @@ helper. If you already know the appliance IP, this is the most direct path:</p>
 <p>Do not pipe the VMX path or put it on a separate line by itself; PowerShell will try to execute the <code>.vmx</code> file. The
 helper builds <code>python -m pip wheel . -w dist</code>, uploads the latest <code>atlaso-*.whl</code> and the OIDC <code>Authlib</code> runtime wheel,
 installs both into <code>/opt/atlaso/.venv</code>, syncs <code>scripts/appliance/atlaso-helper</code> to <code>/opt/atlaso/bin/atlaso-helper</code>,
-restores virtualenv permissions, restarts <code>atlaso.service</code>, and verifies both guest loopback and host-facing
+builds and installs the independently versioned Inventory Linux package from <code>image/inventory-linux/output</code>, restores
+virtualenv permissions, restarts <code>atlaso.service</code>, and verifies both guest loopback and host-facing
 <code>/openapi.json</code>. With <code>-SshPassword</code>, the helper uses the local Python runtime and Paramiko so SSH and sudo do not
 prompt interactively. If the selected Python cannot already import Paramiko, the helper installs it and its dependencies
 into the temporary deployment directory from the wheels downloaded under <code>dist</code>; it does not modify the global Python
@@ -4584,7 +4586,8 @@ environment. When using <code>-SkipBuild</code>, keep those dependency wheels in
 first. You can also set <code>ATLASO_DEPLOY_SSH_PASSWORD</code> instead of passing the password on the command line. Without a
 password, it preserves the original <code>scp</code>/<code>ssh</code> key or agent workflow. Helper sync matters because the privileged helper
 is installed outside the Python virtualenv and is not replaced by <code>pip install</code>. If the app takes longer to import after
-reinstalling the wheel, increase the readiness wait with <code>-ReadinessTimeoutSeconds 120</code>.</p>
+reinstalling the wheel, increase the readiness wait with <code>-ReadinessTimeoutSeconds 120</code>. Use
+<code>-SkipInventoryLinuxSync</code> only when deliberately leaving the appliance's existing Inventory Linux package unchanged.</p>
 <p>Pass <code>-IncludeLabNetworkAdapters</code> only after <code>VMnet2</code>, <code>VMnet3</code>, and <code>VMnet4</code> exist for the SiteA, WAN/SiteB, and
 trunk-like validation networks.</p>
 <p>Discover the running Workstation appliance address with:</p>

@@ -4291,8 +4291,9 @@ because dynamic Kickstart rendering requires a defined host MAC.</p>
 <p>The ESXi PXE boot service selects one or more IPv4 DHCP IP zones instead of a freeform interface/IP pair. Atlaso derives
 the PXE interfaces, TFTP server addresses, DNS records, firewall bind targets, and generated dnsmasq scope tags from
 those zones; the DHCP page shows those generated PXE lines separately from operator-managed DHCP options. Native UEFI
-HTTP boot URLs are generated per selected IPv4 zone from that zone's appliance address unless an operator supplies a
-manual absolute URL, in which case the same URL is returned in every selected zone.</p>
+HTTP boot URLs are generated per selected IPv4 zone from that zone's appliance address and always return the staged
+<code>snponly.efi</code> first stage. Both BIOS and UEFI iPXE requests then load <code>/pxe/boot.ipxe</code>, where Atlaso safely resolves the
+exact host assignment or inventory default. DHCP never returns an ESXi loader directly.</p>
 <p>Host PXE definitions can optionally include an IP address. Blank IPs keep normal DHCP behavior. A concrete host IP
 creates or updates an ESXi-managed DHCP reservation and matching DNS A/AAAA record, and the IP must fall inside one of
 the selected ESXi PXE DHCP zones. The default undefined-MAC profile remains DHCP-only and never creates a reservation.</p>
@@ -4300,7 +4301,8 @@ the selected ESXi PXE DHCP zones. The default undefined-MAC profile remains DHCP
 <code>atlaso-helper esxi-pxe validate|apply</code>, the helper validates the manifest, writes enabled Kickstarts to the PXE HTTP
 root, validates selected installer ISO paths remain under the ESX_HOST folder, extracts selected installers to
 <code>/var/lib/atlaso/pxe/http/esxi/images/&lt;image-key&gt;/</code>, stages the iPXE first-stage boot files <code>undionly.kpxe</code> and
-<code>snponly.efi</code>, stages <code>pxelinux.0</code> and <code>mboot.c32</code>, writes an HTTP <code>boot.ipxe</code> entrypoint even when no host profiles
+<code>snponly.efi</code> to both TFTP and HTTP, stages <code>pxelinux.0</code> and <code>mboot.c32</code>, writes an HTTP <code>boot.ipxe</code> entrypoint even when
+no host profiles
 exist, and generates host-specific <code>boot.cfg</code> plus PXELINUX configs. For ESXi UEFI, the helper uses the selected ISO's
 <code>EFI/BOOT/BOOTX64.EFI</code> as <code>mboot.efi</code> and places it beside the matching host <code>boot.cfg</code>; when <code>crypto64.efi</code> is present,
 it is copied into the same host boot directory. The helper searches Photon package paths plus

@@ -3858,7 +3858,9 @@
   it with <code>scp</code>, installs it into <code>/opt/atlaso/.venv</code>, syncs <code>scripts/appliance/atlaso-helper</code> to
   <code>/opt/atlaso/bin/atlaso-helper</code>, provisions every checked-in public release key under <code>/etc/atlaso/update-trust.d</code>,
   restores venv permissions, restarts <code>atlaso.service</code>, and verifies guest plus host <code>/openapi.json</code> with a readiness
-  retry. Packer image definitions must explicitly stage <code>image/common/update-trust</code>, and provisioning must fail rather
+  retry. The default deploy also builds and installs the independently versioned Inventory Linux package; use
+  <code>-SkipInventoryLinuxSync</code> only for a code-only patch that intentionally preserves existing boot media. Packer image
+  definitions must explicitly stage <code>image/common/update-trust</code>, and provisioning must fail rather
   than build an appliance with no valid public release key. Use <code>-IpAddress &lt;appliance-ip&gt;</code> when the VM IP is known, or
   <code>-VmxPath "&lt;path-to-vmx&gt;"</code> for VMware discovery; do not pipe the VMX path or put the <code>.vmx</code> path on a separate line
   because PowerShell will try to execute it. If uvicorn needs longer after reinstall, pass
@@ -3926,6 +3928,19 @@
 <li>Photon image provisioning must upload <code>third_party/ipxe</code> into the Packer source tree and stage bundled <code>undionly.kpxe</code>
   and <code>snponly.efi</code> under <code>/var/lib/atlaso/pxe/bootloaders</code>; fail the image build rather than silently producing an
   appliance where ESXi PXE validation cannot find first-stage boot files.</li>
+<li>Network Boot retains the <code>esxi_pxe</code> apply/helper identifiers. Its generic
+  <code>/pxe/boot.ipxe</code> menu, Inventory Linux, and optional verified maintenance
+  environments activate only through that global apply unit.</li>
+<li>Keep Inventory Linux reproducible and read-only: pin Buildroot source and
+  digest, run from initramfs, collect only bounded hardware metadata, and never
+  add filesystem mounts, block writes, a remote shell, or arbitrary commands.</li>
+<li><code>pxe-media-sync</code> may populate immutable verified cache versions, but must not
+  alter active menu state. Fixed upstreams, HTTPS limits, pinned verification,
+  allowlisted extraction, and atomic installation are mandatory.</li>
+<li>Preserve generic <code>read:pxe</code> and <code>write:pxe</code> isolation from legacy
+  <code>read:esxi-pxe</code>. Never place inventory bearer tokens in URLs, logs, audits,
+  jobs, or browser state; store only hashes and bind each session to one
+  submitted host identity.</li>
 <li>Real VCF Backup apply stages the rendered OpenSSH drop-in under
   <code>/var/lib/atlaso/apply/vcf-backups/atlaso-vcf-backups-sshd.conf</code> as the <code>atlaso</code> service user before invoking the root
   helper. Provisioning leaves the default <code>vcf-backup</code> OS account absent until Local Users apply creates it; the VCF
