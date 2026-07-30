@@ -22,7 +22,10 @@ from atlaso.app.services.appliance_update import (
     ensure_appliance_update_job_steps,
 )
 from atlaso.app.services.automation import enqueue_due_schedules, json_object
-from atlaso.app.services.network_boot import cleanup_network_boot_upload
+from atlaso.app.services.network_boot import (
+    cleanup_network_boot_upload,
+    recover_interrupted_network_boot_media_swaps,
+)
 from atlaso.app.services.vaults import decrypted_vault_values, redact_secret_values, vault_scope_identity
 
 
@@ -73,6 +76,12 @@ def _release_finalizer() -> dict[str, Any]:
 
 
 def recover_interrupted_worker_jobs(db: Session) -> int:
+    media_swaps = recover_interrupted_network_boot_media_swaps(db)
+    if media_swaps:
+        LOGGER.warning(
+            "Recovered %s interrupted Network Boot media swap(s).",
+            media_swaps,
+        )
     jobs = db.execute(
         select(Job).where(Job.type.in_(WORKER_JOB_TYPES), Job.status == JobStatus.RUNNING.value)
     ).scalars().all()

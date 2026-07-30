@@ -52,12 +52,19 @@ first claim retains a five-minute retry window so firmware retries remain on
 Inventory Linux; later boots return to the normal ESXi assignment. The request
 is audited and does not change the host's permanent ESXi desired state.
 
-Inventory Linux runs from an initramfs in RAM. It does not mount filesystems or
-write target disks. It submits a bounded report containing DMI, CPU, memory,
-block-device, and network-interface metadata, displays a local summary, and
-waits for either the local `R` key or one audited remote reboot command. Its
-startup service first obtains DHCP configuration and confirms a default route;
-the Linux kernel does not inherit iPXE's network state. Optional interface MAC
+Inventory Linux is a purpose-built Buildroot environment that runs from an
+initramfs in RAM; it is not an Ubuntu, Debian, or Photon OS installation. It
+does not mount filesystems or write target disks. It submits a bounded report
+containing DMI, CPU, memory, block-device, and network-interface metadata,
+displays a local summary, and waits for either the local `R` key or one audited
+remote reboot command. Its startup service first obtains DHCP configuration
+and confirms a default route; the Linux kernel does not inherit iPXE's network
+state. The image includes a broad compatibility profile for physical NIC and
+storage-controller families used by ESXi-capable x86-64 hosts and virtual
+devices from VMware, Hyper-V, KVM/Proxmox/QEMU, and Xen. Exact device support
+still depends on an available upstream Linux driver and redistributable
+firmware; the ESXi hardware compatibility list remains a separate vendor
+certification matrix. Optional interface MAC
 fields reported as all-zero or broadcast placeholders are ignored; malformed
 MACs remain invalid, and host identity still requires a valid DMI UUID or
 usable MAC. Atlaso

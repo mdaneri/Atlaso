@@ -2,7 +2,7 @@
 set -euo pipefail
 
 buildroot_version="2026.05.1"
-package_version="2026.05.1+3"
+package_version="2026.05.1+4"
 buildroot_sha256="ae7f706f087b9ae9083a10a587368dfbf53103c28bf81c2d690198dc4090cb58"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source_root="${ATLASO_INVENTORY_BUILD_ROOT:-${script_dir}/.build}"
@@ -65,7 +65,7 @@ cat >"${output_dir}/manifest.json" <<EOF
   "boot": {
     "kernel": "/pxe/media/inventory/${package_version}/bzImage",
     "initrd": "/pxe/media/inventory/${package_version}/rootfs.cpio.gz",
-    "arguments": "rdinit=/sbin/init atlaso.inventory=1"
+    "arguments": "rdinit=/sbin/init console=tty0 atlaso.inventory=1"
   },
   "artifacts": {
     "bzImage": "${kernel_sha256}",

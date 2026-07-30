@@ -134,8 +134,51 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     assert "--inventory-package" in release
     build = Path("image/inventory-linux/build.sh").read_text(encoding="utf-8")
     assert 'buildroot_version="2026.05.1"' in build
-    assert 'package_version="2026.05.1+3"' in build
+    assert 'package_version="2026.05.1+4"' in build
     assert '"version": "${package_version}"' in build
+    assert '"arguments": "rdinit=/sbin/init console=tty0 atlaso.inventory=1"' in build
+    kernel_fragment = Path(
+        "image/inventory-linux/external/board/atlaso-inventory/linux.fragment"
+    ).read_text(encoding="utf-8")
+    for driver in (
+        "CONFIG_VMXNET3=y",
+        "CONFIG_VMWARE_PVSCSI=y",
+        "CONFIG_HYPERV_NET=y",
+        "CONFIG_HYPERV_STORAGE=y",
+        "CONFIG_VIRTIO_NET=y",
+        "CONFIG_VIRTIO_BLK=y",
+        "CONFIG_SCSI_VIRTIO=y",
+        "CONFIG_HYPERVISOR_GUEST=y",
+        "CONFIG_HYPERV=y",
+        "CONFIG_XEN_NETDEV_FRONTEND=y",
+        "CONFIG_XEN_BLKDEV_FRONTEND=y",
+        "CONFIG_BNXT=y",
+        "CONFIG_QEDE=y",
+        "CONFIG_BE2NET=y",
+        "CONFIG_ENIC=y",
+        "CONFIG_CHELSIO_T4=y",
+        "CONFIG_USB_RTL8152=y",
+        "CONFIG_MEGARAID_SAS=y",
+        "CONFIG_SCSI_HPSA=y",
+        "CONFIG_SCSI_LPFC=y",
+        "CONFIG_SCSI_QLA_FC=y",
+    ):
+        assert driver in kernel_fragment
+    assert "CONFIG_DRM_SIMPLEDRM=y" in kernel_fragment
+    assert "CONFIG_SYSFB_SIMPLEFB=y" in kernel_fragment
+    assert "CONFIG_FRAMEBUFFER_CONSOLE=y" in kernel_fragment
+    inventory_defconfig = Path(
+        "image/inventory-linux/external/configs/atlaso_inventory_x86_64_defconfig"
+    ).read_text(encoding="utf-8")
+    for firmware in (
+        "BR2_PACKAGE_LINUX_FIRMWARE_BNX2=y",
+        "BR2_PACKAGE_LINUX_FIRMWARE_BNX2X=y",
+        "BR2_PACKAGE_LINUX_FIRMWARE_INTEL_ICE=y",
+        "BR2_PACKAGE_LINUX_FIRMWARE_QLOGIC_4X=y",
+        "BR2_PACKAGE_LINUX_FIRMWARE_QLOGIC_2XXX=y",
+        "BR2_PACKAGE_LINUX_FIRMWARE_RTL_8169=y",
+    ):
+        assert firmware in inventory_defconfig
     init = Path(
         "image/inventory-linux/external/overlay/etc/init.d/S99atlaso-inventory"
     ).read_text(encoding="utf-8")

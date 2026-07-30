@@ -707,6 +707,10 @@ def network_boot_ipxe(
 
 
 @public_router.get("/pxe/media/{environment_key}/{version}/{file_path:path}")
+@public_router.head(
+    "/pxe/media/{environment_key}/{version}/{file_path:path}",
+    include_in_schema=False,
+)
 def network_boot_media_file(
     environment_key: str,
     version: str,

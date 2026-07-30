@@ -1056,9 +1056,28 @@ def test_media_file_remains_available_until_disable_is_applied(
     )
 
     response = client.get("/pxe/media/inventory/2026.05.1/bzImage")
+    head_response = client.head("/pxe/media/inventory/2026.05.1/bzImage")
 
     assert response.status_code == 200, response.text
     assert response.content == b"kernel"
+    assert head_response.status_code == 200, head_response.text
+    assert head_response.content == b""
+    assert head_response.headers["content-length"] == str(len(b"kernel"))
+
+
+@pytest.mark.parametrize("environment_key", ["gparted", "clonezilla"])
+def test_debian_live_media_uses_fetch_with_implicit_dhcp(environment_key):
+    manifest = network_boot._media_boot_manifest(
+        environment_key,
+        "1.0",
+        extracted=["vmlinuz", "initrd.img", "filesystem.squashfs"],
+    )
+
+    arguments = manifest["boot"]["arguments"].split()
+    assert "boot=live" in arguments
+    assert "username=user" in arguments
+    assert "fetch=/pxe/media/" + environment_key + "/1.0/filesystem.squashfs" in arguments
+    assert "ip=dhcp" not in arguments
 
 
 def test_public_rate_limit_prunes_expired_client_keys():
@@ -1875,6 +1894,170 @@ def test_media_file_selection_uses_allowlist_without_following_symlinks(tmp_path
     assert _allowlisted_media_file(root, "live/outside", {"live/outside"}) is None
 
 
+def _write_test_media_cache(
+    directory: Path,
+    *,
+    environment: str,
+    version: str,
+    content: bytes,
+    artifact_sha256: str,
+) -> None:
+    directory.mkdir(parents=True)
+    artifact = directory / "artifact.bin"
+    artifact.write_bytes(content)
+    (directory / "manifest.json").write_text(
+        json.dumps(
+            {
+                "kind": "atlaso-network-boot-media",
+                "schema_version": 1,
+                "environment": environment,
+                "version": version,
+                "sha256": artifact_sha256,
+                "artifacts": {
+                    "artifact.bin": hashlib.sha256(content).hexdigest(),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_interrupted_media_swap_recovery_restores_database_version(
+    db_session,
+    tmp_path,
+):
+    media_root = tmp_path / "media"
+    environment = "shredos"
+    version = "2025.11"
+    transaction_id = "a" * 32
+    environment_root = media_root / environment
+    final_dir = environment_root / version
+    backup_dir = environment_root / f".{version}.replacement-{transaction_id}"
+    old_sha256 = "a" * 64
+    _write_test_media_cache(
+        final_dir,
+        environment=environment,
+        version=version,
+        content=b"uncommitted replacement",
+        artifact_sha256="b" * 64,
+    )
+    _write_test_media_cache(
+        backup_dir,
+        environment=environment,
+        version=version,
+        content=b"committed media",
+        artifact_sha256=old_sha256,
+    )
+    record_verified_media(
+        db_session,
+        environment_key=environment,
+        version=version,
+        source_url="https://example.test/shredos.img",
+        artifact_sha256=old_sha256,
+        installed_path=str(final_dir.resolve()),
+        manifest={"schema_version": 1},
+    )
+    db_session.commit()
+    journal = environment_root / f".atlaso-media-sync-{transaction_id}.json"
+    journal.write_text(
+        json.dumps({"environment": environment, "version": version}),
+        encoding="utf-8",
+    )
+
+    assert network_boot.recover_interrupted_network_boot_media_swaps(
+        db_session,
+        media_root=media_root,
+    ) == 1
+
+    assert (final_dir / "artifact.bin").read_bytes() == b"committed media"
+    assert not backup_dir.exists()
+    assert not journal.exists()
+
+
+def test_interrupted_media_swap_recovery_finalizes_committed_version(
+    db_session,
+    tmp_path,
+):
+    media_root = tmp_path / "media"
+    environment = "shredos"
+    version = "2025.11"
+    transaction_id = "b" * 32
+    environment_root = media_root / environment
+    final_dir = environment_root / version
+    backup_dir = environment_root / f".{version}.replacement-{transaction_id}"
+    committed_sha256 = "b" * 64
+    _write_test_media_cache(
+        final_dir,
+        environment=environment,
+        version=version,
+        content=b"committed replacement",
+        artifact_sha256=committed_sha256,
+    )
+    _write_test_media_cache(
+        backup_dir,
+        environment=environment,
+        version=version,
+        content=b"old media",
+        artifact_sha256="a" * 64,
+    )
+    record_verified_media(
+        db_session,
+        environment_key=environment,
+        version=version,
+        source_url="https://example.test/shredos.img",
+        artifact_sha256=committed_sha256,
+        installed_path=str(final_dir.resolve()),
+        manifest={"schema_version": 1},
+    )
+    db_session.commit()
+    journal = environment_root / f".atlaso-media-sync-{transaction_id}.json"
+    journal.write_text(
+        json.dumps({"environment": environment, "version": version}),
+        encoding="utf-8",
+    )
+
+    assert network_boot.recover_interrupted_network_boot_media_swaps(
+        db_session,
+        media_root=media_root,
+    ) == 1
+
+    assert (final_dir / "artifact.bin").read_bytes() == b"committed replacement"
+    assert not backup_dir.exists()
+    assert not journal.exists()
+
+
+def test_interrupted_new_media_install_recovery_removes_uncommitted_version(
+    db_session,
+    tmp_path,
+):
+    media_root = tmp_path / "media"
+    environment = "shredos"
+    version = "2025.12"
+    transaction_id = "c" * 32
+    environment_root = media_root / environment
+    final_dir = environment_root / version
+    _write_test_media_cache(
+        final_dir,
+        environment=environment,
+        version=version,
+        content=b"uncommitted new media",
+        artifact_sha256="c" * 64,
+    )
+    journal = environment_root / f".atlaso-media-sync-{transaction_id}.json"
+    journal.write_text(
+        json.dumps({"environment": environment, "version": version}),
+        encoding="utf-8",
+    )
+
+    assert network_boot.recover_interrupted_network_boot_media_swaps(
+        db_session,
+        media_root=media_root,
+    ) == 1
+
+    assert not final_dir.exists()
+    assert not journal.exists()
+
+
 def test_media_sync_revalidates_and_repairs_corrupt_cached_artifacts(
     db_session,
     monkeypatch,
@@ -1938,9 +2121,12 @@ def test_media_sync_revalidates_and_repairs_corrupt_cached_artifacts(
 
     assert isinstance(deferred, network_boot.DeferredNetworkBootMediaSync)
     assert deferred.media.artifact_sha256 == replacement_sha256
+    assert deferred.journal_path is not None
+    assert deferred.journal_path.exists()
     assert (installed / "shredos.img").read_bytes() == replacement
     deferred.rollback_filesystem()
     db_session.rollback()
+    assert not deferred.journal_path.exists()
     assert (installed / "shredos.img").read_bytes() == b"corrupt"
 
     repaired = sync_network_boot_media(

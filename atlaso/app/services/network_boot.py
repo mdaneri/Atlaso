@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import secrets
 import shutil
@@ -150,11 +151,14 @@ class DeferredNetworkBootMediaSync:
     media: NetworkBootMedia
     final_dir: Path
     backup_dir: Path | None
+    journal_path: Path | None = None
     filesystem_changed: bool = True
 
     def commit_filesystem(self) -> None:
         if self.backup_dir is not None:
             shutil.rmtree(self.backup_dir, ignore_errors=True)
+        if self.journal_path is not None:
+            self.journal_path.unlink(missing_ok=True)
 
     def rollback_filesystem(self) -> None:
         if not self.filesystem_changed:
@@ -163,6 +167,8 @@ class DeferredNetworkBootMediaSync:
             shutil.rmtree(self.final_dir)
         if self.backup_dir is not None and self.backup_dir.exists():
             self.backup_dir.replace(self.final_dir)
+        if self.journal_path is not None:
+            self.journal_path.unlink(missing_ok=True)
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -1794,7 +1800,7 @@ def _media_boot_manifest(
             "boot": {
                 "kernel": f"{base}/bzImage",
                 "initrd": f"{base}/rootfs.cpio.gz",
-                "arguments": "rdinit=/sbin/init atlaso.inventory=1",
+                "arguments": "rdinit=/sbin/init console=tty0 atlaso.inventory=1",
             },
             "files": files,
         }
@@ -1809,9 +1815,10 @@ def _media_boot_manifest(
             "union=overlay",
             "config",
             "components",
+            "username=user",
             "noswap",
             "noeject",
-            "ip=dhcp",
+            "vga=788",
             f"fetch={base}/filesystem.squashfs",
         ]
         if environment_key == "clonezilla":
@@ -1934,6 +1941,109 @@ def _verified_cached_media(
         ):
             return None
     return directory
+
+
+def _write_media_swap_journal(
+    environment_root: Path,
+    *,
+    environment_key: str,
+    version: str,
+    transaction_id: str,
+) -> Path:
+    journal_path = environment_root / f".atlaso-media-sync-{transaction_id}.json"
+    with journal_path.open("x", encoding="utf-8") as journal:
+        json.dump(
+            {"environment": environment_key, "version": version},
+            journal,
+            sort_keys=True,
+        )
+        journal.write("\n")
+        journal.flush()
+        os.fsync(journal.fileno())
+    try:
+        directory_fd = os.open(environment_root, os.O_RDONLY)
+    except OSError:
+        return journal_path
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+    return journal_path
+
+
+def recover_interrupted_network_boot_media_swaps(
+    db: Session,
+    *,
+    media_root: Path = NETWORK_BOOT_MEDIA_ROOT,
+) -> int:
+    recovered = 0
+    journal_pattern = re.compile(r"^\.atlaso-media-sync-([0-9a-f]{32})\.json$")
+    for entry in ENVIRONMENT_CATALOG:
+        environment_root = media_root / entry.key
+        if environment_root.is_symlink() or not environment_root.is_dir():
+            continue
+        for journal_path in environment_root.iterdir():
+            match = journal_pattern.fullmatch(journal_path.name)
+            if (
+                match is None
+                or journal_path.is_symlink()
+                or not journal_path.is_file()
+            ):
+                continue
+            try:
+                journal = json.loads(journal_path.read_text(encoding="utf-8"))
+                if not isinstance(journal, dict):
+                    continue
+                version = normalize_version(str(journal.get("version") or ""))
+            except (OSError, ValueError, json.JSONDecodeError):
+                continue
+            if journal.get("environment") != entry.key:
+                continue
+            transaction_id = match.group(1)
+            final_dir = environment_root / version
+            backup_dir = (
+                environment_root / f".{version}.replacement-{transaction_id}"
+            )
+            media = db.execute(
+                select(NetworkBootMedia).where(
+                    NetworkBootMedia.environment_key == entry.key,
+                    NetworkBootMedia.version == version,
+                )
+            ).scalar_one_or_none()
+            if (
+                media is not None
+                and _verified_cached_media(media, media_root=media_root) is not None
+            ):
+                if (
+                    backup_dir.exists()
+                    and not backup_dir.is_symlink()
+                    and backup_dir.is_dir()
+                ):
+                    shutil.rmtree(backup_dir)
+                journal_path.unlink(missing_ok=True)
+                recovered += 1
+                continue
+            installed = _enumerated_media_directory(
+                environment_key=entry.key,
+                version=version,
+                media_root=media_root,
+            )
+            if final_dir.is_symlink() or (
+                final_dir.exists() and installed is None
+            ):
+                continue
+            backup_present = backup_dir.exists() or backup_dir.is_symlink()
+            if backup_present and (
+                backup_dir.is_symlink() or not backup_dir.is_dir()
+            ):
+                continue
+            if installed is not None:
+                shutil.rmtree(installed)
+            if backup_present:
+                backup_dir.replace(final_dir)
+            journal_path.unlink(missing_ok=True)
+            recovered += 1
+    return recovered
 
 
 def _file_sha256(path: Path) -> str:
@@ -2187,18 +2297,26 @@ def sync_network_boot_media(
         )
         raise_if_cancelled()
         final_dir.parent.mkdir(parents=True, exist_ok=True)
+        transaction_id = uuid.uuid4().hex
+        journal_path = _write_media_swap_journal(
+            final_dir.parent,
+            environment_key=key,
+            version=version,
+            transaction_id=transaction_id,
+        )
         backup_dir: Path | None = None
         try:
             if replaced_directory is not None:
                 backup_dir = (
                     final_dir.parent
-                    / f".{version}.replacement-{uuid.uuid4().hex}"
+                    / f".{version}.replacement-{transaction_id}"
                 )
                 replaced_directory.replace(backup_dir)
             staging.replace(final_dir)
         except OSError as exc:
             if backup_dir is not None and backup_dir.exists() and not final_dir.exists():
                 backup_dir.replace(final_dir)
+            journal_path.unlink(missing_ok=True)
             if final_dir.exists():
                 raise ValueError("Immutable boot media version already exists.") from exc
             raise
@@ -2220,12 +2338,14 @@ def sync_network_boot_media(
             media=media,
             final_dir=final_dir,
             backup_dir=backup_dir,
+            journal_path=journal_path,
         )
     except Exception:
         if final_dir.exists():
             shutil.rmtree(final_dir)
         if backup_dir is not None and backup_dir.exists():
             backup_dir.replace(final_dir)
+        journal_path.unlink(missing_ok=True)
         raise
     if defer_filesystem_commit:
         return filesystem_sync

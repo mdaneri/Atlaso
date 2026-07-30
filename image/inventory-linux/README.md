@@ -14,7 +14,15 @@ hardware. It is a Buildroot initramfs that runs entirely from RAM, does not
 mount target filesystems, and submits one bounded inventory report before
 waiting for a local or audited remote reboot request.
 
-Package revision `2026.05.1+3` pins Buildroot 2026.05.1 by SHA-256. The suffix
+Its built-in compatibility profile covers common physical NIC, HBA, RAID,
+NVMe, and SATA families used by ESXi-capable x86-64 hosts, plus VMware,
+Hyper-V, KVM/Proxmox/QEMU, Xen, and common emulated virtual devices. Selected
+redistributable firmware is included for driver families that require it.
+Exact hardware support still depends on the upstream Linux driver and firmware
+available for the device; the ESXi hardware compatibility list is a separate
+vendor certification matrix.
+
+Package revision `2026.05.1+4` pins Buildroot 2026.05.1 by SHA-256. The suffix
 advances independently when Atlaso changes the inventory client without
 changing the upstream Buildroot base. Run on Linux:
 
