@@ -5273,6 +5273,7 @@ function initializeNTPsecUpstreamsTable() {
   try {
     const parsedRows = JSON.parse(tableElement.dataset.ntpUpstreams || "[]");
     const ntsSupported = tableElement.dataset.ntpNtsSupported !== "false";
+    const ntsCapabilityKnown = tableElement.dataset.ntpNtsCapabilityKnown !== "false";
     const rows = normalizeNTPsecUpstreamRows(parsedRows);
     rows.push(ntpBlankUpstreamRow());
     let table;
@@ -5399,15 +5400,18 @@ function initializeNTPsecUpstreamsTable() {
       ]),
       onSubmit: async () => {
         const id = form.elements.record_id.value;
+        const existing = id ? table.getRow(id) : null;
+        const existingData = existing?.getData();
         const payload = {
           id: id || `source-${Date.now()}`,
           source: form.elements.source.value.trim(),
           description: form.elements.description.value.trim(),
-          use_nts: ntsSupported && form.elements.use_nts.checked,
+          use_nts: ntsSupported
+            ? form.elements.use_nts.checked
+            : (!ntsCapabilityKnown && existingData ? Boolean(existingData.use_nts) : false),
           enabled: form.elements.enabled.checked,
         };
-        const existing = id ? table.getRow(id) : null;
-        const previous = existing ? { ...existing.getData() } : null;
+        const previous = existingData ? { ...existingData } : null;
         const inserted = existing
           ? null
           : await table.addRow(payload, true, table.getRows().find((row) => row.getData().is_new));

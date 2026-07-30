@@ -2540,6 +2540,8 @@ def test_ntp_page_autosave_updates_desired_state_and_preview(client, monkeypatch
     assert "record_id: context?.id" not in ntp_table_js
     assert "findDuplicateNtpUpstreamSource" in ntp_table_js
     assert "onReady: (readyTable) => syncNTPsecUpstreamsHiddenInput(readyTable)" in ntp_table_js
+    assert 'const ntsCapabilityKnown = tableElement.dataset.ntpNtsCapabilityKnown !== "false"' in ntp_table_js
+    assert "!ntsCapabilityKnown && existingData ? Boolean(existingData.use_nts) : false" in ntp_table_js
     assert "ntpUpstreamRowHasSource" in js.text
     assert "editable: ntpUpstreamRowHasSource" in js.text
     assert "rowContextMenu" in js.text
@@ -2698,7 +2700,7 @@ def test_ntp_preserves_nts_desired_state_when_capability_check_fails(client, mon
     login(client)
     with SessionLocal() as db:
         settings = db.execute(select(NtpSettings)).scalar_one()
-        settings.nts_server_enabled = True
+        settings.nts_server_enabled = False
         settings.upstream_sources_json = dump_ntp_upstream_sources(
             [
                 {
@@ -2751,13 +2753,18 @@ def test_ntp_preserves_nts_desired_state_when_capability_check_fails(client, mon
     payload = response.json()
     assert payload["nts_supported"] is False
     assert payload["nts_capability_known"] is False
-    assert payload["nts_server_enabled"] is True
+    assert payload["nts_server_enabled"] is False
     assert payload["upstream_sources"][0]["use_nts"] is True
     assert "server time.cloudflare.com iburst nts" in payload["config_preview"]
+    assert payload["valid"] is False
+    assert any(
+        "existing NTS desired state was preserved, but appliance apply is blocked until detection succeeds." in error
+        for error in payload["validation_errors"]
+    )
 
     with SessionLocal() as db:
         settings = db.execute(select(NtpSettings)).scalar_one()
-        assert settings.nts_server_enabled is True
+        assert settings.nts_server_enabled is False
         assert ntp_upstream_sources(settings)[0]["use_nts"] is True
         audit = db.execute(
             select(AuditEvent).where(AuditEvent.action == "disable_unsupported_ntp_nts")

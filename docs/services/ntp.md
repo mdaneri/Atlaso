@@ -38,7 +38,8 @@ Appliance Settings does not own time enforcement. DNS/DHCP also does not apply N
 
 Atlaso disables NTS controls when the installed NTPsec binary explicitly reports that NTS is unsupported. If the
 capability check itself is temporarily unavailable, Atlaso preserves existing NTS desired-state flags and keeps the
-controls disabled until detection succeeds.
+controls disabled until detection succeeds. Validation blocks appliance apply while an enabled source or server mode
+still requests NTS and capability remains unknown.
 
 ## Verify
 

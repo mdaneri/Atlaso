@@ -1917,10 +1917,15 @@ def ntp_context(db: Session, *, include_runtime_health: bool = False, reconcile:
             validation_errors.append("NTPsec NTS server mode requires healthy Certificate Authority state.")
         elif not ca_certificate_available(db, "ntp:nts"):
             validation_errors.append("NTPsec NTS server mode requires an issued CA-managed server certificate before apply.")
-        if ntp_nts_capability_known and not ntp_nts_supported:
-            validation_errors.append("NTPsec NTS server mode is unavailable because the installed ntpd binary does not include NTS support.")
-        elif not ntp_nts_capability_known:
-            validation_errors.append("NTPsec NTS capability detection is temporarily unavailable; existing NTS desired state was preserved.")
+    nts_requested = settings.nts_server_enabled or any(
+        bool(source.get("enabled", True)) and bool(source.get("use_nts"))
+        for source in ntp_upstream_sources(settings)
+    )
+    if not ntp_nts_capability_known and nts_requested:
+        validation_errors.append(
+            "NTPsec NTS capability detection is temporarily unavailable; existing NTS desired state was preserved, "
+            "but appliance apply is blocked until detection succeeds."
+        )
     status_result = SystemAdapter().read_ntpd_status() if include_runtime_health else None
     return {
         "ntp_settings": settings,
