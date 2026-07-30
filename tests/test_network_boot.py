@@ -2222,6 +2222,45 @@ def test_media_recovery_sweeps_only_inactive_prejournal_staging(
     assert not staging.exists()
 
 
+def test_media_staging_lease_serializes_marker_publication_with_recovery(
+    monkeypatch,
+    tmp_path,
+):
+    media_root = tmp_path / "media"
+    environment_root = media_root / "shredos"
+    environment_root.mkdir(parents=True)
+    staging = environment_root / f".atlaso-shredos-{'e' * 32}-prejournal"
+    staging.mkdir()
+    events: list[str] = []
+    original_open = network_boot.os.open
+
+    class RecordingLock:
+        def __init__(self, root):
+            assert root == media_root
+
+        def acquire(self):
+            events.append("recovery-lock:acquire")
+
+        def release(self):
+            events.append("recovery-lock:release")
+
+    def recording_open(path, flags, mode=0o777):
+        if Path(path).name == ".atlaso-staging.lock":
+            assert events == ["recovery-lock:acquire"]
+            events.append("staging-marker:open")
+        return original_open(path, flags, mode)
+
+    monkeypatch.setattr(network_boot, "_MediaSwapRecoveryLock", RecordingLock)
+    monkeypatch.setattr(network_boot.os, "open", recording_open)
+
+    with network_boot._MediaStagingLease(staging):
+        assert events == [
+            "recovery-lock:acquire",
+            "staging-marker:open",
+            "recovery-lock:release",
+        ]
+
+
 def test_media_sync_fsyncs_tree_and_published_directory_before_database_record(
     db_session,
     monkeypatch,
@@ -2294,11 +2333,21 @@ def test_media_sync_fsyncs_tree_and_published_directory_before_database_record(
 
     assert synced.version == "2025.11"
     tree_index = events.index("tree")
-    lock_index = events.index("lock:acquire")
+    lock_indices = [
+        index for index, event in enumerate(events)
+        if event == "lock:acquire"
+    ]
+    assert len(lock_indices) == 2
+    lock_index = lock_indices[-1]
     record_index = events.index("record")
     commit_index = events.index("commit")
     assert events[0] == "directory:media"
-    assert events[1].startswith("directory:.atlaso-shredos-")
+    staging_directory_index = next(
+        index for index, event in enumerate(events)
+        if event.startswith("directory:.atlaso-shredos-")
+    )
+    first_release_index = events.index("lock:release")
+    assert lock_indices[0] < staging_directory_index < first_release_index
     assert tree_index < lock_index < record_index < commit_index
     assert events[lock_index:record_index].count("directory:shredos") == 2
     assert events[-1] == "lock:release"

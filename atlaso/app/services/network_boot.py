@@ -2116,23 +2116,29 @@ class _MediaStagingLease:
             | getattr(os, "O_CLOEXEC", 0)
             | getattr(os, "O_NOFOLLOW", 0)
         )
-        with _MEDIA_STAGING_THREAD_LOCK:
-            _ACTIVE_MEDIA_STAGING_DIRECTORIES.add(self.identity)
+        media_root = self.staging_directory.parent.parent
+        publication_lock = _MediaSwapRecoveryLock(media_root)
+        publication_lock.acquire()
         try:
-            self.lock_fd = os.open(self.lock_path, flags, 0o600)
-            metadata = os.fstat(self.lock_fd)
-            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
-                raise ValueError("Network Boot media staging lock is unsafe.")
-            if fcntl is not None:
-                fcntl.flock(self.lock_fd, fcntl.LOCK_EX)
-                self.process_acquired = True
-            os.fsync(self.lock_fd)
-            _fsync_directory(self.staging_directory)
-            _fsync_directory(self.staging_directory.parent)
-            return self
-        except Exception:
-            self._release()
-            raise
+            with _MEDIA_STAGING_THREAD_LOCK:
+                _ACTIVE_MEDIA_STAGING_DIRECTORIES.add(self.identity)
+            try:
+                self.lock_fd = os.open(self.lock_path, flags, 0o600)
+                metadata = os.fstat(self.lock_fd)
+                if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                    raise ValueError("Network Boot media staging lock is unsafe.")
+                if fcntl is not None:
+                    fcntl.flock(self.lock_fd, fcntl.LOCK_EX)
+                    self.process_acquired = True
+                os.fsync(self.lock_fd)
+                _fsync_directory(self.staging_directory)
+                _fsync_directory(self.staging_directory.parent)
+                return self
+            except Exception:
+                self._release()
+                raise
+        finally:
+            publication_lock.release()
 
     def __exit__(self, _exc_type, _exc_value, _traceback):
         self._release()
