@@ -1080,6 +1080,37 @@ def test_debian_live_media_uses_fetch_with_implicit_dhcp(environment_key):
     assert "ip=dhcp" not in arguments
 
 
+@pytest.mark.parametrize("environment_key", ["gparted", "clonezilla"])
+def test_debian_live_chain_normalizes_existing_media_arguments(environment_key):
+    media = NetworkBootMedia(
+        environment_key=environment_key,
+        version="1.0",
+        manifest_json=json.dumps(
+            {
+                "boot": {
+                    "kernel": f"/pxe/media/{environment_key}/1.0/vmlinuz",
+                    "initrd": f"/pxe/media/{environment_key}/1.0/initrd.img",
+                    "arguments": (
+                        "boot=live config components ip=dhcp "
+                        f"fetch=/pxe/media/{environment_key}/1.0/filesystem.squashfs"
+                    ),
+                }
+            }
+        ),
+    )
+
+    chain = network_boot._chain_line(media, http_origin="http://192.0.2.10:8080")
+
+    assert " ip=dhcp " not in f" {chain} "
+    assert "username=user" in chain
+    assert "vga=788" in chain
+    assert (
+        "fetch=http://192.0.2.10:8080/pxe/media/"
+        + environment_key
+        + "/1.0/filesystem.squashfs"
+    ) in chain
+
+
 def test_public_rate_limit_prunes_expired_client_keys():
     network_boot_api._rate_windows.clear()
     network_boot_api._rate_windows["menu:192.0.2.1"] = deque([time.monotonic() - 120])

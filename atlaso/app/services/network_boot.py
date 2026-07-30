@@ -1128,6 +1128,13 @@ def _chain_line(
     if initrd.startswith("/"):
         initrd = f"{http_origin}{initrd}"
     arguments = arguments.replace("fetch=/", f"fetch={http_origin}/")
+    if media.environment_key in {"gparted", "clonezilla"}:
+        tokens = [token for token in arguments.split() if token != "ip=dhcp"]
+        if "username=user" not in tokens:
+            tokens.append("username=user")
+        if "vga=788" not in tokens:
+            tokens.append("vga=788")
+        arguments = " ".join(tokens)
     if media.environment_key == "inventory":
         arguments = (
             f"{arguments} atlaso.url={http_origin} "
