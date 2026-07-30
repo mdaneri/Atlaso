@@ -441,6 +441,37 @@ def test_uuid_with_disjoint_macs_is_flagged_as_collision(db_session):
     assert second.collision is True
 
 
+def test_dmi_only_report_rejects_ambiguous_collision_candidates(db_session):
+    dmi_uuid = "4c4c4544-004b-4d10-8052-cac04f4c5100"
+    for mac in ("52:54:00:12:34:56", "52:54:00:aa:bb:cc"):
+        session, _token = issue_inventory_session(db_session)
+        store_inventory_report(
+            db_session,
+            session=session,
+            payload=inventory_report(dmi_uuid=dmi_uuid, boot_mac=mac),
+        )
+    existing_reports = db_session.execute(
+        select(NetworkBootInventoryReport)
+    ).scalars().all()
+    ambiguous = inventory_report(
+        dmi_uuid=dmi_uuid,
+        boot_mac="00:00:00:00:00:00",
+    )
+    ambiguous["interfaces"][0]["permanent_mac"] = "00:00:00:00:00:00"
+    ambiguous["interfaces"][0]["current_mac"] = "ff:ff:ff:ff:ff:ff"
+    session, _token = issue_inventory_session(db_session)
+
+    with pytest.raises(ValueError, match="matches multiple hosts"):
+        store_inventory_report(
+            db_session,
+            session=session,
+            payload=ambiguous,
+        )
+
+    reports = db_session.execute(select(NetworkBootInventoryReport)).scalars().all()
+    assert len(reports) == len(existing_reports)
+
+
 def test_inventory_retains_latest_and_ten_previous_reports(db_session):
     host_id = None
     for index in range(NETWORK_BOOT_REPORTS_PER_HOST + 3):

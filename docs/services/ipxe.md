@@ -63,7 +63,8 @@ MACs remain invalid, and host identity still requires a valid DMI UUID or
 usable MAC. Atlaso
 retains the latest report and ten previous reports. A repeated valid DMI UUID
 with disjoint MAC identities is shown as a collision and is not silently
-merged.
+merged; later reports for that UUID must include a usable MAC so Atlaso does
+not attach DMI-only history to an arbitrary collision record.
 
 The **Discovered Hosts** grid is read-only. Open a host to review its latest
 report and history, queue a reboot while its Inventory Linux heartbeat is

@@ -711,6 +711,10 @@ def store_inventory_report(
         candidates = db.execute(
             select(NetworkBootDiscoveredHost).where(NetworkBootDiscoveredHost.identity_key == identity_key)
         ).scalars().all()
+    if dmi_uuid and not macs and len(candidates) > 1:
+        raise ValueError(
+            "Inventory report DMI UUID matches multiple hosts; a valid MAC is required."
+        )
     intersecting = next((row for row in candidates if not macs or _macs(row).intersection(macs)), None)
     collision = bool(dmi_uuid and candidates and intersecting is None)
     host = intersecting
