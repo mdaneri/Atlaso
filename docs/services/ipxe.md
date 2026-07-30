@@ -74,6 +74,13 @@ Upload is limited to 2 GiB and stages the file only for the durable verification
 task. Atlaso still resolves the authoritative stable release metadata and
 checks the uploaded bytes against the same upstream digest or signed checksum;
 the operator cannot substitute an unverified checksum.
+The row context menu exposes the same download and upload actions plus a
+state-aware **Enable** or **Disable** action. Enable remains unavailable until
+that environment has verified installed media.
+
+The Network Boot page separates **Network Boot** and **ESXi Kickstarts** into
+primary tabs. Each primary view retains its own task-specific subtabs, while
+the shared **Boot Service** settings and apply status remain in the right rail.
 
 Downloading never changes the active menu. Editing **Enabled** or **Desired
 version** creates pending state; global **Appliance Apply** is the only

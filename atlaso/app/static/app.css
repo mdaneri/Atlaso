@@ -1241,6 +1241,31 @@ textarea {
   grid-row: 2;
 }
 
+.network-boot-page-workspace {
+  align-items: start;
+}
+
+.network-boot-primary-workspace {
+  margin-bottom: 0;
+  min-height: calc(100vh - 144px);
+}
+
+.network-boot-section-panels {
+  margin-top: 14px;
+}
+
+.network-boot-inner-section {
+  min-width: 0;
+}
+
+.network-boot-inner-section > .panel-head {
+  margin-bottom: 12px;
+}
+
+.network-boot-static-rail > .panel {
+  margin-bottom: 0;
+}
+
 .esxi-boot-service-panel .boot-service-form {
   gap: 9px;
   grid-template-columns: minmax(0, 1fr);

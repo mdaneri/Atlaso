@@ -652,7 +652,10 @@ def create_inventory_session(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     _bounded_rate_limit(request, bucket="session", limit=30)
-    session, token = issue_inventory_session(db)
+    try:
+        session, token = issue_inventory_session(db)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     db.commit()
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"

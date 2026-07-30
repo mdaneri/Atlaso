@@ -1,7 +1,20 @@
 {% extends "base.html" %}
 {% block page_title %}Network Boot{% endblock %}
 {% block content %}
-<section class="panel wide-panel network-boot-overview">
+<section class="split-workspace network-boot-page-workspace" data-network-boot-page-workspace>
+  <div class="panel wide-panel network-boot-primary-workspace">
+    <div class="tab-buttons tool-tabs network-boot-section-tabs" role="tablist" aria-label="Network Boot page sections" data-tab-storage-key="atlaso:network-boot:section">
+      <button class="tab-button active" type="button" role="tab" data-tab-target="network-boot-primary-panel" aria-controls="network-boot-primary-panel" aria-selected="true">Network Boot</button>
+      <button class="tab-button" type="button" role="tab" data-tab-target="network-boot-kickstarts-panel" aria-controls="network-boot-kickstarts-panel" aria-selected="false">ESXi Kickstarts</button>
+    </div>
+    <div class="tab-panels network-boot-section-panels">
+      <div id="network-boot-primary-panel" class="tab-panel active" role="tabpanel" data-network-boot-section-slot></div>
+      <div id="network-boot-kickstarts-panel" class="tab-panel" role="tabpanel" data-network-boot-kickstarts-slot hidden></div>
+    </div>
+  </div>
+  <aside class="side-stack network-boot-static-rail" data-network-boot-static-rail></aside>
+</section>
+<section class="panel wide-panel network-boot-overview" data-network-boot-section>
   <div class="panel-head">
     <div>
       <h2>Network Boot</h2>
@@ -148,7 +161,7 @@
 {% endif %}
 <section class="split-workspace esxi-pxe-workspace">
   <div class="left-stack">
-  <div class="panel esxi-boot-service-panel">
+  <div class="panel esxi-boot-service-panel" data-network-boot-service-panel>
     <div class="panel-head">
       <div>
         <h2>Boot Service</h2>
@@ -238,7 +251,7 @@
     </form>
   </div>
 
-  <div class="panel wide-panel">
+  <div class="panel wide-panel" data-esxi-kickstarts-panel>
     <div class="panel-head">
       <div>
         <h2>ESXi Kickstarts</h2>

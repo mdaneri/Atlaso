@@ -14,7 +14,7 @@ import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from sqlalchemy import delete, desc, func, select
 from sqlalchemy.orm import Session
@@ -129,6 +129,10 @@ ENVIRONMENT_CATALOG: tuple[EnvironmentCatalogEntry, ...] = (
     ),
 )
 CATALOG_BY_KEY = {entry.key: entry for entry in ENVIRONMENT_CATALOG}
+
+
+class NetworkBootMediaSyncCancelled(RuntimeError):
+    """Raised when an operator cancels media acquisition before installation."""
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -280,7 +284,6 @@ def register_bundled_inventory_media(
             if state is not None and not state.desired_version and not state.active_version:
                 state.enabled = True
                 state.desired_version = version
-                state.active_version = version
                 state.updated_at = utcnow()
                 db.add(state)
             return media
@@ -707,22 +710,47 @@ def issue_inventory_session(db: Session) -> tuple[NetworkBootInventorySession, s
             NetworkBootInventorySession.expires_at <= now
         )
     )
-    retained_ids = db.execute(
-        select(NetworkBootInventorySession.id)
-        .order_by(
-            desc(NetworkBootInventorySession.created_at),
-            desc(NetworkBootInventorySession.id),
+    sessions = db.execute(
+        select(NetworkBootInventorySession).order_by(
+            NetworkBootInventorySession.created_at,
+            NetworkBootInventorySession.id,
         )
-        .limit(NETWORK_BOOT_MAX_SESSIONS - 1)
     ).scalars().all()
-    if retained_ids:
+    protected_command_sessions = set(
         db.execute(
-            delete(NetworkBootInventorySession).where(
-                NetworkBootInventorySession.id.not_in(retained_ids)
+            select(NetworkBootInventoryCommand.session_id).where(
+                NetworkBootInventoryCommand.status.in_(("queued", "delivered")),
+                NetworkBootInventoryCommand.expires_at > now.replace(tzinfo=None),
+            )
+        ).scalars()
+    )
+    heartbeat_cutoff = now - NETWORK_BOOT_ONLINE_THRESHOLD
+    evictable = [
+        session
+        for session in sessions
+        if not (
+            session.revoked_at is None
+            and (
+                (
+                    session.heartbeat_at is not None
+                    and _as_utc(session.heartbeat_at) >= heartbeat_cutoff
+                )
+                or session.id in protected_command_sessions
             )
         )
-    else:
-        db.execute(delete(NetworkBootInventorySession))
+    ]
+    required = max(0, len(sessions) - (NETWORK_BOOT_MAX_SESSIONS - 1))
+    if len(evictable) < required:
+        raise ValueError(
+            "Inventory session capacity is occupied by live clients; retry later."
+        )
+    evicted_ids = [session.id for session in evictable[:required]]
+    if evicted_ids:
+        db.execute(
+            delete(NetworkBootInventorySession).where(
+                NetworkBootInventorySession.id.in_(evicted_ids)
+            )
+        )
     session = NetworkBootInventorySession(
         id=f"nbs_{uuid.uuid4().hex}",
         token_hash=hashlib.sha256(token.encode()).hexdigest(),
@@ -835,12 +863,12 @@ def poll_inventory_command(
         select(NetworkBootInventoryCommand)
         .where(
             NetworkBootInventoryCommand.session_id == session.id,
-            NetworkBootInventoryCommand.status == "queued",
+            NetworkBootInventoryCommand.status.in_(("queued", "delivered")),
             NetworkBootInventoryCommand.expires_at > now.replace(tzinfo=None),
         )
         .order_by(NetworkBootInventoryCommand.created_at)
     ).scalars().first()
-    if command is not None:
+    if command is not None and command.status == "queued":
         command.status = "delivered"
         command.delivered_at = now
         db.add(command)
@@ -1142,7 +1170,17 @@ class BoundedHttpsDownloader:
         self.timeout_seconds = timeout_seconds
         self.max_redirects = max_redirects
 
-    def download(self, url: str, destination: Path) -> tuple[str, str]:
+    def download(
+        self,
+        url: str,
+        destination: Path,
+        *,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> tuple[str, str]:
+        if cancelled and cancelled():
+            raise NetworkBootMediaSyncCancelled(
+                "Network Boot media task was cancelled."
+            )
         parsed = urllib.parse.urlparse(url)
         if parsed.scheme != "https" or not parsed.hostname:
             raise ValueError("Boot media downloads require HTTPS.")
@@ -1168,6 +1206,10 @@ class BoundedHttpsDownloader:
         try:
             with response, destination.open("wb") as output:
                 while chunk := response.read(1024 * 1024):
+                    if cancelled and cancelled():
+                        raise NetworkBootMediaSyncCancelled(
+                            "Network Boot media task was cancelled."
+                        )
                     total += len(chunk)
                     if total > self.max_bytes:
                         raise ValueError("Boot media asset exceeds the size limit.")
@@ -1616,11 +1658,20 @@ def sync_network_boot_media(
     media_root: Path = NETWORK_BOOT_MEDIA_ROOT,
     uploaded_artifact: Path | None = None,
     uploaded_filename: str = "",
+    cancelled: Callable[[], bool] | None = None,
 ) -> NetworkBootMedia:
+    def raise_if_cancelled() -> None:
+        if cancelled and cancelled():
+            raise NetworkBootMediaSyncCancelled(
+                "Network Boot media task was cancelled."
+            )
+
+    raise_if_cancelled()
     key = normalize_environment_key(environment_key)
     if key == "inventory":
         raise ValueError("Atlaso Inventory Linux is built and shipped with the appliance.")
     descriptor = _release_descriptor(key)
+    raise_if_cancelled()
     version = normalize_version(descriptor["version"])
     entry = CATALOG_BY_KEY[key]
     final_dir = (media_root / key / version).resolve()
@@ -1671,13 +1722,19 @@ def sync_network_boot_media(
                 raise ValueError(
                     "Uploaded boot media is empty, unsafe, or exceeds the 2 GiB limit."
                 )
-            shutil.copyfile(uploaded_artifact, artifact)
-            artifact_sha256 = _file_sha256(artifact)
+            digest = hashlib.sha256()
+            with uploaded_artifact.open("rb") as source, artifact.open("wb") as target:
+                while chunk := source.read(1024 * 1024):
+                    raise_if_cancelled()
+                    digest.update(chunk)
+                    target.write(chunk)
+            artifact_sha256 = digest.hexdigest()
             acquisition = "upload"
         else:
             _final_url, artifact_sha256 = BoundedHttpsDownloader().download(
                 descriptor["asset_url"],
                 artifact,
+                cancelled=cancelled,
             )
         expected_sha256 = descriptor.get("sha256", "")
         if descriptor.get("checksum_url"):
@@ -1687,15 +1744,18 @@ def sync_network_boot_media(
             BoundedHttpsDownloader(max_bytes=4 * 1024 * 1024).download(
                 descriptor["checksum_url"],
                 checksum_path,
+                cancelled=cancelled,
             )
             if descriptor.get("signature_url"):
                 BoundedHttpsDownloader(max_bytes=4 * 1024 * 1024).download(
                     descriptor["signature_url"],
                     signature_path,
+                    cancelled=cancelled,
                 )
                 BoundedHttpsDownloader(max_bytes=4 * 1024 * 1024).download(
                     entry.signing_key_url,
                     public_key_path,
+                    cancelled=cancelled,
                 )
                 verify_signed_checksum(
                     checksum_path,
@@ -1776,6 +1836,7 @@ def sync_network_boot_media(
             json.dumps(manifest, indent=2, sort_keys=True),
             encoding="utf-8",
         )
+        raise_if_cancelled()
         final_dir.parent.mkdir(parents=True, exist_ok=True)
         try:
             staging.replace(final_dir)
@@ -1783,6 +1844,7 @@ def sync_network_boot_media(
             if final_dir.exists():
                 raise ValueError("Immutable boot media version already exists.") from exc
             raise
+    raise_if_cancelled()
     return record_verified_media(
         db,
         environment_key=key,

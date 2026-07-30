@@ -18155,6 +18155,54 @@ async function networkBootRequest(url, options = {}) {
   return payload;
 }
 
+function initializeNetworkBootWorkspace() {
+  const workspace = document.querySelector("[data-network-boot-page-workspace]");
+  const networkSlot = workspace?.querySelector("[data-network-boot-section-slot]");
+  const kickstartsSlot = workspace?.querySelector("[data-network-boot-kickstarts-slot]");
+  const staticRail = workspace?.querySelector("[data-network-boot-static-rail]");
+  const networkSection = document.querySelector("[data-network-boot-section]");
+  const kickstartsSection = document.querySelector("[data-esxi-kickstarts-panel]");
+  const bootService = document.querySelector("[data-network-boot-service-panel]");
+  const legacyWorkspace = document.querySelector(".esxi-pxe-workspace");
+  const legacyRail = legacyWorkspace?.querySelector(":scope > aside.side-stack");
+  if (
+    !(workspace instanceof HTMLElement)
+    || !(networkSlot instanceof HTMLElement)
+    || !(kickstartsSlot instanceof HTMLElement)
+    || !(staticRail instanceof HTMLElement)
+    || !(networkSection instanceof HTMLElement)
+    || !(kickstartsSection instanceof HTMLElement)
+    || !(bootService instanceof HTMLElement)
+    || !(legacyWorkspace instanceof HTMLElement)
+  ) return;
+
+  networkSection.classList.remove("panel", "wide-panel");
+  networkSection.classList.add("network-boot-inner-section");
+  kickstartsSection.classList.remove("panel", "wide-panel");
+  kickstartsSection.classList.add("network-boot-inner-section");
+  networkSlot.append(networkSection);
+  kickstartsSlot.append(kickstartsSection);
+  staticRail.append(bootService);
+  Array.from(legacyRail?.children || []).forEach((panel) => staticRail.append(panel));
+  legacyWorkspace.remove();
+
+  const hashTarget = window.location.hash
+    ? document.getElementById(window.location.hash.slice(1))
+    : null;
+  if (hashTarget instanceof HTMLElement && kickstartsSection.contains(hashTarget)) {
+    const networkButton = workspace.querySelector('[data-tab-target="network-boot-primary-panel"]');
+    const kickstartsButton = workspace.querySelector('[data-tab-target="network-boot-kickstarts-panel"]');
+    networkButton?.classList.remove("active");
+    networkButton?.setAttribute("aria-selected", "false");
+    kickstartsButton?.classList.add("active");
+    kickstartsButton?.setAttribute("aria-selected", "true");
+    networkSlot.classList.remove("active");
+    networkSlot.setAttribute("hidden", "");
+    kickstartsSlot.classList.add("active");
+    kickstartsSlot.removeAttribute("hidden");
+  }
+}
+
 function initializeNetworkBootPage() {
   const hostsElement = document.getElementById("network-boot-discovered-table");
   const environmentsElement = document.getElementById("network-boot-environments-table");
@@ -18213,17 +18261,32 @@ function initializeNetworkBootPage() {
     await networkBootRequest(`/api/v1/network-boot/hosts/${selectedHost.id}/reboot`, { method: "POST" });
     hostDialog.close();
   });
+  const persistEnvironmentState = async (row, enabled) => {
+    const data = row.getData();
+    const updated = await networkBootRequest(`/api/v1/network-boot/environments/${data.key}`, {
+      method: "PATCH",
+      body: JSON.stringify({ enabled, desired_version: data.desired_version || "" }),
+    });
+    await row.update(updated);
+    return updated;
+  };
   const updateEnvironment = async (cell) => {
     const row = cell.getRow();
     const data = row.getData();
     try {
-      const updated = await networkBootRequest(`/api/v1/network-boot/environments/${data.key}`, {
-        method: "PATCH",
-        body: JSON.stringify({ enabled: Boolean(data.enabled), desired_version: data.desired_version || "" }),
-      });
-      await row.update(updated);
+      await persistEnvironmentState(row, Boolean(data.enabled));
     } catch (error) {
       cell.restoreOldValue();
+      showTransientGridStatus(error instanceof Error ? error.message : "Network Boot desired state could not be saved.");
+    }
+  };
+  const toggleEnvironmentFromMenu = async (row) => {
+    const data = row.getData();
+    const enabled = !data.enabled;
+    try {
+      await persistEnvironmentState(row, enabled);
+      showTransientGridStatus(`${data.label} ${enabled ? "enabled" : "disabled"} in pending desired state.`);
+    } catch (error) {
       showTransientGridStatus(error instanceof Error ? error.message : "Network Boot desired state could not be saved.");
     }
   };
@@ -18263,10 +18326,27 @@ function initializeNetworkBootPage() {
       height: "360px",
       rowContextMenu: canWrite ? [
         {
+          label: (component) => (component.getData().enabled ? "Disable" : "Enable"),
+          disabled: (component) => {
+            const data = component.getData();
+            return !data.enabled && !(data.installed_versions || []).length;
+          },
+          action: async (_event, row) => {
+            await toggleEnvironmentFromMenu(row);
+          },
+        },
+        {
           label: "Download latest stable",
           disabled: (_event, row) => row.getData().key === "inventory",
           action: async (_event, row) => {
             await queueEnvironmentDownload(row.getData());
+          },
+        },
+        {
+          label: "Upload release asset",
+          disabled: (_event, row) => row.getData().key === "inventory",
+          action: (_event, row) => {
+            openEnvironmentUpload(row.getData());
           },
         },
       ] : [],
@@ -18441,6 +18521,7 @@ function initializeNetworkBootPage() {
 }
 
 document.addEventListener("DOMContentLoaded", initializeDashboard);
+document.addEventListener("DOMContentLoaded", initializeNetworkBootWorkspace);
 document.addEventListener("DOMContentLoaded", initializeNetworkBootPage);
 document.addEventListener("DOMContentLoaded", initializeVaultsPage);
 document.addEventListener("DOMContentLoaded", initializeVcfVaultCredentialPickers);

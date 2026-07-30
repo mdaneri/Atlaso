@@ -20,6 +20,7 @@ from atlaso.app.models import (
     AuditEvent,
     EsxiPxeHost,
     Job,
+    JobStatus,
     NetworkBootDiscoveredHost,
     NetworkBootMedia,
     NetworkBootInventoryCommand,
@@ -32,6 +33,7 @@ from atlaso.app.services.network_boot import (
     _BoundedHttpsRedirectHandler,
     _release_descriptor,
     BoundedHttpsDownloader,
+    NetworkBootMediaSyncCancelled,
     NETWORK_BOOT_MAX_DISKS,
     NETWORK_BOOT_REPORTS_PER_HOST,
     ensure_environment_rows,
@@ -43,6 +45,7 @@ from atlaso.app.services.network_boot import (
     poll_inventory_command,
     queue_reboot_command,
     record_verified_media,
+    register_bundled_inventory_media,
     render_network_boot_menu,
     store_inventory_report,
     sync_network_boot_media,
@@ -309,11 +312,45 @@ def test_inventory_prunes_global_hosts_reports_and_sessions(db_session, monkeypa
                 boot_mac=f"52:54:00:12:34:{index:02x}",
             ),
         )
+        session.heartbeat_at = utcnow() - timedelta(minutes=5)
         db_session.commit()
 
     assert len(db_session.execute(select(NetworkBootDiscoveredHost)).scalars().all()) == 2
     assert len(db_session.execute(select(NetworkBootInventoryReport)).scalars().all()) == 2
     assert len(db_session.execute(select(NetworkBootInventorySession)).scalars().all()) <= 2
+
+
+def test_inventory_session_cap_preserves_live_and_command_sessions(
+    db_session,
+    monkeypatch,
+):
+    monkeypatch.setattr(network_boot, "NETWORK_BOOT_MAX_SESSIONS", 2)
+    live, _token = issue_inventory_session(db_session)
+    live_host, _report = store_inventory_report(
+        db_session,
+        session=live,
+        payload=inventory_report(),
+    )
+    touch_inventory_heartbeat(live, identity_key=live_host.identity_key)
+    commanded, _token = issue_inventory_session(db_session)
+    commanded_host, _report = store_inventory_report(
+        db_session,
+        session=commanded,
+        payload=inventory_report(
+            dmi_uuid="4c4c4544-004b-4d10-8052-cac04f4c5199",
+            boot_mac="52:54:00:12:34:99",
+        ),
+    )
+    touch_inventory_heartbeat(commanded, identity_key=commanded_host.identity_key)
+    queue_reboot_command(db_session, host=commanded_host, requested_by="admin")
+    commanded.heartbeat_at = utcnow() - timedelta(minutes=5)
+    db_session.commit()
+
+    with pytest.raises(ValueError, match="occupied by live clients"):
+        issue_inventory_session(db_session)
+
+    assert db_session.get(NetworkBootInventorySession, live.id) is not None
+    assert db_session.get(NetworkBootInventorySession, commanded.id) is not None
 
 
 def test_issuing_inventory_session_prunes_expired_sessions(db_session):
@@ -410,13 +447,16 @@ def test_inventory_identity_heartbeat_and_one_time_reboot(db_session):
     delivered = poll_inventory_command(db_session, session=session)
     assert delivered.id == command.id
     assert delivered.status == "delivered"
-    assert poll_inventory_command(db_session, session=session) is None
+    redelivered = poll_inventory_command(db_session, session=session)
+    assert redelivered.id == command.id
+    assert redelivered.delivered_at == delivered.delivered_at
     acknowledged = acknowledge_inventory_command(
         db_session,
         session=session,
         command_id=command.id,
     )
     assert acknowledged.status == "acknowledged"
+    assert poll_inventory_command(db_session, session=session) is None
     with pytest.raises(ValueError, match="missing, expired, or was not delivered"):
         acknowledge_inventory_command(
             db_session,
@@ -701,6 +741,97 @@ def test_boot_media_downloader_rejects_declared_oversize(monkeypatch, tmp_path):
         )
 
 
+def test_bundled_inventory_registration_defers_active_version_until_apply(
+    db_session,
+    tmp_path,
+):
+    version = "2026.05.1"
+    installed = tmp_path / "inventory" / version
+    installed.mkdir(parents=True)
+    artifacts = {
+        "bzImage": b"inventory kernel",
+        "rootfs.cpio.gz": b"inventory initramfs",
+    }
+    for filename, content in artifacts.items():
+        (installed / filename).write_bytes(content)
+    (installed / "manifest.json").write_text(
+        json.dumps(
+            {
+                "kind": "atlaso-inventory-linux",
+                "schema_version": 1,
+                "version": version,
+                "buildroot": {
+                    "source": "https://buildroot.org/downloads/buildroot-2026.05.1.tar.xz"
+                },
+                "artifacts": {
+                    filename: hashlib.sha256(content).hexdigest()
+                    for filename, content in artifacts.items()
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    media = register_bundled_inventory_media(db_session, media_root=tmp_path)
+    state = {
+        row.key: row for row in ensure_environment_rows(db_session)
+    }["inventory"]
+
+    assert media is not None
+    assert state.enabled is True
+    assert state.desired_version == version
+    assert state.active_version == ""
+
+
+def test_cancelled_media_worker_cannot_overwrite_terminal_status(
+    db_session,
+    monkeypatch,
+):
+    from atlaso.app import worker
+
+    media = record_verified_media(
+        db_session,
+        environment_key="shredos",
+        version="2025.11",
+        source_url="https://example.test/shredos.img",
+        artifact_sha256="a" * 64,
+        installed_path="/var/lib/atlaso/pxe/media/shredos/2025.11",
+        manifest={"schema_version": 1},
+    )
+    job = Job(
+        id="job_" + ("b" * 32),
+        type="pxe-media-sync",
+        status=JobStatus.RUNNING.value,
+        created_by="admin",
+        task_config_json=json.dumps(
+            {"environment": "shredos", "source": "download"}
+        ),
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    def cancel_during_sync(*_args, cancelled, **_kwargs):
+        job.status = JobStatus.CANCELLED.value
+        db_session.add(job)
+        db_session.commit()
+        assert cancelled() is True
+        return media
+
+    monkeypatch.setattr(network_boot, "sync_network_boot_media", cancel_during_sync)
+
+    with pytest.raises(NetworkBootMediaSyncCancelled):
+        worker._run_pxe_media_sync(db_session, job)
+
+    db_session.refresh(job)
+    assert job.status == JobStatus.CANCELLED.value
+    assert not db_session.execute(
+        select(AuditEvent).where(
+            AuditEvent.action == "sync_network_boot_media",
+            AuditEvent.resource_id == f"shredos:{media.version}",
+        )
+    ).scalars().all()
+
+
 def test_signed_checksum_rejects_wrong_fingerprint(monkeypatch, tmp_path):
     files = []
     for name in ("checksums", "signature", "key"):
@@ -849,7 +980,7 @@ def test_media_sync_revalidates_and_repairs_corrupt_cached_artifacts(
         },
     )
 
-    def fake_download(_self, url, destination):
+    def fake_download(_self, url, destination, **_kwargs):
         destination.write_bytes(replacement)
         return url, replacement_sha256
 

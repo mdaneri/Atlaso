@@ -8,7 +8,7 @@ from pathlib import Path
 from secrets import compare_digest
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from atlaso.app.adapters.system import SystemAdapter
@@ -466,12 +466,20 @@ def _run_pxe_media_sync(db: Session, job: Job) -> None:
     environment = str(config.get("environment") or "")
     source = str(config.get("source") or "download")
     upload_path = network_boot_upload_path(job.id) if source == "upload" else None
+
+    def cancelled() -> bool:
+        status = db.execute(
+            select(Job.status).where(Job.id == job.id)
+        ).scalar_one()
+        return status == JobStatus.CANCELLED.value
+
     try:
         media = sync_network_boot_media(
             db,
             environment_key=environment,
             uploaded_artifact=upload_path,
             uploaded_filename=str(config.get("filename") or ""),
+            cancelled=cancelled,
         )
     finally:
         if upload_path is not None:
@@ -480,6 +488,12 @@ def _run_pxe_media_sync(db: Session, job: Job) -> None:
                 upload_path.parent.rmdir()
             except OSError:
                 pass
+    if cancelled():
+        from atlaso.app.services.network_boot import NetworkBootMediaSyncCancelled
+
+        raise NetworkBootMediaSyncCancelled(
+            "Network Boot media task was cancelled."
+        )
     payload = {
         "status": JobStatus.SUCCEEDED.value,
         "success": True,
@@ -488,12 +502,27 @@ def _run_pxe_media_sync(db: Session, job: Job) -> None:
         "media": media_to_dict(media),
         "activation": "pending desired state; global appliance apply is required",
     }
-    job.status = JobStatus.SUCCEEDED.value
-    job.finished_at = utcnow()
-    job.progress_percent = 100
-    job.error = None
-    job.result = json.dumps(payload, indent=2, sort_keys=True)
-    db.add(job)
+    completed = db.execute(
+        update(Job)
+        .where(
+            Job.id == job.id,
+            Job.status == JobStatus.RUNNING.value,
+        )
+        .values(
+            status=JobStatus.SUCCEEDED.value,
+            finished_at=utcnow(),
+            progress_percent=100,
+            error=None,
+            result=json.dumps(payload, indent=2, sort_keys=True),
+        )
+    )
+    if completed.rowcount != 1:
+        db.rollback()
+        from atlaso.app.services.network_boot import NetworkBootMediaSyncCancelled
+
+        raise NetworkBootMediaSyncCancelled(
+            "Network Boot media task was cancelled before completion."
+        )
     db.add(
         AuditEvent(
             actor=job.created_by,
