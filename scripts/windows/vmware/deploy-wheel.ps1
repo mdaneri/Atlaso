@@ -647,6 +647,7 @@ for runtime_dependency_path in $runtime_dependency_paths; do
 done
 IFS="$old_ifs"
 "$python" -m pip install --force-reinstall --no-deps "$wheel"
+install -d -o atlaso -g atlaso -m 0755 /var/lib/atlaso/pxe/media /var/lib/atlaso/pxe/uploads
 if [ "$reset_vault_entries" = "true" ]; then
     systemctl stop atlaso-worker.service atlaso.service
     sqlite3 /var/lib/atlaso/atlaso.db 'DROP TABLE IF EXISTS vault_entries;'

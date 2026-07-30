@@ -72,8 +72,9 @@ each download. **Download latest stable** queues a durable `pxe-media-sync`
 task that:
 
 1. resolves one concrete stable release from the fixed upstream;
-2. downloads over HTTPS with redirect, timeout, and size limits, or accepts the
-   same release asset through the visible **Upload** action;
+2. downloads over HTTPS with bounded retries for transient connection failures
+   plus redirect, timeout, and size limits, or accepts the same release asset
+   through the visible **Upload** action;
 3. verifies the published SHA-256 digest or signed checksum with the pinned
    project fingerprint;
 4. rejects unsafe archive paths and extracts only required boot files; and

@@ -83,6 +83,10 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     assert "SkipInventoryLinuxSync" in deploy
     assert "[AllowEmptyString()][string[]]$Arguments" in deploy
     assert "Installed Atlaso Inventory Linux" in deploy
+    assert (
+        "install -d -o atlaso -g atlaso -m 0755 "
+        "/var/lib/atlaso/pxe/media /var/lib/atlaso/pxe/uploads"
+    ) in deploy
     assert "Build Inventory Linux package" in release
     assert "--inventory-package" in release
     build = Path("image/inventory-linux/build.sh").read_text(encoding="utf-8")

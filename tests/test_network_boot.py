@@ -7,6 +7,7 @@ from datetime import timedelta
 from email.message import Message
 from pathlib import Path
 from subprocess import CompletedProcess
+from urllib.error import URLError
 from urllib.request import Request
 
 import pytest
@@ -39,6 +40,7 @@ from atlaso.app.services.network_boot import (
     _BoundedHttpsRedirectHandler,
     _release_descriptor,
     BoundedHttpsDownloader,
+    checksum_for_filename,
     NetworkBootMediaSyncCancelled,
     NETWORK_BOOT_MAX_DISKS,
     NETWORK_BOOT_REPORTS_PER_HOST,
@@ -1067,6 +1069,66 @@ def test_boot_media_downloader_rejects_declared_oversize(monkeypatch, tmp_path):
             "https://example.test/media",
             tmp_path / "media",
         )
+
+
+def test_boot_media_downloader_retries_transient_open_failure(monkeypatch, tmp_path):
+    class FakeResponse:
+        headers = {"Content-Length": "5"}
+
+        def geturl(self):
+            return "https://mirror.example.test/media"
+
+        def read(self, _size):
+            if getattr(self, "_read", False):
+                return b""
+            self._read = True
+            return b"media"
+
+        def close(self):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+    attempts = 0
+
+    class FakeOpener:
+        def open(self, *_args, **_kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise URLError(ConnectionRefusedError())
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        "atlaso.app.services.network_boot.urllib.request.build_opener",
+        lambda *_args: FakeOpener(),
+    )
+    monkeypatch.setattr(
+        "atlaso.app.services.network_boot.time.sleep",
+        lambda *_args: None,
+    )
+
+    final_url, digest = BoundedHttpsDownloader().download(
+        "https://example.test/media",
+        tmp_path / "media",
+    )
+
+    assert attempts == 2
+    assert final_url == "https://mirror.example.test/media"
+    assert digest == hashlib.sha256(b"media").hexdigest()
+
+
+def test_checksum_filename_accepts_publisher_relative_path():
+    digest = "a" * 64
+
+    assert checksum_for_filename(
+        f"{digest}  v8.10/mt86plus_8.10.binaries.zip",
+        "mt86plus_8.10.binaries.zip",
+    ) == digest
 
 
 def test_bundled_inventory_registration_defers_active_version_until_apply(

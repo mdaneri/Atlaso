@@ -7,6 +7,8 @@ import secrets
 import shutil
 import subprocess
 import tempfile
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
@@ -1287,10 +1289,12 @@ class BoundedHttpsDownloader:
         max_bytes: int = 2 * 1024 * 1024 * 1024,
         timeout_seconds: int = 300,
         max_redirects: int = 5,
+        open_attempts: int = 3,
     ):
         self.max_bytes = max_bytes
         self.timeout_seconds = timeout_seconds
         self.max_redirects = max_redirects
+        self.open_attempts = open_attempts
 
     def download(
         self,
@@ -1307,14 +1311,26 @@ class BoundedHttpsDownloader:
         if parsed.scheme != "https" or not parsed.hostname:
             raise ValueError("Boot media downloads require HTTPS.")
         digest = hashlib.sha256()
-        request = urllib.request.Request(
-            url,
-            headers={"User-Agent": "Atlaso-Network-Boot/1"},
-        )
-        opener = urllib.request.build_opener(
-            _BoundedHttpsRedirectHandler(self.max_redirects)
-        )
-        response = opener.open(request, timeout=self.timeout_seconds)
+        response = None
+        for attempt in range(1, self.open_attempts + 1):
+            request = urllib.request.Request(
+                url,
+                headers={"User-Agent": "Atlaso-Network-Boot/1"},
+            )
+            opener = urllib.request.build_opener(
+                _BoundedHttpsRedirectHandler(self.max_redirects)
+            )
+            try:
+                response = opener.open(request, timeout=self.timeout_seconds)
+                break
+            except urllib.error.HTTPError:
+                raise
+            except urllib.error.URLError:
+                if attempt >= self.open_attempts:
+                    raise
+                time.sleep(attempt)
+        if response is None:
+            raise ValueError("Boot media download did not return a response.")
         final_url = response.geturl()
         if urllib.parse.urlparse(final_url).scheme != "https":
             response.close()
@@ -1349,7 +1365,7 @@ def checksum_for_filename(checksum_text: str, filename: str) -> str:
         if len(parts) < 2:
             continue
         digest = parts[0].lower()
-        candidate = parts[-1].lstrip("*")
+        candidate = PurePosixPath(parts[-1].lstrip("*")).name
         if candidate == filename and re.fullmatch(r"[0-9a-f]{64}", digest):
             return digest
     raise ValueError(f"Signed checksum file does not contain {filename}.")
