@@ -8957,8 +8957,8 @@ function initializeEsxiCustomVariablesTable() {
     editUrl: (id) => `/esxi-pxe/custom-variables/${encodeURIComponent(id)}`,
     deleteUrl: (id) => `/esxi-pxe/custom-variables/${encodeURIComponent(id)}/delete`,
     deleteResource: true,
-    editLabel: "Edit custom variable",
-    deleteLabel: "Delete custom variable",
+    editLabel: "Edit",
+    deleteLabel: "Remove",
     createLabel: "Add custom variable",
     updateLabel: "Save custom variable",
     emptyMessage: "No custom Kickstart variables configured.",
@@ -8974,9 +8974,9 @@ function initializeEsxiCustomVariablesTable() {
       { label: "Default value", field: "default_value" },
     ],
     deleteConfirmation: (data) => ({
-      title: `Delete custom variable ${data.name}?`,
+      title: `Remove custom variable ${data.name}?`,
       message: `Kickstarts using {{custom.${data.name}}} will fail validation unless the variable is restored or the marker is removed.`,
-      confirmLabel: "Delete custom variable",
+      confirmLabel: "Remove custom variable",
       tone: "danger",
     }),
     onOpen: ({ context }) => {
