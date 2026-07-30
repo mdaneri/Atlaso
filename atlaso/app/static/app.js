@@ -8898,134 +8898,98 @@ function initializeEsxiPxePreviewTable() {
   });
 }
 
-function showEsxiCustomVariableError(message) {
-  const element = document.getElementById("esxi-custom-variables-error");
-  if (!element) return;
-  element.textContent = message;
-  element.classList.remove("hidden");
-}
-
-function clearEsxiCustomVariableError() {
-  const element = document.getElementById("esxi-custom-variables-error");
-  if (!element) return;
-  element.textContent = "";
-  element.classList.add("hidden");
-}
-
-async function postEsxiCustomVariableAction(url, data, csrf) {
-  const body = new FormData();
-  body.set("csrf", csrf);
-  for (const field of ["name", "description", "default_value"]) {
-    if (field in data) body.set(field, data[field] ?? "");
-  }
-  const response = await fetch(url, {
-    method: "POST",
-    body,
-    credentials: "same-origin",
-    headers: { Accept: "application/json" },
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload.detail || "The custom variable could not be saved.");
-  }
-  return payload;
-}
-
-async function autoSaveEsxiCustomVariable(cell, csrf) {
-  clearEsxiCustomVariableError();
-  const data = cell.getRow().getData();
-  if (data.is_new && !(data.name || "").trim()) {
-    reformatPendingNewRecord(cell);
-    return;
-  }
-  const url = data.is_new
-    ? "/esxi-pxe/custom-variables"
-    : `/esxi-pxe/custom-variables/${encodeURIComponent(data.id)}`;
-  try {
-    await postEsxiCustomVariableAction(url, data, csrf);
-    showTransientGridStatus(data.is_new ? "Added" : "Saved");
-    window.location.reload();
-  } catch (error) {
-    showEsxiCustomVariableError(error instanceof Error ? error.message : "The custom variable could not be saved.");
-    if (typeof cell.restoreOldValue === "function") cell.restoreOldValue();
-  }
-}
-
-async function deleteEsxiCustomVariable(row, csrf) {
-  const data = row.getData();
-  if (data.is_new) return;
-  const confirmed = await requestConfirmation({
-    title: `Delete custom variable ${data.name}?`,
-    message: `Kickstarts using {{custom.${data.name}}} will fail validation unless the variable is restored or the marker is removed.`,
-    label: "Delete custom variable",
-  });
-  if (!confirmed) return;
-  try {
-    await postEsxiCustomVariableAction(`/esxi-pxe/custom-variables/${encodeURIComponent(data.id)}/delete`, {}, csrf);
-    window.location.reload();
-  } catch (error) {
-    showEsxiCustomVariableError(error instanceof Error ? error.message : "The custom variable could not be deleted.");
-  }
-}
-
 function initializeEsxiCustomVariablesTable() {
   const element = document.getElementById("esxi-custom-variables-table");
   if (!(element instanceof HTMLElement)) return;
   const rows = JSON.parse(element.dataset.rows || "[]");
   const canWrite = element.dataset.canWrite === "true";
-  if (canWrite) rows.push({ id: "__new__", name: "", description: "", default_value: "", is_new: true });
   const columns = [
     {
       title: "Custom variable name",
       field: "name",
-      editor: canWrite ? "input" : false,
       formatter: (cell) => cell.getRow().getData().is_new
-        ? dnsAddRowHintFormatter(cell, "+ Add custom variable")
+        ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add custom variable</button>'
         : `<code>custom.${escapeHtml(cell.getValue())}</code>`,
       minWidth: 220,
-      cellEdited: (cell) => autoSaveEsxiCustomVariable(cell, element.dataset.csrf || ""),
     },
     {
       title: "Description",
       field: "description",
-      editor: canWrite ? "input" : false,
-      editable: (cell) => canWrite && !cell.getRow().getData().is_new,
+      formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || "Not set"),
       minWidth: 260,
       widthGrow: 1.5,
-      cellEdited: (cell) => autoSaveEsxiCustomVariable(cell, element.dataset.csrf || ""),
     },
     {
       title: "Default value, if any",
       field: "default_value",
-      editor: canWrite ? "input" : false,
-      editable: (cell) => canWrite && !cell.getRow().getData().is_new,
+      formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || "Not set"),
       minWidth: 260,
       widthGrow: 1.2,
-      cellEdited: (cell) => autoSaveEsxiCustomVariable(cell, element.dataset.csrf || ""),
     },
   ];
-  window.AtlasoUiPatterns.createGrid({
-    element,
-    pattern: "direct-edit",
-    permission: {
-      allowed: canWrite,
-      message: "You have read-only access to ESXi Kickstart custom variables.",
+  if (!canWrite) {
+    window.AtlasoUiPatterns.createGrid({
+      element,
+      pattern: "read-only",
+      permission: {
+        allowed: false,
+        message: "You have read-only access to ESXi Kickstart custom variables.",
+      },
+      options: {
+        data: rows,
+        index: "id",
+        layout: "fitColumns",
+        height: "calc(100vh - 250px)",
+        placeholder: "No custom Kickstart variables configured.",
+        columns,
+      },
+    });
+    return;
+  }
+  initializeAtlasoResourceWizard({
+    elementId: "esxi-custom-variables-table",
+    formSelector: "[data-esxi-custom-variable-wizard]",
+    dialogId: "esxi-custom-variable-wizard-dialog",
+    rows,
+    newRow: { id: "__new__", name: "", description: "", default_value: "", is_new: true },
+    resourceName: "variable",
+    createUrl: "/esxi-pxe/custom-variables",
+    editUrl: (id) => `/esxi-pxe/custom-variables/${encodeURIComponent(id)}`,
+    deleteUrl: (id) => `/esxi-pxe/custom-variables/${encodeURIComponent(id)}/delete`,
+    deleteResource: true,
+    editLabel: "Edit custom variable",
+    deleteLabel: "Delete custom variable",
+    createLabel: "Add custom variable",
+    updateLabel: "Save custom variable",
+    emptyMessage: "No custom Kickstart variables configured.",
+    gridError: "Custom variable changes are unavailable because the interactive grid could not initialize.",
+    actionErrorSelector: "#esxi-custom-variables-error",
+    steps: [
+      { id: "definition", title: "Define the custom variable", description: "Name and describe the non-secret value, then provide an optional default." },
+      { id: "review", title: "Review the custom variable", description: "Confirm the Kickstart marker and optional default before saving." },
+    ],
+    reviewItems: [
+      { label: "Kickstart marker", value: (form) => `{{custom.${form.elements.name.value.trim()}}}` },
+      { label: "Description", field: "description" },
+      { label: "Default value", field: "default_value" },
+    ],
+    deleteConfirmation: (data) => ({
+      title: `Delete custom variable ${data.name}?`,
+      message: `Kickstarts using {{custom.${data.name}}} will fail validation unless the variable is restored or the marker is removed.`,
+      confirmLabel: "Delete custom variable",
+      tone: "danger",
+    }),
+    onOpen: ({ context }) => {
+      const title = document.querySelector("[data-esxi-custom-variable-modal-title]");
+      if (title) title.textContent = context ? "Edit custom variable" : "Add custom variable";
     },
+    onSaved: () => window.location.reload(),
+    onDeleted: () => window.location.reload(),
     options: {
-      data: rows,
-      index: "id",
       layout: "fitColumns",
       height: "calc(100vh - 250px)",
       placeholder: "No custom Kickstart variables configured.",
       columns,
-      rowContextMenu: canWrite ? [
-        {
-          label: "Delete custom variable",
-          disabled: (_event, row) => row.getData().is_new,
-          action: (_event, row) => deleteEsxiCustomVariable(row, element.dataset.csrf || ""),
-        },
-      ] : false,
-      rowFormatter: (row) => markNewRecordRow(row, "name"),
     },
   });
 }

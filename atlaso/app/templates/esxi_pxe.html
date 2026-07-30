@@ -574,6 +574,37 @@
   </aside>
 </section>
 {% if esxi_can_write %}
+<dialog id="esxi-custom-variable-wizard-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="esxi-custom-variable-wizard-title">
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="/esxi-pxe/custom-variables" method="post" data-esxi-custom-variable-wizard data-atlaso-wizard>
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="record_id" value="">
+    <aside class="vcf-sddc-wizard-rail" aria-label="Custom variable steps">
+      <p class="kicker">ESXi PXE</p><h2 id="esxi-custom-variable-wizard-title" data-esxi-custom-variable-modal-title>Add custom variable</h2>
+      <ol class="vcf-sddc-step-list">
+        <li><button class="vcf-sddc-step-button active" type="button" data-atlaso-wizard-nav="definition"><span>1</span><strong>Definition</strong><small>Name, description, and default</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="review" disabled><span>2</span><strong>Review</strong><small>Confirm the Kickstart marker</small></button></li>
+      </ol>
+    </aside>
+    <div class="vcf-sddc-wizard-main">
+      <div class="confirm-modal-body vcf-sddc-wizard-body">
+        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 2</p><h3 data-atlaso-wizard-title>Define the custom variable</h3><p class="muted" data-atlaso-wizard-description>Name and describe the non-secret value, then provide an optional default.</p></div>
+        <div class="alert error hidden" data-atlaso-wizard-error></div>
+        <section class="vcf-sddc-step-page" data-atlaso-wizard-step="definition">
+          <div class="form-grid">
+            <label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Variable names start with a letter or underscore and contain only letters, numbers, and underscores. Kickstarts reference this value as {{ '{{custom.<name>}}' }}.">i</button></span><input name="name" required maxlength="80" pattern="[A-Za-z_][A-Za-z0-9_]*"></label>
+            <label class="full"><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Explain the non-secret value and where a Kickstart uses it.">i</button></span><textarea name="description" rows="3" maxlength="500"></textarea></label>
+            <label class="full"><span class="field-label"><span>Default value, if any</span><button class="help-icon" type="button" data-help="Optional non-secret fallback used when a host reference does not override this variable. Use a Vault marker for credentials or secrets.">i</button></span><textarea name="default_value" rows="3" maxlength="2048"></textarea></label>
+          </div>
+        </section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review">
+          <div class="settings-list" data-atlaso-resource-review></div>
+          <p class="muted">Custom variables are database-owned Kickstart inputs. Use Vault markers instead of defaults for credentials or secrets.</p>
+        </section>
+      </div>
+      <div class="confirm-modal-actions vcf-sddc-wizard-actions"><button class="button secondary" type="button" data-atlaso-wizard-cancel>Cancel</button><button class="button secondary hidden" type="button" data-atlaso-wizard-back>Back</button><button class="button primary" type="button" data-atlaso-wizard-next>Next</button><button class="button primary hidden" type="submit" data-atlaso-wizard-submit>Add custom variable</button></div>
+    </div>
+  </form>
+</dialog>
 <dialog id="kickstart-wizard-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="kickstart-wizard-title">
   <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="/esxi-pxe/kickstarts" method="post" data-kickstart-wizard data-atlaso-wizard>
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
