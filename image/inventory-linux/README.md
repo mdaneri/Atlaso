@@ -22,13 +22,13 @@ Exact hardware support still depends on the upstream Linux driver and firmware
 available for the device; the ESXi hardware compatibility list is a separate
 vendor certification matrix.
 
-Package revision `2026.05.1+6` pins Buildroot 2026.05.1 by SHA-256. The suffix
+Package revision `2026.05.1+7` pins Buildroot 2026.05.1 by SHA-256. The suffix
 advances independently when Atlaso changes the inventory client without
 changing the upstream Buildroot base. Revision `+5` selects Buildroot's
 util-linux basic binary set so collection uses full `lscpu --json` and
 `lsblk --json` implementations instead of BusyBox's limited `lsblk` applet;
-revision `+6` ignores optional `ethtool` permanent-address placeholders that
-are not MAC addresses.
+revision `+7` ignores optional current or permanent interface addresses that
+are not six-octet Ethernet MACs.
 Run on Linux:
 
 ```bash

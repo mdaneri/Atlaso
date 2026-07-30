@@ -32,15 +32,18 @@ boot_mac="$(cat "/sys/class/net/${boot_interface}/address" 2>/dev/null || true)"
 firmware_mode="bios"
 [ -d /sys/firmware/efi ] && firmware_mode="uefi"
 
+optional_ethernet_mac() {
+  if printf '%s\n' "$1" | grep -Eq '^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'; then
+    printf '%s' "$1"
+  fi
+}
+
 interfaces='[]'
 for path in /sys/class/net/*; do
   name="${path##*/}"
   [ "${name}" = "lo" ] && continue
-  current_mac="$(cat "${path}/address" 2>/dev/null || true)"
-  permanent_mac="$(ethtool -P "${name}" 2>/dev/null | awk '{print $3}')"
-  if ! printf '%s\n' "${permanent_mac}" | grep -Eq '^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'; then
-    permanent_mac=""
-  fi
+  current_mac="$(optional_ethernet_mac "$(cat "${path}/address" 2>/dev/null || true)")"
+  permanent_mac="$(optional_ethernet_mac "$(ethtool -P "${name}" 2>/dev/null | awk '{print $3}')")"
   driver="$(basename "$(readlink "${path}/device/driver" 2>/dev/null || true)")"
   link_state="$(cat "${path}/operstate" 2>/dev/null || true)"
   speed="$(cat "${path}/speed" 2>/dev/null || printf '0')"

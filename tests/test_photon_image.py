@@ -134,7 +134,7 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     assert "--inventory-package" in release
     build = Path("image/inventory-linux/build.sh").read_text(encoding="utf-8")
     assert 'buildroot_version="2026.05.1"' in build
-    assert 'package_version="2026.05.1+6"' in build
+    assert 'package_version="2026.05.1+7"' in build
     assert '"version": "${package_version}"' in build
     assert '"arguments": "rdinit=/sbin/init console=tty0 atlaso.inventory=1"' in build
     assert '"${source_root}/output/target/usr/bin/lscpu"' in build
@@ -158,8 +158,10 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     inventory_client = Path(
         "image/inventory-linux/external/overlay/usr/bin/atlaso-inventory"
     ).read_text(encoding="utf-8")
+    assert "optional_ethernet_mac()" in inventory_client
     assert "grep -Eq '^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'" in inventory_client
-    assert 'permanent_mac=""' in inventory_client
+    assert 'current_mac="$(optional_ethernet_mac ' in inventory_client
+    assert 'permanent_mac="$(optional_ethernet_mac ' in inventory_client
     kernel_fragment = Path(
         "image/inventory-linux/external/board/atlaso-inventory/linux.fragment"
     ).read_text(encoding="utf-8")
