@@ -4385,7 +4385,9 @@ def test_esxi_pxe_multi_zone_host_reservations_and_grid_menu(client):
     assert 'data-tag-name="dhcp_scope_ids"' in refreshed.text
     assert "SiteB - eth3 / 10.1.1.1/24" in refreshed.text
     app_js = client.get("/static/app.js").text
-    host_grid_js = app_js.split("function initializeEsxiPxeHostsTable()", 1)[1].split("function initializeKickstartCollection()", 1)[0]
+    host_grid_js = app_js.split("function initializeEsxiPxeHostsTable()", 1)[1].split(
+        "function initializeEsxiInstallerIsosTable()", 1
+    )[0]
     assert "rowContextMenu" in host_grid_js
     assert "Delete host reference" in host_grid_js
     assert 'field: "ip_address"' in host_grid_js
