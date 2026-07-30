@@ -62,7 +62,7 @@ from atlaso.app.services.network_boot import (
 
 router = APIRouter(prefix="/api/v1/network-boot", tags=["network-boot"])
 public_router = APIRouter(tags=["network-boot-public"])
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 _rate_lock = threading.Lock()
 _rate_windows: dict[str, deque[float]] = defaultdict(deque)
 _MAX_RATE_LIMIT_KEYS = 4096

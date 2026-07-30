@@ -687,7 +687,7 @@ def test_public_inventory_report_logs_sanitized_validation_reason(client, caplog
 
     invalid = inventory_report()
     invalid["interfaces"][0]["current_mac"] = "not-a-mac"
-    with caplog.at_level("WARNING", logger="atlaso.app.api.network_boot"):
+    with caplog.at_level("WARNING", logger="uvicorn.error"):
         response = client.post(
             "/pxe/inventory/report",
             headers={"Authorization": f"Bearer {token}"},
