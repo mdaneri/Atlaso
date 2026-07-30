@@ -815,7 +815,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6" in service_worker.text
     assert "/static/app.css?v=atlaso-wizard-monaco-20260729-11" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in service_worker.text
-    assert "/static/app.js?v=atlaso-kickstart-variables-20260729-16" in service_worker.text
+    assert "/static/app.js?v=atlaso-ntp-upstream-edit-20260730-17" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -835,8 +835,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=atlaso-kickstart-variables-20260729-16"),
-        (public_base, "/static/app.js?v=atlaso-kickstart-variables-20260729-16"),
+        (base, "/static/app.js?v=atlaso-ntp-upstream-edit-20260730-17"),
+        (public_base, "/static/app.js?v=atlaso-ntp-upstream-edit-20260730-17"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5"
@@ -1282,7 +1282,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=atlaso-wizard-monaco-20260729-11" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in page.text
-    assert "/static/app.js?v=atlaso-kickstart-variables-20260729-16" in page.text
+    assert "/static/app.js?v=atlaso-ntp-upstream-edit-20260730-17" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -2498,6 +2498,32 @@ def test_ntp_page_autosave_updates_desired_state_and_preview(client, monkeypatch
     assert "restrict 192.168.50.0 mask 255.255.255.0 kod limited nomodify noquery" in payload["config_preview"]
     assert "nts cert /etc/atlaso/ntp/certs/ntp.atlaso.internal-chain.pem" in payload["config_preview"]
     assert "/tmp/operator-input" not in payload["config_preview"]
+
+    duplicate_response = client.post(
+        "/ntp/settings",
+        data={
+            "enabled": "on",
+            "hostname": "ntp.atlaso.internal",
+            "listen_interfaces_present": "1",
+            "listen_addresses_present": "1",
+            "listen_interfaces": ["eth2"],
+            "upstream_sources_json": json.dumps(
+                [
+                    {"id": "first", "source": "Time.Example.COM.", "enabled": True, "use_nts": False},
+                    {"id": "second", "source": "time.example.com", "enabled": True, "use_nts": False},
+                ]
+            ),
+            "allow_clients": "any",
+            "port": "123",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Autosave": "1"},
+    )
+    assert duplicate_response.status_code == 422
+    assert duplicate_response.json()["detail"] == (
+        "NTP upstream source time.example.com is duplicated. Source names must be unique."
+    )
+
     assert "NTS-KE ntp.atlaso.internal:4460" in client.get("/ntp").text
     js = client.get("/static/app.js")
     assert js.status_code == 200
@@ -2510,6 +2536,12 @@ def test_ntp_page_autosave_updates_desired_state_and_preview(client, monkeypatch
     assert "window.AtlasoUiPatterns.createWizard({" in ntp_table_js
     assert "await persistNtpUpstreamTableChange(table, hiddenInput)" in ntp_table_js
     assert "table.addRow(payload, true" in ntp_table_js
+    assert "id: context?.id || \"\"" in ntp_table_js
+    assert "record_id: context?.id" not in ntp_table_js
+    assert "findDuplicateNtpUpstreamSource" in ntp_table_js
+    assert "onReady: (readyTable) => syncNTPsecUpstreamsHiddenInput(readyTable)" in ntp_table_js
+    assert 'const ntsCapabilityKnown = tableElement.dataset.ntpNtsCapabilityKnown !== "false"' in ntp_table_js
+    assert "!ntsCapabilityKnown && existingData ? Boolean(existingData.use_nts) : false" in ntp_table_js
     assert "ntpUpstreamRowHasSource" in js.text
     assert "editable: ntpUpstreamRowHasSource" in js.text
     assert "rowContextMenu" in js.text
@@ -2643,6 +2675,101 @@ def test_ntp_disables_and_rejects_nts_when_runtime_does_not_support_it(client, m
             select(AuditEvent).where(AuditEvent.action == "disable_unsupported_ntp_nts")
         ).scalar_one()
         assert audit.actor == "system"
+
+
+def test_ntp_preserves_nts_desired_state_when_capability_check_fails(client, monkeypatch):
+    import json
+
+    from sqlalchemy import select
+
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, NtpSettings
+    from atlaso.app.services.ntp import dump_ntp_upstream_sources, ntp_upstream_sources
+
+    unavailable = AdapterResult(
+        command=["atlaso-helper", "ntpd", "capabilities"],
+        dry_run=False,
+        returncode=1,
+        stderr="capability check unavailable",
+    )
+    monkeypatch.setattr(
+        "atlaso.app.ui.SystemAdapter.read_ntpd_capabilities",
+        lambda _self: unavailable,
+    )
+    login(client)
+    with SessionLocal() as db:
+        settings = db.execute(select(NtpSettings)).scalar_one()
+        settings.nts_server_enabled = False
+        settings.upstream_sources_json = dump_ntp_upstream_sources(
+            [
+                {
+                    "id": "cloudflare-nts",
+                    "source": "time.cloudflare.com",
+                    "enabled": True,
+                    "use_nts": True,
+                    "description": "Cloudflare public NTS",
+                }
+            ]
+        )
+        db.commit()
+
+    page = client.get("/ntp")
+
+    assert page.status_code == 200
+    assert 'data-ntp-nts-supported="false"' in page.text
+    assert 'data-ntp-nts-capability-known="false"' in page.text
+    assert "NTS check unavailable" in page.text
+    assert "Existing NTS desired state is preserved" in page.text
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    response = client.post(
+        "/ntp/settings",
+        data={
+            "enabled": "on",
+            "hostname": "ntp.atlaso.internal",
+            "listen_interfaces_present": "1",
+            "listen_addresses_present": "1",
+            "listen_interfaces": ["eth2"],
+            "upstream_sources_json": json.dumps(
+                [
+                    {
+                        "id": "cloudflare-nts",
+                        "source": "time.cloudflare.com",
+                        "enabled": True,
+                        "use_nts": True,
+                        "description": "Cloudflare public NTS",
+                    }
+                ]
+            ),
+            "allow_clients": "any",
+            "port": "123",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Autosave": "1"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["nts_supported"] is False
+    assert payload["nts_capability_known"] is False
+    assert payload["nts_server_enabled"] is False
+    assert payload["upstream_sources"][0]["use_nts"] is True
+    assert "server time.cloudflare.com iburst nts" in payload["config_preview"]
+    assert payload["valid"] is False
+    assert any(
+        "existing NTS desired state was preserved, but appliance apply is blocked until detection succeeds." in error
+        for error in payload["validation_errors"]
+    )
+
+    with SessionLocal() as db:
+        settings = db.execute(select(NtpSettings)).scalar_one()
+        assert settings.nts_server_enabled is False
+        assert ntp_upstream_sources(settings)[0]["use_nts"] is True
+        audit = db.execute(
+            select(AuditEvent).where(AuditEvent.action == "disable_unsupported_ntp_nts")
+        ).scalar_one_or_none()
+        assert audit is None
 
 
 def test_ntp_validation_rejects_enabled_service_without_bind_or_upstreams(client):

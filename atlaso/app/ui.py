@@ -496,6 +496,7 @@ from atlaso.app.services.ntp import (
     NTP_DEFAULT_HOSTNAME,
     NTP_STAGED_CONFIG_PATH,
     default_ntp_upstream_fields,
+    duplicate_ntp_upstream_source,
     dump_ntp_upstream_sources,
     join_allow_clients,
     ntp_settings_to_dict,
@@ -1876,8 +1877,9 @@ def ntp_context(db: Session, *, include_runtime_health: bool = False, reconcile:
         db.refresh(settings)
     capability_result = SystemAdapter().read_ntpd_capabilities()
     ntp_capabilities = ntpd_capabilities_payload(capability_result)
-    ntp_nts_supported = bool(ntp_capabilities.get("nts"))
-    if not ntp_nts_supported:
+    ntp_nts_capability_known = "nts" in ntp_capabilities
+    ntp_nts_supported = ntp_capabilities.get("nts") is True
+    if ntp_nts_capability_known and not ntp_nts_supported:
         upstream_sources = ntp_upstream_sources(settings)
         nts_state_changed = settings.nts_server_enabled or any(bool(source.get("use_nts")) for source in upstream_sources)
         if reconcile and nts_state_changed:
@@ -1915,8 +1917,15 @@ def ntp_context(db: Session, *, include_runtime_health: bool = False, reconcile:
             validation_errors.append("NTPsec NTS server mode requires healthy Certificate Authority state.")
         elif not ca_certificate_available(db, "ntp:nts"):
             validation_errors.append("NTPsec NTS server mode requires an issued CA-managed server certificate before apply.")
-        if not ntp_nts_supported:
-            validation_errors.append("NTPsec NTS server mode is unavailable because the installed ntpd binary does not include NTS support.")
+    nts_requested = settings.nts_server_enabled or any(
+        bool(source.get("enabled", True)) and bool(source.get("use_nts"))
+        for source in ntp_upstream_sources(settings)
+    )
+    if not ntp_nts_capability_known and nts_requested:
+        validation_errors.append(
+            "NTPsec NTS capability detection is temporarily unavailable; existing NTS desired state was preserved, "
+            "but appliance apply is blocked until detection succeeds."
+        )
     status_result = SystemAdapter().read_ntpd_status() if include_runtime_health else None
     return {
         "ntp_settings": settings,
@@ -1936,6 +1945,7 @@ def ntp_context(db: Session, *, include_runtime_health: bool = False, reconcile:
         "ntp_nts_cert_path": ntp_nts_chain_path,
         "ntp_nts_key_path": ntp_nts_key_path,
         "ntp_nts_chain_path": ntp_nts_chain_path,
+        "ntp_nts_capability_known": ntp_nts_capability_known,
         "ntp_nts_supported": ntp_nts_supported,
         "ntp_nts_capabilities": ntp_capabilities,
     }
@@ -16101,7 +16111,8 @@ def update_ntp_settings_from_ui(
     settings = get_ntp_settings_row(db)
     capability_result = SystemAdapter().read_ntpd_capabilities()
     ntp_capabilities = ntpd_capabilities_payload(capability_result)
-    ntp_nts_supported = bool(ntp_capabilities.get("nts"))
+    ntp_nts_capability_known = "nts" in ntp_capabilities
+    ntp_nts_supported = ntp_capabilities.get("nts") is True
     selected_interfaces, selected_addresses = resolve_service_bind_targets(
         db,
         [*listen_interfaces, listen_interface],
@@ -16134,7 +16145,11 @@ def update_ntp_settings_from_ui(
                         "id": str(item.get("id") or f"source-{index}"),
                         "source": source,
                         "enabled": bool(item.get("enabled", True)),
-                        "use_nts": ntp_nts_supported and bool(item.get("use_nts", False)),
+                        "use_nts": (
+                            bool(item.get("use_nts", False))
+                            if not ntp_nts_capability_known
+                            else ntp_nts_supported and bool(item.get("use_nts", False))
+                        ),
                         "description": str(item.get("description") or "").strip(),
                     }
                 )
@@ -16151,7 +16166,11 @@ def update_ntp_settings_from_ui(
                     "id": f"source-{index + 1}",
                     "source": source,
                     "enabled": index in enabled_indexes,
-                    "use_nts": ntp_nts_supported and index in nts_indexes,
+                    "use_nts": (
+                        index in nts_indexes
+                        if not ntp_nts_capability_known
+                        else ntp_nts_supported and index in nts_indexes
+                    ),
                     "description": upstream_description[index].strip() if index < len(upstream_description) else "",
                 }
             )
@@ -16160,10 +16179,20 @@ def update_ntp_settings_from_ui(
             {"id": f"source-{index}", "source": server, "enabled": True, "use_nts": False, "description": ""}
             for index, server in enumerate(split_servers(upstream_servers), start=1)
         ]
+    duplicate_source = duplicate_ntp_upstream_source(source_rows)
+    if duplicate_source:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"NTP upstream source {duplicate_source} is duplicated. Source names must be unique.",
+        )
     settings.upstream_sources_json = dump_ntp_upstream_sources(source_rows)
     settings.upstream_servers = join_servers([str(row["source"]) for row in source_rows if row.get("enabled")])
     settings.allow_clients = join_allow_clients(split_allow_clients(allow_clients))
-    settings.nts_server_enabled = ntp_nts_supported and nts_server_enabled == "on"
+    settings.nts_server_enabled = (
+        settings.nts_server_enabled
+        if not ntp_nts_capability_known
+        else ntp_nts_supported and nts_server_enabled == "on"
+    )
     _ntp_nts_cert_path, ntp_nts_key_path, ntp_nts_chain_path = ntp_nts_certificate_paths(settings)
     settings.nts_server_cert_path = ntp_nts_chain_path
     settings.nts_server_key_path = ntp_nts_key_path
@@ -16198,6 +16227,7 @@ def update_ntp_settings_from_ui(
                 "nts_server_key_path": saved_settings.nts_server_key_path,
                 "nts_ke_port": saved_settings.nts_ke_port,
                 "nts_supported": context["ntp_nts_supported"],
+                "nts_capability_known": context["ntp_nts_capability_known"],
                 "valid": not context["ntp_validation_errors"],
                 "validation_errors": context["ntp_validation_errors"],
                 "config_path": saved_settings.config_path,
