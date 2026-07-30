@@ -680,6 +680,24 @@ def test_public_inventory_report_marks_live_capacity_as_retryable(client, monkey
     assert response.json()["detail"].endswith("retry later.")
 
 
+def test_public_inventory_report_logs_sanitized_validation_reason(client, caplog):
+    session_response = client.post("/pxe/inventory/sessions")
+    assert session_response.status_code == 201
+    token = session_response.json()["access_token"]
+
+    invalid = inventory_report()
+    invalid["interfaces"][0]["current_mac"] = "not-a-mac"
+    with caplog.at_level("WARNING", logger="atlaso.app.api.network_boot"):
+        response = client.post(
+            "/pxe/inventory/report",
+            headers={"Authorization": f"Bearer {token}"},
+            json=invalid,
+        )
+
+    assert response.status_code == 422
+    assert "Rejected Inventory Linux report: MAC address must contain six hexadecimal octets." in caplog.text
+
+
 def test_media_upload_is_staged_as_a_durable_verification_job(
     client,
     db_session,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import threading
 import time
@@ -61,6 +62,7 @@ from atlaso.app.services.network_boot import (
 
 router = APIRouter(prefix="/api/v1/network-boot", tags=["network-boot"])
 public_router = APIRouter(tags=["network-boot-public"])
+logger = logging.getLogger(__name__)
 _rate_lock = threading.Lock()
 _rate_windows: dict[str, deque[float]] = defaultdict(deque)
 _MAX_RATE_LIMIT_KEYS = 4096
@@ -793,6 +795,7 @@ def submit_inventory_report(
     except ValueError as exc:
         db.rollback()
         message = str(exc)
+        logger.warning("Rejected Inventory Linux report: %s", message)
         if "occupied by live clients; retry later" in message:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
