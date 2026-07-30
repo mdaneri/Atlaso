@@ -670,9 +670,13 @@ restore_services_on_exit() {
     set +e
     if [ "$atlaso_was_active" = "true" ]; then
         systemctl restart atlaso.service
+    else
+        systemctl stop atlaso.service
     fi
     if [ "$worker_was_active" = "true" ]; then
         systemctl restart atlaso-worker.service
+    else
+        systemctl stop atlaso-worker.service
     fi
     exit "$exit_status"
 }
@@ -903,7 +907,6 @@ systemctl is-active atlaso
 systemctl enable atlaso-worker.service
 systemctl restart atlaso-worker.service
 systemctl is-active atlaso-worker.service
-trap - EXIT
 deadline=$(( $(date +%s) + timeout_seconds ))
 while ! curl -fsS http://127.0.0.1:8000/openapi.json >/dev/null; do
     if [ "$(date +%s)" -ge "$deadline" ]; then
@@ -913,6 +916,7 @@ while ! curl -fsS http://127.0.0.1:8000/openapi.json >/dev/null; do
     fi
     sleep "$poll_seconds"
 done
+trap - EXIT
 echo "Atlaso service restarted and loopback OpenAPI is reachable."
 '@
 

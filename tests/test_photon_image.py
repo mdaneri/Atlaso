@@ -99,10 +99,15 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     )
     disarm_trap = deploy.rindex("trap - EXIT")
     worker_active = deploy.index("systemctl is-active atlaso-worker.service")
+    readiness_complete = deploy.index(
+        'echo "Atlaso service restarted and loopback OpenAPI is reachable."'
+    )
     assert restore_trap < stop_writers < media_preflight < media_install < inventory_install
-    assert worker_active < disarm_trap
+    assert worker_active < disarm_trap < readiness_complete
     assert 'if [ "$atlaso_was_active" = "true" ]; then' in deploy
     assert 'if [ "$worker_was_active" = "true" ]; then' in deploy
+    assert "systemctl stop atlaso.service" in deploy
+    assert "systemctl stop atlaso-worker.service" in deploy
     assert "target.parent.is_symlink()" in deploy
     assert "target.is_symlink()" in deploy
     assert "installed_artifact.is_symlink()" in deploy
