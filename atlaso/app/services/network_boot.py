@@ -1967,15 +1967,45 @@ def _write_media_swap_journal(
         journal.write("\n")
         journal.flush()
         os.fsync(journal.fileno())
-    try:
-        directory_fd = os.open(environment_root, os.O_RDONLY)
-    except OSError:
-        return journal_path
+    _fsync_directory(environment_root)
+    return journal_path
+
+
+def _fsync_directory(directory: Path) -> None:
+    if os.name == "nt":
+        return
+    directory_fd = os.open(
+        directory,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+    )
     try:
         os.fsync(directory_fd)
     finally:
         os.close(directory_fd)
-    return journal_path
+
+
+def _fsync_media_tree(root: Path) -> None:
+    files = _enumerated_regular_files(root)
+    if files is None:
+        raise ValueError("Boot media staging tree is unsafe.")
+    if os.name == "nt":
+        return
+    directories = {root}
+    for artifact in files.values():
+        with artifact.open("rb") as stream:
+            os.fsync(stream.fileno())
+        parent = artifact.parent
+        while parent.is_relative_to(root):
+            directories.add(parent)
+            if parent == root:
+                break
+            parent = parent.parent
+    for directory in sorted(
+        directories,
+        key=lambda candidate: len(candidate.parts),
+        reverse=True,
+    ):
+        _fsync_directory(directory)
 
 
 def recover_interrupted_network_boot_media_swaps(
@@ -2303,6 +2333,7 @@ def sync_network_boot_media(
             encoding="utf-8",
         )
         raise_if_cancelled()
+        _fsync_media_tree(staging)
         final_dir.parent.mkdir(parents=True, exist_ok=True)
         transaction_id = uuid.uuid4().hex
         journal_path = _write_media_swap_journal(
@@ -2326,6 +2357,15 @@ def sync_network_boot_media(
             journal_path.unlink(missing_ok=True)
             if final_dir.exists():
                 raise ValueError("Immutable boot media version already exists.") from exc
+            raise
+        try:
+            _fsync_directory(final_dir.parent)
+        except OSError:
+            shutil.rmtree(final_dir)
+            if backup_dir is not None and backup_dir.exists():
+                backup_dir.replace(final_dir)
+            journal_path.unlink(missing_ok=True)
+            _fsync_directory(final_dir.parent)
             raise
     filesystem_sync: DeferredNetworkBootMediaSync | None = None
     try:

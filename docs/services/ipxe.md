@@ -106,7 +106,11 @@ task that:
 
 The verified cache is owned by the Atlaso worker account so same-version repair
 can atomically swap and remove its temporary backup without leaving root-owned
-stale media.
+stale media. Before the task commits its database row, Atlaso synchronizes the
+staged artifacts, their directories, and the environment directory containing
+the published rename to stable storage. A fixed-root transaction journal lets
+application startup finish or roll back an interrupted swap before it exposes
+PXE routes; worker startup repeats the recovery check as an idempotent fallback.
 
 Each catalog row exposes **Download**, **Upload**, and **Delete newest inactive
 media** through its row context menu.

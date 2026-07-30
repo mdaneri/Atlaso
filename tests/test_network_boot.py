@@ -2089,6 +2089,90 @@ def test_interrupted_new_media_install_recovery_removes_uncommitted_version(
     assert not journal.exists()
 
 
+def test_application_startup_recovers_media_swaps_before_registering_or_serving(
+    client,
+    monkeypatch,
+):
+    from starlette.testclient import TestClient
+
+    from atlaso.app import main
+
+    calls: list[str] = []
+    original_register = main.register_bundled_inventory_media
+
+    def recover(_db):
+        calls.append("recover")
+        return 0
+
+    def register(db, *args, **kwargs):
+        calls.append("register")
+        return original_register(db, *args, **kwargs)
+
+    monkeypatch.setattr(
+        main,
+        "recover_interrupted_network_boot_media_swaps",
+        recover,
+    )
+    monkeypatch.setattr(main, "register_bundled_inventory_media", register)
+
+    with TestClient(main.create_app()) as restarted_client:
+        assert calls[:2] == ["recover", "register"]
+        assert restarted_client.get("/openapi.json").status_code == 200
+
+
+def test_media_sync_fsyncs_tree_and_published_directory_before_database_record(
+    db_session,
+    monkeypatch,
+    tmp_path,
+):
+    media_root = tmp_path / "media"
+    content = b"durable replacement"
+    digest = hashlib.sha256(content).hexdigest()
+    events: list[str] = []
+    original_record = network_boot.record_verified_media
+
+    monkeypatch.setattr(
+        network_boot,
+        "_release_descriptor",
+        lambda _key: {
+            "version": "2025.11",
+            "filename": "shredos.img",
+            "asset_url": "https://example.test/shredos.img",
+            "sha256": digest,
+        },
+    )
+
+    def fake_download(_self, url, destination, **_kwargs):
+        destination.write_bytes(content)
+        return url, digest
+
+    def record(db, **kwargs):
+        events.append("record")
+        return original_record(db, **kwargs)
+
+    monkeypatch.setattr(BoundedHttpsDownloader, "download", fake_download)
+    monkeypatch.setattr(
+        network_boot,
+        "_fsync_media_tree",
+        lambda _root: events.append("tree"),
+    )
+    monkeypatch.setattr(
+        network_boot,
+        "_fsync_directory",
+        lambda _root: events.append("directory"),
+    )
+    monkeypatch.setattr(network_boot, "record_verified_media", record)
+
+    synced = sync_network_boot_media(
+        db_session,
+        environment_key="shredos",
+        media_root=media_root,
+    )
+
+    assert synced.version == "2025.11"
+    assert events == ["tree", "directory", "directory", "record"]
+
+
 def test_media_sync_revalidates_and_repairs_corrupt_cached_artifacts(
     db_session,
     monkeypatch,

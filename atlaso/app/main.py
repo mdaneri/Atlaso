@@ -25,6 +25,7 @@ from atlaso.app.services.monitoring import start_monitor_sampler
 from atlaso.app.services.networking import sync_host_physical_interfaces
 from atlaso.app.services.network_boot import (
     ensure_environment_rows,
+    recover_interrupted_network_boot_media_swaps,
     register_bundled_inventory_media,
 )
 from atlaso.app.services.oidc import validate_enabled_provider_at_startup
@@ -74,6 +75,12 @@ async def lifespan(app: FastAPI):
         appliance_mode = settings.environment == "appliance"
         seed_initial_data(db, include_examples=not appliance_mode, appliance_mode=appliance_mode)
         ensure_environment_rows(db)
+        recovered_media_swaps = recover_interrupted_network_boot_media_swaps(db)
+        if recovered_media_swaps:
+            REQUEST_LOGGER.warning(
+                "Recovered %s interrupted Network Boot media swap(s) before serving requests.",
+                recovered_media_swaps,
+            )
         register_bundled_inventory_media(db)
         db.commit()
         recover_interrupted_appliance_apply_jobs(db)
