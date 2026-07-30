@@ -571,6 +571,27 @@ def test_public_inventory_session_binds_identity_and_rejects_replay(client):
     assert replay.status_code == 409
 
 
+def test_public_inventory_report_marks_live_capacity_as_retryable(client, monkeypatch):
+    session_response = client.post("/pxe/inventory/sessions")
+    assert session_response.status_code == 201
+    token = session_response.json()["access_token"]
+
+    def capacity_error(*_args, **_kwargs):
+        raise ValueError(
+            "Inventory storage capacity is occupied by live clients; retry later."
+        )
+
+    monkeypatch.setattr(network_boot_api, "store_inventory_report", capacity_error)
+    response = client.post(
+        "/pxe/inventory/report",
+        headers={"Authorization": f"Bearer {token}"},
+        json=inventory_report(),
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"].endswith("retry later.")
+
+
 def test_media_upload_is_staged_as_a_durable_verification_job(
     client,
     db_session,
@@ -801,6 +822,38 @@ def test_settings_restore_and_factory_reset_preserve_installed_media_metadata(
     assert reset.enabled is False
     assert reset.desired_version == ""
     assert reset.active_version == ""
+
+
+def test_legacy_settings_restore_clears_unarchived_network_boot_state(db_session):
+    from atlaso.app.services.settings_archive import (
+        export_settings_archive,
+        restore_settings_archive,
+    )
+
+    states = {row.key: row for row in ensure_environment_rows(db_session)}
+    media = record_verified_media(
+        db_session,
+        environment_key="inventory",
+        version="2026.05.1+3",
+        source_url="https://buildroot.org/downloads/buildroot-2026.05.1.tar.xz",
+        artifact_sha256="b" * 64,
+        installed_path="/var/lib/atlaso/pxe/media/inventory/2026.05.1+3",
+        manifest={"schema_version": 1},
+    )
+    archive = export_settings_archive(db_session, actor="test")
+    archive["data"].pop("network_boot_environments")
+    states["inventory"].enabled = True
+    states["inventory"].desired_version = media.version
+    states["inventory"].active_version = media.version
+    db_session.commit()
+
+    restore_settings_archive(db_session, archive)
+
+    restored = db_session.get(NetworkBootEnvironment, "inventory")
+    assert restored.enabled is False
+    assert restored.desired_version == ""
+    assert restored.active_version == ""
+    assert db_session.get(NetworkBootMedia, media.id) is not None
 
 
 def test_generic_pxe_scopes_do_not_follow_legacy_esxi_scope(client):

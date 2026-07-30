@@ -756,7 +756,10 @@ def test_dnsmasq_renderer_adds_esxi_pxe_boot_options():
     assert "dhcp-match=set:uefi-http-x64,option:client-arch,16" in config
     assert "dhcp-boot=tag:pxe,tag:uefi-http,tag:uefi-http-x64,http://192.168.50.1:8080/pxe/esxi/snponly.efi" in config
     assert "dhcp-option=tag:pxe,66,esxi-pxe.atlaso.internal" in config
-    assert "dhcp-boot=tag:pxe,tag:ipxe,http://192.168.50.1:8080/pxe/boot.ipxe" in config
+    assert (
+        "dhcp-boot=tag:pxe,tag:ipxe,"
+        "http://192.168.50.1:8080/pxe/boot.ipxe?mac=${net0/mac}"
+    ) in config
     assert "dhcp-boot=tag:pxe,tag:!ipxe,tag:efi-x86_64,snponly.efi,esxi-pxe.atlaso.internal,192.168.50.1" in config
     assert "dhcp-boot=tag:pxe,tag:!ipxe,tag:!efi-x86_64,undionly.kpxe,esxi-pxe.atlaso.internal,192.168.50.1" in config
     assert "dhcp-mac=set:esxi-005056aabbcc,00:50:56:aa:bb:cc" in config

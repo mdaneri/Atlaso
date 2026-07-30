@@ -145,9 +145,26 @@ report="$(jq -n \
     disks: $disks,
     interfaces: $interfaces
   }')"
-submission="$(printf '%s' "${report}" | curl --config "${auth_config}" \
-  --fail --silent --show-error --max-time 30 --header "Content-Type: application/json" \
-  --data-binary @- "${api_base}/pxe/inventory/report")"
+report_response="/run/atlaso-inventory-report.json"
+report_attempt=1
+while :; do
+  report_status="$(printf '%s' "${report}" | curl --config "${auth_config}" \
+    --silent --show-error --max-time 30 --header "Content-Type: application/json" \
+    --output "${report_response}" --write-out '%{http_code}' \
+    --data-binary @- "${api_base}/pxe/inventory/report")"
+  if [ "${report_status}" = "201" ]; then
+    submission="$(cat "${report_response}")"
+    rm -f "${report_response}"
+    break
+  fi
+  if [ "${report_status}" != "503" ] || [ "${report_attempt}" -ge 6 ]; then
+    printf 'Inventory report submission failed (HTTP %s).\n' "${report_status}" >&2
+    rm -f "${report_response}"
+    exit 1
+  fi
+  sleep $((report_attempt * 2))
+  report_attempt=$((report_attempt + 1))
+done
 host_id="$(printf '%s' "${submission}" | jq -r '.host_id')"
 identity_key="$(printf '%s' "${submission}" | jq -r '.identity_key')"
 

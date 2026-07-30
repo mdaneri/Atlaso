@@ -93,7 +93,7 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     assert "--inventory-package" in release
     build = Path("image/inventory-linux/build.sh").read_text(encoding="utf-8")
     assert 'buildroot_version="2026.05.1"' in build
-    assert 'package_version="2026.05.1+2"' in build
+    assert 'package_version="2026.05.1+3"' in build
     assert '"version": "${package_version}"' in build
     init = Path(
         "image/inventory-linux/external/overlay/etc/init.d/S99atlaso-inventory"
@@ -119,6 +119,18 @@ def test_inventory_linux_retries_uncertain_reboot_acknowledgments():
     assert client.index("commands/${pending_reboot_id}/acknowledge") < client.index(
         "reboot -f"
     )
+
+
+def test_inventory_linux_retries_capacity_responses_with_bounded_backoff():
+    client = Path(
+        "image/inventory-linux/external/overlay/usr/bin/atlaso-inventory"
+    ).read_text(encoding="utf-8")
+
+    assert "--write-out '%{http_code}'" in client
+    assert '[ "${report_status}" != "503" ]' in client
+    assert '[ "${report_attempt}" -ge 6 ]' in client
+    assert "sleep $((report_attempt * 2))" in client
+    assert "response body" not in client
 
 
 def test_photon_provisioning_management_network_matches_eth0_only():

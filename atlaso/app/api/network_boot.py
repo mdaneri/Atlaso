@@ -789,6 +789,11 @@ def submit_inventory_report(
     except ValueError as exc:
         db.rollback()
         message = str(exc)
+        if "occupied by live clients; retry later" in message:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=message,
+            ) from exc
         code = 409 if "already submitted" in message or "does not match" in message else 422
         raise HTTPException(status_code=code, detail=message) from exc
     return {

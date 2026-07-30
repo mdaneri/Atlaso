@@ -588,6 +588,11 @@ def restore_settings_archive(db: Session, archive: dict[str, Any]) -> dict[str, 
         counts[key] = _insert_rows(db, SCALAR_TABLES[key], data.get(key, []))
     db.flush()
     counts["esxi_pxe_hosts"] = _restore_esxi_pxe_hosts(db, data.get("esxi_pxe_hosts", []))
+    for state in ensure_environment_rows(db):
+        state.enabled = False
+        state.desired_version = ""
+        state.active_version = ""
+        db.add(state)
     for row in data.get("network_boot_environments", []):
         payload = _model_kwargs(
             NetworkBootEnvironment,
