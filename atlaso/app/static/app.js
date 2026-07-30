@@ -18283,7 +18283,7 @@ function initializeNetworkBootPage() {
     options: {
       data: JSON.parse(hostsElement.dataset.rows || "[]"),
       index: "id",
-      height: "360px",
+      maxHeight: "360px",
       columns: [
         { title: "UUID", field: "dmi_uuid", minWidth: 220, formatter: (cell) => escapeHtml(cell.getValue() || "MAC fallback") },
         { title: "MACs", field: "macs", minWidth: 190, formatter: (cell) => escapeHtml((cell.getValue() || []).join(", ")) },
@@ -18370,7 +18370,7 @@ function initializeNetworkBootPage() {
     options: {
       data: JSON.parse(environmentsElement.dataset.rows || "[]"),
       index: "key",
-      height: "360px",
+      maxHeight: "360px",
       rowContextMenu: canWrite ? [
         {
           label: (component) => (component.getData().enabled ? "Disable" : "Enable"),
