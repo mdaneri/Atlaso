@@ -1530,6 +1530,54 @@ def test_bundled_inventory_registration_defers_active_version_until_apply(
     assert state.active_version == ""
 
 
+def test_bundled_inventory_registration_records_and_selects_latest_revision(
+    db_session,
+    tmp_path,
+):
+    artifacts = {
+        "bzImage": b"inventory kernel",
+        "rootfs.cpio.gz": b"inventory initramfs",
+    }
+    for version in ("2026.05.1+9", "2026.05.1+10"):
+        installed = tmp_path / "inventory" / version
+        installed.mkdir(parents=True)
+        for filename, content in artifacts.items():
+            (installed / filename).write_bytes(content + version.encode())
+        (installed / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "kind": "atlaso-inventory-linux",
+                    "schema_version": 1,
+                    "version": version,
+                    "artifacts": {
+                        filename: hashlib.sha256(
+                            content + version.encode()
+                        ).hexdigest()
+                        for filename, content in artifacts.items()
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    latest = register_bundled_inventory_media(db_session, media_root=tmp_path)
+    state = db_session.get(NetworkBootEnvironment, "inventory")
+    registered = db_session.execute(
+        select(NetworkBootMedia)
+        .where(NetworkBootMedia.environment_key == "inventory")
+        .order_by(NetworkBootMedia.version)
+    ).scalars().all()
+
+    assert latest is not None
+    assert latest.version == "2026.05.1+10"
+    assert [row.version for row in registered] == [
+        "2026.05.1+10",
+        "2026.05.1+9",
+    ]
+    assert state is not None
+    assert state.desired_version == "2026.05.1+10"
+
+
 def test_bundled_inventory_registration_preserves_explicit_reset_state(
     db_session,
     tmp_path,
@@ -1638,6 +1686,7 @@ def test_failed_inventory_package_replacement_preserves_active_bundled_media(
 def test_cancelled_media_worker_cannot_overwrite_terminal_status(
     db_session,
     monkeypatch,
+    tmp_path,
 ):
     from atlaso.app import worker
 
@@ -1662,12 +1711,24 @@ def test_cancelled_media_worker_cannot_overwrite_terminal_status(
     db_session.add(job)
     db_session.commit()
 
+    final_dir = tmp_path / "installed"
+    backup_dir = tmp_path / "backup"
+    final_dir.mkdir()
+    backup_dir.mkdir()
+    (final_dir / "shredos.img").write_bytes(b"replacement")
+    (backup_dir / "shredos.img").write_bytes(b"original")
+    filesystem_sync = network_boot.DeferredNetworkBootMediaSync(
+        media=media,
+        final_dir=final_dir,
+        backup_dir=backup_dir,
+    )
+
     def cancel_during_sync(*_args, cancelled, **_kwargs):
         job.status = JobStatus.CANCELLED.value
         db_session.add(job)
         db_session.commit()
         assert cancelled() is True
-        return media
+        return filesystem_sync
 
     monkeypatch.setattr(network_boot, "sync_network_boot_media", cancel_during_sync)
 
@@ -1682,6 +1743,37 @@ def test_cancelled_media_worker_cannot_overwrite_terminal_status(
             AuditEvent.resource_id == f"shredos:{media.version}",
         )
     ).scalars().all()
+    assert (final_dir / "shredos.img").read_bytes() == b"original"
+    assert not backup_dir.exists()
+
+
+def test_deferred_unchanged_media_rollback_preserves_installed_files(
+    db_session,
+    tmp_path,
+):
+    installed = tmp_path / "installed"
+    installed.mkdir()
+    artifact = installed / "shredos.img"
+    artifact.write_bytes(b"verified")
+    media = record_verified_media(
+        db_session,
+        environment_key="shredos",
+        version="2025.11",
+        source_url="https://example.test/shredos.img",
+        artifact_sha256="a" * 64,
+        installed_path=str(installed),
+        manifest={"schema_version": 1},
+    )
+    filesystem_sync = network_boot.DeferredNetworkBootMediaSync(
+        media=media,
+        final_dir=installed,
+        backup_dir=None,
+        filesystem_changed=False,
+    )
+
+    filesystem_sync.rollback_filesystem()
+
+    assert artifact.read_bytes() == b"verified"
 
 
 def test_signed_checksum_rejects_wrong_fingerprint(monkeypatch, tmp_path):
@@ -1837,12 +1929,25 @@ def test_media_sync_revalidates_and_repairs_corrupt_cached_artifacts(
         return url, replacement_sha256
 
     monkeypatch.setattr(BoundedHttpsDownloader, "download", fake_download)
+    deferred = sync_network_boot_media(
+        db_session,
+        environment_key="shredos",
+        media_root=media_root,
+        defer_filesystem_commit=True,
+    )
+
+    assert isinstance(deferred, network_boot.DeferredNetworkBootMediaSync)
+    assert deferred.media.artifact_sha256 == replacement_sha256
+    assert (installed / "shredos.img").read_bytes() == replacement
+    deferred.rollback_filesystem()
+    db_session.rollback()
+    assert (installed / "shredos.img").read_bytes() == b"corrupt"
+
     repaired = sync_network_boot_media(
         db_session,
         environment_key="shredos",
         media_root=media_root,
     )
-
     assert repaired.artifact_sha256 == replacement_sha256
     assert (installed / "shredos.img").read_bytes() == replacement
 

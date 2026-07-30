@@ -145,6 +145,26 @@ class NetworkBootMediaSyncCancelled(RuntimeError):
     """Raised when an operator cancels media acquisition before installation."""
 
 
+@dataclass
+class DeferredNetworkBootMediaSync:
+    media: NetworkBootMedia
+    final_dir: Path
+    backup_dir: Path | None
+    filesystem_changed: bool = True
+
+    def commit_filesystem(self) -> None:
+        if self.backup_dir is not None:
+            shutil.rmtree(self.backup_dir, ignore_errors=True)
+
+    def rollback_filesystem(self) -> None:
+        if not self.filesystem_changed:
+            return
+        if self.final_dir.exists():
+            shutil.rmtree(self.final_dir)
+        if self.backup_dir is not None and self.backup_dir.exists():
+            self.backup_dir.replace(self.final_dir)
+
+
 def _as_utc(value: datetime) -> datetime:
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
 
@@ -251,21 +271,19 @@ def register_bundled_inventory_media(
     inventory_root = media_root / "inventory"
     if not inventory_root.is_dir():
         return None
-    candidates = sorted(
-        (
-            path
-            for path in inventory_root.iterdir()
-            if path.is_dir() and (path / "manifest.json").is_file()
-        ),
-        reverse=True,
-    )
+    candidates = [
+        path
+        for path in inventory_root.iterdir()
+        if path.is_dir() and (path / "manifest.json").is_file()
+    ]
+    existing_media = db.execute(
+        select(NetworkBootMedia.id)
+        .where(NetworkBootMedia.environment_key == "inventory")
+        .limit(1)
+    ).first()
+    registered: list[NetworkBootMedia] = []
     for path in candidates:
         try:
-            existing_media = db.execute(
-                select(NetworkBootMedia.id)
-                .where(NetworkBootMedia.environment_key == "inventory")
-                .limit(1)
-            ).first()
             manifest = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
             version = normalize_version(str(manifest.get("version") or path.name))
             if (
@@ -297,21 +315,24 @@ def register_bundled_inventory_media(
                 installed_path=str(path.resolve()),
                 manifest=manifest,
             )
-            state = db.get(NetworkBootEnvironment, "inventory")
-            if (
-                state is not None
-                and existing_media is None
-                and not state.desired_version
-                and not state.active_version
-            ):
-                state.enabled = True
-                state.desired_version = version
-                state.updated_at = utcnow()
-                db.add(state)
-            return media
+            registered.append(media)
         except (OSError, ValueError, json.JSONDecodeError):
             continue
-    return None
+    if not registered:
+        return None
+    latest = max(registered, key=lambda row: _natural_version_key(row.version))
+    state = db.get(NetworkBootEnvironment, "inventory")
+    if (
+        state is not None
+        and existing_media is None
+        and not state.desired_version
+        and not state.active_version
+    ):
+        state.enabled = True
+        state.desired_version = latest.version
+        state.updated_at = utcnow()
+        db.add(state)
+    return latest
 
 
 def media_to_dict(row: NetworkBootMedia) -> dict[str, Any]:
@@ -346,6 +367,14 @@ def normalize_version(value: str) -> str:
     if not VERSION_PATTERN.fullmatch(version):
         raise ValueError("Boot media version is invalid.")
     return version
+
+
+def _natural_version_key(value: str) -> tuple[tuple[int, int | str], ...]:
+    return tuple(
+        (0, int(part)) if part.isdigit() else (1, part.casefold())
+        for part in re.split(r"([0-9]+)", value)
+        if part
+    )
 
 
 def set_environment_desired_state(
@@ -1943,7 +1972,8 @@ def sync_network_boot_media(
     uploaded_artifact: Path | None = None,
     uploaded_filename: str = "",
     cancelled: Callable[[], bool] | None = None,
-) -> NetworkBootMedia:
+    defer_filesystem_commit: bool = False,
+) -> NetworkBootMedia | DeferredNetworkBootMediaSync:
     def raise_if_cancelled() -> None:
         if cancelled and cancelled():
             raise NetworkBootMediaSyncCancelled(
@@ -1969,6 +1999,13 @@ def sync_network_boot_media(
     replaced_directory: Path | None = None
     if existing is not None:
         if _verified_cached_media(existing, media_root=media_root) is not None:
+            if defer_filesystem_commit:
+                return DeferredNetworkBootMediaSync(
+                    media=existing,
+                    final_dir=Path(existing.installed_path),
+                    backup_dir=None,
+                    filesystem_changed=False,
+                )
             return existing
         replaced_directory = _enumerated_media_directory(
             environment_key=key,
@@ -2165,18 +2202,32 @@ def sync_network_boot_media(
             if final_dir.exists():
                 raise ValueError("Immutable boot media version already exists.") from exc
             raise
-        else:
-            if backup_dir is not None:
-                shutil.rmtree(backup_dir)
-    if existing is not None:
-        db.delete(existing)
-        db.flush()
-    return record_verified_media(
-        db,
-        environment_key=key,
-        version=version,
-        source_url=descriptor["asset_url"],
-        artifact_sha256=artifact_sha256,
-        installed_path=str(final_dir),
-        manifest=manifest,
-    )
+    filesystem_sync: DeferredNetworkBootMediaSync | None = None
+    try:
+        if existing is not None:
+            db.delete(existing)
+            db.flush()
+        media = record_verified_media(
+            db,
+            environment_key=key,
+            version=version,
+            source_url=descriptor["asset_url"],
+            artifact_sha256=artifact_sha256,
+            installed_path=str(final_dir),
+            manifest=manifest,
+        )
+        filesystem_sync = DeferredNetworkBootMediaSync(
+            media=media,
+            final_dir=final_dir,
+            backup_dir=backup_dir,
+        )
+    except Exception:
+        if final_dir.exists():
+            shutil.rmtree(final_dir)
+        if backup_dir is not None and backup_dir.exists():
+            backup_dir.replace(final_dir)
+        raise
+    if defer_filesystem_commit:
+        return filesystem_sync
+    filesystem_sync.commit_filesystem()
+    return media

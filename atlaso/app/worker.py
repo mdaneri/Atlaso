@@ -460,6 +460,8 @@ def _run_managed_script(db: Session, job: Job) -> None:
 
 def _run_pxe_media_sync(db: Session, job: Job) -> None:
     from atlaso.app.services.network_boot import (
+        DeferredNetworkBootMediaSync,
+        NetworkBootMediaSyncCancelled,
         media_to_dict,
         network_boot_upload_path,
         sync_network_boot_media,
@@ -476,70 +478,77 @@ def _run_pxe_media_sync(db: Session, job: Job) -> None:
         ).scalar_one()
         return status == JobStatus.CANCELLED.value
 
+    filesystem_sync: DeferredNetworkBootMediaSync | None = None
     try:
-        media = sync_network_boot_media(
-            db,
-            environment_key=environment,
-            uploaded_artifact=upload_path,
-            uploaded_filename=str(config.get("filename") or ""),
-            cancelled=cancelled,
+        try:
+            filesystem_sync = sync_network_boot_media(
+                db,
+                environment_key=environment,
+                uploaded_artifact=upload_path,
+                uploaded_filename=str(config.get("filename") or ""),
+                cancelled=cancelled,
+                defer_filesystem_commit=True,
+            )
+            if not isinstance(filesystem_sync, DeferredNetworkBootMediaSync):
+                raise RuntimeError("Network Boot media sync did not defer its filesystem commit.")
+        finally:
+            if upload_path is not None:
+                upload_path.unlink(missing_ok=True)
+                try:
+                    upload_path.parent.rmdir()
+                except OSError:
+                    pass
+        media = filesystem_sync.media
+        if cancelled():
+            raise NetworkBootMediaSyncCancelled(
+                "Network Boot media task was cancelled."
+            )
+        payload = {
+            "status": JobStatus.SUCCEEDED.value,
+            "success": True,
+            "environment": environment,
+            "source": source,
+            "media": media_to_dict(media),
+            "activation": "pending desired state; global appliance apply is required",
+        }
+        completed = db.execute(
+            update(Job)
+            .where(
+                Job.id == job.id,
+                Job.status == JobStatus.RUNNING.value,
+            )
+            .values(
+                status=JobStatus.SUCCEEDED.value,
+                finished_at=utcnow(),
+                progress_percent=100,
+                error=None,
+                result=json.dumps(payload, indent=2, sort_keys=True),
+            )
         )
-    finally:
-        if upload_path is not None:
-            upload_path.unlink(missing_ok=True)
-            try:
-                upload_path.parent.rmdir()
-            except OSError:
-                pass
-    if cancelled():
-        from atlaso.app.services.network_boot import NetworkBootMediaSyncCancelled
-
-        raise NetworkBootMediaSyncCancelled(
-            "Network Boot media task was cancelled."
+        if completed.rowcount != 1:
+            raise NetworkBootMediaSyncCancelled(
+                "Network Boot media task was cancelled before completion."
+            )
+        db.add(
+            AuditEvent(
+                actor=job.created_by,
+                action="sync_network_boot_media",
+                resource_type="network_boot_media",
+                resource_id=f"{environment}:{media.version}",
+                success=True,
+                detail=(
+                    f"sha256={media.artifact_sha256}; "
+                    f"verification={media.verification_method}"
+                ),
+            )
         )
-    payload = {
-        "status": JobStatus.SUCCEEDED.value,
-        "success": True,
-        "environment": environment,
-        "source": source,
-        "media": media_to_dict(media),
-        "activation": "pending desired state; global appliance apply is required",
-    }
-    completed = db.execute(
-        update(Job)
-        .where(
-            Job.id == job.id,
-            Job.status == JobStatus.RUNNING.value,
-        )
-        .values(
-            status=JobStatus.SUCCEEDED.value,
-            finished_at=utcnow(),
-            progress_percent=100,
-            error=None,
-            result=json.dumps(payload, indent=2, sort_keys=True),
-        )
-    )
-    if completed.rowcount != 1:
+        db.commit()
+    except Exception:
         db.rollback()
-        from atlaso.app.services.network_boot import NetworkBootMediaSyncCancelled
-
-        raise NetworkBootMediaSyncCancelled(
-            "Network Boot media task was cancelled before completion."
-        )
-    db.add(
-        AuditEvent(
-            actor=job.created_by,
-            action="sync_network_boot_media",
-            resource_type="network_boot_media",
-            resource_id=f"{environment}:{media.version}",
-            success=True,
-            detail=(
-                f"sha256={media.artifact_sha256}; "
-                f"verification={media.verification_method}"
-            ),
-        )
-    )
-    db.commit()
+        if filesystem_sync is not None:
+            filesystem_sync.rollback_filesystem()
+        raise
+    filesystem_sync.commit_filesystem()
 
 
 def run_worker_once() -> str | None:
