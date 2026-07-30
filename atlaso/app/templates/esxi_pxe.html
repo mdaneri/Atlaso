@@ -51,14 +51,14 @@
            data-can-write="{{ 'true' if network_boot_can_write else 'false' }}"
            data-fallback-id="network-boot-environments-fallback"></div>
       <table id="network-boot-environments-fallback" class="data-table compact">
-        <thead><tr><th>Environment</th><th>Enabled</th><th>Desired</th><th>Newest installed</th><th>Active</th><th>Ready</th><th>Verification</th><th>Risk</th></tr></thead>
+        <thead><tr><th>Environment</th><th>Enabled</th><th>Desired</th><th>Newest installed</th><th>Active</th><th>Ready</th><th>Source</th><th>Verification</th><th>Risk</th></tr></thead>
         <tbody>
           {% for row in network_boot_environments %}
-            <tr><td>{{ row.label }}</td><td>{{ "Yes" if row.enabled else "No" }}</td><td>{{ row.desired_version or "Not selected" }}</td><td>{{ row.installed_versions[0].version if row.installed_versions else "Not installed" }}</td><td>{{ row.active_version or "Not active" }}</td><td>{{ "Ready" if row.ready else "Pending" }}</td><td>{{ row.verification_method }}</td><td>{{ row.risk }}</td></tr>
+            <tr><td>{{ row.label }}</td><td>{{ "Yes" if row.enabled else "No" }}</td><td>{{ row.desired_version or "Not selected" }}</td><td>{{ row.installed_versions[0].version if row.installed_versions else "Not installed" }}</td><td>{{ row.active_version or "Not active" }}</td><td>{{ "Ready" if row.ready else "Pending" }}</td><td><a href="{{ row.release_page }}" target="_blank" rel="noopener noreferrer" title="{{ row.release_page }}">{{ row.source_label }}</a></td><td>{{ row.verification_method }}</td><td>{{ row.risk }}</td></tr>
           {% endfor %}
         </tbody>
       </table>
-      <p class="muted">Right-click a row for Enable/Disable, Download, and Upload actions. Downloads resolve the latest stable release; uploads accept the matching upstream asset. Both paths verify the authoritative digest or signature before creating an immutable cache entry. Enablement and version selection remain pending until global appliance apply.</p>
+      <p class="muted">Right-click a row for Enable/Disable, Download, and Upload actions. The Source column names and links to the authoritative release page used to resolve the latest stable download; uploads accept the matching upstream asset. Both paths verify the authoritative digest or signature before creating an immutable cache entry. Enablement and version selection remain pending until global appliance apply.</p>
     </div>
     <div id="network-boot-settings-panel" class="tab-panel" role="tabpanel" hidden>
       <div class="settings-list compact-settings-list">

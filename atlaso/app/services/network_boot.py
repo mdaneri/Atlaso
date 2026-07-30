@@ -71,6 +71,7 @@ class EnvironmentCatalogEntry:
     risk: str
     license_name: str
     verification_method: str
+    source_label: str
     release_page: str
     signing_fingerprint: str = ""
     signing_key_url: str = ""
@@ -84,6 +85,7 @@ ENVIRONMENT_CATALOG: tuple[EnvironmentCatalogEntry, ...] = (
         risk="safe",
         license_name="GPL-2.0-or-later and bundled component licenses",
         verification_method="Atlaso release-asset SHA-256 and reproducible build manifest",
+        source_label="Atlaso GitHub releases",
         release_page="https://github.com/mdaneri/Atlaso/releases/latest",
     ),
     EnvironmentCatalogEntry(
@@ -93,6 +95,7 @@ ENVIRONMENT_CATALOG: tuple[EnvironmentCatalogEntry, ...] = (
         risk="diagnostic",
         license_name="GPL-2.0-only",
         verification_method="upstream-published SHA-256",
+        source_label="Memtest86+ official site",
         release_page="https://www.memtest.org/",
     ),
     EnvironmentCatalogEntry(
@@ -102,6 +105,7 @@ ENVIRONMENT_CATALOG: tuple[EnvironmentCatalogEntry, ...] = (
         risk="destructive",
         license_name="GPL-3.0-or-later and bundled component licenses",
         verification_method="GitHub release-asset SHA-256 digest",
+        source_label="ShredOS GitHub releases",
         release_page="https://github.com/PartialVolume/shredos.x86_64/releases/latest",
     ),
     EnvironmentCatalogEntry(
@@ -111,6 +115,7 @@ ENVIRONMENT_CATALOG: tuple[EnvironmentCatalogEntry, ...] = (
         risk="destructive",
         license_name="GPL-2.0-or-later and bundled component licenses",
         verification_method="signed checksum file and SHA-256",
+        source_label="GParted official downloads",
         release_page="https://gparted.org/download.php",
         signing_fingerprint="EB1DD5BF6F88820BBCF5356C8E94C9CD163E3FB0",
         signing_key_url="https://keys.openpgp.org/vks/v1/by-fingerprint/EB1DD5BF6F88820BBCF5356C8E94C9CD163E3FB0",
@@ -122,6 +127,7 @@ ENVIRONMENT_CATALOG: tuple[EnvironmentCatalogEntry, ...] = (
         risk="destructive",
         license_name="GPL-2.0-or-later and bundled component licenses",
         verification_method="signed checksum file and SHA-256",
+        source_label="Clonezilla official downloads",
         release_page="https://clonezilla.org/downloads.php",
         signing_fingerprint="54C0821A48715DAFD61BFCAF667857D045599AFD",
         signing_key_url="https://keyserver.ubuntu.com/pks/lookup?op=get&options=mr&search=0x54C0821A48715DAFD61BFCAF667857D045599AFD",
@@ -183,6 +189,7 @@ def catalog_rows(db: Session) -> list[dict[str, Any]]:
                 "risk": entry.risk,
                 "license": entry.license_name,
                 "verification_method": entry.verification_method,
+                "source_label": entry.source_label,
                 "signing_fingerprint": entry.signing_fingerprint,
                 "release_page": entry.release_page,
                 "enabled": bool(state.enabled),

@@ -119,6 +119,35 @@ def set_applied_pxe_runtime(db_session, *, boot=None, artifacts=None):
     db_session.commit()
 
 
+def test_network_boot_catalog_identifies_authoritative_download_sources(db_session):
+    from atlaso.app.services.network_boot import catalog_rows
+
+    sources = {
+        row["key"]: (row["source_label"], row["release_page"])
+        for row in catalog_rows(db_session)
+    }
+
+    assert sources == {
+        "inventory": (
+            "Atlaso GitHub releases",
+            "https://github.com/mdaneri/Atlaso/releases/latest",
+        ),
+        "memtest86plus": ("Memtest86+ official site", "https://www.memtest.org/"),
+        "shredos": (
+            "ShredOS GitHub releases",
+            "https://github.com/PartialVolume/shredos.x86_64/releases/latest",
+        ),
+        "gparted": (
+            "GParted official downloads",
+            "https://gparted.org/download.php",
+        ),
+        "clonezilla": (
+            "Clonezilla official downloads",
+            "https://clonezilla.org/downloads.php",
+        ),
+    }
+
+
 def inventory_report(
     *,
     dmi_uuid="4c4c4544-004b-4d10-8052-cac04f4c5132",

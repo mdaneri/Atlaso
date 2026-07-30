@@ -18454,6 +18454,23 @@ function initializeNetworkBootPage() {
         },
         { title: "Active version", field: "active_version", minWidth: 140 },
         { title: "Ready", field: "ready", width: 85, formatter: "tickCross" },
+        {
+          title: "Source",
+          field: "source_label",
+          minWidth: 210,
+          formatter: (cell) => {
+            const data = cell.getRow().getData();
+            const label = data.source_label || "Authoritative release page";
+            try {
+              const source = new URL(data.release_page);
+              if (source.protocol !== "https:") return escapeHtml(label);
+              const url = source.toString();
+              return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(url)}">${escapeHtml(label)}</a>`;
+            } catch {
+              return escapeHtml(label);
+            }
+          },
+        },
         { title: "Verification", field: "verification_method", minWidth: 220 },
         { title: "Risk", field: "risk", minWidth: 240 },
       ],

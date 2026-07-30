@@ -66,8 +66,10 @@ Live, and Clonezilla Live. Full appliance images preinstall the independently
 versioned `atlaso-inventory-linux-<version>.zip` package. The same package is a
 GitHub release asset, so an operator can download or upload a newer verified
 Inventory Linux build without updating the Atlaso Python wheel. The other
-environments are disabled and uninstalled by default. **Download latest
-stable** queues a durable `pxe-media-sync` task that:
+environments are disabled and uninstalled by default. The **Source** column
+names and links to the authoritative release page from which Atlaso resolves
+each download. **Download latest stable** queues a durable `pxe-media-sync`
+task that:
 
 1. resolves one concrete stable release from the fixed upstream;
 2. downloads over HTTPS with redirect, timeout, and size limits, or accepts the
