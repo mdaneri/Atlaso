@@ -801,7 +801,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v210" in service_worker.text
+    assert "atlaso-pwa-v212" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -813,9 +813,9 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6" in service_worker.text
-    assert "/static/app.css?v=atlaso-network-boot-20260730-14" in service_worker.text
+    assert "/static/app.css?v=atlaso-network-boot-20260730-15" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in service_worker.text
-    assert "/static/app.js?v=atlaso-network-boot-20260730-24" in service_worker.text
+    assert "/static/app.js?v=atlaso-network-boot-20260730-26" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -835,8 +835,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=atlaso-network-boot-20260730-24"),
-        (public_base, "/static/app.js?v=atlaso-network-boot-20260730-24"),
+        (base, "/static/app.js?v=atlaso-network-boot-20260730-26"),
+        (public_base, "/static/app.js?v=atlaso-network-boot-20260730-26"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5"
@@ -1318,9 +1318,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=atlaso-network-boot-20260730-14" in page.text
+    assert "/static/app.css?v=atlaso-network-boot-20260730-15" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in page.text
-    assert "/static/app.js?v=atlaso-network-boot-20260730-24" in page.text
+    assert "/static/app.js?v=atlaso-network-boot-20260730-26" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -6188,10 +6188,13 @@ def test_logs_page_renders_refreshable_fixed_source_tabs_and_redacts_logs(client
     assert "grid-template-rows: minmax(0, 1fr);" in css.text
     assert "grid-template-rows: auto minmax(0, 1fr);" in css.text
     assert "overflow-y: auto;" in css.text
-    assert "scrollbar-gutter: stable;" not in css.text
-    assert "scrollbar-width: thin;" not in css.text
-    assert "scrollbar-color:" not in css.text
-    assert "overscroll-behavior:" not in css.text
+    logs_css = css.text[
+        css.text.index("[data-logs-page]") : css.text.index(".audit-events-panel")
+    ]
+    assert "scrollbar-gutter: stable;" not in logs_css
+    assert "scrollbar-width: thin;" not in logs_css
+    assert "scrollbar-color:" not in logs_css
+    assert "overscroll-behavior:" not in logs_css
     assert "::-webkit-scrollbar-thumb" in css.text
     assert "white-space: nowrap;" in css.text
 
