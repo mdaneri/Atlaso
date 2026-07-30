@@ -28,11 +28,17 @@ This verified appliance view provides visual orientation before you begin.
    description.
 2. Configure NTS and desired enablement in the wizard only when the source and certificate trust are available.
    Existing source enablement remains directly editable in the grid.
+   Editing a source updates that row; source names are unique after hostname, address, and optional-port normalization.
+   Rename or remove an existing row before reusing its source name.
 3. Review warnings about source reachability or incomplete security settings.
 4. Inspect the rendered NTPsec preview.
 5. Submit the NTPsec unit through [Appliance Apply](../operate/appliance-apply.md).
 
 Appliance Settings does not own time enforcement. DNS/DHCP also does not apply NTP configuration.
+
+Atlaso disables NTS controls when the installed NTPsec binary explicitly reports that NTS is unsupported. If the
+capability check itself is temporarily unavailable, Atlaso preserves existing NTS desired-state flags and keeps the
+controls disabled until detection succeeds.
 
 ## Verify
 

@@ -46,6 +46,7 @@
         class="tabulator-shell ntp-upstreams-table"
         data-ntp-upstreams='{{ ntp_settings_json.upstream_sources | tojson }}'
         data-ntp-nts-supported="{{ 'true' if ntp_nts_supported else 'false' }}"
+        data-ntp-nts-capability-known="{{ 'true' if ntp_nts_capability_known else 'false' }}"
         data-fallback-id="ntp-upstreams-fallback"
       ></div>
       <table id="ntp-upstreams-fallback" class="data-table compact dns-fallback-table">
@@ -87,11 +88,16 @@
         <label class="switch-field"><span class="field-label"><span>NTP service enabled</span><button class="help-icon" type="button" data-help="Controls the standard NTPsec NTP service on UDP 123. This does not enable NTS. The host service changes only after global appliance apply.">i</button></span><input class="switch-input" type="checkbox" name="enabled" {{ "checked" if ntp_settings.enabled else "" }}><span class="switch-track" aria-hidden="true"></span></label>
         {% if not ntp_nts_supported %}
           <div class="runtime-source-list" data-ntp-nts-unavailable>
-            <span class="status-pill muted">NTS unavailable</span>
-            <span>Installed ntpd has no NTS support.</span>
+            {% if ntp_nts_capability_known %}
+              <span class="status-pill muted">NTS unavailable</span>
+              <span>Installed ntpd has no NTS support.</span>
+            {% else %}
+              <span class="status-pill warning">NTS check unavailable</span>
+              <span>Existing NTS desired state is preserved; controls remain disabled until capability detection succeeds.</span>
+            {% endif %}
           </div>
         {% endif %}
-        <label class="switch-field{% if not ntp_nts_supported %} disabled-field{% endif %}"{% if not ntp_nts_supported %} aria-disabled="true"{% endif %}><span class="field-label"><span>NTS server{% if not ntp_nts_supported %} (disabled){% endif %}</span><button class="help-icon" type="button" data-help="{% if ntp_nts_supported %}Enables NTPsec NTS-KE for lab clients using CA-managed certificate material. Host listeners and TCP 4460 firewall rules change only after global appliance apply.{% else %}Unavailable because the installed ntpd binary does not include NTS support. Rebuild the appliance with an NTS-capable NTPsec package to enable this setting.{% endif %}">i</button></span><input class="switch-input" type="checkbox" name="nts_server_enabled"{% if ntp_settings.nts_server_enabled %} checked{% endif %}{% if not ntp_nts_supported %} disabled{% endif %}><span class="switch-track" aria-hidden="true"></span></label>
+        <label class="switch-field{% if not ntp_nts_supported %} disabled-field{% endif %}"{% if not ntp_nts_supported %} aria-disabled="true"{% endif %}><span class="field-label"><span>NTS server{% if not ntp_nts_supported %} (disabled){% endif %}</span><button class="help-icon" type="button" data-help="{% if ntp_nts_supported %}Enables NTPsec NTS-KE for lab clients using CA-managed certificate material. Host listeners and TCP 4460 firewall rules change only after global appliance apply.{% elif ntp_nts_capability_known %}Unavailable because the installed ntpd binary does not include NTS support. Rebuild the appliance with an NTS-capable NTPsec package to enable this setting.{% else %}Capability detection is temporarily unavailable. Existing NTS desired state is preserved, and the control remains disabled until detection succeeds.{% endif %}">i</button></span><input class="switch-input" type="checkbox" name="nts_server_enabled"{% if ntp_settings.nts_server_enabled %} checked{% endif %}{% if not ntp_nts_supported %} disabled{% endif %}><span class="switch-track" aria-hidden="true"></span></label>
         <label class="compact-service-field">
           <span class="field-label"><span>Hostname</span><button class="help-icon" type="button" data-help="DNS name lab clients can use for the NTP endpoint. It is recorded in desired state and previews; DNS records remain owned by the DNS page.">i</button></span>
           <input name="hostname" value="{{ ntp_settings.hostname }}" autocomplete="off">

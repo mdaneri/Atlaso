@@ -5190,6 +5190,22 @@ function normalizeNTPsecUpstreamRows(rows = []) {
     .filter((row) => row.source);
 }
 
+function ntpUpstreamSourceIdentity(value) {
+  const parsed = parseNtpUpstreamSource(value);
+  if (!parsed) return String(value || "").trim().replace(/\.$/, "").toLowerCase();
+  const host = parsed.host.includes(":") ? `[${parsed.host}]` : parsed.host;
+  return parsed.port ? `${host}:${parsed.port}` : host;
+}
+
+function findDuplicateNtpUpstreamSource(table, source, recordId = "") {
+  const identity = ntpUpstreamSourceIdentity(source);
+  return table.getData().find((row) => (
+    !row.is_new
+    && String(row.id || "") !== String(recordId || "")
+    && ntpUpstreamSourceIdentity(row.source) === identity
+  ));
+}
+
 function syncNTPsecUpstreamsHiddenInput(table) {
   const hiddenInput = document.querySelector("[data-ntp-upstreams-json]");
   if (!(hiddenInput instanceof HTMLInputElement)) {
@@ -5268,6 +5284,7 @@ function initializeNTPsecUpstreamsTable() {
       status: "#ntp-settings-autosave-status",
       pattern: "wizard-backed",
       emptyMessage: "No upstream sources configured.",
+      onReady: (readyTable) => syncNTPsecUpstreamsHiddenInput(readyTable),
       onOpenRow: (data, row, event) => openSource(
         data,
         event?.currentTarget || row?.getElement?.(),
@@ -5343,7 +5360,7 @@ function initializeNTPsecUpstreamsTable() {
       ],
       onOpen: ({ context }) => {
         populateAtlasoWizardForm(form, {
-          record_id: context?.id || "",
+          id: context?.id || "",
           source: context?.source || "",
           description: context?.description || "",
           use_nts: Boolean(context?.use_nts),
@@ -5355,6 +5372,20 @@ function initializeNTPsecUpstreamsTable() {
           return {
             valid: false,
             message: "Enter an IPv4 address, IPv6 address, or FQDN, optionally followed by :port.",
+            field: "source",
+          };
+        }
+        if (
+          step.id === "identity"
+          && findDuplicateNtpUpstreamSource(
+            table,
+            form.elements.source.value,
+            form.elements.record_id.value,
+          )
+        ) {
+          return {
+            valid: false,
+            message: "That NTP upstream source already exists. Source names must be unique.",
             field: "source",
           };
         }
@@ -5397,7 +5428,6 @@ function initializeNTPsecUpstreamsTable() {
       const launcher = event.target.closest("[data-atlaso-wizard-add]");
       if (launcher instanceof HTMLButtonElement) openSource(null, launcher);
     });
-    syncNTPsecUpstreamsHiddenInput(table);
   } catch (error) {
     if (fallback instanceof HTMLElement) {
       fallback.classList.remove("hidden");
