@@ -28,6 +28,7 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (
         github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_repository.full_name == github.repository &&
         github.event.workflow_run.head_branch == 'main' &&
         github.event.workflow_run.event == 'push'
       )
@@ -126,6 +127,13 @@ jobs:
     name: Build Inventory Linux package
     needs:
       - prepare
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.head_repository.full_name == github.repository &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.event == 'push'
+      )
     runs-on: ubuntu-latest
     steps:
       - name: Check out the successful main commit
