@@ -38,6 +38,9 @@ for path in /sys/class/net/*; do
   [ "${name}" = "lo" ] && continue
   current_mac="$(cat "${path}/address" 2>/dev/null || true)"
   permanent_mac="$(ethtool -P "${name}" 2>/dev/null | awk '{print $3}')"
+  if ! printf '%s\n' "${permanent_mac}" | grep -Eq '^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'; then
+    permanent_mac=""
+  fi
   driver="$(basename "$(readlink "${path}/device/driver" 2>/dev/null || true)")"
   link_state="$(cat "${path}/operstate" 2>/dev/null || true)"
   speed="$(cat "${path}/speed" 2>/dev/null || printf '0')"
