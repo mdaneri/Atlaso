@@ -8980,7 +8980,9 @@ function initializeEsxiCustomVariablesTable() {
     {
       title: "Custom variable name",
       field: "name",
-      formatter: (cell) => `<code>custom.${escapeHtml(cell.getValue())}</code>`,
+      formatter: (cell) => cell.getRow().getData().is_new
+        ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add custom variable</button>'
+        : `<code>custom.${escapeHtml(cell.getValue())}</code>`,
       minWidth: 220,
     },
     {
@@ -9023,8 +9025,6 @@ function initializeEsxiCustomVariablesTable() {
     dialogId: "esxi-custom-variable-wizard-dialog",
     rows,
     newRow: { id: "__new__", name: "", description: "", default_value: "", is_new: true },
-    includeNewRow: false,
-    addLauncherSelector: "[data-esxi-custom-variable-add]",
     resourceName: "variable",
     createUrl: "/esxi-pxe/custom-variables",
     editUrl: (id) => `/esxi-pxe/custom-variables/${encodeURIComponent(id)}`,
