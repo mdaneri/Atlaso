@@ -174,6 +174,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Build a signed, offline Atlaso appliance release bundle.")
     parser.add_argument("--wheelhouses", type=Path, required=True, help="Directory containing the cp314 wheelhouse.")
     parser.add_argument("--lock", type=Path, default=ROOT / "requirements-appliance.lock")
+    parser.add_argument("--inventory-package", type=Path, required=True)
     parser.add_argument("--output", type=Path, default=ROOT / "dist/release")
     parser.add_argument("--repository", default="mdaneri/Atlaso")
     parser.add_argument("--signing-key", type=Path, required=True)
@@ -194,6 +195,16 @@ def main() -> int:
         shutil.rmtree(output)
     output.mkdir(parents=True)
     signing_key = load_signing_key(args.signing_key)
+    inventory_package = args.inventory_package.resolve()
+    if (
+        not inventory_package.is_file()
+        or re.fullmatch(
+            r"atlaso-inventory-linux-[A-Za-z0-9][A-Za-z0-9._+-]{0,118}[A-Za-z0-9]\.zip",
+            inventory_package.name,
+        )
+        is None
+    ):
+        raise SystemExit("Inventory Linux release package is missing or incorrectly named.")
 
     with tempfile.TemporaryDirectory(prefix="atlaso-release-") as temporary:
         temp_root = Path(temporary)
@@ -275,6 +286,7 @@ def main() -> int:
         release_manifest_bytes = canonical_json(release_manifest)
         manifest_path = output / "release-manifest.json"
         manifest_path.write_bytes(release_manifest_bytes)
+        shutil.copy2(inventory_package, output / inventory_package.name)
         shutil.copy2(notice_path, output / f"atlaso-third-party-notices-{version}.md")
         write_signature(
             output / "release-manifest.json.sig",

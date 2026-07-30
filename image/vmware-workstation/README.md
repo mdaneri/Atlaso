@@ -130,10 +130,12 @@ Do not pipe the VMX path or put the `.vmx` path on a line by itself; PowerShell 
 pipeline/document execution error. The helper builds `python -m pip wheel . -w dist`, uploads the newest `atlaso-*.whl`
 with `scp`, installs it into `/opt/atlaso/.venv`, syncs `scripts/appliance/atlaso-helper` to
 `/opt/atlaso/bin/atlaso-helper`, synchronizes every checked-in public release key from `image/common/update-trust` into
-`/etc/atlaso/update-trust.d`, restores virtualenv permissions, restarts `atlaso.service`, and verifies `/openapi.json`
+`/etc/atlaso/update-trust.d`, builds and installs the locally verified Inventory Linux package, restores virtualenv
+permissions, restarts `atlaso.service`, and verifies `/openapi.json`
 from inside the guest and from the Windows host. The helper and trust-key syncs are required because those root-owned
-files live outside the Python virtualenv and are not updated by `pip install`. If the app takes longer to become
-reachable after restart, pass `-ReadinessTimeoutSeconds 120`.
+files live outside the Python virtualenv and are not updated by `pip install`. Build Inventory Linux first or pass
+`-SkipInventoryLinuxSync` only for a code-only deployment that intentionally leaves the appliance package unchanged.
+If the app takes longer to become reachable after restart, pass `-ReadinessTimeoutSeconds 120`.
 
 `deploy-wheel.ps1` remains a development-only live-patching path. Production Appliance Update uses signed GitHub release
 bundles, retained ABI-specific wheelhouses, `/opt/atlaso/releases/<version>`, and transactional rollback; it does not

@@ -54,11 +54,15 @@ online, or use **Promote to ESXi**. Promotion requires explicit hostname, a
 discovered MAC, address, Kickstart, installer ISO, variables, and enabled-state
 review. It creates desired state only.
 
-## Maintenance media and activation
+## Boot media packages and activation
 
-The fixed catalog contains Memtest86+, ShredOS, GParted Live, and Clonezilla
-Live. They are disabled and uninstalled by default. **Download latest stable**
-queues a durable `pxe-media-sync` task that:
+The fixed catalog contains Atlaso Inventory Linux, Memtest86+, ShredOS, GParted
+Live, and Clonezilla Live. Full appliance images preinstall the independently
+versioned `atlaso-inventory-linux-<version>.zip` package. The same package is a
+GitHub release asset, so an operator can download or upload a newer verified
+Inventory Linux build without updating the Atlaso Python wheel. The other
+environments are disabled and uninstalled by default. **Download latest
+stable** queues a durable `pxe-media-sync` task that:
 
 1. resolves one concrete stable release from the fixed upstream;
 2. downloads over HTTPS with redirect, timeout, and size limits, or accepts the
@@ -69,14 +73,13 @@ queues a durable `pxe-media-sync` task that:
 5. atomically installs an immutable cache under
    `/var/lib/atlaso/pxe/media/<environment>/<version>`.
 
-Each downloadable catalog row has visible **Download** and **Upload** actions.
+Each catalog row exposes **Download** and **Upload** through its row context menu.
 Upload is limited to 2 GiB and stages the file only for the durable verification
 task. Atlaso still resolves the authoritative stable release metadata and
 checks the uploaded bytes against the same upstream digest or signed checksum;
 the operator cannot substitute an unverified checksum.
-The row context menu exposes the same download and upload actions plus a
-state-aware **Enable** or **Disable** action. Enable remains unavailable until
-that environment has verified installed media.
+The same menu provides a state-aware **Enable** or **Disable** action. Enable
+remains unavailable until that environment has verified installed media.
 
 The Network Boot page separates **Network Boot** and **ESXi Kickstarts** into
 primary tabs. Each primary view retains its own task-specific subtabs, while

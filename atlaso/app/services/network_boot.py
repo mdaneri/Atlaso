@@ -84,8 +84,8 @@ ENVIRONMENT_CATALOG: tuple[EnvironmentCatalogEntry, ...] = (
         description="Read-only hardware inventory that runs from RAM.",
         risk="safe",
         license_name="GPL-2.0-or-later and bundled component licenses",
-        verification_method="Atlaso reproducible build manifest and SHA-256",
-        release_page="https://buildroot.org/download.html",
+        verification_method="Atlaso release-asset SHA-256 and reproducible build manifest",
+        release_page="https://github.com/mdaneri/Atlaso/releases/latest",
     ),
     EnvironmentCatalogEntry(
         key="memtest86plus",
@@ -1382,6 +1382,41 @@ def _fetch_https_text(url: str, *, max_bytes: int = 2 * 1024 * 1024) -> str:
 
 def _release_descriptor(environment_key: str) -> dict[str, str]:
     key = normalize_environment_key(environment_key)
+    if key == "inventory":
+        payload = json.loads(
+            _fetch_https_text(
+                "https://api.github.com/repos/mdaneri/Atlaso/releases/latest"
+            )
+        )
+        if payload.get("draft") or payload.get("prerelease"):
+            raise ValueError("Atlaso latest GitHub release is not stable.")
+        assets = payload.get("assets")
+        if not isinstance(assets, list):
+            raise ValueError("Atlaso latest release has no Inventory Linux package.")
+        asset = next(
+            (
+                row
+                for row in assets
+                if isinstance(row, dict)
+                and re.fullmatch(
+                    r"atlaso-inventory-linux-[A-Za-z0-9][A-Za-z0-9._+-]{0,118}[A-Za-z0-9]\.zip",
+                    str(row.get("name") or ""),
+                )
+            ),
+            None,
+        )
+        digest = str((asset or {}).get("digest") or "")
+        if not asset or not digest.startswith("sha256:"):
+            raise ValueError(
+                "Atlaso Inventory Linux package does not publish a SHA-256 asset digest."
+            )
+        filename = str(asset["name"])
+        return {
+            "version": filename.removeprefix("atlaso-inventory-linux-").removesuffix(".zip"),
+            "filename": filename,
+            "asset_url": str(asset["browser_download_url"]),
+            "sha256": digest.removeprefix("sha256:").lower(),
+        }
     if key == "memtest86plus":
         html = _fetch_https_text("https://www.memtest.org/")
         match = re.search(r"/download/v(?P<version>[0-9.]+)/mt86plus_(?P<fileversion>[0-9.]+)\.binaries\.zip", html)
@@ -1463,7 +1498,7 @@ def _release_descriptor(environment_key: str) -> dict[str, str]:
             "asset_url": str(asset["browser_download_url"]),
             "sha256": digest.removeprefix("sha256:").lower(),
         }
-    raise ValueError("Atlaso Inventory Linux is built and shipped with the appliance.")
+    raise ValueError("Unsupported Network Boot environment.")
 
 
 def _extract_zip_allowlist(
@@ -1498,6 +1533,15 @@ def _media_boot_manifest(
 ) -> dict[str, Any]:
     base = f"/pxe/media/{environment_key}/{version}"
     files = list(extracted)
+    if environment_key == "inventory":
+        return {
+            "boot": {
+                "kernel": f"{base}/bzImage",
+                "initrd": f"{base}/rootfs.cpio.gz",
+                "arguments": "rdinit=/sbin/init atlaso.inventory=1",
+            },
+            "files": files,
+        }
     if environment_key == "memtest86plus":
         return {
             "boot": {"kernel": f"{base}/memtest86plus", "arguments": ""},
@@ -1668,8 +1712,6 @@ def sync_network_boot_media(
 
     raise_if_cancelled()
     key = normalize_environment_key(environment_key)
-    if key == "inventory":
-        raise ValueError("Atlaso Inventory Linux is built and shipped with the appliance.")
     descriptor = _release_descriptor(key)
     raise_if_cancelled()
     version = normalize_version(descriptor["version"])
@@ -1772,7 +1814,38 @@ def sync_network_boot_media(
         staging = temporary / "install"
         staging.mkdir()
         extracted: list[str]
-        if key == "memtest86plus":
+        if key == "inventory":
+            with zipfile.ZipFile(artifact) as archive:
+                try:
+                    source_manifest = json.loads(archive.read("manifest.json"))
+                except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+                    raise ValueError(
+                        "Atlaso Inventory Linux package manifest is missing or invalid."
+                    ) from exc
+            if (
+                source_manifest.get("kind") != "atlaso-inventory-linux"
+                or source_manifest.get("schema_version") != 1
+                or normalize_version(str(source_manifest.get("version") or "")) != version
+            ):
+                raise ValueError("Atlaso Inventory Linux package identity is invalid.")
+            source_hashes = source_manifest.get("artifacts")
+            if not isinstance(source_hashes, dict):
+                raise ValueError("Atlaso Inventory Linux package artifact manifest is invalid.")
+            extracted = _extract_zip_allowlist(
+                artifact,
+                staging,
+                allowed_names={
+                    "bzImage": "bzImage",
+                    "rootfs.cpio.gz": "rootfs.cpio.gz",
+                },
+            )
+            for filename in extracted:
+                expected = str(source_hashes.get(filename) or "").lower()
+                if not secrets.compare_digest(_file_sha256(staging / filename), expected):
+                    raise ValueError(
+                        f"Atlaso Inventory Linux package artifact {filename} failed SHA-256 verification."
+                    )
+        elif key == "memtest86plus":
             member = next(
                 (
                     name

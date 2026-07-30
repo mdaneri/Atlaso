@@ -1158,7 +1158,8 @@ If you want the helper to resolve the guest IP from VMware Tools, pass the VMX p
 Do not pipe the VMX path or put it on a separate line by itself; PowerShell will try to execute the `.vmx` file. The
 helper builds `python -m pip wheel . -w dist`, uploads the latest `atlaso-*.whl` and the OIDC `Authlib` runtime wheel,
 installs both into `/opt/atlaso/.venv`, syncs `scripts/appliance/atlaso-helper` to `/opt/atlaso/bin/atlaso-helper`,
-restores virtualenv permissions, restarts `atlaso.service`, and verifies both guest loopback and host-facing
+builds and installs the independently versioned Inventory Linux package from `image/inventory-linux/output`, restores
+virtualenv permissions, restarts `atlaso.service`, and verifies both guest loopback and host-facing
 `/openapi.json`. With `-SshPassword`, the helper uses the local Python runtime and Paramiko so SSH and sudo do not
 prompt interactively. If the selected Python cannot already import Paramiko, the helper installs it and its dependencies
 into the temporary deployment directory from the wheels downloaded under `dist`; it does not modify the global Python
@@ -1166,7 +1167,8 @@ environment. When using `-SkipBuild`, keep those dependency wheels in `dist` or 
 first. You can also set `ATLASO_DEPLOY_SSH_PASSWORD` instead of passing the password on the command line. Without a
 password, it preserves the original `scp`/`ssh` key or agent workflow. Helper sync matters because the privileged helper
 is installed outside the Python virtualenv and is not replaced by `pip install`. If the app takes longer to import after
-reinstalling the wheel, increase the readiness wait with `-ReadinessTimeoutSeconds 120`.
+reinstalling the wheel, increase the readiness wait with `-ReadinessTimeoutSeconds 120`. Use
+`-SkipInventoryLinuxSync` only when deliberately leaving the appliance's existing Inventory Linux package unchanged.
 
 Pass `-IncludeLabNetworkAdapters` only after `VMnet2`, `VMnet3`, and `VMnet4` exist for the SiteA, WAN/SiteB, and
 trunk-like validation networks.

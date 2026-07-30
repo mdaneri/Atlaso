@@ -8694,7 +8694,7 @@ function initializeEsxiPxeHostsTable() {
       data: rows,
       index: "id",
       layout: "fitColumns",
-      height: "360px",
+      height: "calc(100vh - 250px)",
       rowHeight: 30,
       placeholder: "No ESXi PXE host references configured.",
       reactiveData: false,
@@ -8809,6 +8809,93 @@ function initializeEsxiPxeHostsTable() {
   } catch (error) {
     showEsxiHostError(error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
   }
+}
+
+async function deleteEsxiInstallerIso(row, csrf) {
+  const data = row.getData();
+  const confirmed = await requestConfirmation({
+    title: `Delete ${data.name}?`,
+    message: "This removes the installer ISO and clears host references to it. Generated PXE files change only after global appliance apply.",
+    label: "Delete ISO",
+  });
+  if (!confirmed) return;
+  const body = new FormData();
+  body.set("csrf", csrf);
+  body.set("installer_iso_path", data.path);
+  const response = await fetch("/esxi-pxe/isos/delete", {
+    method: "POST",
+    body,
+    credentials: "same-origin",
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.detail || "The installer ISO could not be deleted.");
+  }
+  window.location.assign("/network-boot#esxi-pxe-isos-panel");
+}
+
+function initializeEsxiInstallerIsosTable() {
+  const element = document.getElementById("esxi-installer-isos-table");
+  if (!(element instanceof HTMLElement)) return;
+  const canWrite = element.dataset.canWrite === "true";
+  window.AtlasoUiPatterns.createGrid({
+    element,
+    fallback: `#${element.dataset.fallbackId}`,
+    pattern: "direct-edit",
+    permission: {
+      allowed: canWrite,
+      message: "You have read-only access to ESXi installer ISOs.",
+    },
+    options: {
+      data: JSON.parse(element.dataset.rows || "[]"),
+      index: "path",
+      layout: "fitColumns",
+      height: "calc(100vh - 300px)",
+      placeholder: "No installer ISOs found.",
+      rowContextMenu: canWrite ? [
+        {
+          label: "Delete installer ISO",
+          action: async (_event, row) => {
+            try {
+              await deleteEsxiInstallerIso(row, element.dataset.csrf || "");
+            } catch (error) {
+              showTransientGridStatus(error instanceof Error ? error.message : "The installer ISO could not be deleted.");
+            }
+          },
+        },
+      ] : false,
+      columns: [
+        { title: "Name", field: "name", minWidth: 260, widthGrow: 1.4 },
+        { title: "Relative path", field: "relative_path", minWidth: 260, formatter: (cell) => `<code>${escapeHtml(cell.getValue())}</code>`, widthGrow: 1.2 },
+        { title: "Source", field: "source_label", minWidth: 150 },
+        { title: "Source date", field: "source_at", minWidth: 190 },
+        { title: "Size", field: "size_bytes", minWidth: 120, formatter: (cell) => formatMonitorBytes(cell.getValue()) },
+      ],
+    },
+  });
+}
+
+function initializeEsxiPxePreviewTable() {
+  const element = document.getElementById("esxi-pxe-preview-table");
+  if (!(element instanceof HTMLElement)) return;
+  window.AtlasoUiPatterns.createGrid({
+    element,
+    fallback: `#${element.dataset.fallbackId}`,
+    pattern: "read-only",
+    options: {
+      data: JSON.parse(element.dataset.rows || "[]"),
+      layout: "fitColumns",
+      height: "calc(100vh - 250px)",
+      placeholder: "No rendered ESXi PXE artifacts.",
+      columns: [
+        { title: "Host", field: "hostname", minWidth: 190, frozen: true },
+        { title: "PXELINUX", field: "pxelinux_config_path", minWidth: 280, formatter: (cell) => `<code>${escapeHtml(cell.getValue())}</code>` },
+        { title: "UEFI boot.cfg", field: "uefi_tftp_boot_cfg_path", minWidth: 280, formatter: (cell) => `<code>${escapeHtml(cell.getValue())}</code>` },
+        { title: "Kickstart URL", field: "kickstart_url", minWidth: 260, formatter: (cell) => `<code>${escapeHtml(cell.getValue() || "interactive installer")}</code>` },
+        { title: "Image URL", field: "image_http_url", minWidth: 340, formatter: (cell) => `<code>${escapeHtml(cell.getValue())}</code>` },
+      ],
+    },
+  });
 }
 
 function showEsxiCustomVariableError(message) {
@@ -8928,7 +9015,7 @@ function initializeEsxiCustomVariablesTable() {
       data: rows,
       index: "id",
       layout: "fitColumns",
-      height: "360px",
+      height: "calc(100vh - 250px)",
       placeholder: "No custom Kickstart variables configured.",
       columns,
       rowContextMenu: canWrite ? [
@@ -18337,14 +18424,12 @@ function initializeNetworkBootPage() {
         },
         {
           label: "Download latest stable",
-          disabled: (_event, row) => row.getData().key === "inventory",
           action: async (_event, row) => {
             await queueEnvironmentDownload(row.getData());
           },
         },
         {
           label: "Upload release asset",
-          disabled: (_event, row) => row.getData().key === "inventory",
           action: (_event, row) => {
             openEnvironmentUpload(row.getData());
           },
@@ -18371,31 +18456,6 @@ function initializeNetworkBootPage() {
         { title: "Ready", field: "ready", width: 85, formatter: "tickCross" },
         { title: "Verification", field: "verification_method", minWidth: 220 },
         { title: "Risk", field: "risk", minWidth: 240 },
-        {
-          title: "Actions",
-          field: "key",
-          minWidth: 190,
-          headerSort: false,
-          formatter: (cell) => {
-            if (!canWrite) return "";
-            if (cell.getValue() === "inventory") return '<span class="muted">Bundled</span>';
-            return '<button class="button tiny secondary" type="button" data-network-boot-action="download">Download</button><button class="button tiny ghost" type="button" data-network-boot-action="upload">Upload</button>';
-          },
-          cellClick: async (event, cell) => {
-            const button = event.target.closest("[data-network-boot-action]");
-            if (!(button instanceof HTMLButtonElement)) return;
-            const data = cell.getRow().getData();
-            try {
-              if (button.dataset.networkBootAction === "download") {
-                await queueEnvironmentDownload(data);
-              } else if (button.dataset.networkBootAction === "upload") {
-                openEnvironmentUpload(data);
-              }
-            } catch (error) {
-              showTransientGridStatus(error instanceof Error ? error.message : "The Network Boot media task could not be queued.");
-            }
-          },
-        },
       ],
     },
   });
@@ -18538,6 +18598,8 @@ document.addEventListener("DOMContentLoaded", initializeDhcpReservationsTable);
 document.addEventListener("DOMContentLoaded", initializeDhcpLeasesTable);
 document.addEventListener("DOMContentLoaded", initializeDhcpLeaseReservationActions);
 document.addEventListener("DOMContentLoaded", initializeEsxiPxeHostsTable);
+document.addEventListener("DOMContentLoaded", initializeEsxiInstallerIsosTable);
+document.addEventListener("DOMContentLoaded", initializeEsxiPxePreviewTable);
 document.addEventListener("DOMContentLoaded", initializeEsxiCustomVariablesTable);
 document.addEventListener("DOMContentLoaded", initializeCaProfilesTable);
 document.addEventListener("DOMContentLoaded", initializeCaCertificatesTable);

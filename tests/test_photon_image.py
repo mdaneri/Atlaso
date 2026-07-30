@@ -2,8 +2,10 @@ from pathlib import Path
 
 import hashlib
 import importlib.util
+import json
 import struct
 import sys
+import zipfile
 
 
 def load_lifecycle_runner():
@@ -41,6 +43,47 @@ def test_photon_image_installs_fixed_size_atlaso_grub_branding():
     assert "/opt/atlaso/bin/atlaso-install-boot-branding" in deploy
     assert '"${SshUser}@${IpAddress}:$remoteBootThemePath"' in deploy
     assert '"${SshUser}@${IpAddress}:$remoteBootBackgroundPath"' in deploy
+
+
+def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path):
+    path = Path("scripts/build_inventory_linux_package.py")
+    spec = importlib.util.spec_from_file_location("build_inventory_linux_package", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    source = tmp_path / "source"
+    (source / "legal-info").mkdir(parents=True)
+    kernel = b"kernel"
+    initrd = b"initrd"
+    (source / "bzImage").write_bytes(kernel)
+    (source / "rootfs.cpio.gz").write_bytes(initrd)
+    (source / "legal-info/LICENSE").write_text("license\n", encoding="utf-8")
+    (source / "manifest.json").write_text(
+        json.dumps(
+            {
+                "kind": "atlaso-inventory-linux",
+                "schema_version": 1,
+                "version": "2026.05.1",
+                "artifacts": {
+                    "bzImage": hashlib.sha256(kernel).hexdigest(),
+                    "rootfs.cpio.gz": hashlib.sha256(initrd).hexdigest(),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    first = module.package_inventory_linux(source, tmp_path / "first")
+    second = module.package_inventory_linux(source, tmp_path / "second")
+    assert hashlib.sha256(first.read_bytes()).digest() == hashlib.sha256(second.read_bytes()).digest()
+    with zipfile.ZipFile(first) as package:
+        assert {"manifest.json", "bzImage", "rootfs.cpio.gz", "legal-info/LICENSE"} <= set(package.namelist())
+
+    deploy = Path("scripts/windows/vmware/deploy-wheel.ps1").read_text(encoding="utf-8")
+    release = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    assert "SkipInventoryLinuxSync" in deploy
+    assert "Installed Atlaso Inventory Linux" in deploy
+    assert "Build Inventory Linux package" in release
+    assert "--inventory-package" in release
 
 
 def test_photon_provisioning_management_network_matches_eth0_only():

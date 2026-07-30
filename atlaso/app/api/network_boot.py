@@ -209,10 +209,10 @@ def sync_network_boot_environment(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     rows = {row["key"]: row for row in catalog_rows(db)}
-    if environment_key not in rows or environment_key == "inventory":
+    if environment_key not in rows:
         raise HTTPException(
             status_code=422,
-            detail="Select one of the four downloadable maintenance environments.",
+            detail="Select a downloadable Network Boot environment.",
         )
     active = db.execute(
         select(Job).where(
@@ -268,10 +268,10 @@ async def upload_network_boot_environment(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     rows = {row["key"]: row for row in catalog_rows(db)}
-    if environment_key not in rows or environment_key == "inventory":
+    if environment_key not in rows:
         raise HTTPException(
             status_code=422,
-            detail="Select one of the four uploadable maintenance environments.",
+            detail="Select an uploadable Network Boot environment.",
         )
     active = db.execute(
         select(Job).where(

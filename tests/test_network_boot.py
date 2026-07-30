@@ -690,6 +690,75 @@ def test_shredos_requires_published_full_image_digest(monkeypatch):
         _release_descriptor("shredos")
 
 
+def test_inventory_linux_resolves_versioned_atlaso_release_package(monkeypatch):
+    payload = {
+        "draft": False,
+        "prerelease": False,
+        "assets": [
+            {
+                "name": "atlaso-inventory-linux-2026.05.1.zip",
+                "browser_download_url": "https://github.com/mdaneri/Atlaso/releases/download/v0.9.52/atlaso-inventory-linux-2026.05.1.zip",
+                "digest": "sha256:" + ("b" * 64),
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        "atlaso.app.services.network_boot._fetch_https_text",
+        lambda *_args, **_kwargs: json.dumps(payload),
+    )
+    descriptor = _release_descriptor("inventory")
+    assert descriptor["version"] == "2026.05.1"
+    assert descriptor["sha256"] == "b" * 64
+
+
+def test_inventory_linux_package_upload_installs_verified_immutable_media(
+    db_session,
+    monkeypatch,
+    tmp_path,
+):
+    kernel = b"inventory kernel"
+    initrd = b"inventory initramfs"
+    source_manifest = {
+        "kind": "atlaso-inventory-linux",
+        "schema_version": 1,
+        "environment": "inventory",
+        "version": "2026.05.1",
+        "artifacts": {
+            "bzImage": hashlib.sha256(kernel).hexdigest(),
+            "rootfs.cpio.gz": hashlib.sha256(initrd).hexdigest(),
+        },
+    }
+    package = tmp_path / "atlaso-inventory-linux-2026.05.1.zip"
+    with zipfile.ZipFile(package, "w") as archive:
+        archive.writestr("manifest.json", json.dumps(source_manifest))
+        archive.writestr("bzImage", kernel)
+        archive.writestr("rootfs.cpio.gz", initrd)
+    package_digest = hashlib.sha256(package.read_bytes()).hexdigest()
+    monkeypatch.setattr(
+        network_boot,
+        "_release_descriptor",
+        lambda _key: {
+            "version": "2026.05.1",
+            "filename": package.name,
+            "asset_url": "https://example.test/" + package.name,
+            "sha256": package_digest,
+        },
+    )
+
+    media = sync_network_boot_media(
+        db_session,
+        environment_key="inventory",
+        media_root=tmp_path / "media",
+        uploaded_artifact=package,
+        uploaded_filename=package.name,
+    )
+    manifest = json.loads(media.manifest_json)
+
+    assert manifest["boot"]["kernel"].endswith("/inventory/2026.05.1/bzImage")
+    assert manifest["acquisition"] == "upload"
+    assert (Path(media.installed_path) / "rootfs.cpio.gz").read_bytes() == initrd
+
+
 def test_boot_media_archive_rejects_traversal(tmp_path):
     archive = tmp_path / "media.zip"
     with zipfile.ZipFile(archive, "w") as rows:

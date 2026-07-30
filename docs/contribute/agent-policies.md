@@ -375,7 +375,9 @@ status: current
   it with `scp`, installs it into `/opt/atlaso/.venv`, syncs `scripts/appliance/atlaso-helper` to
   `/opt/atlaso/bin/atlaso-helper`, provisions every checked-in public release key under `/etc/atlaso/update-trust.d`,
   restores venv permissions, restarts `atlaso.service`, and verifies guest plus host `/openapi.json` with a readiness
-  retry. Packer image definitions must explicitly stage `image/common/update-trust`, and provisioning must fail rather
+  retry. The default deploy also builds and installs the independently versioned Inventory Linux package; use
+  `-SkipInventoryLinuxSync` only for a code-only patch that intentionally preserves existing boot media. Packer image
+  definitions must explicitly stage `image/common/update-trust`, and provisioning must fail rather
   than build an appliance with no valid public release key. Use `-IpAddress <appliance-ip>` when the VM IP is known, or
   `-VmxPath "<path-to-vmx>"` for VMware discovery; do not pipe the VMX path or put the `.vmx` path on a separate line
   because PowerShell will try to execute it. If uvicorn needs longer after reinstall, pass

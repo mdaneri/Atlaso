@@ -51,14 +51,14 @@
            data-can-write="{{ 'true' if network_boot_can_write else 'false' }}"
            data-fallback-id="network-boot-environments-fallback"></div>
       <table id="network-boot-environments-fallback" class="data-table compact">
-        <thead><tr><th>Environment</th><th>Enabled</th><th>Desired</th><th>Newest installed</th><th>Active</th><th>Ready</th><th>Verification</th><th>Risk</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Environment</th><th>Enabled</th><th>Desired</th><th>Newest installed</th><th>Active</th><th>Ready</th><th>Verification</th><th>Risk</th></tr></thead>
         <tbody>
           {% for row in network_boot_environments %}
-            <tr><td>{{ row.label }}</td><td>{{ "Yes" if row.enabled else "No" }}</td><td>{{ row.desired_version or "Not selected" }}</td><td>{{ row.installed_versions[0].version if row.installed_versions else "Not installed" }}</td><td>{{ row.active_version or "Not active" }}</td><td>{{ "Ready" if row.ready else "Pending" }}</td><td>{{ row.verification_method }}</td><td>{{ row.risk }}</td><td>{{ "Bundled" if row.key == "inventory" else "Download or upload" }}</td></tr>
+            <tr><td>{{ row.label }}</td><td>{{ "Yes" if row.enabled else "No" }}</td><td>{{ row.desired_version or "Not selected" }}</td><td>{{ row.installed_versions[0].version if row.installed_versions else "Not installed" }}</td><td>{{ row.active_version or "Not active" }}</td><td>{{ "Ready" if row.ready else "Pending" }}</td><td>{{ row.verification_method }}</td><td>{{ row.risk }}</td></tr>
           {% endfor %}
         </tbody>
       </table>
-      <p class="muted">Download resolves the latest stable release. Upload accepts the same upstream asset from your workstation. Both paths verify the authoritative digest or signature before creating an immutable cache entry. Enablement and version selection remain pending until global appliance apply.</p>
+      <p class="muted">Right-click a row for Enable/Disable, Download, and Upload actions. Downloads resolve the latest stable release; uploads accept the matching upstream asset. Both paths verify the authoritative digest or signature before creating an immutable cache entry. Enablement and version selection remain pending until global appliance apply.</p>
     </div>
     <div id="network-boot-settings-panel" class="tab-panel" role="tabpanel" hidden>
       <div class="settings-list compact-settings-list">
@@ -480,8 +480,16 @@
             </form>
           </details>
         {% endif %}
-        <table class="data-table compact">
-          <thead><tr><th>Name</th><th>Relative path</th><th>Source</th><th>Source date</th><th>Size</th><th>Actions</th></tr></thead>
+        <div
+          id="esxi-installer-isos-table"
+          class="tabulator-shell"
+          data-rows='{{ esxi_installer_isos | tojson }}'
+          data-csrf="{{ csrf_token }}"
+          data-can-write="{{ 'true' if esxi_can_write else 'false' }}"
+          data-fallback-id="esxi-installer-isos-fallback"
+        ></div>
+        <table id="esxi-installer-isos-fallback" class="data-table compact">
+          <thead><tr><th>Name</th><th>Relative path</th><th>Source</th><th>Source date</th><th>Size</th></tr></thead>
           <tbody>
             {% for iso in esxi_installer_isos %}
               <tr>
@@ -490,26 +498,24 @@
                 <td><span class="status-pill {{ 'good' if iso.source == 'uploaded' else 'muted' }}">{{ iso.source_label }}</span></td>
                 <td>{{ iso.source_at }}</td>
                 <td>{{ iso.size_bytes }}</td>
-                <td>
-                  {% if esxi_can_write %}
-                    <form action="/esxi-pxe/isos/delete" method="post" data-confirm-modal data-confirm-title="Delete {{ iso.name }}?" data-confirm-message="This removes the installer ISO from the ESX_HOST depot folder and clears ESXi PXE host/default references to it. Generated PXE runtime files are cleaned on the next global ESXi PXE apply." data-confirm-label="Delete ISO">
-                      <input type="hidden" name="csrf" value="{{ csrf_token }}">
-                      <input type="hidden" name="installer_iso_path" value="{{ iso.path }}">
-                      <button class="button tiny danger" type="submit">Delete</button>
-                    </form>
-                  {% endif %}
-                </td>
               </tr>
             {% else %}
-              <tr><td colspan="6" class="muted">No installer ISOs found.</td></tr>
+              <tr><td colspan="5" class="muted">No installer ISOs found.</td></tr>
             {% endfor %}
           </tbody>
         </table>
+        <p class="muted">Right-click an installer ISO row to delete it.</p>
       </div>
 
       <div id="esxi-pxe-preview-panel" class="tab-panel" role="tabpanel" hidden>
         {% if esxi_pxe_artifacts %}
-          <table class="data-table compact">
+          <div
+            id="esxi-pxe-preview-table"
+            class="tabulator-shell"
+            data-rows='{{ esxi_pxe_artifacts | tojson }}'
+            data-fallback-id="esxi-pxe-preview-fallback"
+          ></div>
+          <table id="esxi-pxe-preview-fallback" class="data-table compact">
             <thead><tr><th>Host</th><th>PXELINUX</th><th>UEFI boot.cfg</th><th>Kickstart URL</th><th>Image URL</th></tr></thead>
             <tbody>
               {% for artifact in esxi_pxe_artifacts %}

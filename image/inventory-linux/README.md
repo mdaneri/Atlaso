@@ -27,10 +27,19 @@ sudo apt-get install build-essential bison flex cpio rsync bc file wget curl \
   git perl python3 unzip patch gzip bzip2 xz-utils ca-certificates libelf-dev
 ```
 
-The script writes `bzImage`, `rootfs.cpio.gz`, and `manifest.json` beneath
-`image/inventory-linux/output/`. The output directory is intentionally ignored;
-appliance packaging invokes the same build and stages those three immutable
-artifacts as the built-in `inventory` media version.
+The script writes `bzImage`, `rootfs.cpio.gz`, `manifest.json`, and Buildroot
+legal metadata beneath `image/inventory-linux/output/`. The output directory is
+intentionally ignored. Package the verified result with:
+
+```bash
+python scripts/build_inventory_linux_package.py
+```
+
+This creates the deterministic, independently versioned
+`dist/inventory-linux/atlaso-inventory-linux-<version>.zip` release asset. Full
+appliance images preinstall its runtime files; Atlaso releases publish the same
+package so Network Boot can download or upload Inventory Linux updates without
+coupling them to the Python wheel version.
 
 The kernel fragment enables common server Ethernet, NVMe, SATA, SCSI, RAID, and
 virtio drivers. The userspace collector reads DMI, CPU, memory, block-device,

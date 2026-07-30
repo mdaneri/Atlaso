@@ -13,6 +13,7 @@ param(
     [switch]$SkipHelperSync,
     [switch]$SkipConsoleAssetSync,
     [switch]$SkipBootBrandingSync,
+    [switch]$SkipInventoryLinuxSync,
     [string]$WheelPath = '',
     [string]$SshPassword = $env:ATLASO_DEPLOY_SSH_PASSWORD,
     [switch]$ResetVaultEntries,
@@ -235,6 +236,7 @@ function Invoke-PasswordBackedDeploy {
         [string]$LocalBootInstallerPath = '',
         [string]$LocalBootThemePath = '',
         [string]$LocalBootBackgroundPath = '',
+        [string]$LocalInventoryLinuxPackagePath = '',
         [Parameter(Mandatory = $true)][string[]]$LocalTrustKeyPaths,
         [Parameter(Mandatory = $true)][string]$LocalWorkerServicePath,
         [Parameter(Mandatory = $true)][string]$LocalScriptPath,
@@ -246,6 +248,7 @@ function Invoke-PasswordBackedDeploy {
         [string]$RemoteBootInstaller = '',
         [string]$RemoteBootTheme = '',
         [string]$RemoteBootBackground = '',
+        [string]$RemoteInventoryLinuxPackage = '',
         [Parameter(Mandatory = $true)][string[]]$RemoteTrustKeys,
         [Parameter(Mandatory = $true)][string]$RemoteWorkerService,
         [Parameter(Mandatory = $true)][string]$RemoteScript,
@@ -295,6 +298,7 @@ parser.add_argument("--local-console-manager", default="")
 parser.add_argument("--local-boot-installer", default="")
 parser.add_argument("--local-boot-theme", default="")
 parser.add_argument("--local-boot-background", default="")
+parser.add_argument("--local-inventory-linux-package", default="")
 parser.add_argument("--local-trust-key", action="append", default=[])
 parser.add_argument("--local-worker-service", required=True)
 parser.add_argument("--local-script", required=True)
@@ -306,6 +310,7 @@ parser.add_argument("--remote-console-manager", default="")
 parser.add_argument("--remote-boot-installer", default="")
 parser.add_argument("--remote-boot-theme", default="")
 parser.add_argument("--remote-boot-background", default="")
+parser.add_argument("--remote-inventory-linux-package", default="")
 parser.add_argument("--remote-trust-key", action="append", default=[])
 parser.add_argument("--remote-worker-service", required=True)
 parser.add_argument("--remote-script", required=True)
@@ -348,6 +353,10 @@ if args.local_boot_installer:
             (pathlib.Path(args.local_boot_background), args.remote_boot_background),
         ]
     )
+if args.local_inventory_linux_package:
+    uploads.append(
+        (pathlib.Path(args.local_inventory_linux_package), args.remote_inventory_linux_package)
+    )
 
 client = paramiko.SSHClient()
 client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -379,6 +388,9 @@ try:
     remote_boot_installer_argument = args.remote_boot_installer if args.local_boot_installer else ""
     remote_boot_theme_argument = args.remote_boot_theme if args.local_boot_installer else ""
     remote_boot_background_argument = args.remote_boot_background if args.local_boot_installer else ""
+    remote_inventory_linux_package_argument = (
+        args.remote_inventory_linux_package if args.local_inventory_linux_package else ""
+    )
     remote_runtime_dependencies_argument = ":".join(args.remote_runtime_dependency)
     remote_trust_keys_argument = ":".join(args.remote_trust_key)
     command = (
@@ -395,7 +407,8 @@ try:
         f"{shell_quote(args.remote_worker_service)} "
         f"{shell_quote(remote_runtime_dependencies_argument)} "
         f"{shell_quote(remote_trust_keys_argument)} "
-        f"{shell_quote('true' if args.reset_vault_entries else 'false')}"
+        f"{shell_quote('true' if args.reset_vault_entries else 'false')} "
+        f"{shell_quote(remote_inventory_linux_package_argument)}"
     )
     stdin, stdout, stderr = client.exec_command(command, get_pty=True, timeout=args.timeout + 60)
     stdin.write(password + "\n")
@@ -439,6 +452,7 @@ finally:
             '--local-boot-installer', $LocalBootInstallerPath,
             '--local-boot-theme', $LocalBootThemePath,
             '--local-boot-background', $LocalBootBackgroundPath,
+            '--local-inventory-linux-package', $LocalInventoryLinuxPackagePath,
             '--local-script', $LocalScriptPath,
             '--remote-dir', $RemoteDirectoryPath,
             '--remote-wheel', $RemoteWheel,
@@ -447,6 +461,7 @@ finally:
             '--remote-boot-installer', $RemoteBootInstaller,
             '--remote-boot-theme', $RemoteBootTheme,
             '--remote-boot-background', $RemoteBootBackground,
+            '--remote-inventory-linux-package', $RemoteInventoryLinuxPackage,
             '--remote-script', $RemoteScript,
             '--timeout', "$TimeoutSeconds",
             '--poll', "$PollSeconds"
@@ -523,6 +538,26 @@ $trustKeyPaths = @(
         Select-Object -ExpandProperty FullName
 )
 $workerServicePath = Join-Path $resolvedRepoRoot 'image\common\systemd\atlaso-worker.service'
+$inventoryLinuxPackagePath = ''
+if (-not $SkipInventoryLinuxSync) {
+    $inventoryLinuxOutput = Join-Path $resolvedRepoRoot 'image\inventory-linux\output'
+    foreach ($inventoryAsset in @('bzImage', 'rootfs.cpio.gz', 'manifest.json')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $inventoryLinuxOutput $inventoryAsset) -PathType Leaf)) {
+            throw "Bundled Inventory Linux output is missing $inventoryAsset. Run scripts/windows/common/Build-AtlasoInventoryLinux.ps1 or pass -SkipInventoryLinuxSync."
+        }
+    }
+    $inventoryPackageOutput = Join-Path $resolvedRepoRoot 'dist\inventory-linux'
+    Invoke-CheckedCommand -FilePath $Python -WorkingDirectory $resolvedRepoRoot -Arguments @(
+        'scripts/build_inventory_linux_package.py',
+        '--source', $inventoryLinuxOutput,
+        '--output', $inventoryPackageOutput
+    )
+    $inventoryLinuxPackagePath = (
+        Get-ChildItem -LiteralPath $inventoryPackageOutput -Filter 'atlaso-inventory-linux-*.zip' -File |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+    ).FullName
+}
 if (-not $SkipHelperSync -and -not (Test-Path -LiteralPath $helperPath -PathType Leaf)) {
     throw "Atlaso helper script not found: $helperPath"
 }
@@ -559,6 +594,11 @@ $remoteTrustKeyPaths = @(
     }
 )
 $remoteWorkerServicePath = "$($RemoteDirectory.TrimEnd('/'))/atlaso-worker.service"
+$remoteInventoryLinuxPackagePath = if ($inventoryLinuxPackagePath) {
+    "$($RemoteDirectory.TrimEnd('/'))/$(Split-Path -Leaf $inventoryLinuxPackagePath)"
+} else {
+    ''
+}
 $remoteScriptPath = "$($RemoteDirectory.TrimEnd('/'))/atlaso-deploy-wheel.sh"
 
 if (-not $IpAddress) {
@@ -591,6 +631,7 @@ worker_service_path="${9:?worker service path required}"
 runtime_dependency_paths="${10:?runtime dependency wheel paths required}"
 trust_key_paths="${11:?release trust key paths required}"
 reset_vault_entries="${12:-false}"
+inventory_linux_package="${13:-}"
 venv="/opt/atlaso/.venv"
 python="$venv/bin/python"
 
@@ -610,6 +651,61 @@ if [ "$reset_vault_entries" = "true" ]; then
     systemctl stop atlaso-worker.service atlaso.service
     sqlite3 /var/lib/atlaso/atlaso.db 'DROP TABLE IF EXISTS vault_entries;'
     echo "Reset vault_entries table; Atlaso will recreate it from the installed model."
+fi
+if [ -n "$inventory_linux_package" ]; then
+    "$python" - "$inventory_linux_package" <<'PY'
+import hashlib
+import json
+import pathlib
+import re
+import secrets
+import shutil
+import sys
+import tempfile
+import zipfile
+
+package = pathlib.Path(sys.argv[1])
+with zipfile.ZipFile(package) as archive:
+    names = set(archive.namelist())
+    if not {"manifest.json", "bzImage", "rootfs.cpio.gz"} <= names:
+        raise SystemExit("Atlaso Inventory Linux package is incomplete.")
+    manifest = json.loads(archive.read("manifest.json"))
+    version = str(manifest.get("version") or "")
+    if (
+        manifest.get("kind") != "atlaso-inventory-linux"
+        or manifest.get("schema_version") != 1
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,118}[A-Za-z0-9]", version) is None
+    ):
+        raise SystemExit("Atlaso Inventory Linux package identity is invalid.")
+    target = pathlib.Path("/var/lib/atlaso/pxe/media/inventory") / version
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.parent.chmod(0o755)
+    with tempfile.TemporaryDirectory(prefix=".inventory-", dir=target.parent) as temporary:
+        staging = pathlib.Path(temporary)
+        staging.chmod(0o755)
+        for name in ("bzImage", "rootfs.cpio.gz"):
+            destination = staging / name
+            with archive.open(name) as source, destination.open("wb") as output:
+                shutil.copyfileobj(source, output, length=1024 * 1024)
+            actual = hashlib.sha256(destination.read_bytes()).hexdigest()
+            expected = str((manifest.get("artifacts") or {}).get(name) or "").lower()
+            if not secrets.compare_digest(actual, expected):
+                raise SystemExit(f"Atlaso Inventory Linux artifact digest mismatch: {name}")
+            destination.chmod(0o644)
+        (staging / "manifest.json").write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        (staging / "manifest.json").chmod(0o644)
+        if target.exists():
+            for name in ("bzImage", "rootfs.cpio.gz", "manifest.json"):
+                if not (target / name).is_file() or (target / name).read_bytes() != (staging / name).read_bytes():
+                    raise SystemExit(f"Immutable Atlaso Inventory Linux {version} is already installed with different content.")
+            target.chmod(0o755)
+        else:
+            pathlib.Path(temporary).replace(target)
+print(f"Installed Atlaso Inventory Linux {version}.")
+PY
 fi
 install -d -o root -g root -m 0755 /usr/local/bin
 ln -sfn "$venv/bin/atlaso-vault" /usr/local/bin/atlaso-vault
@@ -742,6 +838,9 @@ try {
         $uploadPaths += $bootInstallerPath
     }
     $uploadPaths += $workerServicePath
+    if ($inventoryLinuxPackagePath) {
+        $uploadPaths += $inventoryLinuxPackagePath
+    }
     $uploadPaths += $tempScript
 
     $remoteHelperArgument = if ($SkipHelperSync) { '' } else { $remoteHelperPath }
@@ -769,6 +868,7 @@ try {
             -LocalBootInstallerPath $localBootInstallerArgument `
             -LocalBootThemePath $localBootThemeArgument `
             -LocalBootBackgroundPath $localBootBackgroundArgument `
+            -LocalInventoryLinuxPackagePath $inventoryLinuxPackagePath `
             -LocalTrustKeyPaths $trustKeyPaths `
             -LocalWorkerServicePath $workerServicePath `
             -LocalScriptPath $tempScript `
@@ -780,6 +880,7 @@ try {
             -RemoteBootInstaller $remoteBootInstallerArgument `
             -RemoteBootTheme $remoteBootThemeArgument `
             -RemoteBootBackground $remoteBootBackgroundArgument `
+            -RemoteInventoryLinuxPackage $remoteInventoryLinuxPackagePath `
             -RemoteTrustKeys $remoteTrustKeyPaths `
             -RemoteWorkerService $remoteWorkerServicePath `
             -RemoteScript $remoteScriptPath `
@@ -798,7 +899,7 @@ try {
         Write-Host "Installing wheel and restarting atlaso.service..."
         $remoteRuntimeDependenciesArgument = $remoteRuntimeDependencyPaths -join ':'
         $resetVaultEntriesArgument = if ($ResetVaultEntries) { 'true' } else { 'false' }
-        Invoke-CheckedCommand -FilePath 'ssh' -Arguments @($sshConnectionArguments + '-t', "${SshUser}@${IpAddress}", "sudo sh '$remoteScriptPath' '$remoteWheelPath' '$ReadinessTimeoutSeconds' '$ReadinessPollSeconds' '$remoteHelperArgument' '$remoteConsoleManagerArgument' '$remoteBootInstallerArgument' '$remoteBootThemeArgument' '$remoteBootBackgroundArgument' '$remoteWorkerServicePath' '$remoteRuntimeDependenciesArgument' '$remoteTrustKeysArgument' '$resetVaultEntriesArgument'")
+        Invoke-CheckedCommand -FilePath 'ssh' -Arguments @($sshConnectionArguments + '-t', "${SshUser}@${IpAddress}", "sudo sh '$remoteScriptPath' '$remoteWheelPath' '$ReadinessTimeoutSeconds' '$ReadinessPollSeconds' '$remoteHelperArgument' '$remoteConsoleManagerArgument' '$remoteBootInstallerArgument' '$remoteBootThemeArgument' '$remoteBootBackgroundArgument' '$remoteWorkerServicePath' '$remoteRuntimeDependenciesArgument' '$remoteTrustKeysArgument' '$resetVaultEntriesArgument' '$remoteInventoryLinuxPackagePath'")
     }
 
     if (-not $SkipHostCheck) {
