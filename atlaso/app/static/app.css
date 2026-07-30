@@ -3291,6 +3291,10 @@ textarea {
   gap: 5px;
 }
 
+.kickstart-description-field {
+  grid-column: 1;
+}
+
 .compact-service-field {
   display: grid;
   align-content: start;

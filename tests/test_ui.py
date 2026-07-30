@@ -801,7 +801,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v207" in service_worker.text
+    assert "atlaso-pwa-v209" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -813,9 +813,9 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6" in service_worker.text
-    assert "/static/app.css?v=atlaso-network-boot-20260729-12" in service_worker.text
+    assert "/static/app.css?v=atlaso-network-boot-20260729-13" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in service_worker.text
-    assert "/static/app.js?v=atlaso-network-boot-20260729-22" in service_worker.text
+    assert "/static/app.js?v=atlaso-network-boot-20260729-23" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -835,8 +835,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=atlaso-network-boot-20260729-22"),
-        (public_base, "/static/app.js?v=atlaso-network-boot-20260729-22"),
+        (base, "/static/app.js?v=atlaso-network-boot-20260729-23"),
+        (public_base, "/static/app.js?v=atlaso-network-boot-20260729-23"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5"
@@ -1006,7 +1006,9 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     assert custom_variables_block.count(create_grid) == 1
     assert custom_variables_block.count('pattern: "read-only"') == 1
     assert "initializeAtlasoResourceWizard({" in custom_variables_block
-    assert 'data-atlaso-wizard-add' in custom_variables_block
+    assert "includeNewRow: false" in custom_variables_block
+    assert 'addLauncherSelector: "[data-esxi-custom-variable-add]"' in custom_variables_block
+    assert "add-row-button" not in custom_variables_block
     assert 'editLabel: "Edit"' in custom_variables_block
     assert 'deleteLabel: "Remove"' in custom_variables_block
     assert 'confirmLabel: "Remove custom variable"' in custom_variables_block
@@ -1315,9 +1317,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=atlaso-network-boot-20260729-12" in page.text
+    assert "/static/app.css?v=atlaso-network-boot-20260729-13" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in page.text
-    assert "/static/app.js?v=atlaso-network-boot-20260729-22" in page.text
+    assert "/static/app.js?v=atlaso-network-boot-20260729-23" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -3484,11 +3486,17 @@ def test_esxi_pxe_ui_create_apply_and_job_redaction(client):
     assert 'name="vault_id"' not in page.text
     assert 'data-monaco-language="atlaso-kickstart"' in page.text
     assert '<textarea name="description" rows="3" maxlength="500"></textarea>' in page.text
+    assert 'class="kickstart-description-field"' in page.text
+    app_css = Path("atlaso/app/static/app.css").read_text()
+    kickstart_description_css = app_css.split(".kickstart-description-field {", 1)[1].split("}", 1)[0]
+    assert "grid-column: 1;" in kickstart_description_css
     host_tab = page.text.index('data-tab-target="esxi-pxe-hosts-panel"')
     kickstart_tab = page.text.index('data-tab-target="esxi-pxe-editor-panel"')
     custom_variables_tab = page.text.index('data-tab-target="esxi-pxe-custom-variables-panel"')
     iso_tab = page.text.index('data-tab-target="esxi-pxe-isos-panel"')
-    assert host_tab < kickstart_tab < custom_variables_tab < iso_tab
+    preview_tab = page.text.index('data-tab-target="esxi-pxe-preview-panel"')
+    add_custom_variable = page.text.index("data-esxi-custom-variable-add")
+    assert host_tab < kickstart_tab < custom_variables_tab < iso_tab < preview_tab < add_custom_variable
     assert 'id="esxi-custom-variables-table"' in page.text
     assert "Custom variable name" in page.text
     assert "Default value, if any" in page.text

@@ -273,6 +273,7 @@
       <button class="tab-button" type="button" role="tab" data-tab-target="esxi-pxe-custom-variables-panel" aria-controls="esxi-pxe-custom-variables-panel" aria-selected="false">Custom Variables</button>
       <button class="tab-button" type="button" role="tab" data-tab-target="esxi-pxe-isos-panel" aria-controls="esxi-pxe-isos-panel" aria-selected="false">Installer ISOs</button>
       <button class="tab-button" type="button" role="tab" data-tab-target="esxi-pxe-preview-panel" aria-controls="esxi-pxe-preview-panel" aria-selected="false">Preview</button>
+      {% if esxi_can_write %}<button class="tab-button" type="button" aria-haspopup="dialog" aria-controls="esxi-custom-variable-wizard-dialog" data-esxi-custom-variable-add>+ Add custom variable</button>{% endif %}
     </div>
 
     <div class="tab-panels">
@@ -625,7 +626,7 @@
         <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity">
           <div class="form-grid">
             <label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Unique operator-facing name for this database-owned Kickstart.">i</button></span><input name="name" required maxlength="120"></label>
-            <label class="full"><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Optional operator note; it is not added to generated source.">i</button></span><textarea name="description" rows="3" maxlength="500"></textarea></label>
+            <label class="kickstart-description-field"><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Optional operator note; it is not added to generated source.">i</button></span><textarea name="description" rows="3" maxlength="500"></textarea></label>
           </div>
         </section>
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="source">

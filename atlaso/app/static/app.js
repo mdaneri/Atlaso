@@ -1219,7 +1219,7 @@ function initializeAtlasoResourceWizard(config) {
   const csrf = element.dataset.csrf || form.elements.namedItem("csrf")?.value || "";
   let table = null;
   let wizard = null;
-  const rows = [...config.rows, config.newRow];
+  const rows = config.includeNewRow === false ? [...config.rows] : [...config.rows, config.newRow];
   const reportActionError = (error) => {
     const message = error instanceof Error ? error.message : String(error || "The resource action failed.");
     const status = config.actionErrorSelector
@@ -1384,6 +1384,8 @@ function initializeAtlasoResourceWizard(config) {
       if (recordId) {
         const existingRow = table.getRow(recordId) || table.getRow(Number(recordId));
         await existingRow?.update(resource);
+      } else if (config.includeNewRow === false) {
+        await table.addRow(resource, true);
       } else {
         await table.addRow(resource, true, config.newRow.id);
       }
@@ -1393,10 +1395,17 @@ function initializeAtlasoResourceWizard(config) {
       return { valid: true };
     },
   });
-  element.addEventListener("click", (event) => {
-    const launcher = event.target.closest("[data-atlaso-wizard-add]");
-    if (launcher instanceof HTMLButtonElement) openResource(config.newRow, launcher);
-  });
+  if (config.addLauncherSelector) {
+    document.querySelectorAll(config.addLauncherSelector).forEach((launcher) => {
+      if (!(launcher instanceof HTMLButtonElement)) return;
+      launcher.addEventListener("click", () => openResource(config.newRow, launcher));
+    });
+  } else {
+    element.addEventListener("click", (event) => {
+      const launcher = event.target.closest("[data-atlaso-wizard-add]");
+      if (launcher instanceof HTMLButtonElement) openResource(config.newRow, launcher);
+    });
+  }
   return { grid, table, wizard };
 }
 
@@ -8907,22 +8916,20 @@ function initializeEsxiCustomVariablesTable() {
     {
       title: "Custom variable name",
       field: "name",
-      formatter: (cell) => cell.getRow().getData().is_new
-        ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add custom variable</button>'
-        : `<code>custom.${escapeHtml(cell.getValue())}</code>`,
+      formatter: (cell) => `<code>custom.${escapeHtml(cell.getValue())}</code>`,
       minWidth: 220,
     },
     {
       title: "Description",
       field: "description",
-      formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || "Not set"),
+      formatter: (cell) => escapeHtml(cell.getValue() || "Not set"),
       minWidth: 260,
       widthGrow: 1.5,
     },
     {
       title: "Default value, if any",
       field: "default_value",
-      formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || "Not set"),
+      formatter: (cell) => escapeHtml(cell.getValue() || "Not set"),
       minWidth: 260,
       widthGrow: 1.2,
     },
@@ -8952,6 +8959,8 @@ function initializeEsxiCustomVariablesTable() {
     dialogId: "esxi-custom-variable-wizard-dialog",
     rows,
     newRow: { id: "__new__", name: "", description: "", default_value: "", is_new: true },
+    includeNewRow: false,
+    addLauncherSelector: "[data-esxi-custom-variable-add]",
     resourceName: "variable",
     createUrl: "/esxi-pxe/custom-variables",
     editUrl: (id) => `/esxi-pxe/custom-variables/${encodeURIComponent(id)}`,
