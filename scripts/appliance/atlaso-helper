@@ -76,6 +76,13 @@ COMMANDS: dict[str, set[str]] = {
     "console": {"disable-services", "restore-services", "status"},
     "wan": {"validate", "apply"},
 }
+
+
+def _sha256_file(path: Path) -> str:
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
 SYSTEMD_RUN_REAL_ACTIONS = {
     "apply",
     "reload",
@@ -175,6 +182,8 @@ DNSMASQ_DNSSEC_TRUST_ANCHOR_CANDIDATES = [
     Path("/usr/share/doc/dnsmasq/trust-anchors.conf"),
 ]
 ESXI_PXE_APPLY_DIR = Path("/var/lib/atlaso/apply/esxi-pxe")
+NETWORK_BOOT_MEDIA_ROOT = Path("/var/lib/atlaso/pxe/media")
+NETWORK_BOOT_HTTP_ROOT = Path("/var/lib/atlaso/pxe/http")
 ESXI_PXE_HTTP_BASE = Path("/var/lib/atlaso/pxe/http/esxi")
 ESXI_PXE_HTTP_ROOT = Path("/var/lib/atlaso/pxe/http/esxi/ks")
 ESXI_KICKSTART_HTTP_PREFIX = "/pxe/esxi/ks"
@@ -1286,6 +1295,84 @@ def _esxi_pxe_manifest_errors(payload: dict) -> list[str]:
     enabled_ids: set[int] = set()
     iso_root = ESXI_INSTALLER_ISO_ROOT.resolve()
     errors.extend(_esxi_pxe_boot_errors(payload.get("boot") or {"enabled": False}))
+    network_boot = payload.get("network_boot")
+    if network_boot is not None and not isinstance(network_boot, dict):
+        errors.append("Network Boot manifest must be an object.")
+    elif isinstance(network_boot, dict):
+        if Path(str(network_boot.get("media_root") or "")).resolve() != NETWORK_BOOT_MEDIA_ROOT.resolve():
+            errors.append(f"Network Boot media_root must be {NETWORK_BOOT_MEDIA_ROOT}.")
+        if Path(str(network_boot.get("http_root") or "")).resolve() != NETWORK_BOOT_HTTP_ROOT.resolve():
+            errors.append(f"Network Boot http_root must be {NETWORK_BOOT_HTTP_ROOT}.")
+        environments = network_boot.get("environments")
+        if not isinstance(environments, list):
+            errors.append("Network Boot environments must be a list.")
+        else:
+            seen_environment_keys: set[str] = set()
+            for environment in environments:
+                if not isinstance(environment, dict):
+                    errors.append("Network Boot environment entry must be an object.")
+                    continue
+                key = str(environment.get("key") or "")
+                if key not in {"inventory", "memtest86plus", "shredos", "gparted", "clonezilla"}:
+                    errors.append(f"Network Boot environment {key or '<missing>'} is not allowlisted.")
+                    continue
+                if key in seen_environment_keys:
+                    errors.append(f"Network Boot environment {key} is duplicated.")
+                seen_environment_keys.add(key)
+                desired_version = str(environment.get("desired_version") or "")
+                installed_path_value = str(environment.get("installed_path") or "")
+                if environment.get("enabled") and not desired_version:
+                    errors.append(f"Network Boot environment {key} requires a verified desired version.")
+                if not desired_version:
+                    continue
+                if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,118}[A-Za-z0-9]", desired_version):
+                    errors.append(f"Network Boot environment {key} desired version is invalid.")
+                    continue
+                installed_path = Path(installed_path_value).resolve()
+                expected_root = (NETWORK_BOOT_MEDIA_ROOT / key).resolve()
+                if not installed_path.is_relative_to(expected_root) or installed_path.name != desired_version:
+                    errors.append(
+                        f"Network Boot environment {key} installed path must be the immutable desired version under {expected_root}."
+                    )
+                elif not installed_path.is_dir():
+                    errors.append(f"Network Boot environment {key} verified media directory is missing.")
+                manifest = environment.get("manifest")
+                if not isinstance(manifest, dict) or manifest.get("schema_version") != 1:
+                    errors.append(f"Network Boot environment {key} installed manifest is invalid.")
+                elif str(manifest.get("environment") or key) != key:
+                    errors.append(f"Network Boot environment {key} installed manifest identity does not match.")
+                else:
+                    manifest_path = installed_path / "manifest.json"
+                    try:
+                        installed_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    except (OSError, json.JSONDecodeError):
+                        errors.append(f"Network Boot environment {key} installed manifest file is unreadable.")
+                        continue
+                    if installed_manifest != manifest:
+                        errors.append(f"Network Boot environment {key} installed manifest does not match desired state.")
+                        continue
+                    artifacts = manifest.get("artifacts")
+                    if not isinstance(artifacts, dict) or not artifacts:
+                        errors.append(f"Network Boot environment {key} artifact digests are missing.")
+                        continue
+                    for filename, expected_digest in artifacts.items():
+                        normalized_name = str(filename).replace("\\", "/")
+                        target = (installed_path / normalized_name).resolve()
+                        if (
+                            normalized_name.startswith("/")
+                            or ".." in Path(normalized_name).parts
+                            or not target.is_relative_to(installed_path)
+                            or not target.is_file()
+                        ):
+                            errors.append(f"Network Boot environment {key} artifact {normalized_name} is unsafe or missing.")
+                            continue
+                        expected = str(expected_digest).lower()
+                        if not re.fullmatch(r"[0-9a-f]{64}", expected):
+                            errors.append(f"Network Boot environment {key} artifact {normalized_name} digest is invalid.")
+                            continue
+                        actual = _sha256_file(target)
+                        if not hmac.compare_digest(actual, expected):
+                            errors.append(f"Network Boot environment {key} artifact {normalized_name} failed SHA-256 verification.")
     for row in payload.get("kickstarts", []):
         if not isinstance(row, dict):
             errors.append("Kickstart entry must be an object.")
@@ -1628,10 +1715,26 @@ def _esxi_pxe_nginx_config(port: int) -> str:
             "server {",
             f"    listen {port};",
             "    server_name _;",
+            "    location = /pxe/boot.ipxe {",
+            "        proxy_pass http://127.0.0.1:8000;",
+            "        proxy_set_header Host $http_host;",
+            "        proxy_set_header X-Real-IP $remote_addr;",
+            "    }",
+            "    location /pxe/inventory/ {",
+            "        client_max_body_size 256k;",
+            "        proxy_pass http://127.0.0.1:8000;",
+            "        proxy_set_header Host $http_host;",
+            "        proxy_set_header X-Real-IP $remote_addr;",
+            "    }",
+            "    location /pxe/media/ {",
+            "        proxy_pass http://127.0.0.1:8000;",
+            "        proxy_set_header Host $http_host;",
+            "        proxy_set_header X-Real-IP $remote_addr;",
+            "    }",
             "    location /pxe/esxi/ks/ {",
             "        proxy_pass http://127.0.0.1:8000;",
             "        proxy_http_version 1.1;",
-            "        proxy_set_header Host $host;",
+            "        proxy_set_header Host $http_host;",
             "        proxy_set_header X-Real-IP $remote_addr;",
             "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
             "        proxy_set_header X-Forwarded-Proto http;",
@@ -1644,6 +1747,30 @@ def _esxi_pxe_nginx_config(port: int) -> str:
             "",
         ]
     )
+
+
+def _activate_network_boot_media(payload: dict) -> list[str]:
+    network_boot = payload.get("network_boot")
+    if not isinstance(network_boot, dict):
+        return []
+    NETWORK_BOOT_HTTP_ROOT.mkdir(parents=True, exist_ok=True)
+    activated: list[str] = []
+    for environment in network_boot.get("environments") or []:
+        key = str(environment.get("key") or "")
+        target = NETWORK_BOOT_HTTP_ROOT / key
+        desired_path = str(environment.get("installed_path") or "")
+        if not environment.get("enabled") or not desired_path:
+            if target.is_symlink() or target.is_file():
+                target.unlink(missing_ok=True)
+            continue
+        temporary = NETWORK_BOOT_HTTP_ROOT / f".{key}.{uuid.uuid4().hex}.tmp"
+        try:
+            temporary.symlink_to(Path(desired_path).resolve(), target_is_directory=True)
+            os.replace(temporary, target)
+        finally:
+            temporary.unlink(missing_ok=True)
+        activated.append(key)
+    return activated
 
 
 def _apply_esxi_pxe_manifest(payload: dict) -> int:
@@ -1659,6 +1786,7 @@ def _apply_esxi_pxe_manifest(payload: dict) -> int:
     generated_tftp_files: list[str] = []
     generated_images: list[str] = []
     boot = payload.get("boot") or {}
+    activated_network_boot = _activate_network_boot_media(payload)
     for row in payload.get("kickstarts", []):
         generated_path = Path(str(row["generated_path"])).resolve()
         if row.get("enabled"):
@@ -1684,6 +1812,10 @@ def _apply_esxi_pxe_manifest(payload: dict) -> int:
             target = ESXI_TFTP_ROOT / filename
             _copy_file(source, target)
             generated_tftp_files.append(str(target))
+            if key == "uefi_bootfile":
+                http_target = ESXI_PXE_HTTP_BASE / filename
+                _copy_file(source, http_target)
+                generated_files.append(str(http_target))
         if str(boot.get("bios_second_stage_bootfile") or "") == "pxelinux.0":
             ldlinux_source = _find_pxe_boot_binary("ldlinux.c32")
             if ldlinux_source is None:
@@ -1811,6 +1943,7 @@ def _apply_esxi_pxe_manifest(payload: dict) -> int:
                 "generated_files": generated_files,
                 "generated_tftp_files": generated_tftp_files,
                 "generated_images": generated_images,
+                "activated_network_boot": activated_network_boot,
                 "enabled_kickstarts": len(generated_kickstart_paths),
             },
             sort_keys=True,

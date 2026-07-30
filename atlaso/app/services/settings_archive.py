@@ -42,6 +42,7 @@ from atlaso.app.models import (
     LdapUser,
     ManagedPackage,
     NatRule,
+    NetworkBootEnvironment,
     NtpSettings,
     OidcClient,
     OidcClientRedirectUri,
@@ -242,6 +243,12 @@ def export_settings_archive(db: Session, *, actor: str) -> dict[str, Any]:
     data["vcf_backup_settings"] = _vcf_backup_settings_to_archive(db)
     data["vcf_offline_depot_settings"] = _vcf_offline_depot_settings_to_archive(db)
     data["esxi_pxe_hosts"] = _esxi_pxe_hosts_to_archive(db)
+    data["network_boot_environments"] = [
+        _row_to_dict(row, exclude={"active_version"})
+        for row in db.execute(
+            select(NetworkBootEnvironment).order_by(NetworkBootEnvironment.key)
+        ).scalars().all()
+    ]
     data["esx_storage_volumes"] = [_row_to_dict(row) for row in db.execute(select(EsxStorageVolume).order_by(EsxStorageVolume.name)).scalars().all()]
     volume_names = {row.id: row.name for row in db.execute(select(EsxStorageVolume)).scalars().all()}
     data["esx_nfs_shares"] = [
@@ -512,6 +519,8 @@ def _schedules_to_archive(db: Session) -> list[dict[str, Any]]:
 
 
 def restore_settings_archive(db: Session, archive: dict[str, Any]) -> dict[str, int]:
+    from atlaso.app.services.network_boot import ensure_environment_rows
+
     _validate_archive(archive)
     data = archive["data"]
     _clear_desired_state(db)
@@ -579,6 +588,30 @@ def restore_settings_archive(db: Session, archive: dict[str, Any]) -> dict[str, 
         counts[key] = _insert_rows(db, SCALAR_TABLES[key], data.get(key, []))
     db.flush()
     counts["esxi_pxe_hosts"] = _restore_esxi_pxe_hosts(db, data.get("esxi_pxe_hosts", []))
+    for state in ensure_environment_rows(db):
+        state.enabled = False
+        state.desired_version = ""
+        state.active_version = ""
+        db.add(state)
+    for row in data.get("network_boot_environments", []):
+        payload = _model_kwargs(
+            NetworkBootEnvironment,
+            row,
+            exclude={"active_version"},
+        )
+        payload["active_version"] = ""
+        state = db.get(NetworkBootEnvironment, payload["key"])
+        if state is None:
+            state = NetworkBootEnvironment(**payload)
+        else:
+            for field, value in payload.items():
+                setattr(state, field, value)
+        db.add(state)
+    db.flush()
+    ensure_environment_rows(db)
+    counts["network_boot_environments"] = len(
+        db.execute(select(NetworkBootEnvironment)).scalars().all()
+    )
     counts["esx_storage_settings"] = _insert_rows(db, EsxStorageSettings, data.get("esx_storage_settings", []))
     counts["esx_storage_volumes"] = _restore_esx_storage_volumes(db, data.get("esx_storage_volumes", []))
     counts["esx_nfs_shares"] = _restore_esx_nfs_shares(db, data.get("esx_nfs_shares", []))
@@ -593,8 +626,15 @@ def restore_settings_archive(db: Session, archive: dict[str, Any]) -> dict[str, 
 
 
 def factory_reset_desired_state(db: Session) -> dict[str, int]:
+    from atlaso.app.services.network_boot import ensure_environment_rows
+
     _clear_desired_state(db)
     seed_initial_data(db, include_examples=False)
+    for state in ensure_environment_rows(db):
+        state.enabled = False
+        state.desired_version = ""
+        state.active_version = ""
+        db.add(state)
     _disable_startup_example_seed(db)
     _force_services_stopped_unconfigured(db)
     db.commit()
@@ -619,6 +659,9 @@ def desired_state_counts(db: Session) -> dict[str, int]:
     counts["oidc_subjects"] = len(db.execute(select(OidcSubject)).scalars().all())
     counts["vcf_backup_settings"] = len(db.execute(select(VcfBackupSettings)).scalars().all())
     counts["esxi_pxe_hosts"] = len(db.execute(select(EsxiPxeHost)).scalars().all())
+    counts["network_boot_environments"] = len(
+        db.execute(select(NetworkBootEnvironment)).scalars().all()
+    )
     counts["esx_storage_volumes"] = len(db.execute(select(EsxStorageVolume)).scalars().all())
     counts["esx_nfs_shares"] = len(db.execute(select(EsxNfsShare)).scalars().all())
     counts["update_sources"] = len(db.execute(select(UpdateSource)).scalars().all())

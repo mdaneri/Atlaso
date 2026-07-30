@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 SKIP_PARTS = {
     ".git",
+    ".build",
     ".mypy_cache",
     ".pytest_cache",
     ".ruff_cache",

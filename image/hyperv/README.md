@@ -185,7 +185,7 @@ to Packer.
 - `/etc/systemd/system/atlaso.service`.
 - `/etc/systemd/system/atlaso-firewall.service` loading the nftables management firewall.
 - `dnsmasq` for the shared DNS/DHCP appliance service.
-- `ipxe` and `syslinux` for ESXi PXE bootstrap support. Provisioning also stages Atlaso's bundled iPXE first-stage
+- `ipxe` and `syslinux` for Network Boot bootstrap support. Provisioning also stages Atlaso's bundled iPXE first-stage
   files, `undionly.kpxe` and `snponly.efi`, under `/var/lib/atlaso/pxe/bootloaders` because the Photon package stream
   may not ship those filenames. TFTP.
 - `/opt/atlaso/bin/atlaso-helper` constrained appliance helper.
@@ -219,11 +219,16 @@ DNS/DHCP desired state is dnsmasq-backed. Real `/appliance-apply` stages the ren
 reloads or restarts `dnsmasq` through `atlaso-helper`. The rendered config uses `/var/lib/atlaso/dnsmasq/dhcp.leases`
 for DHCP leases, and the helper exposes only that allowlisted lease readback path. DHCP scopes should bind to access
 physical interfaces with IP CIDR or enabled VLAN interfaces with IP CIDR, not trunk or addressless physical interfaces.
-ESXi PXE boot settings add dnsmasq TFTP and DHCP bootfile options for the guide-aligned flow: first-stage
+Network Boot settings add dnsmasq TFTP and DHCP bootfile options for the guide-aligned flow: first-stage
 `undionly.kpxe` or `snponly.efi`, then second-stage `pxelinux.0` or `mboot.efi` when DHCP detects iPXE. Optional native
 UEFI HTTP clients receive the generated absolute `mboot.efi` URL. The generated TFTP files, extracted ESXi installer
 HTTP tree, per-host `boot.cfg` files, and dedicated static PXE HTTP listener are written only by global appliance apply.
-Apply DNS/DHCP, ESXi PXE, and Firewall together when boot settings change.
+The image build also produces and stages the pinned Buildroot-based Atlaso
+Inventory Linux initramfs under
+`/var/lib/atlaso/pxe/media/inventory/<version>`. Unknown hosts enter the generic
+HTTP menu and default to this read-only RAM environment. Apply DNS/DHCP,
+Network Boot (`esxi_pxe` internally), and Firewall together when boot settings
+change.
 
 Certificate Authority desired state is Atlaso CA-backed. Real `/appliance-apply` stages
 `/var/lib/atlaso/apply/ca/atlaso-ca.json`, validates the staged CA/certificate payload through `atlaso-helper`, and

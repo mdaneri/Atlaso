@@ -352,6 +352,10 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly -and -not $KeepExistingOutput) 
     Unregister-ExistingWorkstationTemplate -ResolvedVmrunPath $resolvedVmrunPath -OutputDirectory $workstationOutputDirectory -VmName $VmName
 }
 
+if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
+    & (Join-Path $PSScriptRoot '..\common\Build-AtlasoInventoryLinux.ps1')
+}
+
 Invoke-AtlasoPhotonImageBuild `
     -IsoUrl $IsoUrl `
     -IsoChecksum $IsoChecksum `

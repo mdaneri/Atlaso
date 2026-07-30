@@ -1241,6 +1241,91 @@ textarea {
   grid-row: 2;
 }
 
+.network-boot-page-workspace {
+  align-items: start;
+}
+
+.network-boot-primary-workspace {
+  display: flex;
+  height: calc(100vh - 144px);
+  margin-bottom: 0;
+  min-height: 0;
+  overflow: hidden;
+  flex-direction: column;
+}
+
+.network-boot-section-panels {
+  flex: 1;
+  min-height: 0;
+  margin-top: 14px;
+  overflow: hidden;
+}
+
+.network-boot-section-panels > .tab-panel.active {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.network-boot-section-panels > #network-boot-primary-panel.active {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.network-boot-inner-section {
+  min-width: 0;
+}
+
+.network-boot-inner-section > .panel-head {
+  margin-bottom: 12px;
+}
+
+.network-boot-static-rail > .panel {
+  margin-bottom: 0;
+}
+
+.network-boot-static-rail {
+  position: sticky;
+  top: 22px;
+  max-height: calc(100vh - 144px);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.network-boot-task-history {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 14px;
+  height: 100%;
+  min-height: 0;
+  border: 1px solid #dbe4f0;
+  border-radius: 8px;
+  padding: 16px;
+  background: #f8fafc;
+}
+
+.network-boot-task-history-container {
+  flex: 1;
+  min-height: 0;
+  margin-top: 16px;
+}
+
+.network-boot-task-history .panel-head {
+  margin: 0;
+}
+
+.network-boot-task-history .panel-head p {
+  margin: 4px 0 0;
+}
+
+.network-boot-task-history .task-grid-shell {
+  min-height: 0;
+  border-radius: 7px;
+  background: white;
+}
+
 .esxi-boot-service-panel .boot-service-form {
   gap: 9px;
   grid-template-columns: minmax(0, 1fr);
@@ -3264,6 +3349,10 @@ textarea {
   display: grid;
   align-content: start;
   gap: 5px;
+}
+
+.kickstart-description-field {
+  grid-column: 1;
 }
 
 .compact-service-field {
@@ -7794,6 +7883,24 @@ dialog.has-expanded-monaco .confirm-modal-panel {
 
   .detail-panel {
     position: static;
+  }
+
+  .network-boot-primary-workspace {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .network-boot-section-panels,
+  .network-boot-section-panels > .tab-panel.active {
+    height: auto;
+    overflow: visible;
+  }
+
+  .network-boot-static-rail {
+    position: static;
+    max-height: none;
+    overflow: visible;
   }
 
   .esxi-pxe-workspace .left-stack {

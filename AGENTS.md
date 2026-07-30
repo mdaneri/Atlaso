@@ -61,6 +61,8 @@ The following cross-cutting boundaries always apply:
 - Privileged appliance operations go through `atlaso-helper` and constrained sudoers rules.
 - Keep development system adapters in dry-run mode unless a reviewed apply unit explicitly promotes real mutation.
 - VMware Workstation is the default live appliance target; use Hyper-V lifecycle coverage for exact VLAN behavior.
+- Inventory Linux is an independently versioned Atlaso release package; full images preinstall it and supported VMware
+  wheel deployment synchronizes it unless explicitly skipped.
 - Validate live appliance readiness through `/openapi.json`, not VMware Tools IP discovery or service color alone.
 - OIDC clients use explicit validated identity sources and emit only granted, explicitly mapped claims; see the detailed
   agent policies and canonical OIDC service guide. Administration keeps generated client IDs immutable, shows secrets

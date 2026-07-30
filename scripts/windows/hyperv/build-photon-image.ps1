@@ -42,6 +42,10 @@ if ([string]::IsNullOrWhiteSpace($PackerDirectory)) {
     $PackerDirectory = Join-Path $PSScriptRoot '..\..\..\image\hyperv'
 }
 
+if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
+    & (Join-Path $PSScriptRoot '..\common\Build-AtlasoInventoryLinux.ps1')
+}
+
 $packerVariables = @{
     switch_name = $SwitchName
 }

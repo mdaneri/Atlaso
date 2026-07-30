@@ -8,7 +8,7 @@ from pathlib import Path
 from secrets import compare_digest
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from atlaso.app.adapters.system import SystemAdapter
@@ -22,6 +22,10 @@ from atlaso.app.services.appliance_update import (
     ensure_appliance_update_job_steps,
 )
 from atlaso.app.services.automation import enqueue_due_schedules, json_object
+from atlaso.app.services.network_boot import (
+    cleanup_network_boot_upload,
+    recover_interrupted_network_boot_media_swaps,
+)
 from atlaso.app.services.vaults import decrypted_vault_values, redact_secret_values, vault_scope_identity
 
 
@@ -29,7 +33,12 @@ LOGGER = logging.getLogger("atlaso.worker")
 POLL_SECONDS = 5
 AUTOMATION_STAGE_DIR = Path("/var/lib/atlaso/automation/scripts")
 AUTOMATION_VAULT_STAGE_DIR = Path("/run/atlaso-automation-vaults")
-WORKER_JOB_TYPES = {"appliance-update", "vcf-depot-download", "managed-script"}
+WORKER_JOB_TYPES = {
+    "appliance-update",
+    "vcf-depot-download",
+    "managed-script",
+    "pxe-media-sync",
+}
 _stop_requested = False
 
 
@@ -67,12 +76,20 @@ def _release_finalizer() -> dict[str, Any]:
 
 
 def recover_interrupted_worker_jobs(db: Session) -> int:
+    media_swaps = recover_interrupted_network_boot_media_swaps(db)
+    if media_swaps:
+        LOGGER.warning(
+            "Recovered %s interrupted Network Boot media swap(s).",
+            media_swaps,
+        )
     jobs = db.execute(
         select(Job).where(Job.type.in_(WORKER_JOB_TYPES), Job.status == JobStatus.RUNNING.value)
     ).scalars().all()
     now = utcnow()
     finalizer = _release_finalizer()
     for job in jobs:
+        if job.type == "pxe-media-sync":
+            cleanup_network_boot_upload(job.id)
         definitive = (
             finalizer
             if job.type == "appliance-update" and str(finalizer.get("job_id") or "") == job.id
@@ -450,6 +467,99 @@ def _run_managed_script(db: Session, job: Job) -> None:
     db.commit()
 
 
+def _run_pxe_media_sync(db: Session, job: Job) -> None:
+    from atlaso.app.services.network_boot import (
+        DeferredNetworkBootMediaSync,
+        NetworkBootMediaSyncCancelled,
+        media_to_dict,
+        network_boot_upload_path,
+        sync_network_boot_media,
+    )
+
+    config = _job_config(job)
+    environment = str(config.get("environment") or "")
+    source = str(config.get("source") or "download")
+    upload_path = network_boot_upload_path(job.id) if source == "upload" else None
+
+    def cancelled() -> bool:
+        status = db.execute(
+            select(Job.status).where(Job.id == job.id)
+        ).scalar_one()
+        return status == JobStatus.CANCELLED.value
+
+    filesystem_sync: DeferredNetworkBootMediaSync | None = None
+    try:
+        try:
+            filesystem_sync = sync_network_boot_media(
+                db,
+                environment_key=environment,
+                uploaded_artifact=upload_path,
+                uploaded_filename=str(config.get("filename") or ""),
+                cancelled=cancelled,
+                defer_filesystem_commit=True,
+            )
+            if not isinstance(filesystem_sync, DeferredNetworkBootMediaSync):
+                raise RuntimeError("Network Boot media sync did not defer its filesystem commit.")
+        finally:
+            if upload_path is not None:
+                upload_path.unlink(missing_ok=True)
+                try:
+                    upload_path.parent.rmdir()
+                except OSError:
+                    pass
+        media = filesystem_sync.media
+        if cancelled():
+            raise NetworkBootMediaSyncCancelled(
+                "Network Boot media task was cancelled."
+            )
+        payload = {
+            "status": JobStatus.SUCCEEDED.value,
+            "success": True,
+            "environment": environment,
+            "source": source,
+            "media": media_to_dict(media),
+            "activation": "pending desired state; global appliance apply is required",
+        }
+        completed = db.execute(
+            update(Job)
+            .where(
+                Job.id == job.id,
+                Job.status == JobStatus.RUNNING.value,
+            )
+            .values(
+                status=JobStatus.SUCCEEDED.value,
+                finished_at=utcnow(),
+                progress_percent=100,
+                error=None,
+                result=json.dumps(payload, indent=2, sort_keys=True),
+            )
+        )
+        if completed.rowcount != 1:
+            raise NetworkBootMediaSyncCancelled(
+                "Network Boot media task was cancelled before completion."
+            )
+        db.add(
+            AuditEvent(
+                actor=job.created_by,
+                action="sync_network_boot_media",
+                resource_type="network_boot_media",
+                resource_id=f"{environment}:{media.version}",
+                success=True,
+                detail=(
+                    f"sha256={media.artifact_sha256}; "
+                    f"verification={media.verification_method}"
+                ),
+            )
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        if filesystem_sync is not None:
+            filesystem_sync.rollback_filesystem()
+        raise
+    filesystem_sync.commit_filesystem()
+
+
 def run_worker_once() -> str | None:
     with SessionLocal() as db:
         enqueue_due_schedules(db)
@@ -482,6 +592,11 @@ def run_worker_once() -> str | None:
                 job = db.get(Job, job_id)
                 if job is not None:
                     _run_managed_script(db, job)
+        elif job_type == "pxe-media-sync":
+            with SessionLocal() as db:
+                job = db.get(Job, job_id)
+                if job is not None:
+                    _run_pxe_media_sync(db, job)
         else:
             raise ValueError(f"No worker handler is registered for job type {job_type}.")
     except Exception as exc:  # noqa: BLE001 - the worker must survive individual job failures.

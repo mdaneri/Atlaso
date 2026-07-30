@@ -146,6 +146,9 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     assert "github.event.workflow_run.head_branch == 'main'" in publication
     assert "github.event.workflow_run.event == 'push'" in publication
+    assert publication.count(
+        "github.event.workflow_run.head_repository.full_name == github.repository"
+    ) >= 2
     assert "github.event_name == 'workflow_dispatch'" in publication
     assert "-f head_sha=\"$RELEASE_SHA\"" in publication
     assert "-f status=success" in publication
@@ -156,9 +159,9 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "Infrastructure • Storage • Identity • Networking • Lifecycle" in publication
     assert "The HTML page is informational." in publication
     assert "<script" not in publication
-    assert publication.count("ref: ${{ needs.prepare.outputs.release_sha }}") == 2
+    assert publication.count("ref: ${{ needs.prepare.outputs.release_sha }}") == 3
     assert "actions/upload-artifact@v7" in publication
-    assert publication.count("actions/download-artifact@v8") == 1
+    assert publication.count("actions/download-artifact@v8") == 2
     assert "python-version: '3.14'" in publication
     assert "python-version: '3.14'" in promotion
     assert ci.count("python-version: '3.14'") == 2
@@ -483,6 +486,31 @@ def test_worker_restart_fails_update_parent_after_children_commit(client, monkey
         assert result["success"] is False
         assert result["worker_recovery"] == "interrupted"
         assert [step.status for step in recovered.steps] == ["succeeded", "succeeded"]
+
+
+def test_worker_restart_removes_interrupted_network_boot_upload(client, monkeypatch):
+    from atlaso.app import worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    cleaned = []
+    monkeypatch.setattr(worker, "cleanup_network_boot_upload", cleaned.append)
+    with SessionLocal() as db:
+        job = Job(
+            id="job_" + ("e" * 32),
+            type="pxe-media-sync",
+            status="running",
+            created_by="admin",
+            task_config_json=json.dumps(
+                {"environment": "inventory", "source": "upload"}
+            ),
+        )
+        db.add(job)
+        db.commit()
+
+        assert worker.recover_interrupted_worker_jobs(db) == 1
+        assert cleaned == [job.id]
+        assert db.get(Job, job.id).status == "failed"
 
 
 def test_worker_restart_keeps_release_finalizer_scoped_to_its_child(client, monkeypatch, tmp_path):

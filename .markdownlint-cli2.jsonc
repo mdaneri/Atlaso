@@ -25,6 +25,7 @@
     "!.venv*/**",
     "!build/**",
     "!dist/**",
+    "!image/inventory-linux/.build/**",
     "!test-results/**"
   ]
 }

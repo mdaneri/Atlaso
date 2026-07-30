@@ -2,8 +2,10 @@ from pathlib import Path
 
 import hashlib
 import importlib.util
+import json
 import struct
 import sys
+import zipfile
 
 
 def load_lifecycle_runner():
@@ -43,6 +45,203 @@ def test_photon_image_installs_fixed_size_atlaso_grub_branding():
     assert '"${SshUser}@${IpAddress}:$remoteBootBackgroundPath"' in deploy
 
 
+def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path):
+    path = Path("scripts/build_inventory_linux_package.py")
+    spec = importlib.util.spec_from_file_location("build_inventory_linux_package", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    source = tmp_path / "source"
+    (source / "legal-info").mkdir(parents=True)
+    kernel = b"kernel"
+    initrd = b"initrd"
+    (source / "bzImage").write_bytes(kernel)
+    (source / "rootfs.cpio.gz").write_bytes(initrd)
+    (source / "legal-info/LICENSE").write_text("license\n", encoding="utf-8")
+    (source / "manifest.json").write_text(
+        json.dumps(
+            {
+                "kind": "atlaso-inventory-linux",
+                "schema_version": 1,
+                "version": "2026.05.1",
+                "artifacts": {
+                    "bzImage": hashlib.sha256(kernel).hexdigest(),
+                    "rootfs.cpio.gz": hashlib.sha256(initrd).hexdigest(),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    first = module.package_inventory_linux(source, tmp_path / "first")
+    second = module.package_inventory_linux(source, tmp_path / "second")
+    assert hashlib.sha256(first.read_bytes()).digest() == hashlib.sha256(second.read_bytes()).digest()
+    with zipfile.ZipFile(first) as package:
+        assert {"manifest.json", "bzImage", "rootfs.cpio.gz", "legal-info/LICENSE"} <= set(package.namelist())
+
+    deploy = Path("scripts/windows/vmware/deploy-wheel.ps1").read_text(encoding="utf-8")
+    release = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    assert "SkipInventoryLinuxSync" in deploy
+    assert "[AllowEmptyString()][string[]]$Arguments" in deploy
+    assert "Installed Atlaso Inventory Linux" in deploy
+    assert (
+        "install -d -o atlaso -g atlaso -m 0755 "
+        "/var/lib/atlaso/pxe/media /var/lib/atlaso/pxe/uploads"
+    ) in deploy
+    restore_trap = deploy.index("trap restore_services_on_exit EXIT")
+    stop_writers = deploy.index("systemctl stop atlaso-worker.service atlaso.service")
+    media_preflight = deploy.index("Atlaso media path must not be a symlink")
+    media_install = deploy.index(
+        "install -d -o atlaso -g atlaso -m 0755 "
+        "/var/lib/atlaso/pxe/media /var/lib/atlaso/pxe/uploads"
+    )
+    inventory_install = deploy.index(
+        'if [ -n "$inventory_linux_package" ]; then'
+    )
+    disarm_trap = deploy.rindex("trap - EXIT")
+    worker_active = deploy.index("systemctl is-active atlaso-worker.service")
+    readiness_complete = deploy.index(
+        'echo "Atlaso service restarted and loopback OpenAPI is reachable."'
+    )
+    assert restore_trap < stop_writers < media_preflight < media_install < inventory_install
+    assert worker_active < disarm_trap < readiness_complete
+    assert 'if [ "$atlaso_was_active" = "true" ]; then' in deploy
+    assert 'if [ "$worker_was_active" = "true" ]; then' in deploy
+    assert "systemctl stop atlaso.service" in deploy
+    assert "systemctl stop atlaso-worker.service" in deploy
+    assert "target.parent.is_symlink()" in deploy
+    assert "target.is_symlink()" in deploy
+    assert "installed_artifact.is_symlink()" in deploy
+    assert "installed_manifest_path.is_symlink()" in deploy
+    assert 'target / name for name in ("bzImage", "rootfs.cpio.gz", "manifest.json")' in deploy
+    assert "owned_path.is_symlink()" in deploy
+    assert "follow_symlinks=False" in deploy
+    assert 'target.rglob("*")' not in deploy
+    provision = Path("image/common/scripts/provision-atlaso.sh").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        'install -d -o atlaso -g atlaso -m 0755 '
+        '"$INVENTORY_MEDIA_DIR" "$INVENTORY_TARGET_DIR"'
+        in provision
+    )
+    assert (
+        'install -o atlaso -g atlaso -m 0644 "$INVENTORY_SOURCE_DIR/$artifact"'
+        in provision
+    )
+    assert "command -v gpg" in deploy
+    assert "tdnf -y install gnupg" in deploy
+    assert "Build Inventory Linux package" in release
+    assert "--inventory-package" in release
+    build = Path("image/inventory-linux/build.sh").read_text(encoding="utf-8")
+    assert 'buildroot_version="2026.05.1"' in build
+    assert 'package_version="2026.05.1+7"' in build
+    assert '"version": "${package_version}"' in build
+    assert '"arguments": "rdinit=/sbin/init console=tty0 atlaso.inventory=1"' in build
+    assert '"${source_root}/output/target/usr/bin/lscpu"' in build
+    assert '"${source_root}/output/target/bin/lsblk"' in build
+    assert "Required util-linux tool is missing" in build
+    assert "Required util-linux tool resolves to BusyBox" in build
+    inventory_defconfig = Path(
+        "image/inventory-linux/external/configs/atlaso_inventory_x86_64_defconfig"
+    ).read_text(encoding="utf-8")
+    assert "BR2_PACKAGE_UTIL_LINUX_BINARIES=y" in inventory_defconfig
+    assert (
+        'BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_ATLASO_INVENTORY_PATH)'
+        '/board/atlaso-inventory/busybox.fragment"' in inventory_defconfig
+    )
+    assert "BR2_PACKAGE_UTIL_LINUX_LSCPU" not in inventory_defconfig
+    assert "BR2_PACKAGE_UTIL_LINUX_LSBLK" not in inventory_defconfig
+    busybox_fragment = Path(
+        "image/inventory-linux/external/board/atlaso-inventory/busybox.fragment"
+    ).read_text(encoding="utf-8")
+    assert "# CONFIG_LSBLK is not set" in busybox_fragment
+    inventory_client = Path(
+        "image/inventory-linux/external/overlay/usr/bin/atlaso-inventory"
+    ).read_text(encoding="utf-8")
+    assert "optional_ethernet_mac()" in inventory_client
+    assert "grep -Eq '^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'" in inventory_client
+    assert 'current_mac="$(optional_ethernet_mac ' in inventory_client
+    assert 'permanent_mac="$(optional_ethernet_mac ' in inventory_client
+    kernel_fragment = Path(
+        "image/inventory-linux/external/board/atlaso-inventory/linux.fragment"
+    ).read_text(encoding="utf-8")
+    for driver in (
+        "CONFIG_VMXNET3=y",
+        "CONFIG_VMWARE_PVSCSI=y",
+        "CONFIG_HYPERV_NET=y",
+        "CONFIG_HYPERV_STORAGE=y",
+        "CONFIG_VIRTIO_NET=y",
+        "CONFIG_VIRTIO_BLK=y",
+        "CONFIG_SCSI_VIRTIO=y",
+        "CONFIG_HYPERVISOR_GUEST=y",
+        "CONFIG_HYPERV=y",
+        "CONFIG_XEN_NETDEV_FRONTEND=y",
+        "CONFIG_XEN_BLKDEV_FRONTEND=y",
+        "CONFIG_BNXT=y",
+        "CONFIG_QEDE=y",
+        "CONFIG_BE2NET=y",
+        "CONFIG_ENIC=y",
+        "CONFIG_CHELSIO_T4=y",
+        "CONFIG_USB_RTL8152=y",
+        "CONFIG_MEGARAID_SAS=y",
+        "CONFIG_SCSI_HPSA=y",
+        "CONFIG_SCSI_LPFC=y",
+        "CONFIG_SCSI_QLA_FC=y",
+    ):
+        assert driver in kernel_fragment
+    assert "CONFIG_DRM_SIMPLEDRM=y" in kernel_fragment
+    assert "CONFIG_SYSFB_SIMPLEFB=y" in kernel_fragment
+    assert "CONFIG_FRAMEBUFFER_CONSOLE=y" in kernel_fragment
+    inventory_defconfig = Path(
+        "image/inventory-linux/external/configs/atlaso_inventory_x86_64_defconfig"
+    ).read_text(encoding="utf-8")
+    for firmware in (
+        "BR2_PACKAGE_LINUX_FIRMWARE_BNX2=y",
+        "BR2_PACKAGE_LINUX_FIRMWARE_BNX2X=y",
+        "BR2_PACKAGE_LINUX_FIRMWARE_INTEL_ICE=y",
+        "BR2_PACKAGE_LINUX_FIRMWARE_QLOGIC_4X=y",
+        "BR2_PACKAGE_LINUX_FIRMWARE_QLOGIC_2XXX=y",
+        "BR2_PACKAGE_LINUX_FIRMWARE_RTL_8169=y",
+    ):
+        assert firmware in inventory_defconfig
+    init = Path(
+        "image/inventory-linux/external/overlay/etc/init.d/S99atlaso-inventory"
+    ).read_text(encoding="utf-8")
+    assert "atlaso.boot_mac=*" in init
+    assert 'candidate_mac="$(cat "${candidate_path}/address"' in init
+    assert 'udhcpc -i "${candidate}"' in init
+    assert 'grep -q " dev ${candidate}' in init
+    assert "for candidate_path in /sys/class/net/*" in init
+    assert init.index("udhcpc -i") < init.index("/usr/bin/atlaso-inventory")
+    assert 'installed_manifest.get("kind") != "atlaso-network-boot-media"' in deploy
+    assert 'installed_manifest.get("environment") != "inventory"' in deploy
+
+
+def test_inventory_linux_retries_uncertain_reboot_acknowledgments():
+    client = Path(
+        "image/inventory-linux/external/overlay/usr/bin/atlaso-inventory"
+    ).read_text(encoding="utf-8")
+
+    assert 'pending_reboot_id=""' in client
+    assert 'pending_reboot_id="${command_id}"' in client
+    assert "commands/${pending_reboot_id}/acknowledge" in client
+    assert client.index("commands/${pending_reboot_id}/acknowledge") < client.index(
+        "reboot -f"
+    )
+
+
+def test_inventory_linux_retries_capacity_responses_with_bounded_backoff():
+    client = Path(
+        "image/inventory-linux/external/overlay/usr/bin/atlaso-inventory"
+    ).read_text(encoding="utf-8")
+
+    assert "--write-out '%{http_code}'" in client
+    assert '[ "${report_status}" != "503" ]' in client
+    assert '[ "${report_attempt}" -ge 6 ]' in client
+    assert "sleep $((report_attempt * 2))" in client
+    assert "response body" not in client
+
+
 def test_photon_provisioning_management_network_matches_eth0_only():
     script = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
     main = Path("atlaso/app/main.py").read_text(encoding="utf-8")
@@ -71,6 +270,7 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
 
     assert 'run_tdnf "Photon appliance package installation"' in script
     assert "nginx" in script
+    assert "gnupg" in script
     assert "ntpsec" in script
     assert "python3-ntp" in script
     assert "systemctl disable --now ntpd.service" in script

@@ -4273,7 +4273,6 @@ def generated_esxi_pxe_dhcp_options(esxi_boot: dict[str, Any], scopes: list[Dhcp
     rows: list[dict[str, str]] = []
     tftp_hostname = str(esxi_boot.get("hostname") or "").strip()
     native_uefi_http_enabled = bool(esxi_boot.get("native_uefi_http_enabled"))
-    manual_native_http_url = str(esxi_boot.get("native_uefi_http_url") or "").strip()
     http_port = esxi_boot.get("http_port") or 8080
     scope_ids = {int(scope_id) for scope_id in (esxi_boot.get("dhcp_scope_ids") or []) if str(scope_id).isdigit()}
     selected_scopes = [scope for scope in scopes if scope.id in scope_ids]
@@ -4303,12 +4302,6 @@ def generated_esxi_pxe_dhcp_options(esxi_boot: dict[str, Any], scopes: list[Dhcp
         )
 
     host_bootfiles = list(esxi_boot.get("host_bootfiles") or [])
-    host_exclusion_tags = [
-        f"tag:!{host_tag}"
-        for host_bootfile in host_bootfiles
-        if (host_tag := str(host_bootfile.get("tag") or "").strip())
-    ]
-
     def add(applies_to: str, flow: str, line: str, note: str) -> None:
         rows.append({"applies_to": applies_to, "flow": flow, "line": line, "note": note})
 
@@ -4319,24 +4312,14 @@ def generated_esxi_pxe_dhcp_options(esxi_boot: dict[str, Any], scopes: list[Dhcp
         return f"http://{host}:{http_port}/pxe/esxi"
 
     if native_uefi_http_enabled:
-        generic_native_uefi_http_tags = ",".join(["tag:uefi-http", "tag:uefi-http-x64", *host_exclusion_tags])
         add("All selected zones", "Native UEFI HTTP", "dhcp-vendorclass=set:uefi-http,HTTPClient", "Detect HTTPClient firmware")
         add("All selected zones", "Native UEFI HTTP", "dhcp-match=set:uefi-http-x64,option:client-arch,16", "Match x64 HTTP boot")
         for scope_entry in scope_entries:
             base_url = scope_http_base(scope_entry["address"])
-            native_http_url = manual_native_http_url or (f"{base_url}/{esxi_boot.get('native_uefi_bootfile') or 'mboot.efi'}" if base_url else "")
+            native_http_url = f"{base_url}/{esxi_boot.get('uefi_bootfile') or 'snponly.efi'}" if base_url else ""
             if not native_http_url:
                 continue
-            add(scope_entry["applies_to"], "Native UEFI HTTP", f"dhcp-boot={scope_entry['prefix']}{generic_native_uefi_http_tags},{native_http_url}", "Return default mboot.efi HTTP URL")
-            for host_bootfile in host_bootfiles:
-                host_tag = str(host_bootfile.get("tag") or "").strip()
-                mac_key = str(host_bootfile.get("mac_key") or "").strip()
-                if not mac_key:
-                    uefi_second_stage = str(host_bootfile.get("uefi_second_stage_bootfile") or "")
-                    mac_key = uefi_second_stage.split("/", 1)[0] if "/" in uefi_second_stage else ""
-                native_host_url = manual_native_http_url or (f"{base_url}/{mac_key}/{esxi_boot.get('native_uefi_bootfile') or 'mboot.efi'}" if base_url and mac_key else "")
-                if host_tag and native_host_url:
-                    add(scope_entry["applies_to"], "Host-specific UEFI HTTP", f"dhcp-boot={scope_entry['prefix']}tag:{host_tag},tag:uefi-http,tag:uefi-http-x64,{native_host_url}", "Known HTTPClient firmware loads host-specific mboot.efi")
+            add(scope_entry["applies_to"], "Native UEFI HTTP", f"dhcp-boot={scope_entry['prefix']}tag:uefi-http,tag:uefi-http-x64,{native_http_url}", "Load iPXE before resolving the safe per-host boot menu")
 
     if esxi_boot.get("enabled"):
         add("All selected zones", "PXE TFTP", "enable-tftp", "Enable dnsmasq TFTP")
@@ -4350,21 +4333,16 @@ def generated_esxi_pxe_dhcp_options(esxi_boot: dict[str, Any], scopes: list[Dhcp
             mac_address = str(host_bootfile.get("mac_address") or "").strip()
             if host_tag and mac_address:
                 add("All selected zones", "Host-specific PXE", f"dhcp-mac=set:{host_tag},{mac_address}", "Tag known ESXi host MAC")
-        generic_uefi_second_stage_tags = ",".join(["tag:ipxe", "tag:efi-x86_64", *host_exclusion_tags])
-        generic_uefi_second_stage_boot = str(esxi_boot.get("uefi_second_stage_bootfile") or "")
         for scope_entry in scope_entries:
             boot_server = f",{tftp_hostname},{scope_entry['address']}" if tftp_hostname and scope_entry["address"] else ""
             if tftp_hostname:
                 add(scope_entry["applies_to"], "PXE TFTP", f"dhcp-option={scope_entry['prefix']}66,{tftp_hostname}", "Advertise TFTP server name")
-            add(scope_entry["applies_to"], "iPXE second stage", f"dhcp-boot={scope_entry['prefix']}{generic_uefi_second_stage_tags},{generic_uefi_second_stage_boot}{boot_server}", "UEFI iPXE chains to ESXi mboot, then boot.cfg can use HTTP modules")
-            add(scope_entry["applies_to"], "iPXE second stage", f"dhcp-boot={scope_entry['prefix']}tag:ipxe,tag:!efi-x86_64,{esxi_boot.get('bios_second_stage_bootfile')}{boot_server}", "BIOS iPXE loads PXELINUX")
+            address = scope_entry["address"]
+            rendered_address = f"[{address}]" if ":" in address and not address.startswith("[") else address
+            menu_url = f"http://{rendered_address}:{http_port}/pxe/boot.ipxe" if address else "/pxe/boot.ipxe"
+            add(scope_entry["applies_to"], "iPXE second stage", f"dhcp-boot={scope_entry['prefix']}tag:ipxe,{menu_url}", "Resolve the inventory-first Network Boot menu and exact host assignment")
             add(scope_entry["applies_to"], "UEFI first stage", f"dhcp-boot={scope_entry['prefix']}tag:!ipxe,tag:efi-x86_64,{esxi_boot.get('uefi_bootfile')}{boot_server}", "UEFI PXE clients load iPXE by TFTP before ESXi mboot")
             add(scope_entry["applies_to"], "PXE first stage", f"dhcp-boot={scope_entry['prefix']}tag:!ipxe,tag:!efi-x86_64,{esxi_boot.get('bios_bootfile')}{boot_server}", "BIOS PXE first-stage iPXE")
-            for host_bootfile in host_bootfiles:
-                host_tag = str(host_bootfile.get("tag") or "").strip()
-                uefi_second_stage = str(host_bootfile.get("uefi_second_stage_bootfile") or "").strip()
-                if host_tag and uefi_second_stage:
-                    add(scope_entry["applies_to"], "Host-specific PXE", f"dhcp-boot={scope_entry['prefix']}tag:{host_tag},tag:ipxe,tag:efi-x86_64,{uefi_second_stage}{boot_server}", "UEFI iPXE loads host-specific mboot beside boot.cfg")
     return rows
 
 
@@ -5846,6 +5824,7 @@ SERVICE_ADMIN_CANCELLABLE_JOB_TYPES = {
     "vcf-sddc-manager-deploy",
     "vcf-offline-depot-target-config",
     "vcf-ca-trust",
+    "pxe-media-sync",
 }
 TASK_SECRET_KEY_RE = re.compile(r"(password|passwd|secret|token|credential|authorization|activation|private[_-]?key|api[_-]?key|payload[_-]?b64)", re.IGNORECASE)
 TASK_SECRET_VALUE_RE = re.compile(r"(-----BEGIN [A-Z ]*PRIVATE KEY-----|sk-[A-Za-z0-9_-]{16,}|Bearer\s+[A-Za-z0-9._-]{12,})", re.IGNORECASE)
@@ -5972,6 +5951,7 @@ def _task_type_label(job_type: str) -> str:
         "vcf-offline-depot-target-config": "Configure VCF Offline Depot",
         "vcf-ca-trust": "VCF Certificate Trust",
         "vcf-depot-download": "VCF Depot Download",
+        "pxe-media-sync": "Network Boot Media Sync",
     }
     return labels.get(job_type, job_type.replace("-", " ").title())
 
@@ -7144,6 +7124,8 @@ def local_users_apply_context(db: Session, baseline: dict[str, Any] | None = Non
 
 
 def esxi_pxe_context(db: Session) -> dict[str, Any]:
+    from atlaso.app.services.network_boot import desired_environment_manifest_rows
+
     kickstarts = db.execute(select(EsxiKickstart).order_by(EsxiKickstart.name)).scalars().all()
     hosts = db.execute(select(EsxiPxeHost).options(selectinload(EsxiPxeHost.kickstart)).order_by(EsxiPxeHost.hostname)).scalars().all()
     dhcp_scopes = db.execute(select(DhcpScope).order_by(DhcpScope.name)).scalars().all()
@@ -7216,6 +7198,7 @@ def esxi_pxe_context(db: Session) -> dict[str, Any]:
         except ValueError as exc:
             validation_errors.append(f"{kickstart.name}: {exc}")
     esxi_service_state = esxi_pxe_service_state_from_boot(boot_settings)
+    network_boot_environments = desired_environment_manifest_rows(db)
     return {
         "esxi_kickstarts": kickstarts,
         "esxi_kickstart_completions": [
@@ -7262,8 +7245,22 @@ def esxi_pxe_context(db: Session) -> dict[str, Any]:
         "esxi_pxe_validation_errors": validation_errors,
         "esxi_pxe_validation_warnings": list(dict.fromkeys(validation_warnings)),
         "esxi_pxe_validation_by_id": validation_by_id,
-        "esxi_pxe_manifest": render_esxi_pxe_manifest(kickstarts, hosts, boot_settings, default_host, custom_variables),
-        "esxi_pxe_preview": render_esxi_pxe_preview(kickstarts, hosts, boot_settings, default_host, custom_variables),
+        "esxi_pxe_manifest": render_esxi_pxe_manifest(
+            kickstarts,
+            hosts,
+            boot_settings,
+            default_host,
+            custom_variables,
+            network_boot_environments,
+        ),
+        "esxi_pxe_preview": render_esxi_pxe_preview(
+            kickstarts,
+            hosts,
+            boot_settings,
+            default_host,
+            custom_variables,
+            network_boot_environments,
+        ),
         "esxi_pxe_config_path": ESXI_PXE_STAGED_CONFIG_PATH,
         "esxi_pxe_strict_validation": strict,
         "esxi_default_kickstart_name": DEFAULT_ESXI_KICKSTART_NAME,
@@ -11396,6 +11393,12 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 job.result = json.dumps({**current_payload, "units": unit_results}, indent=2)
                 persist_vcf_depot_metadata_from_apply(db, [result])
                 if result["success"]:
+                    if unit["id"] == "esxi_pxe" and not result.get("dry_run"):
+                        from atlaso.app.services.network_boot import (
+                            mark_network_boot_environments_applied,
+                        )
+
+                        mark_network_boot_environments_applied(db)
                     if unit["id"] == "esx_storage" and not result.get("dry_run"):
                         inventory_result = SystemAdapter(dry_run=False).esx_storage_inventory()
                         if inventory_result.returncode == 0:
@@ -20148,6 +20151,9 @@ def esxi_pxe_page_context(
     result: dict[str, Any] | None = None,
     error: str | None = None,
 ) -> dict[str, Any]:
+    from atlaso.app.models import NetworkBootDiscoveredHost
+    from atlaso.app.services.network_boot import catalog_rows, host_to_dict as inventory_host_to_dict
+
     context = esxi_pxe_context(db)
     kickstarts = context["esxi_kickstarts"]
     selected = next((row for row in kickstarts if row.id == selected_id), None) or (kickstarts[0] if kickstarts else None)
@@ -20158,12 +20164,32 @@ def esxi_pxe_page_context(
         esxi_kickstart_grid_payload(row, include_content=identity.can("write:esxi-pxe"))
         for row in kickstarts
     ]
+    discovered_hosts = db.execute(
+        select(NetworkBootDiscoveredHost).order_by(
+            NetworkBootDiscoveredHost.last_seen_at.desc(),
+            NetworkBootDiscoveredHost.id,
+        )
+    ).scalars().all()
+    media_jobs = db.execute(
+        select(Job)
+        .options(selectinload(Job.steps))
+        .where(Job.type == "pxe-media-sync")
+        .order_by(desc(Job.created_at))
+        .limit(8)
+    ).scalars().all()
     return {
         **context,
         "esxi_selected_kickstart": selected,
         "esxi_selected_kickstart_json": kickstart_to_dict(selected, include_content=identity.can("write:esxi-pxe")) if selected else None,
         "esxi_selected_validation": selected_validation,
         "esxi_can_write": identity.can("write:esxi-pxe"),
+        "network_boot_can_write": identity.can("write:pxe"),
+        "network_boot_environments": catalog_rows(db),
+        "network_boot_discovered_hosts": [
+            inventory_host_to_dict(db, row) for row in discovered_hosts
+        ],
+        "network_boot_media_tasks": [_task_row(job, identity) for job in media_jobs],
+        "task_component_filter_options": _task_component_filter_options(db),
         "esxi_kickstart_grid_rows": grid_rows,
         "esxi_pxe_result": result,
         "esxi_pxe_error": error,
@@ -20449,6 +20475,15 @@ def cancel_task_from_ui(
                 "message": "Cancellation requested. The running component will finish before remaining components are skipped.",
             }
         )
+    if job.type == "pxe-media-sync" and job.status == JobStatus.PENDING.value:
+        try:
+            config = json.loads(job.task_config_json or "{}")
+        except json.JSONDecodeError:
+            config = {}
+        if config.get("source") == "upload":
+            from atlaso.app.services.network_boot import cleanup_network_boot_upload
+
+            cleanup_network_boot_upload(job.id)
     job.status = JobStatus.CANCELLED.value
     job.finished_at = utcnow()
     job.error = "Task cancelled by operator."
@@ -20555,8 +20590,19 @@ def serve_esxi_http_ipxe_script() -> FileResponse:
     return FileResponse(ESXI_IPXE_HTTP_SCRIPT_PATH, media_type="text/plain; charset=utf-8")
 
 
-@router.get("/esxi-pxe", response_class=HTMLResponse, response_model=None)
+@router.get("/esxi-pxe", response_model=None)
 def esxi_pxe_page(
+    request: Request,
+    identity: Identity = Depends(require_session_identity),
+) -> RedirectResponse:
+    query = f"?{request.url.query}" if request.url.query else ""
+    fragment = request.url.fragment
+    suffix = f"#{fragment}" if fragment else ""
+    return RedirectResponse(f"/network-boot{query}{suffix}", status_code=307)
+
+
+@router.get("/network-boot", response_class=HTMLResponse, response_model=None)
+def network_boot_page(
     request: Request,
     kickstart_id: int | None = None,
     identity: Identity = Depends(require_session_identity),

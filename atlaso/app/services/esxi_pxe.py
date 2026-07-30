@@ -387,7 +387,7 @@ def tftp_ipxe_chain_script() -> str:
         [
             "#!ipxe",
             "dhcp",
-            "chain http://${next-server}/pxe/esxi/boot.ipxe || shell",
+            "chain http://${next-server}/pxe/boot.ipxe?mac=${net0/mac}&firmware=${platform} || shell",
             "",
         ]
     )
@@ -417,11 +417,8 @@ def esxi_http_base_url(boot: dict[str, Any]) -> str:
 
 
 def effective_native_uefi_http_url(boot: dict[str, Any]) -> str:
-    configured = str(boot.get("native_uefi_http_url") or "").strip()
-    if configured:
-        return configured
     base_url = esxi_http_base_url(boot)
-    return f"{base_url}/{ESXI_PXE_NATIVE_UEFI_BOOTFILE}" if base_url else ""
+    return f"{base_url}/{ESXI_PXE_UEFI_BOOTFILE}" if base_url else ""
 
 
 def esxi_pxe_service_state_from_boot(boot: dict[str, Any]) -> dict[str, Any]:
@@ -1371,6 +1368,7 @@ def render_esxi_pxe_manifest(
     boot_settings: dict[str, Any] | None = None,
     default_host: dict[str, Any] | None = None,
     custom_variables: list[dict[str, str]] | None = None,
+    network_boot_environments: list[dict[str, Any]] | None = None,
 ) -> str:
     iso_error = ""
     try:
@@ -1482,6 +1480,12 @@ def render_esxi_pxe_manifest(
             "installer_iso_name": (default_host or {}).get("installer_iso_name") or "",
         },
         "artifacts": artifacts,
+        "network_boot": {
+            "schema_version": 1,
+            "media_root": "/var/lib/atlaso/pxe/media",
+            "http_root": "/var/lib/atlaso/pxe/http",
+            "environments": network_boot_environments or [],
+        },
     }
     return json.dumps(payload, indent=2, sort_keys=True)
 
@@ -1492,8 +1496,18 @@ def render_esxi_pxe_preview(
     boot_settings: dict[str, Any] | None = None,
     default_host: dict[str, Any] | None = None,
     custom_variables: list[dict[str, str]] | None = None,
+    network_boot_environments: list[dict[str, Any]] | None = None,
 ) -> str:
-    payload = json.loads(render_esxi_pxe_manifest(kickstarts, hosts, boot_settings, default_host, custom_variables))
+    payload = json.loads(
+        render_esxi_pxe_manifest(
+            kickstarts,
+            hosts,
+            boot_settings,
+            default_host,
+            custom_variables,
+            network_boot_environments,
+        )
+    )
     for row in payload["kickstarts"]:
         row["content"] = redacted_kickstart_preview(str(row["content"]))
     for host in payload.get("hosts", []):

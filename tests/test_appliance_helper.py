@@ -974,6 +974,84 @@ def esxi_pxe_manifest(http_root: Path, *, enabled: bool = True, stale_id: int = 
     }
 
 
+def test_esxi_pxe_helper_validates_network_boot_media_hashes(monkeypatch, tmp_path):
+    helper = load_helper_module()
+    media_root = tmp_path / "media"
+    http_root = tmp_path / "http"
+    installed = media_root / "memtest86plus" / "8.10"
+    installed.mkdir(parents=True)
+    artifact = installed / "memtest"
+    artifact.write_bytes(b"verified memtest payload")
+    manifest = {
+        "schema_version": 1,
+        "environment": "memtest86plus",
+        "artifacts": {"memtest": hashlib.sha256(artifact.read_bytes()).hexdigest()},
+    }
+    (installed / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setattr(helper, "NETWORK_BOOT_MEDIA_ROOT", media_root)
+    monkeypatch.setattr(helper, "NETWORK_BOOT_HTTP_ROOT", http_root)
+    payload = {
+        "boot": {"enabled": False},
+        "network_boot": {
+            "media_root": str(media_root),
+            "http_root": str(http_root),
+            "environments": [
+                {
+                    "key": "memtest86plus",
+                    "enabled": True,
+                    "desired_version": "8.10",
+                    "installed_path": str(installed),
+                    "manifest": manifest,
+                }
+            ],
+        },
+        "kickstarts": [],
+        "hosts": [],
+        "artifacts": [],
+    }
+    original_read_bytes = Path.read_bytes
+
+    def reject_artifact_read_bytes(path):
+        if path == artifact:
+            raise AssertionError("Network Boot artifacts must be hashed as a stream.")
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", reject_artifact_read_bytes)
+
+    errors = helper._esxi_pxe_manifest_errors(payload)
+    assert not [error for error in errors if error.startswith("Network Boot")]
+
+    artifact.write_bytes(b"tampered")
+    errors = helper._esxi_pxe_manifest_errors(payload)
+    assert any("failed SHA-256 verification" in error for error in errors)
+
+
+def test_esxi_pxe_helper_activates_and_disables_network_boot_media(monkeypatch, tmp_path):
+    helper = load_helper_module()
+    media_root = tmp_path / "media"
+    http_root = tmp_path / "http"
+    installed = media_root / "inventory" / "0.9.51"
+    installed.mkdir(parents=True)
+    monkeypatch.setattr(helper, "NETWORK_BOOT_MEDIA_ROOT", media_root)
+    monkeypatch.setattr(helper, "NETWORK_BOOT_HTTP_ROOT", http_root)
+    environment = {
+        "key": "inventory",
+        "enabled": True,
+        "desired_version": "0.9.51",
+        "installed_path": str(installed),
+    }
+    payload = {"network_boot": {"environments": [environment]}}
+
+    assert helper._activate_network_boot_media(payload) == ["inventory"]
+    active = http_root / "inventory"
+    assert active.is_symlink()
+    assert active.resolve() == installed.resolve()
+
+    environment["enabled"] = False
+    assert helper._activate_network_boot_media(payload) == []
+    assert not active.exists()
+
+
 def ca_payload_text(root_dir: Path) -> str:
     root_cert = "-----BEGIN CERTIFICATE-----\nroot\n-----END CERTIFICATE-----\n"
     cert = "-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----\n"
@@ -1739,7 +1817,7 @@ def test_esxi_pxe_helper_validates_and_writes_generated_kickstarts(monkeypatch, 
         "http_port": 8080,
         "http_base_url": "http://192.168.50.1:8080/pxe/esxi",
         "native_uefi_http_enabled": True,
-        "effective_native_uefi_http_url": "http://192.168.50.1:8080/pxe/esxi/mboot.efi",
+        "effective_native_uefi_http_url": "http://192.168.50.1:8080/pxe/esxi/snponly.efi",
         "ipxe_script": "#!ipxe\necho Atlaso PXE ready\nshell\n",
     }
     config_path = apply_dir / "atlaso-esxi-pxe.json"
@@ -1763,6 +1841,7 @@ def test_esxi_pxe_helper_validates_and_writes_generated_kickstarts(monkeypatch, 
     assert generated_kickstart.read_text(encoding="utf-8") == manifest["kickstarts"][0]["content"]
     assert (tftp_root / "undionly.kpxe").read_bytes() == b"bios ipxe"
     assert (tftp_root / "snponly.efi").read_bytes() == b"uefi ipxe"
+    assert (http_base / "snponly.efi").read_bytes() == b"uefi ipxe"
     assert (tftp_root / "pxelinux.0").read_bytes() == b"pxelinux"
     assert (tftp_root / "ldlinux.c32").read_bytes() == b"ldlinux"
     assert (tftp_root / "mboot.efi").read_bytes() == b"mboot efi"
@@ -1795,6 +1874,8 @@ def test_esxi_pxe_helper_validates_and_writes_generated_kickstarts(monkeypatch, 
     assert "IPAPPEND 2" in pxelinux
     nginx_site = (tmp_path / "nginx" / "sites.d" / "esxi-pxe.conf").read_text(encoding="utf-8")
     assert nginx_site.count("listen 8080;") == 1
+    assert nginx_site.count("proxy_set_header Host $http_host;") == 4
+    assert "proxy_set_header Host $host;" not in nginx_site
     assert "location /pxe/esxi/ks/" in nginx_site
     assert "proxy_pass http://127.0.0.1:8000;" in nginx_site
     assert f"alias {http_base}/;" in nginx_site
@@ -1842,7 +1923,7 @@ def test_esxi_pxe_helper_writes_http_ipxe_script_without_profiles(monkeypatch, t
             "http_port": 8080,
             "http_base_url": "http://192.168.50.1:8080/pxe/esxi",
             "native_uefi_http_enabled": True,
-            "effective_native_uefi_http_url": "http://192.168.50.1:8080/pxe/esxi/mboot.efi",
+            "effective_native_uefi_http_url": "http://192.168.50.1:8080/pxe/esxi/snponly.efi",
             "ipxe_script": "#!ipxe\necho No profiles yet\nshell\n",
         },
         "kickstarts": [],
@@ -1920,7 +2001,7 @@ def test_esxi_pxe_helper_does_not_copy_host_artifact_to_default_fallback(monkeyp
         "http_port": 8080,
         "http_base_url": "http://192.168.50.1:8080/pxe/esxi",
         "native_uefi_http_enabled": True,
-        "effective_native_uefi_http_url": "http://192.168.50.1:8080/pxe/esxi/mboot.efi",
+        "effective_native_uefi_http_url": "http://192.168.50.1:8080/pxe/esxi/snponly.efi",
         "ipxe_script": "#!ipxe\necho Atlaso PXE ready\nshell\n",
     }
     config_path = apply_dir / "atlaso-esxi-pxe.json"

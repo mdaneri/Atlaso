@@ -64,7 +64,7 @@ ROUTE_TITLES = {
     "/dhcp": "DHCP",
     "/dns": "DNS",
     "/esx-storage": "ESX Storage",
-    "/esxi-pxe": "ESXi PXE",
+    "/network-boot": "Network Boot",
     "/firewall": "Firewall",
     "/kms": "KMS and KMIP",
     "/ldap": "Managed LDAP",

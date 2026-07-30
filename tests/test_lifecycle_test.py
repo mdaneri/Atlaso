@@ -19,6 +19,24 @@ def load_lifecycle_module():
     return module
 
 
+def load_network_boot_lifecycle_module():
+    path = Path(__file__).resolve().parents[1] / "scripts" / "interop" / "network_boot_lifecycle.py"
+    spec = importlib.util.spec_from_file_location("network_boot_lifecycle_module", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_network_boot_lifecycle_extracts_csrf_without_password_query_login():
+    lifecycle = load_network_boot_lifecycle_module()
+    assert lifecycle.csrf_from_page('<input type="hidden" name="csrf" value="csrf-158">') == "csrf-158"
+    source = Path(lifecycle.__file__).read_text(encoding="utf-8")
+    assert "/api/v1/auth/login?" not in source
+    assert '"password": password' in source
+
+
 def write_baseline(path: Path, *, fingerprint: str = "abc123") -> None:
     path.write_text(
         """
@@ -508,6 +526,12 @@ def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():
             if method == "POST" and path == "/esxi-pxe/boot-settings":
                 self.boot_form = kwargs["form"]
                 return 200, '{"validation_errors": [], "dns_record_action": "created"}', {}
+            if method == "GET" and path.startswith("/pxe/boot.ipxe?"):
+                return (
+                    200,
+                    "choose --timeout 10000 --default esxi_assigned selected",
+                    {"Cache-Control": "no-store"},
+                )
             raise AssertionError(f"unexpected request {method} {path}")
 
         def json_request(self, method, path, json_body=None, **_kwargs):
@@ -549,3 +573,4 @@ def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():
     assert fake.host_payload["ip_address"] == "192.168.50.210"
     assert evidence["dhcp_scope_id"] == 42
     assert evidence["dhcp_reservation_id"] == 11
+    assert evidence["menu_default"] == "esxi_assigned"

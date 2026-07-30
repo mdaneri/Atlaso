@@ -169,7 +169,7 @@ build {
 
   provisioner "shell" {
     inline = [
-      "mkdir -p /tmp/atlaso-src/scripts /tmp/atlaso-src/image/common /tmp/atlaso-src/image/hyperv /tmp/atlaso-src/third_party"
+      "mkdir -p /tmp/atlaso-src/scripts /tmp/atlaso-src/image/common /tmp/atlaso-src/image/hyperv /tmp/atlaso-src/image/inventory-linux /tmp/atlaso-src/third_party"
     ]
   }
 
@@ -226,6 +226,11 @@ build {
   provisioner "file" {
     source      = "../../third_party/ipxe"
     destination = "/tmp/atlaso-src/third_party/ipxe"
+  }
+
+  provisioner "file" {
+    source      = "../inventory-linux/output"
+    destination = "/tmp/atlaso-src/image/inventory-linux/output"
   }
 
   provisioner "file" {

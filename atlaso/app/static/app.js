@@ -1219,7 +1219,7 @@ function initializeAtlasoResourceWizard(config) {
   const csrf = element.dataset.csrf || form.elements.namedItem("csrf")?.value || "";
   let table = null;
   let wizard = null;
-  const rows = [...config.rows, config.newRow];
+  const rows = config.includeNewRow === false ? [...config.rows] : [...config.rows, config.newRow];
   const reportActionError = (error) => {
     const message = error instanceof Error ? error.message : String(error || "The resource action failed.");
     const status = config.actionErrorSelector
@@ -1384,6 +1384,8 @@ function initializeAtlasoResourceWizard(config) {
       if (recordId) {
         const existingRow = table.getRow(recordId) || table.getRow(Number(recordId));
         await existingRow?.update(resource);
+      } else if (config.includeNewRow === false) {
+        await table.addRow(resource, true);
       } else {
         await table.addRow(resource, true, config.newRow.id);
       }
@@ -1393,10 +1395,17 @@ function initializeAtlasoResourceWizard(config) {
       return { valid: true };
     },
   });
-  element.addEventListener("click", (event) => {
-    const launcher = event.target.closest("[data-atlaso-wizard-add]");
-    if (launcher instanceof HTMLButtonElement) openResource(config.newRow, launcher);
-  });
+  if (config.addLauncherSelector) {
+    document.querySelectorAll(config.addLauncherSelector).forEach((launcher) => {
+      if (!(launcher instanceof HTMLButtonElement)) return;
+      launcher.addEventListener("click", () => openResource(config.newRow, launcher));
+    });
+  } else {
+    element.addEventListener("click", (event) => {
+      const launcher = event.target.closest("[data-atlaso-wizard-add]");
+      if (launcher instanceof HTMLButtonElement) openResource(config.newRow, launcher);
+    });
+  }
   return { grid, table, wizard };
 }
 
@@ -2522,6 +2531,27 @@ async function deleteEsxiHost(row, csrf) {
     await postEsxiHostAction(`/esxi-pxe/hosts/${data.id}/delete`, {}, csrf);
   } catch (error) {
     showEsxiHostError(error instanceof Error ? error.message : "The ESXi PXE host reference could not be deleted.");
+  }
+}
+
+async function requestEsxiHostInventoryBoot(row) {
+  clearEsxiHostError();
+  const data = row.getData();
+  if (data.is_new || data.is_default || !data.enabled) return;
+  const confirmed = await requestConfirmation({
+    title: `Boot ${data.hostname} into Inventory Linux?`,
+    message: "For the next 30 minutes, this host's next Network Boot request will select Atlaso Inventory Linux instead of ESXi. The claimed boot has a five-minute retry window.",
+    label: "Schedule utility boot",
+  });
+  if (!confirmed) return;
+  try {
+    const result = await networkBootRequest(
+      `/api/v1/network-boot/esxi-hosts/${data.id}/boot-inventory-once`,
+      { method: "POST" },
+    );
+    showEsxiHostSuccess(`Inventory Linux scheduled for ${data.hostname} until ${new Date(result.expires_at).toLocaleTimeString()}.`);
+  } catch (error) {
+    showEsxiHostError(error instanceof Error ? error.message : "The one-time Inventory Linux boot could not be scheduled.");
   }
 }
 
@@ -8728,13 +8758,22 @@ function initializeEsxiPxeHostsTable() {
       data: rows,
       index: "id",
       layout: "fitColumns",
-      height: "360px",
+      height: "calc(100vh - 250px)",
       rowHeight: 30,
       placeholder: "No ESXi PXE host references configured.",
       reactiveData: false,
       rowContextMenu: canWrite ? [
         {
+          label: "Boot Inventory Linux once",
+          disabled: (component) => {
+            const data = component.getData();
+            return data.is_new || data.is_default || !data.enabled;
+          },
+          action: (_event, row) => requestEsxiHostInventoryBoot(row),
+        },
+        {
           label: "Delete host reference",
+          disabled: (component) => component.getData().is_new || component.getData().is_default,
           action: (event, row) => deleteEsxiHost(row, csrf),
         },
       ] : false,
@@ -8845,74 +8884,91 @@ function initializeEsxiPxeHostsTable() {
   }
 }
 
-function showEsxiCustomVariableError(message) {
-  const element = document.getElementById("esxi-custom-variables-error");
-  if (!element) return;
-  element.textContent = message;
-  element.classList.remove("hidden");
-}
-
-function clearEsxiCustomVariableError() {
-  const element = document.getElementById("esxi-custom-variables-error");
-  if (!element) return;
-  element.textContent = "";
-  element.classList.add("hidden");
-}
-
-async function postEsxiCustomVariableAction(url, data, csrf) {
+async function deleteEsxiInstallerIso(row, csrf) {
+  const data = row.getData();
+  const confirmed = await requestConfirmation({
+    title: `Delete ${data.name}?`,
+    message: "This removes the installer ISO and clears host references to it. Generated PXE files change only after global appliance apply.",
+    label: "Delete ISO",
+  });
+  if (!confirmed) return;
   const body = new FormData();
   body.set("csrf", csrf);
-  for (const field of ["name", "description", "default_value"]) {
-    if (field in data) body.set(field, data[field] ?? "");
-  }
-  const response = await fetch(url, {
+  body.set("installer_iso_path", data.path);
+  const response = await fetch("/esxi-pxe/isos/delete", {
     method: "POST",
     body,
     credentials: "same-origin",
-    headers: { Accept: "application/json" },
   });
-  const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(payload.detail || "The custom variable could not be saved.");
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.detail || "The installer ISO could not be deleted.");
   }
-  return payload;
+  window.location.assign("/network-boot#esxi-pxe-isos-panel");
 }
 
-async function autoSaveEsxiCustomVariable(cell, csrf) {
-  clearEsxiCustomVariableError();
-  const data = cell.getRow().getData();
-  if (data.is_new && !(data.name || "").trim()) {
-    reformatPendingNewRecord(cell);
-    return;
-  }
-  const url = data.is_new
-    ? "/esxi-pxe/custom-variables"
-    : `/esxi-pxe/custom-variables/${encodeURIComponent(data.id)}`;
-  try {
-    await postEsxiCustomVariableAction(url, data, csrf);
-    showTransientGridStatus(data.is_new ? "Added" : "Saved");
-    window.location.reload();
-  } catch (error) {
-    showEsxiCustomVariableError(error instanceof Error ? error.message : "The custom variable could not be saved.");
-    if (typeof cell.restoreOldValue === "function") cell.restoreOldValue();
-  }
-}
-
-async function deleteEsxiCustomVariable(row, csrf) {
-  const data = row.getData();
-  if (data.is_new) return;
-  const confirmed = await requestConfirmation({
-    title: `Delete custom variable ${data.name}?`,
-    message: `Kickstarts using {{custom.${data.name}}} will fail validation unless the variable is restored or the marker is removed.`,
-    label: "Delete custom variable",
+function initializeEsxiInstallerIsosTable() {
+  const element = document.getElementById("esxi-installer-isos-table");
+  if (!(element instanceof HTMLElement)) return;
+  const canWrite = element.dataset.canWrite === "true";
+  window.AtlasoUiPatterns.createGrid({
+    element,
+    fallback: `#${element.dataset.fallbackId}`,
+    pattern: "direct-edit",
+    permission: {
+      allowed: canWrite,
+      message: "You have read-only access to ESXi installer ISOs.",
+    },
+    options: {
+      data: JSON.parse(element.dataset.rows || "[]"),
+      index: "path",
+      layout: "fitColumns",
+      height: "calc(100vh - 300px)",
+      placeholder: "No installer ISOs found.",
+      rowContextMenu: canWrite ? [
+        {
+          label: "Delete installer ISO",
+          action: async (_event, row) => {
+            try {
+              await deleteEsxiInstallerIso(row, element.dataset.csrf || "");
+            } catch (error) {
+              showTransientGridStatus(error instanceof Error ? error.message : "The installer ISO could not be deleted.");
+            }
+          },
+        },
+      ] : false,
+      columns: [
+        { title: "Name", field: "name", minWidth: 260, widthGrow: 1.4 },
+        { title: "Relative path", field: "relative_path", minWidth: 260, formatter: (cell) => `<code>${escapeHtml(cell.getValue())}</code>`, widthGrow: 1.2 },
+        { title: "Source", field: "source_label", minWidth: 150 },
+        { title: "Source date", field: "source_at", minWidth: 190 },
+        { title: "Size", field: "size_bytes", minWidth: 120, formatter: (cell) => formatMonitorBytes(cell.getValue()) },
+      ],
+    },
   });
-  if (!confirmed) return;
-  try {
-    await postEsxiCustomVariableAction(`/esxi-pxe/custom-variables/${encodeURIComponent(data.id)}/delete`, {}, csrf);
-    window.location.reload();
-  } catch (error) {
-    showEsxiCustomVariableError(error instanceof Error ? error.message : "The custom variable could not be deleted.");
-  }
+}
+
+function initializeEsxiPxePreviewTable() {
+  const element = document.getElementById("esxi-pxe-preview-table");
+  if (!(element instanceof HTMLElement)) return;
+  window.AtlasoUiPatterns.createGrid({
+    element,
+    fallback: `#${element.dataset.fallbackId}`,
+    pattern: "read-only",
+    options: {
+      data: JSON.parse(element.dataset.rows || "[]"),
+      layout: "fitColumns",
+      height: "calc(100vh - 250px)",
+      placeholder: "No rendered ESXi PXE artifacts.",
+      columns: [
+        { title: "Host", field: "hostname", minWidth: 190, frozen: true },
+        { title: "PXELINUX", field: "pxelinux_config_path", minWidth: 280, formatter: (cell) => `<code>${escapeHtml(cell.getValue())}</code>` },
+        { title: "UEFI boot.cfg", field: "uefi_tftp_boot_cfg_path", minWidth: 280, formatter: (cell) => `<code>${escapeHtml(cell.getValue())}</code>` },
+        { title: "Kickstart URL", field: "kickstart_url", minWidth: 260, formatter: (cell) => `<code>${escapeHtml(cell.getValue() || "interactive installer")}</code>` },
+        { title: "Image URL", field: "image_http_url", minWidth: 340, formatter: (cell) => `<code>${escapeHtml(cell.getValue())}</code>` },
+      ],
+    },
+  });
 }
 
 function initializeEsxiCustomVariablesTable() {
@@ -8920,59 +8976,93 @@ function initializeEsxiCustomVariablesTable() {
   if (!(element instanceof HTMLElement)) return;
   const rows = JSON.parse(element.dataset.rows || "[]");
   const canWrite = element.dataset.canWrite === "true";
-  if (canWrite) rows.push({ id: "__new__", name: "", description: "", default_value: "", is_new: true });
   const columns = [
     {
       title: "Custom variable name",
       field: "name",
-      editor: canWrite ? "input" : false,
       formatter: (cell) => cell.getRow().getData().is_new
-        ? dnsAddRowHintFormatter(cell, "+ Add custom variable")
+        ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add custom variable</button>'
         : `<code>custom.${escapeHtml(cell.getValue())}</code>`,
       minWidth: 220,
-      cellEdited: (cell) => autoSaveEsxiCustomVariable(cell, element.dataset.csrf || ""),
     },
     {
       title: "Description",
       field: "description",
-      editor: canWrite ? "input" : false,
-      editable: (cell) => canWrite && !cell.getRow().getData().is_new,
+      formatter: (cell) => escapeHtml(cell.getValue() || "Not set"),
       minWidth: 260,
       widthGrow: 1.5,
-      cellEdited: (cell) => autoSaveEsxiCustomVariable(cell, element.dataset.csrf || ""),
     },
     {
       title: "Default value, if any",
       field: "default_value",
-      editor: canWrite ? "input" : false,
-      editable: (cell) => canWrite && !cell.getRow().getData().is_new,
+      formatter: (cell) => escapeHtml(cell.getValue() || "Not set"),
       minWidth: 260,
       widthGrow: 1.2,
-      cellEdited: (cell) => autoSaveEsxiCustomVariable(cell, element.dataset.csrf || ""),
     },
   ];
-  window.AtlasoUiPatterns.createGrid({
-    element,
-    pattern: "direct-edit",
-    permission: {
-      allowed: canWrite,
-      message: "You have read-only access to ESXi Kickstart custom variables.",
+  if (!canWrite) {
+    window.AtlasoUiPatterns.createGrid({
+      element,
+      pattern: "read-only",
+      permission: {
+        allowed: false,
+        message: "You have read-only access to ESXi Kickstart custom variables.",
+      },
+      options: {
+        data: rows,
+        index: "id",
+        layout: "fitColumns",
+        height: "calc(100vh - 250px)",
+        placeholder: "No custom Kickstart variables configured.",
+        columns,
+      },
+    });
+    return;
+  }
+  initializeAtlasoResourceWizard({
+    elementId: "esxi-custom-variables-table",
+    formSelector: "[data-esxi-custom-variable-wizard]",
+    dialogId: "esxi-custom-variable-wizard-dialog",
+    rows,
+    newRow: { id: "__new__", name: "", description: "", default_value: "", is_new: true },
+    resourceName: "variable",
+    createUrl: "/esxi-pxe/custom-variables",
+    editUrl: (id) => `/esxi-pxe/custom-variables/${encodeURIComponent(id)}`,
+    deleteUrl: (id) => `/esxi-pxe/custom-variables/${encodeURIComponent(id)}/delete`,
+    deleteResource: true,
+    editLabel: "Edit",
+    deleteLabel: "Remove",
+    createLabel: "Add custom variable",
+    updateLabel: "Save custom variable",
+    emptyMessage: "No custom Kickstart variables configured.",
+    gridError: "Custom variable changes are unavailable because the interactive grid could not initialize.",
+    actionErrorSelector: "#esxi-custom-variables-error",
+    steps: [
+      { id: "definition", title: "Define the custom variable", description: "Name and describe the non-secret value, then provide an optional default." },
+      { id: "review", title: "Review the custom variable", description: "Confirm the Kickstart marker and optional default before saving." },
+    ],
+    reviewItems: [
+      { label: "Kickstart marker", value: (form) => `{{custom.${form.elements.name.value.trim()}}}` },
+      { label: "Description", field: "description" },
+      { label: "Default value", field: "default_value" },
+    ],
+    deleteConfirmation: (data) => ({
+      title: `Remove custom variable ${data.name}?`,
+      message: `Kickstarts using {{custom.${data.name}}} will fail validation unless the variable is restored or the marker is removed.`,
+      confirmLabel: "Remove custom variable",
+      tone: "danger",
+    }),
+    onOpen: ({ context }) => {
+      const title = document.querySelector("[data-esxi-custom-variable-modal-title]");
+      if (title) title.textContent = context ? "Edit custom variable" : "Add custom variable";
     },
+    onSaved: () => window.location.reload(),
+    onDeleted: () => window.location.reload(),
     options: {
-      data: rows,
-      index: "id",
       layout: "fitColumns",
-      height: "360px",
+      height: "calc(100vh - 250px)",
       placeholder: "No custom Kickstart variables configured.",
       columns,
-      rowContextMenu: canWrite ? [
-        {
-          label: "Delete custom variable",
-          disabled: (_event, row) => row.getData().is_new,
-          action: (_event, row) => deleteEsxiCustomVariable(row, element.dataset.csrf || ""),
-        },
-      ] : false,
-      rowFormatter: (row) => markNewRecordRow(row, "name"),
     },
   });
 }
@@ -18154,7 +18244,410 @@ function initializeVcfVaultImport() {
   document.querySelectorAll("[data-vcf-vault-import-open]").forEach((button) => button.addEventListener("click", () => wizard.open({ launcher: button })));
 }
 
+async function networkBootRequest(url, options = {}) {
+  const csrf = document.querySelector("input[name='csrf']")?.value || "";
+  const isFormData = options.body instanceof FormData;
+  const response = await fetch(url, {
+    credentials: "same-origin",
+    cache: "no-store",
+    headers: {
+      Accept: "application/json",
+      ...(options.body && !isFormData ? { "Content-Type": "application/json" } : {}),
+      ...(csrf ? { "X-CSRF-Token": csrf } : {}),
+    },
+    ...options,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.detail || "The Network Boot request failed.");
+  return payload;
+}
+
+function initializeNetworkBootWorkspace() {
+  const workspace = document.querySelector("[data-network-boot-page-workspace]");
+  const networkSlot = workspace?.querySelector("[data-network-boot-section-slot]");
+  const kickstartsSlot = workspace?.querySelector("[data-network-boot-kickstarts-slot]");
+  const staticRail = workspace?.querySelector("[data-network-boot-static-rail]");
+  const networkSection = document.querySelector("[data-network-boot-section]");
+  const tasksPanel = document.querySelector("[data-network-boot-tasks-panel]");
+  const kickstartsSection = document.querySelector("[data-esxi-kickstarts-panel]");
+  const bootService = document.querySelector("[data-network-boot-service-panel]");
+  const legacyWorkspace = document.querySelector(".esxi-pxe-workspace");
+  const legacyRail = legacyWorkspace?.querySelector(":scope > aside.side-stack");
+  if (
+    !(workspace instanceof HTMLElement)
+    || !(networkSlot instanceof HTMLElement)
+    || !(kickstartsSlot instanceof HTMLElement)
+    || !(staticRail instanceof HTMLElement)
+    || !(networkSection instanceof HTMLElement)
+    || !(tasksPanel instanceof HTMLElement)
+    || !(kickstartsSection instanceof HTMLElement)
+    || !(bootService instanceof HTMLElement)
+    || !(legacyWorkspace instanceof HTMLElement)
+  ) return;
+
+  networkSection.classList.remove("panel", "wide-panel");
+  networkSection.classList.add("network-boot-inner-section");
+  tasksPanel.classList.add("network-boot-inner-section");
+  kickstartsSection.classList.remove("panel", "wide-panel");
+  kickstartsSection.classList.add("network-boot-inner-section");
+  networkSlot.append(networkSection);
+  networkSlot.append(tasksPanel);
+  kickstartsSlot.append(kickstartsSection);
+  staticRail.append(bootService);
+  Array.from(legacyRail?.children || []).forEach((panel) => staticRail.append(panel));
+  legacyWorkspace.remove();
+
+  const hashTarget = window.location.hash
+    ? document.getElementById(window.location.hash.slice(1))
+    : null;
+  if (hashTarget instanceof HTMLElement && kickstartsSection.contains(hashTarget)) {
+    const networkButton = workspace.querySelector('[data-tab-target="network-boot-primary-panel"]');
+    const kickstartsButton = workspace.querySelector('[data-tab-target="network-boot-kickstarts-panel"]');
+    networkButton?.classList.remove("active");
+    networkButton?.setAttribute("aria-selected", "false");
+    kickstartsButton?.classList.add("active");
+    kickstartsButton?.setAttribute("aria-selected", "true");
+    networkSlot.classList.remove("active");
+    networkSlot.setAttribute("hidden", "");
+    kickstartsSlot.classList.add("active");
+    kickstartsSlot.removeAttribute("hidden");
+  }
+}
+
+function initializeNetworkBootPage() {
+  const hostsElement = document.getElementById("network-boot-discovered-table");
+  const environmentsElement = document.getElementById("network-boot-environments-table");
+  if (!(hostsElement instanceof HTMLElement) || !(environmentsElement instanceof HTMLElement)) return;
+  const canWrite = hostsElement.dataset.canWrite === "true";
+  const hostDialog = document.getElementById("network-boot-host-dialog");
+  const detailElement = hostDialog?.querySelector("[data-network-boot-host-detail]");
+  const uploadDialog = document.getElementById("network-boot-upload-dialog");
+  const uploadForm = uploadDialog?.querySelector("[data-network-boot-upload-form]");
+  const uploadLabel = uploadDialog?.querySelector("[data-network-boot-upload-label]");
+  const uploadProgress = uploadDialog?.querySelector("[data-network-boot-upload-progress]");
+  const uploadStatus = uploadDialog?.querySelector("[data-network-boot-upload-status]");
+  const uploadSubmit = uploadDialog?.querySelector("[data-network-boot-upload-submit]");
+  let selectedHost = null;
+  const openHost = async (row) => {
+    try {
+      selectedHost = await networkBootRequest(`/api/v1/network-boot/hosts/${row.id}`);
+      const history = await networkBootRequest(`/api/v1/network-boot/hosts/${row.id}/history`);
+      if (detailElement) detailElement.textContent = JSON.stringify({ host: selectedHost, history }, null, 2);
+      hostDialog?.showModal();
+    } catch (error) {
+      showTransientGridStatus(error instanceof Error ? error.message : "The inventory report could not be loaded.");
+    }
+  };
+  window.AtlasoUiPatterns.createGrid({
+    element: hostsElement,
+    fallback: `#${hostsElement.dataset.fallbackId}`,
+    pattern: "read-only",
+    onOpenRow: openHost,
+    emptyMessage: "No inventory reports received.",
+    options: {
+      data: JSON.parse(hostsElement.dataset.rows || "[]"),
+      index: "id",
+      maxHeight: "360px",
+      columns: [
+        { title: "UUID", field: "dmi_uuid", minWidth: 220, formatter: (cell) => escapeHtml(cell.getValue() || "MAC fallback") },
+        { title: "MACs", field: "macs", minWidth: 190, formatter: (cell) => escapeHtml((cell.getValue() || []).join(", ")) },
+        { title: "CPU", field: "cpu_model", minWidth: 180 },
+        { title: "Memory", field: "total_memory_bytes", width: 120, formatter: (cell) => formatMonitorBytes(cell.getValue()) },
+        { title: "Disks", field: "disk_count", width: 80, hozAlign: "right" },
+        { title: "NICs", field: "interface_count", width: 75, hozAlign: "right" },
+        { title: "Last seen", field: "last_seen_at", minWidth: 170 },
+        { title: "Session", field: "session_state", width: 100 },
+      ],
+    },
+  });
+  hostDialog?.querySelector("[data-network-boot-host-close]")?.addEventListener("click", () => hostDialog.close());
+  hostDialog?.querySelector("[data-network-boot-reboot]")?.addEventListener("click", async () => {
+    if (!selectedHost) return;
+    const confirmed = await requestConfirmation({
+      title: "Reboot inventory session?",
+      message: "Atlaso will deliver one audited reboot command to this host's live Inventory Linux session.",
+      label: "Queue reboot",
+    });
+    if (!confirmed) return;
+    await networkBootRequest(`/api/v1/network-boot/hosts/${selectedHost.id}/reboot`, { method: "POST" });
+    hostDialog.close();
+  });
+  const persistEnvironmentState = async (row, enabled) => {
+    const data = row.getData();
+    const updated = await networkBootRequest(`/api/v1/network-boot/environments/${data.key}`, {
+      method: "PATCH",
+      body: JSON.stringify({ enabled, desired_version: data.desired_version || "" }),
+    });
+    await row.update(updated);
+    return updated;
+  };
+  const updateEnvironment = async (cell) => {
+    const row = cell.getRow();
+    const data = row.getData();
+    try {
+      await persistEnvironmentState(row, Boolean(data.enabled));
+    } catch (error) {
+      cell.restoreOldValue();
+      showTransientGridStatus(error instanceof Error ? error.message : "Network Boot desired state could not be saved.");
+    }
+  };
+  const toggleEnvironmentFromMenu = async (row) => {
+    const data = row.getData();
+    const enabled = !data.enabled;
+    try {
+      await persistEnvironmentState(row, enabled);
+      showTransientGridStatus(`${data.label} ${enabled ? "enabled" : "disabled"} in pending desired state.`);
+    } catch (error) {
+      showTransientGridStatus(error instanceof Error ? error.message : "Network Boot desired state could not be saved.");
+    }
+  };
+  const queueEnvironmentDownload = async (data) => {
+    const confirmed = await requestConfirmation({
+      title: `Download latest ${data.label}?`,
+      message: "Atlaso will resolve, verify, and install one immutable upstream release. The active boot menu will not change.",
+      label: "Queue download",
+    });
+    if (!confirmed) return;
+    const queued = await networkBootRequest(`/api/v1/network-boot/environments/${data.key}/sync`, { method: "POST" });
+    showTransientGridStatus(`Queued verified download task ${queued.job_id}.`);
+  };
+  const openEnvironmentUpload = (data) => {
+    if (!(uploadDialog instanceof HTMLDialogElement) || !(uploadForm instanceof HTMLFormElement)) return;
+    uploadForm.reset();
+    uploadForm.elements.environment_key.value = data.key;
+    if (uploadLabel) uploadLabel.textContent = data.label;
+    if (uploadProgress instanceof HTMLProgressElement) {
+      uploadProgress.hidden = true;
+      uploadProgress.value = 0;
+    }
+    if (uploadStatus instanceof HTMLElement) {
+      uploadStatus.dataset.state = "idle";
+      uploadStatus.textContent = "Choose the matching upstream release asset.";
+    }
+    uploadDialog.showModal();
+  };
+  window.AtlasoUiPatterns.createGrid({
+    element: environmentsElement,
+    fallback: `#${environmentsElement.dataset.fallbackId}`,
+    pattern: "direct-edit",
+    emptyMessage: "The fixed Network Boot catalog is unavailable.",
+    options: {
+      data: JSON.parse(environmentsElement.dataset.rows || "[]"),
+      index: "key",
+      maxHeight: "360px",
+      rowContextMenu: canWrite ? [
+        {
+          label: (component) => (component.getData().enabled ? "Disable" : "Enable"),
+          disabled: (component) => {
+            const data = component.getData();
+            return !data.enabled && !(data.installed_versions || []).length;
+          },
+          action: async (_event, row) => {
+            await toggleEnvironmentFromMenu(row);
+          },
+        },
+        {
+          label: "Download latest stable",
+          action: async (_event, row) => {
+            await queueEnvironmentDownload(row.getData());
+          },
+        },
+        {
+          label: "Upload release asset",
+          action: (_event, row) => {
+            openEnvironmentUpload(row.getData());
+          },
+        },
+        {
+          label: "Delete newest inactive media",
+          disabled: (component) => {
+            const data = component.getData();
+            return data.key === "inventory" || !(data.installed_versions || []).some((item) => item.version !== data.active_version && item.version !== data.desired_version);
+          },
+          action: async (_event, row) => {
+            const data = row.getData();
+            const candidate = (data.installed_versions || []).find((item) => item.version !== data.active_version && item.version !== data.desired_version);
+            if (!candidate) return;
+            const confirmed = await requestConfirmation({
+              title: `Delete ${data.label} ${candidate.version}?`,
+              message: "This permanently removes the selected inactive immutable cache version and any staged uploads for this environment. Active and desired versions cannot be removed.",
+              label: "Delete media",
+            });
+            if (!confirmed) return;
+            try {
+              await networkBootRequest(`/api/v1/network-boot/environments/${data.key}/media/${encodeURIComponent(candidate.version)}`, { method: "DELETE" });
+              window.location.reload();
+            } catch (error) {
+              showTransientGridStatus(error instanceof Error ? error.message : "The inactive boot media could not be deleted.");
+            }
+          },
+        },
+      ] : [],
+      columns: [
+        { title: "Environment", field: "label", minWidth: 180, frozen: true },
+        { title: "Enabled", field: "enabled", width: 95, formatter: (cell) => atlasoBooleanFormatter(cell), editor: canWrite ? "tickCross" : false, cellEdited: updateEnvironment },
+        {
+          title: "Desired version",
+          field: "desired_version",
+          minWidth: 150,
+          editor: canWrite ? "list" : false,
+          editorParams: (cell) => ({ values: Object.fromEntries((cell.getRow().getData().installed_versions || []).map((item) => [item.version, item.version])), clearable: true }),
+          cellEdited: updateEnvironment,
+        },
+        {
+          title: "Newest installed",
+          field: "installed_versions",
+          minWidth: 150,
+          formatter: (cell) => escapeHtml(cell.getValue()?.[0]?.version || "Not installed"),
+        },
+        { title: "Active version", field: "active_version", minWidth: 140 },
+        { title: "Media ready", field: "media_ready", width: 110, formatter: (cell) => atlasoBooleanFormatter(cell) },
+        {
+          title: "Source",
+          field: "source_label",
+          minWidth: 210,
+          formatter: (cell) => {
+            const data = cell.getRow().getData();
+            const label = data.source_label || "Authoritative release page";
+            try {
+              const source = new URL(data.release_page);
+              if (source.protocol !== "https:") return escapeHtml(label);
+              const url = source.toString();
+              return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(url)}">${escapeHtml(label)}</a>`;
+            } catch {
+              return escapeHtml(label);
+            }
+          },
+        },
+        { title: "Verification", field: "verification_method", minWidth: 220 },
+        { title: "Risk", field: "risk", minWidth: 240 },
+      ],
+    },
+  });
+  uploadDialog?.querySelector("[data-network-boot-upload-close]")?.addEventListener("click", () => uploadDialog.close());
+  uploadForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (!(uploadForm instanceof HTMLFormElement) || !(uploadDialog instanceof HTMLDialogElement)) return;
+    const fileInput = uploadForm.elements.artifact;
+    const environmentKey = uploadForm.elements.environment_key.value;
+    if (!(fileInput instanceof HTMLInputElement) || !fileInput.files?.length || !environmentKey) {
+      if (uploadStatus instanceof HTMLElement) {
+        uploadStatus.dataset.state = "error";
+        uploadStatus.textContent = "Choose a boot media file before uploading.";
+      }
+      return;
+    }
+    const file = fileInput.files[0];
+    const body = new FormData(uploadForm);
+    const request = new XMLHttpRequest();
+    request.open("POST", `/api/v1/network-boot/environments/${environmentKey}/upload`);
+    request.setRequestHeader("Accept", "application/json");
+    const csrf = document.querySelector("input[name='csrf']")?.value || "";
+    if (csrf) request.setRequestHeader("X-CSRF-Token", csrf);
+    request.upload.addEventListener("loadstart", () => {
+      if (uploadProgress instanceof HTMLProgressElement) {
+        uploadProgress.hidden = false;
+        uploadProgress.value = 0;
+      }
+      if (uploadSubmit instanceof HTMLButtonElement) uploadSubmit.disabled = true;
+      if (uploadStatus instanceof HTMLElement) {
+        uploadStatus.dataset.state = "saving";
+        uploadStatus.textContent = `Uploading ${file.name}...`;
+      }
+    });
+    request.upload.addEventListener("progress", (progressEvent) => {
+      if (!(uploadProgress instanceof HTMLProgressElement) || !progressEvent.lengthComputable) return;
+      const percent = Math.max(0, Math.min(100, Math.round((progressEvent.loaded / progressEvent.total) * 100)));
+      uploadProgress.value = percent;
+      if (uploadStatus instanceof HTMLElement) uploadStatus.textContent = `Uploading ${file.name}: ${percent}%`;
+    });
+    request.addEventListener("load", () => {
+      let payload = {};
+      try {
+        payload = JSON.parse(request.responseText || "{}");
+      } catch (_error) {
+        payload = {};
+      }
+      if (request.status >= 200 && request.status < 300) {
+        if (uploadStatus instanceof HTMLElement) {
+          uploadStatus.dataset.state = "saved";
+          uploadStatus.textContent = `Queued verification task ${payload.job_id}. You can close this dialog and follow it on Tasks.`;
+        }
+        return;
+      }
+      if (uploadStatus instanceof HTMLElement) {
+        uploadStatus.dataset.state = "error";
+        uploadStatus.textContent = payload.detail || `Upload failed with HTTP ${request.status}.`;
+      }
+    });
+    request.addEventListener("error", () => {
+      if (uploadStatus instanceof HTMLElement) {
+        uploadStatus.dataset.state = "error";
+        uploadStatus.textContent = "Upload failed before Atlaso received the file.";
+      }
+    });
+    request.addEventListener("loadend", () => {
+      if (uploadSubmit instanceof HTMLButtonElement) uploadSubmit.disabled = false;
+    });
+    request.send(body);
+  });
+  const promoteDialog = document.getElementById("network-boot-promote-dialog");
+  const promoteForm = promoteDialog?.querySelector("[data-network-boot-promote-form]");
+  if (!(promoteDialog instanceof HTMLDialogElement) || !(promoteForm instanceof HTMLFormElement)) return;
+  const promoteWizard = window.AtlasoUiPatterns.createWizard({
+    form: promoteForm,
+    dialog: promoteDialog,
+    steps: [
+      { id: "identity", title: "Review host identity", description: "Choose the explicit ESXi hostname, discovered MAC, and address." },
+      { id: "installer", title: "Choose installer inputs", description: "Select the Kickstart, installer ISO, and reviewed variables." },
+      { id: "enablement", title: "Choose desired-state enablement", description: "Enabled is reviewed last before the summary." },
+      { id: "review", title: "Review ESXi promotion", description: "Promotion creates desired state only and does not run appliance apply." },
+    ],
+    validateStep: validateAtlasoWizardStep,
+    onOpen: ({ context }) => {
+      if (!context) return;
+      promoteForm.elements.host_id.value = context.id;
+      promoteForm.elements.hostname.value = context.product_name
+        ? context.product_name.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-|-$/g, "")
+        : "";
+      promoteForm.elements.mac_address.replaceChildren(...context.macs.map((mac) => new Option(mac, mac)));
+      const assignedAddress = context.latest_report?.assigned_addresses?.[0] || "";
+      promoteForm.elements.ip_address.value = assignedAddress.split("/")[0];
+    },
+    prepareReview: () => renderAtlasoWizardReview(promoteForm, [
+      { label: "Hostname", field: "hostname" }, { label: "MAC", field: "mac_address" },
+      { label: "Address", field: "ip_address" }, { label: "Kickstart", field: "kickstart_id" },
+      { label: "Installer ISO", field: "installer_iso_path" }, { label: "Enabled", field: "enabled" },
+    ]),
+    onSubmit: async () => {
+      let variables;
+      try { variables = JSON.parse(promoteForm.elements.variables.value || "{}"); } catch { return { ok: false, message: "Variables must be a JSON object." }; }
+      await networkBootRequest(`/api/v1/network-boot/hosts/${promoteForm.elements.host_id.value}/promote`, {
+        method: "POST",
+        body: JSON.stringify({
+          hostname: promoteForm.elements.hostname.value,
+          mac_address: promoteForm.elements.mac_address.value,
+          ip_address: promoteForm.elements.ip_address.value,
+          kickstart_id: promoteForm.elements.kickstart_id.value,
+          installer_iso_path: promoteForm.elements.installer_iso_path.value,
+          variables,
+          enabled: promoteForm.elements.enabled.checked,
+        }),
+      });
+      window.location.reload();
+      return { ok: true };
+    },
+  });
+  hostDialog?.querySelector("[data-network-boot-promote-open]")?.addEventListener("click", (event) => {
+    if (!selectedHost) return;
+    hostDialog.close();
+    promoteWizard.open({ launcher: event.currentTarget, context: selectedHost });
+  });
+}
+
 document.addEventListener("DOMContentLoaded", initializeDashboard);
+document.addEventListener("DOMContentLoaded", initializeNetworkBootWorkspace);
+document.addEventListener("DOMContentLoaded", initializeNetworkBootPage);
 document.addEventListener("DOMContentLoaded", initializeVaultsPage);
 document.addEventListener("DOMContentLoaded", initializeVcfVaultCredentialPickers);
 document.addEventListener("DOMContentLoaded", initializeVcfVaultImport);
@@ -18170,6 +18663,8 @@ document.addEventListener("DOMContentLoaded", initializeDhcpReservationsTable);
 document.addEventListener("DOMContentLoaded", initializeDhcpLeasesTable);
 document.addEventListener("DOMContentLoaded", initializeDhcpLeaseReservationActions);
 document.addEventListener("DOMContentLoaded", initializeEsxiPxeHostsTable);
+document.addEventListener("DOMContentLoaded", initializeEsxiInstallerIsosTable);
+document.addEventListener("DOMContentLoaded", initializeEsxiPxePreviewTable);
 document.addEventListener("DOMContentLoaded", initializeEsxiCustomVariablesTable);
 document.addEventListener("DOMContentLoaded", initializeCaProfilesTable);
 document.addEventListener("DOMContentLoaded", initializeCaCertificatesTable);

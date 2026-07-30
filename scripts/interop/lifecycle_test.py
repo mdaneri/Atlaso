@@ -822,6 +822,19 @@ def configure_esxi_pxe(client: HttpClient, args: argparse.Namespace) -> dict[str
         raise LifecycleError(
             f"ESXi PXE host {host_payload['mac_address']} did not create an enabled DHCP reservation for {host_payload['ip_address']}."
         )
+    menu_status, menu_body, menu_headers = client.request(
+        "GET",
+        f"/pxe/boot.ipxe?{urllib.parse.urlencode({'mac': args.pxe_client_mac, 'firmware': 'efi'})}",
+    )
+    if menu_status >= 400:
+        raise LifecycleError(f"Network Boot menu failed with HTTP {menu_status}.")
+    expected_default = "esxi_assigned" if args.pxe_test_mode == "esxi" else "inventory"
+    if f"choose --timeout 10000 --default {expected_default}" not in menu_body:
+        raise LifecycleError(
+            f"Network Boot menu did not select expected {expected_default} timed default."
+        )
+    if "no-store" not in str(menu_headers.get("Cache-Control") or "").lower():
+        raise LifecycleError("Network Boot menu response is cacheable.")
 
     return {
         "enabled": True,
@@ -836,6 +849,7 @@ def configure_esxi_pxe(client: HttpClient, args: argparse.Namespace) -> dict[str
         "kickstart_id": kickstart_id,
         "installer_iso_path": host_payload["installer_iso_path"],
         "host_id": host.get("id"),
+        "menu_default": expected_default,
         "dhcp_reservation_id": reservation.get("id") if reservation else None,
         "dns_record_action": settings_payload.get("dns_record_action"),
     }
