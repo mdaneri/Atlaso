@@ -3491,7 +3491,10 @@ def test_esxi_pxe_ui_create_apply_and_job_redaction(client):
     assert "Boot media tasks" in page.text
     assert 'data-task-type="pxe-media-sync"' in page.text
     assert 'data-task-lock-component-filter="true"' in page.text
+    assert 'data-task-grid-height="100%"' in page.text
     assert "Downloads and uploads only" in page.text
+    assert "Media ready" in page.text
+    assert "Delete newest inactive media" in Path("atlaso/app/static/app.js").read_text()
     app_css = Path("atlaso/app/static/app.css").read_text()
     kickstart_description_css = app_css.split(".kickstart-description-field {", 1)[1].split("}", 1)[0]
     assert "grid-column: 1;" in kickstart_description_css

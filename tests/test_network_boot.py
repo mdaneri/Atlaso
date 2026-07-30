@@ -150,6 +150,29 @@ def test_network_boot_catalog_identifies_authoritative_download_sources(db_sessi
     }
 
 
+def test_network_boot_catalog_distinguishes_installed_media_from_active_readiness(
+    db_session,
+):
+    from atlaso.app.services.network_boot import catalog_rows
+
+    record_verified_media(
+        db_session,
+        environment_key="memtest86plus",
+        version="8.10",
+        source_url="https://www.memtest.org/download/v8.10/example.zip",
+        artifact_sha256="a" * 64,
+        installed_path="/var/lib/atlaso/pxe/media/memtest86plus/8.10",
+        manifest={"schema_version": 1},
+    )
+    row = next(
+        item for item in catalog_rows(db_session)
+        if item["key"] == "memtest86plus"
+    )
+
+    assert row["media_ready"] is True
+    assert row["ready"] is False
+
+
 def inventory_report(
     *,
     dmi_uuid="4c4c4544-004b-4d10-8052-cac04f4c5132",
@@ -526,6 +549,73 @@ def test_media_upload_is_staged_as_a_durable_verification_job(
     assert config["source"] == "upload"
     assert config["environment"] == "shredos"
     assert config["filename"] == "shredos-2025.11.img"
+
+
+def test_deleting_inactive_media_cleans_environment_upload_staging(
+    client,
+    db_session,
+    monkeypatch,
+    tmp_path,
+):
+    media_root = tmp_path / "media"
+    environment_root = media_root / "shredos"
+    installed = environment_root / "2025.11"
+    installed.mkdir(parents=True)
+    (installed / "manifest.json").write_text("{}", encoding="utf-8")
+    upload_root = tmp_path / "uploads"
+    job = Job(
+        id="job_" + ("e" * 32),
+        type="pxe-media-sync",
+        status=JobStatus.PENDING.value,
+        created_by="admin",
+        task_config_json=json.dumps(
+            {"environment": "shredos", "source": "upload"}
+        ),
+    )
+    staged = network_boot_upload_path(job.id, upload_root=upload_root)
+    staged.parent.mkdir(parents=True)
+    staged.write_bytes(b"terminal staged artifact")
+    media = record_verified_media(
+        db_session,
+        environment_key="shredos",
+        version="2025.11",
+        source_url="https://example.test/shredos.img",
+        artifact_sha256="a" * 64,
+        installed_path=str(installed.resolve()),
+        manifest={"schema_version": 1},
+    )
+    media_id = media.id
+    db_session.add(job)
+    db_session.commit()
+    monkeypatch.setitem(
+        _MEDIA_ENVIRONMENT_ROOTS,
+        "shredos",
+        environment_root.resolve(),
+    )
+    monkeypatch.setattr(network_boot, "NETWORK_BOOT_UPLOAD_ROOT", upload_root)
+    token = create_api_token(client, ["write:pxe"])
+
+    blocked = client.delete(
+        "/api/v1/network-boot/environments/shredos/media/2025.11",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert blocked.status_code == 409
+    assert installed.exists()
+    assert staged.exists()
+
+    job.status = JobStatus.SUCCEEDED.value
+    db_session.commit()
+    response = client.delete(
+        "/api/v1/network-boot/environments/shredos/media/2025.11",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["staged_uploads_cleaned"] == 1
+    assert not installed.exists()
+    assert not staged.exists()
+    db_session.expire_all()
+    assert db_session.get(NetworkBootMedia, media_id) is None
 
 
 def test_inventory_session_stores_only_token_hash_and_expires(db_session):

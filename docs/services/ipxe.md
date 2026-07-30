@@ -84,19 +84,27 @@ task that:
 5. atomically installs an immutable cache under
    `/var/lib/atlaso/pxe/media/<environment>/<version>`.
 
-Each catalog row exposes **Download** and **Upload** through its row context menu.
+Each catalog row exposes **Download**, **Upload**, and **Delete newest inactive
+media** through its row context menu.
 Upload is limited to 2 GiB and stages the file only for the durable verification
 task. Atlaso still resolves the authoritative stable release metadata and
 checks the uploaded bytes against the same upstream digest or signed checksum;
 the operator cannot substitute an unverified checksum. Cancelling a pending
 upload removes its staged artifact immediately, and worker-startup recovery
 removes staged uploads left by an interrupted running task.
+Deleting an inactive media version also removes terminal staged-upload
+artifacts for that environment. Cleanup is blocked while an environment media
+task is pending or running, and active, desired, and bundled Inventory Linux
+versions cannot be removed.
 The **Boot media tasks** panel reuses the Tasks grid and detail dialogs while
 scoping live refresh, filtering, logs, and cancellation to Network Boot media
 downloads and uploads. The Network Boot and ESXi Kickstarts workspaces scroll
 inside the main panel so the Boot Service rail remains fixed on the right.
 The same menu provides a state-aware **Enable** or **Disable** action. Enable
 remains unavailable until that environment has verified installed media.
+**Media ready** indicates that verified media is installed; **Active version**
+remains empty until the desired version is enabled and submitted through global
+appliance apply.
 
 The Network Boot page separates **Network Boot** and **ESXi Kickstarts** into
 primary tabs. Each primary view retains its own task-specific subtabs, while

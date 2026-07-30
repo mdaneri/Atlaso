@@ -42,6 +42,7 @@ from atlaso.app.services.network_boot import (
     NETWORK_BOOT_MEDIA_ROOT,
     NETWORK_BOOT_UPLOAD_MAX_BYTES,
     catalog_rows,
+    cleanup_network_boot_upload,
     host_to_dict,
     inventory_session_for_token,
     issue_inventory_session,
@@ -382,22 +383,52 @@ def remove_network_boot_media(
             status_code=409,
             detail="Select and apply a different version or disable this environment before removal.",
         )
+    environment_jobs = db.execute(
+        select(Job).where(Job.type == "pxe-media-sync")
+    ).scalars().all()
+    matching_jobs: list[tuple[Job, dict[str, Any]]] = []
+    for job in environment_jobs:
+        try:
+            config = json.loads(job.task_config_json or "{}")
+        except json.JSONDecodeError:
+            config = {}
+        if config.get("environment") == environment_key:
+            matching_jobs.append((job, config))
+    if any(
+        job.status in (JobStatus.PENDING.value, JobStatus.RUNNING.value)
+        for job, _config in matching_jobs
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Wait for the active Network Boot media task before cleaning this environment.",
+        )
     target = _installed_media_directory(media)
     if target is None:
         raise HTTPException(status_code=409, detail="Installed media path failed safety validation.")
     shutil.rmtree(target)
     db.delete(media)
+    cleaned_uploads = 0
+    for job, config in matching_jobs:
+        if config.get("source") != "upload":
+            continue
+        cleanup_network_boot_upload(job.id)
+        cleaned_uploads += 1
     record_audit(
         db,
         actor=identity.username,
         action="remove_network_boot_media",
         resource_type="network_boot_media",
         resource_id=f"{environment_key}:{version}",
-        detail="inactive immutable cache version removed",
+        detail=f"inactive immutable cache version removed; staged_uploads_cleaned={cleaned_uploads}",
         request_id=request.state.request_id,
     )
     db.commit()
-    return {"environment": environment_key, "version": version, "removed": True}
+    return {
+        "environment": environment_key,
+        "version": version,
+        "removed": True,
+        "staged_uploads_cleaned": cleaned_uploads,
+    }
 
 
 @router.get("/hosts")

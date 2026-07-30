@@ -198,6 +198,7 @@ def catalog_rows(db: Session) -> list[dict[str, Any]]:
                 "desired_version": state.desired_version,
                 "active_version": state.active_version,
                 "ready": bool(state.enabled and active),
+                "media_ready": bool(versions),
                 "installed_versions": [media_to_dict(row) for row in versions],
             }
         )

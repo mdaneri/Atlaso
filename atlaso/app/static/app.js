@@ -17404,23 +17404,6 @@ function initializeEsxStorageTables() {
             if (form instanceof HTMLFormElement) form.requestSubmit();
           },
         },
-        {
-          label: "Remove newest inactive version",
-          disabled: (_event, row) => !(row.getData().installed_versions || []).some((item) => item.version !== row.getData().active_version && item.version !== row.getData().desired_version),
-          action: async (_event, row) => {
-            const data = row.getData();
-            const candidate = (data.installed_versions || []).find((item) => item.version !== data.active_version && item.version !== data.desired_version);
-            if (!candidate) return;
-            const confirmed = await requestConfirmation({
-              title: `Remove ${data.label} ${candidate.version}?`,
-              message: "This permanently removes the selected inactive immutable cache version. Active and desired versions cannot be removed.",
-              label: "Remove media",
-            });
-            if (!confirmed) return;
-            await networkBootRequest(`/api/v1/network-boot/environments/${data.key}/media/${encodeURIComponent(candidate.version)}`, { method: "DELETE" });
-            window.location.reload();
-          },
-        },
       ] : [],
       rowDblClick: (_event, row) => editRow(row),
       columns: [
@@ -18411,10 +18394,34 @@ function initializeNetworkBootPage() {
             openEnvironmentUpload(row.getData());
           },
         },
+        {
+          label: "Delete newest inactive media",
+          disabled: (component) => {
+            const data = component.getData();
+            return data.key === "inventory" || !(data.installed_versions || []).some((item) => item.version !== data.active_version && item.version !== data.desired_version);
+          },
+          action: async (_event, row) => {
+            const data = row.getData();
+            const candidate = (data.installed_versions || []).find((item) => item.version !== data.active_version && item.version !== data.desired_version);
+            if (!candidate) return;
+            const confirmed = await requestConfirmation({
+              title: `Delete ${data.label} ${candidate.version}?`,
+              message: "This permanently removes the selected inactive immutable cache version and any staged uploads for this environment. Active and desired versions cannot be removed.",
+              label: "Delete media",
+            });
+            if (!confirmed) return;
+            try {
+              await networkBootRequest(`/api/v1/network-boot/environments/${data.key}/media/${encodeURIComponent(candidate.version)}`, { method: "DELETE" });
+              window.location.reload();
+            } catch (error) {
+              showTransientGridStatus(error instanceof Error ? error.message : "The inactive boot media could not be deleted.");
+            }
+          },
+        },
       ] : [],
       columns: [
         { title: "Environment", field: "label", minWidth: 180, frozen: true },
-        { title: "Enabled", field: "enabled", width: 95, formatter: "tickCross", editor: canWrite ? "tickCross" : false, cellEdited: updateEnvironment },
+        { title: "Enabled", field: "enabled", width: 95, formatter: (cell) => atlasoBooleanFormatter(cell), editor: canWrite ? "tickCross" : false, cellEdited: updateEnvironment },
         {
           title: "Desired version",
           field: "desired_version",
@@ -18430,7 +18437,7 @@ function initializeNetworkBootPage() {
           formatter: (cell) => escapeHtml(cell.getValue()?.[0]?.version || "Not installed"),
         },
         { title: "Active version", field: "active_version", minWidth: 140 },
-        { title: "Ready", field: "ready", width: 85, formatter: "tickCross" },
+        { title: "Media ready", field: "media_ready", width: 110, formatter: (cell) => atlasoBooleanFormatter(cell) },
         {
           title: "Source",
           field: "source_label",
