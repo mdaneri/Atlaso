@@ -21,20 +21,17 @@ from sqlalchemy import delete, desc, func, select
 from sqlalchemy.orm import Session
 
 from atlaso.app.models import (
-    EsxiPxeHost,
     NetworkBootDiscoveredHost,
     NetworkBootEnvironment,
     NetworkBootInventoryCommand,
     NetworkBootInventoryReport,
     NetworkBootInventorySession,
     NetworkBootMedia,
+    Setting,
     utcnow,
 )
 from atlaso.app.services.esxi_pxe import (
     esxi_http_base_url,
-    esxi_pxe_boot_settings,
-    esxi_pxe_default_host_settings,
-    esxi_pxe_host_artifacts,
     normalize_pxe_mac,
 )
 
@@ -55,6 +52,7 @@ NETWORK_BOOT_UPLOAD_MAX_BYTES = 2 * 1024 * 1024 * 1024
 NETWORK_BOOT_HTTP_ROOT = Path("/var/lib/atlaso/pxe/http")
 NETWORK_BOOT_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/esxi-pxe/atlaso-esxi-pxe.json"
 NETWORK_BOOT_UNIT_ID = "esxi_pxe"
+APPLIANCE_APPLY_BASELINES_KEY = "appliance_apply.baselines.v1"
 
 UUID_PLACEHOLDERS = {
     "00000000-0000-0000-0000-000000000000",
@@ -1003,7 +1001,7 @@ def _active_media(
     states = ensure_environment_rows(db)
     result: dict[str, NetworkBootMedia] = {}
     for state in states:
-        if not state.enabled or not state.active_version:
+        if not state.active_version:
             continue
         media = db.execute(
             select(NetworkBootMedia).where(
@@ -1014,6 +1012,29 @@ def _active_media(
         if media is not None:
             result[state.key] = media
     return result
+
+
+def _applied_esxi_pxe_runtime(db: Session) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    setting = db.execute(
+        select(Setting).where(Setting.key == APPLIANCE_APPLY_BASELINES_KEY)
+    ).scalar_one_or_none()
+    if setting is None:
+        return {}, []
+    try:
+        baselines = json.loads(setting.value or "{}")
+        baseline = baselines.get(NETWORK_BOOT_UNIT_ID)
+        manifest = json.loads(str((baseline or {}).get("config_preview") or "{}"))
+    except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+        return {}, []
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("kind") != "atlaso-esxi-pxe"
+        or not isinstance(manifest.get("boot"), dict)
+        or not isinstance(manifest.get("artifacts"), list)
+    ):
+        return {}, []
+    artifacts = [row for row in manifest["artifacts"] if isinstance(row, dict)]
+    return dict(manifest["boot"]), artifacts
 
 
 def _chain_line(
@@ -1098,10 +1119,7 @@ def render_network_boot_menu(
 ) -> str:
     mac = normalize_mac(mac_address) if mac_address else ""
     mac_key = normalize_pxe_mac(mac) if mac else ""
-    hosts = db.execute(select(EsxiPxeHost).order_by(EsxiPxeHost.hostname)).scalars().all()
-    boot = esxi_pxe_boot_settings(db)
-    default_host = esxi_pxe_default_host_settings(db)
-    artifacts = esxi_pxe_host_artifacts(hosts, boot, default_host)
+    boot, artifacts = _applied_esxi_pxe_runtime(db)
     http_origin = _request_http_origin(boot, request_origin)
     esxi_base_url = f"{http_origin}/pxe/esxi" if http_origin else ""
     assigned = next(

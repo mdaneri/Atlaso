@@ -26,6 +26,7 @@ from atlaso.app.models import (
     NetworkBootInventoryCommand,
     NetworkBootInventoryReport,
     NetworkBootInventorySession,
+    Setting,
     utcnow,
 )
 from atlaso.app.services.network_boot import (
@@ -52,6 +53,11 @@ from atlaso.app.services.network_boot import (
     touch_inventory_heartbeat,
     acknowledge_inventory_command,
     verify_signed_checksum,
+)
+from atlaso.app.services.esxi_pxe import (
+    esxi_pxe_boot_settings,
+    esxi_pxe_default_host_settings,
+    esxi_pxe_host_artifacts,
 )
 
 
@@ -84,6 +90,28 @@ def login_session(client):
     page = client.get("/network-boot")
     assert page.status_code == 200
     return page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+
+def set_applied_pxe_runtime(db_session, *, boot=None, artifacts=None):
+    setting = db_session.execute(
+        select(Setting).where(Setting.key == "appliance_apply.baselines.v1")
+    ).scalar_one_or_none()
+    baselines = json.loads(setting.value) if setting else {}
+    baselines["esxi_pxe"] = {
+        "config_preview": json.dumps(
+            {
+                "kind": "atlaso-esxi-pxe",
+                "schema_version": 1,
+                "boot": boot or {},
+                "artifacts": artifacts or [],
+            }
+        )
+    }
+    if setting is None:
+        setting = Setting(key="appliance_apply.baselines.v1", value="")
+    setting.value = json.dumps(baselines)
+    db_session.add(setting)
+    db_session.commit()
 
 
 def inventory_report(
@@ -655,6 +683,27 @@ def test_unknown_host_defaults_to_inventory_and_shredos_has_cancel_guard(db_sess
     assert "autonuke" not in menu.lower()
 
 
+def test_active_media_remains_available_until_disable_is_applied(db_session):
+    states = {row.key: row for row in ensure_environment_rows(db_session)}
+    inventory = record_verified_media(
+        db_session,
+        environment_key="inventory",
+        version="2026.05.1",
+        source_url="https://example.test/atlaso-inventory-linux.zip",
+        artifact_sha256="a" * 64,
+        installed_path="/var/lib/atlaso/pxe/media/inventory/2026.05.1",
+        manifest={"boot": {"kernel": "/bzImage", "initrd": "/rootfs.cpio.gz"}},
+    )
+    states["inventory"].enabled = False
+    states["inventory"].active_version = inventory.version
+    db_session.commit()
+
+    menu = render_network_boot_menu(db_session)
+
+    assert "item inventory Atlaso Inventory Linux" in menu
+    assert "choose --timeout 10000 --default inventory" in menu
+
+
 def test_unknown_host_defaults_to_local_when_inventory_is_inactive(db_session):
     ensure_environment_rows(db_session)
     db_session.commit()
@@ -670,7 +719,6 @@ def test_unknown_host_defaults_to_local_when_inventory_is_inactive(db_session):
 
 def test_boot_menu_uses_the_verified_secondary_listener_origin(
     db_session,
-    monkeypatch,
 ):
     states = {row.key: row for row in ensure_environment_rows(db_session)}
     inventory = record_verified_media(
@@ -689,11 +737,10 @@ def test_boot_menu_uses_the_verified_secondary_listener_origin(
     )
     states["inventory"].enabled = True
     states["inventory"].active_version = inventory.version
-    boot = network_boot.esxi_pxe_boot_settings(db_session)
+    boot = esxi_pxe_boot_settings(db_session)
     boot["listen_address"] = "192.0.2.10\n198.51.100.20"
     boot["http_port"] = 8080
-    monkeypatch.setattr(network_boot, "esxi_pxe_boot_settings", lambda _db: boot)
-    db_session.commit()
+    set_applied_pxe_runtime(db_session, boot=boot)
 
     menu = render_network_boot_menu(
         db_session,
@@ -722,15 +769,28 @@ def test_boot_menu_uses_the_verified_secondary_listener_origin(
 
 
 def test_known_enabled_esxi_mac_becomes_timed_default(db_session):
-    db_session.add(
-        EsxiPxeHost(
-            hostname="esx01.atlaso.internal",
-            mac_address="52:54:00:12:34:56",
-            installer_iso_path="/mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST/esxi.iso",
-            enabled=True,
-        )
+    host = EsxiPxeHost(
+        hostname="esx01.atlaso.internal",
+        mac_address="52:54:00:12:34:56",
+        installer_iso_path="/mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST/esxi.iso",
+        enabled=True,
     )
+    db_session.add(host)
     db_session.commit()
+
+    pending = render_network_boot_menu(
+        db_session,
+        mac_address="52:54:00:12:34:56",
+    )
+    assert "choose --timeout 10000 --default local" in pending
+
+    boot = esxi_pxe_boot_settings(db_session)
+    artifacts = esxi_pxe_host_artifacts(
+        [host],
+        boot,
+        esxi_pxe_default_host_settings(db_session),
+    )
+    set_applied_pxe_runtime(db_session, boot=boot, artifacts=artifacts)
     menu = render_network_boot_menu(
         db_session,
         mac_address="52:54:00:12:34:56",

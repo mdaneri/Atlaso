@@ -93,7 +93,10 @@ Downloading never changes the active menu. Editing **Enabled** or **Desired
 version** creates pending state; global **Appliance Apply** is the only
 activation boundary. A failed download, verification, extraction, or apply
 leaves the previous active version available. Replacement media is verified
-completely before Atlaso swaps the version directory.
+completely before Atlaso swaps the version directory. The public iPXE menu
+reads host assignments, boot listeners, and default-profile artifacts from the
+last successfully applied snapshot. Pending host edits and pending media
+disablement therefore cannot change or interrupt the running boot service.
 
 All maintenance environments are interactive. Atlaso does not automatically
 run memory tests, partitioning, imaging, restoration, or disk erasure. ShredOS
