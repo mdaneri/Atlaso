@@ -1005,11 +1005,22 @@ def test_inventory_linux_package_upload_installs_verified_immutable_media(
             "sha256": package_digest,
         },
     )
+    media_root = tmp_path / "media"
+    environment_root = (media_root / "inventory").resolve()
+    original_replace = Path.replace
+    replacements = []
+
+    def assert_same_filesystem_staging(source, target):
+        replacements.append((source.resolve(), Path(target).resolve()))
+        assert source.resolve().is_relative_to(environment_root)
+        return original_replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", assert_same_filesystem_staging)
 
     media = sync_network_boot_media(
         db_session,
         environment_key="inventory",
-        media_root=tmp_path / "media",
+        media_root=media_root,
         uploaded_artifact=package,
         uploaded_filename=package.name,
     )
@@ -1018,6 +1029,7 @@ def test_inventory_linux_package_upload_installs_verified_immutable_media(
     assert manifest["boot"]["kernel"].endswith("/inventory/2026.05.1/bzImage")
     assert manifest["acquisition"] == "upload"
     assert (Path(media.installed_path) / "rootfs.cpio.gz").read_bytes() == initrd
+    assert replacements
 
 
 def test_boot_media_archive_rejects_traversal(tmp_path):

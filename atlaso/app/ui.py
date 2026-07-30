@@ -20162,6 +20162,13 @@ def esxi_pxe_page_context(
             NetworkBootDiscoveredHost.id,
         )
     ).scalars().all()
+    media_jobs = db.execute(
+        select(Job)
+        .options(selectinload(Job.steps))
+        .where(Job.type == "pxe-media-sync")
+        .order_by(desc(Job.created_at))
+        .limit(8)
+    ).scalars().all()
     return {
         **context,
         "esxi_selected_kickstart": selected,
@@ -20173,6 +20180,8 @@ def esxi_pxe_page_context(
         "network_boot_discovered_hosts": [
             inventory_host_to_dict(db, row) for row in discovered_hosts
         ],
+        "network_boot_media_tasks": [_task_row(job, identity) for job in media_jobs],
+        "task_component_filter_options": _task_component_filter_options(db),
         "esxi_kickstart_grid_rows": grid_rows,
         "esxi_pxe_result": result,
         "esxi_pxe_error": error,

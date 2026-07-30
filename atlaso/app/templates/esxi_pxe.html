@@ -76,6 +76,21 @@
     </div>
   </div>
 </section>
+<div class="network-boot-task-history-container" data-network-boot-tasks-panel>
+  {% set task_grid_class = "network-boot-task-history task-grid-section" %}
+  {% set task_grid_title = "Boot media tasks" %}
+  {% set task_grid_description = "The same task grid used by Tasks, scoped to Network Boot media downloads and uploads." %}
+  {% set task_grid_rows = network_boot_media_tasks %}
+  {% set task_grid_component_options = task_component_filter_options %}
+  {% set task_grid_type = "pxe-media-sync" %}
+  {% set task_grid_lock_component_filter = true %}
+  {% set task_grid_height = "320px" %}
+  {% set task_grid_scope_label = "Downloads and uploads only" %}
+  {% set task_grid_history_url = "/tasks" %}
+  {% set task_grid_empty_message = "No Network Boot media tasks have been recorded yet." %}
+  {% include "partials/task_grid.html" %}
+</div>
+{% include "partials/task_modals.html" %}
 <dialog id="network-boot-host-dialog" class="confirm-modal wide-modal task-modal" aria-labelledby="network-boot-host-title">
   <div class="confirm-modal-panel form-stack">
     <div class="confirm-modal-body">

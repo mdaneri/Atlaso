@@ -523,7 +523,7 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert 'id="confirm-modal-detail"' in base_template
     assert ".confirm-modal.has-confirm-detail" in css
     assert "overflow-wrap: anywhere;" in css[css.index(".confirm-modal-detail-group"):css.index(".confirm-modal.wide-modal")]
-    assert "atlaso-network-boot-20260729-23" in base_template
+    assert "atlaso-network-boot-20260730-24" in base_template
     trust_template = Path("atlaso/app/templates/partials/vcf_trust_modal.html").read_text()
     import_template = Path("atlaso/app/templates/partials/vcf_vault_import_modal.html").read_text()
     depot_template = Path("atlaso/app/templates/partials/vcf_target_depot_modal.html").read_text()
@@ -678,7 +678,7 @@ def test_remote_vault_uri_launch_uses_one_use_server_side_ticket(client, monkeyp
     assert "sidebar" not in remote_page.text
     assert "Primary" not in remote_page.text
     assert "/static/terminal.js?v=atlaso-vault-uri-20260727-2" in remote_page.text
-    assert "/static/app.css?v=atlaso-network-boot-20260729-13" in remote_page.text
+    assert "/static/app.css?v=atlaso-network-boot-20260730-14" in remote_page.text
 
     ticket_response = client.post(
         "/terminal/tickets",

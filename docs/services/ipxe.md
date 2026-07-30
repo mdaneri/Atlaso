@@ -88,6 +88,10 @@ checks the uploaded bytes against the same upstream digest or signed checksum;
 the operator cannot substitute an unverified checksum. Cancelling a pending
 upload removes its staged artifact immediately, and worker-startup recovery
 removes staged uploads left by an interrupted running task.
+The **Boot media tasks** panel reuses the Tasks grid and detail dialogs while
+scoping live refresh, filtering, logs, and cancellation to Network Boot media
+downloads and uploads. The Network Boot and ESXi Kickstarts workspaces scroll
+inside the main panel so the Boot Service rail remains fixed on the right.
 The same menu provides a state-aware **Enable** or **Disable** action. Enable
 remains unavailable until that environment has verified installed media.
 

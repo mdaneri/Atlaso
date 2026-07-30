@@ -1896,7 +1896,11 @@ def sync_network_boot_media(
             raise ValueError(
                 "Boot media cache path is unsafe; remove it manually before retrying."
             )
-    with tempfile.TemporaryDirectory(prefix=f"atlaso-{key}-") as temp_dir:
+    environment_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=f".atlaso-{key}-",
+        dir=environment_root,
+    ) as temp_dir:
         temporary = Path(temp_dir)
         artifact = temporary / descriptor["filename"]
         acquisition = "download"

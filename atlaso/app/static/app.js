@@ -18221,6 +18221,7 @@ function initializeNetworkBootWorkspace() {
   const kickstartsSlot = workspace?.querySelector("[data-network-boot-kickstarts-slot]");
   const staticRail = workspace?.querySelector("[data-network-boot-static-rail]");
   const networkSection = document.querySelector("[data-network-boot-section]");
+  const tasksPanel = document.querySelector("[data-network-boot-tasks-panel]");
   const kickstartsSection = document.querySelector("[data-esxi-kickstarts-panel]");
   const bootService = document.querySelector("[data-network-boot-service-panel]");
   const legacyWorkspace = document.querySelector(".esxi-pxe-workspace");
@@ -18231,6 +18232,7 @@ function initializeNetworkBootWorkspace() {
     || !(kickstartsSlot instanceof HTMLElement)
     || !(staticRail instanceof HTMLElement)
     || !(networkSection instanceof HTMLElement)
+    || !(tasksPanel instanceof HTMLElement)
     || !(kickstartsSection instanceof HTMLElement)
     || !(bootService instanceof HTMLElement)
     || !(legacyWorkspace instanceof HTMLElement)
@@ -18238,9 +18240,11 @@ function initializeNetworkBootWorkspace() {
 
   networkSection.classList.remove("panel", "wide-panel");
   networkSection.classList.add("network-boot-inner-section");
+  tasksPanel.classList.add("network-boot-inner-section");
   kickstartsSection.classList.remove("panel", "wide-panel");
   kickstartsSection.classList.add("network-boot-inner-section");
   networkSlot.append(networkSection);
+  networkSlot.append(tasksPanel);
   kickstartsSlot.append(kickstartsSection);
   staticRail.append(bootService);
   Array.from(legacyRail?.children || []).forEach((panel) => staticRail.append(panel));
