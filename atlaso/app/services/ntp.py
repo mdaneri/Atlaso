@@ -144,6 +144,22 @@ def normalize_ntp_source(value: str) -> str:
     return f"{rendered_host}:{port}" if port is not None else rendered_host
 
 
+def duplicate_ntp_upstream_source(sources: list[dict[str, object]]) -> str | None:
+    seen: set[str] = set()
+    for item in sources:
+        source = str(item.get("source") or "").strip()
+        if not source:
+            continue
+        try:
+            identity = normalize_ntp_source(source)
+        except ValueError:
+            identity = source.rstrip(".").lower()
+        if identity in seen:
+            return source
+        seen.add(identity)
+    return None
+
+
 def ntp_upstream_sources(settings: NtpSettings) -> list[dict[str, object]]:
     raw_sources = (settings.upstream_sources_json or "").strip()
     sources: list[dict[str, object]] = []
@@ -256,6 +272,9 @@ def validate_ntp_state(settings: NtpSettings, available_interfaces: set[str]) ->
     hostname = normalize_hostname(settings.hostname)
     if not hostname or not HOSTNAME_PATTERN.fullmatch(hostname):
         errors.append("NTP hostname must be a valid fully qualified DNS name.")
+    duplicate_source = duplicate_ntp_upstream_source(ntp_upstream_sources(settings))
+    if duplicate_source:
+        errors.append(f"NTP upstream source {duplicate_source} is duplicated. Source names must be unique.")
     if settings.enabled:
         listen_interfaces = split_interfaces(settings.listen_interface)
         if not listen_interfaces:

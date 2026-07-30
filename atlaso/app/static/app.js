@@ -5220,6 +5220,22 @@ function normalizeNTPsecUpstreamRows(rows = []) {
     .filter((row) => row.source);
 }
 
+function ntpUpstreamSourceIdentity(value) {
+  const parsed = parseNtpUpstreamSource(value);
+  if (!parsed) return String(value || "").trim().replace(/\.$/, "").toLowerCase();
+  const host = parsed.host.includes(":") ? `[${parsed.host}]` : parsed.host;
+  return parsed.port ? `${host}:${parsed.port}` : host;
+}
+
+function findDuplicateNtpUpstreamSource(table, source, recordId = "") {
+  const identity = ntpUpstreamSourceIdentity(source);
+  return table.getData().find((row) => (
+    !row.is_new
+    && String(row.id || "") !== String(recordId || "")
+    && ntpUpstreamSourceIdentity(row.source) === identity
+  ));
+}
+
 function syncNTPsecUpstreamsHiddenInput(table) {
   const hiddenInput = document.querySelector("[data-ntp-upstreams-json]");
   if (!(hiddenInput instanceof HTMLInputElement)) {
@@ -5287,6 +5303,7 @@ function initializeNTPsecUpstreamsTable() {
   try {
     const parsedRows = JSON.parse(tableElement.dataset.ntpUpstreams || "[]");
     const ntsSupported = tableElement.dataset.ntpNtsSupported !== "false";
+    const ntsCapabilityKnown = tableElement.dataset.ntpNtsCapabilityKnown !== "false";
     const rows = normalizeNTPsecUpstreamRows(parsedRows);
     rows.push(ntpBlankUpstreamRow());
     let table;
@@ -5298,6 +5315,7 @@ function initializeNTPsecUpstreamsTable() {
       status: "#ntp-settings-autosave-status",
       pattern: "wizard-backed",
       emptyMessage: "No upstream sources configured.",
+      onReady: (readyTable) => syncNTPsecUpstreamsHiddenInput(readyTable),
       onOpenRow: (data, row, event) => openSource(
         data,
         event?.currentTarget || row?.getElement?.(),
@@ -5373,7 +5391,7 @@ function initializeNTPsecUpstreamsTable() {
       ],
       onOpen: ({ context }) => {
         populateAtlasoWizardForm(form, {
-          record_id: context?.id || "",
+          id: context?.id || "",
           source: context?.source || "",
           description: context?.description || "",
           use_nts: Boolean(context?.use_nts),
@@ -5388,6 +5406,20 @@ function initializeNTPsecUpstreamsTable() {
             field: "source",
           };
         }
+        if (
+          step.id === "identity"
+          && findDuplicateNtpUpstreamSource(
+            table,
+            form.elements.source.value,
+            form.elements.record_id.value,
+          )
+        ) {
+          return {
+            valid: false,
+            message: "That NTP upstream source already exists. Source names must be unique.",
+            field: "source",
+          };
+        }
         return { valid: true };
       },
       prepareReview: () => renderAtlasoWizardReview(form, [
@@ -5398,15 +5430,18 @@ function initializeNTPsecUpstreamsTable() {
       ]),
       onSubmit: async () => {
         const id = form.elements.record_id.value;
+        const existing = id ? table.getRow(id) : null;
+        const existingData = existing?.getData();
         const payload = {
           id: id || `source-${Date.now()}`,
           source: form.elements.source.value.trim(),
           description: form.elements.description.value.trim(),
-          use_nts: ntsSupported && form.elements.use_nts.checked,
+          use_nts: ntsSupported
+            ? form.elements.use_nts.checked
+            : (!ntsCapabilityKnown && existingData ? Boolean(existingData.use_nts) : false),
           enabled: form.elements.enabled.checked,
         };
-        const existing = id ? table.getRow(id) : null;
-        const previous = existing ? { ...existing.getData() } : null;
+        const previous = existingData ? { ...existingData } : null;
         const inserted = existing
           ? null
           : await table.addRow(payload, true, table.getRows().find((row) => row.getData().is_new));
@@ -5427,7 +5462,6 @@ function initializeNTPsecUpstreamsTable() {
       const launcher = event.target.closest("[data-atlaso-wizard-add]");
       if (launcher instanceof HTMLButtonElement) openSource(null, launcher);
     });
-    syncNTPsecUpstreamsHiddenInput(table);
   } catch (error) {
     if (fallback instanceof HTMLElement) {
       fallback.classList.remove("hidden");
