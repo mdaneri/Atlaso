@@ -134,9 +134,27 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     assert "--inventory-package" in release
     build = Path("image/inventory-linux/build.sh").read_text(encoding="utf-8")
     assert 'buildroot_version="2026.05.1"' in build
-    assert 'package_version="2026.05.1+4"' in build
+    assert 'package_version="2026.05.1+5"' in build
     assert '"version": "${package_version}"' in build
     assert '"arguments": "rdinit=/sbin/init console=tty0 atlaso.inventory=1"' in build
+    assert '"${source_root}/output/target/usr/bin/lscpu"' in build
+    assert '"${source_root}/output/target/bin/lsblk"' in build
+    assert "Required util-linux tool is missing" in build
+    assert "Required util-linux tool resolves to BusyBox" in build
+    inventory_defconfig = Path(
+        "image/inventory-linux/external/configs/atlaso_inventory_x86_64_defconfig"
+    ).read_text(encoding="utf-8")
+    assert "BR2_PACKAGE_UTIL_LINUX_BINARIES=y" in inventory_defconfig
+    assert (
+        'BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_ATLASO_INVENTORY_PATH)'
+        '/board/atlaso-inventory/busybox.fragment"' in inventory_defconfig
+    )
+    assert "BR2_PACKAGE_UTIL_LINUX_LSCPU" not in inventory_defconfig
+    assert "BR2_PACKAGE_UTIL_LINUX_LSBLK" not in inventory_defconfig
+    busybox_fragment = Path(
+        "image/inventory-linux/external/board/atlaso-inventory/busybox.fragment"
+    ).read_text(encoding="utf-8")
+    assert "# CONFIG_LSBLK is not set" in busybox_fragment
     kernel_fragment = Path(
         "image/inventory-linux/external/board/atlaso-inventory/linux.fragment"
     ).read_text(encoding="utf-8")

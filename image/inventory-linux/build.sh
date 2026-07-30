@@ -2,7 +2,7 @@
 set -euo pipefail
 
 buildroot_version="2026.05.1"
-package_version="2026.05.1+4"
+package_version="2026.05.1+5"
 buildroot_sha256="ae7f706f087b9ae9083a10a587368dfbf53103c28bf81c2d690198dc4090cb58"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source_root="${ATLASO_INVENTORY_BUILD_ROOT:-${script_dir}/.build}"
@@ -37,6 +37,19 @@ make -C "${build_dir}" \
 make -C "${build_dir}" \
   BR2_EXTERNAL="${script_dir}/external" \
   O="${source_root}/output"
+for inventory_tool_path in \
+  "${source_root}/output/target/usr/bin/lscpu" \
+  "${source_root}/output/target/bin/lsblk"; do
+  inventory_tool="$(basename "${inventory_tool_path}")"
+  if [[ ! -x "${inventory_tool_path}" ]]; then
+    printf 'Required util-linux tool is missing: %s\n' "${inventory_tool}" >&2
+    exit 1
+  fi
+  if [[ "$(readlink "${inventory_tool_path}" 2>/dev/null || true)" == *busybox* ]]; then
+    printf 'Required util-linux tool resolves to BusyBox: %s\n' "${inventory_tool}" >&2
+    exit 1
+  fi
+done
 make -C "${build_dir}" \
   BR2_EXTERNAL="${script_dir}/external" \
   O="${source_root}/output" \
