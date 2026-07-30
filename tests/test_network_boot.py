@@ -2175,6 +2175,35 @@ def test_media_swap_recovery_lock_serializes_callers(tmp_path):
     assert second_acquired.is_set()
 
 
+def test_media_recovery_sweeps_only_inactive_prejournal_staging(
+    db_session,
+    tmp_path,
+):
+    media_root = tmp_path / "media"
+    environment_root = media_root / "shredos"
+    environment_root.mkdir(parents=True)
+    transaction_id = "d" * 32
+    staging = (
+        environment_root
+        / f".atlaso-shredos-{transaction_id}-prejournal"
+    )
+    staging.mkdir()
+
+    with network_boot._MediaStagingLease(staging):
+        (staging / "source.img").write_bytes(b"in-progress acquisition")
+        assert network_boot.recover_interrupted_network_boot_media_swaps(
+            db_session,
+            media_root=media_root,
+        ) == 0
+        assert staging.exists()
+
+    assert network_boot.recover_interrupted_network_boot_media_swaps(
+        db_session,
+        media_root=media_root,
+    ) == 0
+    assert not staging.exists()
+
+
 def test_media_sync_fsyncs_tree_and_published_directory_before_database_record(
     db_session,
     monkeypatch,
@@ -2246,15 +2275,14 @@ def test_media_sync_fsyncs_tree_and_published_directory_before_database_record(
     )
 
     assert synced.version == "2025.11"
-    assert events[:7] == [
-        "directory:media",
-        "tree",
-        "lock:acquire",
-        "directory:shredos",
-        "directory:shredos",
-        "record",
-        "commit",
-    ]
+    tree_index = events.index("tree")
+    lock_index = events.index("lock:acquire")
+    record_index = events.index("record")
+    commit_index = events.index("commit")
+    assert events[0] == "directory:media"
+    assert events[1].startswith("directory:.atlaso-shredos-")
+    assert tree_index < lock_index < record_index < commit_index
+    assert events[lock_index:record_index].count("directory:shredos") == 2
     assert events[-1] == "lock:release"
 
 

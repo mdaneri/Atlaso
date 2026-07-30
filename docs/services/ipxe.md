@@ -116,7 +116,10 @@ journal. An interprocess lock serializes application and worker startup
 recovery and remains held from publication through the database outcome and
 filesystem cleanup. The journal also identifies the bounded transaction staging
 directory so recovery removes any interrupted source artifact and extracted
-content. Worker startup retains the recovery check as an idempotent fallback.
+content. A separately fsynced staging lease exists before acquisition begins;
+startup safely skips a live lease and removes validated orphan transaction
+directories even when interruption happened before journal publication. Worker
+startup retains the recovery check as an idempotent fallback.
 
 Each catalog row exposes **Download**, **Upload**, and **Delete newest inactive
 media** through its row context menu.

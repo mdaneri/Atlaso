@@ -67,6 +67,8 @@ NETWORK_BOOT_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/esxi-pxe/atlaso-esxi-px
 NETWORK_BOOT_UNIT_ID = "esxi_pxe"
 APPLIANCE_APPLY_BASELINES_KEY = "appliance_apply.baselines.v1"
 _MEDIA_SWAP_THREAD_LOCK = threading.Lock()
+_MEDIA_STAGING_THREAD_LOCK = threading.Lock()
+_ACTIVE_MEDIA_STAGING_DIRECTORIES: set[str] = set()
 
 UUID_PLACEHOLDERS = {
     "00000000-0000-0000-0000-000000000000",
@@ -2098,6 +2100,117 @@ class _MediaSwapRecoveryLock:
         self.release()
 
 
+class _MediaStagingLease:
+    def __init__(self, staging_directory: Path):
+        self.staging_directory = staging_directory
+        self.lock_path = staging_directory / ".atlaso-staging.lock"
+        self.lock_fd: int | None = None
+        self.process_acquired = False
+        self.identity = str(staging_directory.resolve())
+
+    def __enter__(self):
+        flags = (
+            os.O_CREAT
+            | os.O_EXCL
+            | os.O_RDWR
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+        with _MEDIA_STAGING_THREAD_LOCK:
+            _ACTIVE_MEDIA_STAGING_DIRECTORIES.add(self.identity)
+        try:
+            self.lock_fd = os.open(self.lock_path, flags, 0o600)
+            metadata = os.fstat(self.lock_fd)
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                raise ValueError("Network Boot media staging lock is unsafe.")
+            if fcntl is not None:
+                fcntl.flock(self.lock_fd, fcntl.LOCK_EX)
+                self.process_acquired = True
+            os.fsync(self.lock_fd)
+            _fsync_directory(self.staging_directory)
+            _fsync_directory(self.staging_directory.parent)
+            return self
+        except Exception:
+            self._release()
+            raise
+
+    def __exit__(self, _exc_type, _exc_value, _traceback):
+        self._release()
+
+    def _release(self) -> None:
+        with _MEDIA_STAGING_THREAD_LOCK:
+            _ACTIVE_MEDIA_STAGING_DIRECTORIES.discard(self.identity)
+        if (
+            fcntl is not None
+            and self.process_acquired
+            and self.lock_fd is not None
+        ):
+            fcntl.flock(self.lock_fd, fcntl.LOCK_UN)
+            self.process_acquired = False
+        if self.lock_fd is not None:
+            os.close(self.lock_fd)
+            self.lock_fd = None
+
+
+def _remove_orphan_media_staging_directories(
+    environment_root: Path,
+    *,
+    environment_key: str,
+) -> int:
+    staging_pattern = re.compile(
+        rf"^\.atlaso-{re.escape(environment_key)}-[0-9a-f]{{32}}-"
+        r"[A-Za-z0-9_-]{1,64}$"
+    )
+    removed = 0
+    for index, candidate in enumerate(environment_root.iterdir()):
+        if index >= 256:
+            break
+        if (
+            staging_pattern.fullmatch(candidate.name) is None
+            or candidate.is_symlink()
+            or not candidate.is_dir()
+        ):
+            continue
+        resolved = candidate.resolve()
+        if not resolved.is_relative_to(environment_root):
+            continue
+        identity = str(resolved)
+        with _MEDIA_STAGING_THREAD_LOCK:
+            if identity in _ACTIVE_MEDIA_STAGING_DIRECTORIES:
+                continue
+        lock_path = resolved / ".atlaso-staging.lock"
+        if lock_path.is_symlink() or not lock_path.is_file():
+            continue
+        flags = (
+            os.O_RDWR
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+        try:
+            lock_fd = os.open(lock_path, flags)
+        except OSError:
+            continue
+        process_acquired = False
+        try:
+            metadata = os.fstat(lock_fd)
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                continue
+            if fcntl is not None:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    continue
+                process_acquired = True
+        finally:
+            if fcntl is not None and process_acquired:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
+        shutil.rmtree(resolved)
+        _fsync_directory(environment_root)
+        removed += 1
+    return removed
+
+
 def recover_interrupted_network_boot_media_swaps(
     db: Session,
     *,
@@ -2123,6 +2236,10 @@ def _recover_interrupted_network_boot_media_swaps(
         environment_root = media_root / entry.key
         if environment_root.is_symlink() or not environment_root.is_dir():
             continue
+        _remove_orphan_media_staging_directories(
+            environment_root,
+            environment_key=entry.key,
+        )
         for journal_path in environment_root.iterdir():
             match = journal_pattern.fullmatch(journal_path.name)
             if (
@@ -2309,10 +2426,13 @@ def sync_network_boot_media(
         _fsync_directory(media_root_path)
     transaction_id = uuid.uuid4().hex
     media_swap_lock: _MediaSwapRecoveryLock | None = None
-    with tempfile.TemporaryDirectory(
-        prefix=f".atlaso-{key}-{transaction_id}-",
-        dir=environment_root,
-    ) as temp_dir:
+    with (
+        tempfile.TemporaryDirectory(
+            prefix=f".atlaso-{key}-{transaction_id}-",
+            dir=environment_root,
+        ) as temp_dir,
+        _MediaStagingLease(Path(temp_dir)),
+    ):
         temporary = Path(temp_dir)
         artifact = temporary / descriptor["filename"]
         acquisition = "download"
