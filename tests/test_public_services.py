@@ -114,6 +114,7 @@ def test_public_services_nginx_config_contains_per_ip_scoped_locations():
     assert "location /pxe/inventory/" in config
     assert "location /pxe/media/" in config
     assert "location = /pxe/esxi/boot.ipxe" in config
+    assert config.count("proxy_set_header Host $http_host;") == 5
     assert "location = /pxe/esxi {" in config
     assert "return 301 /pxe/esxi/;" in config
     assert "location = /pxe/esxi/ {" in config

@@ -46,7 +46,9 @@ UDP/69 before iPXE switches to HTTP.
 Inventory Linux runs from an initramfs in RAM. It does not mount filesystems or
 write target disks. It submits a bounded report containing DMI, CPU, memory,
 block-device, and network-interface metadata, displays a local summary, and
-waits for either the local `R` key or one audited remote reboot command. Atlaso
+waits for either the local `R` key or one audited remote reboot command. Its
+startup service first obtains DHCP configuration and confirms a default route;
+the Linux kernel does not inherit iPXE's network state. Atlaso
 retains the latest report and ten previous reports. A repeated valid DMI UUID
 with disjoint MAC identities is shown as a collision and is not silently
 merged.

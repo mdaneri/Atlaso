@@ -698,9 +698,21 @@ with zipfile.ZipFile(package) as archive:
         )
         (staging / "manifest.json").chmod(0o644)
         if target.exists():
-            for name in ("bzImage", "rootfs.cpio.gz", "manifest.json"):
+            for name in ("bzImage", "rootfs.cpio.gz"):
                 if not (target / name).is_file() or (target / name).read_bytes() != (staging / name).read_bytes():
                     raise SystemExit(f"Immutable Atlaso Inventory Linux {version} is already installed with different content.")
+            installed_manifest_path = target / "manifest.json"
+            if not installed_manifest_path.is_file():
+                raise SystemExit(f"Installed Atlaso Inventory Linux {version} has no manifest.")
+            installed_manifest = json.loads(installed_manifest_path.read_text(encoding="utf-8"))
+            if installed_manifest_path.read_bytes() != (staging / "manifest.json").read_bytes():
+                if (
+                    installed_manifest.get("kind") != "atlaso-network-boot-media"
+                    or installed_manifest.get("schema_version") != 1
+                    or installed_manifest.get("environment") != "inventory"
+                    or installed_manifest.get("version") != version
+                ):
+                    raise SystemExit(f"Immutable Atlaso Inventory Linux {version} is already installed with a different manifest.")
             target.chmod(0o755)
         else:
             pathlib.Path(temporary).replace(target)

@@ -26,6 +26,7 @@ from atlaso.app.models import (
     Job,
     JobStatus,
     NetworkBootDiscoveredHost,
+    NetworkBootEnvironment,
     NetworkBootMedia,
     NetworkBootInventoryCommand,
     NetworkBootInventoryReport,
@@ -1078,6 +1079,47 @@ def test_bundled_inventory_registration_defers_active_version_until_apply(
     assert media is not None
     assert state.enabled is True
     assert state.desired_version == version
+    assert state.active_version == ""
+
+
+def test_bundled_inventory_registration_preserves_explicit_reset_state(
+    db_session,
+    tmp_path,
+):
+    version = "2026.05.1"
+    installed = tmp_path / "inventory" / version
+    installed.mkdir(parents=True)
+    artifacts = {
+        "bzImage": b"inventory kernel",
+        "rootfs.cpio.gz": b"inventory initramfs",
+    }
+    for filename, content in artifacts.items():
+        (installed / filename).write_bytes(content)
+    (installed / "manifest.json").write_text(
+        json.dumps(
+            {
+                "kind": "atlaso-inventory-linux",
+                "schema_version": 1,
+                "version": version,
+                "artifacts": {
+                    filename: hashlib.sha256(content).hexdigest()
+                    for filename, content in artifacts.items()
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert register_bundled_inventory_media(db_session, media_root=tmp_path)
+    state = db_session.get(NetworkBootEnvironment, "inventory")
+    state.enabled = False
+    state.desired_version = ""
+    state.active_version = ""
+    db_session.commit()
+
+    assert register_bundled_inventory_media(db_session, media_root=tmp_path)
+
+    assert state.enabled is False
+    assert state.desired_version == ""
     assert state.active_version == ""
 
 

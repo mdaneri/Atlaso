@@ -248,6 +248,11 @@ def register_bundled_inventory_media(
     )
     for path in candidates:
         try:
+            existing_media = db.execute(
+                select(NetworkBootMedia.id)
+                .where(NetworkBootMedia.environment_key == "inventory")
+                .limit(1)
+            ).first()
             manifest = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
             version = normalize_version(str(manifest.get("version") or path.name))
             if (
@@ -280,7 +285,12 @@ def register_bundled_inventory_media(
                 manifest=manifest,
             )
             state = db.get(NetworkBootEnvironment, "inventory")
-            if state is not None and not state.desired_version and not state.active_version:
+            if (
+                state is not None
+                and existing_media is None
+                and not state.desired_version
+                and not state.active_version
+            ):
                 state.enabled = True
                 state.desired_version = version
                 state.updated_at = utcnow()
