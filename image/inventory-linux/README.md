@@ -14,7 +14,9 @@ hardware. It is a Buildroot initramfs that runs entirely from RAM, does not
 mount target filesystems, and submits one bounded inventory report before
 waiting for a local or audited remote reboot request.
 
-The build pins Buildroot 2026.05.1 by SHA-256. Run on Linux:
+Package revision `2026.05.1+1` pins Buildroot 2026.05.1 by SHA-256. The suffix
+advances independently when Atlaso changes the inventory client without
+changing the upstream Buildroot base. Run on Linux:
 
 ```bash
 ./image/inventory-linux/build.sh

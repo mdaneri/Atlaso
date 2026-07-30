@@ -60,6 +60,7 @@ router = APIRouter(prefix="/api/v1/network-boot", tags=["network-boot"])
 public_router = APIRouter(tags=["network-boot-public"])
 _rate_lock = threading.Lock()
 _rate_windows: dict[str, deque[float]] = defaultdict(deque)
+_MAX_RATE_LIMIT_KEYS = 4096
 _MEDIA_ENVIRONMENT_ROOTS = {
     key: (NETWORK_BOOT_MEDIA_ROOT / key).resolve()
     for key in ("inventory", "memtest86plus", "shredos", "gparted", "clonezilla")
@@ -129,9 +130,17 @@ def _bounded_rate_limit(request: Request, *, bucket: str, limit: int, window: in
     key = f"{bucket}:{remote}"
     now = time.monotonic()
     with _rate_lock:
+        cutoff = now - window
+        for existing_key in list(_rate_windows):
+            existing = _rate_windows[existing_key]
+            while existing and existing[0] <= cutoff:
+                existing.popleft()
+            if not existing:
+                del _rate_windows[existing_key]
+        if key not in _rate_windows and len(_rate_windows) >= _MAX_RATE_LIMIT_KEYS:
+            oldest_key = min(_rate_windows, key=lambda item: _rate_windows[item][-1])
+            del _rate_windows[oldest_key]
         values = _rate_windows[key]
-        while values and values[0] <= now - window:
-            values.popleft()
         if len(values) >= limit:
             raise HTTPException(status_code=429, detail="Network Boot request rate limit exceeded.")
         values.append(now)
@@ -613,7 +622,6 @@ def network_boot_media_file(
     state = db.get(NetworkBootEnvironment, environment_key)
     if (
         state is None
-        or not state.enabled
         or state.active_version != version
     ):
         raise HTTPException(status_code=404, detail="Network Boot media is not active.")

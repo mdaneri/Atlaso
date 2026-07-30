@@ -163,6 +163,7 @@ printf 'Disks: %s  Interfaces: %s\n' \
   "$(printf '%s' "${interfaces}" | jq length)"
 printf '\nInventory submitted as host %s. Press R to reboot.\n' "${host_id}"
 
+pending_reboot_id=""
 while :; do
   curl --config "${auth_config}" --fail --silent --max-time 10 \
     --header "Content-Type: application/json" \
@@ -173,9 +174,12 @@ while :; do
   action="$(printf '%s' "${command}" | jq -r '.command.action // empty')"
   command_id="$(printf '%s' "${command}" | jq -r '.command.id // empty')"
   if [ "${action}" = "reboot" ] && [ -n "${command_id}" ]; then
-    curl --config "${auth_config}" --fail --silent --max-time 10 --request POST \
-      "${api_base}/pxe/inventory/commands/${command_id}/acknowledge" >/dev/null
-    reboot -f
+    pending_reboot_id="${command_id}"
+  fi
+  if [ -n "${pending_reboot_id}" ] && curl --config "${auth_config}" \
+    --fail --silent --max-time 10 --request POST \
+    "${api_base}/pxe/inventory/commands/${pending_reboot_id}/acknowledge" >/dev/null; then
+      reboot -f
   fi
   if read -r -n 1 -t 10 key && { [ "${key}" = "R" ] || [ "${key}" = "r" ]; }; then
     reboot -f

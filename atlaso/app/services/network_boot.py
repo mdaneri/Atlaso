@@ -930,14 +930,15 @@ def acknowledge_inventory_command(
     if (
         command is None
         or command.session_id != session.id
-        or command.status != "delivered"
+        or command.status not in {"delivered", "acknowledged"}
         or _as_utc(command.expires_at) <= utcnow()
     ):
         raise ValueError("Inventory command is missing, expired, or was not delivered.")
-    command.status = "acknowledged"
-    command.acknowledged_at = utcnow()
-    db.add(command)
-    db.flush()
+    if command.status == "delivered":
+        command.status = "acknowledged"
+        command.acknowledged_at = utcnow()
+        db.add(command)
+        db.flush()
     return command
 
 

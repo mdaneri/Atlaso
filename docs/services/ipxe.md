@@ -81,7 +81,8 @@ Upload is limited to 2 GiB and stages the file only for the durable verification
 task. Atlaso still resolves the authoritative stable release metadata and
 checks the uploaded bytes against the same upstream digest or signed checksum;
 the operator cannot substitute an unverified checksum. Cancelling a pending
-upload removes its staged artifact immediately.
+upload removes its staged artifact immediately, and worker-startup recovery
+removes staged uploads left by an interrupted running task.
 The same menu provides a state-aware **Enable** or **Disable** action. Enable
 remains unavailable until that environment has verified installed media.
 
@@ -121,6 +122,9 @@ Inventory Linux receives a one-use report session with an eight-hour maximum
 lifetime. Only the token hash is persisted. The bearer token is sent in the
 authorization header, never a URL, audit, or browser UI. Reports bind the
 session to the presented identity; replays and mismatches are rejected.
+Reboot-command acknowledgment is idempotent so the client can retry an
+uncertain response before rebooting. Public endpoint rate-limit state expires
+inactive client entries and remains bounded across address-rotating clients.
 Heartbeats run every 10 seconds, and the UI treats a host as offline after 30
 seconds. Reboot is the only remote action. Runtime inventory storage retains at
 most 512 discovered hosts, 2,048 reports across all hosts, 11 reports per host,

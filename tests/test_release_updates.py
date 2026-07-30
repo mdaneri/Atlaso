@@ -488,6 +488,31 @@ def test_worker_restart_fails_update_parent_after_children_commit(client, monkey
         assert [step.status for step in recovered.steps] == ["succeeded", "succeeded"]
 
 
+def test_worker_restart_removes_interrupted_network_boot_upload(client, monkeypatch):
+    from atlaso.app import worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    cleaned = []
+    monkeypatch.setattr(worker, "cleanup_network_boot_upload", cleaned.append)
+    with SessionLocal() as db:
+        job = Job(
+            id="job_" + ("e" * 32),
+            type="pxe-media-sync",
+            status="running",
+            created_by="admin",
+            task_config_json=json.dumps(
+                {"environment": "inventory", "source": "upload"}
+            ),
+        )
+        db.add(job)
+        db.commit()
+
+        assert worker.recover_interrupted_worker_jobs(db) == 1
+        assert cleaned == [job.id]
+        assert db.get(Job, job.id).status == "failed"
+
+
 def test_worker_restart_keeps_release_finalizer_scoped_to_its_child(client, monkeypatch, tmp_path):
     from sqlalchemy import select
 

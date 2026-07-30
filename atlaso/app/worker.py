@@ -22,6 +22,7 @@ from atlaso.app.services.appliance_update import (
     ensure_appliance_update_job_steps,
 )
 from atlaso.app.services.automation import enqueue_due_schedules, json_object
+from atlaso.app.services.network_boot import cleanup_network_boot_upload
 from atlaso.app.services.vaults import decrypted_vault_values, redact_secret_values, vault_scope_identity
 
 
@@ -78,6 +79,8 @@ def recover_interrupted_worker_jobs(db: Session) -> int:
     now = utcnow()
     finalizer = _release_finalizer()
     for job in jobs:
+        if job.type == "pxe-media-sync":
+            cleanup_network_boot_upload(job.id)
         definitive = (
             finalizer
             if job.type == "appliance-update" and str(finalizer.get("job_id") or "") == job.id

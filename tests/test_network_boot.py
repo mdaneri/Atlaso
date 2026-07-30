@@ -1,6 +1,8 @@
 import hashlib
 import json
+import time
 import zipfile
+from collections import deque
 from datetime import timedelta
 from email.message import Message
 from pathlib import Path
@@ -9,8 +11,10 @@ from urllib.request import Request
 
 import pytest
 from sqlalchemy import select
+from starlette.requests import Request as StarletteRequest
 
 import atlaso.app.services.network_boot as network_boot
+import atlaso.app.api.network_boot as network_boot_api
 from atlaso.app.api.network_boot import (
     _allowlisted_media_file,
     _installed_media_directory,
@@ -528,12 +532,13 @@ def test_inventory_identity_heartbeat_and_one_time_reboot(db_session):
     )
     assert acknowledged.status == "acknowledged"
     assert poll_inventory_command(db_session, session=session) is None
-    with pytest.raises(ValueError, match="missing, expired, or was not delivered"):
-        acknowledge_inventory_command(
-            db_session,
-            session=session,
-            command_id=command.id,
-        )
+    repeated = acknowledge_inventory_command(
+        db_session,
+        session=session,
+        command_id=command.id,
+    )
+    assert repeated.status == "acknowledged"
+    assert repeated.acknowledged_at == acknowledged.acknowledged_at
 
 
 def test_stale_inventory_session_is_offline_and_reboot_conflicts(db_session):
@@ -702,6 +707,60 @@ def test_active_media_remains_available_until_disable_is_applied(db_session):
 
     assert "item inventory Atlaso Inventory Linux" in menu
     assert "choose --timeout 10000 --default inventory" in menu
+
+
+def test_media_file_remains_available_until_disable_is_applied(
+    client,
+    db_session,
+    monkeypatch,
+    tmp_path,
+):
+    states = {row.key: row for row in ensure_environment_rows(db_session)}
+    installed = tmp_path / "inventory" / "2026.05.1"
+    installed.mkdir(parents=True)
+    (installed / "bzImage").write_bytes(b"kernel")
+    media = record_verified_media(
+        db_session,
+        environment_key="inventory",
+        version="2026.05.1",
+        source_url="https://example.test/atlaso-inventory-linux.zip",
+        artifact_sha256="a" * 64,
+        installed_path=str(installed.resolve()),
+        manifest={"boot": {"kernel": "/bzImage"}, "files": ["bzImage"]},
+    )
+    states["inventory"].enabled = False
+    states["inventory"].active_version = media.version
+    db_session.commit()
+    monkeypatch.setitem(
+        network_boot_api._MEDIA_ENVIRONMENT_ROOTS,
+        "inventory",
+        (tmp_path / "inventory").resolve(),
+    )
+
+    response = client.get("/pxe/media/inventory/2026.05.1/bzImage")
+
+    assert response.status_code == 200, response.text
+    assert response.content == b"kernel"
+
+
+def test_public_rate_limit_prunes_expired_client_keys():
+    network_boot_api._rate_windows.clear()
+    network_boot_api._rate_windows["menu:192.0.2.1"] = deque([time.monotonic() - 120])
+    request = StarletteRequest(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/pxe/boot.ipxe",
+            "headers": [(b"x-real-ip", b"198.51.100.20")],
+            "client": ("127.0.0.1", 12345),
+        }
+    )
+
+    network_boot_api._bounded_rate_limit(request, bucket="menu", limit=120)
+
+    assert "menu:192.0.2.1" not in network_boot_api._rate_windows
+    assert list(network_boot_api._rate_windows) == ["menu:198.51.100.20"]
+    network_boot_api._rate_windows.clear()
 
 
 def test_unknown_host_defaults_to_local_when_inventory_is_inactive(db_session):
