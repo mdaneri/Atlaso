@@ -87,6 +87,8 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
         "install -d -o atlaso -g atlaso -m 0755 "
         "/var/lib/atlaso/pxe/media /var/lib/atlaso/pxe/uploads"
     ) in deploy
+    assert "command -v gpg" in deploy
+    assert "tdnf -y install gnupg" in deploy
     assert "Build Inventory Linux package" in release
     assert "--inventory-package" in release
     build = Path("image/inventory-linux/build.sh").read_text(encoding="utf-8")
@@ -144,6 +146,7 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
 
     assert 'run_tdnf "Photon appliance package installation"' in script
     assert "nginx" in script
+    assert "gnupg" in script
     assert "ntpsec" in script
     assert "python3-ntp" in script
     assert "systemctl disable --now ntpd.service" in script

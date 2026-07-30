@@ -640,6 +640,15 @@ if [ ! -x "$python" ]; then
     exit 2
 fi
 
+if ! command -v gpg >/dev/null 2>&1; then
+    if ! command -v tdnf >/dev/null 2>&1; then
+        echo "GnuPG is required for signed Network Boot media and tdnf is unavailable." >&2
+        exit 2
+    fi
+    echo "Installing GnuPG for signed Network Boot media verification..."
+    tdnf -y install gnupg
+fi
+
 old_ifs="$IFS"
 IFS=:
 for runtime_dependency_path in $runtime_dependency_paths; do
