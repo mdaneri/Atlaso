@@ -726,8 +726,22 @@ with zipfile.ZipFile(package) as archive:
             target.chmod(0o755)
         else:
             pathlib.Path(temporary).replace(target)
-    for owned_path in (target.parent, target, *target.rglob("*")):
-        shutil.chown(owned_path, user="atlaso", group="atlaso")
+    owned_paths = [
+        target.parent,
+        target,
+        *(target / name for name in ("bzImage", "rootfs.cpio.gz", "manifest.json")),
+    ]
+    if any(owned_path.is_symlink() for owned_path in owned_paths):
+        raise SystemExit(
+            f"Atlaso Inventory Linux {version} ownership path must not be a symlink."
+        )
+    for owned_path in owned_paths:
+        shutil.chown(
+            owned_path,
+            user="atlaso",
+            group="atlaso",
+            follow_symlinks=False,
+        )
 print(f"Installed Atlaso Inventory Linux {version}.")
 PY
 fi
