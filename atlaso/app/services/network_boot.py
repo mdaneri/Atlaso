@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import hashlib
 import json
 import os
 import re
 import secrets
 import shutil
+import stat
 import subprocess
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -39,6 +42,11 @@ from atlaso.app.services.esxi_pxe import (
     normalize_pxe_mac,
 )
 
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows development fallback
+    fcntl = None
+
 
 NETWORK_BOOT_SCHEMA_VERSION = 1
 NETWORK_BOOT_REPORT_MAX_BYTES = 256 * 1024
@@ -59,6 +67,7 @@ NETWORK_BOOT_HTTP_ROOT = Path("/var/lib/atlaso/pxe/http")
 NETWORK_BOOT_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/esxi-pxe/atlaso-esxi-pxe.json"
 NETWORK_BOOT_UNIT_ID = "esxi_pxe"
 APPLIANCE_APPLY_BASELINES_KEY = "appliance_apply.baselines.v1"
+_MEDIA_SWAP_THREAD_LOCK = threading.Lock()
 
 UUID_PLACEHOLDERS = {
     "00000000-0000-0000-0000-000000000000",
@@ -155,10 +164,12 @@ class DeferredNetworkBootMediaSync:
     filesystem_changed: bool = True
 
     def commit_filesystem(self) -> None:
-        if self.backup_dir is not None:
-            shutil.rmtree(self.backup_dir, ignore_errors=True)
+        if self.backup_dir is not None and self.backup_dir.exists():
+            shutil.rmtree(self.backup_dir)
+        _fsync_directory(self.final_dir.parent)
         if self.journal_path is not None:
             self.journal_path.unlink(missing_ok=True)
+            _fsync_directory(self.final_dir.parent)
 
     def rollback_filesystem(self) -> None:
         if not self.filesystem_changed:
@@ -167,8 +178,10 @@ class DeferredNetworkBootMediaSync:
             shutil.rmtree(self.final_dir)
         if self.backup_dir is not None and self.backup_dir.exists():
             self.backup_dir.replace(self.final_dir)
+        _fsync_directory(self.final_dir.parent)
         if self.journal_path is not None:
             self.journal_path.unlink(missing_ok=True)
+            _fsync_directory(self.final_dir.parent)
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -2008,10 +2021,50 @@ def _fsync_media_tree(root: Path) -> None:
         _fsync_directory(directory)
 
 
+@contextmanager
+def _media_swap_recovery_lock(media_root: Path):
+    lock_path = media_root / ".atlaso-media-swap-recovery.lock"
+    flags = (
+        os.O_CREAT
+        | os.O_RDWR
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    with _MEDIA_SWAP_THREAD_LOCK:
+        lock_fd = os.open(lock_path, flags, 0o600)
+        lock_acquired = False
+        try:
+            metadata = os.fstat(lock_fd)
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                raise ValueError("Network Boot media recovery lock is unsafe.")
+            if fcntl is not None:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+                lock_acquired = True
+            yield
+        finally:
+            if fcntl is not None and lock_acquired:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
+
+
 def recover_interrupted_network_boot_media_swaps(
     db: Session,
     *,
     media_root: Path = NETWORK_BOOT_MEDIA_ROOT,
+) -> int:
+    if media_root.is_symlink() or not media_root.is_dir():
+        return 0
+    with _media_swap_recovery_lock(media_root):
+        return _recover_interrupted_network_boot_media_swaps(
+            db,
+            media_root=media_root,
+        )
+
+
+def _recover_interrupted_network_boot_media_swaps(
+    db: Session,
+    *,
+    media_root: Path,
 ) -> int:
     recovered = 0
     journal_pattern = re.compile(r"^\.atlaso-media-sync-([0-9a-f]{32})\.json$")
@@ -2057,7 +2110,9 @@ def recover_interrupted_network_boot_media_swaps(
                     and backup_dir.is_dir()
                 ):
                     shutil.rmtree(backup_dir)
+                _fsync_directory(environment_root)
                 journal_path.unlink(missing_ok=True)
+                _fsync_directory(environment_root)
                 recovered += 1
                 continue
             installed = _enumerated_media_directory(
@@ -2078,7 +2133,9 @@ def recover_interrupted_network_boot_media_swaps(
                 shutil.rmtree(installed)
             if backup_present:
                 backup_dir.replace(final_dir)
+            _fsync_directory(environment_root)
             journal_path.unlink(missing_ok=True)
+            _fsync_directory(environment_root)
             recovered += 1
     return recovered
 
@@ -2169,7 +2226,15 @@ def sync_network_boot_media(
             raise ValueError(
                 "Boot media cache path is unsafe; remove it manually before retrying."
             )
-    environment_root.mkdir(parents=True, exist_ok=True)
+    media_root_path = environment_root.parent
+    media_root_exists = media_root_path.exists()
+    media_root_path.mkdir(parents=True, exist_ok=True)
+    if not media_root_exists:
+        _fsync_directory(media_root_path.parent)
+    environment_root_exists = environment_root.exists()
+    environment_root.mkdir(exist_ok=True)
+    if not environment_root_exists:
+        _fsync_directory(media_root_path)
     with tempfile.TemporaryDirectory(
         prefix=f".atlaso-{key}-",
         dir=environment_root,

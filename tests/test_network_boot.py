@@ -1955,6 +1955,7 @@ def _write_test_media_cache(
 
 def test_interrupted_media_swap_recovery_restores_database_version(
     db_session,
+    monkeypatch,
     tmp_path,
 ):
     media_root = tmp_path / "media"
@@ -1994,6 +1995,12 @@ def test_interrupted_media_swap_recovery_restores_database_version(
         json.dumps({"environment": environment, "version": version}),
         encoding="utf-8",
     )
+    synced_directories: list[Path] = []
+    monkeypatch.setattr(
+        network_boot,
+        "_fsync_directory",
+        lambda directory: synced_directories.append(directory),
+    )
 
     assert network_boot.recover_interrupted_network_boot_media_swaps(
         db_session,
@@ -2003,6 +2010,7 @@ def test_interrupted_media_swap_recovery_restores_database_version(
     assert (final_dir / "artifact.bin").read_bytes() == b"committed media"
     assert not backup_dir.exists()
     assert not journal.exists()
+    assert synced_directories == [environment_root, environment_root]
 
 
 def test_interrupted_media_swap_recovery_finalizes_committed_version(
@@ -2120,12 +2128,47 @@ def test_application_startup_recovers_media_swaps_before_registering_or_serving(
         assert restarted_client.get("/openapi.json").status_code == 200
 
 
+def test_media_swap_recovery_lock_serializes_callers(tmp_path):
+    from threading import Event, Thread
+
+    media_root = tmp_path / "media"
+    media_root.mkdir()
+    first_acquired = Event()
+    release_first = Event()
+    second_acquired = Event()
+
+    def first_caller():
+        with network_boot._media_swap_recovery_lock(media_root):
+            first_acquired.set()
+            assert release_first.wait(timeout=2)
+
+    def second_caller():
+        assert first_acquired.wait(timeout=2)
+        with network_boot._media_swap_recovery_lock(media_root):
+            second_acquired.set()
+
+    first = Thread(target=first_caller)
+    second = Thread(target=second_caller)
+    first.start()
+    assert first_acquired.wait(timeout=2)
+    second.start()
+    assert not second_acquired.wait(timeout=0.1)
+    release_first.set()
+    first.join(timeout=2)
+    second.join(timeout=2)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert second_acquired.is_set()
+
+
 def test_media_sync_fsyncs_tree_and_published_directory_before_database_record(
     db_session,
     monkeypatch,
     tmp_path,
 ):
     media_root = tmp_path / "media"
+    media_root.mkdir()
     content = b"durable replacement"
     digest = hashlib.sha256(content).hexdigest()
     events: list[str] = []
@@ -2159,7 +2202,7 @@ def test_media_sync_fsyncs_tree_and_published_directory_before_database_record(
     monkeypatch.setattr(
         network_boot,
         "_fsync_directory",
-        lambda _root: events.append("directory"),
+        lambda root: events.append(f"directory:{root.name}"),
     )
     monkeypatch.setattr(network_boot, "record_verified_media", record)
 
@@ -2170,7 +2213,13 @@ def test_media_sync_fsyncs_tree_and_published_directory_before_database_record(
     )
 
     assert synced.version == "2025.11"
-    assert events == ["tree", "directory", "directory", "record"]
+    assert events[:5] == [
+        "directory:media",
+        "tree",
+        "directory:shredos",
+        "directory:shredos",
+        "record",
+    ]
 
 
 def test_media_sync_revalidates_and_repairs_corrupt_cached_artifacts(
