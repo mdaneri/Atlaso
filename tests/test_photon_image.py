@@ -87,6 +87,20 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
         "install -d -o atlaso -g atlaso -m 0755 "
         "/var/lib/atlaso/pxe/media /var/lib/atlaso/pxe/uploads"
     ) in deploy
+    stop_writers = deploy.index("systemctl stop atlaso-worker.service atlaso.service")
+    media_preflight = deploy.index("Atlaso media path must not be a symlink")
+    media_install = deploy.index(
+        "install -d -o atlaso -g atlaso -m 0755 "
+        "/var/lib/atlaso/pxe/media /var/lib/atlaso/pxe/uploads"
+    )
+    inventory_install = deploy.index(
+        'if [ -n "$inventory_linux_package" ]; then'
+    )
+    assert stop_writers < media_preflight < media_install < inventory_install
+    assert "target.parent.is_symlink()" in deploy
+    assert "target.is_symlink()" in deploy
+    assert "installed_artifact.is_symlink()" in deploy
+    assert "installed_manifest_path.is_symlink()" in deploy
     assert 'target / name for name in ("bzImage", "rootfs.cpio.gz", "manifest.json")' in deploy
     assert "owned_path.is_symlink()" in deploy
     assert "follow_symlinks=False" in deploy

@@ -656,9 +656,29 @@ for runtime_dependency_path in $runtime_dependency_paths; do
 done
 IFS="$old_ifs"
 "$python" -m pip install --force-reinstall --no-deps "$wheel"
+systemctl stop atlaso-worker.service atlaso.service
+"$python" - <<'PY'
+import pathlib
+
+required_directories = (
+    pathlib.Path("/var/lib/atlaso"),
+    pathlib.Path("/var/lib/atlaso/pxe"),
+)
+optional_directories = (
+    pathlib.Path("/var/lib/atlaso/pxe/media"),
+    pathlib.Path("/var/lib/atlaso/pxe/uploads"),
+)
+for directory in (*required_directories, *optional_directories):
+    if directory.is_symlink():
+        raise SystemExit(f"Atlaso media path must not be a symlink: {directory}")
+    if directory.exists() and not directory.is_dir():
+        raise SystemExit(f"Atlaso media path must be a directory: {directory}")
+for directory in required_directories:
+    if not directory.is_dir():
+        raise SystemExit(f"Required Atlaso media parent is missing: {directory}")
+PY
 install -d -o atlaso -g atlaso -m 0755 /var/lib/atlaso/pxe/media /var/lib/atlaso/pxe/uploads
 if [ "$reset_vault_entries" = "true" ]; then
-    systemctl stop atlaso-worker.service atlaso.service
     sqlite3 /var/lib/atlaso/atlaso.db 'DROP TABLE IF EXISTS vault_entries;'
     echo "Reset vault_entries table; Atlaso will recreate it from the installed model."
 fi
@@ -688,8 +708,20 @@ with zipfile.ZipFile(package) as archive:
     ):
         raise SystemExit("Atlaso Inventory Linux package identity is invalid.")
     target = pathlib.Path("/var/lib/atlaso/pxe/media/inventory") / version
-    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.parent.is_symlink():
+        raise SystemExit("Atlaso Inventory Linux media root must not be a symlink.")
+    if target.parent.exists() and not target.parent.is_dir():
+        raise SystemExit("Atlaso Inventory Linux media root must be a directory.")
+    target.parent.mkdir(exist_ok=True)
     target.parent.chmod(0o755)
+    if target.is_symlink():
+        raise SystemExit(
+            f"Atlaso Inventory Linux {version} target must not be a symlink."
+        )
+    if target.exists() and not target.is_dir():
+        raise SystemExit(
+            f"Atlaso Inventory Linux {version} target must be a directory."
+        )
     with tempfile.TemporaryDirectory(prefix=".inventory-", dir=target.parent) as temporary:
         staging = pathlib.Path(temporary)
         staging.chmod(0o755)
@@ -709,10 +741,15 @@ with zipfile.ZipFile(package) as archive:
         (staging / "manifest.json").chmod(0o644)
         if target.exists():
             for name in ("bzImage", "rootfs.cpio.gz"):
-                if not (target / name).is_file() or (target / name).read_bytes() != (staging / name).read_bytes():
+                installed_artifact = target / name
+                if (
+                    installed_artifact.is_symlink()
+                    or not installed_artifact.is_file()
+                    or installed_artifact.read_bytes() != (staging / name).read_bytes()
+                ):
                     raise SystemExit(f"Immutable Atlaso Inventory Linux {version} is already installed with different content.")
             installed_manifest_path = target / "manifest.json"
-            if not installed_manifest_path.is_file():
+            if installed_manifest_path.is_symlink() or not installed_manifest_path.is_file():
                 raise SystemExit(f"Installed Atlaso Inventory Linux {version} has no manifest.")
             installed_manifest = json.loads(installed_manifest_path.read_text(encoding="utf-8"))
             if installed_manifest_path.read_bytes() != (staging / "manifest.json").read_bytes():
