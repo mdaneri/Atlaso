@@ -4263,7 +4263,6 @@ def generated_esxi_pxe_dhcp_options(esxi_boot: dict[str, Any], scopes: list[Dhcp
     rows: list[dict[str, str]] = []
     tftp_hostname = str(esxi_boot.get("hostname") or "").strip()
     native_uefi_http_enabled = bool(esxi_boot.get("native_uefi_http_enabled"))
-    manual_native_http_url = str(esxi_boot.get("native_uefi_http_url") or "").strip()
     http_port = esxi_boot.get("http_port") or 8080
     scope_ids = {int(scope_id) for scope_id in (esxi_boot.get("dhcp_scope_ids") or []) if str(scope_id).isdigit()}
     selected_scopes = [scope for scope in scopes if scope.id in scope_ids]
@@ -4293,12 +4292,6 @@ def generated_esxi_pxe_dhcp_options(esxi_boot: dict[str, Any], scopes: list[Dhcp
         )
 
     host_bootfiles = list(esxi_boot.get("host_bootfiles") or [])
-    host_exclusion_tags = [
-        f"tag:!{host_tag}"
-        for host_bootfile in host_bootfiles
-        if (host_tag := str(host_bootfile.get("tag") or "").strip())
-    ]
-
     def add(applies_to: str, flow: str, line: str, note: str) -> None:
         rows.append({"applies_to": applies_to, "flow": flow, "line": line, "note": note})
 
@@ -4309,24 +4302,14 @@ def generated_esxi_pxe_dhcp_options(esxi_boot: dict[str, Any], scopes: list[Dhcp
         return f"http://{host}:{http_port}/pxe/esxi"
 
     if native_uefi_http_enabled:
-        generic_native_uefi_http_tags = ",".join(["tag:uefi-http", "tag:uefi-http-x64", *host_exclusion_tags])
         add("All selected zones", "Native UEFI HTTP", "dhcp-vendorclass=set:uefi-http,HTTPClient", "Detect HTTPClient firmware")
         add("All selected zones", "Native UEFI HTTP", "dhcp-match=set:uefi-http-x64,option:client-arch,16", "Match x64 HTTP boot")
         for scope_entry in scope_entries:
             base_url = scope_http_base(scope_entry["address"])
-            native_http_url = manual_native_http_url or (f"{base_url}/{esxi_boot.get('native_uefi_bootfile') or 'mboot.efi'}" if base_url else "")
+            native_http_url = f"{base_url}/{esxi_boot.get('uefi_bootfile') or 'snponly.efi'}" if base_url else ""
             if not native_http_url:
                 continue
-            add(scope_entry["applies_to"], "Native UEFI HTTP", f"dhcp-boot={scope_entry['prefix']}{generic_native_uefi_http_tags},{native_http_url}", "Return default mboot.efi HTTP URL")
-            for host_bootfile in host_bootfiles:
-                host_tag = str(host_bootfile.get("tag") or "").strip()
-                mac_key = str(host_bootfile.get("mac_key") or "").strip()
-                if not mac_key:
-                    uefi_second_stage = str(host_bootfile.get("uefi_second_stage_bootfile") or "")
-                    mac_key = uefi_second_stage.split("/", 1)[0] if "/" in uefi_second_stage else ""
-                native_host_url = manual_native_http_url or (f"{base_url}/{mac_key}/{esxi_boot.get('native_uefi_bootfile') or 'mboot.efi'}" if base_url and mac_key else "")
-                if host_tag and native_host_url:
-                    add(scope_entry["applies_to"], "Host-specific UEFI HTTP", f"dhcp-boot={scope_entry['prefix']}tag:{host_tag},tag:uefi-http,tag:uefi-http-x64,{native_host_url}", "Known HTTPClient firmware loads host-specific mboot.efi")
+            add(scope_entry["applies_to"], "Native UEFI HTTP", f"dhcp-boot={scope_entry['prefix']}tag:uefi-http,tag:uefi-http-x64,{native_http_url}", "Load iPXE before resolving the safe per-host boot menu")
 
     if esxi_boot.get("enabled"):
         add("All selected zones", "PXE TFTP", "enable-tftp", "Enable dnsmasq TFTP")
@@ -4340,21 +4323,16 @@ def generated_esxi_pxe_dhcp_options(esxi_boot: dict[str, Any], scopes: list[Dhcp
             mac_address = str(host_bootfile.get("mac_address") or "").strip()
             if host_tag and mac_address:
                 add("All selected zones", "Host-specific PXE", f"dhcp-mac=set:{host_tag},{mac_address}", "Tag known ESXi host MAC")
-        generic_uefi_second_stage_tags = ",".join(["tag:ipxe", "tag:efi-x86_64", *host_exclusion_tags])
-        generic_uefi_second_stage_boot = str(esxi_boot.get("uefi_second_stage_bootfile") or "")
         for scope_entry in scope_entries:
             boot_server = f",{tftp_hostname},{scope_entry['address']}" if tftp_hostname and scope_entry["address"] else ""
             if tftp_hostname:
                 add(scope_entry["applies_to"], "PXE TFTP", f"dhcp-option={scope_entry['prefix']}66,{tftp_hostname}", "Advertise TFTP server name")
-            add(scope_entry["applies_to"], "iPXE second stage", f"dhcp-boot={scope_entry['prefix']}{generic_uefi_second_stage_tags},{generic_uefi_second_stage_boot}{boot_server}", "UEFI iPXE chains to ESXi mboot, then boot.cfg can use HTTP modules")
-            add(scope_entry["applies_to"], "iPXE second stage", f"dhcp-boot={scope_entry['prefix']}tag:ipxe,tag:!efi-x86_64,{esxi_boot.get('bios_second_stage_bootfile')}{boot_server}", "BIOS iPXE loads PXELINUX")
+            address = scope_entry["address"]
+            rendered_address = f"[{address}]" if ":" in address and not address.startswith("[") else address
+            menu_url = f"http://{rendered_address}:{http_port}/pxe/boot.ipxe" if address else "/pxe/boot.ipxe"
+            add(scope_entry["applies_to"], "iPXE second stage", f"dhcp-boot={scope_entry['prefix']}tag:ipxe,{menu_url}", "Resolve the inventory-first Network Boot menu and exact host assignment")
             add(scope_entry["applies_to"], "UEFI first stage", f"dhcp-boot={scope_entry['prefix']}tag:!ipxe,tag:efi-x86_64,{esxi_boot.get('uefi_bootfile')}{boot_server}", "UEFI PXE clients load iPXE by TFTP before ESXi mboot")
             add(scope_entry["applies_to"], "PXE first stage", f"dhcp-boot={scope_entry['prefix']}tag:!ipxe,tag:!efi-x86_64,{esxi_boot.get('bios_bootfile')}{boot_server}", "BIOS PXE first-stage iPXE")
-            for host_bootfile in host_bootfiles:
-                host_tag = str(host_bootfile.get("tag") or "").strip()
-                uefi_second_stage = str(host_bootfile.get("uefi_second_stage_bootfile") or "").strip()
-                if host_tag and uefi_second_stage:
-                    add(scope_entry["applies_to"], "Host-specific PXE", f"dhcp-boot={scope_entry['prefix']}tag:{host_tag},tag:ipxe,tag:efi-x86_64,{uefi_second_stage}{boot_server}", "UEFI iPXE loads host-specific mboot beside boot.cfg")
     return rows
 
 

@@ -631,7 +631,8 @@ over that default.
 Saving updates desired state and marks the `esxi_pxe` apply unit changed. ESXi PXE boot settings select one or more IPv4
 DHCP IP zones instead of a freeform interface/IP pair; Atlaso derives the PXE interfaces, TFTP server addresses, DNS
 records, firewall bind targets, and dnsmasq scope tags from those zones. Native UEFI HTTP URLs are generated per
-selected IPv4 zone unless an operator supplies a manual absolute URL. Installer ISO choices are discovered from
+selected IPv4 zone and always load `snponly.efi`; every iPXE second request loads `/pxe/boot.ipxe` so exact host
+assignment and one-time Inventory Linux overrides are resolved in one place. Installer ISO choices are discovered from
 `/mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST`, the VCFDT ESX host component folder; Atlaso creates that folder when
 needed, marks VCFDT-discovered images separately from user-uploaded images with dates, and lets operators upload or
 delete `.iso` files from the Installer ISOs tab. Deleting an ISO clears host/default PXE references to that image;

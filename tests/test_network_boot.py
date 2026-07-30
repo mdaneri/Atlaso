@@ -28,6 +28,7 @@ from atlaso.app.models import (
     JobStatus,
     NetworkBootDiscoveredHost,
     NetworkBootEnvironment,
+    NetworkBootHostBootOverride,
     NetworkBootMedia,
     NetworkBootInventoryCommand,
     NetworkBootInventoryReport,
@@ -52,9 +53,11 @@ from atlaso.app.services.network_boot import (
     normalize_inventory_report,
     poll_inventory_command,
     queue_reboot_command,
+    claim_host_boot_override,
     record_verified_media,
     register_bundled_inventory_media,
     render_network_boot_menu,
+    request_host_boot_override,
     store_inventory_report,
     sync_network_boot_media,
     touch_inventory_heartbeat,
@@ -334,6 +337,57 @@ def test_network_boot_mutation_endpoints_persist_jobs_commands_profiles_and_audi
         "acknowledge_inventory_command",
         "promote_inventory_host_to_esxi",
     }
+
+
+def test_api_schedules_and_claims_esxi_inventory_boot_override(client):
+    raw_token = create_api_token(client, ["read:pxe", "write:pxe"])
+    from atlaso.app.database import SessionLocal
+
+    with SessionLocal() as db:
+        states = {row.key: row for row in ensure_environment_rows(db)}
+        inventory = record_verified_media(
+            db,
+            environment_key="inventory",
+            version="2026.05.1",
+            source_url="https://example.test/atlaso-inventory-linux.zip",
+            artifact_sha256="a" * 64,
+            installed_path="/var/lib/atlaso/pxe/media/inventory/2026.05.1",
+            manifest={"boot": {"kernel": "/bzImage", "initrd": "/rootfs.cpio.gz"}},
+        )
+        states["inventory"].enabled = True
+        states["inventory"].active_version = inventory.version
+        host = EsxiPxeHost(
+            hostname="esxi-api-utility",
+            mac_address="52:54:00:ab:cd:ef",
+            enabled=True,
+        )
+        db.add(host)
+        db.commit()
+        host_id = host.id
+
+    response = client.post(
+        f"/api/v1/network-boot/esxi-hosts/{host_id}/boot-inventory-once",
+        headers={"Authorization": f"Bearer {raw_token}"},
+    )
+    assert response.status_code == 202, response.text
+    assert response.json()["environment_key"] == "inventory"
+
+    menu = client.get(
+        "/pxe/boot.ipxe?mac=52:54:00:ab:cd:ef&firmware=efi",
+    )
+    assert menu.status_code == 200
+    assert "choose --timeout 10000 --default inventory" in menu.text
+
+    with SessionLocal() as db:
+        override = db.get(NetworkBootHostBootOverride, host_id)
+        assert override is not None
+        assert override.claimed_at is not None
+        assert db.execute(
+            select(AuditEvent).where(
+                AuditEvent.action == "request_esxi_host_inventory_boot",
+                AuditEvent.resource_id == str(host_id),
+            )
+        ).scalar_one_or_none() is not None
 
 
 def test_inventory_report_is_bounded_and_uses_mac_for_placeholder_uuid():
@@ -977,6 +1031,65 @@ def test_known_enabled_esxi_mac_becomes_timed_default(db_session):
         mac_address="52:54:00:12:34:56",
     )
     assert "choose --timeout 10000 --default esxi_assigned" in menu
+
+
+def test_known_esxi_host_can_claim_one_time_inventory_boot(db_session):
+    states = {row.key: row for row in ensure_environment_rows(db_session)}
+    inventory = record_verified_media(
+        db_session,
+        environment_key="inventory",
+        version="2026.05.1",
+        source_url="https://example.test/atlaso-inventory-linux.zip",
+        artifact_sha256="a" * 64,
+        installed_path="/var/lib/atlaso/pxe/media/inventory/2026.05.1",
+        manifest={"boot": {"kernel": "/bzImage", "initrd": "/rootfs.cpio.gz"}},
+    )
+    states["inventory"].enabled = True
+    states["inventory"].active_version = inventory.version
+    host = EsxiPxeHost(
+        hostname="esxi-utility-test",
+        mac_address="52:54:00:12:34:56",
+        installer_iso_path="/mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST/esxi.iso",
+        enabled=True,
+    )
+    db_session.add(host)
+    db_session.flush()
+    boot = esxi_pxe_boot_settings(db_session)
+    artifacts = esxi_pxe_host_artifacts(
+        [host],
+        boot,
+        esxi_pxe_default_host_settings(db_session),
+    )
+    set_applied_pxe_runtime(db_session, boot=boot, artifacts=artifacts)
+    request_host_boot_override(
+        db_session,
+        host_id=host.id,
+        mac_address=host.mac_address,
+        environment_key="inventory",
+        requested_by="admin",
+    )
+    db_session.commit()
+
+    claimed = claim_host_boot_override(
+        db_session,
+        mac_address=host.mac_address,
+    )
+    menu = render_network_boot_menu(
+        db_session,
+        mac_address=host.mac_address,
+        default_environment_key=claimed,
+    )
+    override = db_session.get(NetworkBootHostBootOverride, host.id)
+
+    assert claimed == "inventory"
+    assert override is not None
+    assert override.claimed_at is not None
+    assert "item esxi_assigned ESXi: esxi-utility-test" in menu
+    assert "choose --timeout 10000 --default inventory" in menu
+    assert (
+        claim_host_boot_override(db_session, mac_address=host.mac_address)
+        == "inventory"
+    )
 
 
 @pytest.mark.parametrize(

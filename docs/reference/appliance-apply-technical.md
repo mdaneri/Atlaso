@@ -301,8 +301,9 @@ because dynamic Kickstart rendering requires a defined host MAC.
 The ESXi PXE boot service selects one or more IPv4 DHCP IP zones instead of a freeform interface/IP pair. Atlaso derives
 the PXE interfaces, TFTP server addresses, DNS records, firewall bind targets, and generated dnsmasq scope tags from
 those zones; the DHCP page shows those generated PXE lines separately from operator-managed DHCP options. Native UEFI
-HTTP boot URLs are generated per selected IPv4 zone from that zone's appliance address unless an operator supplies a
-manual absolute URL, in which case the same URL is returned in every selected zone.
+HTTP boot URLs are generated per selected IPv4 zone from that zone's appliance address and always return the staged
+`snponly.efi` first stage. Both BIOS and UEFI iPXE requests then load `/pxe/boot.ipxe`, where Atlaso safely resolves the
+exact host assignment or inventory default. DHCP never returns an ESXi loader directly.
 
 Host PXE definitions can optionally include an IP address. Blank IPs keep normal DHCP behavior. A concrete host IP
 creates or updates an ESXi-managed DHCP reservation and matching DNS A/AAAA record, and the IP must fall inside one of
@@ -312,7 +313,8 @@ The real apply path stages schema-v2 `/var/lib/atlaso/apply/esxi-pxe/atlaso-esxi
 `atlaso-helper esxi-pxe validate|apply`, the helper validates the manifest, writes enabled Kickstarts to the PXE HTTP
 root, validates selected installer ISO paths remain under the ESX_HOST folder, extracts selected installers to
 `/var/lib/atlaso/pxe/http/esxi/images/<image-key>/`, stages the iPXE first-stage boot files `undionly.kpxe` and
-`snponly.efi`, stages `pxelinux.0` and `mboot.c32`, writes an HTTP `boot.ipxe` entrypoint even when no host profiles
+`snponly.efi` to both TFTP and HTTP, stages `pxelinux.0` and `mboot.c32`, writes an HTTP `boot.ipxe` entrypoint even when
+no host profiles
 exist, and generates host-specific `boot.cfg` plus PXELINUX configs. For ESXi UEFI, the helper uses the selected ISO's
 `EFI/BOOT/BOOTX64.EFI` as `mboot.efi` and places it beside the matching host `boot.cfg`; when `crypto64.efi` is present,
 it is copied into the same host boot directory. The helper searches Photon package paths plus

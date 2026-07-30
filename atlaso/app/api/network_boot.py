@@ -42,6 +42,7 @@ from atlaso.app.services.network_boot import (
     NETWORK_BOOT_MEDIA_ROOT,
     NETWORK_BOOT_UPLOAD_MAX_BYTES,
     catalog_rows,
+    claim_host_boot_override,
     cleanup_network_boot_upload,
     host_to_dict,
     inventory_session_for_token,
@@ -51,6 +52,7 @@ from atlaso.app.services.network_boot import (
     queue_reboot_command,
     render_network_boot_menu,
     report_history,
+    request_host_boot_override,
     set_environment_desired_state,
     store_inventory_report,
     touch_inventory_heartbeat,
@@ -527,6 +529,60 @@ def get_inventory_command_status(
     }
 
 
+@router.post(
+    "/esxi-hosts/{host_id}/boot-inventory-once",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def boot_esxi_host_into_inventory_once(
+    host_id: int,
+    request: Request,
+    identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    host = db.get(EsxiPxeHost, host_id)
+    if host is None or not host.enabled:
+        raise HTTPException(
+            status_code=404,
+            detail="Enabled ESXi host reference not found.",
+        )
+    inventory = db.execute(
+        select(NetworkBootEnvironment).where(
+            NetworkBootEnvironment.key == "inventory",
+            NetworkBootEnvironment.active_version != "",
+        )
+    ).scalar_one_or_none()
+    if inventory is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Atlaso Inventory Linux must be active before scheduling a utility boot.",
+        )
+    override = request_host_boot_override(
+        db,
+        host_id=host.id,
+        mac_address=host.mac_address,
+        environment_key="inventory",
+        requested_by=identity.username,
+    )
+    record_audit(
+        db,
+        actor=identity.username,
+        action="request_esxi_host_inventory_boot",
+        resource_type="network_boot_host_boot_override",
+        resource_id=str(host.id),
+        detail=f"mac={host.mac_address}; expires_at={override.expires_at.isoformat()}",
+        request_id=request.state.request_id,
+    )
+    db.commit()
+    return {
+        "host_id": host.id,
+        "mac_address": host.mac_address,
+        "environment_key": override.environment_key,
+        "requested_at": override.requested_at.isoformat(),
+        "expires_at": override.expires_at.isoformat(),
+        "claimed_at": None,
+    }
+
+
 @router.post("/hosts/{host_id}/promote", status_code=status.HTTP_201_CREATED)
 def promote_discovered_host(
     host_id: int,
@@ -624,12 +680,19 @@ def network_boot_ipxe(
 ) -> Response:
     _bounded_rate_limit(request, bucket="menu", limit=120)
     try:
+        default_environment_key = claim_host_boot_override(
+            db,
+            mac_address=mac,
+        )
         content = render_network_boot_menu(
             db,
             mac_address=mac,
             firmware=firmware,
             request_origin=f"{request.url.scheme}://{request.url.netloc}",
+            default_environment_key=default_environment_key,
         )
+        if default_environment_key:
+            db.commit()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return Response(

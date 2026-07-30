@@ -417,11 +417,8 @@ def esxi_http_base_url(boot: dict[str, Any]) -> str:
 
 
 def effective_native_uefi_http_url(boot: dict[str, Any]) -> str:
-    configured = str(boot.get("native_uefi_http_url") or "").strip()
-    if configured:
-        return configured
     base_url = esxi_http_base_url(boot)
-    return f"{base_url}/{ESXI_PXE_NATIVE_UEFI_BOOTFILE}" if base_url else ""
+    return f"{base_url}/{ESXI_PXE_UEFI_BOOTFILE}" if base_url else ""
 
 
 def esxi_pxe_service_state_from_boot(boot: dict[str, Any]) -> dict[str, Any]:

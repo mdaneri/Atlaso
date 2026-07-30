@@ -35,13 +35,22 @@ An unknown or unassigned x86-64 machine receives a per-host iPXE menu from
 environment is active; otherwise it exits to local disk or firmware. A known
 MAC assigned to an enabled ESXi profile defaults to that ESXi entry instead. An
 undefined-MAC ESXi profile is manual-only and cannot replace the safe inventory
-default. Each menu uses the selected listener address through which that client
-connected, so isolated secondary DHCP IP zones do not redirect boot artifacts
+default. All PXE and native UEFI HTTP clients load iPXE before resolving this
+menu; DHCP never returns `mboot.efi` or PXELINUX directly. This prevents an
+unassigned machine from inheriting the default ESXi installer profile. Each
+menu uses the selected listener address through which that client connected, so
+isolated secondary DHCP IP zones do not redirect boot artifacts
 through the primary zone. Both legacy BIOS and UEFI use the bundled
 `undionly.kpxe` or `snponly.efi` first stage; Secure Boot is not supported.
 Atlaso binds dnsmasq TFTP explicitly to every selected IPv4 DHCP IP-zone
 interface so VMware Workstation firmware can retrieve that first stage over
 UDP/69 before iPXE switches to HTTP.
+
+For an enabled ESXi Host Reference, right-click and choose **Boot Inventory
+Linux once** to override that exact MAC's next menu default for 30 minutes. The
+first claim retains a five-minute retry window so firmware retries remain on
+Inventory Linux; later boots return to the normal ESXi assignment. The request
+is audited and does not change the host's permanent ESXi desired state.
 
 Inventory Linux runs from an initramfs in RAM. It does not mount filesystems or
 write target disks. It submits a bounded report containing DMI, CPU, memory,

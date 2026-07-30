@@ -1809,7 +1809,7 @@ def test_esxi_pxe_helper_validates_and_writes_generated_kickstarts(monkeypatch, 
         "http_port": 8080,
         "http_base_url": "http://192.168.50.1:8080/pxe/esxi",
         "native_uefi_http_enabled": True,
-        "effective_native_uefi_http_url": "http://192.168.50.1:8080/pxe/esxi/mboot.efi",
+        "effective_native_uefi_http_url": "http://192.168.50.1:8080/pxe/esxi/snponly.efi",
         "ipxe_script": "#!ipxe\necho Atlaso PXE ready\nshell\n",
     }
     config_path = apply_dir / "atlaso-esxi-pxe.json"
@@ -1833,6 +1833,7 @@ def test_esxi_pxe_helper_validates_and_writes_generated_kickstarts(monkeypatch, 
     assert generated_kickstart.read_text(encoding="utf-8") == manifest["kickstarts"][0]["content"]
     assert (tftp_root / "undionly.kpxe").read_bytes() == b"bios ipxe"
     assert (tftp_root / "snponly.efi").read_bytes() == b"uefi ipxe"
+    assert (http_base / "snponly.efi").read_bytes() == b"uefi ipxe"
     assert (tftp_root / "pxelinux.0").read_bytes() == b"pxelinux"
     assert (tftp_root / "ldlinux.c32").read_bytes() == b"ldlinux"
     assert (tftp_root / "mboot.efi").read_bytes() == b"mboot efi"
@@ -1914,7 +1915,7 @@ def test_esxi_pxe_helper_writes_http_ipxe_script_without_profiles(monkeypatch, t
             "http_port": 8080,
             "http_base_url": "http://192.168.50.1:8080/pxe/esxi",
             "native_uefi_http_enabled": True,
-            "effective_native_uefi_http_url": "http://192.168.50.1:8080/pxe/esxi/mboot.efi",
+            "effective_native_uefi_http_url": "http://192.168.50.1:8080/pxe/esxi/snponly.efi",
             "ipxe_script": "#!ipxe\necho No profiles yet\nshell\n",
         },
         "kickstarts": [],
@@ -1992,7 +1993,7 @@ def test_esxi_pxe_helper_does_not_copy_host_artifact_to_default_fallback(monkeyp
         "http_port": 8080,
         "http_base_url": "http://192.168.50.1:8080/pxe/esxi",
         "native_uefi_http_enabled": True,
-        "effective_native_uefi_http_url": "http://192.168.50.1:8080/pxe/esxi/mboot.efi",
+        "effective_native_uefi_http_url": "http://192.168.50.1:8080/pxe/esxi/snponly.efi",
         "ipxe_script": "#!ipxe\necho Atlaso PXE ready\nshell\n",
     }
     config_path = apply_dir / "atlaso-esxi-pxe.json"

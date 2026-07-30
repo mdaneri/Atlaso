@@ -1805,6 +1805,10 @@ def _apply_esxi_pxe_manifest(payload: dict) -> int:
             target = ESXI_TFTP_ROOT / filename
             _copy_file(source, target)
             generated_tftp_files.append(str(target))
+            if key == "uefi_bootfile":
+                http_target = ESXI_PXE_HTTP_BASE / filename
+                _copy_file(source, http_target)
+                generated_files.append(str(http_target))
         if str(boot.get("bios_second_stage_bootfile") or "") == "pxelinux.0":
             ldlinux_source = _find_pxe_boot_binary("ldlinux.c32")
             if ldlinux_source is None:

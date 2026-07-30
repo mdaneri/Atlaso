@@ -2534,6 +2534,27 @@ async function deleteEsxiHost(row, csrf) {
   }
 }
 
+async function requestEsxiHostInventoryBoot(row) {
+  clearEsxiHostError();
+  const data = row.getData();
+  if (data.is_new || data.is_default || !data.enabled) return;
+  const confirmed = await requestConfirmation({
+    title: `Boot ${data.hostname} into Inventory Linux?`,
+    message: "For the next 30 minutes, this host's next Network Boot request will select Atlaso Inventory Linux instead of ESXi. The claimed boot has a five-minute retry window.",
+    label: "Schedule utility boot",
+  });
+  if (!confirmed) return;
+  try {
+    const result = await networkBootRequest(
+      `/api/v1/network-boot/esxi-hosts/${data.id}/boot-inventory-once`,
+      { method: "POST" },
+    );
+    showEsxiHostSuccess(`Inventory Linux scheduled for ${data.hostname} until ${new Date(result.expires_at).toLocaleTimeString()}.`);
+  } catch (error) {
+    showEsxiHostError(error instanceof Error ? error.message : "The one-time Inventory Linux boot could not be scheduled.");
+  }
+}
+
 function showCaMessage(elementId, message, type = "error") {
   const element = document.getElementById(elementId);
   if (!element) {
@@ -8709,7 +8730,16 @@ function initializeEsxiPxeHostsTable() {
       reactiveData: false,
       rowContextMenu: canWrite ? [
         {
+          label: "Boot Inventory Linux once",
+          disabled: (component) => {
+            const data = component.getData();
+            return data.is_new || data.is_default || !data.enabled;
+          },
+          action: (_event, row) => requestEsxiHostInventoryBoot(row),
+        },
+        {
           label: "Delete host reference",
+          disabled: (component) => component.getData().is_new || component.getData().is_default,
           action: (event, row) => deleteEsxiHost(row, csrf),
         },
       ] : false,

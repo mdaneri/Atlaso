@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 from atlaso.app.models import (
     NetworkBootDiscoveredHost,
     NetworkBootEnvironment,
+    NetworkBootHostBootOverride,
     NetworkBootInventoryCommand,
     NetworkBootInventoryReport,
     NetworkBootInventorySession,
@@ -48,6 +49,8 @@ NETWORK_BOOT_MAX_REPORTS = 2048
 NETWORK_BOOT_MAX_SESSIONS = 4096
 NETWORK_BOOT_SESSION_LIFETIME = timedelta(hours=8)
 NETWORK_BOOT_ONLINE_THRESHOLD = timedelta(seconds=30)
+NETWORK_BOOT_OVERRIDE_LIFETIME = timedelta(minutes=30)
+NETWORK_BOOT_OVERRIDE_CLAIM_GRACE = timedelta(minutes=5)
 NETWORK_BOOT_MEDIA_ROOT = Path("/var/lib/atlaso/pxe/media")
 NETWORK_BOOT_UPLOAD_ROOT = Path("/var/lib/atlaso/pxe/uploads")
 NETWORK_BOOT_UPLOAD_MAX_BYTES = 2 * 1024 * 1024 * 1024
@@ -1137,6 +1140,7 @@ def render_network_boot_menu(
     mac_address: str = "",
     firmware: str = "",
     request_origin: str = "",
+    default_environment_key: str = "",
 ) -> str:
     mac = normalize_mac(mac_address) if mac_address else ""
     mac_key = normalize_pxe_mac(mac) if mac else ""
@@ -1154,8 +1158,21 @@ def render_network_boot_menu(
     undefined = next((artifact for artifact in artifacts if artifact.get("is_default")), None)
     active = _active_media(db)
     inventory = active.get("inventory")
+    requested_default = (
+        default_environment_key
+        if default_environment_key in active
+        else ""
+    )
     default_label = (
-        "esxi_assigned" if assigned else ("inventory" if inventory else "local")
+        f"env_{requested_default}"
+        if requested_default and requested_default != "inventory"
+        else "inventory"
+        if requested_default == "inventory"
+        else "esxi_assigned"
+        if assigned
+        else "inventory"
+        if inventory
+        else "local"
     )
     lines = [
         "#!ipxe",
@@ -1262,6 +1279,62 @@ def render_network_boot_menu(
         ]
     )
     return "\n".join(lines)
+
+
+def request_host_boot_override(
+    db: Session,
+    *,
+    host_id: int,
+    mac_address: str,
+    environment_key: str,
+    requested_by: str,
+) -> NetworkBootHostBootOverride:
+    now = utcnow()
+    override = db.get(NetworkBootHostBootOverride, host_id)
+    if override is None:
+        override = NetworkBootHostBootOverride(host_id=host_id)
+    override.mac_address = normalize_mac(mac_address)
+    override.environment_key = environment_key
+    override.requested_by = requested_by
+    override.requested_at = now
+    override.expires_at = now + NETWORK_BOOT_OVERRIDE_LIFETIME
+    override.claimed_at = None
+    db.add(override)
+    db.flush()
+    return override
+
+
+def claim_host_boot_override(
+    db: Session,
+    *,
+    mac_address: str,
+) -> str:
+    if not mac_address:
+        return ""
+    now = utcnow()
+    normalized = normalize_mac(mac_address)
+    override = db.execute(
+        select(NetworkBootHostBootOverride).where(
+            NetworkBootHostBootOverride.mac_address == normalized,
+            NetworkBootHostBootOverride.expires_at > now,
+        )
+    ).scalar_one_or_none()
+    if override is None:
+        return ""
+    active = _active_media(db)
+    if override.environment_key not in active:
+        return ""
+    if override.claimed_at is not None:
+        claimed_at = override.claimed_at
+        if claimed_at.tzinfo is None:
+            claimed_at = claimed_at.replace(tzinfo=timezone.utc)
+        if claimed_at + NETWORK_BOOT_OVERRIDE_CLAIM_GRACE <= now:
+            return ""
+    else:
+        override.claimed_at = now
+        db.add(override)
+        db.flush()
+    return override.environment_key
 
 
 class _BoundedHttpsRedirectHandler(urllib.request.HTTPRedirectHandler):

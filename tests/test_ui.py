@@ -4265,7 +4265,7 @@ def test_esxi_pxe_boot_settings_update_dnsmasq_and_apply_manifest(client):
         assert boot["listen_interface"] == "eth2"
         assert boot["listen_address"] == "192.168.50.1"
         assert boot["http_port"] == 8080
-        assert boot["effective_native_uefi_http_url"] == "http://192.168.50.1:8080/pxe/esxi/mboot.efi"
+        assert boot["effective_native_uefi_http_url"] == "http://192.168.50.1:8080/pxe/esxi/snponly.efi"
         assert boot["native_uefi_http_enabled"] is True
         record = db.execute(
             select(DnsRecord).where(DnsRecord.hostname == "esxi-pxe.atlaso.internal", DnsRecord.record_type == "CNAME")
@@ -4282,11 +4282,10 @@ def test_esxi_pxe_boot_settings_update_dnsmasq_and_apply_manifest(client):
         dns_preview = dnsmasq_context(db)["config_preview"]
         assert "enable-tftp" in dns_preview
         assert "dhcp-option=tag:sitea,66,esxi-pxe.atlaso.internal" in dns_preview
-        assert "dhcp-boot=tag:sitea,tag:ipxe,tag:efi-x86_64,mboot.efi,esxi-pxe.atlaso.internal,192.168.50.1" in dns_preview
-        assert "dhcp-boot=tag:sitea,tag:ipxe,tag:!efi-x86_64,pxelinux.0,esxi-pxe.atlaso.internal,192.168.50.1" in dns_preview
+        assert "dhcp-boot=tag:sitea,tag:ipxe,http://192.168.50.1:8080/pxe/boot.ipxe" in dns_preview
         assert "dhcp-boot=tag:sitea,tag:!ipxe,tag:efi-x86_64,snponly.efi,esxi-pxe.atlaso.internal,192.168.50.1" in dns_preview
         assert "dhcp-boot=tag:sitea,tag:!ipxe,tag:!efi-x86_64,undionly.kpxe,esxi-pxe.atlaso.internal,192.168.50.1" in dns_preview
-        assert "dhcp-boot=tag:sitea,tag:uefi-http,tag:uefi-http-x64,http://192.168.50.1:8080/pxe/esxi/mboot.efi" in dns_preview
+        assert "dhcp-boot=tag:sitea,tag:uefi-http,tag:uefi-http-x64,http://192.168.50.1:8080/pxe/esxi/snponly.efi" in dns_preview
         manifest = json.loads(esxi_pxe_context(db)["esxi_pxe_manifest"])
         assert manifest["schema_version"] == 2
         assert manifest["boot"]["enabled"] is True
@@ -4303,9 +4302,9 @@ def test_esxi_pxe_boot_settings_update_dnsmasq_and_apply_manifest(client):
     assert "dhcp-userclass=set:ipxe,iPXE" in dhcp_page.text
     assert "dhcp-match=set:ipxe,175" in dhcp_page.text
     assert "dhcp-boot=tag:sitea,tag:!ipxe,tag:!efi-x86_64,undionly.kpxe,esxi-pxe.atlaso.internal,192.168.50.1" in dhcp_page.text
-    assert "dhcp-boot=tag:sitea,tag:ipxe,tag:efi-x86_64,mboot.efi,esxi-pxe.atlaso.internal,192.168.50.1" in dhcp_page.text
+    assert "dhcp-boot=tag:sitea,tag:ipxe,http://192.168.50.1:8080/pxe/boot.ipxe" in dhcp_page.text
     assert "dhcp-boot=tag:sitea,tag:!ipxe,tag:efi-x86_64,snponly.efi,esxi-pxe.atlaso.internal,192.168.50.1" in dhcp_page.text
-    assert "dhcp-boot=tag:sitea,tag:uefi-http,tag:uefi-http-x64,http://192.168.50.1:8080/pxe/esxi/mboot.efi" in dhcp_page.text
+    assert "dhcp-boot=tag:sitea,tag:uefi-http,tag:uefi-http-x64,http://192.168.50.1:8080/pxe/esxi/snponly.efi" in dhcp_page.text
 def test_esxi_pxe_multi_zone_host_reservations_and_grid_menu(client):
     import json
 
@@ -4378,8 +4377,8 @@ def test_esxi_pxe_multi_zone_host_reservations_and_grid_menu(client):
         dns_preview = dnsmasq_context(db)["config_preview"]
         assert "dhcp-option=tag:sitea,66,esxi-pxe.atlaso.internal" in dns_preview
         assert "dhcp-option=tag:siteb,66,esxi-pxe.atlaso.internal" in dns_preview
-        assert "dhcp-boot=tag:sitea,tag:uefi-http,tag:uefi-http-x64,http://192.168.50.1:8080/pxe/esxi/mboot.efi" in dns_preview
-        assert "dhcp-boot=tag:siteb,tag:uefi-http,tag:uefi-http-x64,http://10.1.1.1:8080/pxe/esxi/mboot.efi" in dns_preview
+        assert "dhcp-boot=tag:sitea,tag:uefi-http,tag:uefi-http-x64,http://192.168.50.1:8080/pxe/esxi/snponly.efi" in dns_preview
+        assert "dhcp-boot=tag:siteb,tag:uefi-http,tag:uefi-http-x64,http://10.1.1.1:8080/pxe/esxi/snponly.efi" in dns_preview
 
     create_host = client.post(
         "/esxi-pxe/hosts",
@@ -10889,7 +10888,7 @@ def test_physical_interface_edit_updates_desired_state(client):
         boot = esxi_pxe_boot_settings(db)
         assert boot["listen_interface"] == "eth2"
         assert boot["listen_address"] == "192.168.70.1"
-        assert boot["effective_native_uefi_http_url"] == "http://192.168.70.1:8080/pxe/esxi/mboot.efi"
+        assert boot["effective_native_uefi_http_url"] == "http://192.168.70.1:8080/pxe/esxi/snponly.efi"
         pxe_record = db.execute(select(DnsRecord).where(DnsRecord.hostname == ESXI_PXE_DEFAULT_HOSTNAME, DnsRecord.record_type == "CNAME")).scalar_one()
         assert pxe_record.address == "esxi-pxe-192-168-70-1.atlaso.internal"
         pxe_interface_record = db.execute(select(DnsRecord).where(DnsRecord.hostname == "esxi-pxe-192-168-70-1.atlaso.internal", DnsRecord.record_type == "A")).scalar_one()

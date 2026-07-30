@@ -1463,6 +1463,24 @@ class NetworkBootInventoryCommand(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class NetworkBootHostBootOverride(Base):
+    __tablename__ = "network_boot_host_boot_overrides"
+
+    host_id: Mapped[int] = mapped_column(
+        ForeignKey("esxi_pxe_hosts.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    mac_address: Mapped[str] = mapped_column(String(32), index=True)
+    environment_key: Mapped[str] = mapped_column(
+        ForeignKey("network_boot_environments.key", ondelete="CASCADE"),
+        default="inventory",
+    )
+    requested_by: Mapped[str] = mapped_column(String(100))
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class Job(Base):
     __tablename__ = "jobs"
 

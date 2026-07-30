@@ -238,7 +238,7 @@
       <input type="hidden" name="uefi_bootfile" value="{{ esxi_pxe_boot.uefi_bootfile }}">
       <div class="form-grid">
         <label class="switch-field">
-          <span class="field-label"><span>Native UEFI HTTP</span><button class="help-icon" type="button" data-help="Adds DHCP matching for UEFI HTTPClient firmware and returns the configured absolute HTTP boot URL. This is separate from iPXE script chaining.">i</button></span>
+          <span class="field-label"><span>Native UEFI HTTP</span><button class="help-icon" type="button" data-help="Adds DHCP matching for UEFI HTTPClient firmware and loads the generated iPXE first stage. Every client then resolves the safe per-host Network Boot menu.">i</button></span>
           <input class="switch-input" type="checkbox" name="native_uefi_http_enabled" {{ "checked" if esxi_pxe_boot.native_uefi_http_enabled else "" }} {{ "disabled" if not esxi_can_write else "" }}><span class="switch-track" aria-hidden="true"></span>
         </label>
         <label>
@@ -247,8 +247,9 @@
         </label>
       </div>
       <label>
-        <span class="field-label"><span>UEFI HTTP URL</span><button class="help-icon" type="button" data-help="Absolute bootloader URL returned only to native UEFI HTTP clients, such as an ESXi UEFI HTTP bootloader staged under the PXE HTTP root.">i</button></span>
-        <input name="native_uefi_http_url" value="{{ esxi_pxe_boot.native_uefi_http_url }}" placeholder="{{ esxi_pxe_boot.effective_native_uefi_http_url or 'http://<pxe-ip>:8080/pxe/esxi/mboot.efi' }}" {{ "disabled" if not esxi_can_write else "" }}>
+        <span class="field-label"><span>UEFI HTTP URL</span><button class="help-icon" type="button" data-help="Generated iPXE first-stage URL. It cannot be redirected to an ESXi loader because that would bypass the safe per-host menu.">i</button></span>
+        <input value="{{ esxi_pxe_boot.effective_native_uefi_http_url }}" placeholder="http://&lt;pxe-ip&gt;:8080/pxe/esxi/snponly.efi" readonly>
+        <input type="hidden" name="native_uefi_http_url" value="">
       </label>
       <div class="settings-list compact-settings-list">
         <div><span>TFTP root</span><strong>{{ esxi_pxe_boot.tftp_root }}</strong></div>

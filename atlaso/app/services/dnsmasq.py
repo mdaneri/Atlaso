@@ -1137,7 +1137,6 @@ def render_dnsmasq_config(
         if esxi_pxe_boot and esxi_pxe_boot.get("enabled"):
             tftp_hostname = str(esxi_pxe_boot.get("hostname") or "").strip()
             native_uefi_http_enabled = bool(esxi_pxe_boot.get("native_uefi_http_enabled"))
-            manual_native_http_url = str(esxi_pxe_boot.get("native_uefi_http_url") or "").strip()
             http_port = esxi_pxe_boot.get("http_port") or 8080
             selected_scope_payloads = list(esxi_pxe_boot.get("dhcp_scopes") or [])
             pxe_scope_entries = []
@@ -1203,32 +1202,21 @@ def render_dnsmasq_config(
                     }
                 )
             host_bootfiles = list(esxi_pxe_boot.get("host_bootfiles") or [])
-            host_exclusion_tags = []
             for host_bootfile in host_bootfiles:
                 host_tag = str(host_bootfile.get("tag") or "").strip()
                 mac_address = str(host_bootfile.get("mac_address") or "").strip()
                 if host_tag and mac_address:
                     lines.append(f"dhcp-mac=set:{host_tag},{mac_address}")
-                    host_exclusion_tags.append(f"tag:!{host_tag}")
             if native_uefi_http_enabled:
                 native_lines = []
                 for scope_entry in pxe_scope_entries:
                     scope_address = scope_entry["address"]
                     base_url = f"http://{f'[{scope_address}]' if ':' in scope_address and not scope_address.startswith('[') else scope_address}:{http_port}/pxe/esxi" if scope_address else ""
-                    native_http_url = manual_native_http_url or (f"{base_url}/{esxi_pxe_boot.get('native_uefi_bootfile') or 'mboot.efi'}" if base_url else "")
+                    native_http_url = f"{base_url}/{esxi_pxe_boot.get('uefi_bootfile') or 'snponly.efi'}" if base_url else ""
                     if not native_http_url:
                         continue
-                    generic_native_uefi_http_tags = ",".join(["tag:uefi-http", "tag:uefi-http-x64", *host_exclusion_tags])
+                    generic_native_uefi_http_tags = ",".join(["tag:uefi-http", "tag:uefi-http-x64"])
                     native_lines.append(f"dhcp-boot={scope_entry['prefix']}{generic_native_uefi_http_tags},{native_http_url}")
-                    for host_bootfile in host_bootfiles:
-                        host_tag = str(host_bootfile.get("tag") or "").strip()
-                        mac_key = str(host_bootfile.get("mac_key") or "").strip()
-                        if not mac_key:
-                            uefi_second_stage = str(host_bootfile.get("uefi_second_stage_bootfile") or "")
-                            mac_key = uefi_second_stage.split("/", 1)[0] if "/" in uefi_second_stage else ""
-                        native_host_url = manual_native_http_url or (f"{base_url}/{mac_key}/{esxi_pxe_boot.get('native_uefi_bootfile') or 'mboot.efi'}" if base_url and mac_key else "")
-                        if host_tag and native_host_url:
-                            native_lines.append(f"dhcp-boot={scope_entry['prefix']}tag:{host_tag},tag:uefi-http,tag:uefi-http-x64,{native_host_url}")
                 if native_lines:
                     lines.extend(["dhcp-vendorclass=set:uefi-http,HTTPClient", "dhcp-match=set:uefi-http-x64,option:client-arch,16", *native_lines])
         if esxi_pxe_boot and esxi_pxe_boot.get("enabled"):
@@ -1256,21 +1244,24 @@ def render_dnsmasq_config(
                 if tftp_hostname and scope_entry["address"]:
                     lines.append(f"dhcp-option={scope_entry['prefix']}66,{tftp_hostname}")
                     boot_server = f",{tftp_hostname},{scope_entry['address']}"
-                generic_uefi_second_stage_tags = ",".join(["tag:ipxe", "tag:efi-x86_64", *host_exclusion_tags])
-                generic_uefi_second_stage_boot = str(esxi_pxe_boot.get("uefi_second_stage_bootfile") or "")
+                scope_address = scope_entry["address"]
+                rendered_address = (
+                    f"[{scope_address}]"
+                    if ":" in scope_address and not scope_address.startswith("[")
+                    else scope_address
+                )
+                menu_url = (
+                    f"http://{rendered_address}:{http_port}/pxe/boot.ipxe"
+                    if scope_address
+                    else "/pxe/boot.ipxe"
+                )
                 lines.extend(
                     [
-                        f"dhcp-boot={scope_entry['prefix']}{generic_uefi_second_stage_tags},{generic_uefi_second_stage_boot}{boot_server}",
-                        f"dhcp-boot={scope_entry['prefix']}tag:ipxe,tag:!efi-x86_64,{esxi_pxe_boot.get('bios_second_stage_bootfile')}{boot_server}",
+                        f"dhcp-boot={scope_entry['prefix']}tag:ipxe,{menu_url}",
                         f"dhcp-boot={scope_entry['prefix']}tag:!ipxe,tag:efi-x86_64,{esxi_pxe_boot.get('uefi_bootfile')}{boot_server}",
                         f"dhcp-boot={scope_entry['prefix']}tag:!ipxe,tag:!efi-x86_64,{esxi_pxe_boot.get('bios_bootfile')}{boot_server}",
                     ]
                 )
-                for host_bootfile in host_bootfiles:
-                    host_tag = str(host_bootfile.get("tag") or "").strip()
-                    uefi_second_stage = str(host_bootfile.get("uefi_second_stage_bootfile") or "").strip()
-                    if host_tag and uefi_second_stage:
-                        lines.append(f"dhcp-boot={scope_entry['prefix']}tag:{host_tag},tag:ipxe,tag:efi-x86_64,{uefi_second_stage}{boot_server}")
         for scope in scopes:
             if scope.enabled is False:
                 continue
