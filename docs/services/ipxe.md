@@ -97,6 +97,10 @@ task that:
 5. atomically installs an immutable cache under
    `/var/lib/atlaso/pxe/media/<environment>/<version>`.
 
+The verified cache is owned by the Atlaso worker account so same-version repair
+can atomically swap and remove its temporary backup without leaving root-owned
+stale media.
+
 Each catalog row exposes **Download**, **Upload**, and **Delete newest inactive
 media** through its row context menu.
 Upload is limited to 2 GiB and stages the file only for the durable verification

@@ -270,11 +270,12 @@ if [ ! -r "$INVENTORY_MANIFEST" ]; then
   exit 2
 fi
 INVENTORY_VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["version"])' "$INVENTORY_MANIFEST")"
-INVENTORY_TARGET_DIR="$ATLASO_STATE/pxe/media/inventory/$INVENTORY_VERSION"
+INVENTORY_MEDIA_DIR="$ATLASO_STATE/pxe/media/inventory"
+INVENTORY_TARGET_DIR="$INVENTORY_MEDIA_DIR/$INVENTORY_VERSION"
 log_step "staging bundled Atlaso Inventory Linux $INVENTORY_VERSION"
-install -d -o root -g root -m 0755 "$INVENTORY_TARGET_DIR"
+install -d -o atlaso -g atlaso -m 0755 "$INVENTORY_MEDIA_DIR" "$INVENTORY_TARGET_DIR"
 for artifact in bzImage rootfs.cpio.gz manifest.json; do
-  install -o root -g root -m 0644 "$INVENTORY_SOURCE_DIR/$artifact" "$INVENTORY_TARGET_DIR/$artifact"
+  install -o atlaso -g atlaso -m 0644 "$INVENTORY_SOURCE_DIR/$artifact" "$INVENTORY_TARGET_DIR/$artifact"
 done
 if [ ! -d "$INVENTORY_SOURCE_DIR/legal-info" ]; then
   echo "Bundled Atlaso Inventory Linux legal-info is missing." >&2

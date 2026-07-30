@@ -1009,6 +1009,14 @@ def test_esxi_pxe_helper_validates_network_boot_media_hashes(monkeypatch, tmp_pa
         "hosts": [],
         "artifacts": [],
     }
+    original_read_bytes = Path.read_bytes
+
+    def reject_artifact_read_bytes(path):
+        if path == artifact:
+            raise AssertionError("Network Boot artifacts must be hashed as a stream.")
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", reject_artifact_read_bytes)
 
     errors = helper._esxi_pxe_manifest_errors(payload)
     assert not [error for error in errors if error.startswith("Network Boot")]

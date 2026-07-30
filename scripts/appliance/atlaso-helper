@@ -76,6 +76,13 @@ COMMANDS: dict[str, set[str]] = {
     "console": {"disable-services", "restore-services", "status"},
     "wan": {"validate", "apply"},
 }
+
+
+def _sha256_file(path: Path) -> str:
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
 SYSTEMD_RUN_REAL_ACTIONS = {
     "apply",
     "reload",
@@ -1363,7 +1370,7 @@ def _esxi_pxe_manifest_errors(payload: dict) -> list[str]:
                         if not re.fullmatch(r"[0-9a-f]{64}", expected):
                             errors.append(f"Network Boot environment {key} artifact {normalized_name} digest is invalid.")
                             continue
-                        actual = hashlib.sha256(target.read_bytes()).hexdigest()
+                        actual = _sha256_file(target)
                         if not hmac.compare_digest(actual, expected):
                             errors.append(f"Network Boot environment {key} artifact {normalized_name} failed SHA-256 verification.")
     for row in payload.get("kickstarts", []):

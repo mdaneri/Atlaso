@@ -726,6 +726,8 @@ with zipfile.ZipFile(package) as archive:
             target.chmod(0o755)
         else:
             pathlib.Path(temporary).replace(target)
+    for owned_path in (target.parent, target, *target.rglob("*")):
+        shutil.chown(owned_path, user="atlaso", group="atlaso")
 print(f"Installed Atlaso Inventory Linux {version}.")
 PY
 fi

@@ -472,6 +472,41 @@ def test_dmi_only_report_rejects_ambiguous_collision_candidates(db_session):
     assert len(reports) == len(existing_reports)
 
 
+def test_dmi_only_report_preserves_single_candidate_macs(db_session):
+    dmi_uuid = "4c4c4544-004b-4d10-8052-cac04f4c5100"
+    expected_mac = "52:54:00:12:34:56"
+    first_session, _token = issue_inventory_session(db_session)
+    first, _report = store_inventory_report(
+        db_session,
+        session=first_session,
+        payload=inventory_report(dmi_uuid=dmi_uuid, boot_mac=expected_mac),
+    )
+    dmi_only = inventory_report(
+        dmi_uuid=dmi_uuid,
+        boot_mac="00:00:00:00:00:00",
+    )
+    dmi_only["interfaces"][0]["permanent_mac"] = "00:00:00:00:00:00"
+    dmi_only["interfaces"][0]["current_mac"] = "ff:ff:ff:ff:ff:ff"
+    second_session, _token = issue_inventory_session(db_session)
+    second, _report = store_inventory_report(
+        db_session,
+        session=second_session,
+        payload=dmi_only,
+    )
+    third_session, _token = issue_inventory_session(db_session)
+    third, _report = store_inventory_report(
+        db_session,
+        session=third_session,
+        payload=inventory_report(dmi_uuid=dmi_uuid, boot_mac=expected_mac),
+    )
+
+    assert second.id == first.id
+    assert third.id == first.id
+    assert second.boot_mac == expected_mac
+    assert json.loads(second.macs_json) == [expected_mac]
+    assert third.collision is False
+
+
 def test_inventory_retains_latest_and_ten_previous_reports(db_session):
     host_id = None
     for index in range(NETWORK_BOOT_REPORTS_PER_HOST + 3):

@@ -733,8 +733,9 @@ def store_inventory_report(
     if session.bound_identity_key and session.bound_identity_key != host.identity_key:
         raise ValueError("Inventory session identity does not match the submitted host.")
     now = utcnow()
-    host.boot_mac = str(report.get("boot_mac") or "")
-    host.macs_json = json.dumps(macs)
+    if macs or not candidates:
+        host.boot_mac = str(report.get("boot_mac") or "")
+        host.macs_json = json.dumps(macs)
     host.manufacturer = report["system"]["manufacturer"]
     host.product_name = report["system"]["product_name"]
     host.serial_number = report["system"]["serial_number"]

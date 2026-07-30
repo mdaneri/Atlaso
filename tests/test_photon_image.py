@@ -87,6 +87,19 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
         "install -d -o atlaso -g atlaso -m 0755 "
         "/var/lib/atlaso/pxe/media /var/lib/atlaso/pxe/uploads"
     ) in deploy
+    assert 'shutil.chown(owned_path, user="atlaso", group="atlaso")' in deploy
+    provision = Path("image/common/scripts/provision-atlaso.sh").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        'install -d -o atlaso -g atlaso -m 0755 '
+        '"$INVENTORY_MEDIA_DIR" "$INVENTORY_TARGET_DIR"'
+        in provision
+    )
+    assert (
+        'install -o atlaso -g atlaso -m 0644 "$INVENTORY_SOURCE_DIR/$artifact"'
+        in provision
+    )
     assert "command -v gpg" in deploy
     assert "tdnf -y install gnupg" in deploy
     assert "Build Inventory Linux package" in release
