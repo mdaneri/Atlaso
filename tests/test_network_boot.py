@@ -855,6 +855,7 @@ def test_unknown_host_defaults_to_inventory_and_shredos_has_cancel_guard(db_sess
         mac_address="52:54:00:de:ad:be",
     )
     assert "choose --timeout 10000 --default inventory" in menu
+    assert "atlaso.boot_mac=${net0/mac}" in menu
     assert "menu ShredOS can permanently erase selected disks" in menu
     assert "choose --default cancel" in menu
     assert "--timeout" not in menu.split(

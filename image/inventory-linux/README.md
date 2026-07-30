@@ -14,7 +14,7 @@ hardware. It is a Buildroot initramfs that runs entirely from RAM, does not
 mount target filesystems, and submits one bounded inventory report before
 waiting for a local or audited remote reboot request.
 
-Package revision `2026.05.1+1` pins Buildroot 2026.05.1 by SHA-256. The suffix
+Package revision `2026.05.1+2` pins Buildroot 2026.05.1 by SHA-256. The suffix
 advances independently when Atlaso changes the inventory client without
 changing the upstream Buildroot base. Run on Linux:
 
@@ -42,6 +42,11 @@ This creates the deterministic, independently versioned
 appliance images preinstall its runtime files; Atlaso releases publish the same
 package so Network Boot can download or upload Inventory Linux updates without
 coupling them to the Python wheel version.
+
+The iPXE menu passes the PXE adapter MAC address to Inventory Linux. At startup,
+the utility requests DHCP on that adapter first and falls back across the
+remaining non-loopback adapters until one receives a default route. This keeps
+multi-NIC hosts on the network they used to PXE boot.
 
 The kernel fragment enables common server Ethernet, NVMe, SATA, SCSI, RAID, and
 virtio drivers. The userspace collector reads DMI, CPU, memory, block-device,

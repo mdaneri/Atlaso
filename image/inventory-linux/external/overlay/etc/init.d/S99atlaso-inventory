@@ -2,28 +2,58 @@
 
 case "$1" in
   start)
-    boot_interface=""
-    for candidate in /sys/class/net/*; do
-      [ "$(basename "${candidate}")" = "lo" ] && continue
-      boot_interface="$(basename "${candidate}")"
-      break
-    done
-    if [ -z "${boot_interface}" ]; then
-      echo "Atlaso Inventory Linux could not find a network interface." >&2
-      exit 1
-    fi
-    ip link set "${boot_interface}" up
-    udhcpc -i "${boot_interface}" -n -q -t 10 -T 1
     route_ready=false
-    for _attempt in 1 2 3 4 5 6 7 8 9 10; do
-      if ip route show default | grep -q '^default '; then
-        route_ready=true
-        break
-      fi
-      sleep 1
+    boot_interface=""
+    attempted_boot_interface=""
+    boot_mac=""
+    for argument in $(cat /proc/cmdline); do
+      case "${argument}" in
+        atlaso.boot_mac=*)
+          boot_mac="${argument#atlaso.boot_mac=}"
+          boot_mac="$(printf '%s' "${boot_mac}" | tr '[:upper:]' '[:lower:]' | tr '-' ':')"
+          ;;
+      esac
     done
+
+    try_interface() {
+      candidate="$1"
+      ip link set "${candidate}" up || return 1
+      udhcpc -i "${candidate}" -n -q -t 10 -T 1 || return 1
+      for _attempt in 1 2 3 4 5 6 7 8 9 10; do
+        if ip route show default | grep -q " dev ${candidate}\\( \\|$\\)"; then
+          boot_interface="${candidate}"
+          route_ready=true
+          return 0
+        fi
+        sleep 1
+      done
+      return 1
+    }
+
+    if [ -n "${boot_mac}" ]; then
+      for candidate_path in /sys/class/net/*; do
+        candidate="$(basename "${candidate_path}")"
+        [ "${candidate}" = "lo" ] && continue
+        candidate_mac="$(cat "${candidate_path}/address" 2>/dev/null)"
+        candidate_mac="$(printf '%s' "${candidate_mac}" | tr '[:upper:]' '[:lower:]')"
+        if [ "${candidate_mac}" = "${boot_mac}" ]; then
+          attempted_boot_interface="${candidate}"
+          try_interface "${candidate}" && break
+        fi
+      done
+    fi
+
     if [ "${route_ready}" != "true" ]; then
-      echo "Atlaso Inventory Linux did not receive a default route." >&2
+      for candidate_path in /sys/class/net/*; do
+        candidate="$(basename "${candidate_path}")"
+        [ "${candidate}" = "lo" ] && continue
+        [ "${candidate}" = "${attempted_boot_interface}" ] && continue
+        try_interface "${candidate}" && break
+      done
+    fi
+
+    if [ "${route_ready}" != "true" ]; then
+      echo "Atlaso Inventory Linux could not obtain a default route on any network interface." >&2
       exit 1
     fi
     /usr/bin/atlaso-inventory

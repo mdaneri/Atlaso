@@ -93,13 +93,16 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     assert "--inventory-package" in release
     build = Path("image/inventory-linux/build.sh").read_text(encoding="utf-8")
     assert 'buildroot_version="2026.05.1"' in build
-    assert 'package_version="2026.05.1+1"' in build
+    assert 'package_version="2026.05.1+2"' in build
     assert '"version": "${package_version}"' in build
     init = Path(
         "image/inventory-linux/external/overlay/etc/init.d/S99atlaso-inventory"
     ).read_text(encoding="utf-8")
-    assert 'udhcpc -i "${boot_interface}"' in init
-    assert "ip route show default" in init
+    assert "atlaso.boot_mac=*" in init
+    assert 'candidate_mac="$(cat "${candidate_path}/address"' in init
+    assert 'udhcpc -i "${candidate}"' in init
+    assert 'grep -q " dev ${candidate}' in init
+    assert "for candidate_path in /sys/class/net/*" in init
     assert init.index("udhcpc -i") < init.index("/usr/bin/atlaso-inventory")
     assert 'installed_manifest.get("kind") != "atlaso-network-boot-media"' in deploy
     assert 'installed_manifest.get("environment") != "inventory"' in deploy

@@ -1082,7 +1082,10 @@ def _chain_line(
         initrd = f"{http_origin}{initrd}"
     arguments = arguments.replace("fetch=/", f"fetch={http_origin}/")
     if media.environment_key == "inventory":
-        arguments = f"{arguments} atlaso.url={http_origin}".strip()
+        arguments = (
+            f"{arguments} atlaso.url={http_origin} "
+            "atlaso.boot_mac=${net0/mac}"
+        ).strip()
     if kernel:
         lines = [f"kernel {kernel}" + (f" {arguments}" if arguments else "")]
         if initrd:
