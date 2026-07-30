@@ -20458,6 +20458,15 @@ def cancel_task_from_ui(
                 "message": "Cancellation requested. The running component will finish before remaining components are skipped.",
             }
         )
+    if job.type == "pxe-media-sync" and job.status == JobStatus.PENDING.value:
+        try:
+            config = json.loads(job.task_config_json or "{}")
+        except json.JSONDecodeError:
+            config = {}
+        if config.get("source") == "upload":
+            from atlaso.app.services.network_boot import cleanup_network_boot_upload
+
+            cleanup_network_boot_upload(job.id)
     job.status = JobStatus.CANCELLED.value
     job.finished_at = utcnow()
     job.error = "Task cancelled by operator."

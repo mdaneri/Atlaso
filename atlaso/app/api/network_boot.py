@@ -588,6 +588,7 @@ def network_boot_ipxe(
             db,
             mac_address=mac,
             firmware=firmware,
+            request_origin=f"{request.url.scheme}://{request.url.netloc}",
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

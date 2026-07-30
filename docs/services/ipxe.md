@@ -31,10 +31,13 @@ redirects here; existing ESXi API paths, the `esxi_pxe` apply unit, staged
 configuration paths, and helper commands remain compatible.
 
 An unknown or unassigned x86-64 machine receives a per-host iPXE menu from
-`/pxe/boot.ipxe`. After 10 seconds it boots the bundled Atlaso Inventory Linux
-image. A known MAC assigned to an enabled ESXi profile defaults to that ESXi
-entry instead. An undefined-MAC ESXi profile is manual-only and cannot replace
-the safe inventory default. Both legacy BIOS and UEFI use the bundled
+`/pxe/boot.ipxe`. After 10 seconds it boots Atlaso Inventory Linux when that
+environment is active; otherwise it exits to local disk or firmware. A known
+MAC assigned to an enabled ESXi profile defaults to that ESXi entry instead. An
+undefined-MAC ESXi profile is manual-only and cannot replace the safe inventory
+default. Each menu uses the selected listener address through which that client
+connected, so isolated secondary DHCP IP zones do not redirect boot artifacts
+through the primary zone. Both legacy BIOS and UEFI use the bundled
 `undionly.kpxe` or `snponly.efi` first stage; Secure Boot is not supported.
 Atlaso binds dnsmasq TFTP explicitly to every selected IPv4 DHCP IP-zone
 interface so VMware Workstation firmware can retrieve that first stage over
@@ -77,7 +80,8 @@ Each catalog row exposes **Download** and **Upload** through its row context men
 Upload is limited to 2 GiB and stages the file only for the durable verification
 task. Atlaso still resolves the authoritative stable release metadata and
 checks the uploaded bytes against the same upstream digest or signed checksum;
-the operator cannot substitute an unverified checksum.
+the operator cannot substitute an unverified checksum. Cancelling a pending
+upload removes its staged artifact immediately.
 The same menu provides a state-aware **Enable** or **Disable** action. Enable
 remains unavailable until that environment has verified installed media.
 
@@ -88,7 +92,8 @@ the shared **Boot Service** settings and apply status remain in the right rail.
 Downloading never changes the active menu. Editing **Enabled** or **Desired
 version** creates pending state; global **Appliance Apply** is the only
 activation boundary. A failed download, verification, extraction, or apply
-leaves the previous active version available.
+leaves the previous active version available. Replacement media is verified
+completely before Atlaso swaps the version directory.
 
 All maintenance environments are interactive. Atlaso does not automatically
 run memory tests, partitioning, imaging, restoration, or disk erasure. ShredOS
@@ -117,7 +122,8 @@ Heartbeats run every 10 seconds, and the UI treats a host as offline after 30
 seconds. Reboot is the only remote action. Runtime inventory storage retains at
 most 512 discovered hosts, 2,048 reports across all hosts, 11 reports per host,
 and 4,096 sessions; expired sessions and the oldest inactive inventory are
-pruned as new sessions and reports arrive.
+pruned as new sessions and reports arrive. Hosts with a recent heartbeat or an
+unacknowledged command are never selected for storage eviction.
 
 ## ESX technical reference
 

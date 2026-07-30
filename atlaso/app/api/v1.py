@@ -197,6 +197,7 @@ from atlaso.app.services.ldap import (
     vcf_ldap_settings,
 )
 from atlaso.app.services.networking import normalize_interface_mode, normalize_interface_role, normalize_ipv4_method
+from atlaso.app.services.network_boot import cleanup_network_boot_upload
 from atlaso.app.services.routes_wan import validate_nat_source
 from atlaso.app.services.service_registry import SERVICE_STATE_IDS, SERVICE_SYSTEMD_UNITS
 from atlaso.app.security import (
@@ -2412,6 +2413,13 @@ def cancel_job(job_id: str, identity: Annotated[Identity, Depends(require_scope(
     job = db.get(Job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+    if job.type == "pxe-media-sync" and job.status == "pending":
+        try:
+            config = json.loads(job.task_config_json or "{}")
+        except json.JSONDecodeError:
+            config = {}
+        if config.get("source") == "upload":
+            cleanup_network_boot_upload(job.id)
     job.status = "cancelled"
     job.finished_at = utcnow()
     db.commit()

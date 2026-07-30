@@ -13,6 +13,7 @@ import uuid
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from ipaddress import ip_address
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterable
 
@@ -570,6 +571,32 @@ def _prune_inventory_storage(
     *,
     preserve_host_id: int,
 ) -> None:
+    now = utcnow()
+    heartbeat_cutoff = now - NETWORK_BOOT_ONLINE_THRESHOLD
+    protected_host_ids = {
+        int(host_id)
+        for host_id in db.execute(
+            select(NetworkBootInventorySession.host_id).where(
+                NetworkBootInventorySession.host_id.is_not(None),
+                NetworkBootInventorySession.revoked_at.is_(None),
+                NetworkBootInventorySession.expires_at > now.replace(tzinfo=None),
+                NetworkBootInventorySession.heartbeat_at.is_not(None),
+                NetworkBootInventorySession.heartbeat_at
+                >= heartbeat_cutoff.replace(tzinfo=None),
+            )
+        ).scalars()
+        if host_id is not None
+    }
+    protected_host_ids.update(
+        int(host_id)
+        for host_id in db.execute(
+            select(NetworkBootInventoryCommand.host_id).where(
+                NetworkBootInventoryCommand.status.in_(("queued", "delivered")),
+                NetworkBootInventoryCommand.expires_at > now.replace(tzinfo=None),
+            )
+        ).scalars()
+    )
+    protected_host_ids.add(preserve_host_id)
     host_rows = db.execute(
         select(
             NetworkBootDiscoveredHost.id,
@@ -585,11 +612,28 @@ def _prune_inventory_storage(
             desc(NetworkBootDiscoveredHost.id),
         )
     ).all()
-    retained_hosts: list[int] = []
-    retained_reports = 0
+    report_counts = {
+        int(host_id): int(report_count or 0)
+        for host_id, report_count in host_rows
+    }
+    retained_hosts = [
+        int(host_id) for host_id, _report_count in host_rows
+        if int(host_id) in protected_host_ids
+    ]
+    retained_reports = sum(report_counts[host_id] for host_id in retained_hosts)
+    if (
+        len(retained_hosts) > NETWORK_BOOT_MAX_HOSTS
+        or retained_reports > NETWORK_BOOT_MAX_REPORTS
+    ):
+        raise ValueError(
+            "Inventory storage capacity is occupied by live clients; retry later."
+        )
     for host_id, report_count in host_rows:
+        host_id = int(host_id)
+        if host_id in protected_host_ids:
+            continue
         count = int(report_count or 0)
-        if host_id == preserve_host_id or (
+        if (
             len(retained_hosts) < NETWORK_BOOT_MAX_HOSTS
             and retained_reports + count <= NETWORK_BOOT_MAX_REPORTS
         ):
@@ -1006,11 +1050,51 @@ def _chain_line(
     return f"chain {script}" if script else "echo Environment media is incomplete\nsleep 3\ngoto menu"
 
 
+def _request_http_origin(boot: dict[str, Any], requested_origin: str) -> str:
+    default_base = esxi_http_base_url(boot)
+    default = urllib.parse.urlsplit(default_base)
+    fallback = (
+        f"{default.scheme}://{default.netloc}"
+        if default.scheme and default.netloc
+        else ""
+    )
+    requested = urllib.parse.urlsplit(requested_origin)
+    if (
+        requested.scheme != "http"
+        or not requested.hostname
+        or requested.username is not None
+        or requested.password is not None
+    ):
+        return fallback
+    port = requested.port or 80
+    if port != int(boot.get("http_port") or 8080):
+        return fallback
+    allowed_hosts = {
+        line.strip().lower()
+        for line in str(boot.get("listen_address") or "").replace(",", "\n").splitlines()
+        if line.strip()
+    }
+    hostname = requested.hostname.lower()
+    try:
+        hostname = str(ip_address(hostname))
+        allowed_hosts = {
+            str(ip_address(value)) if value else value
+            for value in allowed_hosts
+        }
+    except ValueError:
+        allowed_hosts.add(str(boot.get("hostname") or "").strip().lower())
+    if hostname not in allowed_hosts:
+        return fallback
+    rendered_host = f"[{hostname}]" if ":" in hostname else hostname
+    return f"http://{rendered_host}:{port}"
+
+
 def render_network_boot_menu(
     db: Session,
     *,
     mac_address: str = "",
     firmware: str = "",
+    request_origin: str = "",
 ) -> str:
     mac = normalize_mac(mac_address) if mac_address else ""
     mac_key = normalize_pxe_mac(mac) if mac else ""
@@ -1018,13 +1102,8 @@ def render_network_boot_menu(
     boot = esxi_pxe_boot_settings(db)
     default_host = esxi_pxe_default_host_settings(db)
     artifacts = esxi_pxe_host_artifacts(hosts, boot, default_host)
-    esxi_base_url = esxi_http_base_url(boot)
-    parsed_base = urllib.parse.urlsplit(esxi_base_url)
-    http_origin = (
-        f"{parsed_base.scheme}://{parsed_base.netloc}"
-        if parsed_base.scheme and parsed_base.netloc
-        else ""
-    )
+    http_origin = _request_http_origin(boot, request_origin)
+    esxi_base_url = f"{http_origin}/pxe/esxi" if http_origin else ""
     assigned = next(
         (
             artifact
@@ -1035,14 +1114,22 @@ def render_network_boot_menu(
     )
     undefined = next((artifact for artifact in artifacts if artifact.get("is_default")), None)
     active = _active_media(db)
-    default_label = "esxi_assigned" if assigned else "inventory"
+    inventory = active.get("inventory")
+    default_label = (
+        "esxi_assigned" if assigned else ("inventory" if inventory else "local")
+    )
     lines = [
         "#!ipxe",
         ":menu",
         "menu Atlaso Network Boot",
-        "item --gap -- ---------------- Safe inventory ----------------",
-        "item inventory Atlaso Inventory Linux",
     ]
+    if inventory:
+        lines.extend(
+            [
+                "item --gap -- ---------------- Safe inventory ----------------",
+                "item inventory Atlaso Inventory Linux",
+            ]
+        )
     if assigned:
         lines.extend(
             [
@@ -1080,7 +1167,6 @@ def render_network_boot_menu(
             ":inventory",
         ]
     )
-    inventory = active.get("inventory")
     if inventory:
         lines.extend([_chain_line(inventory, http_origin=http_origin), ""])
     else:
@@ -1695,6 +1781,19 @@ def network_boot_upload_path(
     return (upload_root or NETWORK_BOOT_UPLOAD_ROOT).resolve() / job_id / "artifact"
 
 
+def cleanup_network_boot_upload(
+    job_id: str,
+    *,
+    upload_root: Path | None = None,
+) -> None:
+    upload_path = network_boot_upload_path(job_id, upload_root=upload_root)
+    upload_path.unlink(missing_ok=True)
+    try:
+        upload_path.parent.rmdir()
+    except FileNotFoundError:
+        pass
+
+
 def sync_network_boot_media(
     db: Session,
     *,
@@ -1726,27 +1825,22 @@ def sync_network_boot_media(
             NetworkBootMedia.version == version,
         )
     ).scalar_one_or_none()
+    replaced_directory: Path | None = None
     if existing is not None:
         if _verified_cached_media(existing, media_root=media_root) is not None:
             return existing
-        stale_directory = _enumerated_media_directory(
+        replaced_directory = _enumerated_media_directory(
             environment_key=key,
             version=version,
             media_root=media_root,
         )
-        if stale_directory is not None:
-            shutil.rmtree(stale_directory)
-        db.delete(existing)
-        db.flush()
     else:
-        orphaned_directory = _enumerated_media_directory(
+        replaced_directory = _enumerated_media_directory(
             environment_key=key,
             version=version,
             media_root=media_root,
         )
-        if orphaned_directory is not None:
-            shutil.rmtree(orphaned_directory)
-        elif final_dir.exists():
+        if replaced_directory is None and final_dir.exists():
             raise ValueError(
                 "Boot media cache path is unsafe; remove it manually before retrying."
             )
@@ -1911,13 +2005,27 @@ def sync_network_boot_media(
         )
         raise_if_cancelled()
         final_dir.parent.mkdir(parents=True, exist_ok=True)
+        backup_dir: Path | None = None
         try:
+            if replaced_directory is not None:
+                backup_dir = (
+                    final_dir.parent
+                    / f".{version}.replacement-{uuid.uuid4().hex}"
+                )
+                replaced_directory.replace(backup_dir)
             staging.replace(final_dir)
         except OSError as exc:
+            if backup_dir is not None and backup_dir.exists() and not final_dir.exists():
+                backup_dir.replace(final_dir)
             if final_dir.exists():
                 raise ValueError("Immutable boot media version already exists.") from exc
             raise
-    raise_if_cancelled()
+        else:
+            if backup_dir is not None:
+                shutil.rmtree(backup_dir)
+    if existing is not None:
+        db.delete(existing)
+        db.flush()
     return record_verified_media(
         db,
         environment_key=key,

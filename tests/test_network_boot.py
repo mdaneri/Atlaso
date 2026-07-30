@@ -320,6 +320,49 @@ def test_inventory_prunes_global_hosts_reports_and_sessions(db_session, monkeypa
     assert len(db_session.execute(select(NetworkBootInventorySession)).scalars().all()) <= 2
 
 
+def test_inventory_storage_pruning_preserves_live_hosts(db_session, monkeypatch):
+    monkeypatch.setattr(network_boot, "NETWORK_BOOT_MAX_HOSTS", 2)
+    monkeypatch.setattr(network_boot, "NETWORK_BOOT_MAX_REPORTS", 2)
+
+    live_session, _token = issue_inventory_session(db_session)
+    live_host, _report = store_inventory_report(
+        db_session,
+        session=live_session,
+        payload=inventory_report(
+            dmi_uuid="4c4c4544-004b-4d10-8052-cac04f4c5101",
+            boot_mac="52:54:00:12:34:01",
+        ),
+    )
+    db_session.commit()
+
+    stale_session, _token = issue_inventory_session(db_session)
+    stale_host, _report = store_inventory_report(
+        db_session,
+        session=stale_session,
+        payload=inventory_report(
+            dmi_uuid="4c4c4544-004b-4d10-8052-cac04f4c5102",
+            boot_mac="52:54:00:12:34:02",
+        ),
+    )
+    stale_session.heartbeat_at = utcnow() - timedelta(minutes=5)
+    db_session.commit()
+
+    newest_session, _token = issue_inventory_session(db_session)
+    newest_host, _report = store_inventory_report(
+        db_session,
+        session=newest_session,
+        payload=inventory_report(
+            dmi_uuid="4c4c4544-004b-4d10-8052-cac04f4c5103",
+            boot_mac="52:54:00:12:34:03",
+        ),
+    )
+    db_session.flush()
+
+    assert db_session.get(NetworkBootDiscoveredHost, live_host.id) is not None
+    assert db_session.get(NetworkBootDiscoveredHost, newest_host.id) is not None
+    assert db_session.get(NetworkBootDiscoveredHost, stale_host.id) is None
+
+
 def test_inventory_session_cap_preserves_live_and_command_sessions(
     db_session,
     monkeypatch,
@@ -592,6 +635,7 @@ def test_unknown_host_defaults_to_inventory_and_shredos_has_cancel_guard(db_sess
         installed_path="/var/lib/atlaso/pxe/media/shredos/2025.11_30_x86-64_0.41",
         manifest={"boot": {"script": "http://192.0.2.1/pxe/media/shredos/boot.ipxe"}},
     )
+    states["inventory"].enabled = True
     states["inventory"].active_version = inventory.version
     states["shredos"].enabled = True
     states["shredos"].active_version = shredos.version
@@ -609,6 +653,72 @@ def test_unknown_host_defaults_to_inventory_and_shredos_has_cancel_guard(db_sess
         1,
     )[1].split("iseq ${shred_choice}", 1)[0]
     assert "autonuke" not in menu.lower()
+
+
+def test_unknown_host_defaults_to_local_when_inventory_is_inactive(db_session):
+    ensure_environment_rows(db_session)
+    db_session.commit()
+
+    menu = render_network_boot_menu(
+        db_session,
+        mac_address="52:54:00:de:ad:be",
+    )
+
+    assert "choose --timeout 10000 --default local" in menu
+    assert "item inventory Atlaso Inventory Linux" not in menu
+
+
+def test_boot_menu_uses_the_verified_secondary_listener_origin(
+    db_session,
+    monkeypatch,
+):
+    states = {row.key: row for row in ensure_environment_rows(db_session)}
+    inventory = record_verified_media(
+        db_session,
+        environment_key="inventory",
+        version="2026.05.1",
+        source_url="https://example.test/atlaso-inventory-linux.zip",
+        artifact_sha256="a" * 64,
+        installed_path="/var/lib/atlaso/pxe/media/inventory/2026.05.1",
+        manifest={
+            "boot": {
+                "kernel": "/pxe/media/inventory/2026.05.1/bzImage",
+                "initrd": "/pxe/media/inventory/2026.05.1/rootfs.cpio.gz",
+            }
+        },
+    )
+    states["inventory"].enabled = True
+    states["inventory"].active_version = inventory.version
+    boot = network_boot.esxi_pxe_boot_settings(db_session)
+    boot["listen_address"] = "192.0.2.10\n198.51.100.20"
+    boot["http_port"] = 8080
+    monkeypatch.setattr(network_boot, "esxi_pxe_boot_settings", lambda _db: boot)
+    db_session.commit()
+
+    menu = render_network_boot_menu(
+        db_session,
+        request_origin="http://198.51.100.20:8080",
+    )
+
+    assert (
+        "kernel http://198.51.100.20:8080/pxe/media/inventory/"
+        "2026.05.1/bzImage"
+    ) in menu
+    assert (
+        "initrd http://198.51.100.20:8080/pxe/media/inventory/"
+        "2026.05.1/rootfs.cpio.gz"
+    ) in menu
+    assert "http://192.0.2.10:8080/pxe/media/inventory" not in menu
+
+    spoofed = render_network_boot_menu(
+        db_session,
+        request_origin="http://attacker.example:8080",
+    )
+    assert (
+        "kernel http://192.0.2.10:8080/pxe/media/inventory/"
+        "2026.05.1/bzImage"
+    ) in spoofed
+    assert "attacker.example" not in spoofed
 
 
 def test_known_enabled_esxi_mac_becomes_timed_default(db_session):
@@ -850,6 +960,70 @@ def test_bundled_inventory_registration_defers_active_version_until_apply(
     assert state.enabled is True
     assert state.desired_version == version
     assert state.active_version == ""
+
+
+def test_failed_inventory_package_replacement_preserves_active_bundled_media(
+    db_session,
+    monkeypatch,
+    tmp_path,
+):
+    version = "2026.05.1"
+    installed = tmp_path / "inventory" / version
+    installed.mkdir(parents=True)
+    artifacts = {
+        "bzImage": b"inventory kernel",
+        "rootfs.cpio.gz": b"inventory initramfs",
+    }
+    for filename, content in artifacts.items():
+        (installed / filename).write_bytes(content)
+    (installed / "manifest.json").write_text(
+        json.dumps(
+            {
+                "kind": "atlaso-inventory-linux",
+                "schema_version": 1,
+                "version": version,
+                "buildroot": {"source": "https://example.test/buildroot.tar.xz"},
+                "artifacts": {
+                    filename: hashlib.sha256(content).hexdigest()
+                    for filename, content in artifacts.items()
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    media = register_bundled_inventory_media(db_session, media_root=tmp_path)
+    state = {
+        row.key: row for row in ensure_environment_rows(db_session)
+    }["inventory"]
+    state.active_version = version
+    db_session.commit()
+    monkeypatch.setattr(
+        network_boot,
+        "_release_descriptor",
+        lambda _key: {
+            "version": version,
+            "filename": f"atlaso-inventory-linux-{version}.zip",
+            "asset_url": "https://example.test/atlaso-inventory-linux.zip",
+            "sha256": "f" * 64,
+        },
+    )
+
+    def fail_download(*_args, **_kwargs):
+        raise ValueError("simulated acquisition failure")
+
+    monkeypatch.setattr(BoundedHttpsDownloader, "download", fail_download)
+
+    with pytest.raises(ValueError, match="simulated acquisition failure"):
+        sync_network_boot_media(
+            db_session,
+            environment_key="inventory",
+            media_root=tmp_path,
+        )
+
+    assert media is not None
+    assert db_session.get(NetworkBootMedia, media.id) is not None
+    assert (installed / "bzImage").read_bytes() == artifacts["bzImage"]
+    assert (installed / "rootfs.cpio.gz").read_bytes() == artifacts["rootfs.cpio.gz"]
 
 
 def test_cancelled_media_worker_cannot_overwrite_terminal_status(
@@ -1108,3 +1282,71 @@ def test_network_boot_upload_path_rejects_untrusted_job_identifiers(tmp_path):
     )
     with pytest.raises(ValueError, match="identifier is invalid"):
         network_boot_upload_path("../../escape", upload_root=tmp_path)
+
+
+def test_cancelling_pending_media_upload_removes_staged_artifact(
+    client,
+    db_session,
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(network_boot, "NETWORK_BOOT_UPLOAD_ROOT", tmp_path)
+    job = Job(
+        id="job_" + ("c" * 32),
+        type="pxe-media-sync",
+        status=JobStatus.PENDING.value,
+        created_by="admin",
+        task_config_json=json.dumps(
+            {"environment": "inventory", "source": "upload"}
+        ),
+    )
+    upload_path = network_boot_upload_path(job.id)
+    upload_path.parent.mkdir(parents=True)
+    upload_path.write_bytes(b"staged package")
+    db_session.add(job)
+    db_session.commit()
+    token = create_api_token(client, ["admin:all"])
+
+    response = client.post(
+        f"/api/v1/jobs/{job.id}/cancel",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == JobStatus.CANCELLED.value
+    assert not upload_path.exists()
+    assert not upload_path.parent.exists()
+
+
+def test_ui_cancelling_pending_media_upload_removes_staged_artifact(
+    client,
+    db_session,
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(network_boot, "NETWORK_BOOT_UPLOAD_ROOT", tmp_path)
+    job = Job(
+        id="job_" + ("d" * 32),
+        type="pxe-media-sync",
+        status=JobStatus.PENDING.value,
+        created_by="admin",
+        task_config_json=json.dumps(
+            {"environment": "inventory", "source": "upload"}
+        ),
+    )
+    upload_path = network_boot_upload_path(job.id)
+    upload_path.parent.mkdir(parents=True)
+    upload_path.write_bytes(b"staged package")
+    db_session.add(job)
+    db_session.commit()
+    csrf = login_session(client)
+
+    response = client.post(
+        f"/tasks/{job.id}/cancel",
+        data={"csrf": csrf},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["task"]["status"] == JobStatus.CANCELLED.value
+    assert not upload_path.exists()
+    assert not upload_path.parent.exists()
