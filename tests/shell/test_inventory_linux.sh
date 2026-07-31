@@ -49,11 +49,14 @@ for name in eth0 eth1; do
   mkdir -p "${path}"
   [ "${name}" = "eth0" ] && pci=0000:02:00.0 || pci=0000:03:00.0
   ln -s "${ATLASO_SYSFS_ROOT}/bus/pci/devices/${pci}" "${path}/device"
+  printf '1\n' >"${path}/type"
   printf 'up\n' >"${path}/operstate"
   printf '10000\n' >"${path}/speed"
 done
 printf '52:54:00:11:22:33\n' >"${ATLASO_SYSFS_ROOT}/class/net/eth0/address"
 printf '52:54:00:44:55:66\n' >"${ATLASO_SYSFS_ROOT}/class/net/eth1/address"
+mkdir -p "${ATLASO_SYSFS_ROOT}/class/net/sit0"
+printf '776\n' >"${ATLASO_SYSFS_ROOT}/class/net/sit0/type"
 
 make_disk() {
   name="$1"
@@ -201,6 +204,9 @@ printf '%s' "${console}" | grep -F 'Atlaso Inventory Linux' >/dev/null || fail '
 printf '%s' "${console}" | grep -F 'Network' >/dev/null || fail 'network page'
 printf '%s' "${console}" | grep -F 'Page 2/3' >/dev/null || fail 'console paging footer'
 printf '%s' "${console}" | grep -F '[S] Pause/resume' >/dev/null || fail 'console actions'
+printf '%s' "${console}" | grep -F "$(printf '\033[106m')" >/dev/null || fail 'console-native pale-blue header'
+printf '%s' "${console}" | grep -F "$(printf '\033[107m')" >/dev/null || fail 'console-native light content'
+printf '%s' "${console}" | grep -F "$(printf '\033[44m')" >/dev/null || fail 'console-native blue footer'
 footer="$(refresh_inventory_console_footer 2 89 true 7)"
 printf '%s' "${footer}" | grep -F 'Paused at 89s' >/dev/null || fail 'in-place countdown footer refresh'
 if grep -F '| gsub(' "${library}" >/dev/null; then fail 'Buildroot jq regex dependency'; fi

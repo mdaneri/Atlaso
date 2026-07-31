@@ -145,6 +145,8 @@ collect_interfaces() {
     [ -d "${path}" ] || continue
     name="${path##*/}"
     [ "${name}" = "lo" ] && continue
+    interface_type="$(read_value "${path}/type")"
+    [ -z "${interface_type}" ] || [ "${interface_type}" = "1" ] || continue
     [ "${count}" -lt 64 ] || break
     current_mac="$(optional_ethernet_mac "$(read_value "${path}/address")")"
     permanent_mac="$(optional_ethernet_mac "$(ethtool -P "${name}" 2>/dev/null | awk '{print $3}')")"
@@ -432,8 +434,9 @@ render_inventory_console() {
   remaining="$3"
   paused="$4"
   host_id="$5"
-  printf '\033[2J\033[H\033[48;5;153m\033[38;5;17m\033[1m  Atlaso Inventory Linux  \033[0m\033[K\n'
-  printf '\033[48;5;255m\033[38;5;235m\033[K'
+  printf '\033[107m\033[30m\033[2J\033[H'
+  printf '\033[106m\033[34m\033[1m  Atlaso Inventory Linux  \033[22m\033[K\n'
+  printf '\033[107m\033[30m\033[K'
   case "${page}" in
     1)
       printf '\033[1m  System / CPU / DIMMs\033[0m\033[K\n\n'
@@ -460,7 +463,7 @@ render_inventory_console() {
       printf '%s' "${report}" | jq -r '.storage_controllers[] | "  " + .pci_address + "  " + .type + "  " + ([.vendor,.device] | map(select(length > 0)) | join(" ")) + "  driver " + .driver'
       ;;
   esac
-  printf '\033[0m\033[48;5;25m\033[38;5;255m\033[K\n'
+  printf '\033[0m\033[44m\033[97m\033[K\n'
   printf '\033[s'
   render_inventory_console_footer_lines "${page}" "${remaining}" "${paused}" "${host_id}"
 }
@@ -472,10 +475,11 @@ render_inventory_console_footer_lines() {
   host_id="$4"
   if [ "${paused}" = "true" ]; then countdown="Paused at ${remaining}s"; else countdown="Reboot in ${remaining}s"; fi
   printf '  Host %s  |  Page %s/3  |  %s\033[K\n' "${host_id}" "${page}" "${countdown}"
-  printf '  [N] Next  [P] Previous  [1-3] Page  [S] Pause/resume  [R] Reboot now\033[K\033[0m\n\033[J'
+  printf '  [N] Next  [P] Previous  [1-3] Page  [S] Pause/resume  [R] Reboot now\033[K\n'
+  printf '\033[107m\033[30m\033[J\033[0m'
 }
 
 refresh_inventory_console_footer() {
-  printf '\033[u\033[48;5;25m\033[38;5;255m'
+  printf '\033[u\033[44m\033[97m'
   render_inventory_console_footer_lines "$1" "$2" "$3" "$4"
 }

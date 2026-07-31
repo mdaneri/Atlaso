@@ -179,6 +179,9 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     assert "render_inventory_console" in inventory_client
     assert "refresh_inventory_console_footer" in inventory_client
     assert "| gsub(" not in inventory_library
+    assert "\\033[106m" in inventory_library
+    assert "\\033[107m" in inventory_library
+    assert "\\033[44m" in inventory_library
     kernel_fragment = Path(
         "image/inventory-linux/external/board/atlaso-inventory/linux.fragment"
     ).read_text(encoding="utf-8")
