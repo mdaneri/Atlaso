@@ -111,11 +111,14 @@ the retained v2 JSON shape in the existing report column.
 
 After a report is accepted, the local console opens full-screen Atlaso-style
 System/CPU/DIMMs, Network, and Storage pages. Use `N`/`P` or `1`-`3` to move
-between pages. Countdown updates repaint only the fixed action footer so the
-hardware pages remain stable without full-screen flicker. The 120-second reboot
-countdown starts only after successful submission; `S` pauses or resumes the
-remaining time and `R` reboots immediately. An acknowledged audited remote
-reboot remains authoritative.
+between pages. On lists larger than the fixed console viewport, use `J`/`K` to
+move through bounded list windows; network windows show at most five adapters
+and clip individual rows to the console width. Countdown updates repaint only
+the fixed action footer so the hardware pages remain stable without full-screen
+flicker. The 120-second reboot countdown starts only after successful
+submission; navigation time still advances the countdown, `S` pauses or
+resumes the remaining time, and `R` reboots immediately. An acknowledged
+audited remote reboot remains authoritative.
 
 ## Included upstream components
 

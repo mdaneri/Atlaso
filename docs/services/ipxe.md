@@ -64,8 +64,11 @@ normalizes it into retained v2 JSON in the existing report column.
 The local full-screen console uses the Atlaso pale-blue header, light content,
 and blue action footer across **System / CPU / DIMMs**, **Network**, and
 **Storage** pages. Use `N`/`P` or `1`-`3` to page. Only after successful report
-submission, a 120-second reboot countdown begins. `S` pauses or resumes the
-remaining time and `R` reboots immediately; an acknowledged audited remote
+submission, a 120-second reboot countdown begins. Use `J`/`K` to move through
+bounded list windows when a hardware list is larger than the console viewport;
+network windows show at most five adapters and clip rows to the console width.
+Page and list navigation still consume countdown time. `S` pauses or resumes
+the remaining time and `R` reboots immediately; an acknowledged audited remote
 reboot remains authoritative. Its startup service first obtains DHCP
 configuration and confirms a default route; the Linux kernel does not inherit
 iPXE's network state. The image includes a broad compatibility profile for

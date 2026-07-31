@@ -130,6 +130,9 @@ pending_reboot_id=""
 last_tick="$(date +%s)"
 next_poll="${last_tick}"
 rendered_page=0
+network_start=0
+network_page_size=5
+network_total="$(printf '%s' "${report}" | jq -r '.interfaces | length')"
 while :; do
   now="$(date +%s)"
   elapsed=$((now - last_tick))
@@ -157,19 +160,33 @@ while :; do
     next_poll=$((now + 10))
   fi
 
-  if [ "${page}" != "${rendered_page}" ]; then
-    render_inventory_console "${report}" "${page}" "${remaining}" "${paused}" "${host_id}"
-    rendered_page="${page}"
+  render_state="${page}:${network_start}"
+  if [ "${render_state}" != "${rendered_page}" ]; then
+    render_inventory_console "${report}" "${page}" "${remaining}" "${paused}" "${host_id}" "${network_start}"
+    rendered_page="${render_state}"
   else
     refresh_inventory_console_footer "${page}" "${remaining}" "${paused}" "${host_id}"
   fi
   key=""
   if read -r -n 1 -t 1 key; then
+    key_now="$(date +%s)"
+    key_elapsed=$((key_now - last_tick))
+    [ "${key_elapsed}" -ge 0 ] || key_elapsed=0
+    remaining="$(countdown_after_elapsed "${remaining}" "${paused}" "${key_elapsed}")"
+    [ "${remaining}" -gt 0 ] || reboot -f
+    last_tick="${key_now}"
     key_result="$(console_key_action "${key}" "${page}" "${paused}")"
     page="$(printf '%s' "${key_result}" | cut -d'|' -f1)"
     paused="$(printf '%s' "${key_result}" | cut -d'|' -f2)"
     key_action="$(printf '%s' "${key_result}" | cut -d'|' -f3)"
-    last_tick="$(date +%s)"
+    case "${key}" in
+      j|J)
+        [ "${page}" != "2" ] || network_start="$(console_window_offset "${network_start}" "${network_total}" "${network_page_size}" next)"
+        ;;
+      k|K)
+        [ "${page}" != "2" ] || network_start="$(console_window_offset "${network_start}" "${network_total}" "${network_page_size}" previous)"
+        ;;
+    esac
     [ "${key_action}" != "reboot" ] || reboot -f
   fi
 done

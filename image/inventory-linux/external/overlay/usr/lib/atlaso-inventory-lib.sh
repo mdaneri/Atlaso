@@ -399,6 +399,32 @@ countdown_after_elapsed() {
   fi
 }
 
+console_window_offset() {
+  offset="$(unsigned_value "${1:-0}")"
+  total="$(unsigned_value "${2:-0}")"
+  page_size="$(unsigned_value "${3:-1}")"
+  direction="$4"
+  [ "${page_size}" -gt 0 ] || page_size=1
+  if [ "${total}" -le "${page_size}" ]; then
+    printf '0'
+    return
+  fi
+  case "${direction}" in
+    next)
+      offset=$((offset + page_size))
+      [ "${offset}" -lt "${total}" ] || offset=0
+      ;;
+    previous)
+      if [ "${offset}" -ge "${page_size}" ]; then
+        offset=$((offset - page_size))
+      else
+        offset=$((((total - 1) / page_size) * page_size))
+      fi
+      ;;
+  esac
+  printf '%s' "${offset}"
+}
+
 console_key_action() {
   key="$1"
   page="$2"
@@ -428,12 +454,20 @@ console_line() {
   printf '  %-22s %s\n' "$1" "$2"
 }
 
+console_clip_lines() {
+  width="$(unsigned_value "${1:-78}")"
+  [ "${width}" -gt 0 ] || width=78
+  awk -v width="${width}" '{ print substr($0, 1, width) }'
+}
+
 render_inventory_console() {
   report="$1"
   page="$2"
   remaining="$3"
   paused="$4"
   host_id="$5"
+  network_start="$(unsigned_value "${6:-0}")"
+  network_page_size=5
   printf '\033[107m\033[30m\033[2J\033[H'
   printf '\033[106m\033[34m\033[1m  Atlaso Inventory Linux  \033[22m\033[K\n'
   printf '\033[107m\033[30m\033[K'
@@ -454,7 +488,13 @@ render_inventory_console() {
       ;;
     2)
       printf '\033[1m  Network\033[0m\033[K\n\n'
-      printf '%s' "${report}" | jq -r '.interfaces[] | "  " + (if .boot_interface then "* " else "  " end) + .name + "  " + ([.vendor,.device] | map(select(length > 0)) | join(" ")) + "\n      permanent " + .permanent_mac + "  current " + .current_mac + "  " + .link_state + " " + (.speed_mbps|tostring) + " Mb/s\n      " + (.addresses|join(", ")) + "  driver " + .driver + "  PCI " + .pci_address'
+      network_total="$(printf '%s' "${report}" | jq -r '.interfaces | length')"
+      if [ "${network_start}" -ge "${network_total}" ]; then network_start=0; fi
+      network_end=$((network_start + network_page_size))
+      [ "${network_end}" -le "${network_total}" ] || network_end="${network_total}"
+      if [ "${network_total}" -gt 0 ]; then network_first=$((network_start + 1)); else network_first=0; fi
+      printf '  Interfaces %s-%s of %s  [J] More  [K] Back\n' "${network_first}" "${network_end}" "${network_total}"
+      printf '%s' "${report}" | jq -r --argjson start "${network_start}" --argjson limit "${network_page_size}" '.interfaces[$start:($start + $limit)][] | "  " + (if .boot_interface then "* " else "  " end) + .name + "  " + ([.vendor,.device] | map(select(length > 0)) | join(" ")) + "\n      permanent " + .permanent_mac + "  current " + .current_mac + "  " + .link_state + " " + (.speed_mbps|tostring) + " Mb/s\n      " + (.addresses|join(", ")) + "  driver " + .driver + "  PCI " + .pci_address' | console_clip_lines 78
       ;;
     *)
       printf '\033[1m  Storage\033[0m\033[K\n\n'
@@ -475,7 +515,7 @@ render_inventory_console_footer_lines() {
   host_id="$4"
   if [ "${paused}" = "true" ]; then countdown="Paused at ${remaining}s"; else countdown="Reboot in ${remaining}s"; fi
   printf '  Host %s  |  Page %s/3  |  %s\033[K\n' "${host_id}" "${page}" "${countdown}"
-  printf '  [N] Next  [P] Previous  [1-3] Page  [S] Pause/resume  [R] Reboot now\033[K\n'
+  printf '  [N/P] Page  [1-3] Select  [J/K] List  [S] Pause/resume  [R] Reboot now\033[K\n'
   printf '\033[107m\033[30m\033[J\033[0m'
 }
 

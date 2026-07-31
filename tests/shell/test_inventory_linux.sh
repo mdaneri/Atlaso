@@ -174,6 +174,9 @@ assert_jq "${cpu}" '.sockets == 2 and .cores == 16 and .threads == 32 and .cores
 [ "$(printf '%s' "$(bounded_text 240 "$(printf '%0241d' 0)")" | wc -c)" -eq 240 ] || fail 'string limit'
 [ "$(cycle_console_page 3 next)" = "1" ] || fail 'next page wraps'
 [ "$(cycle_console_page 1 previous)" = "3" ] || fail 'previous page wraps'
+[ "$(console_window_offset 0 12 5 next)" = "5" ] || fail 'list paging advances'
+[ "$(console_window_offset 10 12 5 next)" = "0" ] || fail 'list paging wraps'
+[ "$(console_window_offset 0 12 5 previous)" = "10" ] || fail 'list paging wraps backward'
 [ "$(countdown_after_elapsed 120 false 30)" = "90" ] || fail 'countdown advances'
 [ "$(countdown_after_elapsed 90 true 30)" = "90" ] || fail 'countdown pauses'
 [ "$(countdown_after_elapsed 90 false 90)" = "0" ] || fail 'countdown reaches automatic reboot boundary'
@@ -181,6 +184,7 @@ assert_jq "${cpu}" '.sockets == 2 and .cores == 16 and .threads == 32 and .cores
 [ "$(console_key_action S 2 true)" = "2|false|none" ] || fail 'resume key'
 [ "$(console_key_action R 2 false)" = "2|false|reboot" ] || fail 'local reboot key'
 grep -F '[ "${remaining}" -gt 0 ] || reboot -f' "${client}" >/dev/null || fail 'automatic reboot integration'
+grep -F 'countdown_after_elapsed "${remaining}" "${paused}" "${key_elapsed}"' "${client}" >/dev/null || fail 'key-read elapsed countdown integration'
 grep -F '[ "${key_action}" != "reboot" ] || reboot -f' "${client}" >/dev/null || fail 'local reboot integration'
 
 cat >"${fixture_root}/bin/curl" <<'EOF'
@@ -202,6 +206,7 @@ report="$(jq -cn --argjson interfaces "${interfaces}" --argjson disks "${disks}"
 console="$(render_inventory_console "${report}" 2 90 false 7)"
 printf '%s' "${console}" | grep -F 'Atlaso Inventory Linux' >/dev/null || fail 'console header'
 printf '%s' "${console}" | grep -F 'Network' >/dev/null || fail 'network page'
+printf '%s' "${console}" | grep -F 'Interfaces 1-2 of 2' >/dev/null || fail 'network list window'
 printf '%s' "${console}" | grep -F 'Page 2/3' >/dev/null || fail 'console paging footer'
 printf '%s' "${console}" | grep -F '[S] Pause/resume' >/dev/null || fail 'console actions'
 printf '%s' "${console}" | grep -F "$(printf '\033[106m')" >/dev/null || fail 'console-native pale-blue header'
@@ -209,6 +214,12 @@ printf '%s' "${console}" | grep -F "$(printf '\033[107m')" >/dev/null || fail 'c
 printf '%s' "${console}" | grep -F "$(printf '\033[44m')" >/dev/null || fail 'console-native blue footer'
 footer="$(refresh_inventory_console_footer 2 89 true 7)"
 printf '%s' "${footer}" | grep -F 'Paused at 89s' >/dev/null || fail 'in-place countdown footer refresh'
+many_report="$(printf '%s' "${report}" | jq '.interfaces = [range(0;8) as $index | (.interfaces[0] | .name = ("nic" + ($index|tostring)))]')"
+network_window="$(render_inventory_console "${many_report}" 2 90 false 7 5)"
+printf '%s' "${network_window}" | grep -F 'Interfaces 6-8 of 8' >/dev/null || fail 'network list subpage status'
+printf '%s' "${network_window}" | grep -F 'nic5' >/dev/null || fail 'network list subpage first row'
+if printf '%s' "${network_window}" | grep -F 'nic0' >/dev/null; then fail 'network list subpage bounds'; fi
+[ "$(printf '%0100d\n' 0 | console_clip_lines 78 | awk '{ print length }')" = "78" ] || fail 'console line clipping'
 if grep -F '| gsub(' "${library}" >/dev/null; then fail 'Buildroot jq regex dependency'; fi
 
 printf 'Inventory Linux shell fixtures passed.\n'
