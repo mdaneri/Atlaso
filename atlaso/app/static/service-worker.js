@@ -1,9 +1,9 @@
-const ATLASO_CACHE = "atlaso-pwa-v212";
+const ATLASO_CACHE = "atlaso-pwa-v214";
 const ATLASO_ASSETS = [
   "/manifest.webmanifest",
   "/favicon.ico",
   "/static/offline.html",
-  "/static/app.css?v=atlaso-network-boot-20260730-15",
+  "/static/app.css?v=atlaso-horizontal-brand-20260730-2",
   "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5",
   "/static/app.js?v=atlaso-network-boot-ntp-20260730-28",
   "/static/terminal.js?v=web-terminal-review-20260716-3",
@@ -12,6 +12,7 @@ const ATLASO_ASSETS = [
   "/static/pwa.js?v=atlaso-brand-20260725-1",
   "/static/brand/atlaso-icon.svg",
   "/static/brand/atlaso-logo-horizontal-light.svg",
+  "/static/brand/atlaso-logo-horizontal-transparent-1200x300.png",
   "/static/brand/atlaso-app-icon-light-180.png",
   "/static/brand/atlaso-app-icon-dark-192.png",
   "/static/brand/atlaso-app-icon-dark-512.png",
