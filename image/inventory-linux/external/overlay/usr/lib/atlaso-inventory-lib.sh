@@ -254,10 +254,10 @@ dimm_size_bytes() {
     {
       amount = $1 + 0
       unit = toupper($2)
-      factor = unit == "KB" ? 1024 :
-        unit == "MB" ? 1024 * 1024 :
-        unit == "GB" ? 1024 * 1024 * 1024 :
-        unit == "TB" ? 1024 * 1024 * 1024 * 1024 : 0
+      factor = unit == "KB" || unit == "KIB" ? 1024 :
+        unit == "MB" || unit == "MIB" ? 1024 * 1024 :
+        unit == "GB" || unit == "GIB" ? 1024 * 1024 * 1024 :
+        unit == "TB" || unit == "TIB" ? 1024 * 1024 * 1024 * 1024 : 0
       if (amount < 0 || factor == 0) print "0"
       else printf "%.0f\n", amount * factor
     }
