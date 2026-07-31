@@ -27,19 +27,25 @@ boot_mac="$(optional_ethernet_mac "$(read_value "${SYSFS_ROOT}/class/net/${boot_
 firmware_mode="bios"
 [ -d "${SYSFS_ROOT}/firmware/efi" ] && firmware_mode="uefi"
 
-pci_devices="$(collect_pci_devices)"
-storage_controllers="$(collect_storage_controllers "${pci_devices}")"
-interfaces="$(collect_interfaces "${boot_interface}")"
-disks="$(collect_disks)"
-dimms="$(collect_dimms)"
-usb_devices="$(collect_usb_devices)"
+pci_devices_file="${RUNTIME_ROOT}/atlaso-inventory-pci.json"
+storage_controllers_file="${RUNTIME_ROOT}/atlaso-inventory-controllers.json"
+interfaces_file="${RUNTIME_ROOT}/atlaso-inventory-interfaces.json"
+disks_file="${RUNTIME_ROOT}/atlaso-inventory-disks.json"
+dimms_file="${RUNTIME_ROOT}/atlaso-inventory-dimms.json"
+usb_devices_file="${RUNTIME_ROOT}/atlaso-inventory-usb.json"
+collect_pci_devices >"${pci_devices_file}"
+collect_storage_controllers "${pci_devices_file}" >"${storage_controllers_file}"
+collect_interfaces "${boot_interface}" >"${interfaces_file}"
+collect_disks >"${disks_file}"
+collect_dimms >"${dimms_file}"
+collect_usb_devices >"${usb_devices_file}"
 cpu="$(collect_cpu)"
 memory_bytes="$(awk '/MemTotal:/ {print $2 * 1024}' "${PROC_ROOT}/meminfo" | cut -d. -f1)"
 memory_bytes="$(unsigned_value "${memory_bytes}")"
 assigned_addresses="$(ip -j address show dev "${boot_interface}" 2>/dev/null |
   jq '[.[0].addr_info[]? | "\(.local)/\(.prefixlen)"][0:64]' 2>/dev/null || printf '[]')"
 
-report="$(jq -n \
+report="$(jq -cn \
   --arg boot_interface "${boot_interface}" --arg boot_mac "${boot_mac}" \
   --argjson assigned_addresses "${assigned_addresses}" --arg firmware_mode "${firmware_mode}" \
   --arg dmi_uuid "$(read_value "${DMI_ROOT}/product_uuid")" \
@@ -65,9 +71,9 @@ report="$(jq -n \
   --arg chassis_asset_tag "$(read_value "${DMI_ROOT}/chassis_asset_tag")" \
   --argjson cpu "${cpu}" \
   --argjson total_bytes "${memory_bytes}" --arg total_human "$(human_size "${memory_bytes}")" \
-  --argjson dimms "${dimms}" --argjson disks "${disks}" \
-  --argjson interfaces "${interfaces}" --argjson storage_controllers "${storage_controllers}" \
-  --argjson pci_devices "${pci_devices}" --argjson usb_devices "${usb_devices}" \
+  --slurpfile dimms "${dimms_file}" --slurpfile disks "${disks_file}" \
+  --slurpfile interfaces "${interfaces_file}" --slurpfile storage_controllers "${storage_controllers_file}" \
+  --slurpfile pci_devices "${pci_devices_file}" --slurpfile usb_devices "${usb_devices_file}" \
   '{
     schema_version: 2,
     boot_interface: $boot_interface,
@@ -86,13 +92,15 @@ report="$(jq -n \
         version:$chassis_version,serial:$chassis_serial,asset_tag:$chassis_asset_tag}
     },
     cpu: $cpu,
-    memory: {total_bytes:$total_bytes,total_human:$total_human,dimms:$dimms},
-    disks: $disks,
-    interfaces: $interfaces,
-    storage_controllers: $storage_controllers,
-    pci_devices: $pci_devices,
-    usb_devices: $usb_devices
+    memory: {total_bytes:$total_bytes,total_human:$total_human,dimms:$dimms[0]},
+    disks: $disks[0],
+    interfaces: $interfaces[0],
+    storage_controllers: $storage_controllers[0],
+    pci_devices: $pci_devices[0],
+    usb_devices: $usb_devices[0]
   }')"
+rm -f "${pci_devices_file}" "${storage_controllers_file}" "${interfaces_file}" \
+  "${disks_file}" "${dimms_file}" "${usb_devices_file}"
 report_bytes="$(printf '%s' "${report}" | wc -c | tr -d ' ')"
 if [ "${report_bytes}" -gt 262144 ]; then
   printf 'Inventory report exceeds the 256 KiB boundary.\n' >&2
@@ -136,6 +144,9 @@ network_total="$(printf '%s' "${report}" | jq -r '.interfaces | length')"
 storage_start=0
 storage_page_size=5
 storage_total="$(printf '%s' "${report}" | jq -r '(.disks | length) + (.storage_controllers | length)')"
+dimm_start=0
+dimm_page_size=5
+dimm_total="$(printf '%s' "${report}" | jq -r '.memory.dimms | length')"
 while :; do
   now="$(date +%s)"
   elapsed=$((now - last_tick))
@@ -163,9 +174,9 @@ while :; do
     next_poll=$((now + 10))
   fi
 
-  render_state="${page}:${network_start}:${storage_start}"
+  render_state="${page}:${network_start}:${storage_start}:${dimm_start}"
   if [ "${render_state}" != "${rendered_page}" ]; then
-    render_inventory_console "${report}" "${page}" "${remaining}" "${paused}" "${host_id}" "${network_start}" "${storage_start}"
+    render_inventory_console "${report}" "${page}" "${remaining}" "${paused}" "${host_id}" "${network_start}" "${storage_start}" "${dimm_start}"
     rendered_page="${render_state}"
   else
     refresh_inventory_console_footer "${page}" "${remaining}" "${paused}" "${host_id}"
@@ -184,10 +195,12 @@ while :; do
     key_action="$(printf '%s' "${key_result}" | cut -d'|' -f3)"
     case "${key}" in
       j|J)
+        [ "${page}" != "1" ] || dimm_start="$(console_window_offset "${dimm_start}" "${dimm_total}" "${dimm_page_size}" next)"
         [ "${page}" != "2" ] || network_start="$(console_window_offset "${network_start}" "${network_total}" "${network_page_size}" next)"
         [ "${page}" != "3" ] || storage_start="$(console_window_offset "${storage_start}" "${storage_total}" "${storage_page_size}" next)"
         ;;
       k|K)
+        [ "${page}" != "1" ] || dimm_start="$(console_window_offset "${dimm_start}" "${dimm_total}" "${dimm_page_size}" previous)"
         [ "${page}" != "2" ] || network_start="$(console_window_offset "${network_start}" "${network_total}" "${network_page_size}" previous)"
         [ "${page}" != "3" ] || storage_start="$(console_window_offset "${storage_start}" "${storage_total}" "${storage_page_size}" previous)"
         ;;

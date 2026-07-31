@@ -124,8 +124,9 @@ collect_pci_devices() {
 }
 
 collect_storage_controllers() {
-  pci_json="$1"
-  printf '%s' "${pci_json}" | jq '[.[] | select(.class_id | startswith("01")) | {
+  pci_file="$1"
+  output="$(mktemp "${RUNTIME_ROOT}/atlaso-controller.XXXXXX")"
+  jq -c '.[] | select(.class_id | startswith("01")) | {
     pci_address, type: (if .class_id | startswith("0100") then "SCSI"
       elif .class_id | startswith("0101") then "IDE"
       elif .class_id | startswith("0104") then "RAID"
@@ -133,7 +134,35 @@ collect_storage_controllers() {
       elif .class_id | startswith("0107") then "SAS"
       elif .class_id | startswith("0108") then "NVMe" else "Other storage" end),
     vendor_id, device_id, vendor, device, driver
-  }][0:64]'
+  }' "${pci_file}" >"${output}"
+  count="$(wc -l <"${output}" | tr -d ' ')"
+  for path in "${SYSFS_ROOT}"/class/scsi_host/host*; do
+    [ -d "${path}" ] || continue
+    [ "${count}" -lt 64 ] || break
+    device_path="$(readlink -f "${path}/device" 2>/dev/null || true)"
+    pci_address="$(printf '%s\n' "${device_path}" | grep -Eo '[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]' | tail -n1 | tr 'A-F' 'a-f')"
+    if [ -n "${pci_address}" ] && jq -e --arg address "${pci_address}" 'select(.pci_address == $address)' "${output}" >/dev/null 2>&1; then
+      continue
+    fi
+    driver="$(bounded_text 120 "$(read_value "${path}/proc_name")")"
+    [ -n "${driver}" ] || driver="$(bounded_text 120 "$(basename "$(readlink "${path}/device/driver" 2>/dev/null || true)")")"
+    case "${driver}" in
+      storvsc*) type='Hyper-V SCSI' ;;
+      virtio_scsi*) type='Virtio SCSI' ;;
+      xen*) type='Xen SCSI' ;;
+      *) type='SCSI' ;;
+    esac
+    vendor="$(bounded_text 240 "$(read_value "${path}/device/vendor")")"
+    device="$(bounded_text 240 "$(read_value "${path}/device/model")")"
+    [ -n "${device}" ] || device="${path##*/}"
+    jq -cn --arg pci_address "${pci_address}" --arg type "${type}" \
+      --arg vendor "${vendor}" --arg device "${device}" --arg driver "${driver}" \
+      '{pci_address:$pci_address,type:$type,vendor_id:"",device_id:"",
+        vendor:$vendor,device:$device,driver:$driver}' >>"${output}"
+    count=$((count + 1))
+  done
+  jq -s '.[0:64]' "${output}"
+  rm -f "${output}"
 }
 
 collect_interfaces() {
@@ -151,7 +180,14 @@ collect_interfaces() {
     current_mac="$(optional_ethernet_mac "$(read_value "${path}/address")")"
     permanent_mac="$(optional_ethernet_mac "$(ethtool -P "${name}" 2>/dev/null | awk '{print $3}')")"
     device_path="$(readlink -f "${path}/device" 2>/dev/null || true)"
-    pci_address="$(printf '%s\n' "${device_path}" | grep -Eo '[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]' | tail -n1 | tr 'A-F' 'a-f')"
+    device_name="${device_path##*/}"
+    pci_address=""
+    case "${device_name}" in
+      [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F].[0-7])
+        pci_address="$(printf '%s' "${device_name}" | tr 'A-F' 'a-f')"
+        [ -d "${SYSFS_ROOT}/bus/pci/devices/${pci_address}" ] || pci_address=""
+        ;;
+    esac
     driver="$(bounded_text 120 "$(basename "$(readlink "${path}/device/driver" 2>/dev/null || true)")")"
     vendor_id=""
     device_id=""
@@ -523,8 +559,10 @@ render_inventory_console() {
   host_id="$5"
   network_start="$(unsigned_value "${6:-0}")"
   storage_start="$(unsigned_value "${7:-0}")"
+  dimm_start="$(unsigned_value "${8:-0}")"
   network_page_size=5
   storage_page_size=5
+  dimm_page_size=5
   printf '\033[107m\033[30m\033[2J\033[H'
   printf '\033[106m\033[34m\033[1m  Atlaso Inventory Linux  \033[22m\033[K\n'
   printf '\033[107m\033[30m\033[K'
@@ -541,7 +579,13 @@ render_inventory_console() {
       console_line 'Model' "$(printf '%s' "${report}" | jq -r '.cpu.model')"
       console_line 'Topology' "$(printf '%s' "${report}" | jq -r '"\(.cpu.sockets) sockets / \(.cpu.cores) cores / \(.cpu.threads) threads (\(.cpu.cores_per_socket) cores/socket, \(.cpu.threads_per_core) threads/core)"')"
       printf '\n\033[1m  Memory: %s\033[0m\n' "$(printf '%s' "${report}" | jq -r '.memory.total_human')"
-      printf '%s' "${report}" | jq -r '.memory.dimms[] | "  \(.locator) | \(.bank) | \(.size_human) | \(.type) | \(.speed_mts) MT/s | \(.manufacturer) \(.part_number) | S/N \(.serial)"'
+      dimm_total="$(printf '%s' "${report}" | jq -r '.memory.dimms | length')"
+      if [ "${dimm_start}" -ge "${dimm_total}" ]; then dimm_start=0; fi
+      dimm_end=$((dimm_start + dimm_page_size))
+      [ "${dimm_end}" -le "${dimm_total}" ] || dimm_end="${dimm_total}"
+      if [ "${dimm_total}" -gt 0 ]; then dimm_first=$((dimm_start + 1)); else dimm_first=0; fi
+      printf '  DIMMs %s-%s of %s  [J] More  [K] Back\n' "${dimm_first}" "${dimm_end}" "${dimm_total}"
+      printf '%s' "${report}" | jq -r --argjson start "${dimm_start}" --argjson limit "${dimm_page_size}" '.memory.dimms[$start:($start + $limit)][] | "  \(.locator) | \(.bank) | \(.size_human) | \(.type) | \(.speed_mts) MT/s | \(.manufacturer) \(.part_number) | S/N \(.serial)"' | console_clip_lines 78
       ;;
     2)
       printf '\033[1m  Network\033[0m\033[K\n\n'

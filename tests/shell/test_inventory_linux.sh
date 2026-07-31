@@ -43,6 +43,7 @@ make_pci() {
 
 make_pci 0000:02:00.0 020000 8086 10fb ixgbe
 make_pci 0000:03:00.0 010601 8086 2922 ahci
+make_pci 0000:04:00.0 0c0330 8086 1e31 xhci_hcd
 
 for name in eth0 eth1; do
   path="${ATLASO_SYSFS_ROOT}/class/net/${name}"
@@ -55,6 +56,13 @@ for name in eth0 eth1; do
 done
 printf '52:54:00:11:22:33\n' >"${ATLASO_SYSFS_ROOT}/class/net/eth0/address"
 printf '52:54:00:44:55:66\n' >"${ATLASO_SYSFS_ROOT}/class/net/eth1/address"
+usb_net_device="${ATLASO_SYSFS_ROOT}/bus/pci/devices/0000:04:00.0/usb1/1-1/1-1:1.0"
+mkdir -p "${usb_net_device}" "${ATLASO_SYSFS_ROOT}/class/net/usb0"
+ln -s "${usb_net_device}" "${ATLASO_SYSFS_ROOT}/class/net/usb0/device"
+printf '1\n' >"${ATLASO_SYSFS_ROOT}/class/net/usb0/type"
+printf 'up\n' >"${ATLASO_SYSFS_ROOT}/class/net/usb0/operstate"
+printf '1000\n' >"${ATLASO_SYSFS_ROOT}/class/net/usb0/speed"
+printf '52:54:00:77:88:99\n' >"${ATLASO_SYSFS_ROOT}/class/net/usb0/address"
 mkdir -p "${ATLASO_SYSFS_ROOT}/class/net/sit0"
 printf '776\n' >"${ATLASO_SYSFS_ROOT}/class/net/sit0/type"
 
@@ -81,6 +89,11 @@ make_disk sda 0000:03:00.0 209715200 1 0 'Fixture HDD' HDD-1
 make_disk nvme0n1 0000:03:00.0 104857600 0 0 'Fixture NVMe' NVME-1
 make_disk sr0 0000:03:00.0 1048576 0 1 'Fixture DVD' DVD-1
 printf '5\n' >"${ATLASO_SYSFS_ROOT}/bus/pci/devices/0000:03:00.0/disk-sr0/type"
+
+mkdir -p "${ATLASO_SYSFS_ROOT}/class/scsi_host/host9/device"
+printf 'storvsc_host\n' >"${ATLASO_SYSFS_ROOT}/class/scsi_host/host9/proc_name"
+printf 'Microsoft\n' >"${ATLASO_SYSFS_ROOT}/class/scsi_host/host9/device/vendor"
+printf 'Virtual SCSI\n' >"${ATLASO_SYSFS_ROOT}/class/scsi_host/host9/device/model"
 
 for usb in 1-1 1-2; do
   path="${ATLASO_SYSFS_ROOT}/bus/usb/devices/${usb}"
@@ -127,7 +140,11 @@ esac
 EOF
 cat >"${fixture_root}/bin/ethtool" <<'EOF'
 #!/bin/sh
-[ "$2" = "eth0" ] && mac=52:54:00:11:22:33 || mac=52:54:00:44:55:66
+case "$2" in
+  eth0) mac=52:54:00:11:22:33 ;;
+  eth1) mac=52:54:00:44:55:66 ;;
+  *) mac=52:54:00:77:88:99 ;;
+esac
 printf 'Permanent address: %s\n' "${mac}"
 EOF
 cat >"${fixture_root}/bin/ip" <<'EOF'
@@ -187,16 +204,18 @@ EOF
 chmod +x "${fixture_root}/bin/"*
 
 pci="$(collect_pci_devices)"
-controllers="$(collect_storage_controllers "${pci}")"
+pci_file="${fixture_root}/pci.json"
+printf '%s' "${pci}" >"${pci_file}"
+controllers="$(collect_storage_controllers "${pci_file}")"
 interfaces="$(collect_interfaces eth0)"
 disks="$(collect_disks)"
 dimms="$(collect_dimms)"
 usb="$(collect_usb_devices)"
 cpu="$(collect_cpu)"
 
-assert_jq "${pci}" 'length == 2 and .[0].vendor_id == "8086" and .[1].class_id == "010601"'
-assert_jq "${controllers}" 'length == 1 and .[0].type == "SATA" and .[0].driver == "ahci"'
-assert_jq "${interfaces}" 'length == 2 and .[0].boot_interface and .[1].current_mac == "52:54:00:44:55:66"'
+assert_jq "${pci}" 'length == 3 and .[0].vendor_id == "8086" and .[1].class_id == "010601"'
+assert_jq "${controllers}" 'length == 2 and .[0].type == "SATA" and .[0].driver == "ahci" and .[1].type == "Hyper-V SCSI" and .[1].driver == "storvsc_host" and .[1].pci_address == ""'
+assert_jq "${interfaces}" 'length == 3 and .[0].boot_interface and .[1].current_mac == "52:54:00:44:55:66" and (map(select(.name == "usb0"))[0].pci_address == "")'
 assert_jq "${disks}" 'length == 3 and (map(select(.device == "/dev/sda"))[0].type == "HDD") and (map(select(.device == "/dev/nvme0n1"))[0].type == "NVMe") and (map(select(.device == "/dev/sr0"))[0].type == "Optical") and (map(select(.device == "/dev/nvme0n1"))[0].size_human == "50.0 GiB") and (map(select(.device == "/dev/sda"))[0].controller_pci_address == "0000:03:00.0")'
 assert_jq "${dimms}" 'length == 3 and .[0].locator == "DIMM_A1" and .[1].speed_mts == 4800 and .[0].size_bytes == 17179869184 and .[2].size_bytes == 8589934592 and .[2].locator == "" and (map(.locator) | index("PHANTOM") == null)'
 assert_jq "${usb}" 'length == 2 and .[0].class == "Mass storage" and .[1].serial == "USB-1-2"'
@@ -240,7 +259,7 @@ report="$(jq -cn --argjson interfaces "${interfaces}" --argjson disks "${disks}"
 console="$(render_inventory_console "${report}" 2 90 false 7)"
 printf '%s' "${console}" | grep -F 'Atlaso Inventory Linux' >/dev/null || fail 'console header'
 printf '%s' "${console}" | grep -F 'Network' >/dev/null || fail 'network page'
-printf '%s' "${console}" | grep -F 'Interfaces 1-2 of 2' >/dev/null || fail 'network list window'
+printf '%s' "${console}" | grep -F 'Interfaces 1-3 of 3' >/dev/null || fail 'network list window'
 printf '%s' "${console}" | grep -F 'Page 2/3' >/dev/null || fail 'console paging footer'
 printf '%s' "${console}" | grep -F '[S] Pause/resume' >/dev/null || fail 'console actions'
 printf '%s' "${console}" | grep -F "$(printf '\033[106m')" >/dev/null || fail 'console-native pale-blue header'
@@ -255,11 +274,18 @@ printf '%s' "${network_window}" | grep -F 'nic5' >/dev/null || fail 'network lis
 if printf '%s' "${network_window}" | grep -F 'nic0' >/dev/null; then fail 'network list subpage bounds'; fi
 many_storage_report="$(printf '%s' "${report}" | jq '.disks = [range(0;8) as $index | (.disks[0] | .device = ("/dev/disk" + ($index|tostring)))]')"
 storage_window="$(render_inventory_console "${many_storage_report}" 3 90 false 7 0 5)"
-printf '%s' "${storage_window}" | grep -F 'Devices 6-9 of 9' >/dev/null || fail 'storage list subpage status'
+printf '%s' "${storage_window}" | grep -F 'Devices 6-10 of 10' >/dev/null || fail 'storage list subpage status'
 printf '%s' "${storage_window}" | grep -F '/dev/disk5' >/dev/null || fail 'storage list subpage first row'
 printf '%s' "${storage_window}" | grep -F '[Controller]' >/dev/null || fail 'storage controller retained in list window'
 if printf '%s' "${storage_window}" | grep -F '/dev/disk0' >/dev/null; then fail 'storage list subpage bounds'; fi
+many_dimm_report="$(printf '%s' "${report}" | jq '.memory.dimms = [range(0;8) as $index | (.memory.dimms[0] | .locator = ("DIMM_" + ($index|tostring)))]')"
+dimm_window="$(render_inventory_console "${many_dimm_report}" 1 90 false 7 0 0 5)"
+printf '%s' "${dimm_window}" | grep -F 'DIMMs 6-8 of 8' >/dev/null || fail 'DIMM list subpage status'
+printf '%s' "${dimm_window}" | grep -F 'DIMM_5' >/dev/null || fail 'DIMM list subpage first row'
+if printf '%s' "${dimm_window}" | grep -F 'DIMM_0' >/dev/null; then fail 'DIMM list subpage bounds'; fi
 [ "$(printf '%0100d\n' 0 | console_clip_lines 78 | awk '{ print length }')" = "78" ] || fail 'console line clipping'
 if grep -F '| gsub(' "${library}" >/dev/null; then fail 'Buildroot jq regex dependency'; fi
+grep -F -- '--slurpfile pci_devices' "${client}" >/dev/null || fail 'large inventory file input'
+grep -F 'report="$(jq -cn' "${client}" >/dev/null || fail 'compact report serialization'
 
 printf 'Inventory Linux shell fixtures passed.\n'

@@ -69,8 +69,13 @@ and blue action footer across **System / CPU / DIMMs**, **Network**, and
 submission, a 120-second reboot countdown begins. Use `J`/`K` to move through
 bounded list windows when a hardware list is larger than the console viewport;
 Network windows show at most five adapters, Storage windows show at most five
-disks/controllers, and both clip rows to the console width. Optical block
+disks/controllers, and System windows show at most five DIMMs. All clip rows to
+the console width. Optical block
 devices are identified from the authoritative sysfs peripheral type.
+PCI identity is attached only to directly PCI-backed devices; controller sysfs
+also retains non-PCI SCSI hosts such as Hyper-V StorVSC. Large inventories are
+assembled from files as compact JSON so the 256 KiB boundary is independent of
+pretty-print whitespace and Linux per-argument limits.
 Page and list navigation still consume countdown time. `S` pauses or resumes
 the remaining time and `R` reboots immediately; an acknowledged audited remote
 reboot remains authoritative. Its startup service first obtains DHCP
