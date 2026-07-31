@@ -1,4 +1,12 @@
-image/hyperv/scripts/*.sh text eol=lf
+# Keep interpreter entrypoints stable across Windows and Unix checkouts.
+*.sh text eol=lf
+*.bash text eol=lf
+*.ps1 text eol=lf
+*.psm1 text eol=lf
+*.psd1 text eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
 image/hyperv/sudoers.d/* text eol=lf
 image/hyperv/systemd/* text eol=lf
 scripts/appliance/atlaso-helper text eol=lf
