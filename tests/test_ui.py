@@ -2,6 +2,8 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
 
 def login(client):
     page = client.get("/login")
@@ -807,7 +809,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v214" in service_worker.text
+    assert "atlaso-pwa-v215" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -819,9 +821,9 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6" in service_worker.text
-    assert "/static/app.css?v=atlaso-horizontal-brand-20260730-2" in service_worker.text
+    assert "/static/app.css?v=atlaso-users-brand-20260730-1" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in service_worker.text
-    assert "/static/app.js?v=atlaso-network-boot-ntp-20260730-28" in service_worker.text
+    assert "/static/app.js?v=atlaso-local-users-20260730-41" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -841,8 +843,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=atlaso-network-boot-ntp-20260730-28"),
-        (public_base, "/static/app.js?v=atlaso-network-boot-ntp-20260730-28"),
+        (base, "/static/app.js?v=atlaso-local-users-20260730-41"),
+        (public_base, "/static/app.js?v=atlaso-local-users-20260730-41"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5"
@@ -967,6 +969,10 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     assert "await table.addRow(resource, true, config.newRow.id)" in adapter_block
     assert "await Promise.resolve(config.onSaved?.({ payload, resource, form, table }))" in adapter_block
     assert "await Promise.resolve(config.onDeleted?.({ data, table }))" in adapter_block
+    assert 'toggle.className = "inline-boolean-toggle"' in adapter_block
+    assert 'toggle.addEventListener("click", (event) =>' in adapter_block
+    assert 'cell.setValue(!Boolean(cell.getValue()))' in adapter_block
+    assert "void saveInlineEnabled(cell)" in adapter_block
     assert adapter_block.count("await refreshNetworkSideStack();") == 3
     for name in (
         "initializeApiTokensTable",
@@ -1325,9 +1331,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=atlaso-horizontal-brand-20260730-2" in page.text
+    assert "/static/app.css?v=atlaso-users-brand-20260730-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in page.text
-    assert "/static/app.js?v=atlaso-network-boot-ntp-20260730-28" in page.text
+    assert "/static/app.js?v=atlaso-local-users-20260730-41" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -5365,14 +5371,21 @@ def test_local_users_page_separates_ldap_authentication(client):
     assert "Unlock OS account" in app_js.text
     assert "disableUserFromMenu" in app_js.text
     assert "Disable user" in app_js.text
+    assert "function initializePasswordToggles(container)" in app_js.text
+    assert "function resetPasswordVisibility(container)" in app_js.text
     users_table_js = app_js.text.split("function initializeUsersTable()", 1)[1].split("function initializeUserPasswordForm()", 1)[0]
     assert "initializeAtlasoResourceWizard({" in users_table_js
+    assert 'height: "100%"' in users_table_js
+    assert "initializePasswordToggles(accountForm)" in users_table_js
+    assert "resetPasswordVisibility(form)" in users_table_js
+    assert "form.dataset.osPasswordAvailable" in users_table_js
     assert 'dialogId: "user-account-dialog"' in users_table_js
     assert 'resourceName: "user"' in users_table_js
     assert 'editor:' not in users_table_js
     assert "cellEdited:" not in users_table_js
     assert "Select at least one Atlaso role." in users_table_js
     assert "Web SSH access requires an interactive Photon shell." in users_table_js
+    assert "Set a Photon password in the Password step before enabling this user." in users_table_js
     enabled_column_js = users_table_js.split('title: "Enabled"', 1)[1].split('title: "OS account"', 1)[0]
     assert "editor:" not in enabled_column_js
     assert "validatePasswordMatch" in app_js.text
@@ -5383,6 +5396,11 @@ def test_local_users_page_separates_ldap_authentication(client):
     assert 'field: "web_terminal_access"' in app_js.text
     assert 'title: "Web SSH"' in app_js.text
     assert "Temp Password" not in app_js.text
+    app_css = client.get("/static/app.css").text
+    assert ".users-main-panel {" in app_css
+    assert "height: calc(100vh - 144px);" in app_css
+    assert ".users-grid {" in app_css
+    assert "flex: 1 1 0;" in app_css
 
 
 def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
@@ -5852,6 +5870,7 @@ def test_local_user_wizard_can_stage_password_and_enable_account(client):
     )
     assert created.status_code == 200, created.text
     assert created.json()["user"]["enabled"] is True
+    assert created.json()["user"]["os_password_available"] is True
     with SessionLocal() as db:
         user = db.execute(select(User).where(User.username == "wizard-enabled")).scalar_one()
         assert user.enabled is True
@@ -5871,6 +5890,74 @@ def test_local_user_wizard_can_stage_password_and_enable_account(client):
     )
     assert rejected.status_code == 400
     assert "Set a Photon password" in rejected.text
+
+
+def test_existing_local_user_can_be_enabled_inline_after_password_staging(client):
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import User
+    from atlaso.app.services.local_users import has_pending_os_password
+
+    login(client)
+    users = client.get("/users")
+    csrf = users.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    created = client.post(
+        "/users",
+        data={"username": "inline-enabled", "roles": ["viewer"], "shell": "/sbin/nologin", "csrf": csrf},
+        headers={"X-Atlaso-Grid": "1"},
+    )
+    assert created.status_code == 200
+    user_id = created.json()["user"]["id"]
+    staged = client.post(
+        f"/users/{user_id}/password",
+        data={"password": "Inline-Bridge1!", "confirm_password": "Inline-Bridge1!", "csrf": csrf},
+        follow_redirects=False,
+    )
+    assert staged.status_code == 303
+
+    enabled = client.post(
+        f"/users/{user_id}/edit",
+        data={
+            "username": "inline-enabled",
+            "roles": ["viewer"],
+            "roles_text": "viewer",
+            "shell": "/sbin/nologin",
+            "enabled": "on",
+            "enabled_present": "1",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Grid": "1"},
+    )
+
+    assert enabled.status_code == 200, enabled.text
+    assert enabled.json()["user"]["enabled"] is True
+    assert enabled.json()["user"]["os_password_available"] is True
+    with SessionLocal() as db:
+        user = db.get(User, user_id)
+        assert user is not None
+        assert user.enabled is True
+        assert has_pending_os_password(user)
+
+
+def test_real_local_users_apply_preserves_pending_password_for_disabled_user():
+    from atlaso.app.models import User
+    from atlaso.app.services.local_users import (
+        clear_pending_os_password,
+        has_pending_os_password,
+        mark_local_users_applied,
+        stage_user_os_password,
+    )
+
+    user = User(username="disabled-staged", role="viewer", shell="/sbin/nologin", enabled=False)
+    stage_user_os_password(user, "Disabled-Bridge1!")
+    try:
+        mark_local_users_applied([user])
+        assert has_pending_os_password(user)
+        assert user.os_password_applied_at is None
+        assert user.os_sync_status == "pending"
+    finally:
+        clear_pending_os_password(user)
 
 
 def test_local_users_password_policy_staging_and_apply_redaction(client):
@@ -6751,10 +6838,13 @@ def test_new_record_rows_lock_defaults_until_required_field(client):
     assert 'editor: "tickCross"' not in firewall_block
     assert "initializeAtlasoResourceWizard({" in firewall_block
     assert "supportsInlineEnabled" in app_js.text
-    assert 'editor: "tickCross"' in app_js.text[
+    configured_columns_block = app_js.text[
         app_js.text.index("const configuredColumns"):
         app_js.text.index("const options =", app_js.text.index("const configuredColumns"))
     ]
+    assert 'editor: "tickCross"' not in configured_columns_block
+    assert 'toggle.className = "inline-boolean-toggle"' in configured_columns_block
+    assert "void saveInlineEnabled(cell)" in configured_columns_block
     assert firewall_block.index('{ id: "state"') < firewall_block.index('{ id: "enablement"')
     assert firewall_block.index('{ id: "enablement"') < firewall_block.index('{ id: "review"')
     assert 'title: "Choose rule enablement"' in firewall_block
@@ -7761,6 +7851,30 @@ def test_public_services_reject_terminal_listener_without_valid_management_https
     ]
     assert "Terminal-only HTTPS front door" not in context["public_service_config_preview"]
     assert not any(entry.get("web_terminal") for entry in context["public_service_entries"])
+
+
+def test_public_services_rejects_authenticated_depot_with_disabled_http_user(client):
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import User, VcfOfflineDepotSettings
+    from atlaso.app.ui import public_services_context
+
+    with SessionLocal() as db:
+        settings = db.execute(select(VcfOfflineDepotSettings)).scalar_one()
+        depot_user = db.execute(select(User).where(User.username == "vcf-depot")).scalar_one()
+        settings.enabled = True
+        settings.allow_unauthenticated_access = False
+        settings.http_user_id = depot_user.id
+        depot_user.enabled = False
+        db.commit()
+
+        context = public_services_context(db, reconcile=False)
+
+    assert (
+        "Public Services cannot publish VCF Offline Depot while HTTP user vcf-depot is disabled. "
+        "Enable the user and apply Local Users first."
+    ) in context["public_service_validation_errors"]
 
 
 def test_public_service_home_is_scoped_to_called_ip(client, tmp_path, monkeypatch):
@@ -11811,6 +11925,95 @@ def test_global_appliance_apply_tracks_baselines_diffs_and_skips(client):
         assert job is not None
         assert "skipped_changed_units" in (job.result or "")
         assert '"unit_id": "firewall"' in (job.result or "")
+
+
+@pytest.mark.parametrize(
+    ("selected_unit", "depot_user_status", "expected_units"),
+    [
+        ("public_services", "pending", ["local_users", "public_services"]),
+        ("vcf_offline_depot", "pending", ["local_users", "vcf_offline_depot"]),
+        ("public_services", "applied", ["public_services"]),
+    ],
+)
+def test_depot_submission_includes_only_relevant_local_user_dependency(
+    client,
+    monkeypatch,
+    selected_unit,
+    depot_user_status,
+    expected_units,
+):
+    import json
+    from types import SimpleNamespace
+
+    from sqlalchemy import select
+
+    import atlaso.app.ui as ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStep, User
+
+    def unit(unit_id, label, *, changed, context=None):
+        return {
+            "id": unit_id,
+            "label": label,
+            "changed": changed,
+            "context": context or {},
+            "summary": [f"{label} desired state"],
+            "validation_errors": [],
+            "validation_warnings": [],
+            "config_path": f"/var/lib/atlaso/apply/{unit_id}.conf",
+            "config_preview": f"{unit_id}=configured",
+            "raw_config_preview": f"{unit_id}=configured",
+            "config_diff": f"+{unit_id}=configured" if changed else "",
+            "snapshot_hash": f"{unit_id}-snapshot",
+        }
+
+    depot_user = User(
+        id=41,
+        username=f"depot-dependency-{selected_unit}-{depot_user_status}",
+        enabled=True,
+        os_sync_status=depot_user_status,
+        os_unlock_requested_at=None,
+    )
+    units = [
+        unit(
+            "local_users",
+            "Local Users",
+            changed=True,
+            context={"local_users": [depot_user]},
+        ),
+        unit(
+            "vcf_offline_depot",
+            "VCF Offline Depot",
+            changed=selected_unit == "vcf_offline_depot",
+            context={
+                "vcf_depot_settings": SimpleNamespace(
+                    enabled=True,
+                    allow_unauthenticated_access=False,
+                    http_user_id=depot_user.id,
+                )
+            },
+        ),
+        unit("public_services", "Public Services", changed=selected_unit == "public_services"),
+    ]
+    started_jobs = []
+    login(client)
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    monkeypatch.setattr(ui, "appliance_apply_units", lambda _db, **_kwargs: units)
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda job_id: started_jobs.append(job_id))
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": selected_unit},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    with SessionLocal() as db:
+        job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()
+        assert json.loads(job.result or "{}")["selected_units"] == expected_units
+        steps = db.scalars(select(JobStep).where(JobStep.job_id == job.id).order_by(JobStep.position)).all()
+        assert [step.component_key for step in steps] == expected_units
+    assert started_jobs == [job.id]
 
 
 def test_appliance_apply_connection_warnings_detect_management_address_and_certificate_changes():
