@@ -107,7 +107,10 @@ command.
 The accepted report remains at most 256 KiB. Schema v2 bounds reports to 64
 NICs, 128 disks, 64 storage controllers, 256 populated DIMMs, 512 PCI devices,
 and 256 USB devices. Atlaso continues to accept schema v1 and normalizes it to
-the retained v2 JSON shape in the existing report column.
+the retained v2 JSON shape in the existing report column. Populated DIMM
+existence and size come from kernel-exposed sysfs DMI Type-17 entries;
+`dmidecode` enriches only matching sysfs handles with readable labels and
+manufacturer metadata.
 
 After a report is accepted, the local console opens full-screen Atlaso-style
 System/CPU/DIMMs, Network, and Storage pages. Use `N`/`P` or `1`-`3` to move

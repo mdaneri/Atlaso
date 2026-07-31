@@ -93,6 +93,21 @@ for usb in 1-1 1-2; do
   printf '%s\n' "USB-${usb}" >"${path}/serial"
 done
 
+make_dmi_dimm() {
+  instance="$1"
+  handle="$2"
+  size_low_octal="$3"
+  size_high_octal="$4"
+  path="${ATLASO_SYSFS_ROOT}/firmware/dmi/entries/17-${instance}"
+  mkdir -p "${path}"
+  printf '%s\n' "${handle}" >"${path}/handle"
+  awk 'BEGIN { for (i = 0; i < 32; i++) printf "%c", 0 }' >"${path}/raw"
+  printf "\\${size_low_octal}\\${size_high_octal}" | dd of="${path}/raw" bs=1 seek=12 conv=notrunc 2>/dev/null
+}
+make_dmi_dimm 0 0x0011 000 100
+make_dmi_dimm 1 0x0012 000 100
+make_dmi_dimm 2 0x0013 000 040
+
 cat >"${fixture_root}/bin/lspci" <<'EOF'
 #!/bin/sh
 for value in "$@"; do address="${value}"; done
@@ -126,6 +141,7 @@ EOF
 cat >"${fixture_root}/bin/dmidecode" <<'EOF'
 #!/bin/sh
 cat <<'DMI'
+Handle 0x0011, DMI type 17, 92 bytes
 Memory Device
         Size: 16 GB
         Locator: DIMM_A1
@@ -136,6 +152,7 @@ Memory Device
         Serial Number: DIMM-1
         Part Number: MEM-16G
 
+Handle 0x0012, DMI type 17, 92 bytes
 Memory Device
         Size: 16 GB
         Locator: DIMM_B1
@@ -145,6 +162,17 @@ Memory Device
         Manufacturer: Memory Vendor
         Serial Number: DIMM-2
         Part Number: MEM-16G
+
+Handle 0x0099, DMI type 17, 92 bytes
+Memory Device
+        Size: 64 GB
+        Locator: PHANTOM
+        Bank Locator: BANK 9
+        Type: DDR5
+        Speed: 4800 MT/s
+        Manufacturer: Stale Firmware Record
+        Serial Number: PHANTOM
+        Part Number: PHANTOM
 DMI
 EOF
 cat >"${fixture_root}/bin/lscpu" <<'EOF'
@@ -165,7 +193,7 @@ assert_jq "${pci}" 'length == 2 and .[0].vendor_id == "8086" and .[1].class_id =
 assert_jq "${controllers}" 'length == 1 and .[0].type == "SATA" and .[0].driver == "ahci"'
 assert_jq "${interfaces}" 'length == 2 and .[0].boot_interface and .[1].current_mac == "52:54:00:44:55:66"'
 assert_jq "${disks}" 'length == 2 and (map(select(.device == "/dev/sda"))[0].type == "HDD") and (map(select(.device == "/dev/nvme0n1"))[0].type == "NVMe") and (map(select(.device == "/dev/nvme0n1"))[0].size_human == "50.0 GiB") and (map(select(.device == "/dev/sda"))[0].controller_pci_address == "0000:03:00.0")'
-assert_jq "${dimms}" 'length == 2 and .[0].locator == "DIMM_A1" and .[1].speed_mts == 4800 and .[0].size_bytes == 17179869184'
+assert_jq "${dimms}" 'length == 3 and .[0].locator == "DIMM_A1" and .[1].speed_mts == 4800 and .[0].size_bytes == 17179869184 and .[2].size_bytes == 8589934592 and .[2].locator == "" and (map(.locator) | index("PHANTOM") == null)'
 assert_jq "${usb}" 'length == 2 and .[0].class == "Mass storage" and .[1].serial == "USB-1-2"'
 assert_jq "${cpu}" '.sockets == 2 and .cores == 16 and .threads == 32 and .cores_per_socket == 8 and .threads_per_core == 2'
 [ "$(human_size 1073741824)" = "1.00 GiB" ] || fail 'human size'

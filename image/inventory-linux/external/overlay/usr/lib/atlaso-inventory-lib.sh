@@ -266,6 +266,35 @@ dimm_size_bytes() {
   '
 }
 
+dimm_sysfs_size_bytes() {
+  raw="$1"
+  base="$(od -An -tu1 -j 12 -N 2 "${raw}" 2>/dev/null || true)"
+  extended="$(od -An -tu1 -j 28 -N 4 "${raw}" 2>/dev/null || true)"
+  awk -v base="${base}" -v extended="${extended}" 'BEGIN {
+    count = split(base, bytes)
+    if (count < 2) exit 1
+    encoded = bytes[1] + bytes[2] * 256
+    if (encoded == 0) exit 1
+    if (encoded == 65535) { print "0"; exit }
+    if (encoded == 32767) {
+      count = split(extended, ext)
+      if (count < 4) { print "0"; exit }
+      amount = ext[1] + ext[2] * 256 + ext[3] * 65536 + ext[4] * 16777216
+      if (amount >= 2147483648) amount -= 2147483648
+      printf "%.0f\n", amount * 1024 * 1024
+      exit
+    }
+    if (encoded >= 32768) {
+      amount = encoded - 32768
+      factor = 1024
+    } else {
+      amount = encoded
+      factor = 1024 * 1024
+    }
+    printf "%.0f\n", amount * factor
+  }'
+}
+
 collect_dimms() {
   records="$(mktemp "${RUNTIME_ROOT}/atlaso-dimm-records.XXXXXX")"
   output="$(mktemp "${RUNTIME_ROOT}/atlaso-dimm-json.XXXXXX")"
@@ -274,14 +303,14 @@ collect_dimms() {
   dmidecode --type 17 2>/dev/null | awk '
     function clean(v) { gsub(/[|\t\r\n]/, " ", v); sub(/^ +/, "", v); sub(/ +$/, "", v); return v }
     function emit() {
-      if (size != "" && size !~ /No Module Installed|Not Installed/) {
-        print clean(locator) "|" clean(bank) "|" clean(size) "|" clean(type) "|" clean(speed) "|" clean(manufacturer) "|" clean(part) "|" clean(serial)
+      if (handle != "") {
+        print clean(handle) "|" clean(locator) "|" clean(bank) "|" clean(type) "|" clean(speed) "|" clean(manufacturer) "|" clean(part) "|" clean(serial)
       }
     }
-    /^[[:space:]]*Memory Device[[:space:]]*$/ { emit(); active=1; locator=bank=size=type=speed=manufacturer=part=serial=""; next }
+    /^Handle 0x[[:xdigit:]]+,[[:space:]]+DMI type 17,/ { emit(); handle=$2; sub(/,$/, "", handle); active=0; locator=bank=type=speed=manufacturer=part=serial=""; next }
+    /^[[:space:]]*Memory Device[[:space:]]*$/ { active=1; next }
     active && /^[[:space:]]*Locator:/ { sub(/^[^:]*:[[:space:]]*/, ""); locator=$0; next }
     active && /^[[:space:]]*Bank Locator:/ { sub(/^[^:]*:[[:space:]]*/, ""); bank=$0; next }
-    active && /^[[:space:]]*Size:/ { sub(/^[^:]*:[[:space:]]*/, ""); size=$0; next }
     active && /^[[:space:]]*Type:/ { sub(/^[^:]*:[[:space:]]*/, ""); type=$0; next }
     active && /^[[:space:]]*Configured Memory Speed:/ { sub(/^[^:]*:[[:space:]]*/, ""); speed=$0; next }
     active && speed == "" && /^[[:space:]]*Speed:/ { sub(/^[^:]*:[[:space:]]*/, ""); speed=$0; next }
@@ -291,9 +320,23 @@ collect_dimms() {
     END { emit() }
   ' >"${records}"
   count=0
-  while IFS='|' read -r locator bank size type speed manufacturer part serial; do
+  for path in "${SYSFS_ROOT}"/firmware/dmi/entries/17-*; do
+    [ -d "${path}" ] || continue
+    [ -f "${path}/raw" ] || continue
     [ "${count}" -lt 256 ] || break
-    size_bytes="$(dimm_size_bytes "${size}")"
+    size_bytes="$(dimm_sysfs_size_bytes "${path}/raw" || true)"
+    [ -n "${size_bytes}" ] || continue
+    handle="$(read_value "${path}/handle")"
+    enrichment="$(awk -F '|' -v expected="${handle}" 'tolower($1) == tolower(expected) { sub(/^[^|]*\|/, ""); print; exit }' "${records}")"
+    enrichment="${enrichment:-||||||}"
+    locator="$(printf '%s' "${enrichment}" | cut -d'|' -f1)"
+    bank="$(printf '%s' "${enrichment}" | cut -d'|' -f2)"
+    type="$(printf '%s' "${enrichment}" | cut -d'|' -f3)"
+    speed="$(printf '%s' "${enrichment}" | cut -d'|' -f4)"
+    manufacturer="$(printf '%s' "${enrichment}" | cut -d'|' -f5)"
+    part="$(printf '%s' "${enrichment}" | cut -d'|' -f6)"
+    serial="$(printf '%s' "${enrichment}" | cut -d'|' -f7)"
+    [ "${count}" -lt 256 ] || break
     speed_mts="$(unsigned_value "$(printf '%s' "${speed}" | awk '{print $1}')")"
     jq -cn --arg locator "$(bounded_text 240 "${locator}")" \
       --arg bank "$(bounded_text 240 "${bank}")" \
@@ -306,7 +349,7 @@ collect_dimms() {
         type:$type,speed_mts:$speed_mts,manufacturer:$manufacturer,
         part_number:$part_number,serial:$serial}' >>"${output}"
     count=$((count + 1))
-  done <"${records}"
+  done
   jq -s '.' "${output}"
   rm -f "${records}" "${output}"
 }

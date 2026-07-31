@@ -57,8 +57,10 @@ initramfs in RAM; it is not an Ubuntu, Debian, or Photon OS installation. It
 does not mount filesystems or write target disks. Schema v2 submits bounded
 structured CPU topology, populated DIMMs, every NIC and disk, storage
 controllers, PCI/USB devices, and system/BIOS/baseboard/chassis identity. Sysfs
-is authoritative for devices; pciutils/pci.ids enrich readable PCI names, and
-raw command output is never submitted. Atlaso still accepts schema v1 and
+is authoritative for devices, including populated DIMMs enumerated from
+kernel-exposed DMI Type-17 entries; `dmidecode` only enriches matching handles.
+Pciutils/pci.ids enrich readable PCI names, and raw command output is never
+submitted. Atlaso still accepts schema v1 and
 normalizes it into retained v2 JSON in the existing report column.
 
 The local full-screen console uses the Atlaso pale-blue header, light content,

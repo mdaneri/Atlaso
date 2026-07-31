@@ -162,6 +162,7 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
         "image/inventory-linux/external/board/atlaso-inventory/busybox.fragment"
     ).read_text(encoding="utf-8")
     assert "# CONFIG_LSBLK is not set" in busybox_fragment
+    assert "CONFIG_OD=y" in busybox_fragment
     inventory_client = Path(
         "image/inventory-linux/external/overlay/usr/bin/atlaso-inventory"
     ).read_text(encoding="utf-8")
@@ -175,6 +176,8 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     assert "schema_version: 2" in inventory_client
     assert "collect_pci_devices" in inventory_client
     assert "collect_usb_devices" in inventory_client
+    assert '"${SYSFS_ROOT}"/firmware/dmi/entries/17-*' in inventory_library
+    assert 'tolower($1) == tolower(expected)' in inventory_library
     assert "remaining=120" in inventory_client
     assert "render_inventory_console" in inventory_client
     assert "refresh_inventory_console_footer" in inventory_client
