@@ -159,6 +159,15 @@ class NetworkBootMediaSyncCancelled(RuntimeError):
     """Raised when an operator cancels media acquisition before installation."""
 
 
+@dataclass(frozen=True)
+class ActiveNetworkBootMedia:
+    environment_key: str
+    version: str
+    installed_path: str
+    manifest_json: str
+    artifact_sha256: str = ""
+
+
 @dataclass
 class DeferredNetworkBootMediaSync:
     media: NetworkBootMedia
@@ -1095,41 +1104,107 @@ def report_history(
     ]
 
 
+def _applied_esxi_pxe_manifest(db: Session) -> dict[str, Any]:
+    setting = db.execute(
+        select(Setting).where(Setting.key == APPLIANCE_APPLY_BASELINES_KEY)
+    ).scalar_one_or_none()
+    if setting is None:
+        return {}
+    try:
+        baselines = json.loads(setting.value or "{}")
+        baseline = baselines.get(NETWORK_BOOT_UNIT_ID)
+        manifest = json.loads(str((baseline or {}).get("config_preview") or "{}"))
+    except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("kind") != "atlaso-esxi-pxe"
+    ):
+        return {}
+    return manifest
+
+
+def _applied_network_boot_media(
+    db: Session,
+    *,
+    environment_key: str,
+    version: str,
+) -> ActiveNetworkBootMedia | None:
+    manifest = _applied_esxi_pxe_manifest(db)
+    network_boot = manifest.get("network_boot")
+    environments = (
+        network_boot.get("environments")
+        if isinstance(network_boot, dict)
+        else None
+    )
+    if not isinstance(environments, list):
+        return None
+    for row in environments[: len(ENVIRONMENT_CATALOG)]:
+        if (
+            not isinstance(row, dict)
+            or row.get("key") != environment_key
+            or not row.get("enabled")
+            or row.get("desired_version") != version
+            or not isinstance(row.get("installed_path"), str)
+            or not isinstance(row.get("manifest"), dict)
+        ):
+            continue
+        return ActiveNetworkBootMedia(
+            environment_key=environment_key,
+            version=version,
+            installed_path=row["installed_path"],
+            manifest_json=json.dumps(row["manifest"], sort_keys=True),
+            artifact_sha256=str(row.get("artifact_sha256") or ""),
+        )
+    return None
+
+
+def active_network_boot_media(
+    db: Session,
+    *,
+    environment_key: str,
+    version: str,
+) -> ActiveNetworkBootMedia | NetworkBootMedia | None:
+    state = db.get(NetworkBootEnvironment, environment_key)
+    if state is None or state.active_version != version:
+        return None
+    applied = _applied_network_boot_media(
+        db,
+        environment_key=environment_key,
+        version=version,
+    )
+    if applied is not None:
+        return applied
+    return db.execute(
+        select(NetworkBootMedia).where(
+            NetworkBootMedia.environment_key == environment_key,
+            NetworkBootMedia.version == version,
+        )
+    ).scalar_one_or_none()
+
+
 def _active_media(
     db: Session,
-) -> dict[str, NetworkBootMedia]:
+) -> dict[str, ActiveNetworkBootMedia | NetworkBootMedia]:
     states = ensure_environment_rows(db)
-    result: dict[str, NetworkBootMedia] = {}
+    result: dict[str, ActiveNetworkBootMedia | NetworkBootMedia] = {}
     for state in states:
         if not state.active_version:
             continue
-        media = db.execute(
-            select(NetworkBootMedia).where(
-                NetworkBootMedia.environment_key == state.key,
-                NetworkBootMedia.version == state.active_version,
-            )
-        ).scalar_one_or_none()
+        media = active_network_boot_media(
+            db,
+            environment_key=state.key,
+            version=state.active_version,
+        )
         if media is not None:
             result[state.key] = media
     return result
 
 
 def _applied_esxi_pxe_runtime(db: Session) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    setting = db.execute(
-        select(Setting).where(Setting.key == APPLIANCE_APPLY_BASELINES_KEY)
-    ).scalar_one_or_none()
-    if setting is None:
-        return {}, []
-    try:
-        baselines = json.loads(setting.value or "{}")
-        baseline = baselines.get(NETWORK_BOOT_UNIT_ID)
-        manifest = json.loads(str((baseline or {}).get("config_preview") or "{}"))
-    except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
-        return {}, []
+    manifest = _applied_esxi_pxe_manifest(db)
     if (
-        not isinstance(manifest, dict)
-        or manifest.get("kind") != "atlaso-esxi-pxe"
-        or not isinstance(manifest.get("boot"), dict)
+        not isinstance(manifest.get("boot"), dict)
         or not isinstance(manifest.get("artifacts"), list)
     ):
         return {}, []
@@ -1138,7 +1213,7 @@ def _applied_esxi_pxe_runtime(db: Session) -> tuple[dict[str, Any], list[dict[st
 
 
 def _chain_line(
-    media: NetworkBootMedia,
+    media: ActiveNetworkBootMedia | NetworkBootMedia,
     *,
     http_origin: str,
 ) -> str:
@@ -1971,12 +2046,26 @@ def _verified_cached_media(
     *,
     media_root: Path,
 ) -> Path | None:
-    directory = _enumerated_media_directory(
-        environment_key=media.environment_key,
-        version=media.version,
-        media_root=media_root,
-    )
-    if directory is None or str(directory) != media.installed_path:
+    environment_root = (
+        media_root / normalize_environment_key(media.environment_key)
+    ).resolve()
+    expected = Path(media.installed_path)
+    directory: Path | None = None
+    if environment_root.is_dir() and not environment_root.is_symlink():
+        for index, candidate in enumerate(environment_root.iterdir()):
+            if index >= 256:
+                return None
+            if candidate.is_symlink() or not candidate.is_dir():
+                continue
+            resolved = candidate.resolve()
+            if (
+                resolved.is_relative_to(environment_root)
+                and resolved.parent == environment_root
+                and str(resolved) == str(expected)
+            ):
+                directory = resolved
+                break
+    if directory is None:
         return None
     files = _enumerated_regular_files(directory)
     manifest_path = (files or {}).get("manifest.json")
@@ -2028,6 +2117,7 @@ def _write_media_swap_journal(
     *,
     environment_key: str,
     version: str,
+    final_directory: str,
     transaction_id: str,
     staging_directory: str,
 ) -> Path:
@@ -2036,6 +2126,7 @@ def _write_media_swap_journal(
         json.dump(
             {
                 "environment": environment_key,
+                "final_directory": final_directory,
                 "staging_directory": staging_directory,
                 "version": version,
             },
@@ -2328,7 +2419,17 @@ def _recover_interrupted_network_boot_media_swaps(
                     staging_dir.exists() and not staging_dir.is_dir()
                 ):
                     continue
-            final_dir = environment_root / version
+            final_directory = journal.get("final_directory", version)
+            if (
+                not isinstance(final_directory, str)
+                or re.fullmatch(
+                    rf"{re.escape(version)}(?:\.sha256-[0-9a-f]{{12}})?",
+                    final_directory,
+                )
+                is None
+            ):
+                continue
+            final_dir = environment_root / final_directory
             backup_dir = (
                 environment_root / f".{version}.replacement-{transaction_id}"
             )
@@ -2355,11 +2456,14 @@ def _recover_interrupted_network_boot_media_swaps(
                 _fsync_directory(environment_root)
                 recovered += 1
                 continue
-            installed = _enumerated_media_directory(
-                environment_key=entry.key,
-                version=version,
-                media_root=media_root,
-            )
+            installed = None
+            if final_dir.is_dir() and not final_dir.is_symlink():
+                resolved_final = final_dir.resolve()
+                if (
+                    resolved_final.is_relative_to(environment_root.resolve())
+                    and resolved_final.parent == environment_root.resolve()
+                ):
+                    installed = resolved_final
             if final_dir.is_symlink() or (
                 final_dir.exists() and installed is None
             ):
@@ -2432,10 +2536,18 @@ def sync_network_boot_media(
     raise_if_cancelled()
     version = normalize_version(descriptor["version"])
     entry = CATALOG_BY_KEY[key]
-    final_dir = (media_root / key / version).resolve()
     environment_root = (media_root / key).resolve()
-    if not final_dir.is_relative_to(environment_root):
-        raise ValueError("Boot media install path escaped the environment cache.")
+    state = db.get(NetworkBootEnvironment, key)
+    active_snapshot = (
+        _applied_network_boot_media(
+            db,
+            environment_key=key,
+            version=version,
+        )
+        if state is not None and state.active_version == version
+        else None
+    )
+    final_directory_name = version
     existing = db.execute(
         select(NetworkBootMedia).where(
             NetworkBootMedia.environment_key == key,
@@ -2453,21 +2565,57 @@ def sync_network_boot_media(
                     filesystem_changed=False,
                 )
             return existing
-        replaced_directory = _enumerated_media_directory(
-            environment_key=key,
-            version=version,
-            media_root=media_root,
-        )
+        if (
+            key == "shredos"
+            and state is not None
+            and state.active_version == version
+        ):
+            if (
+                active_snapshot is None
+                or active_snapshot.installed_path != existing.installed_path
+            ):
+                raise ValueError(
+                    "Active same-version media cannot be repaired until its "
+                    "applied snapshot is available."
+                )
+            descriptor_sha256 = str(descriptor.get("sha256") or "")
+            if not re.fullmatch(r"[0-9a-f]{64}", descriptor_sha256):
+                raise ValueError(
+                    "Active same-version media requires a verified replacement digest."
+                )
+            final_directory_name = (
+                f"{version}.sha256-{descriptor_sha256[:12]}"
+            )
+        else:
+            replaced_directory = _enumerated_media_directory(
+                environment_key=key,
+                version=version,
+                media_root=media_root,
+            )
     else:
         replaced_directory = _enumerated_media_directory(
             environment_key=key,
             version=version,
             media_root=media_root,
         )
-        if replaced_directory is None and final_dir.exists():
-            raise ValueError(
-                "Boot media cache path is unsafe; remove it manually before retrying."
-            )
+    final_dir = (environment_root / final_directory_name).resolve()
+    if not final_dir.is_relative_to(environment_root):
+        raise ValueError("Boot media install path escaped the environment cache.")
+    if (
+        existing is None
+        and replaced_directory is None
+        and final_dir.exists()
+    ):
+        raise ValueError(
+            "Boot media cache path is unsafe; remove it manually before retrying."
+        )
+    if (
+        final_directory_name != version
+        and final_dir.exists()
+    ):
+        raise ValueError(
+            "The verified same-version media replacement already exists."
+        )
     media_root_path = environment_root.parent
     media_root_exists = media_root_path.exists()
     media_root_path.mkdir(parents=True, exist_ok=True)
@@ -2654,6 +2802,7 @@ def sync_network_boot_media(
                 final_dir.parent,
                 environment_key=key,
                 version=version,
+                final_directory=final_dir.name,
                 transaction_id=transaction_id,
                 staging_directory=temporary.name,
             )

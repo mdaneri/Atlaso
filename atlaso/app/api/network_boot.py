@@ -40,6 +40,7 @@ from atlaso.app.services.esxi_pxe import (
 )
 from atlaso.app.services.network_boot import (
     acknowledge_inventory_command,
+    active_network_boot_media,
     NETWORK_BOOT_MEDIA_ROOT,
     NETWORK_BOOT_UPLOAD_MAX_BYTES,
     catalog_rows,
@@ -73,17 +74,18 @@ _MEDIA_ENVIRONMENT_ROOTS = {
 _MAX_MEDIA_FILES = 256
 
 
-def _installed_media_directory(media: NetworkBootMedia) -> Path | None:
+def _installed_media_directory(media: Any) -> Path | None:
     environment_root = _MEDIA_ENVIRONMENT_ROOTS.get(media.environment_key)
     if environment_root is None or not environment_root.is_dir():
         return None
     try:
         for candidate in environment_root.iterdir():
-            if candidate.name != media.version or candidate.is_symlink() or not candidate.is_dir():
+            if candidate.is_symlink() or not candidate.is_dir():
                 continue
             resolved = candidate.resolve()
             if (
                 resolved.is_relative_to(environment_root)
+                and resolved.parent == environment_root
                 and str(resolved) == media.installed_path
             ):
                 return resolved
@@ -719,20 +721,13 @@ def network_boot_media_file(
     file_path: str,
     db: Session = Depends(get_db),
 ) -> FileResponse:
-    state = db.get(NetworkBootEnvironment, environment_key)
-    if (
-        state is None
-        or state.active_version != version
-    ):
-        raise HTTPException(status_code=404, detail="Network Boot media is not active.")
-    media = db.execute(
-        select(NetworkBootMedia).where(
-            NetworkBootMedia.environment_key == environment_key,
-            NetworkBootMedia.version == version,
-        )
-    ).scalar_one_or_none()
+    media = active_network_boot_media(
+        db,
+        environment_key=environment_key,
+        version=version,
+    )
     if media is None:
-        raise HTTPException(status_code=404, detail="Network Boot media is not installed.")
+        raise HTTPException(status_code=404, detail="Network Boot media is not active.")
     root = _installed_media_directory(media)
     if root is None:
         raise HTTPException(status_code=404, detail="Network Boot media file not found.")
