@@ -2,8 +2,8 @@
 {% from "partials/resource_wizard.html" import resource_wizard %}
 {% block page_title %}Users{% endblock %}
 {% block content %}
-<section class="split-workspace">
-  <div class="panel wide-panel">
+<section class="split-workspace users-workspace">
+  <div class="panel wide-panel users-main-panel">
     <div class="panel-head">
       <div>
         <h2>Local Users</h2>
@@ -14,7 +14,7 @@
     <div id="users-error" class="alert hidden"></div>
     <div
       id="users-table"
-      class="tabulator-shell"
+      class="tabulator-shell users-grid"
       data-users='{{ users_json | tojson }}'
       data-roles='{{ roles | tojson }}'
       data-shells='{{ shells | tojson }}'
