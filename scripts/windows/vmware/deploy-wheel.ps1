@@ -511,7 +511,7 @@ if (-not $SkipBuild) {
 $resolvedWheelPath = Get-WheelPath -Path $WheelPath -Root $resolvedRepoRoot
 $wheelName = Split-Path -Leaf $resolvedWheelPath
 $runtimeDependencies = @(
-    foreach ($runtimeDependencyPattern in @('authlib-*.whl', 'joserfc-*.whl')) {
+    foreach ($runtimeDependencyPattern in @('authlib-*.whl', 'joserfc-*.whl', 'pycdlib-*.whl')) {
         $runtimeDependency = Get-ChildItem -LiteralPath (Join-Path $resolvedRepoRoot 'dist') -Filter $runtimeDependencyPattern -File |
             Sort-Object LastWriteTime -Descending |
             Select-Object -First 1
@@ -523,8 +523,8 @@ $runtimeDependencies = @(
 )
 $runtimeDependencyPaths = @($runtimeDependencies | Select-Object -ExpandProperty FullName)
 $runtimeDependencyNames = @($runtimeDependencies | Select-Object -ExpandProperty Name)
-if ($runtimeDependencyPaths.Count -ne 2) {
-    throw 'Exactly the Authlib and joserfc runtime dependency wheels are required.'
+if ($runtimeDependencyPaths.Count -ne 3) {
+    throw 'Exactly the Authlib, joserfc, and pycdlib runtime dependency wheels are required.'
 }
 $helperPath = Join-Path $resolvedRepoRoot 'scripts\appliance\atlaso-helper'
 $consoleManagerPath = Join-Path $resolvedRepoRoot 'image\common\systemd\atlaso-console-manager.conf'

@@ -104,6 +104,14 @@ task that:
 5. atomically installs an immutable cache under
    `/var/lib/atlaso/pxe/media/<environment>/<version>`.
 
+ShredOS follows its supported single-kernel PXE procedure. Atlaso resolves the
+full x86-64 non-lite ISO, verifies its release-published SHA-256 digest, and
+uses the pinned `pycdlib` parser to extract only the upstream `/boot/bzImage`
+kernel, stored in Atlaso's cache as `shredos`. The generated `boot.ipxe` loads
+that kernel with `console=tty3 loglevel=3`; Atlaso does not SAN-boot the raw USB
+image. ShredOS uploads therefore accept the authoritative ISO rather than an
+IMG file.
+
 The verified cache is owned by the Atlaso worker account so same-version repair
 can atomically swap and remove its temporary backup without leaving root-owned
 stale media. Before the task commits its database row, Atlaso synchronizes the
@@ -164,7 +172,10 @@ never supplies `autonuke`, device lists, or unattended erase arguments.
 Installed metadata records source, version, license, digest/signature method,
 and verification time. A repeated sync revalidates the cached manifest and
 every boot artifact before reporting success; a missing or corrupt cache is
-replaced from the verified upstream release. Downloaded media and inventory
+replaced from the verified upstream release. This includes replacing a
+same-version legacy or corrupt ShredOS cache with the verified ISO-extracted
+kernel; global appliance apply remains the only activation boundary.
+Downloaded media and inventory
 reports are runtime data and are excluded from settings archives; desired
 environment enablement and version selection are included. Restore and factory
 reset preserve installed-media metadata while clearing active activation state.

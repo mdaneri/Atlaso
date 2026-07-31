@@ -15,7 +15,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - [Services](docs/services/index.md) — configure DNS, identity, storage, network boot, and VCF integrations.
 - [Network Boot](docs/services/ipxe.md) — discover unassigned hardware with
   independently packaged read-only Inventory Linux, download verified package
-  updates, activate interactive maintenance media,
+  updates, activate interactive maintenance media including verified
+  single-kernel ShredOS PXE,
   and retain the ESX scripted-install workflow.
 - [Vaults](docs/services/vaults.md) — scope encrypted VCF and ESX passwords to managed scripts and exact Kickstart
   source markers.

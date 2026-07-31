@@ -22,6 +22,8 @@ from ipaddress import ip_address
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterable
 
+import pycdlib
+from pycdlib import pycdlibexception
 from sqlalchemy import delete, desc, func, select
 from sqlalchemy.orm import Session
 
@@ -62,6 +64,7 @@ NETWORK_BOOT_OVERRIDE_CLAIM_GRACE = timedelta(minutes=5)
 NETWORK_BOOT_MEDIA_ROOT = Path("/var/lib/atlaso/pxe/media")
 NETWORK_BOOT_UPLOAD_ROOT = Path("/var/lib/atlaso/pxe/uploads")
 NETWORK_BOOT_UPLOAD_MAX_BYTES = 2 * 1024 * 1024 * 1024
+NETWORK_BOOT_SHREDOS_KERNEL_MAX_BYTES = 512 * 1024 * 1024
 NETWORK_BOOT_HTTP_ROOT = Path("/var/lib/atlaso/pxe/http")
 NETWORK_BOOT_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/esxi-pxe/atlaso-esxi-pxe.json"
 NETWORK_BOOT_UNIT_ID = "esxi_pxe"
@@ -1141,11 +1144,6 @@ def _chain_line(
 ) -> str:
     manifest = json.loads(media.manifest_json or "{}")
     boot = manifest.get("boot") if isinstance(manifest.get("boot"), dict) else {}
-    if media.environment_key == "shredos":
-        return (
-            "sanboot --no-describe "
-            f"{http_origin}/pxe/media/shredos/{media.version}/shredos.img"
-        )
     kernel = str(boot.get("kernel") or "")
     initrd = str(boot.get("initrd") or "")
     arguments = str(boot.get("arguments") or "").strip()
@@ -1779,14 +1777,15 @@ def _release_descriptor(environment_key: str) -> dict[str, str]:
                 row
                 for row in assets
                 if isinstance(row, dict)
-                and re.search(r"x86-64.*\.img$", str(row.get("name") or ""))
+                and re.search(r"x86-64.*\.iso$", str(row.get("name") or ""))
                 and "lite" not in str(row.get("name") or "").lower()
+                and "plus-partition" not in str(row.get("name") or "").lower()
             ),
             None,
         )
         digest = str((asset or {}).get("digest") or "")
         if not asset or not digest.startswith("sha256:"):
-            raise ValueError("ShredOS stable image does not publish a SHA-256 asset digest.")
+            raise ValueError("ShredOS stable ISO does not publish a SHA-256 asset digest.")
         return {
             "version": str(payload.get("tag_name") or "").removeprefix("v"),
             "filename": str(asset["name"]),
@@ -1818,6 +1817,49 @@ def _extract_zip_allowlist(
             target.chmod(0o644)
             extracted.append(target_name)
     return extracted
+
+
+def _extract_shredos_kernel(
+    archive: Path,
+    destination: Path,
+) -> list[str]:
+    iso = pycdlib.PyCdlib()
+    opened = False
+    try:
+        iso.open(str(archive))
+        opened = True
+        selected: dict[str, str] | None = None
+        record = None
+        for candidate in (
+            {"rr_path": "/boot/bzImage"},
+            {"joliet_path": "/boot/bzImage"},
+            {"iso_path": "/BOOT/BZIMAGE.;1"},
+            {"iso_path": "/BOOT/BZIMAGE;1"},
+        ):
+            try:
+                record = iso.get_record(**candidate)
+            except (pycdlibexception.PyCdlibException, IndexError):
+                continue
+            selected = candidate
+            break
+        if selected is None or record is None or record.is_dir():
+            raise ValueError("ShredOS ISO is missing the /boot/bzImage kernel.")
+        size = int(record.data_length)
+        if size <= 0 or size > NETWORK_BOOT_SHREDOS_KERNEL_MAX_BYTES:
+            raise ValueError("ShredOS kernel size is outside the supported range.")
+        target = destination / "shredos"
+        with target.open("xb") as output:
+            iso.get_file_from_iso_fp(output, **selected)
+        if target.stat().st_size != size:
+            target.unlink(missing_ok=True)
+            raise ValueError("ShredOS kernel extraction was incomplete.")
+        target.chmod(0o644)
+        return ["shredos"]
+    except pycdlibexception.PyCdlibException as exc:
+        raise ValueError("ShredOS release asset is not a valid ISO image.") from exc
+    finally:
+        if opened:
+            iso.close()
 
 
 def _media_boot_manifest(
@@ -1955,6 +1997,11 @@ def _verified_cached_media(
         return None
     artifacts = manifest.get("artifacts")
     if not isinstance(artifacts, dict) or not artifacts:
+        return None
+    if media.environment_key == "shredos" and set(artifacts) != {
+        "boot.ipxe",
+        "shredos",
+    }:
         return None
     for filename, expected_sha256 in artifacts.items():
         if (
@@ -2560,17 +2607,17 @@ def sync_network_boot_media(
                 },
             )
         else:
-            target = staging / "shredos.img"
-            shutil.copy2(artifact, target)
-            target.chmod(0o644)
+            extracted = _extract_shredos_kernel(artifact, staging)
             boot_script = staging / "boot.ipxe"
             boot_script.write_text(
-                "#!ipxe\nsanboot --no-describe "
-                f"/pxe/media/{key}/{version}/shredos.img || exit\n",
+                "#!ipxe\n"
+                f"kernel /pxe/media/{key}/{version}/shredos "
+                "console=tty3 loglevel=3 || exit\n"
+                "boot || exit\n",
                 encoding="utf-8",
             )
             boot_script.chmod(0o644)
-            extracted = ["shredos.img", "boot.ipxe"]
+            extracted.append("boot.ipxe")
         manifest = _media_boot_manifest(key, version, extracted=extracted)
         manifest.update(
             {

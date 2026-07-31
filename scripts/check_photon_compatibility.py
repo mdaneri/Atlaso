@@ -23,6 +23,7 @@ DEPENDENCY_IMPORTS = [
     "jwt",
     "multipart",
     "pydantic_settings",
+    "pycdlib",
     "sqlalchemy",
     "uvicorn",
     "pyVmomi",
