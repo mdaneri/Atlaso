@@ -214,6 +214,7 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     ):
         assert driver in kernel_fragment
     assert "CONFIG_DRM_SIMPLEDRM=y" in kernel_fragment
+    assert "CONFIG_DMI_SYSFS=y" in kernel_fragment
     assert "CONFIG_SYSFB_SIMPLEFB=y" in kernel_fragment
     assert "CONFIG_FRAMEBUFFER_CONSOLE=y" in kernel_fragment
     inventory_defconfig = Path(
