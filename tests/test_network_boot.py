@@ -1191,6 +1191,67 @@ def test_same_version_shredos_repair_serves_applied_snapshot_until_apply(
     assert "immutable" in response.headers["cache-control"]
 
 
+def test_explicit_invalid_runtime_preview_does_not_fall_back_to_desired_media(
+    db_session,
+    tmp_path,
+):
+    installed = tmp_path / "shredos" / "2025.11"
+    installed.mkdir(parents=True)
+    media = record_verified_media(
+        db_session,
+        environment_key="shredos",
+        version="2025.11",
+        source_url="https://example.test/shredos.iso",
+        artifact_sha256="b" * 64,
+        installed_path=str(installed.resolve()),
+        manifest={"boot": {"script": "/pxe/media/shredos/2025.11/boot.ipxe"}},
+    )
+    state = db_session.get(NetworkBootEnvironment, "shredos")
+    assert state is not None
+    state.enabled = True
+    state.desired_version = media.version
+    state.active_version = media.version
+    setting = db_session.execute(
+        select(Setting).where(Setting.key == "appliance_apply.baselines.v1")
+    ).scalar_one_or_none()
+    baselines = json.loads(setting.value) if setting else {}
+    baselines["esxi_pxe"] = {
+        "config_preview": json.dumps(
+            {
+                "kind": "atlaso-esxi-pxe",
+                "schema_version": 1,
+                "network_boot": {
+                    "schema_version": 1,
+                    "environments": [
+                        {
+                            "key": "shredos",
+                            "enabled": True,
+                            "desired_version": media.version,
+                            "installed_path": media.installed_path,
+                            "manifest": json.loads(media.manifest_json),
+                        }
+                    ],
+                },
+            }
+        ),
+        "runtime_config_preview": "",
+    }
+    if setting is None:
+        setting = Setting(
+            key="appliance_apply.baselines.v1",
+            value=json.dumps(baselines),
+        )
+    else:
+        setting.value = json.dumps(baselines)
+    db_session.add(setting)
+    db_session.commit()
+
+    assert network_boot.active_network_boot_media(
+        db_session,
+        environment_key="shredos",
+    ) is None
+
+
 def test_prune_superseded_shredos_media_waits_for_applied_manifest(
     db_session,
     tmp_path,

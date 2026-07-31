@@ -1133,6 +1133,19 @@ def _applied_esxi_pxe_manifest(db: Session) -> dict[str, Any]:
     return manifest
 
 
+def _has_explicit_esxi_pxe_runtime_preview(db: Session) -> bool:
+    setting = db.execute(
+        select(Setting).where(Setting.key == APPLIANCE_APPLY_BASELINES_KEY)
+    ).scalar_one_or_none()
+    if setting is None:
+        return False
+    try:
+        baseline = json.loads(setting.value or "{}").get(NETWORK_BOOT_UNIT_ID)
+    except (AttributeError, TypeError, json.JSONDecodeError):
+        return False
+    return isinstance(baseline, dict) and "runtime_config_preview" in baseline
+
+
 def _applied_network_boot_media(
     db: Session,
     *,
@@ -1189,6 +1202,8 @@ def active_network_boot_media(
             if not public_version or applied.public_version == public_version
             else None
         )
+    if _has_explicit_esxi_pxe_runtime_preview(db):
+        return None
     media = db.execute(
         select(NetworkBootMedia).where(
             NetworkBootMedia.environment_key == environment_key,
