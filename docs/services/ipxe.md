@@ -124,6 +124,9 @@ repeated repairs from consuming appliance storage. A successful sync alone
 cannot expose the new kernel. If a pending replacement becomes corrupt before
 apply, another repair publishes a new immutable identity and removes the
 superseded pending directory only after the replacement database row commits.
+Dry-run appliance validation may update the desired-state comparison baseline,
+but it retains the prior real-apply runtime manifest and cannot activate a
+pending replacement.
 The replacement's generated boot
 paths include the digest-qualified directory identity, so year-long immutable
 HTTP caching never assigns different bytes to the same public URL. Before the

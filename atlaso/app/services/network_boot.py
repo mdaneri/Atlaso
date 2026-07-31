@@ -1118,7 +1118,11 @@ def _applied_esxi_pxe_manifest(db: Session) -> dict[str, Any]:
     try:
         baselines = json.loads(setting.value or "{}")
         baseline = baselines.get(NETWORK_BOOT_UNIT_ID)
-        manifest = json.loads(str((baseline or {}).get("config_preview") or "{}"))
+        runtime_preview = (baseline or {}).get(
+            "runtime_config_preview",
+            (baseline or {}).get("config_preview"),
+        )
+        manifest = json.loads(str(runtime_preview or "{}"))
     except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
         return {}
     if (

@@ -9610,13 +9610,17 @@ def update_appliance_apply_baselines(db: Session, units: list[dict[str, Any]], s
     for unit in units:
         if unit["id"] not in selected_ids:
             continue
-        baselines[unit["id"]] = {
+        baseline = {
             "snapshot_hash": unit["snapshot_hash"],
             "config_path": unit["config_path"],
             "config_preview": unit["config_preview"],
             "summary": unit["summary"],
             "applied_at": applied_at,
         }
+        runtime_config_preview = unit.get("runtime_config_preview")
+        if isinstance(runtime_config_preview, str):
+            baseline["runtime_config_preview"] = runtime_config_preview
+        baselines[unit["id"]] = baseline
     save_appliance_apply_baselines(db, baselines)
 
 
@@ -11438,6 +11442,28 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                     db.expire_all()
                     refreshed_units = appliance_apply_units(db, reconcile=False)
                     applied_unit = next((candidate for candidate in refreshed_units if candidate["id"] == unit["id"]), unit)
+                    if unit["id"] == "esxi_pxe":
+                        if result.get("dry_run"):
+                            previous_baseline = load_appliance_apply_baselines(db).get(
+                                "esxi_pxe",
+                                {},
+                            )
+                            if not isinstance(previous_baseline, dict):
+                                previous_baseline = {}
+                            runtime_config_preview = str(
+                                previous_baseline.get(
+                                    "runtime_config_preview",
+                                    previous_baseline.get("config_preview", ""),
+                                )
+                            )
+                        else:
+                            runtime_config_preview = str(
+                                applied_unit["config_preview"]
+                            )
+                        applied_unit = {
+                            **applied_unit,
+                            "runtime_config_preview": runtime_config_preview,
+                        }
                     update_appliance_apply_baselines(db, [applied_unit], {unit["id"]})
                 else:
                     failed = True

@@ -12515,9 +12515,11 @@ def test_successful_appliance_apply_baseline_uses_post_apply_snapshot(client, mo
         assert stored["summary"] == ["tool version 9.1.0"]
 
 
+@pytest.mark.parametrize("dry_run", [False, True])
 def test_successful_esxi_pxe_apply_marks_network_boot_state_in_job_session(
     client,
     monkeypatch,
+    dry_run,
 ):
     import json
 
@@ -12529,6 +12531,22 @@ def test_successful_esxi_pxe_apply_marks_network_boot_state_in_job_session(
     from atlaso.app.models import Job, JobStatus, JobStep, NetworkBootEnvironment
     from atlaso.app.services.network_boot import ensure_environment_rows
 
+    previous_runtime_preview = json.dumps(
+        {
+            "kind": "atlaso-esxi-pxe",
+            "schema_version": 1,
+            "network_boot": {"schema_version": 1, "environments": []},
+            "marker": "previous-real-apply",
+        }
+    )
+    desired_preview = json.dumps(
+        {
+            "kind": "atlaso-esxi-pxe",
+            "schema_version": 1,
+            "network_boot": {"schema_version": 1, "environments": []},
+            "marker": "current-desired-state",
+        }
+    )
     unit = {
         "id": "esxi_pxe",
         "label": "ESXi PXE",
@@ -12537,7 +12555,7 @@ def test_successful_esxi_pxe_apply_marks_network_boot_state_in_job_session(
         "validation_errors": [],
         "validation_warnings": [],
         "config_path": "/var/lib/atlaso/apply/esxi-pxe/atlaso-esxi-pxe.json",
-        "config_preview": "{}",
+        "config_preview": desired_preview,
         "config_diff": "",
         "context": {},
     }
@@ -12555,12 +12573,20 @@ def test_successful_esxi_pxe_apply_marks_network_boot_state_in_job_session(
         "dry_run": False,
     }
     with SessionLocal() as db:
+        ui.save_appliance_apply_baselines(
+            db,
+            {
+                "esxi_pxe": {
+                    "config_preview": previous_runtime_preview,
+                }
+            },
+        )
         states = {row.key: row for row in ensure_environment_rows(db)}
         states["memtest86plus"].enabled = True
         states["memtest86plus"].desired_version = "8.10"
         states["memtest86plus"].active_version = ""
         job = Job(
-            id="job_network_boot_applied_state",
+            id=f"job_network_boot_applied_state_{dry_run}",
             type="appliance-apply",
             status=JobStatus.PENDING.value,
             created_by="admin",
@@ -12589,7 +12615,7 @@ def test_successful_esxi_pxe_apply_marks_network_boot_state_in_job_session(
             "label": "ESXi PXE",
             "status": "succeeded",
             "success": True,
-            "dry_run": False,
+            "dry_run": dry_run,
             "commands": [],
             "summary": unit["summary"],
             "validation_errors": [],
@@ -12608,10 +12634,10 @@ def test_successful_esxi_pxe_apply_marks_network_boot_state_in_job_session(
         lambda _db: prune_calls.append("after-apply") or 0,
     )
 
-    ui.run_appliance_apply_job("job_network_boot_applied_state")
+    ui.run_appliance_apply_job(f"job_network_boot_applied_state_{dry_run}")
 
     with SessionLocal() as db:
-        job = db.get(Job, "job_network_boot_applied_state")
+        job = db.get(Job, f"job_network_boot_applied_state_{dry_run}")
         state = db.scalar(
             select(NetworkBootEnvironment).where(
                 NetworkBootEnvironment.key == "memtest86plus"
@@ -12620,8 +12646,16 @@ def test_successful_esxi_pxe_apply_marks_network_boot_state_in_job_session(
         assert job is not None
         assert job.status == JobStatus.SUCCEEDED.value
         assert state is not None
-        assert state.active_version == "8.10"
-        assert prune_calls == ["after-apply"]
+        assert state.active_version == ("" if dry_run else "8.10")
+        assert prune_calls == ([] if dry_run else ["after-apply"])
+        baseline = ui.load_appliance_apply_baselines(db)["esxi_pxe"]
+        assert baseline["config_preview"] == desired_preview
+        assert baseline["runtime_config_preview"] == (
+            previous_runtime_preview if dry_run else desired_preview
+        )
+        assert network_boot._applied_esxi_pxe_manifest(db)["marker"] == (
+            "previous-real-apply" if dry_run else "current-desired-state"
+        )
 
 
 def test_appliance_apply_parent_cancel_finishes_current_step_and_skips_remaining(client, monkeypatch):
