@@ -333,6 +333,9 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert "Set-PowerCLIConfiguration -ParticipateInCeip $false -Scope AllUsers -Confirm:$false" in script
     assert "Get-PowerCLIConfiguration -Scope AllUsers" in script
     assert "ATLASO_POWERCLI_MODULE_SOURCE" in script
+    assert 'awk \'$2 == "/tmp" { print $3; exit }\' /proc/mounts' in script
+    assert "mount -o remount,size=4G /tmp" in script
+    assert script.index("mount -o remount,size=4G /tmp") < script.index("Install-Module -Name VCF.PowerCLI")
     assert "chmod 0755 /usr/local/share/powershell /usr/local/share/powershell/Modules" in script
     assert "chmod -R a+rX,go-w /usr/local/share/powershell/Modules" in script
     assert "ipxe" in script
@@ -660,6 +663,8 @@ def test_photon_image_optional_pip_global_index_configuration():
         assert 'destination = "/tmp/atlaso-src/scripts/version.py"' in packer_template
         assert 'source      = "../../scripts/run_tdnf_with_progress.py"' in packer_template
         assert 'destination = "/tmp/atlaso-src/scripts/run_tdnf_with_progress.py"' in packer_template
+        assert 'source      = "../inventory-linux/README.md"' in packer_template
+        assert 'destination = "/tmp/atlaso-src/image/inventory-linux/README.md"' in packer_template
         assert 'source      = "../common/update-trust"' in packer_template
         assert 'destination = "/tmp/atlaso-src/image/common/update-trust"' in packer_template
     assert "Atlaso release trust source directory is missing" in script

@@ -174,7 +174,8 @@ the bootstrap release directory. Missing, unreadable, malformed, or invalid vers
 specific version-policy error instead of an ambiguous shell match failure. Both Photon Packer targets stage
 `requirements-appliance.lock` with the application source so bootstrap dependency installation can retain
 `--require-hashes`; a missing staged lock fails the image rather than falling back to unpinned dependencies. They also
-stage the third-party notice generator and its vendored-component inventory so the image can generate the required
+stage the third-party notice generator, its vendored-component inventory, and the referenced Inventory Linux README so
+the image can generate the required
 Python, Photon RPM, and bundled-component notice at build time. Installed Python inventory reads only top-level
 virtual-environment distributions; package-internal vendored metadata is not treated as a separately installed locked
 dependency. Long TDNF operations capture their raw transaction output and emit one compact Packer status line every 30
@@ -812,7 +813,9 @@ The MVP follows these boundaries:
   Python `vcf-sdk` `9.1.0.0`. It keeps the system module tree root-owned and read-only to non-root users, verifies
   `Connect-VIServer` from the bootstrap administrator's unprivileged PowerShell session, records tool versions in
   `/etc/atlaso/build-info`, and creates that OS account under `/var/lib/atlaso/users` with `/usr/bin/pwsh`. Appliance
-  Update preserves the same permissions after managed PowerShell module installs. PowerCLI is for interactive
+  Update preserves the same permissions after managed PowerShell module installs. Before a PSGallery install, shared
+  provisioning expands the build-time `/tmp` tmpfs to 4 GiB so dependency extraction does not exhaust Photon's default
+  capacity; the deployed appliance returns to normal `/tmp` sizing after reboot. PowerCLI is for interactive
   administration and reviewed future workflows; the web service does not expose arbitrary PowerShell execution.
 - Local Users apply stages `/var/lib/atlaso/apply/local-users/atlaso-users.json`, creates or updates enabled local users
   under `/var/lib/atlaso/users` with their desired shell, removes disabled or removed managed users with `userdel -r`,

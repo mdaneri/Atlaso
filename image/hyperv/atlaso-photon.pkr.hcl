@@ -234,6 +234,11 @@ build {
   }
 
   provisioner "file" {
+    source      = "../inventory-linux/README.md"
+    destination = "/tmp/atlaso-src/image/inventory-linux/README.md"
+  }
+
+  provisioner "file" {
     source      = "systemd"
     destination = "/tmp/atlaso-src/image/hyperv/systemd"
   }

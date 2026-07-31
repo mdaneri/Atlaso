@@ -109,6 +109,10 @@ if [ -n "$ATLASO_POWERCLI_MODULE_SOURCE" ]; then
   install -d -o root -g root -m 0755 /usr/local/share/powershell/Modules
   cp -R "$ATLASO_POWERCLI_MODULE_SOURCE"/. /usr/local/share/powershell/Modules/
 else
+  if [ "$(awk '$2 == "/tmp" { print $3; exit }' /proc/mounts)" = "tmpfs" ]; then
+    log_step "expanding build-time /tmp tmpfs to 4 GiB for VCF PowerCLI"
+    mount -o remount,size=4G /tmp
+  fi
   pwsh -NoLogo -NoProfile -NonInteractive -Command \
     '$ErrorActionPreference = "Stop"; Set-PSRepository -Name PSGallery -InstallationPolicy Trusted; try { Install-Module -Name VCF.PowerCLI -RequiredVersion $env:ATLASO_POWERCLI_VERSION -Repository PSGallery -Scope AllUsers -Force -AllowClobber -AcceptLicense -Confirm:$false } finally { Set-PSRepository -Name PSGallery -InstallationPolicy Untrusted }'
 fi

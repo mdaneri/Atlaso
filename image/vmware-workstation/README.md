@@ -6,6 +6,9 @@ also disables and verifies PowerCLI CEIP participation at `AllUsers` scope; Appl
 preference after deployment without product-specific prompts. The system module tree remains root-owned and writable
 only by root, while every local `/usr/bin/pwsh` user can read and import its modules. Set
 `ATLASO_POWERCLI_MODULE_SOURCE` to a pre-staged module directory for offline image builds; otherwise PSGallery is used.
+Before a PSGallery install, the shared provisioner expands Photon's build-time `/tmp` tmpfs to 4 GiB so PowerCLI's
+dependency extraction does not exhaust the default memory-backed temporary filesystem. The deployed appliance returns
+to Photon's normal `/tmp` sizing after reboot.
 
 This target builds a Photon OS 5.0 VMware Workstation VMX/VMDK appliance with the same Atlaso control plane provisioning
 used by the Hyper-V image. Fresh appliances enable the integrated CA on deployed-VM first boot, serve the management
@@ -44,8 +47,9 @@ log reports the specific version-policy error. The remastered kickstart disables
 password-authenticated SSH for Packer after the installed-system boot. The Photon root/build password remains separate
 from the Atlaso web bootstrap administrator password. The template also stages `requirements-appliance.lock` with the
 application source so bootstrap dependency installation retains hash verification instead of falling back to unpinned
-packages. It stages the third-party notice generator and vendored-component inventory as mandatory build inputs rather
-than skipping notice generation when either is missing. The shared PowerShell profile is staged with the other common
+packages. It stages the third-party notice generator, vendored-component inventory, and Inventory Linux README used by
+that inventory as mandatory build inputs rather than skipping notice generation when any input is missing. The shared
+PowerShell profile is staged with the other common
 image assets so provisioning can install the interactive `Get-AtlasoVault` helper. Notice lock verification inventories
 only top-level virtual-environment distributions and ignores package-internal vendored metadata. Long TDNF operations
 emit compact 30-second heartbeats with elapsed time and cache size instead of streaming terminal progress redraws
