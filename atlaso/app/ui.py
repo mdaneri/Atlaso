@@ -817,6 +817,7 @@ def user_to_dict(user: User, current_user_id: int | None = None, os_status: dict
         "created_at": user.created_at.strftime("%Y-%m-%d"),
         "os_sync_status": local_user_sync_rows([user])[0]["sync_status"],
         "os_password_pending": has_pending_os_password(user),
+        "os_password_available": bool(has_pending_os_password(user) or user.os_password_applied_at),
         "os_account_state": os_state,
         "os_account_detail": os_detail,
         "os_unlock_available": os_state in {"locked", "faillock blocked"},
@@ -3403,6 +3404,17 @@ def public_services_context(db: Session, *, reconcile: bool = True) -> dict[str,
         )
     )
     validation_errors = []
+    if depot_settings.enabled and not depot_settings.allow_unauthenticated_access:
+        depot_user = db.get(User, depot_settings.http_user_id) if depot_settings.http_user_id else None
+        if depot_user is None:
+            validation_errors.append(
+                "Public Services cannot publish VCF Offline Depot until an HTTP user is selected."
+            )
+        elif not depot_user.enabled:
+            validation_errors.append(
+                f"Public Services cannot publish VCF Offline Depot while HTTP user {depot_user.username} is disabled. "
+                "Enable the user and apply Local Users first."
+            )
     if terminal_extra_requested and not terminal_https_ready:
         validation_errors.append(
             "Web terminal public listeners require valid Management HTTPS and an issued appliance HTTPS certificate. Apply Certificate Authority and Appliance Settings first."
@@ -11555,6 +11567,35 @@ def submit_appliance_apply(
             for unit_id in ldap_related_units
             if unit_id in unit_map and unit_map[unit_id]["changed"]
         )
+    depot_context_for_apply = unit_map.get("vcf_offline_depot", {}).get("context", {})
+    depot_settings_for_apply = depot_context_for_apply.get("vcf_depot_settings")
+    depot_publishing_units = {"vcf_offline_depot", "public_services"}
+    depot_http_user_id = getattr(depot_settings_for_apply, "http_user_id", None)
+    local_users_for_apply = unit_map.get("local_users", {}).get("context", {}).get("local_users", [])
+    depot_http_user_for_apply = next(
+        (user for user in local_users_for_apply if user.id == depot_http_user_id),
+        None,
+    )
+    depot_http_user_has_pending_state = bool(
+        depot_http_user_for_apply
+        and (
+            depot_http_user_for_apply.os_sync_status != "applied"
+            or depot_http_user_for_apply.os_unlock_requested_at
+            or has_pending_os_password(depot_http_user_for_apply)
+        )
+    )
+    local_users_required_for_authenticated_depot = bool(
+        selected_ids & depot_publishing_units
+        and getattr(depot_settings_for_apply, "enabled", False)
+        and not getattr(depot_settings_for_apply, "allow_unauthenticated_access", False)
+        and depot_http_user_has_pending_state
+    )
+    if (
+        local_users_required_for_authenticated_depot
+        and "local_users" in unit_map
+        and unit_map["local_users"]["changed"]
+    ):
+        selected_ids.add("local_users")
     if not selected_ids:
         detail = "Select at least one appliance change to submit."
         return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
