@@ -7,6 +7,9 @@
 *.cmd text eol=crlf
 *.bat text eol=crlf
 
+# Buildroot parses or copies every external-tree input verbatim.
+image/inventory-linux/external/** text eol=lf
+
 image/hyperv/sudoers.d/* text eol=lf
 image/hyperv/systemd/* text eol=lf
 scripts/appliance/atlaso-helper text eol=lf
