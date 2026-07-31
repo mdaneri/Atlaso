@@ -1026,6 +1026,71 @@ def test_esxi_pxe_helper_validates_network_boot_media_hashes(monkeypatch, tmp_pa
     assert any("failed SHA-256 verification" in error for error in errors)
 
 
+def test_esxi_pxe_helper_accepts_verified_shredos_digest_directory(
+    monkeypatch,
+    tmp_path,
+):
+    helper = load_helper_module()
+    media_root = tmp_path / "media"
+    http_root = tmp_path / "http"
+    version = "2025.11"
+    artifact_sha256 = "b" * 64
+    installed = (
+        media_root
+        / "shredos"
+        / f"{version}.sha256-{artifact_sha256[:12]}"
+    )
+    installed.mkdir(parents=True)
+    artifact = installed / "shredos"
+    artifact.write_bytes(b"verified ShredOS kernel")
+    manifest = {
+        "schema_version": 1,
+        "environment": "shredos",
+        "artifacts": {
+            "shredos": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+        },
+    }
+    (installed / "manifest.json").write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "NETWORK_BOOT_MEDIA_ROOT", media_root)
+    monkeypatch.setattr(helper, "NETWORK_BOOT_HTTP_ROOT", http_root)
+    environment = {
+        "key": "shredos",
+        "enabled": True,
+        "desired_version": version,
+        "installed_path": str(installed),
+        "artifact_sha256": artifact_sha256,
+        "manifest": manifest,
+    }
+    payload = {
+        "boot": {"enabled": False},
+        "network_boot": {
+            "media_root": str(media_root),
+            "http_root": str(http_root),
+            "environments": [environment],
+        },
+        "kickstarts": [],
+        "hosts": [],
+        "artifacts": [],
+    }
+
+    errors = helper._esxi_pxe_manifest_errors(payload)
+
+    assert not [error for error in errors if error.startswith("Network Boot")]
+
+    environment["installed_path"] = str(
+        media_root / "shredos" / f"{version}.sha256-{'c' * 12}"
+    )
+    errors = helper._esxi_pxe_manifest_errors(payload)
+
+    assert any(
+        "installed path must be the immutable desired version" in error
+        for error in errors
+    )
+
+
 def test_esxi_pxe_helper_activates_and_disables_network_boot_media(monkeypatch, tmp_path):
     helper = load_helper_module()
     media_root = tmp_path / "media"

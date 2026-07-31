@@ -1177,10 +1177,15 @@ def test_same_version_shredos_repair_serves_applied_snapshot_until_apply(
         ],
     )
 
-    response = client.get("/pxe/media/shredos/2025.11/boot.ipxe")
+    stale_response = client.get("/pxe/media/shredos/2025.11/boot.ipxe")
+    response = client.get(
+        f"/pxe/media/shredos/{replacement.name}/boot.ipxe"
+    )
 
+    assert stale_response.status_code == 404
     assert response.status_code == 200, response.text
     assert response.content == b"verified replacement script"
+    assert "immutable" in response.headers["cache-control"]
 
 
 @pytest.mark.parametrize("environment_key", ["gparted", "clonezilla"])
@@ -2269,6 +2274,65 @@ def test_interrupted_media_swap_recovery_finalizes_committed_version(
     assert not journal.exists()
 
 
+def test_recovery_removes_uncommitted_digest_directory_for_valid_old_row(
+    db_session,
+    tmp_path,
+):
+    media_root = tmp_path / "media"
+    environment = "memtest86plus"
+    version = "2025.11"
+    transaction_id = "f" * 32
+    environment_root = media_root / environment
+    applied_dir = environment_root / version
+    replacement_dir = environment_root / (
+        f"{version}.sha256-{'b' * 12}"
+    )
+    _write_test_media_cache(
+        applied_dir,
+        environment=environment,
+        version=version,
+        content=b"applied media",
+        artifact_sha256="a" * 64,
+    )
+    _write_test_media_cache(
+        replacement_dir,
+        environment=environment,
+        version=version,
+        content=b"uncommitted replacement",
+        artifact_sha256="b" * 64,
+    )
+    record_verified_media(
+        db_session,
+        environment_key=environment,
+        version=version,
+        source_url="https://example.test/memtest.zip",
+        artifact_sha256="a" * 64,
+        installed_path=str(applied_dir.resolve()),
+        manifest={"schema_version": 1},
+    )
+    db_session.commit()
+    journal = environment_root / f".atlaso-media-sync-{transaction_id}.json"
+    journal.write_text(
+        json.dumps(
+            {
+                "environment": environment,
+                "final_directory": replacement_dir.name,
+                "version": version,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert network_boot.recover_interrupted_network_boot_media_swaps(
+        db_session,
+        media_root=media_root,
+    ) == 1
+
+    assert (applied_dir / "artifact.bin").read_bytes() == b"applied media"
+    assert not replacement_dir.exists()
+    assert not journal.exists()
+
+
 def test_interrupted_new_media_install_recovery_removes_uncommitted_version(
     db_session,
     tmp_path,
@@ -2706,16 +2770,18 @@ def test_media_sync_replaces_verified_legacy_shredos_image_cache(
     assert (replacement_directory / "shredos").read_bytes() == replacement
     assert (replacement_directory / "boot.ipxe").read_text(encoding="utf-8") == (
         "#!ipxe\n"
-        "kernel /pxe/media/shredos/2025.11/shredos "
+        f"kernel /pxe/media/shredos/{replacement_directory.name}/shredos "
         "console=tty3 loglevel=3 || exit\n"
         "boot || exit\n"
     )
     assert sorted(manifest["artifacts"]) == ["boot.ipxe", "shredos"]
+    assert manifest["boot"]["script"] == (
+        f"/pxe/media/shredos/{replacement_directory.name}/boot.ipxe"
+    )
 
     active = network_boot.active_network_boot_media(
         db_session,
         environment_key="shredos",
-        version="2025.11",
     )
     assert active is not None
     assert active.installed_path == str(installed.resolve())
@@ -2737,10 +2803,15 @@ def test_media_sync_replaces_verified_legacy_shredos_image_cache(
     active = network_boot.active_network_boot_media(
         db_session,
         environment_key="shredos",
-        version="2025.11",
     )
     assert active is not None
     assert active.installed_path == media.installed_path
+    menu = render_network_boot_menu(db_session)
+    assert (
+        f"/pxe/media/shredos/{replacement_directory.name}/boot.ipxe"
+        in menu
+    )
+    assert "/pxe/media/shredos/2025.11/boot.ipxe" not in menu
 
 
 def test_media_sync_verifies_uploaded_artifact_without_downloading_it(

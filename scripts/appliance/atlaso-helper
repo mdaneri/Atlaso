@@ -1330,7 +1330,21 @@ def _esxi_pxe_manifest_errors(payload: dict) -> list[str]:
                     continue
                 installed_path = Path(installed_path_value).resolve()
                 expected_root = (NETWORK_BOOT_MEDIA_ROOT / key).resolve()
-                if not installed_path.is_relative_to(expected_root) or installed_path.name != desired_version:
+                artifact_sha256 = str(
+                    environment.get("artifact_sha256") or ""
+                ).lower()
+                allowed_directory_names = {desired_version}
+                if (
+                    key == "shredos"
+                    and re.fullmatch(r"[0-9a-f]{64}", artifact_sha256)
+                ):
+                    allowed_directory_names.add(
+                        f"{desired_version}.sha256-{artifact_sha256[:12]}"
+                    )
+                if (
+                    installed_path.parent != expected_root
+                    or installed_path.name not in allowed_directory_names
+                ):
                     errors.append(
                         f"Network Boot environment {key} installed path must be the immutable desired version under {expected_root}."
                     )

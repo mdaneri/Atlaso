@@ -118,9 +118,11 @@ stale media. When the same ShredOS version is already active, Atlaso publishes
 the repaired payload under a digest-qualified immutable directory and retains
 the last applied directory and manifest for live clients. Global appliance
 apply moves the applied snapshot to the replacement; a successful sync alone
-cannot expose the new kernel. Before the task commits its database row, Atlaso
-synchronizes the
-staged artifacts, their directories, and the environment directory containing
+cannot expose the new kernel. The replacement's generated boot paths include
+the digest-qualified directory identity, so year-long immutable HTTP caching
+never assigns different bytes to the same public URL. Before the task commits
+its database row, Atlaso synchronizes the staged artifacts, their directories,
+and the environment directory containing
 the published rename to stable storage. First-time environment creation also
 synchronizes its media-root parent. A fixed-root transaction journal lets
 application startup finish or roll back an interrupted swap before it exposes

@@ -724,7 +724,7 @@ def network_boot_media_file(
     media = active_network_boot_media(
         db,
         environment_key=environment_key,
-        version=version,
+        public_version=version,
     )
     if media is None:
         raise HTTPException(status_code=404, detail="Network Boot media is not active.")

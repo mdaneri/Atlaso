@@ -163,6 +163,7 @@ class NetworkBootMediaSyncCancelled(RuntimeError):
 class ActiveNetworkBootMedia:
     environment_key: str
     version: str
+    public_version: str
     installed_path: str
     manifest_json: str
     artifact_sha256: str = ""
@@ -1152,6 +1153,7 @@ def _applied_network_boot_media(
         return ActiveNetworkBootMedia(
             environment_key=environment_key,
             version=version,
+            public_version=Path(row["installed_path"]).name,
             installed_path=row["installed_path"],
             manifest_json=json.dumps(row["manifest"], sort_keys=True),
             artifact_sha256=str(row.get("artifact_sha256") or ""),
@@ -1163,24 +1165,36 @@ def active_network_boot_media(
     db: Session,
     *,
     environment_key: str,
-    version: str,
+    public_version: str = "",
 ) -> ActiveNetworkBootMedia | NetworkBootMedia | None:
     state = db.get(NetworkBootEnvironment, environment_key)
-    if state is None or state.active_version != version:
+    if state is None or not state.active_version:
         return None
     applied = _applied_network_boot_media(
         db,
         environment_key=environment_key,
-        version=version,
+        version=state.active_version,
     )
     if applied is not None:
-        return applied
-    return db.execute(
+        return (
+            applied
+            if not public_version or applied.public_version == public_version
+            else None
+        )
+    media = db.execute(
         select(NetworkBootMedia).where(
             NetworkBootMedia.environment_key == environment_key,
-            NetworkBootMedia.version == version,
+            NetworkBootMedia.version == state.active_version,
         )
     ).scalar_one_or_none()
+    if media is None:
+        return None
+    installed_name = Path(media.installed_path).name
+    return (
+        media
+        if not public_version or installed_name == public_version
+        else None
+    )
 
 
 def _active_media(
@@ -1194,7 +1208,6 @@ def _active_media(
         media = active_network_boot_media(
             db,
             environment_key=state.key,
-            version=state.active_version,
         )
         if media is not None:
             result[state.key] = media
@@ -2439,9 +2452,14 @@ def _recover_interrupted_network_boot_media_swaps(
                     NetworkBootMedia.version == version,
                 )
             ).scalar_one_or_none()
+            verified_directory = (
+                _verified_cached_media(media, media_root=media_root)
+                if media is not None
+                else None
+            )
             if (
-                media is not None
-                and _verified_cached_media(media, media_root=media_root) is not None
+                verified_directory is not None
+                and verified_directory == final_dir.resolve()
             ):
                 if (
                     backup_dir.exists()
@@ -2759,14 +2777,18 @@ def sync_network_boot_media(
             boot_script = staging / "boot.ipxe"
             boot_script.write_text(
                 "#!ipxe\n"
-                f"kernel /pxe/media/{key}/{version}/shredos "
+                f"kernel /pxe/media/{key}/{final_directory_name}/shredos "
                 "console=tty3 loglevel=3 || exit\n"
                 "boot || exit\n",
                 encoding="utf-8",
             )
             boot_script.chmod(0o644)
             extracted.append("boot.ipxe")
-        manifest = _media_boot_manifest(key, version, extracted=extracted)
+        manifest = _media_boot_manifest(
+            key,
+            final_directory_name,
+            extracted=extracted,
+        )
         manifest.update(
             {
                 "kind": "atlaso-network-boot-media",
