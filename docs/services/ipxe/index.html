@@ -4925,6 +4925,8 @@ credential values. Atlaso validates every referenced vault, key, and subkey when
 enabled assigned host requests the dynamic response. Source downloads and previews retain the marker, missing or
 renamed references fail closed, and dynamic responses disable caching. See <a href="../vaults/">Vaults</a> for marker examples,
 URI ordering, and secret-handling boundaries.</p>
+<p>The management UI reports invalid Kickstart references and uploads with bounded
+operator guidance and does not render raw backend exception text.</p>
 <p>Define non-secret custom values in the <strong>Custom Variables</strong> tab before <strong>Installer ISOs</strong>. The final <strong>+ Add custom
 variable</strong> control in the ESXi PXE tablist opens a two-step Definition and Review wizard; double-clicking an existing
 row or choosing <strong>Edit</strong> from its context menu opens the same wizard, while <strong>Remove</strong> deletes the definition after
