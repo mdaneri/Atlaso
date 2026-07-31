@@ -1157,8 +1157,9 @@ If you want the helper to resolve the guest IP from VMware Tools, pass the VMX p
 ```
 
 Do not pipe the VMX path or put it on a separate line by itself; PowerShell will try to execute the `.vmx` file. The
-helper builds `python -m pip wheel . -w dist`, uploads the latest `atlaso-*.whl` and the OIDC `Authlib` runtime wheel,
-installs both into `/opt/atlaso/.venv`, syncs `scripts/appliance/atlaso-helper` to `/opt/atlaso/bin/atlaso-helper`,
+helper builds `python -m pip wheel . -w dist`, uploads the latest `atlaso-*.whl` plus the pinned `Authlib`, `joserfc`,
+and `pycdlib` runtime wheels, installs them into `/opt/atlaso/.venv`, syncs `scripts/appliance/atlaso-helper` to
+`/opt/atlaso/bin/atlaso-helper`,
 builds and installs the independently versioned Inventory Linux package from `image/inventory-linux/output`, restores
 virtualenv permissions, restarts `atlaso.service`, and verifies both guest loopback and host-facing
 `/openapi.json`. With `-SshPassword`, the helper uses the local Python runtime and Paramiko so SSH and sudo do not

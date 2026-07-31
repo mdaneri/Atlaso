@@ -22,6 +22,8 @@ from ipaddress import ip_address
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterable
 
+import pycdlib
+from pycdlib import pycdlibexception
 from sqlalchemy import delete, desc, func, select
 from sqlalchemy.orm import Session
 
@@ -62,6 +64,7 @@ NETWORK_BOOT_OVERRIDE_CLAIM_GRACE = timedelta(minutes=5)
 NETWORK_BOOT_MEDIA_ROOT = Path("/var/lib/atlaso/pxe/media")
 NETWORK_BOOT_UPLOAD_ROOT = Path("/var/lib/atlaso/pxe/uploads")
 NETWORK_BOOT_UPLOAD_MAX_BYTES = 2 * 1024 * 1024 * 1024
+NETWORK_BOOT_SHREDOS_KERNEL_MAX_BYTES = 512 * 1024 * 1024
 NETWORK_BOOT_HTTP_ROOT = Path("/var/lib/atlaso/pxe/http")
 NETWORK_BOOT_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/esxi-pxe/atlaso-esxi-pxe.json"
 NETWORK_BOOT_UNIT_ID = "esxi_pxe"
@@ -156,11 +159,22 @@ class NetworkBootMediaSyncCancelled(RuntimeError):
     """Raised when an operator cancels media acquisition before installation."""
 
 
+@dataclass(frozen=True)
+class ActiveNetworkBootMedia:
+    environment_key: str
+    version: str
+    public_version: str
+    installed_path: str
+    manifest_json: str
+    artifact_sha256: str = ""
+
+
 @dataclass
 class DeferredNetworkBootMediaSync:
     media: NetworkBootMedia
     final_dir: Path
     backup_dir: Path | None
+    superseded_dirs: tuple[Path, ...] = ()
     journal_path: Path | None = None
     filesystem_changed: bool = True
     recovery_lock: _MediaSwapRecoveryLock | None = None
@@ -169,6 +183,9 @@ class DeferredNetworkBootMediaSync:
         try:
             if self.backup_dir is not None and self.backup_dir.exists():
                 shutil.rmtree(self.backup_dir)
+            for directory in self.superseded_dirs:
+                if directory.exists():
+                    shutil.rmtree(directory)
             _fsync_directory(self.final_dir.parent)
             if self.journal_path is not None:
                 self.journal_path.unlink(missing_ok=True)
@@ -1092,41 +1109,138 @@ def report_history(
     ]
 
 
+def _applied_esxi_pxe_manifest(db: Session) -> dict[str, Any]:
+    setting = db.execute(
+        select(Setting).where(Setting.key == APPLIANCE_APPLY_BASELINES_KEY)
+    ).scalar_one_or_none()
+    if setting is None:
+        return {}
+    try:
+        baselines = json.loads(setting.value or "{}")
+        baseline = baselines.get(NETWORK_BOOT_UNIT_ID)
+        runtime_preview = (baseline or {}).get(
+            "runtime_config_preview",
+            (baseline or {}).get("config_preview"),
+        )
+        manifest = json.loads(str(runtime_preview or "{}"))
+    except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("kind") != "atlaso-esxi-pxe"
+    ):
+        return {}
+    return manifest
+
+
+def _has_explicit_esxi_pxe_runtime_preview(db: Session) -> bool:
+    setting = db.execute(
+        select(Setting).where(Setting.key == APPLIANCE_APPLY_BASELINES_KEY)
+    ).scalar_one_or_none()
+    if setting is None:
+        return False
+    try:
+        baseline = json.loads(setting.value or "{}").get(NETWORK_BOOT_UNIT_ID)
+    except (AttributeError, TypeError, json.JSONDecodeError):
+        return False
+    return isinstance(baseline, dict) and "runtime_config_preview" in baseline
+
+
+def _applied_network_boot_media(
+    db: Session,
+    *,
+    environment_key: str,
+    version: str,
+) -> ActiveNetworkBootMedia | None:
+    manifest = _applied_esxi_pxe_manifest(db)
+    network_boot = manifest.get("network_boot")
+    environments = (
+        network_boot.get("environments")
+        if isinstance(network_boot, dict)
+        else None
+    )
+    if not isinstance(environments, list):
+        return None
+    for row in environments[: len(ENVIRONMENT_CATALOG)]:
+        if (
+            not isinstance(row, dict)
+            or row.get("key") != environment_key
+            or not row.get("enabled")
+            or row.get("desired_version") != version
+            or not isinstance(row.get("installed_path"), str)
+            or not isinstance(row.get("manifest"), dict)
+        ):
+            continue
+        return ActiveNetworkBootMedia(
+            environment_key=environment_key,
+            version=version,
+            public_version=Path(row["installed_path"]).name,
+            installed_path=row["installed_path"],
+            manifest_json=json.dumps(row["manifest"], sort_keys=True),
+            artifact_sha256=str(row.get("artifact_sha256") or ""),
+        )
+    return None
+
+
+def active_network_boot_media(
+    db: Session,
+    *,
+    environment_key: str,
+    public_version: str = "",
+) -> ActiveNetworkBootMedia | NetworkBootMedia | None:
+    state = db.get(NetworkBootEnvironment, environment_key)
+    if state is None or not state.active_version:
+        return None
+    applied = _applied_network_boot_media(
+        db,
+        environment_key=environment_key,
+        version=state.active_version,
+    )
+    if applied is not None:
+        return (
+            applied
+            if not public_version or applied.public_version == public_version
+            else None
+        )
+    if _has_explicit_esxi_pxe_runtime_preview(db):
+        return None
+    media = db.execute(
+        select(NetworkBootMedia).where(
+            NetworkBootMedia.environment_key == environment_key,
+            NetworkBootMedia.version == state.active_version,
+        )
+    ).scalar_one_or_none()
+    if media is None:
+        return None
+    installed_name = Path(media.installed_path).name
+    return (
+        media
+        if not public_version or installed_name == public_version
+        else None
+    )
+
+
 def _active_media(
     db: Session,
-) -> dict[str, NetworkBootMedia]:
+) -> dict[str, ActiveNetworkBootMedia | NetworkBootMedia]:
     states = ensure_environment_rows(db)
-    result: dict[str, NetworkBootMedia] = {}
+    result: dict[str, ActiveNetworkBootMedia | NetworkBootMedia] = {}
     for state in states:
         if not state.active_version:
             continue
-        media = db.execute(
-            select(NetworkBootMedia).where(
-                NetworkBootMedia.environment_key == state.key,
-                NetworkBootMedia.version == state.active_version,
-            )
-        ).scalar_one_or_none()
+        media = active_network_boot_media(
+            db,
+            environment_key=state.key,
+        )
         if media is not None:
             result[state.key] = media
     return result
 
 
 def _applied_esxi_pxe_runtime(db: Session) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    setting = db.execute(
-        select(Setting).where(Setting.key == APPLIANCE_APPLY_BASELINES_KEY)
-    ).scalar_one_or_none()
-    if setting is None:
-        return {}, []
-    try:
-        baselines = json.loads(setting.value or "{}")
-        baseline = baselines.get(NETWORK_BOOT_UNIT_ID)
-        manifest = json.loads(str((baseline or {}).get("config_preview") or "{}"))
-    except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
-        return {}, []
+    manifest = _applied_esxi_pxe_manifest(db)
     if (
-        not isinstance(manifest, dict)
-        or manifest.get("kind") != "atlaso-esxi-pxe"
-        or not isinstance(manifest.get("boot"), dict)
+        not isinstance(manifest.get("boot"), dict)
         or not isinstance(manifest.get("artifacts"), list)
     ):
         return {}, []
@@ -1135,17 +1249,12 @@ def _applied_esxi_pxe_runtime(db: Session) -> tuple[dict[str, Any], list[dict[st
 
 
 def _chain_line(
-    media: NetworkBootMedia,
+    media: ActiveNetworkBootMedia | NetworkBootMedia,
     *,
     http_origin: str,
 ) -> str:
     manifest = json.loads(media.manifest_json or "{}")
     boot = manifest.get("boot") if isinstance(manifest.get("boot"), dict) else {}
-    if media.environment_key == "shredos":
-        return (
-            "sanboot --no-describe "
-            f"{http_origin}/pxe/media/shredos/{media.version}/shredos.img"
-        )
     kernel = str(boot.get("kernel") or "")
     initrd = str(boot.get("initrd") or "")
     arguments = str(boot.get("arguments") or "").strip()
@@ -1779,14 +1888,15 @@ def _release_descriptor(environment_key: str) -> dict[str, str]:
                 row
                 for row in assets
                 if isinstance(row, dict)
-                and re.search(r"x86-64.*\.img$", str(row.get("name") or ""))
+                and re.search(r"x86-64.*\.iso$", str(row.get("name") or ""))
                 and "lite" not in str(row.get("name") or "").lower()
+                and "plus-partition" not in str(row.get("name") or "").lower()
             ),
             None,
         )
         digest = str((asset or {}).get("digest") or "")
         if not asset or not digest.startswith("sha256:"):
-            raise ValueError("ShredOS stable image does not publish a SHA-256 asset digest.")
+            raise ValueError("ShredOS stable ISO does not publish a SHA-256 asset digest.")
         return {
             "version": str(payload.get("tag_name") or "").removeprefix("v"),
             "filename": str(asset["name"]),
@@ -1818,6 +1928,49 @@ def _extract_zip_allowlist(
             target.chmod(0o644)
             extracted.append(target_name)
     return extracted
+
+
+def _extract_shredos_kernel(
+    archive: Path,
+    destination: Path,
+) -> list[str]:
+    iso = pycdlib.PyCdlib()
+    opened = False
+    try:
+        iso.open(str(archive))
+        opened = True
+        selected: dict[str, str] | None = None
+        record = None
+        for candidate in (
+            {"rr_path": "/boot/bzImage"},
+            {"joliet_path": "/boot/bzImage"},
+            {"iso_path": "/BOOT/BZIMAGE.;1"},
+            {"iso_path": "/BOOT/BZIMAGE;1"},
+        ):
+            try:
+                record = iso.get_record(**candidate)
+            except (pycdlibexception.PyCdlibException, IndexError):
+                continue
+            selected = candidate
+            break
+        if selected is None or record is None or record.is_dir():
+            raise ValueError("ShredOS ISO is missing the /boot/bzImage kernel.")
+        size = int(record.data_length)
+        if size <= 0 or size > NETWORK_BOOT_SHREDOS_KERNEL_MAX_BYTES:
+            raise ValueError("ShredOS kernel size is outside the supported range.")
+        target = destination / "shredos"
+        with target.open("xb") as output:
+            iso.get_file_from_iso_fp(output, **selected)
+        if target.stat().st_size != size:
+            target.unlink(missing_ok=True)
+            raise ValueError("ShredOS kernel extraction was incomplete.")
+        target.chmod(0o644)
+        return ["shredos"]
+    except pycdlibexception.PyCdlibException as exc:
+        raise ValueError("ShredOS release asset is not a valid ISO image.") from exc
+    finally:
+        if opened:
+            iso.close()
 
 
 def _media_boot_manifest(
@@ -1929,12 +2082,26 @@ def _verified_cached_media(
     *,
     media_root: Path,
 ) -> Path | None:
-    directory = _enumerated_media_directory(
-        environment_key=media.environment_key,
-        version=media.version,
-        media_root=media_root,
-    )
-    if directory is None or str(directory) != media.installed_path:
+    environment_root = (
+        media_root / normalize_environment_key(media.environment_key)
+    ).resolve()
+    expected = Path(media.installed_path)
+    directory: Path | None = None
+    if environment_root.is_dir() and not environment_root.is_symlink():
+        for index, candidate in enumerate(environment_root.iterdir()):
+            if index >= 256:
+                return None
+            if candidate.is_symlink() or not candidate.is_dir():
+                continue
+            resolved = candidate.resolve()
+            if (
+                resolved.is_relative_to(environment_root)
+                and resolved.parent == environment_root
+                and str(resolved) == str(expected)
+            ):
+                directory = resolved
+                break
+    if directory is None:
         return None
     files = _enumerated_regular_files(directory)
     manifest_path = (files or {}).get("manifest.json")
@@ -1956,6 +2123,11 @@ def _verified_cached_media(
     artifacts = manifest.get("artifacts")
     if not isinstance(artifacts, dict) or not artifacts:
         return None
+    if media.environment_key == "shredos" and set(artifacts) != {
+        "boot.ipxe",
+        "shredos",
+    }:
+        return None
     for filename, expected_sha256 in artifacts.items():
         if (
             not isinstance(filename, str)
@@ -1976,11 +2148,110 @@ def _verified_cached_media(
     return directory
 
 
+def prune_superseded_shredos_media(
+    db: Session,
+    *,
+    media_root: Path = NETWORK_BOOT_MEDIA_ROOT,
+) -> int:
+    """Remove immutable ShredOS snapshots no longer referenced by desired or applied state."""
+    root = media_root.resolve()
+    environment_root = (root / "shredos").resolve()
+    if (
+        media_root.is_symlink()
+        or not media_root.is_dir()
+        or environment_root.is_symlink()
+        or not environment_root.is_dir()
+        or environment_root.parent != root
+    ):
+        return 0
+
+    removed = 0
+    with _MediaSwapRecoveryLock(root):
+        protected: set[str] = set()
+        installed_paths = db.execute(
+            select(NetworkBootMedia.installed_path).where(
+                NetworkBootMedia.environment_key == "shredos"
+            )
+        ).scalars()
+        for installed_path in installed_paths:
+            try:
+                resolved = Path(installed_path).resolve()
+            except OSError:
+                continue
+            if resolved.parent == environment_root:
+                protected.add(str(resolved))
+
+        applied = _applied_esxi_pxe_manifest(db).get("network_boot")
+        applied_environments = (
+            applied.get("environments")
+            if isinstance(applied, dict)
+            else None
+        )
+        if isinstance(applied_environments, list):
+            for row in applied_environments[: len(ENVIRONMENT_CATALOG)]:
+                if not isinstance(row, dict) or row.get("key") != "shredos":
+                    continue
+                installed_path = row.get("installed_path")
+                if not isinstance(installed_path, str):
+                    continue
+                try:
+                    resolved = Path(installed_path).resolve()
+                except OSError:
+                    continue
+                if resolved.parent == environment_root:
+                    protected.add(str(resolved))
+
+        for index, candidate in enumerate(environment_root.iterdir()):
+            if index >= 256:
+                break
+            if candidate.is_symlink() or not candidate.is_dir():
+                continue
+            resolved = candidate.resolve()
+            if (
+                resolved.parent != environment_root
+                or str(resolved) in protected
+            ):
+                continue
+            manifest_path = resolved / "manifest.json"
+            try:
+                if (
+                    manifest_path.is_symlink()
+                    or not manifest_path.is_file()
+                    or manifest_path.stat().st_size > 2 * 1024 * 1024
+                ):
+                    continue
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                if not isinstance(manifest, dict):
+                    continue
+                version = normalize_version(str(manifest.get("version") or ""))
+            except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
+                continue
+            artifact_sha256 = str(manifest.get("sha256") or "")
+            if (
+                manifest.get("kind") != "atlaso-network-boot-media"
+                or manifest.get("schema_version") != NETWORK_BOOT_SCHEMA_VERSION
+                or manifest.get("environment") != "shredos"
+                or re.fullmatch(r"[0-9a-f]{64}", artifact_sha256) is None
+                or re.fullmatch(
+                    rf"{re.escape(version)}"
+                    rf"(?:\.sha256-{re.escape(artifact_sha256[:12])}-[0-9a-f]{{12}})?",
+                    candidate.name,
+                )
+                is None
+            ):
+                continue
+            shutil.rmtree(resolved)
+            _fsync_directory(environment_root)
+            removed += 1
+    return removed
+
+
 def _write_media_swap_journal(
     environment_root: Path,
     *,
     environment_key: str,
     version: str,
+    final_directory: str,
     transaction_id: str,
     staging_directory: str,
 ) -> Path:
@@ -1989,6 +2260,7 @@ def _write_media_swap_journal(
         json.dump(
             {
                 "environment": environment_key,
+                "final_directory": final_directory,
                 "staging_directory": staging_directory,
                 "version": version,
             },
@@ -2281,7 +2553,18 @@ def _recover_interrupted_network_boot_media_swaps(
                     staging_dir.exists() and not staging_dir.is_dir()
                 ):
                     continue
-            final_dir = environment_root / version
+            final_directory = journal.get("final_directory", version)
+            if (
+                not isinstance(final_directory, str)
+                or re.fullmatch(
+                    rf"{re.escape(version)}"
+                    r"(?:\.sha256-[0-9a-f]{12}-[0-9a-f]{12})?",
+                    final_directory,
+                )
+                is None
+            ):
+                continue
+            final_dir = environment_root / final_directory
             backup_dir = (
                 environment_root / f".{version}.replacement-{transaction_id}"
             )
@@ -2291,9 +2574,14 @@ def _recover_interrupted_network_boot_media_swaps(
                     NetworkBootMedia.version == version,
                 )
             ).scalar_one_or_none()
+            verified_directory = (
+                _verified_cached_media(media, media_root=media_root)
+                if media is not None
+                else None
+            )
             if (
-                media is not None
-                and _verified_cached_media(media, media_root=media_root) is not None
+                verified_directory is not None
+                and verified_directory == final_dir.resolve()
             ):
                 if (
                     backup_dir.exists()
@@ -2308,11 +2596,14 @@ def _recover_interrupted_network_boot_media_swaps(
                 _fsync_directory(environment_root)
                 recovered += 1
                 continue
-            installed = _enumerated_media_directory(
-                environment_key=entry.key,
-                version=version,
-                media_root=media_root,
-            )
+            installed = None
+            if final_dir.is_dir() and not final_dir.is_symlink():
+                resolved_final = final_dir.resolve()
+                if (
+                    resolved_final.is_relative_to(environment_root.resolve())
+                    and resolved_final.parent == environment_root.resolve()
+                ):
+                    installed = resolved_final
             if final_dir.is_symlink() or (
                 final_dir.exists() and installed is None
             ):
@@ -2385,10 +2676,19 @@ def sync_network_boot_media(
     raise_if_cancelled()
     version = normalize_version(descriptor["version"])
     entry = CATALOG_BY_KEY[key]
-    final_dir = (media_root / key / version).resolve()
+    transaction_id = uuid.uuid4().hex
     environment_root = (media_root / key).resolve()
-    if not final_dir.is_relative_to(environment_root):
-        raise ValueError("Boot media install path escaped the environment cache.")
+    state = db.get(NetworkBootEnvironment, key)
+    active_snapshot = (
+        _applied_network_boot_media(
+            db,
+            environment_key=key,
+            version=version,
+        )
+        if state is not None and state.active_version == version
+        else None
+    )
+    final_directory_name = version
     existing = db.execute(
         select(NetworkBootMedia).where(
             NetworkBootMedia.environment_key == key,
@@ -2396,6 +2696,7 @@ def sync_network_boot_media(
         )
     ).scalar_one_or_none()
     replaced_directory: Path | None = None
+    superseded_directories: list[Path] = []
     if existing is not None:
         if _verified_cached_media(existing, media_root=media_root) is not None:
             if defer_filesystem_commit:
@@ -2406,21 +2707,64 @@ def sync_network_boot_media(
                     filesystem_changed=False,
                 )
             return existing
-        replaced_directory = _enumerated_media_directory(
-            environment_key=key,
-            version=version,
-            media_root=media_root,
-        )
+        if (
+            key == "shredos"
+            and state is not None
+            and state.active_version == version
+        ):
+            if active_snapshot is None:
+                raise ValueError(
+                    "Active same-version media cannot be repaired until its "
+                    "applied snapshot is available."
+                )
+            if active_snapshot.installed_path != existing.installed_path:
+                pending_directory = Path(existing.installed_path)
+                if (
+                    not pending_directory.is_symlink()
+                    and pending_directory.is_dir()
+                ):
+                    resolved_pending = pending_directory.resolve()
+                    if resolved_pending.parent == environment_root:
+                        superseded_directories.append(resolved_pending)
+            descriptor_sha256 = str(descriptor.get("sha256") or "")
+            if not re.fullmatch(r"[0-9a-f]{64}", descriptor_sha256):
+                raise ValueError(
+                    "Active same-version media requires a verified replacement digest."
+                )
+            final_directory_name = (
+                f"{version}.sha256-{descriptor_sha256[:12]}-"
+                f"{transaction_id[:12]}"
+            )
+        else:
+            replaced_directory = _enumerated_media_directory(
+                environment_key=key,
+                version=version,
+                media_root=media_root,
+            )
     else:
         replaced_directory = _enumerated_media_directory(
             environment_key=key,
             version=version,
             media_root=media_root,
         )
-        if replaced_directory is None and final_dir.exists():
-            raise ValueError(
-                "Boot media cache path is unsafe; remove it manually before retrying."
-            )
+    final_dir = (environment_root / final_directory_name).resolve()
+    if not final_dir.is_relative_to(environment_root):
+        raise ValueError("Boot media install path escaped the environment cache.")
+    if (
+        existing is None
+        and replaced_directory is None
+        and final_dir.exists()
+    ):
+        raise ValueError(
+            "Boot media cache path is unsafe; remove it manually before retrying."
+        )
+    if (
+        final_directory_name != version
+        and final_dir.exists()
+    ):
+        raise ValueError(
+            "The verified same-version media replacement already exists."
+        )
     media_root_path = environment_root.parent
     media_root_exists = media_root_path.exists()
     media_root_path.mkdir(parents=True, exist_ok=True)
@@ -2430,7 +2774,6 @@ def sync_network_boot_media(
     environment_root.mkdir(exist_ok=True)
     if not environment_root_exists:
         _fsync_directory(media_root_path)
-    transaction_id = uuid.uuid4().hex
     media_swap_lock: _MediaSwapRecoveryLock | None = None
     with (
         tempfile.TemporaryDirectory(
@@ -2560,18 +2903,22 @@ def sync_network_boot_media(
                 },
             )
         else:
-            target = staging / "shredos.img"
-            shutil.copy2(artifact, target)
-            target.chmod(0o644)
+            extracted = _extract_shredos_kernel(artifact, staging)
             boot_script = staging / "boot.ipxe"
             boot_script.write_text(
-                "#!ipxe\nsanboot --no-describe "
-                f"/pxe/media/{key}/{version}/shredos.img || exit\n",
+                "#!ipxe\n"
+                f"kernel /pxe/media/{key}/{final_directory_name}/shredos "
+                "console=tty3 loglevel=3 || exit\n"
+                "boot || exit\n",
                 encoding="utf-8",
             )
             boot_script.chmod(0o644)
-            extracted = ["shredos.img", "boot.ipxe"]
-        manifest = _media_boot_manifest(key, version, extracted=extracted)
+            extracted.append("boot.ipxe")
+        manifest = _media_boot_manifest(
+            key,
+            final_directory_name,
+            extracted=extracted,
+        )
         manifest.update(
             {
                 "kind": "atlaso-network-boot-media",
@@ -2607,6 +2954,7 @@ def sync_network_boot_media(
                 final_dir.parent,
                 environment_key=key,
                 version=version,
+                final_directory=final_dir.name,
                 transaction_id=transaction_id,
                 staging_directory=temporary.name,
             )
@@ -2657,6 +3005,7 @@ def sync_network_boot_media(
             media=media,
             final_dir=final_dir,
             backup_dir=backup_dir,
+            superseded_dirs=tuple(superseded_directories),
             journal_path=journal_path,
             recovery_lock=media_swap_lock,
         )

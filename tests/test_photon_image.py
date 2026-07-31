@@ -926,6 +926,7 @@ def test_vmware_deploy_wheel_supports_password_backed_noninteractive_deploy():
     assert "--local-runtime-dependency" in script
     assert "'authlib-*.whl'" in script
     assert "'joserfc-*.whl'" in script
+    assert "'pycdlib-*.whl'" in script
     assert "Matched local and remote runtime dependency wheels are required." in script
     assert '"$python" -m pip install --force-reinstall --no-deps "$runtime_dependency_path"' in script
     assert '"$python" -m pip install --force-reinstall --no-deps "$wheel"' in script

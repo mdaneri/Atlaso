@@ -1,5 +1,7 @@
 import hashlib
+import io
 import json
+import re
 import time
 import zipfile
 from collections import deque
@@ -11,6 +13,7 @@ from urllib.error import URLError
 from urllib.request import Request
 
 import pytest
+import pycdlib
 from sqlalchemy import select
 from starlette.requests import Request as StarletteRequest
 
@@ -37,6 +40,7 @@ from atlaso.app.models import (
     utcnow,
 )
 from atlaso.app.services.network_boot import (
+    _extract_shredos_kernel,
     _extract_zip_allowlist,
     _BoundedHttpsRedirectHandler,
     _release_descriptor,
@@ -88,6 +92,16 @@ def create_api_token(client, scopes):
     return response.json()["raw_token"]
 
 
+def use_test_shredos_extractor(monkeypatch):
+    def extract(archive, destination):
+        target = destination / "shredos"
+        target.write_bytes(archive.read_bytes())
+        target.chmod(0o644)
+        return ["shredos"]
+
+    monkeypatch.setattr(network_boot, "_extract_shredos_kernel", extract)
+
+
 def login_session(client):
     page = client.get("/login")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -102,7 +116,13 @@ def login_session(client):
     return page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
 
-def set_applied_pxe_runtime(db_session, *, boot=None, artifacts=None):
+def set_applied_pxe_runtime(
+    db_session,
+    *,
+    boot=None,
+    artifacts=None,
+    environments=None,
+):
     setting = db_session.execute(
         select(Setting).where(Setting.key == "appliance_apply.baselines.v1")
     ).scalar_one_or_none()
@@ -114,6 +134,10 @@ def set_applied_pxe_runtime(db_session, *, boot=None, artifacts=None):
                 "schema_version": 1,
                 "boot": boot or {},
                 "artifacts": artifacts or [],
+                "network_boot": {
+                    "schema_version": 1,
+                    "environments": environments or [],
+                },
             }
         )
     }
@@ -714,9 +738,9 @@ def test_media_upload_is_staged_as_a_durable_verification_job(
         headers={"Authorization": f"Bearer {token}"},
         files={
             "artifact": (
-                "shredos-2025.11.img",
+                "shredos-2025.11.iso",
                 b"uploaded boot media",
-                "application/octet-stream",
+                "application/x-iso9660-image",
             )
         },
     )
@@ -729,7 +753,7 @@ def test_media_upload_is_staged_as_a_durable_verification_job(
     config = json.loads(job.task_config_json)
     assert config["source"] == "upload"
     assert config["environment"] == "shredos"
-    assert config["filename"] == "shredos-2025.11.img"
+    assert config["filename"] == "shredos-2025.11.iso"
 
 
 def test_deleting_inactive_media_cleans_environment_upload_staging(
@@ -760,7 +784,7 @@ def test_deleting_inactive_media_cleans_environment_upload_staging(
         db_session,
         environment_key="shredos",
         version="2025.11",
-        source_url="https://example.test/shredos.img",
+        source_url="https://example.test/shredos.iso",
         artifact_sha256="a" * 64,
         installed_path=str(installed.resolve()),
         manifest={"schema_version": 1},
@@ -998,7 +1022,7 @@ def test_unknown_host_defaults_to_inventory_and_shredos_has_cancel_guard(db_sess
         db_session,
         environment_key="shredos",
         version="2025.11_30_x86-64_0.41",
-        source_url="https://github.com/PartialVolume/shredos.x86_64/releases/download/example/shredos.img",
+        source_url="https://github.com/PartialVolume/shredos.x86_64/releases/download/example/shredos.iso",
         artifact_sha256="b" * 64,
         installed_path="/var/lib/atlaso/pxe/media/shredos/2025.11_30_x86-64_0.41",
         manifest={"boot": {"script": "http://192.0.2.1/pxe/media/shredos/boot.ipxe"}},
@@ -1081,6 +1105,247 @@ def test_media_file_remains_available_until_disable_is_applied(
     assert head_response.status_code == 200, head_response.text
     assert head_response.content == b""
     assert head_response.headers["content-length"] == str(len(b"kernel"))
+
+
+def test_same_version_shredos_repair_serves_applied_snapshot_until_apply(
+    client,
+    db_session,
+    monkeypatch,
+    tmp_path,
+):
+    environment_root = tmp_path / "shredos"
+    applied = environment_root / "2025.11"
+    replacement = environment_root / (
+        "2025.11.sha256-" + ("b" * 12) + "-" + ("d" * 12)
+    )
+    applied.mkdir(parents=True)
+    replacement.mkdir()
+    (applied / "boot.ipxe").write_bytes(b"legacy applied script")
+    (replacement / "boot.ipxe").write_bytes(b"verified replacement script")
+    applied_manifest = {"files": ["boot.ipxe"], "artifacts": {"boot.ipxe": "a" * 64}}
+    replacement_manifest = {
+        "files": ["boot.ipxe"],
+        "artifacts": {"boot.ipxe": "b" * 64},
+    }
+    media = record_verified_media(
+        db_session,
+        environment_key="shredos",
+        version="2025.11",
+        source_url="https://example.test/shredos.iso",
+        artifact_sha256="b" * 64,
+        installed_path=str(replacement.resolve()),
+        manifest=replacement_manifest,
+    )
+    state = db_session.get(NetworkBootEnvironment, "shredos")
+    assert state is not None
+    state.enabled = True
+    state.desired_version = media.version
+    state.active_version = media.version
+    db_session.commit()
+    monkeypatch.setitem(
+        network_boot_api._MEDIA_ENVIRONMENT_ROOTS,
+        "shredos",
+        environment_root.resolve(),
+    )
+    set_applied_pxe_runtime(
+        db_session,
+        environments=[
+            {
+                "key": "shredos",
+                "enabled": True,
+                "desired_version": media.version,
+                "installed_path": str(applied.resolve()),
+                "artifact_sha256": "a" * 64,
+                "manifest": applied_manifest,
+            }
+        ],
+    )
+
+    response = client.get("/pxe/media/shredos/2025.11/boot.ipxe")
+
+    assert response.status_code == 200, response.text
+    assert response.content == b"legacy applied script"
+
+    set_applied_pxe_runtime(
+        db_session,
+        environments=[
+            {
+                "key": "shredos",
+                "enabled": True,
+                "desired_version": media.version,
+                "installed_path": media.installed_path,
+                "artifact_sha256": media.artifact_sha256,
+                "manifest": replacement_manifest,
+            }
+        ],
+    )
+
+    stale_response = client.get("/pxe/media/shredos/2025.11/boot.ipxe")
+    response = client.get(
+        f"/pxe/media/shredos/{replacement.name}/boot.ipxe"
+    )
+
+    assert stale_response.status_code == 404
+    assert response.status_code == 200, response.text
+    assert response.content == b"verified replacement script"
+    assert "immutable" in response.headers["cache-control"]
+
+
+def test_explicit_invalid_runtime_preview_does_not_fall_back_to_desired_media(
+    db_session,
+    tmp_path,
+):
+    installed = tmp_path / "shredos" / "2025.11"
+    installed.mkdir(parents=True)
+    media = record_verified_media(
+        db_session,
+        environment_key="shredos",
+        version="2025.11",
+        source_url="https://example.test/shredos.iso",
+        artifact_sha256="b" * 64,
+        installed_path=str(installed.resolve()),
+        manifest={"boot": {"script": "/pxe/media/shredos/2025.11/boot.ipxe"}},
+    )
+    state = db_session.get(NetworkBootEnvironment, "shredos")
+    assert state is not None
+    state.enabled = True
+    state.desired_version = media.version
+    state.active_version = media.version
+    setting = db_session.execute(
+        select(Setting).where(Setting.key == "appliance_apply.baselines.v1")
+    ).scalar_one_or_none()
+    baselines = json.loads(setting.value) if setting else {}
+    baselines["esxi_pxe"] = {
+        "config_preview": json.dumps(
+            {
+                "kind": "atlaso-esxi-pxe",
+                "schema_version": 1,
+                "network_boot": {
+                    "schema_version": 1,
+                    "environments": [
+                        {
+                            "key": "shredos",
+                            "enabled": True,
+                            "desired_version": media.version,
+                            "installed_path": media.installed_path,
+                            "manifest": json.loads(media.manifest_json),
+                        }
+                    ],
+                },
+            }
+        ),
+        "runtime_config_preview": "",
+    }
+    if setting is None:
+        setting = Setting(
+            key="appliance_apply.baselines.v1",
+            value=json.dumps(baselines),
+        )
+    else:
+        setting.value = json.dumps(baselines)
+    db_session.add(setting)
+    db_session.commit()
+
+    assert network_boot.active_network_boot_media(
+        db_session,
+        environment_key="shredos",
+    ) is None
+
+
+def test_prune_superseded_shredos_media_waits_for_applied_manifest(
+    db_session,
+    tmp_path,
+):
+    media_root = tmp_path / "media"
+    environment_root = media_root / "shredos"
+    version = "2025.11"
+
+    def write_snapshot(path: Path, digest: str) -> dict:
+        path.mkdir(parents=True)
+        manifest = {
+            "kind": "atlaso-network-boot-media",
+            "schema_version": 1,
+            "environment": "shredos",
+            "version": version,
+            "sha256": digest,
+            "artifacts": {
+                "boot.ipxe": "d" * 64,
+                "shredos": "e" * 64,
+            },
+        }
+        (path / "manifest.json").write_text(
+            json.dumps(manifest),
+            encoding="utf-8",
+        )
+        return manifest
+
+    applied = environment_root / version
+    applied_manifest = write_snapshot(applied, "a" * 64)
+    current = environment_root / (
+        f"{version}.sha256-{'b' * 12}-{'1' * 12}"
+    )
+    current_manifest = write_snapshot(current, "b" * 64)
+    orphan = environment_root / (
+        f"{version}.sha256-{'c' * 12}-{'2' * 12}"
+    )
+    write_snapshot(orphan, "c" * 64)
+    unrelated = environment_root / "operator-files"
+    unrelated.mkdir()
+
+    media = record_verified_media(
+        db_session,
+        environment_key="shredos",
+        version=version,
+        source_url="https://example.test/shredos.iso",
+        artifact_sha256="b" * 64,
+        installed_path=str(current.resolve()),
+        manifest=current_manifest,
+    )
+    db_session.commit()
+    set_applied_pxe_runtime(
+        db_session,
+        environments=[
+            {
+                "key": "shredos",
+                "enabled": True,
+                "desired_version": version,
+                "installed_path": str(applied.resolve()),
+                "artifact_sha256": "a" * 64,
+                "manifest": applied_manifest,
+            }
+        ],
+    )
+
+    assert network_boot.prune_superseded_shredos_media(
+        db_session,
+        media_root=media_root,
+    ) == 1
+    assert applied.exists()
+    assert current.exists()
+    assert not orphan.exists()
+    assert unrelated.exists()
+
+    set_applied_pxe_runtime(
+        db_session,
+        environments=[
+            {
+                "key": "shredos",
+                "enabled": True,
+                "desired_version": version,
+                "installed_path": media.installed_path,
+                "artifact_sha256": media.artifact_sha256,
+                "manifest": current_manifest,
+            }
+        ],
+    )
+
+    assert network_boot.prune_superseded_shredos_media(
+        db_session,
+        media_root=media_root,
+    ) == 1
+    assert not applied.exists()
+    assert current.exists()
+    assert unrelated.exists()
 
 
 @pytest.mark.parametrize("environment_key", ["gparted", "clonezilla"])
@@ -1340,15 +1605,25 @@ def test_fixed_catalog_resolves_expected_stable_branch(
     assert _release_descriptor(environment)["version"] == expected_version
 
 
-def test_shredos_requires_published_full_image_digest(monkeypatch):
+def test_shredos_requires_published_full_iso_digest(monkeypatch):
     payload = {
         "tag_name": "v2025.11_31_x86-64_0.42",
         "draft": False,
         "prerelease": False,
         "assets": [
             {
-                "name": "shredos-2025.11_31_x86-64_v0.42.img",
-                "browser_download_url": "https://github.com/example/shredos.img",
+                "name": "shredos-2025.11_31_x86-64_v0.42_lite.iso",
+                "browser_download_url": "https://github.com/example/shredos-lite.iso",
+                "digest": "sha256:" + ("c" * 64),
+            },
+            {
+                "name": "shredos-2025.11_31_x86-64_v0.42_plus-partition.iso",
+                "browser_download_url": "https://github.com/example/shredos-plus.iso",
+                "digest": "sha256:" + ("d" * 64),
+            },
+            {
+                "name": "shredos-2025.11_31_x86-64_v0.42.iso",
+                "browser_download_url": "https://github.com/example/shredos.iso",
                 "digest": "sha256:" + ("a" * 64),
             }
         ],
@@ -1359,9 +1634,68 @@ def test_shredos_requires_published_full_image_digest(monkeypatch):
     )
     descriptor = _release_descriptor("shredos")
     assert descriptor["sha256"] == "a" * 64
-    payload["assets"][0]["digest"] = ""
+    assert descriptor["filename"] == "shredos-2025.11_31_x86-64_v0.42.iso"
+    payload["assets"][2]["digest"] = ""
     with pytest.raises(ValueError, match="does not publish"):
         _release_descriptor("shredos")
+
+
+def test_shredos_iso_extracts_only_allowlisted_kernel(tmp_path):
+    archive = tmp_path / "shredos.iso"
+    iso = pycdlib.PyCdlib()
+    iso.new(interchange_level=3, joliet=3, rock_ridge="1.09")
+    iso.add_directory("/BOOT", rr_name="boot", joliet_path="/boot")
+    kernel = b"verified ShredOS kernel"
+    iso.add_fp(
+        io.BytesIO(kernel),
+        len(kernel),
+        "/BOOT/BZIMAGE.;1",
+        rr_name="bzImage",
+        joliet_path="/boot/bzImage",
+    )
+    extra = b"must not be extracted"
+    iso.add_fp(
+        io.BytesIO(extra),
+        len(extra),
+        "/AUTONUKE.;1",
+        rr_name="autonuke",
+        joliet_path="/autonuke",
+    )
+    iso.write(str(archive))
+    iso.close()
+    destination = tmp_path / "install"
+    destination.mkdir()
+
+    assert _extract_shredos_kernel(archive, destination) == ["shredos"]
+    assert (destination / "shredos").read_bytes() == kernel
+    assert sorted(path.name for path in destination.iterdir()) == ["shredos"]
+
+
+@pytest.mark.parametrize("mode", ["missing", "invalid"])
+def test_shredos_iso_rejects_missing_or_invalid_kernel(tmp_path, mode):
+    archive = tmp_path / "shredos.iso"
+    if mode == "missing":
+        iso = pycdlib.PyCdlib()
+        iso.new(interchange_level=3, joliet=3, rock_ridge="1.09")
+        content = b"not the kernel"
+        iso.add_fp(
+            io.BytesIO(content),
+            len(content),
+            "/README.;1",
+            rr_name="README",
+            joliet_path="/README",
+        )
+        iso.write(str(archive))
+        iso.close()
+        expected = "missing the /boot/bzImage kernel"
+    else:
+        archive.write_bytes(b"not an ISO")
+        expected = "not a valid ISO image"
+    destination = tmp_path / "install"
+    destination.mkdir()
+
+    with pytest.raises(ValueError, match=expected):
+        _extract_shredos_kernel(archive, destination)
 
 
 def test_inventory_linux_resolves_versioned_atlaso_release_package(monkeypatch):
@@ -1762,7 +2096,7 @@ def test_cancelled_media_worker_cannot_overwrite_terminal_status(
         db_session,
         environment_key="shredos",
         version="2025.11",
-        source_url="https://example.test/shredos.img",
+        source_url="https://example.test/shredos.iso",
         artifact_sha256="a" * 64,
         installed_path="/var/lib/atlaso/pxe/media/shredos/2025.11",
         manifest={"schema_version": 1},
@@ -1783,8 +2117,8 @@ def test_cancelled_media_worker_cannot_overwrite_terminal_status(
     backup_dir = tmp_path / "backup"
     final_dir.mkdir()
     backup_dir.mkdir()
-    (final_dir / "shredos.img").write_bytes(b"replacement")
-    (backup_dir / "shredos.img").write_bytes(b"original")
+    (final_dir / "shredos").write_bytes(b"replacement")
+    (backup_dir / "shredos").write_bytes(b"original")
     filesystem_sync = network_boot.DeferredNetworkBootMediaSync(
         media=media,
         final_dir=final_dir,
@@ -1811,7 +2145,7 @@ def test_cancelled_media_worker_cannot_overwrite_terminal_status(
             AuditEvent.resource_id == f"shredos:{media.version}",
         )
     ).scalars().all()
-    assert (final_dir / "shredos.img").read_bytes() == b"original"
+    assert (final_dir / "shredos").read_bytes() == b"original"
     assert not backup_dir.exists()
 
 
@@ -1821,13 +2155,13 @@ def test_deferred_unchanged_media_rollback_preserves_installed_files(
 ):
     installed = tmp_path / "installed"
     installed.mkdir()
-    artifact = installed / "shredos.img"
+    artifact = installed / "shredos"
     artifact.write_bytes(b"verified")
     media = record_verified_media(
         db_session,
         environment_key="shredos",
         version="2025.11",
-        source_url="https://example.test/shredos.img",
+        source_url="https://example.test/shredos.iso",
         artifact_sha256="a" * 64,
         installed_path=str(installed),
         manifest={"schema_version": 1},
@@ -1917,6 +2251,10 @@ def test_installed_media_paths_are_selected_only_from_fixed_environment_root(
     )
 
     assert _installed_media_directory(media) == installed.resolve()
+    replacement = environment_root / ("8.10.sha256-" + ("a" * 12))
+    replacement.mkdir()
+    media.installed_path = str(replacement.resolve())
+    assert _installed_media_directory(media) == replacement.resolve()
     media.installed_path = str((tmp_path / "outside" / "8.10").resolve())
     assert _installed_media_directory(media) is None
 
@@ -1977,7 +2315,7 @@ def test_interrupted_media_swap_recovery_restores_database_version(
     tmp_path,
 ):
     media_root = tmp_path / "media"
-    environment = "shredos"
+    environment = "memtest86plus"
     version = "2025.11"
     transaction_id = "a" * 32
     environment_root = media_root / environment
@@ -2008,7 +2346,7 @@ def test_interrupted_media_swap_recovery_restores_database_version(
         db_session,
         environment_key=environment,
         version=version,
-        source_url="https://example.test/shredos.img",
+        source_url="https://example.test/shredos.iso",
         artifact_sha256=old_sha256,
         installed_path=str(final_dir.resolve()),
         manifest={"schema_version": 1},
@@ -2049,7 +2387,7 @@ def test_interrupted_media_swap_recovery_finalizes_committed_version(
     tmp_path,
 ):
     media_root = tmp_path / "media"
-    environment = "shredos"
+    environment = "memtest86plus"
     version = "2025.11"
     transaction_id = "b" * 32
     environment_root = media_root / environment
@@ -2074,7 +2412,7 @@ def test_interrupted_media_swap_recovery_finalizes_committed_version(
         db_session,
         environment_key=environment,
         version=version,
-        source_url="https://example.test/shredos.img",
+        source_url="https://example.test/shredos.iso",
         artifact_sha256=committed_sha256,
         installed_path=str(final_dir.resolve()),
         manifest={"schema_version": 1},
@@ -2096,12 +2434,71 @@ def test_interrupted_media_swap_recovery_finalizes_committed_version(
     assert not journal.exists()
 
 
+def test_recovery_removes_uncommitted_digest_directory_for_valid_old_row(
+    db_session,
+    tmp_path,
+):
+    media_root = tmp_path / "media"
+    environment = "memtest86plus"
+    version = "2025.11"
+    transaction_id = "f" * 32
+    environment_root = media_root / environment
+    applied_dir = environment_root / version
+    replacement_dir = environment_root / (
+        f"{version}.sha256-{'b' * 12}-{'c' * 12}"
+    )
+    _write_test_media_cache(
+        applied_dir,
+        environment=environment,
+        version=version,
+        content=b"applied media",
+        artifact_sha256="a" * 64,
+    )
+    _write_test_media_cache(
+        replacement_dir,
+        environment=environment,
+        version=version,
+        content=b"uncommitted replacement",
+        artifact_sha256="b" * 64,
+    )
+    record_verified_media(
+        db_session,
+        environment_key=environment,
+        version=version,
+        source_url="https://example.test/memtest.zip",
+        artifact_sha256="a" * 64,
+        installed_path=str(applied_dir.resolve()),
+        manifest={"schema_version": 1},
+    )
+    db_session.commit()
+    journal = environment_root / f".atlaso-media-sync-{transaction_id}.json"
+    journal.write_text(
+        json.dumps(
+            {
+                "environment": environment,
+                "final_directory": replacement_dir.name,
+                "version": version,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert network_boot.recover_interrupted_network_boot_media_swaps(
+        db_session,
+        media_root=media_root,
+    ) == 1
+
+    assert (applied_dir / "artifact.bin").read_bytes() == b"applied media"
+    assert not replacement_dir.exists()
+    assert not journal.exists()
+
+
 def test_interrupted_new_media_install_recovery_removes_uncommitted_version(
     db_session,
     tmp_path,
 ):
     media_root = tmp_path / "media"
-    environment = "shredos"
+    environment = "memtest86plus"
     version = "2025.12"
     transaction_id = "c" * 32
     environment_root = media_root / environment
@@ -2273,6 +2670,7 @@ def test_media_sync_fsyncs_tree_and_published_directory_before_database_record(
     events: list[str] = []
     original_record = network_boot.record_verified_media
     original_commit = db_session.commit
+    use_test_shredos_extractor(monkeypatch)
 
     class RecordingLock:
         def __init__(self, _media_root):
@@ -2292,8 +2690,8 @@ def test_media_sync_fsyncs_tree_and_published_directory_before_database_record(
         "_release_descriptor",
         lambda _key: {
             "version": "2025.11",
-            "filename": "shredos.img",
-            "asset_url": "https://example.test/shredos.img",
+            "filename": "shredos.iso",
+            "asset_url": "https://example.test/shredos.iso",
             "sha256": digest,
         },
     )
@@ -2361,7 +2759,7 @@ def test_media_sync_revalidates_and_repairs_corrupt_cached_artifacts(
     media_root = tmp_path / "media"
     installed = media_root / "shredos" / "2025.11"
     installed.mkdir(parents=True)
-    artifact = installed / "shredos.img"
+    artifact = installed / "shredos"
     artifact.write_bytes(b"original")
     boot_script = installed / "boot.ipxe"
     boot_script.write_text("#!ipxe\n", encoding="utf-8")
@@ -2372,7 +2770,7 @@ def test_media_sync_revalidates_and_repairs_corrupt_cached_artifacts(
         "version": "2025.11",
         "sha256": "a" * 64,
         "artifacts": {
-            "shredos.img": hashlib.sha256(b"original").hexdigest(),
+            "shredos": hashlib.sha256(b"original").hexdigest(),
             "boot.ipxe": hashlib.sha256(b"#!ipxe\n").hexdigest(),
         },
     }
@@ -2381,7 +2779,7 @@ def test_media_sync_revalidates_and_repairs_corrupt_cached_artifacts(
         db_session,
         environment_key="shredos",
         version="2025.11",
-        source_url="https://example.test/shredos.img",
+        source_url="https://example.test/shredos.iso",
         artifact_sha256="a" * 64,
         installed_path=str(installed.resolve()),
         manifest=manifest,
@@ -2396,8 +2794,8 @@ def test_media_sync_revalidates_and_repairs_corrupt_cached_artifacts(
         "_release_descriptor",
         lambda _key: {
             "version": "2025.11",
-            "filename": "shredos.img",
-            "asset_url": "https://example.test/shredos.img",
+            "filename": "shredos.iso",
+            "asset_url": "https://example.test/shredos.iso",
             "sha256": replacement_sha256,
         },
     )
@@ -2407,6 +2805,7 @@ def test_media_sync_revalidates_and_repairs_corrupt_cached_artifacts(
         return url, replacement_sha256
 
     monkeypatch.setattr(BoundedHttpsDownloader, "download", fake_download)
+    use_test_shredos_extractor(monkeypatch)
     deferred = sync_network_boot_media(
         db_session,
         environment_key="shredos",
@@ -2418,11 +2817,11 @@ def test_media_sync_revalidates_and_repairs_corrupt_cached_artifacts(
     assert deferred.media.artifact_sha256 == replacement_sha256
     assert deferred.journal_path is not None
     assert deferred.journal_path.exists()
-    assert (installed / "shredos.img").read_bytes() == replacement
+    assert (installed / "shredos").read_bytes() == replacement
     deferred.rollback_filesystem()
     db_session.rollback()
     assert not deferred.journal_path.exists()
-    assert (installed / "shredos.img").read_bytes() == b"corrupt"
+    assert (installed / "shredos").read_bytes() == b"corrupt"
 
     repaired = sync_network_boot_media(
         db_session,
@@ -2430,7 +2829,193 @@ def test_media_sync_revalidates_and_repairs_corrupt_cached_artifacts(
         media_root=media_root,
     )
     assert repaired.artifact_sha256 == replacement_sha256
-    assert (installed / "shredos.img").read_bytes() == replacement
+    assert (installed / "shredos").read_bytes() == replacement
+
+
+def test_media_sync_replaces_verified_legacy_shredos_image_cache(
+    db_session,
+    monkeypatch,
+    tmp_path,
+):
+    media_root = tmp_path / "media"
+    installed = media_root / "shredos" / "2025.11"
+    installed.mkdir(parents=True)
+    legacy_image = installed / "shredos.img"
+    legacy_image.write_bytes(b"legacy raw image")
+    legacy_script = installed / "boot.ipxe"
+    legacy_script.write_text(
+        "#!ipxe\n"
+        "sanboot --no-describe /pxe/media/shredos/2025.11/shredos.img || exit\n",
+        encoding="utf-8",
+    )
+    legacy_manifest = {
+        "kind": "atlaso-network-boot-media",
+        "schema_version": 1,
+        "environment": "shredos",
+        "version": "2025.11",
+        "sha256": "a" * 64,
+        "artifacts": {
+            "shredos.img": hashlib.sha256(legacy_image.read_bytes()).hexdigest(),
+            "boot.ipxe": hashlib.sha256(legacy_script.read_bytes()).hexdigest(),
+        },
+    }
+    (installed / "manifest.json").write_text(
+        json.dumps(legacy_manifest),
+        encoding="utf-8",
+    )
+    existing = record_verified_media(
+        db_session,
+        environment_key="shredos",
+        version="2025.11",
+        source_url="https://example.test/shredos.img",
+        artifact_sha256="a" * 64,
+        installed_path=str(installed.resolve()),
+        manifest=legacy_manifest,
+    )
+    state = db_session.get(NetworkBootEnvironment, "shredos")
+    assert state is not None
+    state.enabled = True
+    state.desired_version = "2025.11"
+    state.active_version = "2025.11"
+    db_session.commit()
+    set_applied_pxe_runtime(
+        db_session,
+        environments=[
+            {
+                "key": "shredos",
+                "enabled": True,
+                "desired_version": "2025.11",
+                "installed_path": str(installed.resolve()),
+                "artifact_sha256": existing.artifact_sha256,
+                "manifest": legacy_manifest,
+            }
+        ],
+    )
+
+    replacement = b"verified ISO"
+    replacement_sha256 = hashlib.sha256(replacement).hexdigest()
+    monkeypatch.setattr(
+        network_boot,
+        "_release_descriptor",
+        lambda _key: {
+            "version": "2025.11",
+            "filename": "shredos.iso",
+            "asset_url": "https://example.test/shredos.iso",
+            "sha256": replacement_sha256,
+        },
+    )
+
+    def fake_download(_self, url, destination, **_kwargs):
+        destination.write_bytes(replacement)
+        return url, replacement_sha256
+
+    monkeypatch.setattr(BoundedHttpsDownloader, "download", fake_download)
+    use_test_shredos_extractor(monkeypatch)
+
+    media = sync_network_boot_media(
+        db_session,
+        environment_key="shredos",
+        media_root=media_root,
+    )
+    manifest = json.loads(media.manifest_json)
+    replacement_directory = Path(media.installed_path)
+
+    assert re.fullmatch(
+        rf"2025\.11\.sha256-{replacement_sha256[:12]}-[0-9a-f]{{12}}",
+        replacement_directory.name,
+    )
+    assert (installed / "shredos.img").read_bytes() == b"legacy raw image"
+    assert legacy_script.read_text(encoding="utf-8").startswith(
+        "#!ipxe\nsanboot "
+    )
+    assert (replacement_directory / "shredos").read_bytes() == replacement
+    assert (replacement_directory / "boot.ipxe").read_text(encoding="utf-8") == (
+        "#!ipxe\n"
+        f"kernel /pxe/media/shredos/{replacement_directory.name}/shredos "
+        "console=tty3 loglevel=3 || exit\n"
+        "boot || exit\n"
+    )
+    assert sorted(manifest["artifacts"]) == ["boot.ipxe", "shredos"]
+    assert manifest["boot"]["script"] == (
+        f"/pxe/media/shredos/{replacement_directory.name}/boot.ipxe"
+    )
+
+    active = network_boot.active_network_boot_media(
+        db_session,
+        environment_key="shredos",
+    )
+    assert active is not None
+    assert active.installed_path == str(installed.resolve())
+    assert json.loads(active.manifest_json)["artifacts"] == legacy_manifest["artifacts"]
+
+    (replacement_directory / "shredos").write_bytes(b"corrupt before apply")
+    repaired_pending = sync_network_boot_media(
+        db_session,
+        environment_key="shredos",
+        media_root=media_root,
+    )
+    pending_replacement_directory = Path(repaired_pending.installed_path)
+    pending_manifest = json.loads(repaired_pending.manifest_json)
+
+    assert pending_replacement_directory != replacement_directory
+    assert not replacement_directory.exists()
+    assert (pending_replacement_directory / "shredos").read_bytes() == replacement
+    active = network_boot.active_network_boot_media(
+        db_session,
+        environment_key="shredos",
+    )
+    assert active is not None
+    assert active.installed_path == str(installed.resolve())
+
+    media = repaired_pending
+    manifest = pending_manifest
+    replacement_directory = pending_replacement_directory
+    set_applied_pxe_runtime(
+        db_session,
+        environments=[
+            {
+                "key": "shredos",
+                "enabled": True,
+                "desired_version": "2025.11",
+                "installed_path": media.installed_path,
+                "artifact_sha256": media.artifact_sha256,
+                "manifest": manifest,
+            }
+        ],
+    )
+    active = network_boot.active_network_boot_media(
+        db_session,
+        environment_key="shredos",
+    )
+    assert active is not None
+    assert active.installed_path == media.installed_path
+    menu = render_network_boot_menu(db_session)
+    assert (
+        f"/pxe/media/shredos/{replacement_directory.name}/boot.ipxe"
+        in menu
+    )
+    assert "/pxe/media/shredos/2025.11/boot.ipxe" not in menu
+
+    (replacement_directory / "shredos").write_bytes(b"corrupt after apply")
+    repaired_again = sync_network_boot_media(
+        db_session,
+        environment_key="shredos",
+        media_root=media_root,
+    )
+    repeated_directory = Path(repaired_again.installed_path)
+
+    assert repeated_directory != replacement_directory
+    assert re.fullmatch(
+        rf"2025\.11\.sha256-{replacement_sha256[:12]}-[0-9a-f]{{12}}",
+        repeated_directory.name,
+    )
+    assert (repeated_directory / "shredos").read_bytes() == replacement
+    active = network_boot.active_network_boot_media(
+        db_session,
+        environment_key="shredos",
+    )
+    assert active is not None
+    assert active.installed_path == str(replacement_directory.resolve())
 
 
 def test_media_sync_verifies_uploaded_artifact_without_downloading_it(
@@ -2438,7 +3023,7 @@ def test_media_sync_verifies_uploaded_artifact_without_downloading_it(
     monkeypatch,
     tmp_path,
 ):
-    uploaded = tmp_path / "uploaded.img"
+    uploaded = tmp_path / "uploaded.iso"
     uploaded.write_bytes(b"operator supplied asset")
     digest = hashlib.sha256(uploaded.read_bytes()).hexdigest()
     monkeypatch.setattr(
@@ -2446,8 +3031,8 @@ def test_media_sync_verifies_uploaded_artifact_without_downloading_it(
         "_release_descriptor",
         lambda _key: {
             "version": "2025.12",
-            "filename": "shredos.img",
-            "asset_url": "https://example.test/shredos.img",
+            "filename": "shredos.iso",
+            "asset_url": "https://example.test/shredos.iso",
             "sha256": digest,
         },
     )
@@ -2456,18 +3041,21 @@ def test_media_sync_verifies_uploaded_artifact_without_downloading_it(
         raise AssertionError("The uploaded release asset must not be downloaded again.")
 
     monkeypatch.setattr(BoundedHttpsDownloader, "download", reject_download)
+    use_test_shredos_extractor(monkeypatch)
     media = sync_network_boot_media(
         db_session,
         environment_key="shredos",
         media_root=tmp_path / "media",
         uploaded_artifact=uploaded,
-        uploaded_filename="local-copy.img",
+        uploaded_filename="local-copy.iso",
     )
     manifest = json.loads(media.manifest_json)
 
     assert media.artifact_sha256 == digest
     assert manifest["acquisition"] == "upload"
-    assert manifest["uploaded_filename"] == "local-copy.img"
+    assert manifest["uploaded_filename"] == "local-copy.iso"
+    assert manifest["boot"]["script"].endswith("/boot.ipxe")
+    assert sorted(manifest["artifacts"]) == ["boot.ipxe", "shredos"]
 
 
 def test_network_boot_upload_path_rejects_untrusted_job_identifiers(tmp_path):

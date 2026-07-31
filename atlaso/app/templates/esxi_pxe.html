@@ -117,10 +117,10 @@
       <p class="muted">Upload the upstream release asset for <strong data-network-boot-upload-label>the selected environment</strong>. Atlaso resolves the current stable release and verifies the uploaded bytes against its authoritative digest or signed checksum before installation.</p>
       <input type="hidden" name="environment_key">
       <label>
-        <span class="field-label"><span>Release asset</span><button class="help-icon" type="button" data-help="Choose the original upstream ZIP or IMG asset. Uploads are limited to 2 GiB and are never activated until global appliance apply.">i</button></span>
+        <span class="field-label"><span>Release asset</span><button class="help-icon" type="button" data-help="Choose the original upstream ZIP or ISO asset listed for this environment. Uploads are limited to 2 GiB and are never activated until global appliance apply.">i</button></span>
         <span class="file-upload-control">
-          <input class="file-upload-input" type="file" name="artifact" accept=".zip,.img,application/zip,application/octet-stream" required data-file-upload-input>
-          <span class="file-upload-surface"><span class="file-upload-copy"><strong>Choose boot media file</strong><small data-file-upload-name>ZIP or IMG, up to 2 GiB</small></span></span>
+          <input class="file-upload-input" type="file" name="artifact" accept=".zip,.iso,application/zip,application/x-iso9660-image,application/octet-stream" required data-file-upload-input>
+          <span class="file-upload-surface"><span class="file-upload-copy"><strong>Choose boot media file</strong><small data-file-upload-name>ZIP or ISO, up to 2 GiB</small></span></span>
         </span>
       </label>
       <progress class="upload-progress" value="0" max="100" data-network-boot-upload-progress hidden></progress>

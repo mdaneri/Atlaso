@@ -4,7 +4,7 @@
 #
 #    pip-compile --allow-unsafe --generate-hashes --index-url=https://pypi.org/simple --no-emit-index-url --output-file=requirements-appliance.lock --strip-extras --uploaded-prior-to=P7D pyproject.toml requirements-appliance-bootstrap.in
 #
-# atlaso-declarations-sha256: fc7b486c4dc516fcff601da1867f740a61007e313e7525c3e7cb12114f93d509
+# atlaso-declarations-sha256: 45f96153a7014a837270e5f743b666a0d2cf971eca07a193485e5f9f770d23b3
 annotated-doc==0.0.4 \
     --hash=sha256:571ac1dc6991c450b25a9c2d84a3705e2ae7a53467b5d111c24fa8baabbed320 \
     --hash=sha256:fbcda96e87e9c92ad167c2e53839e57503ecfda18804ea28102353485033faa4
@@ -666,6 +666,10 @@ packaging==26.2 \
 paramiko==5.0.0 \
     --hash=sha256:36763b5b95c2a0dcfdf1abc48e48156ee425b21efe2f0e787c2dd5a95c0e5e79 \
     --hash=sha256:b7044611c30140d9a75261653210e2002977b71a0497ff3ba0d98d7edbf62f7c
+    # via atlaso (pyproject.toml)
+pycdlib==1.16.0 \
+    --hash=sha256:17843829c6bf2fd365d3d2e49a94f06da82c999efc313b9f26b0ce59c0070785 \
+    --hash=sha256:da02ce3d3a7cc1f879cd84db7bb39427a082cee0dbf0730fec89604039344058
     # via atlaso (pyproject.toml)
 pycparser==3.0 \
     --hash=sha256:600f49d217304a5902ac3c37e1281c9fe94e4d0489de643a9504c5cdfdfc6b29 \

@@ -64,6 +64,8 @@ The following cross-cutting boundaries always apply:
 - Inventory Linux is an independently versioned Atlaso release package; full images preinstall it and supported VMware
   wheel deployment synchronizes it unless explicitly skipped.
 - Validate live appliance readiness through `/openapi.json`, not VMware Tools IP discovery or service color alone.
+- Boot ShredOS only from the verified stable ISO's allowlisted `/boot/bzImage` kernel through iPXE. Do not restore raw
+  disk-image SAN boot or add unattended erase arguments.
 - OIDC clients use explicit validated identity sources and emit only granted, explicitly mapped claims; see the detailed
   agent policies and canonical OIDC service guide. Administration keeps generated client IDs immutable, shows secrets
   once, validates the issuer against the applied Management HTTPS certificate, preserves retired-key overlap, and
