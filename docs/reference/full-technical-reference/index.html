@@ -4575,8 +4575,9 @@ helper. If you already know the appliance IP, this is the most direct path:</p>
 </span><span id="__span-35-3"><a id="__codelineno-35-3" name="__codelineno-35-3" href="#__codelineno-35-3"></a>  <span class="n">-SshPassword</span> <span class="s1">&#39;&lt;admin-password&gt;&#39;</span>
 </span></code></pre></div>
 <p>Do not pipe the VMX path or put it on a separate line by itself; PowerShell will try to execute the <code>.vmx</code> file. The
-helper builds <code>python -m pip wheel . -w dist</code>, uploads the latest <code>atlaso-*.whl</code> and the OIDC <code>Authlib</code> runtime wheel,
-installs both into <code>/opt/atlaso/.venv</code>, syncs <code>scripts/appliance/atlaso-helper</code> to <code>/opt/atlaso/bin/atlaso-helper</code>,
+helper builds <code>python -m pip wheel . -w dist</code>, uploads the latest <code>atlaso-*.whl</code> plus the pinned <code>Authlib</code>, <code>joserfc</code>,
+and <code>pycdlib</code> runtime wheels, installs them into <code>/opt/atlaso/.venv</code>, syncs <code>scripts/appliance/atlaso-helper</code> to
+<code>/opt/atlaso/bin/atlaso-helper</code>,
 builds and installs the independently versioned Inventory Linux package from <code>image/inventory-linux/output</code>, restores
 virtualenv permissions, restarts <code>atlaso.service</code>, and verifies both guest loopback and host-facing
 <code>/openapi.json</code>. With <code>-SshPassword</code>, the helper uses the local Python runtime and Paramiko so SSH and sudo do not

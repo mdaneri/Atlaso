@@ -4835,10 +4835,33 @@ task that:</p>
 <li>atomically installs an immutable cache under
    <code>/var/lib/atlaso/pxe/media/&lt;environment&gt;/&lt;version&gt;</code>.</li>
 </ol>
+<p>ShredOS follows its supported single-kernel PXE procedure. Atlaso resolves the
+full x86-64 non-lite ISO, verifies its release-published SHA-256 digest, and
+uses the pinned <code>pycdlib</code> parser to extract only the upstream <code>/boot/bzImage</code>
+kernel, stored in Atlaso's cache as <code>shredos</code>. The generated <code>boot.ipxe</code> loads
+that kernel with <code>console=tty3 loglevel=3</code>; Atlaso does not SAN-boot the raw USB
+image. ShredOS uploads therefore accept the authoritative ISO rather than an
+IMG file.</p>
 <p>The verified cache is owned by the Atlaso worker account so same-version repair
 can atomically swap and remove its temporary backup without leaving root-owned
-stale media. Before the task commits its database row, Atlaso synchronizes the
-staged artifacts, their directories, and the environment directory containing
+stale media. When the same ShredOS version is already active, Atlaso publishes
+each repaired payload under a unique digest-qualified immutable directory and
+retains the last applied directory and manifest for live clients. Global
+appliance apply moves the applied snapshot to the replacement; a successful
+apply then removes superseded ShredOS snapshots that are no longer referenced
+by either the installed-media catalog or the applied manifest, preventing
+repeated repairs from consuming appliance storage. A successful sync alone
+cannot expose the new kernel. If a pending replacement becomes corrupt before
+apply, another repair publishes a new immutable identity and removes the
+superseded pending directory only after the replacement database row commits.
+Dry-run appliance validation may update the desired-state comparison baseline,
+but it retains the prior real-apply runtime manifest and cannot activate a
+pending replacement.
+The replacement's generated boot
+paths include the digest-qualified directory identity, so year-long immutable
+HTTP caching never assigns different bytes to the same public URL. Before the
+task commits its database row, Atlaso synchronizes the staged artifacts, their
+directories, and the environment directory containing
 the published rename to stable storage. First-time environment creation also
 synchronizes its media-root parent. A fixed-root transaction journal lets
 application startup finish or roll back an interrupted swap before it exposes
@@ -4879,7 +4902,7 @@ the shared <strong>Boot Service</strong> settings and apply status remain in the
 version</strong> creates pending state; global <strong>Appliance Apply</strong> is the only
 activation boundary. A failed download, verification, extraction, or apply
 leaves the previous active version available. Replacement media is verified
-completely before Atlaso swaps the version directory. The public iPXE menu
+completely before Atlaso publishes its immutable directory. The public iPXE menu
 reads host assignments, boot listeners, and default-profile artifacts from the
 last successfully applied snapshot. Pending host edits and pending media
 disablement therefore cannot change or interrupt the running boot service.</p>
@@ -4890,7 +4913,10 @@ never supplies <code>autonuke</code>, device lists, or unattended erase argument
 <p>Installed metadata records source, version, license, digest/signature method,
 and verification time. A repeated sync revalidates the cached manifest and
 every boot artifact before reporting success; a missing or corrupt cache is
-replaced from the verified upstream release. Downloaded media and inventory
+replaced from the verified upstream release. This includes replacing a
+same-version legacy or corrupt ShredOS cache with the verified ISO-extracted
+kernel; global appliance apply remains the only activation boundary.
+Downloaded media and inventory
 reports are runtime data and are excluded from settings archives; desired
 environment enablement and version selection are included. Restore and factory
 reset preserve installed-media metadata while clearing active activation state.</p>
