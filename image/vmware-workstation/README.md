@@ -18,6 +18,8 @@ payload.
 ## Prerequisites
 
 - PowerShell 7.x (`pwsh`). Windows PowerShell 5.1 (`powershell.exe`) is not supported.
+- WSL 2 installed and initialized before provisioning the default `Atlaso-Build` image-build distribution. See
+  [Windows image-build WSL environment](../../docs/contribute/windows-image-build-wsl.md).
 - VMware Workstation Pro with `vmrun.exe` available under `C:\Program Files\VMware\VMware Workstation`.
 - VMware Workstation's bundled OVF Tool with `ovftool.exe` available under
   `C:\Program Files\VMware\VMware Workstation\OVFTool` when exporting OVF/OVA artifacts.
@@ -62,6 +64,10 @@ pwsh -ExecutionPolicy Bypass `
   -IsoUrl "https://packages.vmware.com/photon/5.0/GA/iso/photon-5.0-dde71ec57.x86_64.iso" `
   -IsoChecksum "sha512:<checksum>"
 ```
+
+The wrapper builds Inventory Linux in `Atlaso-Build` by default. Pass `-WslDistribution <name>` to validate and use an
+existing compatible WSL distribution instead; the wrapper forwards that selection to every Inventory Linux build
+subprocess.
 
 Before `packer build -force` replaces the Workstation output directory, the wrapper checks for an existing output VMX
 and unregisters it with `vmrun -T ws unregister`. The `vmrun.exe` path is resolved through the same Workstation
