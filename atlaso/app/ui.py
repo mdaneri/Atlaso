@@ -11406,13 +11406,16 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 job.progress_percent = min(99, int((index / total_steps) * 100))
                 job.result = json.dumps({**current_payload, "units": unit_results}, indent=2)
                 persist_vcf_depot_metadata_from_apply(db, [result])
+                prune_network_boot_media = False
                 if result["success"]:
                     if unit["id"] == "esxi_pxe" and not result.get("dry_run"):
                         from atlaso.app.services.network_boot import (
                             mark_network_boot_environments_applied,
+                            prune_superseded_shredos_media,
                         )
 
                         mark_network_boot_environments_applied(db)
+                        prune_network_boot_media = True
                     if unit["id"] == "esx_storage" and not result.get("dry_run"):
                         inventory_result = SystemAdapter(dry_run=False).esx_storage_inventory()
                         if inventory_result.returncode == 0:
@@ -11459,6 +11462,13 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         remaining.error = "Skipped after the master task cancellation request."
                         remaining.result = json.dumps({"summary": remaining_unit["summary"], "reason": "cancelled"}, indent=2)
                 db.commit()
+                if prune_network_boot_media:
+                    removed_media = prune_superseded_shredos_media(db)
+                    if removed_media:
+                        APPLY_LOGGER.info(
+                            "Removed %s superseded ShredOS media snapshot(s) after Network Boot apply.",
+                            removed_media,
+                        )
                 if failed or cancelled:
                     break
 

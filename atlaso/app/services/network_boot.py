@@ -2125,6 +2125,104 @@ def _verified_cached_media(
     return directory
 
 
+def prune_superseded_shredos_media(
+    db: Session,
+    *,
+    media_root: Path = NETWORK_BOOT_MEDIA_ROOT,
+) -> int:
+    """Remove immutable ShredOS snapshots no longer referenced by desired or applied state."""
+    root = media_root.resolve()
+    environment_root = (root / "shredos").resolve()
+    if (
+        media_root.is_symlink()
+        or not media_root.is_dir()
+        or environment_root.is_symlink()
+        or not environment_root.is_dir()
+        or environment_root.parent != root
+    ):
+        return 0
+
+    removed = 0
+    with _MediaSwapRecoveryLock(root):
+        protected: set[str] = set()
+        installed_paths = db.execute(
+            select(NetworkBootMedia.installed_path).where(
+                NetworkBootMedia.environment_key == "shredos"
+            )
+        ).scalars()
+        for installed_path in installed_paths:
+            try:
+                resolved = Path(installed_path).resolve()
+            except OSError:
+                continue
+            if resolved.parent == environment_root:
+                protected.add(str(resolved))
+
+        applied = _applied_esxi_pxe_manifest(db).get("network_boot")
+        applied_environments = (
+            applied.get("environments")
+            if isinstance(applied, dict)
+            else None
+        )
+        if isinstance(applied_environments, list):
+            for row in applied_environments[: len(ENVIRONMENT_CATALOG)]:
+                if not isinstance(row, dict) or row.get("key") != "shredos":
+                    continue
+                installed_path = row.get("installed_path")
+                if not isinstance(installed_path, str):
+                    continue
+                try:
+                    resolved = Path(installed_path).resolve()
+                except OSError:
+                    continue
+                if resolved.parent == environment_root:
+                    protected.add(str(resolved))
+
+        for index, candidate in enumerate(environment_root.iterdir()):
+            if index >= 256:
+                break
+            if candidate.is_symlink() or not candidate.is_dir():
+                continue
+            resolved = candidate.resolve()
+            if (
+                resolved.parent != environment_root
+                or str(resolved) in protected
+            ):
+                continue
+            manifest_path = resolved / "manifest.json"
+            try:
+                if (
+                    manifest_path.is_symlink()
+                    or not manifest_path.is_file()
+                    or manifest_path.stat().st_size > 2 * 1024 * 1024
+                ):
+                    continue
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                if not isinstance(manifest, dict):
+                    continue
+                version = normalize_version(str(manifest.get("version") or ""))
+            except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
+                continue
+            artifact_sha256 = str(manifest.get("sha256") or "")
+            if (
+                manifest.get("kind") != "atlaso-network-boot-media"
+                or manifest.get("schema_version") != NETWORK_BOOT_SCHEMA_VERSION
+                or manifest.get("environment") != "shredos"
+                or re.fullmatch(r"[0-9a-f]{64}", artifact_sha256) is None
+                or re.fullmatch(
+                    rf"{re.escape(version)}"
+                    rf"(?:\.sha256-{re.escape(artifact_sha256[:12])}-[0-9a-f]{{12}})?",
+                    candidate.name,
+                )
+                is None
+            ):
+                continue
+            shutil.rmtree(resolved)
+            _fsync_directory(environment_root)
+            removed += 1
+    return removed
+
+
 def _write_media_swap_journal(
     environment_root: Path,
     *,

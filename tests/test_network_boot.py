@@ -1191,6 +1191,102 @@ def test_same_version_shredos_repair_serves_applied_snapshot_until_apply(
     assert "immutable" in response.headers["cache-control"]
 
 
+def test_prune_superseded_shredos_media_waits_for_applied_manifest(
+    db_session,
+    tmp_path,
+):
+    media_root = tmp_path / "media"
+    environment_root = media_root / "shredos"
+    version = "2025.11"
+
+    def write_snapshot(path: Path, digest: str) -> dict:
+        path.mkdir(parents=True)
+        manifest = {
+            "kind": "atlaso-network-boot-media",
+            "schema_version": 1,
+            "environment": "shredos",
+            "version": version,
+            "sha256": digest,
+            "artifacts": {
+                "boot.ipxe": "d" * 64,
+                "shredos": "e" * 64,
+            },
+        }
+        (path / "manifest.json").write_text(
+            json.dumps(manifest),
+            encoding="utf-8",
+        )
+        return manifest
+
+    applied = environment_root / version
+    applied_manifest = write_snapshot(applied, "a" * 64)
+    current = environment_root / (
+        f"{version}.sha256-{'b' * 12}-{'1' * 12}"
+    )
+    current_manifest = write_snapshot(current, "b" * 64)
+    orphan = environment_root / (
+        f"{version}.sha256-{'c' * 12}-{'2' * 12}"
+    )
+    write_snapshot(orphan, "c" * 64)
+    unrelated = environment_root / "operator-files"
+    unrelated.mkdir()
+
+    media = record_verified_media(
+        db_session,
+        environment_key="shredos",
+        version=version,
+        source_url="https://example.test/shredos.iso",
+        artifact_sha256="b" * 64,
+        installed_path=str(current.resolve()),
+        manifest=current_manifest,
+    )
+    db_session.commit()
+    set_applied_pxe_runtime(
+        db_session,
+        environments=[
+            {
+                "key": "shredos",
+                "enabled": True,
+                "desired_version": version,
+                "installed_path": str(applied.resolve()),
+                "artifact_sha256": "a" * 64,
+                "manifest": applied_manifest,
+            }
+        ],
+    )
+
+    assert network_boot.prune_superseded_shredos_media(
+        db_session,
+        media_root=media_root,
+    ) == 1
+    assert applied.exists()
+    assert current.exists()
+    assert not orphan.exists()
+    assert unrelated.exists()
+
+    set_applied_pxe_runtime(
+        db_session,
+        environments=[
+            {
+                "key": "shredos",
+                "enabled": True,
+                "desired_version": version,
+                "installed_path": media.installed_path,
+                "artifact_sha256": media.artifact_sha256,
+                "manifest": current_manifest,
+            }
+        ],
+    )
+
+    assert network_boot.prune_superseded_shredos_media(
+        db_session,
+        media_root=media_root,
+    ) == 1
+    assert not applied.exists()
+    assert current.exists()
+    assert unrelated.exists()
+
+
 @pytest.mark.parametrize("environment_key", ["gparted", "clonezilla"])
 def test_debian_live_media_uses_fetch_with_implicit_dhcp(environment_key):
     manifest = network_boot._media_boot_manifest(

@@ -12523,6 +12523,7 @@ def test_successful_esxi_pxe_apply_marks_network_boot_state_in_job_session(
 
     from sqlalchemy import select
 
+    import atlaso.app.services.network_boot as network_boot
     import atlaso.app.ui as ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, JobStep, NetworkBootEnvironment
@@ -12600,6 +12601,12 @@ def test_successful_esxi_pxe_apply_marks_network_boot_state_in_job_session(
     )
     monkeypatch.setattr(ui, "persist_vcf_depot_metadata_from_apply", lambda *_args: None)
     monkeypatch.setattr(ui, "log_appliance_apply_submission", lambda *_args, **_kwargs: None)
+    prune_calls: list[str] = []
+    monkeypatch.setattr(
+        network_boot,
+        "prune_superseded_shredos_media",
+        lambda _db: prune_calls.append("after-apply") or 0,
+    )
 
     ui.run_appliance_apply_job("job_network_boot_applied_state")
 
@@ -12614,6 +12621,7 @@ def test_successful_esxi_pxe_apply_marks_network_boot_state_in_job_session(
         assert job.status == JobStatus.SUCCEEDED.value
         assert state is not None
         assert state.active_version == "8.10"
+        assert prune_calls == ["after-apply"]
 
 
 def test_appliance_apply_parent_cancel_finishes_current_step_and_skips_remaining(client, monkeypatch):
