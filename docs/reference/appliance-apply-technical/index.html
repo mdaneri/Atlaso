@@ -4142,9 +4142,11 @@ of all selected role scopes. This changes Atlaso authorization only; Photon OS a
 home directory, shell, password/update state, and unlock state per local user.</p>
 <p>Passwords are available for OS sync only when an administrator creates or resets a local user password. Atlaso does not
 store local user password hashes or encrypted pending OS passwords in the database; the pending value is held only in
-process memory until a real global apply sends it to <code>chpasswd</code> over stdin and then clears it. If the service restarts
-before apply, the operator must set/reset the password again. Dry-run apply records command intent but keeps the
-in-memory pending password staged. Unlock requests are staged as desired state and applied later with <code>passwd -u</code> plus
+process memory until a real global apply sends it to <code>chpasswd</code> over stdin and then clears it. A real apply keeps the
+pending password when the account is disabled because the helper does not create or update that Photon account; the
+password is consumed only after the account is enabled and applied. If the service restarts before apply, the operator
+must set/reset the password again. Dry-run apply records command intent but keeps the in-memory pending password staged.
+Unlock requests are staged as desired state and applied later with <code>passwd -u</code> plus
 <code>faillock --user &lt;name&gt; --reset</code>. Password policy edits are also desired state; Local Users apply writes a
 Atlaso-managed block in <code>/etc/security/pwquality.conf</code> and ensures <code>/etc/pam.d/system-password</code> runs <code>pam_pwquality.so</code>
 before <code>pam_unix.so</code>. Rendered previews, diffs, job results, logs, and audit details must show only counts and status
@@ -4498,7 +4500,10 @@ navigation redirects to the form; non-browser requests receive a standard <code>
 <code>vcf_offline_depot</code> and <code>public_services</code> units when this nginx behavior changes because either front door may own the
 shared service-IP listener. Local Users apply refreshes an existing managed depot <code>htpasswd</code> entry from the current
 Photon hash and writes a locked, non-matching entry if that account is missing or locked. No second application password
-hash is stored.</p>
+hash is stored. Public Services validation blocks publishing the authenticated depot while its selected local user is
+disabled. When an authenticated VCF Offline Depot or Public Services unit is selected and its HTTP user has unapplied
+Local Users state, appliance apply automatically places Local Users before that publishing unit so the Photon account
+and derived <code>htpasswd</code> state exist first. Unrelated Local Users changes do not alter a publishing-only submission.</p>
 <h4 id="tool-staging-downloads-and-https-service">Tool staging, downloads, and HTTPS service<a class="headerlink" href="#tool-staging-downloads-and-https-service" title="Permanent link">&para;</a></h4>
 <p>The real VCF Offline Depot apply path stages nginx config at
 <code>/var/lib/atlaso/apply/vcf-offline-depot/atlaso-vcf-offline-depot.conf</code>. The preview and staged config use the
