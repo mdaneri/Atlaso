@@ -12,6 +12,8 @@ status: current
 Atlaso lifecycle interop tests use a separate Hyper-V lab set. They must not reuse or destroy the normal `Atlaso` test
 appliance VM.
 
+Run all Windows commands in PowerShell 7.x (`pwsh`). Windows PowerShell 5.1 (`powershell.exe`) is not supported.
+
 ## Topology
 
 The default lifecycle lab creates these VMs:
@@ -42,7 +44,7 @@ image/hyperv/clients/alpine-cloud/atlaso-tiny-linux-client.vhdx
 Prepare or refresh that image with:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/hyperv/prepare-tiny-linux-client.ps1
 ```
 
@@ -52,10 +54,10 @@ ISOs; if it is missing, the script installs it with `python -m pip install pycdl
 
 ## Single-Command Run
 
-Run from an elevated PowerShell session:
+Run from an elevated PowerShell 7 session:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/hyperv/invoke-lifecycle-test.ps1
 ```
 
@@ -83,17 +85,17 @@ Useful single-purpose commands:
 
 ```powershell
 # Create or repair the Atlaso Hyper-V switches and management NAT only.
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/hyperv/invoke-lifecycle-test.ps1 `
   -PrepareNetworksOnly
 
 # Remove only AtlasoLifecycle* VMs; keep Hyper-V switches and NAT.
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/hyperv/invoke-lifecycle-test.ps1 `
   -CleanupVmsOnly
 
 # Remove Atlaso switches and management NAT; refuses if VMs are attached.
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/hyperv/invoke-lifecycle-test.ps1 `
   -CleanupNetworksOnly
 ```
@@ -110,7 +112,7 @@ The wrapper delegates to `scripts/windows/hyperv/run-lifecycle-test.ps1`. That l
 when you need explicit control over every input:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/hyperv/run-lifecycle-test.ps1 `
   -ApplianceVhdxPath image/hyperv/output/atlaso-photon-hyperv/"Virtual Hard Disks"/Atlaso-Photon-Builder.vhdx `
   -AdminPassword '<bootstrap-admin-password>' `

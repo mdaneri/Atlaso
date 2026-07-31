@@ -3,6 +3,7 @@ from pathlib import Path
 import hashlib
 import importlib.util
 import json
+import re
 import struct
 import sys
 import zipfile
@@ -810,6 +811,27 @@ def test_windows_script_names_use_provider_tokens():
     assert "vmware/remove-lifecycle-vms.ps1" in script_paths
     assert "vmware/reset-atlaso-vm.ps1" in script_paths
     assert "vmware/set-test-nics.ps1" in script_paths
+
+
+def test_windows_documentation_requires_powershell_7():
+    documentation_paths = [
+        Path("README.md"),
+        *Path("clients").rglob("*.md"),
+        *Path("docs").rglob("*.md"),
+        *Path("image").rglob("*.md"),
+    ]
+    for path in documentation_paths:
+        text = path.read_text(encoding="utf-8")
+        powershell_blocks = re.findall(r"```powershell\n(.*?)```", text, re.DOTALL)
+        assert all("powershell.exe" not in block.lower() for block in powershell_blocks), path
+
+    support_note = "PowerShell 7.x (`pwsh`)"
+    for path in (
+        Path("image/hyperv/README.md"),
+        Path("image/vmware-workstation/README.md"),
+        Path("docs/reference/full-technical-reference.md"),
+    ):
+        assert support_note in path.read_text(encoding="utf-8")
 
 
 def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():

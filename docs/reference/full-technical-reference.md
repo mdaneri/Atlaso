@@ -135,11 +135,14 @@ June 21, 2026, live repository metadata showed `python3` as `3.14.5-2.ph5`. Atla
 python3 scripts/check_photon_compatibility.py
 ```
 
+Atlaso Windows automation supports only PowerShell 7.x (`pwsh`). Windows PowerShell 5.1 (`powershell.exe`) is not
+supported. Run every documented Windows command from `pwsh`, including elevated Hyper-V operations.
+
 Build inputs are the current Photon OS 5.0 ISO URL and checksum. On Hyper-V, use the Windows wrapper so the Photon
 kickstart is attached as a local single remastered ISO instead of depending on early installer networking:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/hyperv/build-photon-image.ps1 `
   -IsoUrl "https://packages.broadcom.com/photon/5.0/GA/iso/photon-5.0-dde71ec57.x86_64.iso" `
   -IsoChecksum "sha512:6a7a258399a258da742032987c043ab25503698d35edafaf1ae000f12127da1a161d8b84caa17fd8f23d129e81e1faa7ab087c20ab9229772a643f8f9475305f" `
@@ -147,11 +150,11 @@ powershell.exe -ExecutionPolicy Bypass `
   -BootstrapAdminPassword "<initial-atlaso-admin-password>"
 ```
 
-Run Packer from an elevated PowerShell session or as a user in the `Hyper-V Administrators` group. Prepare the Atlaso
+Run Packer from an elevated PowerShell 7 session or as a user in the `Hyper-V Administrators` group. Prepare the Atlaso
 Hyper-V management network before building:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass -File scripts/windows/hyperv/create-switches.ps1
+pwsh -ExecutionPolicy Bypass -File scripts/windows/hyperv/create-switches.ps1
 ```
 
 The Packer build VM uses the `Atlaso-Mgmt` switch by default with temporary static address `192.168.49.30/24` and
@@ -186,7 +189,7 @@ Photon-packaged pip to install Atlaso so a transient public PyPI pip release dow
 application install starts. Leave both options empty to keep standard pip behavior:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/hyperv/build-photon-image.ps1 `
   -IsoUrl "<photon-5.0-iso-url>" `
   -IsoChecksum "<packer-checksum>" `
@@ -316,13 +319,13 @@ checking out or pushing. The privileged updater has no manual-dispatch trigger.
 The application update build continues to append `+g<commit>` metadata to wheel versions. A merged pull request does not
 create a Git tag, GitHub release, or changelog entry; those remain deliberate release-management actions.
 
-Run from Windows PowerShell using the WSL development virtualenv:
+Run from PowerShell 7 using the WSL development virtualenv:
 
 ```powershell
 wsl -e sh -lc "cd /mnt/c/Users/m_dan/Documents/Atlaso && /home/m_dan/.venvs/atlaso/bin/python -m uvicorn atlaso.app.main:app --host 127.0.0.1 --port 8000"
 ```
 
-Run in the background from Windows PowerShell:
+Run in the background from PowerShell 7:
 
 ```powershell
 wsl -e sh -lc "cd /mnt/c/Users/m_dan/Documents/Atlaso && setsid -f /home/m_dan/.venvs/atlaso/bin/python -m uvicorn atlaso.app.main:app --host 127.0.0.1 --port 8000 >/tmp/atlaso-uvicorn.log 2>&1"
@@ -1031,7 +1034,7 @@ provider-specific entry points under `scripts/windows/hyperv/` and `scripts/wind
 From WSL2:
 
 ```bash
-powershell.exe -ExecutionPolicy Bypass -File scripts/windows/hyperv/create-switches.ps1
+pwsh -ExecutionPolicy Bypass -File scripts/windows/hyperv/create-switches.ps1
 ```
 
 The scaffold uses these switch names:
@@ -1058,7 +1061,7 @@ smoke checks. The first appliance smoke pass should verify SSH, `systemctl statu
 For a normal Hyper-V test appliance, use the explicit Hyper-V wrapper:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/hyperv/create-atlaso-test-vm.ps1 `
   -WaitForIp
 ```
@@ -1067,7 +1070,7 @@ Lifecycle interop testing uses a separate Hyper-V VM set and must not reuse or d
 simple entry point is:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/hyperv/invoke-lifecycle-test.ps1
 ```
 
@@ -1104,7 +1107,7 @@ the Workstation image installs `open-vm-tools` instead of Hyper-V guest integrat
 Build the image with:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/build-photon-image.ps1 `
   -IsoUrl "<photon-iso-url-or-path>" `
   -IsoChecksum "<packer-checksum>"
@@ -1120,7 +1123,7 @@ Photon root/build password remains separate from the Atlaso web bootstrap admini
 Lifecycle testing uses VMX/VMDK artifacts and `vmrun.exe`:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/invoke-lifecycle-test.ps1
 ```
 
@@ -1132,7 +1135,7 @@ authoritative for that VLAN-specific behavior. Details live in
 For a normal Workstation test appliance on the management vmnet:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/create-atlaso-test-vm.ps1 `
   -Redeploy `
   -ResetDataDisks `
@@ -1178,7 +1181,7 @@ trunk-like validation networks.
 Discover the running Workstation appliance address with:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/get-atlaso-vm-ip.ps1
 ```
 

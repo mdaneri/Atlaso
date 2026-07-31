@@ -16,6 +16,8 @@ command check run directly as the unprivileged appliance SSH user rather than th
 Atlaso can run a VMware Workstation lifecycle lab alongside the Hyper-V lab. The Workstation path uses VMX/VMDK
 artifacts and `vmrun.exe`, then delegates appliance behavior checks to the shared Python lifecycle runner.
 
+Run all Windows commands in PowerShell 7.x (`pwsh`). Windows PowerShell 5.1 (`powershell.exe`) is not supported.
+
 Appliance VMX files set `disk.EnableUUID = "TRUE"` so Photon exposes stable `/dev/disk/by-id` identities. ESX Storage
 blank-disk claims depend on those identities and reject transient `/dev/sdX` names.
 
@@ -40,7 +42,7 @@ Default vmnets:
 Check the current Workstation host network inventory with:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/prepare-networks.ps1 `
   -PlanOnly
 ```
@@ -58,7 +60,7 @@ discovers the runtime address through VMware Tools.
 Build the Workstation appliance with:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/build-photon-image.ps1 `
   -IsoUrl "<photon-iso-url-or-path>" `
   -IsoChecksum "<packer-checksum>" `
@@ -74,7 +76,7 @@ default. Use `-Headless` only when an unattended build is preferred.
 ## Single-Command Run
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/invoke-lifecycle-test.ps1
 ```
 
@@ -93,17 +95,17 @@ Useful commands:
 
 ```powershell
 # Print selected paths and topology without creating VMs.
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/invoke-lifecycle-test.ps1 `
   -PlanOnly
 
 # Validate Workstation vmnet inventory.
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/invoke-lifecycle-test.ps1 `
   -PrepareNetworksOnly
 
 # Stop and remove existing AtlasoWorkstationLifecycle* VMs.
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/invoke-lifecycle-test.ps1 `
   -CleanupVmsOnly
 ```
@@ -113,7 +115,7 @@ powershell.exe -ExecutionPolicy Bypass `
 For a normal Workstation appliance VM, separate from the lifecycle lab, use:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/create-atlaso-test-vm.ps1 `
   -Redeploy `
   -ResetDataDisks `
