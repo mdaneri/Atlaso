@@ -6827,10 +6827,13 @@ def test_new_record_rows_lock_defaults_until_required_field(client):
     assert 'editor: "tickCross"' not in firewall_block
     assert "initializeAtlasoResourceWizard({" in firewall_block
     assert "supportsInlineEnabled" in app_js.text
-    assert 'editor: "tickCross"' in app_js.text[
+    configured_columns_block = app_js.text[
         app_js.text.index("const configuredColumns"):
         app_js.text.index("const options =", app_js.text.index("const configuredColumns"))
     ]
+    assert 'editor: "tickCross"' not in configured_columns_block
+    assert 'toggle.className = "inline-boolean-toggle"' in configured_columns_block
+    assert "void saveInlineEnabled(cell)" in configured_columns_block
     assert firewall_block.index('{ id: "state"') < firewall_block.index('{ id: "enablement"')
     assert firewall_block.index('{ id: "enablement"') < firewall_block.index('{ id: "review"')
     assert 'title: "Choose rule enablement"' in firewall_block
@@ -11955,7 +11958,7 @@ def test_depot_submission_includes_only_relevant_local_user_dependency(
 
     depot_user = User(
         id=41,
-        username="vcf-depot",
+        username=f"depot-dependency-{selected_unit}-{depot_user_status}",
         enabled=True,
         os_sync_status=depot_user_status,
         os_unlock_requested_at=None,
