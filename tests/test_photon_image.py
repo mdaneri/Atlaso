@@ -635,6 +635,8 @@ def test_photon_image_optional_pip_global_index_configuration():
         assert 'destination = "/tmp/atlaso-src/scripts/version.py"' in packer_template
         assert 'source      = "../../scripts/run_tdnf_with_progress.py"' in packer_template
         assert 'destination = "/tmp/atlaso-src/scripts/run_tdnf_with_progress.py"' in packer_template
+        assert 'source      = "../inventory-linux/README.md"' in packer_template
+        assert 'destination = "/tmp/atlaso-src/image/inventory-linux/README.md"' in packer_template
         assert 'source      = "../common/update-trust"' in packer_template
         assert 'destination = "/tmp/atlaso-src/image/common/update-trust"' in packer_template
     assert "Atlaso release trust source directory is missing" in script
