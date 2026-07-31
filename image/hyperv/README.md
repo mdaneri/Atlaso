@@ -71,8 +71,9 @@ Omit both pip options for standard/default pip behavior. Image provisioning uses
 Atlaso virtual environment and does not upgrade pip as a separate bootstrap step, so transient public PyPI release
 downloads do not block the appliance build before the actual Atlaso package install begins. The Packer template stages
 `requirements-appliance.lock` with the application source so bootstrap dependency installation retains hash verification
-instead of falling back to unpinned packages. It also stages the third-party notice generator and vendored-component
-inventory as mandatory build inputs rather than skipping notice generation when either is missing. The shared
+instead of falling back to unpinned packages. It also stages the third-party notice generator, vendored-component
+inventory, and Inventory Linux README used by that inventory as mandatory build inputs rather than skipping notice
+generation when any input is missing. The shared
 PowerShell profile is staged with the other common image assets so provisioning can install the interactive
 `Get-AtlasoVault` helper. Notice lock verification inventories only top-level virtual-environment distributions and
 ignores package-internal vendored metadata.

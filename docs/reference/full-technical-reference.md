@@ -174,7 +174,8 @@ the bootstrap release directory. Missing, unreadable, malformed, or invalid vers
 specific version-policy error instead of an ambiguous shell match failure. Both Photon Packer targets stage
 `requirements-appliance.lock` with the application source so bootstrap dependency installation can retain
 `--require-hashes`; a missing staged lock fails the image rather than falling back to unpinned dependencies. They also
-stage the third-party notice generator and its vendored-component inventory so the image can generate the required
+stage the third-party notice generator, its vendored-component inventory, and the referenced Inventory Linux README so
+the image can generate the required
 Python, Photon RPM, and bundled-component notice at build time. Installed Python inventory reads only top-level
 virtual-environment distributions; package-internal vendored metadata is not treated as a separately installed locked
 dependency. Long TDNF operations capture their raw transaction output and emit one compact Packer status line every 30
