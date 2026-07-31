@@ -109,7 +109,9 @@ source and emits bounded structured JSON for CPU topology, populated DIMMs,
 every NIC and disk, storage controllers, PCI and USB devices, and
 system/BIOS/baseboard/chassis identity. `pciutils` and its `pci.ids` data add
 readable PCI names only; raw command output is never submitted. The collector
-never invokes a filesystem mount, partition, format, wipe, or block-write
+uses the sysfs SCSI peripheral type to identify optical block devices instead
+of misclassifying them from rotational-media flags. It never invokes a
+filesystem mount, partition, format, wipe, or block-write
 command.
 
 The accepted report remains at most 256 KiB. Schema v2 bounds reports to 64
@@ -124,7 +126,8 @@ After a report is accepted, the local console opens full-screen Atlaso-style
 System/CPU/DIMMs, Network, and Storage pages. Use `N`/`P` or `1`-`3` to move
 between pages. On lists larger than the fixed console viewport, use `J`/`K` to
 move through bounded list windows; network windows show at most five adapters
-and clip individual rows to the console width. Countdown updates repaint only
+and Storage windows show at most five disks/controllers. Both clip individual
+rows to the console width. Countdown updates repaint only
 the fixed action footer so the hardware pages remain stable without full-screen
 flicker. The 120-second reboot countdown starts only after successful
 submission; navigation time still advances the countdown, `S` pauses or

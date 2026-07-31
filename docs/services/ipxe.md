@@ -68,7 +68,9 @@ and blue action footer across **System / CPU / DIMMs**, **Network**, and
 **Storage** pages. Use `N`/`P` or `1`-`3` to page. Only after successful report
 submission, a 120-second reboot countdown begins. Use `J`/`K` to move through
 bounded list windows when a hardware list is larger than the console viewport;
-network windows show at most five adapters and clip rows to the console width.
+Network windows show at most five adapters, Storage windows show at most five
+disks/controllers, and both clip rows to the console width. Optical block
+devices are identified from the authoritative sysfs peripheral type.
 Page and list navigation still consume countdown time. `S` pauses or resumes
 the remaining time and `R` reboots immediately; an acknowledged audited remote
 reboot remains authoritative. Its startup service first obtains DHCP

@@ -133,6 +133,9 @@ rendered_page=0
 network_start=0
 network_page_size=5
 network_total="$(printf '%s' "${report}" | jq -r '.interfaces | length')"
+storage_start=0
+storage_page_size=5
+storage_total="$(printf '%s' "${report}" | jq -r '(.disks | length) + (.storage_controllers | length)')"
 while :; do
   now="$(date +%s)"
   elapsed=$((now - last_tick))
@@ -160,9 +163,9 @@ while :; do
     next_poll=$((now + 10))
   fi
 
-  render_state="${page}:${network_start}"
+  render_state="${page}:${network_start}:${storage_start}"
   if [ "${render_state}" != "${rendered_page}" ]; then
-    render_inventory_console "${report}" "${page}" "${remaining}" "${paused}" "${host_id}" "${network_start}"
+    render_inventory_console "${report}" "${page}" "${remaining}" "${paused}" "${host_id}" "${network_start}" "${storage_start}"
     rendered_page="${render_state}"
   else
     refresh_inventory_console_footer "${page}" "${remaining}" "${paused}" "${host_id}"
@@ -182,9 +185,11 @@ while :; do
     case "${key}" in
       j|J)
         [ "${page}" != "2" ] || network_start="$(console_window_offset "${network_start}" "${network_total}" "${network_page_size}" next)"
+        [ "${page}" != "3" ] || storage_start="$(console_window_offset "${storage_start}" "${storage_total}" "${storage_page_size}" next)"
         ;;
       k|K)
         [ "${page}" != "2" ] || network_start="$(console_window_offset "${network_start}" "${network_total}" "${network_page_size}" previous)"
+        [ "${page}" != "3" ] || storage_start="$(console_window_offset "${storage_start}" "${storage_total}" "${storage_page_size}" previous)"
         ;;
     esac
     [ "${key_action}" != "reboot" ] || reboot -f

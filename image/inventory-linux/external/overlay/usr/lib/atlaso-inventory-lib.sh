@@ -190,11 +190,13 @@ disk_type() {
   name="$1"
   transport="$2"
   rotational="$3"
-  case "${name}:${transport}:${rotational}" in
+  peripheral_type="$4"
+  case "${name}:${transport}:${rotational}:${peripheral_type}" in
+    *:*:*:5) printf 'Optical' ;;
     nvme*:*|*:nvme:*) printf 'NVMe' ;;
     mmcblk*:*) printf 'Flash' ;;
     *:usb:*) printf 'USB' ;;
-    *:*:true) printf 'HDD' ;;
+    *:*:true:*) printf 'HDD' ;;
     *) printf 'SSD' ;;
   esac
 }
@@ -226,8 +228,9 @@ collect_disks() {
     read_only=false
     [ "$(read_value "${path}/ro")" = "1" ] && read_only=true
     device_path="$(readlink -f "${path}/device" 2>/dev/null || true)"
+    peripheral_type="$(unsigned_value "$(read_value "${path}/device/type")")"
     controller="$(printf '%s\n' "${device_path}" | grep -Eo '[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]' | tail -n1 | tr 'A-F' 'a-f')"
-    type="$(disk_type "${name}" "${transport}" "${rotational}")"
+    type="$(disk_type "${name}" "${transport}" "${rotational}" "${peripheral_type}")"
     flags="$(jq -cn --argjson rotational "${rotational}" --argjson removable "${removable}" \
       --argjson read_only "${read_only}" '[if $rotational then "rotational" else empty end,
         if $removable then "removable" else empty end,
@@ -510,7 +513,9 @@ render_inventory_console() {
   paused="$4"
   host_id="$5"
   network_start="$(unsigned_value "${6:-0}")"
+  storage_start="$(unsigned_value "${7:-0}")"
   network_page_size=5
+  storage_page_size=5
   printf '\033[107m\033[30m\033[2J\033[H'
   printf '\033[106m\033[34m\033[1m  Atlaso Inventory Linux  \033[22m\033[K\n'
   printf '\033[107m\033[30m\033[K'
@@ -541,9 +546,22 @@ render_inventory_console() {
       ;;
     *)
       printf '\033[1m  Storage\033[0m\033[K\n\n'
-      printf '%s' "${report}" | jq -r '.disks[] | "  " + .device + "  " + .size_human + "  " + .type + "  " + .model + "\n      serial " + .serial + "  WWN " + .wwn + "  transport " + .transport + "  controller " + .controller_pci_address + "  flags " + (.flags|join(", "))'
-      printf '\n\033[1m  Storage controllers\033[0m\n'
-      printf '%s' "${report}" | jq -r '.storage_controllers[] | "  " + .pci_address + "  " + .type + "  " + ([.vendor,.device] | map(select(length > 0)) | join(" ")) + "  driver " + .driver'
+      storage_total="$(printf '%s' "${report}" | jq -r '(.disks | length) + (.storage_controllers | length)')"
+      if [ "${storage_start}" -ge "${storage_total}" ]; then storage_start=0; fi
+      storage_end=$((storage_start + storage_page_size))
+      [ "${storage_end}" -le "${storage_total}" ] || storage_end="${storage_total}"
+      if [ "${storage_total}" -gt 0 ]; then storage_first=$((storage_start + 1)); else storage_first=0; fi
+      printf '  Devices %s-%s of %s  [J] More  [K] Back\n' "${storage_first}" "${storage_end}" "${storage_total}"
+      printf '%s' "${report}" | jq -r --argjson start "${storage_start}" --argjson limit "${storage_page_size}" '
+        ([.disks[] | {kind:"Disk", value:.}] + [.storage_controllers[] | {kind:"Controller", value:.}])[$start:($start + $limit)][] |
+        if .kind == "Disk" then
+          "  [Disk] " + .value.device + "  " + .value.size_human + "  " + .value.type + "  " + .value.model +
+          "\n      serial " + .value.serial + "  WWN " + .value.wwn + "  transport " + .value.transport +
+          "  controller " + .value.controller_pci_address + "  flags " + (.value.flags|join(", "))
+        else
+          "  [Controller] " + .value.pci_address + "  " + .value.type + "  " +
+          ([.value.vendor,.value.device] | map(select(length > 0)) | join(" ")) + "  driver " + .value.driver
+        end' | console_clip_lines 78
       ;;
   esac
   printf '\033[0m\033[44m\033[97m\033[K\n'
