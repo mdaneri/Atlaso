@@ -815,7 +815,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6" in service_worker.text
     assert "/static/app.css?v=atlaso-local-users-20260730-17" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in service_worker.text
-    assert "/static/app.js?v=atlaso-local-users-20260730-40" in service_worker.text
+    assert "/static/app.js?v=atlaso-local-users-20260730-41" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -835,8 +835,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=atlaso-local-users-20260730-40"),
-        (public_base, "/static/app.js?v=atlaso-local-users-20260730-40"),
+        (base, "/static/app.js?v=atlaso-local-users-20260730-41"),
+        (public_base, "/static/app.js?v=atlaso-local-users-20260730-41"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5"
@@ -1325,7 +1325,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=atlaso-local-users-20260730-17" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in page.text
-    assert "/static/app.js?v=atlaso-local-users-20260730-40" in page.text
+    assert "/static/app.js?v=atlaso-local-users-20260730-41" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -5365,12 +5365,14 @@ def test_local_users_page_separates_ldap_authentication(client):
     assert 'height: "100%"' in users_table_js
     assert "initializePasswordToggles(accountForm)" in users_table_js
     assert "resetPasswordVisibility(form)" in users_table_js
+    assert "form.dataset.osPasswordAvailable" in users_table_js
     assert 'dialogId: "user-account-dialog"' in users_table_js
     assert 'resourceName: "user"' in users_table_js
     assert 'editor:' not in users_table_js
     assert "cellEdited:" not in users_table_js
     assert "Select at least one Atlaso role." in users_table_js
     assert "Web SSH access requires an interactive Photon shell." in users_table_js
+    assert "Set a Photon password in the Password step before enabling this user." in users_table_js
     enabled_column_js = users_table_js.split('title: "Enabled"', 1)[1].split('title: "OS account"', 1)[0]
     assert "editor:" not in enabled_column_js
     assert "validatePasswordMatch" in app_js.text
@@ -5855,6 +5857,7 @@ def test_local_user_wizard_can_stage_password_and_enable_account(client):
     )
     assert created.status_code == 200, created.text
     assert created.json()["user"]["enabled"] is True
+    assert created.json()["user"]["os_password_available"] is True
     with SessionLocal() as db:
         user = db.execute(select(User).where(User.username == "wizard-enabled")).scalar_one()
         assert user.enabled is True
@@ -5916,6 +5919,7 @@ def test_existing_local_user_can_be_enabled_inline_after_password_staging(client
 
     assert enabled.status_code == 200, enabled.text
     assert enabled.json()["user"]["enabled"] is True
+    assert enabled.json()["user"]["os_password_available"] is True
     with SessionLocal() as db:
         user = db.get(User, user_id)
         assert user is not None

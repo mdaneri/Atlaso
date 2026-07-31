@@ -32,7 +32,8 @@ This verified appliance view provides visual orientation before you begin.
    keep the new account disabled. Use the eye beside either password field to show only that field temporarily; opening
    the workflow again always masks both fields.
 4. Choose account enablement explicitly. Existing accounts can also be enabled or disabled directly from the grid;
-   enabling still requires a staged or previously applied Photon password.
+   enabling still requires a staged or previously applied Photon password. When editing an account without either,
+   return to the Password step and enter the intended Photon password before enabling it.
 5. Use the shared confirmation dialog before permanent deletion.
 
 Passwords are never displayed again or stored in audit details. Do not reuse the Photon build password or publish test

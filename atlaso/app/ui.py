@@ -817,6 +817,7 @@ def user_to_dict(user: User, current_user_id: int | None = None, os_status: dict
         "created_at": user.created_at.strftime("%Y-%m-%d"),
         "os_sync_status": local_user_sync_rows([user])[0]["sync_status"],
         "os_password_pending": has_pending_os_password(user),
+        "os_password_available": bool(has_pending_os_password(user) or user.os_password_applied_at),
         "os_account_state": os_state,
         "os_account_detail": os_detail,
         "os_unlock_available": os_state in {"locked", "faillock blocked"},

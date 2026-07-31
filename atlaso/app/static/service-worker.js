@@ -5,7 +5,7 @@ const ATLASO_ASSETS = [
   "/static/offline.html",
   "/static/app.css?v=atlaso-local-users-20260730-17",
   "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5",
-  "/static/app.js?v=atlaso-local-users-20260730-40",
+  "/static/app.js?v=atlaso-local-users-20260730-41",
   "/static/terminal.js?v=web-terminal-review-20260716-3",
   "/static/vendor/xterm/xterm.css?v=5.5.0",
   "/static/vendor/xterm/xterm.js?v=5.5.0",

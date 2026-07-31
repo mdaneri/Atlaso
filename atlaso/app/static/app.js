@@ -3842,6 +3842,10 @@ function initializeUsersTable() {
       resetPasswordVisibility(form);
       form.elements.password.value = "";
       form.elements.confirm_password.value = "";
+      form.dataset.osPasswordAvailable = form.elements.record_id.value
+        && existingRows.find((row) => String(row.id) === String(form.elements.record_id.value))?.os_password_available
+        ? "true"
+        : "false";
     },
     validateStep: ({ form, step }) => {
       if (step.id === "identity" && !form.querySelector('input[name="roles"]:checked')) {
@@ -3867,11 +3871,15 @@ function initializeUsersTable() {
       }
       if (
         step.id === "enablement"
-        && !form.elements.record_id.value
         && form.elements.enabled.checked
         && !form.elements.password.value
+        && form.dataset.osPasswordAvailable !== "true"
       ) {
-        return { valid: false, message: "Set a Photon password before enabling a new user, or leave the user disabled.", field: "enabled" };
+        return {
+          valid: false,
+          message: "Set a Photon password in the Password step before enabling this user.",
+          field: "enabled",
+        };
       }
       return { valid: true };
     },
