@@ -283,13 +283,14 @@ def mark_local_users_applied(users: list[User], *, applied_at: datetime | None =
     timestamp = applied_at or utcnow()
     for user in users:
         password_was_pending = has_pending_os_password(user)
-        clear_pending_os_password(user)
-        if password_was_pending:
-            user.os_password_applied_at = timestamp
-        if not user.enabled:
+        if user.enabled:
+            clear_pending_os_password(user)
+            if password_was_pending:
+                user.os_password_applied_at = timestamp
+        else:
             user.os_password_applied_at = None
         user.os_sync_applied_at = timestamp
-        user.os_sync_status = "applied"
+        user.os_sync_status = "pending" if password_was_pending and not user.enabled else "applied"
         user.os_sync_error = None
         user.os_unlock_requested_at = None
 

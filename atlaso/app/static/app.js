@@ -1314,17 +1314,31 @@ function initializeAtlasoResourceWizard(config) {
       action: (_event, row) => deleteResource(row).catch(reportActionError),
     });
   }
-  const configuredColumns = (config.options.columns || []).map((column) => (
-    supportsInlineEnabled && column.field === "enabled"
-      ? {
-        ...column,
-        editor: "tickCross",
-        editable: (cell) => canEdit(cell.getRow().getData()),
-        cellEdited: saveInlineEnabled,
-        headerSort: false,
-      }
-      : column
-  ));
+  const configuredColumns = (config.options.columns || []).map((column) => {
+    if (!supportsInlineEnabled || column.field !== "enabled") return column;
+    const baseFormatter = column.formatter;
+    return {
+      ...column,
+      formatter: (cell) => {
+        const content = typeof baseFormatter === "function"
+          ? baseFormatter(cell)
+          : atlasoBooleanFormatter(cell);
+        if (!canEdit(cell.getRow().getData())) return content;
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = "inline-boolean-toggle";
+        toggle.setAttribute("aria-label", `${cell.getValue() ? "Disable" : "Enable"} ${config.resourceName}`);
+        toggle.innerHTML = content;
+        toggle.addEventListener("click", (event) => {
+          event.stopPropagation();
+          cell.setValue(!Boolean(cell.getValue()));
+          void saveInlineEnabled(cell);
+        });
+        return toggle;
+      },
+      headerSort: false,
+    };
+  });
   const options = {
     ...config.options,
     columns: configuredColumns,
@@ -3648,6 +3662,40 @@ async function postUserAction(url, data, csrf, options = {}) {
   }
 }
 
+function resetPasswordVisibility(container) {
+  if (!(container instanceof HTMLElement)) return;
+  container.querySelectorAll("input[data-password-visible]").forEach((input) => {
+    if (input instanceof HTMLInputElement) {
+      input.type = "password";
+      input.removeAttribute("data-password-visible");
+    }
+  });
+  container.querySelectorAll("[data-password-toggle]").forEach((button) => {
+    if (!(button instanceof HTMLButtonElement)) return;
+    button.setAttribute("aria-pressed", "false");
+    button.setAttribute("aria-label", button.getAttribute("aria-label")?.replace(/^Hide /, "Show ") || "Show password");
+  });
+}
+
+function initializePasswordToggles(container) {
+  if (!(container instanceof HTMLElement)) return;
+  container.querySelectorAll("[data-password-toggle]").forEach((button) => {
+    if (!(button instanceof HTMLButtonElement) || button.dataset.passwordToggleReady === "true") return;
+    const input = button.closest(".password-input-wrap")?.querySelector("input");
+    if (!(input instanceof HTMLInputElement)) return;
+    button.dataset.passwordToggleReady = "true";
+    button.addEventListener("click", () => {
+      const nextVisible = input.type === "password";
+      input.type = nextVisible ? "text" : "password";
+      input.toggleAttribute("data-password-visible", nextVisible);
+      button.setAttribute("aria-pressed", nextVisible ? "true" : "false");
+      const currentLabel = button.getAttribute("aria-label") || "Show password";
+      button.setAttribute("aria-label", currentLabel.replace(/^(Show|Hide) /, `${nextVisible ? "Hide" : "Show"} `));
+      input.focus();
+    });
+  });
+}
+
 function openUserPasswordModal(data) {
   const modal = document.getElementById("user-password-modal");
   const form = document.getElementById("user-password-form");
@@ -3658,18 +3706,7 @@ function openUserPasswordModal(data) {
   }
   form.action = `/users/${data.id}/password`;
   form.reset();
-  form.querySelectorAll('input[type="text"][data-password-visible]').forEach((input) => {
-    if (input instanceof HTMLInputElement) {
-      input.type = "password";
-      input.removeAttribute("data-password-visible");
-    }
-  });
-  form.querySelectorAll("[data-password-toggle]").forEach((button) => {
-    if (button instanceof HTMLButtonElement) {
-      button.setAttribute("aria-pressed", "false");
-      button.setAttribute("aria-label", button.getAttribute("aria-label")?.replace("Hide", "Show") || "Show password");
-    }
-  });
+  resetPasswordVisibility(form);
   form.querySelectorAll("input").forEach((input) => {
     if (input instanceof HTMLInputElement) {
       input.setCustomValidity("");
@@ -3759,6 +3796,8 @@ function userRolesFormatter(cell) {
 function initializeUsersTable() {
   const element = document.getElementById("users-table");
   if (!(element instanceof HTMLElement)) return;
+  const accountForm = document.querySelector("[data-user-account-form]");
+  initializePasswordToggles(accountForm);
   const csrf = element.dataset.csrf || "";
   const existingRows = JSON.parse(element.dataset.users || "[]");
   initializeAtlasoResourceWizard({
@@ -3800,6 +3839,7 @@ function initializeUsersTable() {
       { label: "Enabled", field: "enabled" },
     ],
     onOpen: ({ form }) => {
+      resetPasswordVisibility(form);
       form.elements.password.value = "";
       form.elements.confirm_password.value = "";
     },
@@ -3866,7 +3906,7 @@ function initializeUsersTable() {
       },
     ],
     options: {
-      height: "420px",
+      height: "100%",
       rowHeight: 28,
       placeholder: "No local users configured.",
       reactiveData: false,
@@ -3951,6 +3991,7 @@ function initializeUserPasswordForm() {
   if (!(form instanceof HTMLFormElement)) {
     return;
   }
+  initializePasswordToggles(form);
   const password = form.querySelector('input[name="password"]');
   const confirmation = form.querySelector('input[name="confirm_password"]');
   const validatePasswordMatch = (report = false) => {
@@ -3972,23 +4013,6 @@ function initializeUserPasswordForm() {
       return;
     }
     input.addEventListener("input", () => validatePasswordMatch(false));
-  });
-  form.querySelectorAll("[data-password-toggle]").forEach((button) => {
-    if (!(button instanceof HTMLButtonElement)) {
-      return;
-    }
-    const input = button.closest(".password-input-wrap")?.querySelector("input");
-    if (!(input instanceof HTMLInputElement)) {
-      return;
-    }
-    button.addEventListener("click", () => {
-      const nextVisible = input.type === "password";
-      input.type = nextVisible ? "text" : "password";
-      input.toggleAttribute("data-password-visible", nextVisible);
-      button.setAttribute("aria-pressed", nextVisible ? "true" : "false");
-      button.setAttribute("aria-label", `${nextVisible ? "Hide" : "Show"} ${input.name === "confirm_password" ? "confirmation password" : "new password"}`);
-      input.focus();
-    });
   });
   form.addEventListener("submit", (event) => {
     if (!validatePasswordMatch(true)) {

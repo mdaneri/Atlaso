@@ -120,9 +120,11 @@ home directory, shell, password/update state, and unlock state per local user.
 
 Passwords are available for OS sync only when an administrator creates or resets a local user password. Atlaso does not
 store local user password hashes or encrypted pending OS passwords in the database; the pending value is held only in
-process memory until a real global apply sends it to `chpasswd` over stdin and then clears it. If the service restarts
-before apply, the operator must set/reset the password again. Dry-run apply records command intent but keeps the
-in-memory pending password staged. Unlock requests are staged as desired state and applied later with `passwd -u` plus
+process memory until a real global apply sends it to `chpasswd` over stdin and then clears it. A real apply keeps the
+pending password when the account is disabled because the helper does not create or update that Photon account; the
+password is consumed only after the account is enabled and applied. If the service restarts before apply, the operator
+must set/reset the password again. Dry-run apply records command intent but keeps the in-memory pending password staged.
+Unlock requests are staged as desired state and applied later with `passwd -u` plus
 `faillock --user <name> --reset`. Password policy edits are also desired state; Local Users apply writes a
 Atlaso-managed block in `/etc/security/pwquality.conf` and ensures `/etc/pam.d/system-password` runs `pam_pwquality.so`
 before `pam_unix.so`. Rendered previews, diffs, job results, logs, and audit details must show only counts and status
@@ -549,7 +551,9 @@ navigation redirects to the form; non-browser requests receive a standard `401` 
 `vcf_offline_depot` and `public_services` units when this nginx behavior changes because either front door may own the
 shared service-IP listener. Local Users apply refreshes an existing managed depot `htpasswd` entry from the current
 Photon hash and writes a locked, non-matching entry if that account is missing or locked. No second application password
-hash is stored.
+hash is stored. Public Services validation blocks publishing the authenticated depot while its selected local user is
+disabled. When authenticated depot listeners are selected and Local Users has changed, appliance apply automatically
+places Local Users before Public Services so the Photon account and derived `htpasswd` state exist first.
 
 #### Tool staging, downloads, and HTTPS service
 

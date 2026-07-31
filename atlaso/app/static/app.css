@@ -1192,6 +1192,25 @@ textarea {
   min-width: 0;
 }
 
+.users-main-panel {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 144px);
+  min-height: 420px;
+  overflow: hidden;
+}
+
+.users-main-panel > .panel-head,
+.users-main-panel > #users-error {
+  flex: 0 0 auto;
+}
+
+.users-grid {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .vcf-offline-depot-workspace > .side-stack .detail-panel {
   position: static;
 }
@@ -7924,6 +7943,11 @@ dialog.has-expanded-monaco .confirm-modal-panel {
     min-height: 0;
   }
 
+  .users-main-panel {
+    height: min(620px, calc(100vh - 100px));
+    min-height: 320px;
+  }
+
   .firewall-managed-section,
   .firewall-managed-section .readonly-tabulator-shell,
   .services-table {
@@ -8131,4 +8155,15 @@ dialog.has-expanded-monaco .confirm-modal-panel {
 .vcf-vault-candidate-list .info-band {
   align-items: center;
   grid-template-columns: auto 1fr;
+}
+.inline-boolean-toggle {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  display: flex;
+  height: 100%;
+  justify-content: center;
+  padding: 0;
+  width: 100%;
 }

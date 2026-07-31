@@ -3403,6 +3403,17 @@ def public_services_context(db: Session, *, reconcile: bool = True) -> dict[str,
         )
     )
     validation_errors = []
+    if depot_settings.enabled and not depot_settings.allow_unauthenticated_access:
+        depot_user = db.get(User, depot_settings.http_user_id) if depot_settings.http_user_id else None
+        if depot_user is None:
+            validation_errors.append(
+                "Public Services cannot publish VCF Offline Depot until an HTTP user is selected."
+            )
+        elif not depot_user.enabled:
+            validation_errors.append(
+                f"Public Services cannot publish VCF Offline Depot while HTTP user {depot_user.username} is disabled. "
+                "Enable the user and apply Local Users first."
+            )
     if terminal_extra_requested and not terminal_https_ready:
         validation_errors.append(
             "Web terminal public listeners require valid Management HTTPS and an issued appliance HTTPS certificate. Apply Certificate Authority and Appliance Settings first."
@@ -11555,6 +11566,19 @@ def submit_appliance_apply(
             for unit_id in ldap_related_units
             if unit_id in unit_map and unit_map[unit_id]["changed"]
         )
+    depot_context_for_apply = unit_map.get("vcf_offline_depot", {}).get("context", {})
+    depot_settings_for_apply = depot_context_for_apply.get("vcf_depot_settings")
+    local_users_required_for_public_services = bool(
+        "public_services" in selected_ids
+        and getattr(depot_settings_for_apply, "enabled", False)
+        and not getattr(depot_settings_for_apply, "allow_unauthenticated_access", False)
+    )
+    if (
+        local_users_required_for_public_services
+        and "local_users" in unit_map
+        and unit_map["local_users"]["changed"]
+    ):
+        selected_ids.add("local_users")
     if not selected_ids:
         detail = "Select at least one appliance change to submit."
         return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")

@@ -29,7 +29,8 @@ This verified appliance view provides visual orientation before you begin.
    and choose the least-privileged suitable roles.
 2. Choose Photon shell and Web SSH access as separate decisions.
 3. Set a policy-compliant Photon password in the guided workflow, or leave both password fields blank to postpone and
-   keep the new account disabled.
+   keep the new account disabled. Use the eye beside either password field to show only that field temporarily; opening
+   the workflow again always masks both fields.
 4. Choose account enablement explicitly. Existing accounts can also be enabled or disabled directly from the grid;
    enabling still requires a staged or previously applied Photon password.
 5. Use the shared confirmation dialog before permanent deletion.
@@ -43,6 +44,11 @@ A real Local Users apply writes its secret-bearing helper input with mode `0600`
 execution window. Atlaso and `atlaso-helper` both remove that file after success, validation failure, or apply failure;
 application startup also removes a stale input left by an interrupted process. Previews, baselines, task results, logs,
 audits, and test output never receive the raw password.
+
+If a password is staged while its user remains disabled, a successful Local Users apply keeps that in-memory pending
+password instead of treating it as applied. Enable the user and apply Local Users again to create the Photon account and
+consume the staged password. Public Services blocks VCF Offline Depot publication while its selected HTTP user is
+disabled, and appliance apply automatically includes changed Local Users state before that public listener.
 
 Read-only Photon account status uses a different uniquely named, short-lived file containing no password values. It
 cannot replace an active apply payload and is removed as soon as the status request finishes.

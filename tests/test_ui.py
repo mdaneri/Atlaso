@@ -813,9 +813,9 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6" in service_worker.text
-    assert "/static/app.css?v=atlaso-network-boot-20260730-15" in service_worker.text
+    assert "/static/app.css?v=atlaso-local-users-20260730-17" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in service_worker.text
-    assert "/static/app.js?v=atlaso-network-boot-ntp-20260730-28" in service_worker.text
+    assert "/static/app.js?v=atlaso-local-users-20260730-40" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -835,8 +835,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=atlaso-network-boot-ntp-20260730-28"),
-        (public_base, "/static/app.js?v=atlaso-network-boot-ntp-20260730-28"),
+        (base, "/static/app.js?v=atlaso-local-users-20260730-40"),
+        (public_base, "/static/app.js?v=atlaso-local-users-20260730-40"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5"
@@ -961,6 +961,10 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     assert "await table.addRow(resource, true, config.newRow.id)" in adapter_block
     assert "await Promise.resolve(config.onSaved?.({ payload, resource, form, table }))" in adapter_block
     assert "await Promise.resolve(config.onDeleted?.({ data, table }))" in adapter_block
+    assert 'toggle.className = "inline-boolean-toggle"' in adapter_block
+    assert 'toggle.addEventListener("click", (event) =>' in adapter_block
+    assert 'cell.setValue(!Boolean(cell.getValue()))' in adapter_block
+    assert "void saveInlineEnabled(cell)" in adapter_block
     assert adapter_block.count("await refreshNetworkSideStack();") == 3
     for name in (
         "initializeApiTokensTable",
@@ -1319,9 +1323,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=atlaso-network-boot-20260730-15" in page.text
+    assert "/static/app.css?v=atlaso-local-users-20260730-17" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in page.text
-    assert "/static/app.js?v=atlaso-network-boot-ntp-20260730-28" in page.text
+    assert "/static/app.js?v=atlaso-local-users-20260730-40" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -5354,8 +5358,13 @@ def test_local_users_page_separates_ldap_authentication(client):
     assert "Unlock OS account" in app_js.text
     assert "disableUserFromMenu" in app_js.text
     assert "Disable user" in app_js.text
+    assert "function initializePasswordToggles(container)" in app_js.text
+    assert "function resetPasswordVisibility(container)" in app_js.text
     users_table_js = app_js.text.split("function initializeUsersTable()", 1)[1].split("function initializeUserPasswordForm()", 1)[0]
     assert "initializeAtlasoResourceWizard({" in users_table_js
+    assert 'height: "100%"' in users_table_js
+    assert "initializePasswordToggles(accountForm)" in users_table_js
+    assert "resetPasswordVisibility(form)" in users_table_js
     assert 'dialogId: "user-account-dialog"' in users_table_js
     assert 'resourceName: "user"' in users_table_js
     assert 'editor:' not in users_table_js
@@ -5372,6 +5381,11 @@ def test_local_users_page_separates_ldap_authentication(client):
     assert 'field: "web_terminal_access"' in app_js.text
     assert 'title: "Web SSH"' in app_js.text
     assert "Temp Password" not in app_js.text
+    app_css = client.get("/static/app.css").text
+    assert ".users-main-panel {" in app_css
+    assert "height: calc(100vh - 144px);" in app_css
+    assert ".users-grid {" in app_css
+    assert "flex: 1 1 0;" in app_css
 
 
 def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
@@ -5860,6 +5874,73 @@ def test_local_user_wizard_can_stage_password_and_enable_account(client):
     )
     assert rejected.status_code == 400
     assert "Set a Photon password" in rejected.text
+
+
+def test_existing_local_user_can_be_enabled_inline_after_password_staging(client):
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import User
+    from atlaso.app.services.local_users import has_pending_os_password
+
+    login(client)
+    users = client.get("/users")
+    csrf = users.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    created = client.post(
+        "/users",
+        data={"username": "inline-enabled", "roles": ["viewer"], "shell": "/sbin/nologin", "csrf": csrf},
+        headers={"X-Atlaso-Grid": "1"},
+    )
+    assert created.status_code == 200
+    user_id = created.json()["user"]["id"]
+    staged = client.post(
+        f"/users/{user_id}/password",
+        data={"password": "Inline-Bridge1!", "confirm_password": "Inline-Bridge1!", "csrf": csrf},
+        follow_redirects=False,
+    )
+    assert staged.status_code == 303
+
+    enabled = client.post(
+        f"/users/{user_id}/edit",
+        data={
+            "username": "inline-enabled",
+            "roles": ["viewer"],
+            "roles_text": "viewer",
+            "shell": "/sbin/nologin",
+            "enabled": "on",
+            "enabled_present": "1",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Grid": "1"},
+    )
+
+    assert enabled.status_code == 200, enabled.text
+    assert enabled.json()["user"]["enabled"] is True
+    with SessionLocal() as db:
+        user = db.get(User, user_id)
+        assert user is not None
+        assert user.enabled is True
+        assert has_pending_os_password(user)
+
+
+def test_real_local_users_apply_preserves_pending_password_for_disabled_user():
+    from atlaso.app.models import User
+    from atlaso.app.services.local_users import (
+        clear_pending_os_password,
+        has_pending_os_password,
+        mark_local_users_applied,
+        stage_user_os_password,
+    )
+
+    user = User(username="disabled-staged", role="viewer", shell="/sbin/nologin", enabled=False)
+    stage_user_os_password(user, "Disabled-Bridge1!")
+    try:
+        mark_local_users_applied([user])
+        assert has_pending_os_password(user)
+        assert user.os_password_applied_at is None
+        assert user.os_sync_status == "pending"
+    finally:
+        clear_pending_os_password(user)
 
 
 def test_local_users_password_policy_staging_and_apply_redaction(client):
@@ -7750,6 +7831,30 @@ def test_public_services_reject_terminal_listener_without_valid_management_https
     ]
     assert "Terminal-only HTTPS front door" not in context["public_service_config_preview"]
     assert not any(entry.get("web_terminal") for entry in context["public_service_entries"])
+
+
+def test_public_services_rejects_authenticated_depot_with_disabled_http_user(client):
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import User, VcfOfflineDepotSettings
+    from atlaso.app.ui import public_services_context
+
+    with SessionLocal() as db:
+        settings = db.execute(select(VcfOfflineDepotSettings)).scalar_one()
+        depot_user = db.execute(select(User).where(User.username == "vcf-depot")).scalar_one()
+        settings.enabled = True
+        settings.allow_unauthenticated_access = False
+        settings.http_user_id = depot_user.id
+        depot_user.enabled = False
+        db.commit()
+
+        context = public_services_context(db, reconcile=False)
+
+    assert (
+        "Public Services cannot publish VCF Offline Depot while HTTP user vcf-depot is disabled. "
+        "Enable the user and apply Local Users first."
+    ) in context["public_service_validation_errors"]
 
 
 def test_public_service_home_is_scoped_to_called_ip(client, tmp_path, monkeypatch):
@@ -11800,6 +11905,68 @@ def test_global_appliance_apply_tracks_baselines_diffs_and_skips(client):
         assert job is not None
         assert "skipped_changed_units" in (job.result or "")
         assert '"unit_id": "firewall"' in (job.result or "")
+
+
+def test_public_services_submission_includes_changed_local_users_dependency(client, monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    from sqlalchemy import select
+
+    import atlaso.app.ui as ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStep
+
+    def unit(unit_id, label, *, changed, context=None):
+        return {
+            "id": unit_id,
+            "label": label,
+            "changed": changed,
+            "context": context or {},
+            "summary": [f"{label} desired state"],
+            "validation_errors": [],
+            "validation_warnings": [],
+            "config_path": f"/var/lib/atlaso/apply/{unit_id}.conf",
+            "config_preview": f"{unit_id}=configured",
+            "raw_config_preview": f"{unit_id}=configured",
+            "config_diff": f"+{unit_id}=configured" if changed else "",
+            "snapshot_hash": f"{unit_id}-snapshot",
+        }
+
+    units = [
+        unit("local_users", "Local Users", changed=True),
+        unit(
+            "vcf_offline_depot",
+            "VCF Offline Depot",
+            changed=False,
+            context={
+                "vcf_depot_settings": SimpleNamespace(
+                    enabled=True,
+                    allow_unauthenticated_access=False,
+                )
+            },
+        ),
+        unit("public_services", "Public Services", changed=True),
+    ]
+    started_jobs = []
+    login(client)
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    monkeypatch.setattr(ui, "appliance_apply_units", lambda _db, **_kwargs: units)
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda job_id: started_jobs.append(job_id))
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "public_services"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    with SessionLocal() as db:
+        job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()
+        assert json.loads(job.result or "{}")["selected_units"] == ["local_users", "public_services"]
+        steps = db.scalars(select(JobStep).where(JobStep.job_id == job.id).order_by(JobStep.position)).all()
+        assert [step.component_key for step in steps] == ["local_users", "public_services"]
+    assert started_jobs == [job.id]
 
 
 def test_appliance_apply_connection_warnings_detect_management_address_and_certificate_changes():
