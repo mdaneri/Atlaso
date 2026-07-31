@@ -4303,7 +4303,9 @@ CA/certificate material while host file writes still go through <code>atlaso-hel
   Python <code>vcf-sdk</code> <code>9.1.0.0</code>. It keeps the system module tree root-owned and read-only to non-root users, verifies
   <code>Connect-VIServer</code> from the bootstrap administrator's unprivileged PowerShell session, records tool versions in
   <code>/etc/atlaso/build-info</code>, and creates that OS account under <code>/var/lib/atlaso/users</code> with <code>/usr/bin/pwsh</code>. Appliance
-  Update preserves the same permissions after managed PowerShell module installs. PowerCLI is for interactive
+  Update preserves the same permissions after managed PowerShell module installs. Before a PSGallery install, shared
+  provisioning expands the build-time <code>/tmp</code> tmpfs to 4 GiB so dependency extraction does not exhaust Photon's default
+  capacity; the deployed appliance returns to normal <code>/tmp</code> sizing after reboot. PowerCLI is for interactive
   administration and reviewed future workflows; the web service does not expose arbitrary PowerShell execution.</li>
 <li>Local Users apply stages <code>/var/lib/atlaso/apply/local-users/atlaso-users.json</code>, creates or updates enabled local users
   under <code>/var/lib/atlaso/users</code> with their desired shell, removes disabled or removed managed users with <code>userdel -r</code>,
