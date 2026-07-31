@@ -7,9 +7,8 @@
 *.cmd text eol=crlf
 *.bat text eol=crlf
 
-# Buildroot copies these extensionless shell entrypoints verbatim.
-image/inventory-linux/external/overlay/etc/init.d/S99atlaso-inventory text eol=lf
-image/inventory-linux/external/overlay/usr/bin/atlaso-inventory text eol=lf
+# Buildroot parses or copies every external-tree input verbatim.
+image/inventory-linux/external/** text eol=lf
 
 image/hyperv/sudoers.d/* text eol=lf
 image/hyperv/systemd/* text eol=lf
