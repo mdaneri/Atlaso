@@ -645,6 +645,8 @@ ATLASO_APP_LOG_PATH = get_settings().app_log_path
 KMS_SERVER_LOG_PATH = Path("/var/log/atlaso/kmip/server.log")
 APPLY_LOGGER = logging.getLogger("atlaso.appliance_apply")
 APPLIANCE_UPDATE_LOGGER = logging.getLogger("atlaso.appliance_update")
+KICKSTART_REFERENCE_VALIDATION_ERROR = "Kickstart source is invalid. Review its variable and vault markers."
+KICKSTART_UPLOAD_ERROR = "Kickstart upload is invalid. Review the file, name, and reference markers."
 NETWORK_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/network/atlaso-network.conf"
 DNSMASQ_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/dnsmasq/atlaso.conf"
 
@@ -7207,8 +7209,8 @@ def esxi_pxe_context(db: Session) -> dict[str, Any]:
         try:
             validate_kickstart_custom_references(db, kickstart.content)
             validate_kickstart_vault_references(db, kickstart.content)
-        except ValueError as exc:
-            validation_errors.append(f"{kickstart.name}: {exc}")
+        except ValueError:
+            validation_errors.append(f"{kickstart.name}: {KICKSTART_REFERENCE_VALIDATION_ERROR}")
     esxi_service_state = esxi_pxe_service_state_from_boot(boot_settings)
     network_boot_environments = desired_environment_manifest_rows(db)
     return {
@@ -20777,7 +20779,7 @@ def create_esxi_kickstart_from_ui(
         detail = (
             "A Kickstart with that name already exists."
             if isinstance(exc, IntegrityError)
-            else "Kickstart source is invalid. Review its variable and vault markers."
+            else KICKSTART_REFERENCE_VALIDATION_ERROR
         )
         if "application/json" in request.headers.get("accept", ""):
             return JSONResponse({"detail": detail}, status_code=400)
@@ -20794,6 +20796,51 @@ def create_esxi_kickstart_from_ui(
     record_audit(db, actor=identity.username, action="create_esxi_kickstart", resource_type="esxi_kickstart", resource_id=str(kickstart.id), detail=f"name={kickstart.name} hash={kickstart.content_hash}", request_id=request.state.request_id)
     if "application/json" in request.headers.get("accept", ""):
         return JSONResponse({"kickstart": esxi_kickstart_grid_payload(kickstart, include_content=True)})
+    return RedirectResponse(f"/esxi-pxe?kickstart_id={kickstart.id}", status_code=303)
+
+
+@router.post("/esxi-pxe/kickstarts/upload", response_model=None)
+async def upload_esxi_kickstart_from_ui(
+    request: Request,
+    kickstart_file: UploadFile = File(...),
+    name: str = Form(""),
+    description: str = Form(""),
+    enabled: bool = Form(False),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> RedirectResponse | HTMLResponse:
+    require_esxi_pxe_write(identity)
+    verify_csrf(request, csrf)
+    try:
+        content = decode_kickstart_upload(await kickstart_file.read(), max_bytes=get_settings().esxi_kickstart_max_bytes)
+        kickstart = EsxiKickstart(
+            name=normalize_kickstart_name(name or Path(kickstart_file.filename or "uploaded-kickstart").stem),
+            description=description or None,
+            content=content,
+            content_hash=content_hash(content),
+            rendered_content=content,
+            enabled=enabled,
+        )
+        db.add(kickstart)
+        db.flush()
+        validate_kickstart_custom_references(db, kickstart.content)
+        validate_kickstart_vault_references(db, kickstart.content)
+        kickstart.http_path = canonical_http_path(kickstart.id, kickstart.content_hash)
+        db.commit()
+    except (ValueError, IntegrityError):
+        db.rollback()
+        return render(
+            request,
+            "esxi_pxe.html",
+            {
+                "identity": identity,
+                **esxi_pxe_page_context(db, identity, error=KICKSTART_UPLOAD_ERROR),
+                "appliance_apply_status": appliance_apply_status(db, "esxi_pxe"),
+            },
+            status_code=400,
+        )
+    record_audit(db, actor=identity.username, action="upload_esxi_kickstart", resource_type="esxi_kickstart", resource_id=str(kickstart.id), detail=f"name={kickstart.name} hash={kickstart.content_hash}", request_id=request.state.request_id)
     return RedirectResponse(f"/esxi-pxe?kickstart_id={kickstart.id}", status_code=303)
 
 
@@ -20828,7 +20875,7 @@ def update_esxi_kickstart_from_ui(
         detail = (
             "A Kickstart with that name already exists."
             if isinstance(exc, IntegrityError)
-            else "Kickstart source is invalid. Review its variable and vault markers."
+            else KICKSTART_REFERENCE_VALIDATION_ERROR
         )
         if "application/json" in request.headers.get("accept", ""):
             return JSONResponse({"detail": detail}, status_code=400)
@@ -20916,8 +20963,8 @@ def validate_esxi_kickstart_from_ui(
     try:
         validate_kickstart_custom_references(db, kickstart.content)
         validate_kickstart_vault_references(db, kickstart.content)
-    except ValueError as exc:
-        errors.append(str(exc))
+    except ValueError:
+        errors.append(KICKSTART_REFERENCE_VALIDATION_ERROR)
     record_audit(db, actor=identity.username, action="validate_esxi_kickstart", resource_type="esxi_kickstart", resource_id=str(kickstart.id), detail=f"errors={len(errors)} warnings={len(warnings)}", request_id=request.state.request_id)
     return render(
         request,
@@ -21051,51 +21098,6 @@ def delete_esxi_custom_variable_from_ui(
     if "application/json" in request.headers.get("accept", ""):
         return JSONResponse({"deleted": variable_name})
     return RedirectResponse("/esxi-pxe#esxi-pxe-custom-variables-panel", status_code=303)
-
-
-@router.post("/esxi-pxe/kickstarts/upload", response_model=None)
-async def upload_esxi_kickstart_from_ui(
-    request: Request,
-    kickstart_file: UploadFile = File(...),
-    name: str = Form(""),
-    description: str = Form(""),
-    enabled: bool = Form(False),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse:
-    require_esxi_pxe_write(identity)
-    verify_csrf(request, csrf)
-    try:
-        content = decode_kickstart_upload(await kickstart_file.read(), max_bytes=get_settings().esxi_kickstart_max_bytes)
-        kickstart = EsxiKickstart(
-            name=normalize_kickstart_name(name or Path(kickstart_file.filename or "uploaded-kickstart").stem),
-            description=description or None,
-            content=content,
-            content_hash=content_hash(content),
-            rendered_content=content,
-            enabled=enabled,
-        )
-        db.add(kickstart)
-        db.flush()
-        validate_kickstart_custom_references(db, kickstart.content)
-        validate_kickstart_vault_references(db, kickstart.content)
-        kickstart.http_path = canonical_http_path(kickstart.id, kickstart.content_hash)
-        db.commit()
-    except (ValueError, IntegrityError) as exc:
-        db.rollback()
-        return render(
-            request,
-            "esxi_pxe.html",
-            {
-                "identity": identity,
-                **esxi_pxe_page_context(db, identity, error=str(exc)),
-                "appliance_apply_status": appliance_apply_status(db, "esxi_pxe"),
-            },
-            status_code=400,
-        )
-    record_audit(db, actor=identity.username, action="upload_esxi_kickstart", resource_type="esxi_kickstart", resource_id=str(kickstart.id), detail=f"name={kickstart.name} hash={kickstart.content_hash}", request_id=request.state.request_id)
-    return RedirectResponse(f"/esxi-pxe?kickstart_id={kickstart.id}", status_code=303)
 
 
 @router.post("/esxi-pxe/isos/upload", response_model=None)
