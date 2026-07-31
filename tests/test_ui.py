@@ -830,7 +830,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=atlaso-monaco-expand-20260729-4" in offline.text
+    assert "/static/app.css?v=atlaso-horizontal-brand-20260730-2" in offline.text
 
 
 def test_shared_ui_pattern_shell_and_wizard_contracts(client):
