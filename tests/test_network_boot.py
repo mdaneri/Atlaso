@@ -603,6 +603,23 @@ def test_inventory_report_rejects_dimm_string_and_report_size_limits():
         normalize_inventory_report(payload)
 
 
+def test_inventory_report_rejects_normalized_report_size_limit():
+    payload = inventory_report_v2()
+    payload["interfaces"] = [{}] * NETWORK_BOOT_MAX_INTERFACES
+    payload["disks"] = [{}] * NETWORK_BOOT_MAX_DISKS
+    payload["memory"]["dimms"] = [{}] * NETWORK_BOOT_MAX_DIMMS
+    payload["storage_controllers"] = [{}] * NETWORK_BOOT_MAX_STORAGE_CONTROLLERS
+    payload["pci_devices"] = [
+        {"vendor": "x" * 200, "device": "y" * 200}
+    ] * NETWORK_BOOT_MAX_PCI_DEVICES
+    payload["usb_devices"] = [{}] * NETWORK_BOOT_MAX_USB_DEVICES
+
+    encoded = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    assert len(encoded) < NETWORK_BOOT_REPORT_MAX_BYTES
+    with pytest.raises(ValueError, match="Normalized inventory report exceeds"):
+        normalize_inventory_report(payload)
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     (
