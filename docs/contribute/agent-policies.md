@@ -451,6 +451,14 @@ status: current
 - Keep Inventory Linux reproducible and read-only: pin Buildroot source and
   digest, run from initramfs, collect only bounded hardware metadata, and never
   add filesystem mounts, block writes, a remote shell, or arbitrary commands.
+- Inventory report schema v2 uses sysfs as the authoritative source for bounded
+  CPU/DIMM, NIC, disk/controller, PCI/USB, and system identity data. Continue to
+  accept v1 and normalize it into retained v2 JSON without a database migration,
+  enforce collection/string limits plus the 256 KiB report boundary, and use
+  pciutils/pci.ids only to enrich readable names rather than submitting raw
+  command output. Start the local 120-second reboot countdown only after a
+  successful report; pause/resume preserves remaining time, local immediate
+  reboot stays explicit, and acknowledged audited remote reboot is authoritative.
 - `pxe-media-sync` may populate immutable verified cache versions, but must not
   alter active menu state. Fixed upstreams, HTTPS limits, pinned verification,
   allowlisted extraction, and atomic installation are mandatory.

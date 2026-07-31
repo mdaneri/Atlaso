@@ -53,6 +53,11 @@ NETWORK_BOOT_SCHEMA_VERSION = 1
 NETWORK_BOOT_REPORT_MAX_BYTES = 256 * 1024
 NETWORK_BOOT_MAX_DISKS = 128
 NETWORK_BOOT_MAX_INTERFACES = 64
+NETWORK_BOOT_MAX_DIMMS = 256
+NETWORK_BOOT_MAX_STORAGE_CONTROLLERS = 64
+NETWORK_BOOT_MAX_PCI_DEVICES = 512
+NETWORK_BOOT_MAX_USB_DEVICES = 256
+NETWORK_BOOT_MAX_DEVICE_FLAGS = 32
 NETWORK_BOOT_REPORTS_PER_HOST = 11
 NETWORK_BOOT_MAX_HOSTS = 512
 NETWORK_BOOT_MAX_REPORTS = 2048
@@ -510,10 +515,14 @@ def _bounded_integer(
 ) -> int:
     if isinstance(value, bool):
         raise ValueError(f"{field} must be an integer.")
-    try:
-        normalized = int(value or 0)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{field} must be an integer.") from exc
+    if value in (None, ""):
+        normalized = 0
+    elif isinstance(value, int):
+        normalized = value
+    elif isinstance(value, str) and re.fullmatch(r"[+-]?\d+", value.strip()):
+        normalized = int(value.strip())
+    else:
+        raise ValueError(f"{field} must be an integer.")
     if normalized < minimum or normalized > maximum:
         raise ValueError(f"{field} is outside the supported range.")
     return normalized
@@ -527,24 +536,103 @@ def _string_list(value: Any, field: str, *, maximum_items: int, maximum_length: 
     return [_bounded_string(item, field, maximum=maximum_length) for item in value]
 
 
+def _bounded_bool(value: Any, field: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value in (0, 1):
+        return bool(value)
+    raise ValueError(f"{field} must be a boolean.")
+
+
+def _object_list(value: Any, field: str, *, maximum_items: int) -> list[dict[str, Any]]:
+    if value in (None, ""):
+        return []
+    if not isinstance(value, list) or len(value) > maximum_items:
+        raise ValueError(f"{field} must contain at most {maximum_items} objects.")
+    for index, row in enumerate(value):
+        if not isinstance(row, dict):
+            raise ValueError(f"{field}[{index}] must be an object.")
+    return value
+
+
+def _hardware_string(value: Any, field: str, *, maximum: int = 240) -> str:
+    return _bounded_string(value, field, maximum=maximum)
+
+
+def _pci_id(value: Any, field: str) -> str:
+    normalized = _bounded_string(value, field, maximum=6).lower().removeprefix("0x")
+    if normalized and not re.fullmatch(r"[0-9a-f]{4}", normalized):
+        raise ValueError(f"{field} must contain four hexadecimal digits.")
+    return normalized
+
+
+def _pci_class_id(value: Any, field: str) -> str:
+    normalized = _bounded_string(value, field, maximum=8).lower().removeprefix("0x")
+    if normalized and not re.fullmatch(r"[0-9a-f]{6}", normalized):
+        raise ValueError(f"{field} must contain six hexadecimal digits.")
+    return normalized
+
+
+def _usb_id(value: Any, field: str) -> str:
+    return _pci_id(value, field)
+
+
+def _human_size(value: Any, field: str) -> str:
+    return _bounded_string(value, field, maximum=32)
+
+
 def normalize_inventory_report(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("Inventory report must be a JSON object.")
     encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     if len(encoded) > NETWORK_BOOT_REPORT_MAX_BYTES:
         raise ValueError("Inventory report exceeds the 256 KiB limit.")
-    schema_version = _bounded_integer(payload.get("schema_version"), "schema_version", minimum=1, maximum=1)
+    source_schema_version = _bounded_integer(
+        payload.get("schema_version"), "schema_version", minimum=1, maximum=2
+    )
     system = payload.get("system")
     cpu = payload.get("cpu")
     memory = payload.get("memory")
-    disks = payload.get("disks", [])
-    interfaces = payload.get("interfaces", [])
     if not isinstance(system, dict) or not isinstance(cpu, dict) or not isinstance(memory, dict):
         raise ValueError("Inventory report requires system, cpu, and memory objects.")
-    if not isinstance(disks, list) or len(disks) > NETWORK_BOOT_MAX_DISKS:
+    baseboard = system.get("baseboard")
+    chassis = system.get("chassis")
+    if baseboard is None:
+        baseboard = {}
+    if chassis is None:
+        chassis = {}
+    if not isinstance(baseboard, dict) or not isinstance(chassis, dict):
+        raise ValueError("system.baseboard and system.chassis must be objects.")
+    disk_rows = payload.get("disks", [])
+    interface_rows = payload.get("interfaces", [])
+    if not isinstance(disk_rows, list) or len(disk_rows) > NETWORK_BOOT_MAX_DISKS:
         raise ValueError(f"Inventory report supports at most {NETWORK_BOOT_MAX_DISKS} disks.")
-    if not isinstance(interfaces, list) or len(interfaces) > NETWORK_BOOT_MAX_INTERFACES:
-        raise ValueError(f"Inventory report supports at most {NETWORK_BOOT_MAX_INTERFACES} interfaces.")
+    if not isinstance(interface_rows, list) or len(interface_rows) > NETWORK_BOOT_MAX_INTERFACES:
+        raise ValueError(
+            f"Inventory report supports at most {NETWORK_BOOT_MAX_INTERFACES} interfaces."
+        )
+    disks = _object_list(disk_rows, "disks", maximum_items=NETWORK_BOOT_MAX_DISKS)
+    interfaces = _object_list(
+        interface_rows,
+        "interfaces",
+        maximum_items=NETWORK_BOOT_MAX_INTERFACES,
+    )
+    dimms = _object_list(memory.get("dimms", []), "memory.dimms", maximum_items=NETWORK_BOOT_MAX_DIMMS)
+    storage_controllers = _object_list(
+        payload.get("storage_controllers", []),
+        "storage_controllers",
+        maximum_items=NETWORK_BOOT_MAX_STORAGE_CONTROLLERS,
+    )
+    pci_devices = _object_list(
+        payload.get("pci_devices", []),
+        "pci_devices",
+        maximum_items=NETWORK_BOOT_MAX_PCI_DEVICES,
+    )
+    usb_devices = _object_list(
+        payload.get("usb_devices", []),
+        "usb_devices",
+        maximum_items=NETWORK_BOOT_MAX_USB_DEVICES,
+    )
 
     normalized_interfaces: list[dict[str, Any]] = []
     for index, row in enumerate(interfaces):
@@ -558,6 +646,13 @@ def normalize_inventory_report(payload: Any) -> dict[str, Any]:
                 "permanent_mac": permanent_mac,
                 "current_mac": current_mac,
                 "driver": _bounded_string(row.get("driver"), f"interfaces[{index}].driver", maximum=120),
+                "pci_address": _bounded_string(
+                    row.get("pci_address"), f"interfaces[{index}].pci_address", maximum=32
+                ),
+                "vendor_id": _pci_id(row.get("vendor_id"), f"interfaces[{index}].vendor_id"),
+                "device_id": _pci_id(row.get("device_id"), f"interfaces[{index}].device_id"),
+                "vendor": _hardware_string(row.get("vendor"), f"interfaces[{index}].vendor"),
+                "device": _hardware_string(row.get("device"), f"interfaces[{index}].device"),
                 "link_state": _bounded_string(row.get("link_state"), f"interfaces[{index}].link_state", maximum=32),
                 "speed_mbps": _bounded_integer(
                     row.get("speed_mbps"),
@@ -569,7 +664,9 @@ def normalize_inventory_report(payload: Any) -> dict[str, Any]:
                     f"interfaces[{index}].addresses",
                     maximum_items=64,
                 ),
-                "boot_interface": bool(row.get("boot_interface")),
+                "boot_interface": _bounded_bool(
+                    row.get("boot_interface", False), f"interfaces[{index}].boot_interface"
+                ),
             }
         )
 
@@ -604,14 +701,116 @@ def normalize_inventory_report(payload: Any) -> dict[str, Any]:
                 "wwn": _bounded_string(row.get("wwn"), f"disks[{index}].wwn", maximum=240),
                 "transport": _bounded_string(row.get("transport"), f"disks[{index}].transport", maximum=64),
                 "size_bytes": _bounded_integer(row.get("size_bytes"), f"disks[{index}].size_bytes"),
-                "rotational": bool(row.get("rotational")),
-                "removable": bool(row.get("removable")),
-                "read_only": bool(row.get("read_only")),
+                "size_human": _human_size(row.get("size_human"), f"disks[{index}].size_human"),
+                "type": _bounded_string(row.get("type"), f"disks[{index}].type", maximum=32),
+                "flags": _string_list(
+                    row.get("flags"),
+                    f"disks[{index}].flags",
+                    maximum_items=NETWORK_BOOT_MAX_DEVICE_FLAGS,
+                    maximum_length=32,
+                ),
+                "controller_pci_address": _bounded_string(
+                    row.get("controller_pci_address"),
+                    f"disks[{index}].controller_pci_address",
+                    maximum=32,
+                ),
+                "rotational": _bounded_bool(
+                    row.get("rotational", False), f"disks[{index}].rotational"
+                ),
+                "removable": _bounded_bool(
+                    row.get("removable", False), f"disks[{index}].removable"
+                ),
+                "read_only": _bounded_bool(
+                    row.get("read_only", False), f"disks[{index}].read_only"
+                ),
             }
         )
 
-    return {
-        "schema_version": schema_version,
+    normalized_dimms = [
+        {
+            "locator": _hardware_string(row.get("locator"), f"memory.dimms[{index}].locator"),
+            "bank": _hardware_string(row.get("bank"), f"memory.dimms[{index}].bank"),
+            "size_bytes": _bounded_integer(
+                row.get("size_bytes"), f"memory.dimms[{index}].size_bytes"
+            ),
+            "size_human": _human_size(
+                row.get("size_human"), f"memory.dimms[{index}].size_human"
+            ),
+            "type": _hardware_string(row.get("type"), f"memory.dimms[{index}].type"),
+            "speed_mts": _bounded_integer(
+                row.get("speed_mts"), f"memory.dimms[{index}].speed_mts", maximum=1_000_000
+            ),
+            "manufacturer": _hardware_string(
+                row.get("manufacturer"), f"memory.dimms[{index}].manufacturer"
+            ),
+            "part_number": _hardware_string(
+                row.get("part_number"), f"memory.dimms[{index}].part_number"
+            ),
+            "serial": _hardware_string(row.get("serial"), f"memory.dimms[{index}].serial"),
+        }
+        for index, row in enumerate(dimms)
+    ]
+
+    normalized_controllers = [
+        {
+            "pci_address": _bounded_string(
+                row.get("pci_address"), f"storage_controllers[{index}].pci_address", maximum=32
+            ),
+            "type": _hardware_string(row.get("type"), f"storage_controllers[{index}].type"),
+            "vendor_id": _pci_id(row.get("vendor_id"), f"storage_controllers[{index}].vendor_id"),
+            "device_id": _pci_id(row.get("device_id"), f"storage_controllers[{index}].device_id"),
+            "vendor": _hardware_string(row.get("vendor"), f"storage_controllers[{index}].vendor"),
+            "device": _hardware_string(row.get("device"), f"storage_controllers[{index}].device"),
+            "driver": _hardware_string(row.get("driver"), f"storage_controllers[{index}].driver", maximum=120),
+        }
+        for index, row in enumerate(storage_controllers)
+    ]
+
+    normalized_pci = [
+        {
+            "pci_address": _bounded_string(
+                row.get("pci_address"), f"pci_devices[{index}].pci_address", maximum=32
+            ),
+            "class_id": _pci_class_id(row.get("class_id"), f"pci_devices[{index}].class_id"),
+            "class": _hardware_string(row.get("class"), f"pci_devices[{index}].class"),
+            "vendor_id": _pci_id(row.get("vendor_id"), f"pci_devices[{index}].vendor_id"),
+            "device_id": _pci_id(row.get("device_id"), f"pci_devices[{index}].device_id"),
+            "vendor": _hardware_string(row.get("vendor"), f"pci_devices[{index}].vendor"),
+            "device": _hardware_string(row.get("device"), f"pci_devices[{index}].device"),
+            "subsystem_vendor_id": _pci_id(
+                row.get("subsystem_vendor_id"), f"pci_devices[{index}].subsystem_vendor_id"
+            ),
+            "subsystem_device_id": _pci_id(
+                row.get("subsystem_device_id"), f"pci_devices[{index}].subsystem_device_id"
+            ),
+            "driver": _hardware_string(row.get("driver"), f"pci_devices[{index}].driver", maximum=120),
+        }
+        for index, row in enumerate(pci_devices)
+    ]
+
+    normalized_usb = [
+        {
+            "bus": _bounded_integer(row.get("bus"), f"usb_devices[{index}].bus", maximum=65535),
+            "device_number": _bounded_integer(
+                row.get("device_number"), f"usb_devices[{index}].device_number", maximum=65535
+            ),
+            "port": _bounded_string(row.get("port"), f"usb_devices[{index}].port", maximum=64),
+            "vendor_id": _usb_id(row.get("vendor_id"), f"usb_devices[{index}].vendor_id"),
+            "product_id": _usb_id(row.get("product_id"), f"usb_devices[{index}].product_id"),
+            "manufacturer": _hardware_string(
+                row.get("manufacturer"), f"usb_devices[{index}].manufacturer"
+            ),
+            "product": _hardware_string(row.get("product"), f"usb_devices[{index}].product"),
+            "serial": _hardware_string(row.get("serial"), f"usb_devices[{index}].serial"),
+            "class": _hardware_string(row.get("class"), f"usb_devices[{index}].class"),
+            "driver": _hardware_string(row.get("driver"), f"usb_devices[{index}].driver", maximum=120),
+        }
+        for index, row in enumerate(usb_devices)
+    ]
+
+    normalized = {
+        "schema_version": 2,
+        "source_schema_version": source_schema_version,
         "boot_interface": _bounded_string(payload.get("boot_interface"), "boot_interface", maximum=64),
         "boot_mac": boot_mac,
         "assigned_addresses": _string_list(
@@ -625,9 +824,49 @@ def normalize_inventory_report(payload: Any) -> dict[str, Any]:
             "manufacturer": _bounded_string(system.get("manufacturer"), "system.manufacturer", maximum=240),
             "product_name": _bounded_string(system.get("product_name"), "system.product_name", maximum=240),
             "serial_number": _bounded_string(system.get("serial_number"), "system.serial_number", maximum=240),
+            "product_version": _hardware_string(system.get("product_version"), "system.product_version"),
+            "product_sku": _hardware_string(system.get("product_sku"), "system.product_sku"),
+            "product_family": _hardware_string(system.get("product_family"), "system.product_family"),
             "bios_vendor": _bounded_string(system.get("bios_vendor"), "system.bios_vendor", maximum=240),
             "bios_version": _bounded_string(system.get("bios_version"), "system.bios_version", maximum=240),
             "bios_date": _bounded_string(system.get("bios_date"), "system.bios_date", maximum=64),
+            "bios_release": _hardware_string(system.get("bios_release"), "system.bios_release", maximum=64),
+            "baseboard": {
+                "manufacturer": _hardware_string(
+                    baseboard.get("manufacturer"),
+                    "system.baseboard.manufacturer",
+                ),
+                "product": _hardware_string(
+                    baseboard.get("product"), "system.baseboard.product"
+                ),
+                "version": _hardware_string(
+                    baseboard.get("version"), "system.baseboard.version"
+                ),
+                "serial": _hardware_string(
+                    baseboard.get("serial"), "system.baseboard.serial"
+                ),
+                "asset_tag": _hardware_string(
+                    baseboard.get("asset_tag"), "system.baseboard.asset_tag"
+                ),
+            },
+            "chassis": {
+                "manufacturer": _hardware_string(
+                    chassis.get("manufacturer"),
+                    "system.chassis.manufacturer",
+                ),
+                "type": _hardware_string(
+                    chassis.get("type"), "system.chassis.type"
+                ),
+                "version": _hardware_string(
+                    chassis.get("version"), "system.chassis.version"
+                ),
+                "serial": _hardware_string(
+                    chassis.get("serial"), "system.chassis.serial"
+                ),
+                "asset_tag": _hardware_string(
+                    chassis.get("asset_tag"), "system.chassis.asset_tag"
+                ),
+            },
         },
         "cpu": {
             "architecture": _bounded_string(cpu.get("architecture"), "cpu.architecture", maximum=64),
@@ -636,13 +875,30 @@ def normalize_inventory_report(payload: Any) -> dict[str, Any]:
             "sockets": _bounded_integer(cpu.get("sockets"), "cpu.sockets", maximum=4096),
             "cores": _bounded_integer(cpu.get("cores"), "cpu.cores", maximum=65536),
             "threads": _bounded_integer(cpu.get("threads"), "cpu.threads", maximum=131072),
+            "cores_per_socket": _bounded_integer(
+                cpu.get("cores_per_socket"), "cpu.cores_per_socket", maximum=65536
+            ),
+            "threads_per_core": _bounded_integer(
+                cpu.get("threads_per_core"), "cpu.threads_per_core", maximum=4096
+            ),
         },
         "memory": {
             "total_bytes": _bounded_integer(memory.get("total_bytes"), "memory.total_bytes"),
+            "total_human": _human_size(memory.get("total_human"), "memory.total_human"),
+            "dimms": normalized_dimms,
         },
         "disks": normalized_disks,
         "interfaces": normalized_interfaces,
+        "storage_controllers": normalized_controllers,
+        "pci_devices": normalized_pci,
+        "usb_devices": normalized_usb,
     }
+    normalized_encoded = json.dumps(
+        normalized, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    if len(normalized_encoded) > NETWORK_BOOT_REPORT_MAX_BYTES:
+        raise ValueError("Normalized inventory report exceeds the 256 KiB limit.")
+    return normalized
 
 
 def report_identity(report: dict[str, Any]) -> tuple[str, str, list[str]]:

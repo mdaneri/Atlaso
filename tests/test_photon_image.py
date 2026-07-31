@@ -3,7 +3,9 @@ from pathlib import Path
 import hashlib
 import importlib.util
 import json
+import os
 import struct
+import subprocess
 import sys
 import zipfile
 
@@ -134,17 +136,20 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     assert "--inventory-package" in release
     build = Path("image/inventory-linux/build.sh").read_text(encoding="utf-8")
     assert 'buildroot_version="2026.05.1"' in build
-    assert 'package_version="2026.05.1+7"' in build
+    assert 'package_version="2026.05.1+8"' in build
     assert '"version": "${package_version}"' in build
     assert '"arguments": "rdinit=/sbin/init console=tty0 atlaso.inventory=1"' in build
     assert '"${source_root}/output/target/usr/bin/lscpu"' in build
     assert '"${source_root}/output/target/bin/lsblk"' in build
+    assert '"${source_root}/output/target/usr/bin/lspci"' in build
+    assert "Required pci.ids metadata is missing" in build
     assert "Required util-linux tool is missing" in build
     assert "Required util-linux tool resolves to BusyBox" in build
     inventory_defconfig = Path(
         "image/inventory-linux/external/configs/atlaso_inventory_x86_64_defconfig"
     ).read_text(encoding="utf-8")
     assert "BR2_PACKAGE_UTIL_LINUX_BINARIES=y" in inventory_defconfig
+    assert "BR2_PACKAGE_PCIUTILS=y" in inventory_defconfig
     assert (
         'BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_ATLASO_INVENTORY_PATH)'
         '/board/atlaso-inventory/busybox.fragment"' in inventory_defconfig
@@ -158,10 +163,18 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     inventory_client = Path(
         "image/inventory-linux/external/overlay/usr/bin/atlaso-inventory"
     ).read_text(encoding="utf-8")
-    assert "optional_ethernet_mac()" in inventory_client
-    assert "grep -Eq '^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'" in inventory_client
-    assert 'current_mac="$(optional_ethernet_mac ' in inventory_client
-    assert 'permanent_mac="$(optional_ethernet_mac ' in inventory_client
+    inventory_library = Path(
+        "image/inventory-linux/external/overlay/usr/lib/atlaso-inventory-lib.sh"
+    ).read_text(encoding="utf-8")
+    assert "optional_ethernet_mac()" in inventory_library
+    assert "grep -Eq '^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'" in inventory_library
+    assert 'current_mac="$(optional_ethernet_mac ' in inventory_library
+    assert 'permanent_mac="$(optional_ethernet_mac ' in inventory_library
+    assert "schema_version: 2" in inventory_client
+    assert "collect_pci_devices" in inventory_client
+    assert "collect_usb_devices" in inventory_client
+    assert "remaining=120" in inventory_client
+    assert "render_inventory_console" in inventory_client
     kernel_fragment = Path(
         "image/inventory-linux/external/board/atlaso-inventory/linux.fragment"
     ).read_text(encoding="utf-8")
@@ -224,10 +237,25 @@ def test_inventory_linux_retries_uncertain_reboot_acknowledgments():
 
     assert 'pending_reboot_id=""' in client
     assert 'pending_reboot_id="${command_id}"' in client
-    assert "commands/${pending_reboot_id}/acknowledge" in client
-    assert client.index("commands/${pending_reboot_id}/acknowledge") < client.index(
-        "reboot -f"
+    assert "acknowledge_remote_reboot" in client
+    assert client.index("acknowledge_remote_reboot") < client.index("reboot -f", client.index("acknowledge_remote_reboot"))
+
+
+def test_inventory_linux_shell_hardware_console_and_reboot_fixtures():
+    if os.name == "nt":
+        return
+    completed = subprocess.run(
+        [
+            "sh",
+            "tests/shell/test_inventory_linux.sh",
+            "image/inventory-linux/external/overlay/usr/lib/atlaso-inventory-lib.sh",
+            "image/inventory-linux/external/overlay/usr/bin/atlaso-inventory",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
     )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
 def test_inventory_linux_retries_capacity_responses_with_bounded_backoff():

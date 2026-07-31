@@ -1,8 +1,10 @@
 #!/bin/sh
 set -eu
 
+. /usr/lib/atlaso-inventory-lib.sh
+
 api_base=""
-for argument in $(cat /proc/cmdline); do
+for argument in $(cat "${PROC_ROOT}/cmdline"); do
   case "${argument}" in
     atlaso.url=*) api_base="${argument#atlaso.url=}" ;;
   esac
@@ -15,143 +17,89 @@ fi
 session_json="$(curl --fail --silent --show-error --max-time 20 \
   --request POST "${api_base}/pxe/inventory/sessions")"
 token="$(printf '%s' "${session_json}" | jq -r '.access_token')"
-auth_config="/run/atlaso-inventory-curl.conf"
-mkdir -p /run
+auth_config="${RUNTIME_ROOT}/atlaso-inventory-curl.conf"
+mkdir -p "${RUNTIME_ROOT}"
 umask 077
 printf 'header = "Authorization: Bearer %s"\n' "${token}" >"${auth_config}"
 
-dmi_uuid="$(cat /sys/class/dmi/id/product_uuid 2>/dev/null || true)"
-manufacturer="$(cat /sys/class/dmi/id/sys_vendor 2>/dev/null || true)"
-product_name="$(cat /sys/class/dmi/id/product_name 2>/dev/null || true)"
-serial_number="$(cat /sys/class/dmi/id/product_serial 2>/dev/null || true)"
-bios_vendor="$(cat /sys/class/dmi/id/bios_vendor 2>/dev/null || true)"
-bios_version="$(cat /sys/class/dmi/id/bios_version 2>/dev/null || true)"
-bios_date="$(cat /sys/class/dmi/id/bios_date 2>/dev/null || true)"
 boot_interface="$(ip route show default | awk 'NR==1 {print $5}')"
-boot_mac="$(cat "/sys/class/net/${boot_interface}/address" 2>/dev/null || true)"
+boot_mac="$(optional_ethernet_mac "$(read_value "${SYSFS_ROOT}/class/net/${boot_interface}/address")")"
 firmware_mode="bios"
-[ -d /sys/firmware/efi ] && firmware_mode="uefi"
+[ -d "${SYSFS_ROOT}/firmware/efi" ] && firmware_mode="uefi"
 
-optional_ethernet_mac() {
-  if printf '%s\n' "$1" | grep -Eq '^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'; then
-    printf '%s' "$1"
-  fi
-}
-
-interfaces='[]'
-for path in /sys/class/net/*; do
-  name="${path##*/}"
-  [ "${name}" = "lo" ] && continue
-  current_mac="$(optional_ethernet_mac "$(cat "${path}/address" 2>/dev/null || true)")"
-  permanent_mac="$(optional_ethernet_mac "$(ethtool -P "${name}" 2>/dev/null | awk '{print $3}')")"
-  driver="$(basename "$(readlink "${path}/device/driver" 2>/dev/null || true)")"
-  link_state="$(cat "${path}/operstate" 2>/dev/null || true)"
-  speed="$(cat "${path}/speed" 2>/dev/null || printf '0')"
-  case "${speed}" in
-    ''|*[!0-9]*) speed=0 ;;
-  esac
-  addresses="$(ip -j address show dev "${name}" | jq '[.[0].addr_info[]? | "\(.local)/\(.prefixlen)"]')"
-  boot=false
-  [ "${name}" = "${boot_interface}" ] && boot=true
-  interfaces="$(printf '%s' "${interfaces}" | jq \
-    --arg name "${name}" \
-    --arg permanent_mac "${permanent_mac}" \
-    --arg current_mac "${current_mac}" \
-    --arg driver "${driver}" \
-    --arg link_state "${link_state}" \
-    --argjson speed_mbps "${speed:-0}" \
-    --argjson addresses "${addresses}" \
-    --argjson boot_interface "${boot}" \
-    '. + [{
-      name: $name,
-      permanent_mac: $permanent_mac,
-      current_mac: $current_mac,
-      driver: $driver,
-      link_state: $link_state,
-      speed_mbps: $speed_mbps,
-      addresses: $addresses,
-      boot_interface: $boot_interface
-    }]')"
-done
-
-disks="$(lsblk --json --bytes --nodeps \
-  --output NAME,MODEL,SERIAL,WWN,TRAN,SIZE,ROTA,RM,RO | jq \
-  '[.blockdevices[] | {
-    device: ("/dev/" + .name),
-    model: (.model // ""),
-    serial: (.serial // ""),
-    wwn: (.wwn // ""),
-    transport: (.tran // ""),
-    size_bytes: (.size // 0),
-    rotational: ((.rota // false) == true),
-    removable: ((.rm // false) == true),
-    read_only: ((.ro // false) == true)
-  }]')"
-cpu_json="$(lscpu -J)"
-cpu_value() {
-  printf '%s' "${cpu_json}" | jq -r --arg field "$1" \
-    '.lscpu[] | select(.field == ($field + ":")) | .data' | head -n1
-}
-architecture="$(cpu_value Architecture)"
-cpu_vendor="$(cpu_value "Vendor ID")"
-cpu_model="$(cpu_value "Model name")"
-sockets="$(cpu_value "Socket(s)")"
-cores_per_socket="$(cpu_value "Core(s) per socket")"
-threads_per_core="$(cpu_value "Thread(s) per core")"
-cores=$(( ${sockets:-0} * ${cores_per_socket:-0} ))
-threads=$(( ${cores:-0} * ${threads_per_core:-0} ))
-memory_bytes="$(awk '/MemTotal:/ {print $2 * 1024}' /proc/meminfo | cut -d. -f1)"
-assigned_addresses="$(ip -j address show dev "${boot_interface}" | jq '[.[0].addr_info[]? | "\(.local)/\(.prefixlen)"]')"
+pci_devices="$(collect_pci_devices)"
+storage_controllers="$(collect_storage_controllers "${pci_devices}")"
+interfaces="$(collect_interfaces "${boot_interface}")"
+disks="$(collect_disks)"
+dimms="$(collect_dimms)"
+usb_devices="$(collect_usb_devices)"
+cpu="$(collect_cpu)"
+memory_bytes="$(awk '/MemTotal:/ {print $2 * 1024}' "${PROC_ROOT}/meminfo" | cut -d. -f1)"
+memory_bytes="$(unsigned_value "${memory_bytes}")"
+assigned_addresses="$(ip -j address show dev "${boot_interface}" 2>/dev/null |
+  jq '[.[0].addr_info[]? | "\(.local)/\(.prefixlen)"]' 2>/dev/null || printf '[]')"
 
 report="$(jq -n \
-  --arg boot_interface "${boot_interface}" \
-  --arg boot_mac "${boot_mac}" \
-  --argjson assigned_addresses "${assigned_addresses}" \
-  --arg firmware_mode "${firmware_mode}" \
-  --arg dmi_uuid "${dmi_uuid}" \
-  --arg manufacturer "${manufacturer}" \
-  --arg product_name "${product_name}" \
-  --arg serial_number "${serial_number}" \
-  --arg bios_vendor "${bios_vendor}" \
-  --arg bios_version "${bios_version}" \
-  --arg bios_date "${bios_date}" \
-  --arg architecture "${architecture}" \
-  --arg cpu_vendor "${cpu_vendor}" \
-  --arg cpu_model "${cpu_model}" \
-  --argjson sockets "${sockets:-0}" \
-  --argjson cores "${cores:-0}" \
-  --argjson threads "${threads:-0}" \
-  --argjson total_bytes "${memory_bytes:-0}" \
-  --argjson disks "${disks}" \
-  --argjson interfaces "${interfaces}" \
+  --arg boot_interface "${boot_interface}" --arg boot_mac "${boot_mac}" \
+  --argjson assigned_addresses "${assigned_addresses}" --arg firmware_mode "${firmware_mode}" \
+  --arg dmi_uuid "$(read_value "${DMI_ROOT}/product_uuid")" \
+  --arg manufacturer "$(read_value "${DMI_ROOT}/sys_vendor")" \
+  --arg product_name "$(read_value "${DMI_ROOT}/product_name")" \
+  --arg serial_number "$(read_value "${DMI_ROOT}/product_serial")" \
+  --arg product_version "$(read_value "${DMI_ROOT}/product_version")" \
+  --arg product_sku "$(read_value "${DMI_ROOT}/product_sku")" \
+  --arg product_family "$(read_value "${DMI_ROOT}/product_family")" \
+  --arg bios_vendor "$(read_value "${DMI_ROOT}/bios_vendor")" \
+  --arg bios_version "$(read_value "${DMI_ROOT}/bios_version")" \
+  --arg bios_date "$(read_value "${DMI_ROOT}/bios_date")" \
+  --arg bios_release "$(read_value "${DMI_ROOT}/bios_release")" \
+  --arg board_manufacturer "$(read_value "${DMI_ROOT}/board_vendor")" \
+  --arg board_product "$(read_value "${DMI_ROOT}/board_name")" \
+  --arg board_version "$(read_value "${DMI_ROOT}/board_version")" \
+  --arg board_serial "$(read_value "${DMI_ROOT}/board_serial")" \
+  --arg board_asset_tag "$(read_value "${DMI_ROOT}/board_asset_tag")" \
+  --arg chassis_manufacturer "$(read_value "${DMI_ROOT}/chassis_vendor")" \
+  --arg chassis_type "$(read_value "${DMI_ROOT}/chassis_type")" \
+  --arg chassis_version "$(read_value "${DMI_ROOT}/chassis_version")" \
+  --arg chassis_serial "$(read_value "${DMI_ROOT}/chassis_serial")" \
+  --arg chassis_asset_tag "$(read_value "${DMI_ROOT}/chassis_asset_tag")" \
+  --argjson cpu "${cpu}" \
+  --argjson total_bytes "${memory_bytes}" --arg total_human "$(human_size "${memory_bytes}")" \
+  --argjson dimms "${dimms}" --argjson disks "${disks}" \
+  --argjson interfaces "${interfaces}" --argjson storage_controllers "${storage_controllers}" \
+  --argjson pci_devices "${pci_devices}" --argjson usb_devices "${usb_devices}" \
   '{
-    schema_version: 1,
+    schema_version: 2,
     boot_interface: $boot_interface,
     boot_mac: $boot_mac,
     assigned_addresses: $assigned_addresses,
     firmware_mode: $firmware_mode,
     system: {
-      dmi_uuid: $dmi_uuid,
-      manufacturer: $manufacturer,
-      product_name: $product_name,
-      serial_number: $serial_number,
-      bios_vendor: $bios_vendor,
-      bios_version: $bios_version,
-      bios_date: $bios_date
+      dmi_uuid: $dmi_uuid, manufacturer: $manufacturer, product_name: $product_name,
+      serial_number: $serial_number, product_version: $product_version,
+      product_sku: $product_sku, product_family: $product_family,
+      bios_vendor: $bios_vendor, bios_version: $bios_version, bios_date: $bios_date,
+      bios_release: $bios_release,
+      baseboard: {manufacturer:$board_manufacturer,product:$board_product,
+        version:$board_version,serial:$board_serial,asset_tag:$board_asset_tag},
+      chassis: {manufacturer:$chassis_manufacturer,type:$chassis_type,
+        version:$chassis_version,serial:$chassis_serial,asset_tag:$chassis_asset_tag}
     },
-    cpu: {
-      architecture: $architecture,
-      vendor: $cpu_vendor,
-      model: $cpu_model,
-      sockets: $sockets,
-      cores: $cores,
-      threads: $threads
-    },
-    memory: {total_bytes: $total_bytes},
+    cpu: $cpu,
+    memory: {total_bytes:$total_bytes,total_human:$total_human,dimms:$dimms},
     disks: $disks,
-    interfaces: $interfaces
+    interfaces: $interfaces,
+    storage_controllers: $storage_controllers,
+    pci_devices: $pci_devices,
+    usb_devices: $usb_devices
   }')"
-report_response="/run/atlaso-inventory-report.json"
+report_bytes="$(printf '%s' "${report}" | wc -c | tr -d ' ')"
+if [ "${report_bytes}" -gt 262144 ]; then
+  printf 'Inventory report exceeds the 256 KiB boundary.\n' >&2
+  exit 1
+fi
+
+report_response="${RUNTIME_ROOT}/atlaso-inventory-report.json"
 report_attempt=1
 while :; do
   report_status="$(printf '%s' "${report}" | curl --config "${auth_config}" \
@@ -174,37 +122,48 @@ done
 host_id="$(printf '%s' "${submission}" | jq -r '.host_id')"
 identity_key="$(printf '%s' "${submission}" | jq -r '.identity_key')"
 
-clear
-printf 'Atlaso Inventory Linux\n\n'
-printf 'Host: %s %s\n' "${manufacturer}" "${product_name}"
-printf 'DMI UUID: %s\n' "${dmi_uuid}"
-printf 'Boot MAC: %s\n' "${boot_mac}"
-printf 'CPU: %s\n' "${cpu_model}"
-printf 'Memory: %s bytes\n' "${memory_bytes}"
-printf 'Disks: %s  Interfaces: %s\n' \
-  "$(printf '%s' "${disks}" | jq length)" \
-  "$(printf '%s' "${interfaces}" | jq length)"
-printf '\nInventory submitted as host %s. Press R to reboot.\n' "${host_id}"
-
+# The reboot timer begins only after the API has accepted the complete report.
+page=1
+remaining=120
+paused=false
 pending_reboot_id=""
+last_tick="$(date +%s)"
+next_poll="${last_tick}"
 while :; do
-  curl --config "${auth_config}" --fail --silent --max-time 10 \
-    --header "Content-Type: application/json" \
-    --data "$(jq -cn --arg identity_key "${identity_key}" '{identity_key: $identity_key}')" \
-    "${api_base}/pxe/inventory/heartbeat" >/dev/null || true
-  command="$(curl --config "${auth_config}" --fail --silent --max-time 10 \
-    "${api_base}/pxe/inventory/commands" || printf '{"command":null}')"
-  action="$(printf '%s' "${command}" | jq -r '.command.action // empty')"
-  command_id="$(printf '%s' "${command}" | jq -r '.command.id // empty')"
-  if [ "${action}" = "reboot" ] && [ -n "${command_id}" ]; then
-    pending_reboot_id="${command_id}"
-  fi
-  if [ -n "${pending_reboot_id}" ] && curl --config "${auth_config}" \
-    --fail --silent --max-time 10 --request POST \
-    "${api_base}/pxe/inventory/commands/${pending_reboot_id}/acknowledge" >/dev/null; then
+  now="$(date +%s)"
+  elapsed=$((now - last_tick))
+  [ "${elapsed}" -ge 0 ] || elapsed=0
+  remaining="$(countdown_after_elapsed "${remaining}" "${paused}" "${elapsed}")"
+  [ "${remaining}" -gt 0 ] || reboot -f
+  last_tick="${now}"
+
+  if [ "${now}" -ge "${next_poll}" ]; then
+    curl --config "${auth_config}" --fail --silent --max-time 10 \
+      --header "Content-Type: application/json" \
+      --data "$(jq -cn --arg identity_key "${identity_key}" '{identity_key: $identity_key}')" \
+      "${api_base}/pxe/inventory/heartbeat" >/dev/null || true
+    command="$(curl --config "${auth_config}" --fail --silent --max-time 10 \
+      "${api_base}/pxe/inventory/commands" || printf '{"command":null}')"
+    action="$(printf '%s' "${command}" | jq -r '.command.action // empty')"
+    command_id="$(printf '%s' "${command}" | jq -r '.command.id // empty')"
+    if [ "${action}" = "reboot" ] && [ -n "${command_id}" ]; then
+      pending_reboot_id="${command_id}"
+    fi
+    if [ -n "${pending_reboot_id}" ] && acknowledge_remote_reboot \
+      "${api_base}" "${auth_config}" "${pending_reboot_id}"; then
       reboot -f
+    fi
+    next_poll=$((now + 10))
   fi
-  if read -r -n 1 -t 10 key && { [ "${key}" = "R" ] || [ "${key}" = "r" ]; }; then
-    reboot -f
+
+  render_inventory_console "${report}" "${page}" "${remaining}" "${paused}" "${host_id}"
+  key=""
+  if read -r -n 1 -t 1 key; then
+    key_result="$(console_key_action "${key}" "${page}" "${paused}")"
+    page="$(printf '%s' "${key_result}" | cut -d'|' -f1)"
+    paused="$(printf '%s' "${key_result}" | cut -d'|' -f2)"
+    key_action="$(printf '%s' "${key_result}" | cut -d'|' -f3)"
+    last_tick="$(date +%s)"
+    [ "${key_action}" != "reboot" ] || reboot -f
   fi
 done

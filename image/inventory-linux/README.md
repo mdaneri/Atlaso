@@ -22,13 +22,15 @@ Exact hardware support still depends on the upstream Linux driver and firmware
 available for the device; the ESXi hardware compatibility list is a separate
 vendor certification matrix.
 
-Package revision `2026.05.1+7` pins Buildroot 2026.05.1 by SHA-256. The suffix
+Package revision `2026.05.1+8` pins Buildroot 2026.05.1 by SHA-256. The suffix
 advances independently when Atlaso changes the inventory client without
 changing the upstream Buildroot base. Revision `+5` selects Buildroot's
 util-linux basic binary set so collection uses full `lscpu --json` and
 `lsblk --json` implementations instead of BusyBox's limited `lsblk` applet;
 revision `+7` ignores optional current or permanent interface addresses that
-are not six-octet Ethernet MACs.
+are not six-octet Ethernet MACs. Revision `+8` introduces report schema v2,
+sysfs-first complete device collection, PCI-readable names, and the paged local
+console with its suspendable reboot countdown.
 Run on Linux:
 
 ```bash
@@ -67,9 +69,24 @@ to 30 seconds. Other report errors remain terminal and never expose the session
 token or response body.
 
 The kernel fragment enables common server Ethernet, NVMe, SATA, SCSI, RAID, and
-virtio drivers. The userspace collector reads DMI, CPU, memory, block-device,
-and interface metadata only. It never invokes a filesystem mount, partition,
-format, wipe, or block-write command.
+virtio drivers. The userspace collector uses sysfs as the authoritative device
+source and emits bounded structured JSON for CPU topology, populated DIMMs,
+every NIC and disk, storage controllers, PCI and USB devices, and
+system/BIOS/baseboard/chassis identity. `pciutils` and its `pci.ids` data add
+readable PCI names only; raw command output is never submitted. The collector
+never invokes a filesystem mount, partition, format, wipe, or block-write
+command.
+
+The accepted report remains at most 256 KiB. Schema v2 bounds reports to 64
+NICs, 128 disks, 64 storage controllers, 256 populated DIMMs, 512 PCI devices,
+and 256 USB devices. Atlaso continues to accept schema v1 and normalizes it to
+the retained v2 JSON shape in the existing report column.
+
+After a report is accepted, the local console opens full-screen Atlaso-style
+System/CPU/DIMMs, Network, and Storage pages. Use `N`/`P` or `1`-`3` to move
+between pages. The 120-second reboot countdown starts only after successful
+submission; `S` pauses or resumes the remaining time and `R` reboots
+immediately. An acknowledged audited remote reboot remains authoritative.
 
 ## Included upstream components
 
@@ -87,6 +104,7 @@ the pinned Buildroot release. The principal runtime components are:
 | util-linux | 2.41.5 | GPL-2.0-or-later and LGPL-2.1-or-later | `https://www.kernel.org/pub/linux/utils/util-linux/v2.41/` |
 | dmidecode | 3.7 | GPL-2.0-or-later | `https://download.savannah.gnu.org/releases/dmidecode/` |
 | ethtool | 7.0 | GPL-2.0-only | `https://www.kernel.org/pub/software/network/ethtool/` |
+| pciutils | 3.15.0 | GPL-2.0-or-later | `https://mj.ucw.cz/sw/pciutils/` |
 
 The generated Buildroot `legal-info` output is the authoritative machine-built
 license/source inventory for a release image. Keep it with release build

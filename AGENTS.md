@@ -63,6 +63,11 @@ The following cross-cutting boundaries always apply:
 - VMware Workstation is the default live appliance target; use Hyper-V lifecycle coverage for exact VLAN behavior.
 - Inventory Linux is an independently versioned Atlaso release package; full images preinstall it and supported VMware
   wheel deployment synchronizes it unless explicitly skipped.
+- Inventory Linux reports use bounded schema v2 while accepting and normalizing legacy v1. Keep sysfs authoritative for
+  device enumeration, use metadata tools only for structured enrichment/readable names, retain JSON in the existing
+  report column, enforce the 256 KiB boundary, and never submit raw command output. Its local console countdown starts
+  only after successful submission; pause/resume must preserve the remaining time and audited remote reboot remains
+  authoritative.
 - Validate live appliance readiness through `/openapi.json`, not VMware Tools IP discovery or service color alone.
 - Boot ShredOS only from the verified stable ISO's allowlisted `/boot/bzImage` kernel through iPXE. Do not restore raw
   disk-image SAN boot or add unattended erase arguments.

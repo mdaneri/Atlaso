@@ -54,17 +54,26 @@ is audited and does not change the host's permanent ESXi desired state.
 
 Inventory Linux is a purpose-built Buildroot environment that runs from an
 initramfs in RAM; it is not an Ubuntu, Debian, or Photon OS installation. It
-does not mount filesystems or write target disks. It submits a bounded report
-containing DMI, CPU, memory, block-device, and network-interface metadata,
-displays a local summary, and waits for either the local `R` key or one audited
-remote reboot command. Its startup service first obtains DHCP configuration
-and confirms a default route; the Linux kernel does not inherit iPXE's network
-state. The image includes a broad compatibility profile for physical NIC and
-storage-controller families used by ESXi-capable x86-64 hosts and virtual
-devices from VMware, Hyper-V, KVM/Proxmox/QEMU, and Xen. Exact device support
-still depends on an available upstream Linux driver and redistributable
-firmware; the ESXi hardware compatibility list remains a separate vendor
-certification matrix. Optional interface MAC
+does not mount filesystems or write target disks. Schema v2 submits bounded
+structured CPU topology, populated DIMMs, every NIC and disk, storage
+controllers, PCI/USB devices, and system/BIOS/baseboard/chassis identity. Sysfs
+is authoritative for devices; pciutils/pci.ids enrich readable PCI names, and
+raw command output is never submitted. Atlaso still accepts schema v1 and
+normalizes it into retained v2 JSON in the existing report column.
+
+The local full-screen console uses the Atlaso pale-blue header, light content,
+and blue action footer across **System / CPU / DIMMs**, **Network**, and
+**Storage** pages. Use `N`/`P` or `1`-`3` to page. Only after successful report
+submission, a 120-second reboot countdown begins. `S` pauses or resumes the
+remaining time and `R` reboots immediately; an acknowledged audited remote
+reboot remains authoritative. Its startup service first obtains DHCP
+configuration and confirms a default route; the Linux kernel does not inherit
+iPXE's network state. The image includes a broad compatibility profile for
+physical NIC and storage-controller families used by ESXi-capable x86-64 hosts
+and virtual devices from VMware, Hyper-V, KVM/Proxmox/QEMU, and Xen. Exact
+device support still depends on an available upstream Linux driver and
+redistributable firmware; the ESXi hardware compatibility list remains a
+separate vendor certification matrix. Optional interface MAC
 fields reported as all-zero or broadcast placeholders are ignored; malformed
 MACs remain invalid, and host identity still requires a valid DMI UUID or
 usable MAC. Atlaso
@@ -72,6 +81,11 @@ retains the latest report and ten previous reports. A repeated valid DMI UUID
 with disjoint MAC identities is shown as a collision and is not silently
 merged; later reports for that UUID must include a usable MAC so Atlaso does
 not attach DMI-only history to an arbitrary collision record.
+
+Each report is limited to 256 KiB, 64 NICs, 128 disks, 64 storage controllers,
+256 populated DIMMs, 512 PCI devices, and 256 USB devices. Individual strings
+and address/flag lists are also bounded; malformed hardware objects are
+rejected rather than retained partially.
 
 The **Discovered Hosts** grid is read-only. Open a host to review its latest
 report and history, queue a reboot while its Inventory Linux heartbeat is

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 buildroot_version="2026.05.1"
-package_version="2026.05.1+7"
+package_version="2026.05.1+8"
 buildroot_sha256="ae7f706f087b9ae9083a10a587368dfbf53103c28bf81c2d690198dc4090cb58"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source_root="${ATLASO_INVENTORY_BUILD_ROOT:-${script_dir}/.build}"
@@ -39,7 +39,8 @@ make -C "${build_dir}" \
   O="${source_root}/output"
 for inventory_tool_path in \
   "${source_root}/output/target/usr/bin/lscpu" \
-  "${source_root}/output/target/bin/lsblk"; do
+  "${source_root}/output/target/bin/lsblk" \
+  "${source_root}/output/target/usr/bin/lspci"; do
   inventory_tool="$(basename "${inventory_tool_path}")"
   if [[ ! -x "${inventory_tool_path}" ]]; then
     printf 'Required util-linux tool is missing: %s\n' "${inventory_tool}" >&2
@@ -50,6 +51,11 @@ for inventory_tool_path in \
     exit 1
   fi
 done
+if [[ ! -s "${source_root}/output/target/usr/share/hwdata/pci.ids" && \
+      ! -s "${source_root}/output/target/usr/share/pci.ids" ]]; then
+  printf 'Required pci.ids metadata is missing.\n' >&2
+  exit 1
+fi
 make -C "${build_dir}" \
   BR2_EXTERNAL="${script_dir}/external" \
   O="${source_root}/output" \
