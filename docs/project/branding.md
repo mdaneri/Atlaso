@@ -40,6 +40,7 @@ The appliance package includes only the assets required at runtime under `atlaso
 
 - `atlaso-icon.svg` for compact product marks;
 - light and dark horizontal SVG logos;
+- the transparent 1200×300 horizontal logo for the authenticated sidebar and management login masthead;
 - 180, 192, and 512 pixel application icons;
 - `favicon.ico`.
 
