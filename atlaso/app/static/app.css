@@ -90,6 +90,18 @@ textarea {
   font-size: 12px;
 }
 
+.sidebar-brand {
+  min-height: 64px;
+  padding: 0 8px 12px;
+}
+
+.sidebar-brand-logo {
+  display: block;
+  width: 208px;
+  max-width: 100%;
+  height: auto;
+}
+
 .nav-stack {
   display: grid;
   gap: 3px;
@@ -7386,35 +7398,14 @@ dialog.has-expanded-monaco .confirm-modal-panel {
   padding: 26px;
 }
 
-.login-brand {
-  color: var(--text);
-  padding: 0 0 14px;
-}
-
-.login-graphic {
+.login-logo {
   display: block;
   width: 100%;
+  max-width: 480px;
+  height: auto;
   aspect-ratio: 4 / 1;
   object-fit: contain;
-  margin: 0 0 12px;
-  background: #ffffff;
-}
-
-.brand-capabilities {
-  margin: 0 0 22px;
-  color: var(--accent-dark);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  text-align: center;
-}
-
-.brand-headline {
-  margin: 6px 0 4px;
-  color: var(--text);
-  font-size: 1.05rem;
-  font-weight: 750;
-  text-align: center;
+  margin: 0 auto 22px;
 }
 
 .login-panel h1 {

@@ -114,6 +114,11 @@ def test_login_and_dashboard_render(client):
     assert "unpkg.com/htmx" not in response.text
     assert 'body class="bg-slate-100 text-slate-900"' not in response.text
     assert "/static/brand/atlaso-icon.svg" in response.text
+    sidebar_brand = response.text.split('<a class="brand sidebar-brand"', 1)[1].split("</a>", 1)[0]
+    assert 'aria-label="Atlaso Dashboard"' in sidebar_brand
+    assert "/static/brand/atlaso-logo-horizontal-transparent-1200x300.png" in sidebar_brand
+    assert "<strong>Atlaso</strong>" not in sidebar_brand
+    assert "Photon appliance" not in sidebar_brand
     assert 'class="management-info-footnote"' in response.text
     from atlaso import __version__
 
@@ -415,6 +420,7 @@ def test_web_terminal_uses_one_use_ticket_and_bridges_websocket_input(client, mo
     assert web_terminal._consume_ticket(ticket, 1, "admin", csrf) is None
     assert client.get("/static/brand/atlaso-icon.svg").status_code == 200
     assert client.get("/static/brand/atlaso-logo-horizontal-light.svg").status_code == 200
+    assert client.get("/static/brand/atlaso-logo-horizontal-transparent-1200x300.png").status_code == 200
     favicon = client.get("/favicon.ico")
     assert favicon.status_code == 200
     assert favicon.headers["content-type"].startswith("image/x-icon")
@@ -1409,6 +1415,11 @@ def test_login_page_includes_pwa_metadata(client):
     assert '<form class="form-stack" action="/login" method="post" target="_self">' in response.text
     assert '<meta name="theme-color"' not in response.text
     assert "/static/pwa.js?v=atlaso-brand-20260725-1" in response.text
+    assert response.text.count("/static/brand/atlaso-logo-horizontal-transparent-1200x300.png") == 1
+    assert 'alt="Atlaso — Infrastructure • Connectivity • Automation"' in response.text
+    assert "Infrastructure appliance" not in response.text
+    assert "Everything your virtualization lab needs." not in response.text
+    assert "Infrastructure • Storage • Identity • Networking • Lifecycle" not in response.text
 
 
 def test_shared_shells_use_current_mobile_web_app_metadata(client):
