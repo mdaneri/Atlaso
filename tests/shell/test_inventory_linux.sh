@@ -166,6 +166,7 @@ assert_jq "${dimms}" 'length == 2 and .[0].locator == "DIMM_A1" and .[1].speed_m
 assert_jq "${usb}" 'length == 2 and .[0].class == "Mass storage" and .[1].serial == "USB-1-2"'
 assert_jq "${cpu}" '.sockets == 2 and .cores == 16 and .threads == 32 and .cores_per_socket == 8 and .threads_per_core == 2'
 [ "$(human_size 1073741824)" = "1.00 GiB" ] || fail 'human size'
+[ "$(printf '%s' "$(bounded_text 240 "$(printf '%0241d' 0)")" | wc -c)" -eq 240 ] || fail 'string limit'
 [ "$(cycle_console_page 3 next)" = "1" ] || fail 'next page wraps'
 [ "$(cycle_console_page 1 previous)" = "3" ] || fail 'previous page wraps'
 [ "$(countdown_after_elapsed 120 false 30)" = "90" ] || fail 'countdown advances'

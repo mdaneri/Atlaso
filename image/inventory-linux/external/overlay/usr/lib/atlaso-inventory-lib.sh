@@ -5,9 +5,16 @@ PROC_ROOT="${ATLASO_PROC_ROOT:-/proc}"
 DMI_ROOT="${SYSFS_ROOT}/class/dmi/id"
 RUNTIME_ROOT="${ATLASO_RUNTIME_ROOT:-/run}"
 
+bounded_text() {
+  maximum="$1"
+  value="${2:-}"
+  printf '%s' "${value}" | cut -c "1-${maximum}"
+}
+
 read_value() {
   value="$(cat "$1" 2>/dev/null || true)"
-  printf '%s' "$(printf '%s' "${value}" | tr '\t\r\n' '   ' | sed 's/^ *//;s/ *$//')"
+  value="$(printf '%s' "${value}" | tr '\t\r\n' '   ' | sed 's/^ *//;s/ *$//')"
+  bounded_text 240 "${value}"
 }
 
 unsigned_value() {
@@ -47,7 +54,7 @@ pci_readable() {
   command -v lspci >/dev/null 2>&1 || return 0
   lspci -D -vmmnn -s "${address}" 2>/dev/null |
     awk -F '\t' -v wanted="${field}:" '$1 == wanted {sub(/ \[[^][]*\]$/, "", $2); print $2; exit}' |
-    tr '\t\r\n' '   ' | sed 's/^ *//;s/ *$//'
+    tr '\t\r\n' '   ' | sed 's/^ *//;s/ *$//' | cut -c 1-240
 }
 
 pci_class_name() {
@@ -95,7 +102,7 @@ collect_pci_devices() {
     device_id="$(hex_id "${path}/device")"
     subsystem_vendor_id="$(hex_id "${path}/subsystem_vendor")"
     subsystem_device_id="$(hex_id "${path}/subsystem_device")"
-    driver="$(basename "$(readlink "${path}/driver" 2>/dev/null || true)")"
+    driver="$(bounded_text 120 "$(basename "$(readlink "${path}/driver" 2>/dev/null || true)")")"
     class_name="$(pci_readable "${address}" Class)"
     [ -n "${class_name}" ] || class_name="$(pci_class_name "${class_id}")"
     vendor="$(pci_readable "${address}" Vendor)"
@@ -143,7 +150,7 @@ collect_interfaces() {
     permanent_mac="$(optional_ethernet_mac "$(ethtool -P "${name}" 2>/dev/null | awk '{print $3}')")"
     device_path="$(readlink -f "${path}/device" 2>/dev/null || true)"
     pci_address="$(printf '%s\n' "${device_path}" | grep -Eo '[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]' | tail -n1 | tr 'A-F' 'a-f')"
-    driver="$(basename "$(readlink "${path}/device/driver" 2>/dev/null || true)")"
+    driver="$(bounded_text 120 "$(basename "$(readlink "${path}/device/driver" 2>/dev/null || true)")")"
     vendor_id=""
     device_id=""
     vendor=""
@@ -157,11 +164,11 @@ collect_interfaces() {
     link_state="$(read_value "${path}/operstate")"
     speed="$(unsigned_value "$(read_value "${path}/speed")")"
     addresses="$(ip -j address show dev "${name}" 2>/dev/null |
-      jq '[.[0].addr_info[]? | "\(.local)/\(.prefixlen)"]' 2>/dev/null || printf '[]')"
+      jq '[.[0].addr_info[]? | "\(.local)/\(.prefixlen)"][0:64]' 2>/dev/null || printf '[]')"
     boot=false
     [ "${name}" = "${boot_interface}" ] && boot=true
     jq -cn \
-      --arg name "${name}" --arg permanent_mac "${permanent_mac}" \
+      --arg name "$(bounded_text 64 "${name}")" --arg permanent_mac "${permanent_mac}" \
       --arg current_mac "${current_mac}" --arg driver "${driver}" \
       --arg pci_address "${pci_address}" --arg vendor_id "${vendor_id}" \
       --arg device_id "${device_id}" --arg vendor "${vendor}" --arg device "${device}" \
@@ -207,7 +214,9 @@ collect_disks() {
     serial="$(read_value "${path}/device/serial")"
     wwn="$(read_value "${path}/device/wwid")"
     [ -n "${wwn}" ] || wwn="$(printf '%s' "${lsblk_json}" | jq -r --arg name "${name}" '.blockdevices[]? | select(.name == $name) | .wwn // ""' | head -n1)"
+    wwn="$(bounded_text 240 "${wwn}")"
     transport="$(printf '%s' "${lsblk_json}" | jq -r --arg name "${name}" '.blockdevices[]? | select(.name == $name) | .tran // ""' | head -n1)"
+    transport="$(bounded_text 64 "${transport}")"
     rotational=false
     [ "$(read_value "${path}/queue/rotational")" = "1" ] && rotational=true
     removable=false
@@ -221,7 +230,7 @@ collect_disks() {
       --argjson read_only "${read_only}" '[if $rotational then "rotational" else empty end,
         if $removable then "removable" else empty end,
         if $read_only then "read-only" else empty end]')"
-    jq -cn --arg device "/dev/${name}" --arg model "${model}" --arg serial "${serial}" \
+    jq -cn --arg device "$(bounded_text 120 "/dev/${name}")" --arg model "${model}" --arg serial "${serial}" \
       --arg wwn "${wwn}" --arg transport "${transport}" --argjson size_bytes "${size_bytes}" \
       --arg size_human "$(human_size "${size_bytes}")" --arg type "${type}" \
       --argjson flags "${flags}" --arg controller_pci_address "${controller}" \
@@ -279,10 +288,13 @@ collect_dimms() {
     [ "${count}" -lt 256 ] || break
     size_bytes="$(dimm_size_bytes "${size}")"
     speed_mts="$(unsigned_value "$(printf '%s' "${speed}" | awk '{print $1}')")"
-    jq -cn --arg locator "${locator}" --arg bank "${bank}" \
+    jq -cn --arg locator "$(bounded_text 240 "${locator}")" \
+      --arg bank "$(bounded_text 240 "${bank}")" \
       --argjson size_bytes "${size_bytes}" --arg size_human "$(human_size "${size_bytes}")" \
-      --arg type "${type}" --argjson speed_mts "${speed_mts}" \
-      --arg manufacturer "${manufacturer}" --arg part_number "${part}" --arg serial "${serial}" \
+      --arg type "$(bounded_text 240 "${type}")" --argjson speed_mts "${speed_mts}" \
+      --arg manufacturer "$(bounded_text 240 "${manufacturer}")" \
+      --arg part_number "$(bounded_text 240 "${part}")" \
+      --arg serial "$(bounded_text 240 "${serial}")" \
       '{locator:$locator,bank:$bank,size_bytes:$size_bytes,size_human:$size_human,
         type:$type,speed_mts:$speed_mts,manufacturer:$manufacturer,
         part_number:$part_number,serial:$serial}' >>"${output}"
@@ -317,9 +329,9 @@ collect_usb_devices() {
     class_id="$(hex_id "${path}/bDeviceClass")"
     bus="$(unsigned_value "$(read_value "${path}/busnum")")"
     device_number="$(unsigned_value "$(read_value "${path}/devnum")")"
-    driver="$(basename "$(readlink "${path}/driver" 2>/dev/null || true)")"
+    driver="$(bounded_text 120 "$(basename "$(readlink "${path}/driver" 2>/dev/null || true)")")"
     jq -cn --argjson bus "${bus}" --argjson device_number "${device_number}" \
-      --arg port "${path##*/}" --arg vendor_id "$(hex_id "${path}/idVendor")" \
+      --arg port "$(bounded_text 64 "${path##*/}")" --arg vendor_id "$(hex_id "${path}/idVendor")" \
       --arg product_id "$(hex_id "${path}/idProduct")" \
       --arg manufacturer "$(read_value "${path}/manufacturer")" \
       --arg product "$(read_value "${path}/product")" --arg serial "$(read_value "${path}/serial")" \
@@ -339,9 +351,9 @@ collect_cpu() {
     printf '%s' "${cpu_json}" | jq -r --arg field "$1" \
       '.lscpu[] | select(.field == ($field + ":")) | .data' | head -n1
   }
-  architecture="$(cpu_field Architecture)"
-  vendor="$(cpu_field "Vendor ID")"
-  model="$(cpu_field "Model name")"
+  architecture="$(bounded_text 64 "$(cpu_field Architecture)")"
+  vendor="$(bounded_text 120 "$(cpu_field "Vendor ID")")"
+  model="$(bounded_text 240 "$(cpu_field "Model name")")"
   sockets="$(unsigned_value "$(cpu_field "Socket(s)")")"
   cores_per_socket="$(unsigned_value "$(cpu_field "Core(s) per socket")")"
   threads_per_core="$(unsigned_value "$(cpu_field "Thread(s) per core")")"

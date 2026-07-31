@@ -37,7 +37,7 @@ cpu="$(collect_cpu)"
 memory_bytes="$(awk '/MemTotal:/ {print $2 * 1024}' "${PROC_ROOT}/meminfo" | cut -d. -f1)"
 memory_bytes="$(unsigned_value "${memory_bytes}")"
 assigned_addresses="$(ip -j address show dev "${boot_interface}" 2>/dev/null |
-  jq '[.[0].addr_info[]? | "\(.local)/\(.prefixlen)"]' 2>/dev/null || printf '[]')"
+  jq '[.[0].addr_info[]? | "\(.local)/\(.prefixlen)"][0:64]' 2>/dev/null || printf '[]')"
 
 report="$(jq -n \
   --arg boot_interface "${boot_interface}" --arg boot_mac "${boot_mac}" \
