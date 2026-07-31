@@ -102,8 +102,11 @@ make_dmi_dimm() {
   size_high_octal="$4"
   path="${ATLASO_SYSFS_ROOT}/firmware/dmi/entries/17-${instance}"
   mkdir -p "${path}"
-  printf '%s\n' "${handle}" >"${path}/handle"
   awk 'BEGIN { for (i = 0; i < 32; i++) printf "%c", 0 }' >"${path}/raw"
+  handle_value=$((handle))
+  handle_low_octal="$(printf '%03o' $((handle_value % 256)))"
+  handle_high_octal="$(printf '%03o' $((handle_value / 256)))"
+  printf "\\${handle_low_octal}\\${handle_high_octal}" | dd of="${path}/raw" bs=1 seek=2 conv=notrunc 2>/dev/null
   printf "\\${size_low_octal}\\${size_high_octal}" | dd of="${path}/raw" bs=1 seek=12 conv=notrunc 2>/dev/null
 }
 make_dmi_dimm 0 0x0011 000 100
@@ -199,6 +202,7 @@ assert_jq "${dimms}" 'length == 3 and .[0].locator == "DIMM_A1" and .[1].speed_m
 assert_jq "${usb}" 'length == 2 and .[0].class == "Mass storage" and .[1].serial == "USB-1-2"'
 assert_jq "${cpu}" '.sockets == 2 and .cores == 16 and .threads == 32 and .cores_per_socket == 8 and .threads_per_core == 2'
 [ "$(human_size 1073741824)" = "1.00 GiB" ] || fail 'human size'
+[ "$(dmi_sysfs_handle "${ATLASO_SYSFS_ROOT}/firmware/dmi/entries/17-0/raw")" = "0x0011" ] || fail 'sysfs DIMM handle'
 [ "$(dimm_size_bytes '4096 MiB')" = "4294967296" ] || fail 'dmidecode 3.7 binary DIMM size'
 [ "$(dimm_size_bytes '4 GB')" = "4294967296" ] || fail 'legacy decimal DIMM size'
 [ "$(printf '%s' "$(bounded_text 240 "$(printf '%0241d' 0)")" | wc -c)" -eq 240 ] || fail 'string limit'

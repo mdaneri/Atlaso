@@ -119,9 +119,9 @@ NICs, 128 disks, 64 storage controllers, 256 populated DIMMs, 512 PCI devices,
 and 256 USB devices. Atlaso continues to accept schema v1 and normalizes it to
 the retained v2 JSON shape in the existing report column. Populated DIMM
 existence and size come from kernel-exposed sysfs DMI Type-17 entries;
-`dmidecode` enriches only matching sysfs handles with readable labels and
-manufacturer metadata. The Inventory kernel enables the DMI sysfs interface so
-those authoritative records are available on supported firmware.
+`dmidecode` enriches only records whose handle matches the little-endian handle
+in the authoritative sysfs raw entry. The Inventory kernel enables the DMI
+sysfs interface so those records are available on supported firmware.
 
 After a report is accepted, the local console opens full-screen Atlaso-style
 System/CPU/DIMMs, Network, and Storage pages. Use `N`/`P` or `1`-`3` to move

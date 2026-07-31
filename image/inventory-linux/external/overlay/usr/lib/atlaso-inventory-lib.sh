@@ -298,6 +298,15 @@ dimm_sysfs_size_bytes() {
   }'
 }
 
+dmi_sysfs_handle() {
+  bytes="$(od -An -tu1 -j 2 -N 2 "$1" 2>/dev/null || true)"
+  awk -v bytes="${bytes}" 'BEGIN {
+    count = split(bytes, value)
+    if (count < 2) exit 1
+    printf "0x%04X\n", value[1] + value[2] * 256
+  }'
+}
+
 collect_dimms() {
   records="$(mktemp "${RUNTIME_ROOT}/atlaso-dimm-records.XXXXXX")"
   output="$(mktemp "${RUNTIME_ROOT}/atlaso-dimm-json.XXXXXX")"
@@ -329,7 +338,7 @@ collect_dimms() {
     [ "${count}" -lt 256 ] || break
     size_bytes="$(dimm_sysfs_size_bytes "${path}/raw" || true)"
     [ -n "${size_bytes}" ] || continue
-    handle="$(read_value "${path}/handle")"
+    handle="$(dmi_sysfs_handle "${path}/raw" || true)"
     enrichment="$(awk -F '|' -v expected="${handle}" 'tolower($1) == tolower(expected) { sub(/^[^|]*\|/, ""); print; exit }' "${records}")"
     enrichment="${enrichment:-||||||}"
     locator="$(printf '%s' "${enrichment}" | cut -d'|' -f1)"
