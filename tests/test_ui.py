@@ -2,6 +2,8 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
 
 def login(client):
     page = client.get("/login")
@@ -11911,7 +11913,21 @@ def test_global_appliance_apply_tracks_baselines_diffs_and_skips(client):
         assert '"unit_id": "firewall"' in (job.result or "")
 
 
-def test_public_services_submission_includes_changed_local_users_dependency(client, monkeypatch):
+@pytest.mark.parametrize(
+    ("selected_unit", "depot_user_status", "expected_units"),
+    [
+        ("public_services", "pending", ["local_users", "public_services"]),
+        ("vcf_offline_depot", "pending", ["local_users", "vcf_offline_depot"]),
+        ("public_services", "applied", ["public_services"]),
+    ],
+)
+def test_depot_submission_includes_only_relevant_local_user_dependency(
+    client,
+    monkeypatch,
+    selected_unit,
+    depot_user_status,
+    expected_units,
+):
     import json
     from types import SimpleNamespace
 
@@ -11919,7 +11935,7 @@ def test_public_services_submission_includes_changed_local_users_dependency(clie
 
     import atlaso.app.ui as ui
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import Job, JobStep
+    from atlaso.app.models import Job, JobStep, User
 
     def unit(unit_id, label, *, changed, context=None):
         return {
@@ -11937,20 +11953,33 @@ def test_public_services_submission_includes_changed_local_users_dependency(clie
             "snapshot_hash": f"{unit_id}-snapshot",
         }
 
+    depot_user = User(
+        id=41,
+        username="vcf-depot",
+        enabled=True,
+        os_sync_status=depot_user_status,
+        os_unlock_requested_at=None,
+    )
     units = [
-        unit("local_users", "Local Users", changed=True),
+        unit(
+            "local_users",
+            "Local Users",
+            changed=True,
+            context={"local_users": [depot_user]},
+        ),
         unit(
             "vcf_offline_depot",
             "VCF Offline Depot",
-            changed=False,
+            changed=selected_unit == "vcf_offline_depot",
             context={
                 "vcf_depot_settings": SimpleNamespace(
                     enabled=True,
                     allow_unauthenticated_access=False,
+                    http_user_id=depot_user.id,
                 )
             },
         ),
-        unit("public_services", "Public Services", changed=True),
+        unit("public_services", "Public Services", changed=selected_unit == "public_services"),
     ]
     started_jobs = []
     login(client)
@@ -11960,16 +11989,16 @@ def test_public_services_submission_includes_changed_local_users_dependency(clie
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda job_id: started_jobs.append(job_id))
     response = client.post(
         "/appliance-apply",
-        data={"csrf": csrf, "selected_units": "public_services"},
+        data={"csrf": csrf, "selected_units": selected_unit},
         follow_redirects=False,
     )
 
     assert response.status_code == 303
     with SessionLocal() as db:
         job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()
-        assert json.loads(job.result or "{}")["selected_units"] == ["local_users", "public_services"]
+        assert json.loads(job.result or "{}")["selected_units"] == expected_units
         steps = db.scalars(select(JobStep).where(JobStep.job_id == job.id).order_by(JobStep.position)).all()
-        assert [step.component_key for step in steps] == ["local_users", "public_services"]
+        assert [step.component_key for step in steps] == expected_units
     assert started_jobs == [job.id]
 
 

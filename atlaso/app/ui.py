@@ -11569,13 +11569,29 @@ def submit_appliance_apply(
         )
     depot_context_for_apply = unit_map.get("vcf_offline_depot", {}).get("context", {})
     depot_settings_for_apply = depot_context_for_apply.get("vcf_depot_settings")
-    local_users_required_for_public_services = bool(
-        "public_services" in selected_ids
+    depot_publishing_units = {"vcf_offline_depot", "public_services"}
+    depot_http_user_id = getattr(depot_settings_for_apply, "http_user_id", None)
+    local_users_for_apply = unit_map.get("local_users", {}).get("context", {}).get("local_users", [])
+    depot_http_user_for_apply = next(
+        (user for user in local_users_for_apply if user.id == depot_http_user_id),
+        None,
+    )
+    depot_http_user_has_pending_state = bool(
+        depot_http_user_for_apply
+        and (
+            depot_http_user_for_apply.os_sync_status != "applied"
+            or depot_http_user_for_apply.os_unlock_requested_at
+            or has_pending_os_password(depot_http_user_for_apply)
+        )
+    )
+    local_users_required_for_authenticated_depot = bool(
+        selected_ids & depot_publishing_units
         and getattr(depot_settings_for_apply, "enabled", False)
         and not getattr(depot_settings_for_apply, "allow_unauthenticated_access", False)
+        and depot_http_user_has_pending_state
     )
     if (
-        local_users_required_for_public_services
+        local_users_required_for_authenticated_depot
         and "local_users" in unit_map
         and unit_map["local_users"]["changed"]
     ):

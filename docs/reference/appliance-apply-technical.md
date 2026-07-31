@@ -552,8 +552,9 @@ navigation redirects to the form; non-browser requests receive a standard `401` 
 shared service-IP listener. Local Users apply refreshes an existing managed depot `htpasswd` entry from the current
 Photon hash and writes a locked, non-matching entry if that account is missing or locked. No second application password
 hash is stored. Public Services validation blocks publishing the authenticated depot while its selected local user is
-disabled. When authenticated depot listeners are selected and Local Users has changed, appliance apply automatically
-places Local Users before Public Services so the Photon account and derived `htpasswd` state exist first.
+disabled. When an authenticated VCF Offline Depot or Public Services unit is selected and its HTTP user has unapplied
+Local Users state, appliance apply automatically places Local Users before that publishing unit so the Photon account
+and derived `htpasswd` state exist first. Unrelated Local Users changes do not alter a publishing-only submission.
 
 #### Tool staging, downloads, and HTTPS service
 
