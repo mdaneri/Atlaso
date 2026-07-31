@@ -45,6 +45,22 @@ directory documented below. A per-repository lock serializes concurrent Windows
 build requests that share this cache. This does not change the caller's Windows
 `PATH` or global WSL configuration.
 
+Atlaso's `.gitattributes` keeps Bash and PowerShell sources at LF in every
+checkout, including Windows clones with Git's automatic line-ending conversion
+enabled. If Bash reports an invalid `pipefail` option before the build starts,
+verify the working-tree format from PowerShell:
+
+```powershell
+git ls-files --eol -- image/inventory-linux/build.sh
+```
+
+The result must report `w/lf`. After pulling the line-ending policy, restore an
+older checkout that reports `w/crlf` with:
+
+```powershell
+git restore --source=HEAD --worktree -- image/inventory-linux/build.sh
+```
+
 On Debian or Ubuntu, install the Buildroot host prerequisites first:
 
 ```bash
