@@ -3155,6 +3155,7 @@
 command check run directly as the unprivileged appliance SSH user rather than through sudo.</p>
 <p>Atlaso can run a VMware Workstation lifecycle lab alongside the Hyper-V lab. The Workstation path uses VMX/VMDK
 artifacts and <code>vmrun.exe</code>, then delegates appliance behavior checks to the shared Python lifecycle runner.</p>
+<p>Run all Windows commands in PowerShell 7.x (<code>pwsh</code>). Windows PowerShell 5.1 (<code>powershell.exe</code>) is not supported.</p>
 <p>Appliance VMX files set <code>disk.EnableUUID = "TRUE"</code> so Photon exposes stable <code>/dev/disk/by-id</code> identities. ESX Storage
 blank-disk claims depend on those identities and reject transient <code>/dev/sdX</code> names.</p>
 <h2 id="topology">Topology<a class="headerlink" href="#topology" title="Permanent link">&para;</a></h2>
@@ -3171,7 +3172,7 @@ from the same upstream QCOW2 source as the Hyper-V lifecycle client.</p>
 <li><code>VMnet4</code> for trunk-like validation</li>
 </ul>
 <p>Check the current Workstation host network inventory with:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">prepare-networks</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
 </span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>  <span class="n">-PlanOnly</span>
 </span></code></pre></div>
@@ -3183,7 +3184,7 @@ wrapper chooses <code>.30</code> in that subnet for temporary builder SSH, then 
 discovers the runtime address through VMware Tools.</p>
 <h2 id="build-the-appliance">Build The Appliance<a class="headerlink" href="#build-the-appliance" title="Permanent link">&para;</a></h2>
 <p>Build the Workstation appliance with:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">build-photon-image</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>  <span class="n">-IsoUrl</span> <span class="s2">&quot;&lt;photon-iso-url-or-path&gt;&quot;</span> <span class="p">`</span>
 </span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>  <span class="n">-IsoChecksum</span> <span class="s2">&quot;&lt;packer-checksum&gt;&quot;</span> <span class="p">`</span>
@@ -3195,7 +3196,7 @@ source ISO is not duplicated under each target. The Workstation image installs <
 the <code>hyper-v</code> package and Hyper-V guest daemons. The Workstation build wrapper opens a visible VMware console by
 default. Use <code>-Headless</code> only when an unattended build is preferred.</p>
 <h2 id="single-command-run">Single-Command Run<a class="headerlink" href="#single-command-run" title="Permanent link">&para;</a></h2>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span>
 </span></code></pre></div>
 <p>The wrapper selects the newest appliance VMX under <code>image/vmware-workstation/output</code>, prepares the tiny Alpine client
@@ -3209,23 +3210,23 @@ Authorization Code acceptance check. It skips unrelated multi-NIC service config
 and the backup/restore pass.</p>
 <p>Useful commands:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c"># Print selected paths and topology without creating VMs.</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
 </span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>  <span class="n">-PlanOnly</span>
 </span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>
 </span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="c"># Validate Workstation vmnet inventory.</span>
-</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
 </span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>  <span class="n">-PrepareNetworksOnly</span>
 </span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>
 </span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="c"># Stop and remove existing AtlasoWorkstationLifecycle* VMs.</span>
-</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
 </span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>  <span class="n">-CleanupVmsOnly</span>
 </span></code></pre></div>
 <h2 id="normal-test-vm">Normal Test VM<a class="headerlink" href="#normal-test-vm" title="Permanent link">&para;</a></h2>
 <p>For a normal Workstation appliance VM, separate from the lifecycle lab, use:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">create-atlaso-test-vm</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
 </span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>  <span class="n">-Redeploy</span> <span class="p">`</span>
 </span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>  <span class="n">-ResetDataDisks</span> <span class="p">`</span>

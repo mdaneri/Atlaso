@@ -3174,6 +3174,7 @@
 <h1 id="hyper-v-lifecycle-testing">Hyper-V Lifecycle Testing<a class="headerlink" href="#hyper-v-lifecycle-testing" title="Permanent link">&para;</a></h1>
 <p>Atlaso lifecycle interop tests use a separate Hyper-V lab set. They must not reuse or destroy the normal <code>Atlaso</code> test
 appliance VM.</p>
+<p>Run all Windows commands in PowerShell 7.x (<code>pwsh</code>). Windows PowerShell 5.1 (<code>powershell.exe</code>) is not supported.</p>
 <h2 id="topology">Topology<a class="headerlink" href="#topology" title="Permanent link">&para;</a></h2>
 <p>The default lifecycle lab creates these VMs:</p>
 <ul>
@@ -3195,15 +3196,15 @@ helper.</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>image/hyperv/clients/alpine-cloud/atlaso-tiny-linux-client.vhdx
 </span></code></pre></div>
 <p>Prepare or refresh that image with:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="n">prepare-tiny-linux-client</span><span class="p">.</span><span class="n">ps1</span>
 </span></code></pre></div>
 <p>The preparation script downloads Alpine's official UEFI cloud-init QCOW2 image, verifies the <code>.sha512</code> checksum, and
 converts it to a dynamic Hyper-V VHDX with <code>qemu-img</code>. The lifecycle script uses <code>pycdlib</code> to build the NoCloud seed
 ISOs; if it is missing, the script installs it with <code>python -m pip install pycdlib</code>.</p>
 <h2 id="single-command-run">Single-Command Run<a class="headerlink" href="#single-command-run" title="Permanent link">&para;</a></h2>
-<p>Run from an elevated PowerShell session:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+<p>Run from an elevated PowerShell 7 session:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span>
 </span></code></pre></div>
 <p>The wrapper prepares the Alpine client VHDX if needed, selects the newest appliance VHDX under <code>image/hyperv/output</code>,
@@ -3225,17 +3226,17 @@ management HTTPS/443 and redirect public HTTP/80 to HTTPS; override the probe wi
 different management front door.</p>
 <p>Useful single-purpose commands:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c"># Create or repair the Atlaso Hyper-V switches and management NAT only.</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
 </span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>  <span class="n">-PrepareNetworksOnly</span>
 </span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>
 </span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="c"># Remove only AtlasoLifecycle* VMs; keep Hyper-V switches and NAT.</span>
-</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
 </span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>  <span class="n">-CleanupVmsOnly</span>
 </span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>
 </span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="c"># Remove Atlaso switches and management NAT; refuses if VMs are attached.</span>
-</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
 </span><span id="__span-3-14"><a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>  <span class="n">-CleanupNetworksOnly</span>
 </span></code></pre></div>
@@ -3246,7 +3247,7 @@ is intentionally opt-in because the normal <code>Atlaso</code> VM can also be at
 <h2 id="low-level-run">Low-Level Run<a class="headerlink" href="#low-level-run" title="Permanent link">&para;</a></h2>
 <p>The wrapper delegates to <code>scripts/windows/hyperv/run-lifecycle-test.ps1</code>. That lower-level script is still available
 when you need explicit control over every input:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="n">run-lifecycle-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
 </span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>  <span class="n">-ApplianceVhdxPath</span> <span class="n">image</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="n">output</span><span class="p">/</span><span class="n">atlaso-photon-hyperv</span><span class="p">/</span><span class="s2">&quot;Virtual Hard Disks&quot;</span><span class="p">/</span><span class="n">Atlaso-Photon-Builder</span><span class="p">.</span><span class="n">vhdx</span> <span class="p">`</span>
 </span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>  <span class="n">-AdminPassword</span> <span class="s1">&#39;&lt;bootstrap-admin-password&gt;&#39;</span> <span class="p">`</span>

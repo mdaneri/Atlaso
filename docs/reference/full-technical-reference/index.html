@@ -3738,18 +3738,20 @@ June 21, 2026, live repository metadata showed <code>python3</code> as <code>3.1
 (<code>requires-python &gt;=3.14,&lt;3.15</code>); verify the appliance stream with:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>python3<span class="w"> </span>scripts/check_photon_compatibility.py
 </span></code></pre></div>
+<p>Atlaso Windows automation supports only PowerShell 7.x (<code>pwsh</code>). Windows PowerShell 5.1 (<code>powershell.exe</code>) is not
+supported. Run every documented Windows command from <code>pwsh</code>, including elevated Hyper-V operations.</p>
 <p>Build inputs are the current Photon OS 5.0 ISO URL and checksum. On Hyper-V, use the Windows wrapper so the Photon
 kickstart is attached as a local single remastered ISO instead of depending on early installer networking:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="n">build-photon-image</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
 </span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>  <span class="n">-IsoUrl</span> <span class="s2">&quot;https://packages.broadcom.com/photon/5.0/GA/iso/photon-5.0-dde71ec57.x86_64.iso&quot;</span> <span class="p">`</span>
 </span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>  <span class="n">-IsoChecksum</span> <span class="s2">&quot;sha512:6a7a258399a258da742032987c043ab25503698d35edafaf1ae000f12127da1a161d8b84caa17fd8f23d129e81e1faa7ab087c20ab9229772a643f8f9475305f&quot;</span> <span class="p">`</span>
 </span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>  <span class="n">-SshPassword</span> <span class="s2">&quot;&lt;one-time-build-root-password&gt;&quot;</span> <span class="p">`</span>
 </span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>  <span class="n">-BootstrapAdminPassword</span> <span class="s2">&quot;&lt;initial-atlaso-admin-password&gt;&quot;</span>
 </span></code></pre></div>
-<p>Run Packer from an elevated PowerShell session or as a user in the <code>Hyper-V Administrators</code> group. Prepare the Atlaso
+<p>Run Packer from an elevated PowerShell 7 session or as a user in the <code>Hyper-V Administrators</code> group. Prepare the Atlaso
 Hyper-V management network before building:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="n">create-switches</span><span class="p">.</span><span class="n">ps1</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="n">create-switches</span><span class="p">.</span><span class="n">ps1</span>
 </span></code></pre></div>
 <p>The Packer build VM uses the <code>Atlaso-Mgmt</code> switch by default with temporary static address <code>192.168.49.30/24</code> and
 gateway <code>192.168.49.254</code>. This avoids fragile <code>Default Switch</code> host-IP detection while still giving the builder NAT
@@ -3780,7 +3782,7 @@ PyPI mirror, pass <code>-PipGlobalIndex</code> or <code>-PipGlobalIndexUrl</code
 virtual environment is created. The provisioner does not upgrade pip as a separate bootstrap step; it uses the
 Photon-packaged pip to install Atlaso so a transient public PyPI pip release download cannot fail the image before the
 application install starts. Leave both options empty to keep standard pip behavior:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="n">build-photon-image</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
 </span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>  <span class="n">-IsoUrl</span> <span class="s2">&quot;&lt;photon-5.0-iso-url&gt;&quot;</span> <span class="p">`</span>
 </span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>  <span class="n">-IsoChecksum</span> <span class="s2">&quot;&lt;packer-checksum&gt;&quot;</span> <span class="p">`</span>
@@ -3879,10 +3881,10 @@ re-fetches the PR and verifies that it remains open, same-repository, based on <
 checking out or pushing. The privileged updater has no manual-dispatch trigger.</p>
 <p>The application update build continues to append <code>+g&lt;commit&gt;</code> metadata to wheel versions. A merged pull request does not
 create a Git tag, GitHub release, or changelog entry; those remain deliberate release-management actions.</p>
-<p>Run from Windows PowerShell using the WSL development virtualenv:</p>
+<p>Run from PowerShell 7 using the WSL development virtualenv:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">wsl</span> <span class="n">-e</span> <span class="n">sh</span> <span class="n">-lc</span> <span class="s2">&quot;cd /mnt/c/Users/m_dan/Documents/Atlaso &amp;&amp; /home/m_dan/.venvs/atlaso/bin/python -m uvicorn atlaso.app.main:app --host 127.0.0.1 --port 8000&quot;</span>
 </span></code></pre></div>
-<p>Run in the background from Windows PowerShell:</p>
+<p>Run in the background from PowerShell 7:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">wsl</span> <span class="n">-e</span> <span class="n">sh</span> <span class="n">-lc</span> <span class="s2">&quot;cd /mnt/c/Users/m_dan/Documents/Atlaso &amp;&amp; setsid -f /home/m_dan/.venvs/atlaso/bin/python -m uvicorn atlaso.app.main:app --host 127.0.0.1 --port 8000 &gt;/tmp/atlaso-uvicorn.log 2&gt;&amp;1&quot;</span>
 </span></code></pre></div>
 <p>View the background server log:</p>
@@ -4485,7 +4487,7 @@ repository administration scopes.</p>
 <p>Windows-side automation lives in <code>scripts/windows/</code>, with shared helpers under <code>scripts/windows/common/</code> and
 provider-specific entry points under <code>scripts/windows/hyperv/</code> and <code>scripts/windows/vmware/</code>.</p>
 <p>From WSL2:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-26-1"><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a>powershell.exe<span class="w"> </span>-ExecutionPolicy<span class="w"> </span>Bypass<span class="w"> </span>-File<span class="w"> </span>scripts/windows/hyperv/create-switches.ps1
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-26-1"><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a>pwsh<span class="w"> </span>-ExecutionPolicy<span class="w"> </span>Bypass<span class="w"> </span>-File<span class="w"> </span>scripts/windows/hyperv/create-switches.ps1
 </span></code></pre></div>
 <p>The scaffold uses these switch names:</p>
 <ul>
@@ -4504,13 +4506,13 @@ parity work; ESXi/vSphere OVA and KVM/Proxmox QCOW2 are future packaging targets
 smoke checks. The first appliance smoke pass should verify SSH, <code>systemctl status atlaso</code>, web UI login,
 <code>/openapi.json</code>, <code>/api/v1/dashboard</code>, reboot persistence, and dry-run <code>/appliance-apply</code> job output.</p>
 <p>For a normal Hyper-V test appliance, use the explicit Hyper-V wrapper:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-28-1"><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-28-1"><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-28-2"><a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="n">create-atlaso-test-vm</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
 </span><span id="__span-28-3"><a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a>  <span class="n">-WaitForIp</span>
 </span></code></pre></div>
 <p>Lifecycle interop testing uses a separate Hyper-V VM set and must not reuse or destroy the normal <code>Atlaso</code> test VM. The
 simple entry point is:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-29-1"><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-29-1"><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-29-2"><a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span>
 </span></code></pre></div>
 <p>The wrapper prepares the tiny Alpine client VHDX, selects the newest appliance VHDX under <code>image/hyperv/output</code>, creates
@@ -4537,7 +4539,7 @@ session to read the current IPv4 address reported by Hyper-V.</p>
 provisioning with the Hyper-V image path. The original Photon source ISO cache is shared under <code>image/common/source</code>;
 the Workstation image installs <code>open-vm-tools</code> instead of Hyper-V guest integration packages.</p>
 <p>Build the image with:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-31-1"><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-31-1"><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-31-2"><a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">build-photon-image</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
 </span><span id="__span-31-3"><a id="__codelineno-31-3" name="__codelineno-31-3" href="#__codelineno-31-3"></a>  <span class="n">-IsoUrl</span> <span class="s2">&quot;&lt;photon-iso-url-or-path&gt;&quot;</span> <span class="p">`</span>
 </span><span id="__span-31-4"><a id="__codelineno-31-4" name="__codelineno-31-4" href="#__codelineno-31-4"></a>  <span class="n">-IsoChecksum</span> <span class="s2">&quot;&lt;packer-checksum&gt;&quot;</span>
@@ -4549,7 +4551,7 @@ survive a rebuild. The remastered kickstart disables Photon's socket-activated S
 <code>sshd.service</code>, ensuring Packer receives a deterministic SSH daemon after the first installed-system boot. The temporary
 Photon root/build password remains separate from the Atlaso web bootstrap administrator password.</p>
 <p>Lifecycle testing uses VMX/VMDK artifacts and <code>vmrun.exe</code>:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-32-1"><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-32-1"><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-32-2"><a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span>
 </span></code></pre></div>
 <p>Results are written under <code>test-results/vmware-workstation-lifecycle/&lt;timestamp&gt;</code>. Workstation vmnets provide isolated
@@ -4557,7 +4559,7 @@ layer-2 segments, but they do not model Hyper-V access/trunk VLAN port controls 
 authoritative for that VLAN-specific behavior. Details live in
 <a href="../vmware-workstation-lifecycle-testing/">VMware Workstation Lifecycle Testing</a>.</p>
 <p>For a normal Workstation test appliance on the management vmnet:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-33-1"><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-33-1"><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-33-2"><a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">create-atlaso-test-vm</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
 </span><span id="__span-33-3"><a id="__codelineno-33-3" name="__codelineno-33-3" href="#__codelineno-33-3"></a>  <span class="n">-Redeploy</span> <span class="p">`</span>
 </span><span id="__span-33-4"><a id="__codelineno-33-4" name="__codelineno-33-4" href="#__codelineno-33-4"></a>  <span class="n">-ResetDataDisks</span> <span class="p">`</span>
@@ -4592,7 +4594,7 @@ reinstalling the wheel, increase the readiness wait with <code>-ReadinessTimeout
 <p>Pass <code>-IncludeLabNetworkAdapters</code> only after <code>VMnet2</code>, <code>VMnet3</code>, and <code>VMnet4</code> exist for the SiteA, WAN/SiteB, and
 trunk-like validation networks.</p>
 <p>Discover the running Workstation appliance address with:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-36-1"><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a><span class="n">powershell</span><span class="p">.</span><span class="n">exe</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-36-1"><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-36-2"><a id="__codelineno-36-2" name="__codelineno-36-2" href="#__codelineno-36-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">get-atlaso</span><span class="n">-vm-ip</span><span class="p">.</span><span class="n">ps1</span>
 </span></code></pre></div>
 <h2 id="powershell-roadmap">PowerShell Roadmap<a class="headerlink" href="#powershell-roadmap" title="Permanent link">&para;</a></h2>
