@@ -217,6 +217,21 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     assert 'installed_manifest.get("environment") != "inventory"' in deploy
 
 
+def test_windows_inventory_linux_build_uses_linux_only_path():
+    wrapper = Path("scripts/windows/common/Build-AtlasoInventoryLinux.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    linux_path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    assert f"$linuxPath = '{linux_path}'" in wrapper
+    assert "${XDG_CACHE_HOME:-$HOME/.cache}/atlaso/inventory-linux" in wrapper
+    assert "[System.Security.Cryptography.SHA256]::HashData" in wrapper
+    assert '"ATLASO_INVENTORY_BUILD_ROOT=$linuxBuildRoot"' in wrapper
+    assert 'exec flock --exclusive "$2" bash "$3"' in wrapper
+    assert '"$linuxBuildRoot.lock"' in wrapper
+    assert "wsl.exe --exec bash $linuxScript" not in wrapper
+
+
 def test_inventory_linux_retries_uncertain_reboot_acknowledgments():
     client = Path(
         "image/inventory-linux/external/overlay/usr/bin/atlaso-inventory"
