@@ -51,14 +51,22 @@ enabled. If Bash reports an invalid `pipefail` option before the build starts,
 verify the working-tree format from PowerShell:
 
 ```powershell
-git ls-files --eol -- image/inventory-linux/build.sh
+$inventoryScripts = @(
+    'image/inventory-linux/build.sh'
+    'image/inventory-linux/external/overlay/etc/init.d/S99atlaso-inventory'
+    'image/inventory-linux/external/overlay/usr/bin/atlaso-inventory'
+)
+git ls-files --eol -- $inventoryScripts
 ```
 
-The result must report `w/lf`. After pulling the line-ending policy, restore an
-older checkout that reports `w/crlf` with:
+Every result must report `w/lf`. After pulling the line-ending policy, remove
+and restore any older checkout that reports `w/crlf`; removing the working-tree
+copies is necessary because Git otherwise treats their normalized content as
+unchanged:
 
 ```powershell
-git restore --source=HEAD --worktree -- image/inventory-linux/build.sh
+Remove-Item -LiteralPath $inventoryScripts
+git restore --source=HEAD --worktree -- $inventoryScripts
 ```
 
 On Debian or Ubuntu, install the Buildroot host prerequisites first:
