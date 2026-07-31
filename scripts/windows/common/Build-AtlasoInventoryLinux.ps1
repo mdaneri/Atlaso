@@ -21,7 +21,21 @@ $linuxScript = (wsl.exe wslpath -a ($buildScript -replace '\\', '/')).Trim()
 if ([string]::IsNullOrWhiteSpace($linuxScript)) {
     throw 'WSL could not resolve the Atlaso Inventory Linux build path.'
 }
-wsl.exe --exec bash $linuxScript
+$linuxPath = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+$linuxCacheRoot = (wsl.exe --exec env "PATH=$linuxPath" sh -c 'printf "%s" "${XDG_CACHE_HOME:-$HOME/.cache}/atlaso/inventory-linux"').Trim()
+if ([string]::IsNullOrWhiteSpace($linuxCacheRoot) -or $linuxCacheRoot -match '\s') {
+    throw 'WSL could not resolve a whitespace-free Atlaso Inventory Linux cache path.'
+}
+$repositoryHash = [System.Security.Cryptography.SHA256]::HashData(
+    [System.Text.Encoding]::UTF8.GetBytes($RepositoryRoot.ToLowerInvariant())
+)
+$repositoryKey = [System.Convert]::ToHexString($repositoryHash).Substring(0, 16).ToLowerInvariant()
+$linuxBuildRoot = "$linuxCacheRoot/$repositoryKey"
+wsl.exe --exec env `
+    "PATH=$linuxPath" `
+    "ATLASO_INVENTORY_BUILD_ROOT=$linuxBuildRoot" `
+    sh -c 'mkdir -p "$1"; exec flock --exclusive "$2" bash "$3"' `
+    atlaso-inventory-build $linuxCacheRoot "$linuxBuildRoot.lock" $linuxScript
 if ($LASTEXITCODE -ne 0) {
     throw "Atlaso Inventory Linux build failed with exit code $LASTEXITCODE."
 }
