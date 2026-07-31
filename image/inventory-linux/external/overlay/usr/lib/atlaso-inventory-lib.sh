@@ -247,16 +247,21 @@ collect_disks() {
 }
 
 dimm_size_bytes() {
-  amount="$(printf '%s' "$1" | awk '{print $1}')"
-  unit="$(printf '%s' "$1" | awk '{print toupper($2)}')"
-  amount="$(unsigned_value "${amount}")"
-  case "${unit}" in
-    KB) printf '%s' $((amount * 1024)) ;;
-    MB) printf '%s' $((amount * 1024 * 1024)) ;;
-    GB) printf '%s' $((amount * 1024 * 1024 * 1024)) ;;
-    TB) printf '%s' $((amount * 1024 * 1024 * 1024 * 1024)) ;;
-    *) printf '0' ;;
-  esac
+  # BusyBox ash can be configured with 32-bit arithmetic even on x86_64. Use
+  # awk's numeric representation so populated DIMMs of 4 GiB or more do not
+  # wrap to zero before they reach the structured report.
+  printf '%s\n' "$1" | awk '
+    {
+      amount = $1 + 0
+      unit = toupper($2)
+      factor = unit == "KB" ? 1024 :
+        unit == "MB" ? 1024 * 1024 :
+        unit == "GB" ? 1024 * 1024 * 1024 :
+        unit == "TB" ? 1024 * 1024 * 1024 * 1024 : 0
+      if (amount < 0 || factor == 0) print "0"
+      else printf "%.0f\n", amount * factor
+    }
+  '
 }
 
 collect_dimms() {
@@ -446,17 +451,31 @@ render_inventory_console() {
       ;;
     2)
       printf '\033[1m  Network\033[0m\033[K\n\n'
-      printf '%s' "${report}" | jq -r '.interfaces[] | "  " + (if .boot_interface then "* " else "  " end) + .name + "  " + (.vendor + " " + .device | gsub("  +";" ")) + "\n      permanent " + .permanent_mac + "  current " + .current_mac + "  " + .link_state + " " + (.speed_mbps|tostring) + " Mb/s\n      " + (.addresses|join(", ")) + "  driver " + .driver + "  PCI " + .pci_address'
+      printf '%s' "${report}" | jq -r '.interfaces[] | "  " + (if .boot_interface then "* " else "  " end) + .name + "  " + ([.vendor,.device] | map(select(length > 0)) | join(" ")) + "\n      permanent " + .permanent_mac + "  current " + .current_mac + "  " + .link_state + " " + (.speed_mbps|tostring) + " Mb/s\n      " + (.addresses|join(", ")) + "  driver " + .driver + "  PCI " + .pci_address'
       ;;
     *)
       printf '\033[1m  Storage\033[0m\033[K\n\n'
       printf '%s' "${report}" | jq -r '.disks[] | "  " + .device + "  " + .size_human + "  " + .type + "  " + .model + "\n      serial " + .serial + "  WWN " + .wwn + "  transport " + .transport + "  controller " + .controller_pci_address + "  flags " + (.flags|join(", "))'
       printf '\n\033[1m  Storage controllers\033[0m\n'
-      printf '%s' "${report}" | jq -r '.storage_controllers[] | "  " + .pci_address + "  " + .type + "  " + (.vendor + " " + .device | gsub("  +";" ")) + "  driver " + .driver'
+      printf '%s' "${report}" | jq -r '.storage_controllers[] | "  " + .pci_address + "  " + .type + "  " + ([.vendor,.device] | map(select(length > 0)) | join(" ")) + "  driver " + .driver'
       ;;
   esac
   printf '\033[0m\033[48;5;25m\033[38;5;255m\033[K\n'
+  printf '\033[s'
+  render_inventory_console_footer_lines "${page}" "${remaining}" "${paused}" "${host_id}"
+}
+
+render_inventory_console_footer_lines() {
+  page="$1"
+  remaining="$2"
+  paused="$3"
+  host_id="$4"
   if [ "${paused}" = "true" ]; then countdown="Paused at ${remaining}s"; else countdown="Reboot in ${remaining}s"; fi
   printf '  Host %s  |  Page %s/3  |  %s\033[K\n' "${host_id}" "${page}" "${countdown}"
-  printf '  [N] Next  [P] Previous  [1-3] Page  [S] Pause/resume  [R] Reboot now\033[K\033[0m\n'
+  printf '  [N] Next  [P] Previous  [1-3] Page  [S] Pause/resume  [R] Reboot now\033[K\033[0m\n\033[J'
+}
+
+refresh_inventory_console_footer() {
+  printf '\033[u\033[48;5;25m\033[38;5;255m'
+  render_inventory_console_footer_lines "$1" "$2" "$3" "$4"
 }

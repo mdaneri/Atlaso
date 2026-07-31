@@ -129,6 +129,7 @@ paused=false
 pending_reboot_id=""
 last_tick="$(date +%s)"
 next_poll="${last_tick}"
+rendered_page=0
 while :; do
   now="$(date +%s)"
   elapsed=$((now - last_tick))
@@ -156,7 +157,12 @@ while :; do
     next_poll=$((now + 10))
   fi
 
-  render_inventory_console "${report}" "${page}" "${remaining}" "${paused}" "${host_id}"
+  if [ "${page}" != "${rendered_page}" ]; then
+    render_inventory_console "${report}" "${page}" "${remaining}" "${paused}" "${host_id}"
+    rendered_page="${page}"
+  else
+    refresh_inventory_console_footer "${page}" "${remaining}" "${paused}" "${host_id}"
+  fi
   key=""
   if read -r -n 1 -t 1 key; then
     key_result="$(console_key_action "${key}" "${page}" "${paused}")"

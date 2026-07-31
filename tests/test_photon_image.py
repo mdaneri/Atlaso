@@ -177,12 +177,15 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     assert "collect_usb_devices" in inventory_client
     assert "remaining=120" in inventory_client
     assert "render_inventory_console" in inventory_client
+    assert "refresh_inventory_console_footer" in inventory_client
+    assert "| gsub(" not in inventory_library
     kernel_fragment = Path(
         "image/inventory-linux/external/board/atlaso-inventory/linux.fragment"
     ).read_text(encoding="utf-8")
     for driver in (
         "CONFIG_VMXNET3=y",
         "CONFIG_VMWARE_PVSCSI=y",
+        "CONFIG_FUSION_SPI=y",
         "CONFIG_HYPERV_NET=y",
         "CONFIG_HYPERV_STORAGE=y",
         "CONFIG_VIRTIO_NET=y",

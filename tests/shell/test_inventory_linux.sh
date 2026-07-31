@@ -166,6 +166,7 @@ assert_jq "${dimms}" 'length == 2 and .[0].locator == "DIMM_A1" and .[1].speed_m
 assert_jq "${usb}" 'length == 2 and .[0].class == "Mass storage" and .[1].serial == "USB-1-2"'
 assert_jq "${cpu}" '.sockets == 2 and .cores == 16 and .threads == 32 and .cores_per_socket == 8 and .threads_per_core == 2'
 [ "$(human_size 1073741824)" = "1.00 GiB" ] || fail 'human size'
+[ "$(dimm_size_bytes '4096 MB')" = "4294967296" ] || fail 'DIMM size exceeds 32-bit arithmetic'
 [ "$(printf '%s' "$(bounded_text 240 "$(printf '%0241d' 0)")" | wc -c)" -eq 240 ] || fail 'string limit'
 [ "$(cycle_console_page 3 next)" = "1" ] || fail 'next page wraps'
 [ "$(cycle_console_page 1 previous)" = "3" ] || fail 'previous page wraps'
@@ -199,5 +200,8 @@ printf '%s' "${console}" | grep -F 'Atlaso Inventory Linux' >/dev/null || fail '
 printf '%s' "${console}" | grep -F 'Network' >/dev/null || fail 'network page'
 printf '%s' "${console}" | grep -F 'Page 2/3' >/dev/null || fail 'console paging footer'
 printf '%s' "${console}" | grep -F '[S] Pause/resume' >/dev/null || fail 'console actions'
+footer="$(refresh_inventory_console_footer 2 89 true 7)"
+printf '%s' "${footer}" | grep -F 'Paused at 89s' >/dev/null || fail 'in-place countdown footer refresh'
+if grep -F '| gsub(' "${library}" >/dev/null; then fail 'Buildroot jq regex dependency'; fi
 
 printf 'Inventory Linux shell fixtures passed.\n'
