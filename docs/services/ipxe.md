@@ -207,8 +207,8 @@ enabled assigned host requests the dynamic response. Source downloads and previe
 renamed references fail closed, and dynamic responses disable caching. See [Vaults](vaults.md) for marker examples,
 URI ordering, and secret-handling boundaries.
 
-The management UI reports invalid Kickstart references with bounded operator
-guidance and does not render raw backend exception text.
+The management UI reports invalid Kickstart references and uploads with bounded
+operator guidance and does not render raw backend exception text.
 
 Define non-secret custom values in the **Custom Variables** tab before **Installer ISOs**. The final **+ Add custom
 variable** control in the ESXi PXE tablist opens a two-step Definition and Review wizard; double-clicking an existing
