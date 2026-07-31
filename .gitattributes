@@ -9,6 +9,8 @@
 
 # Buildroot parses or copies every external-tree input verbatim.
 image/inventory-linux/external/** text eol=lf
+image/inventory-linux/external/overlay/usr/share/atlaso/*.png binary
+image/inventory-linux/external/overlay/usr/share/atlaso/*.ppm binary
 
 image/hyperv/sudoers.d/* text eol=lf
 image/hyperv/systemd/* text eol=lf
