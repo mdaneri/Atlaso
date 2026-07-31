@@ -2436,7 +2436,8 @@ def _recover_interrupted_network_boot_media_swaps(
             if (
                 not isinstance(final_directory, str)
                 or re.fullmatch(
-                    rf"{re.escape(version)}(?:\.sha256-[0-9a-f]{{12}})?",
+                    rf"{re.escape(version)}"
+                    r"(?:\.sha256-[0-9a-f]{12}-[0-9a-f]{12})?",
                     final_directory,
                 )
                 is None
@@ -2554,6 +2555,7 @@ def sync_network_boot_media(
     raise_if_cancelled()
     version = normalize_version(descriptor["version"])
     entry = CATALOG_BY_KEY[key]
+    transaction_id = uuid.uuid4().hex
     environment_root = (media_root / key).resolve()
     state = db.get(NetworkBootEnvironment, key)
     active_snapshot = (
@@ -2602,7 +2604,8 @@ def sync_network_boot_media(
                     "Active same-version media requires a verified replacement digest."
                 )
             final_directory_name = (
-                f"{version}.sha256-{descriptor_sha256[:12]}"
+                f"{version}.sha256-{descriptor_sha256[:12]}-"
+                f"{transaction_id[:12]}"
             )
         else:
             replaced_directory = _enumerated_media_directory(
@@ -2643,7 +2646,6 @@ def sync_network_boot_media(
     environment_root.mkdir(exist_ok=True)
     if not environment_root_exists:
         _fsync_directory(media_root_path)
-    transaction_id = uuid.uuid4().hex
     media_swap_lock: _MediaSwapRecoveryLock | None = None
     with (
         tempfile.TemporaryDirectory(

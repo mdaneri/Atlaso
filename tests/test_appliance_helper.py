@@ -1038,7 +1038,7 @@ def test_esxi_pxe_helper_accepts_verified_shredos_digest_directory(
     installed = (
         media_root
         / "shredos"
-        / f"{version}.sha256-{artifact_sha256[:12]}"
+        / f"{version}.sha256-{artifact_sha256[:12]}-{'d' * 12}"
     )
     installed.mkdir(parents=True)
     artifact = installed / "shredos"
@@ -1081,7 +1081,9 @@ def test_esxi_pxe_helper_accepts_verified_shredos_digest_directory(
     assert not [error for error in errors if error.startswith("Network Boot")]
 
     environment["installed_path"] = str(
-        media_root / "shredos" / f"{version}.sha256-{'c' * 12}"
+        media_root
+        / "shredos"
+        / f"{version}.sha256-{'c' * 12}-{'d' * 12}"
     )
     errors = helper._esxi_pxe_manifest_errors(payload)
 

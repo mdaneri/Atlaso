@@ -1,6 +1,7 @@
 import hashlib
 import io
 import json
+import re
 import time
 import zipfile
 from collections import deque
@@ -1114,7 +1115,9 @@ def test_same_version_shredos_repair_serves_applied_snapshot_until_apply(
 ):
     environment_root = tmp_path / "shredos"
     applied = environment_root / "2025.11"
-    replacement = environment_root / ("2025.11.sha256-" + ("b" * 12))
+    replacement = environment_root / (
+        "2025.11.sha256-" + ("b" * 12) + "-" + ("d" * 12)
+    )
     applied.mkdir(parents=True)
     replacement.mkdir()
     (applied / "boot.ipxe").write_bytes(b"legacy applied script")
@@ -2285,7 +2288,7 @@ def test_recovery_removes_uncommitted_digest_directory_for_valid_old_row(
     environment_root = media_root / environment
     applied_dir = environment_root / version
     replacement_dir = environment_root / (
-        f"{version}.sha256-{'b' * 12}"
+        f"{version}.sha256-{'b' * 12}-{'c' * 12}"
     )
     _write_test_media_cache(
         applied_dir,
@@ -2760,8 +2763,9 @@ def test_media_sync_replaces_verified_legacy_shredos_image_cache(
     manifest = json.loads(media.manifest_json)
     replacement_directory = Path(media.installed_path)
 
-    assert replacement_directory.name == (
-        f"2025.11.sha256-{replacement_sha256[:12]}"
+    assert re.fullmatch(
+        rf"2025\.11\.sha256-{replacement_sha256[:12]}-[0-9a-f]{{12}}",
+        replacement_directory.name,
     )
     assert (installed / "shredos.img").read_bytes() == b"legacy raw image"
     assert legacy_script.read_text(encoding="utf-8").startswith(
@@ -2812,6 +2816,27 @@ def test_media_sync_replaces_verified_legacy_shredos_image_cache(
         in menu
     )
     assert "/pxe/media/shredos/2025.11/boot.ipxe" not in menu
+
+    (replacement_directory / "shredos").write_bytes(b"corrupt after apply")
+    repaired_again = sync_network_boot_media(
+        db_session,
+        environment_key="shredos",
+        media_root=media_root,
+    )
+    repeated_directory = Path(repaired_again.installed_path)
+
+    assert repeated_directory != replacement_directory
+    assert re.fullmatch(
+        rf"2025\.11\.sha256-{replacement_sha256[:12]}-[0-9a-f]{{12}}",
+        repeated_directory.name,
+    )
+    assert (repeated_directory / "shredos").read_bytes() == replacement
+    active = network_boot.active_network_boot_media(
+        db_session,
+        environment_key="shredos",
+    )
+    assert active is not None
+    assert active.installed_path == str(replacement_directory.resolve())
 
 
 def test_media_sync_verifies_uploaded_artifact_without_downloading_it(
