@@ -12,19 +12,15 @@
     <link rel="icon" href="/favicon.ico" type="image/x-icon">
     <link rel="icon" href="/static/brand/atlaso-icon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/static/vendor/tabulator/tabulator.min.css">
-    <link rel="stylesheet" href="/static/app.css?v=atlaso-network-boot-20260730-15">
+    <link rel="stylesheet" href="/static/app.css?v=atlaso-horizontal-brand-20260730-2">
     {% block extra_head %}{% endblock %}
   </head>
   <body>
     {% set pending_apply_count = sidebar_pending_apply_count|default(0) %}
     <div class="app-shell">
       <aside class="sidebar">
-        <a class="brand" href="/">
-          {% include "partials/brand_mark.html" %}
-          <span>
-            <strong>Atlaso</strong>
-            <small>Photon appliance</small>
-          </span>
+        <a class="brand sidebar-brand" href="/" aria-label="Atlaso Dashboard">
+          <img class="sidebar-brand-logo" src="/static/brand/atlaso-logo-horizontal-transparent-1200x300.png" alt="">
         </a>
         <nav class="nav-stack" aria-label="Primary">
           {% set nav_groups = [

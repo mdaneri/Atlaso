@@ -114,6 +114,11 @@ def test_login_and_dashboard_render(client):
     assert "unpkg.com/htmx" not in response.text
     assert 'body class="bg-slate-100 text-slate-900"' not in response.text
     assert "/static/brand/atlaso-icon.svg" in response.text
+    sidebar_brand = response.text.split('<a class="brand sidebar-brand"', 1)[1].split("</a>", 1)[0]
+    assert 'aria-label="Atlaso Dashboard"' in sidebar_brand
+    assert "/static/brand/atlaso-logo-horizontal-transparent-1200x300.png" in sidebar_brand
+    assert "<strong>Atlaso</strong>" not in sidebar_brand
+    assert "Photon appliance" not in sidebar_brand
     assert 'class="management-info-footnote"' in response.text
     from atlaso import __version__
 
@@ -415,6 +420,7 @@ def test_web_terminal_uses_one_use_ticket_and_bridges_websocket_input(client, mo
     assert web_terminal._consume_ticket(ticket, 1, "admin", csrf) is None
     assert client.get("/static/brand/atlaso-icon.svg").status_code == 200
     assert client.get("/static/brand/atlaso-logo-horizontal-light.svg").status_code == 200
+    assert client.get("/static/brand/atlaso-logo-horizontal-transparent-1200x300.png").status_code == 200
     favicon = client.get("/favicon.ico")
     assert favicon.status_code == 200
     assert favicon.headers["content-type"].startswith("image/x-icon")
@@ -801,7 +807,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v212" in service_worker.text
+    assert "atlaso-pwa-v214" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -813,7 +819,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6" in service_worker.text
-    assert "/static/app.css?v=atlaso-network-boot-20260730-15" in service_worker.text
+    assert "/static/app.css?v=atlaso-horizontal-brand-20260730-2" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in service_worker.text
     assert "/static/app.js?v=atlaso-network-boot-ntp-20260730-28" in service_worker.text
 
@@ -824,7 +830,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=atlaso-monaco-expand-20260729-4" in offline.text
+    assert "/static/app.css?v=atlaso-horizontal-brand-20260730-2" in offline.text
 
 
 def test_shared_ui_pattern_shell_and_wizard_contracts(client):
@@ -1319,7 +1325,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=atlaso-network-boot-20260730-15" in page.text
+    assert "/static/app.css?v=atlaso-horizontal-brand-20260730-2" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in page.text
     assert "/static/app.js?v=atlaso-network-boot-ntp-20260730-28" in page.text
     app_css = client.get("/static/app.css")
@@ -1409,6 +1415,11 @@ def test_login_page_includes_pwa_metadata(client):
     assert '<form class="form-stack" action="/login" method="post" target="_self">' in response.text
     assert '<meta name="theme-color"' not in response.text
     assert "/static/pwa.js?v=atlaso-brand-20260725-1" in response.text
+    assert response.text.count("/static/brand/atlaso-logo-horizontal-transparent-1200x300.png") == 1
+    assert 'alt="Atlaso — Infrastructure • Connectivity • Automation"' in response.text
+    assert "Infrastructure appliance" not in response.text
+    assert "Everything your virtualization lab needs." not in response.text
+    assert "Infrastructure • Storage • Identity • Networking • Lifecycle" not in response.text
 
 
 def test_shared_shells_use_current_mobile_web_app_metadata(client):
