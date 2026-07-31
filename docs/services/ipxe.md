@@ -63,14 +63,16 @@ Pciutils/pci.ids enrich readable PCI names, and raw command output is never
 submitted. Atlaso still accepts schema v1 and
 normalizes it into retained v2 JSON in the existing report column.
 
-The local full-screen console uses the Atlaso pale-blue header, light content,
-and blue action footer across **System / CPU / DIMMs**, **Network**, and
-**Storage** pages. Use `N`/`P` or `1`-`3` to page. Only after successful report
-submission, a 120-second reboot countdown begins. Use `J`/`K` to move through
-bounded list windows when a hardware list is larger than the console viewport;
-Network windows show at most five adapters, Storage windows show at most five
-disks/controllers, and System windows show at most five DIMMs. All clip rows to
-the console width. Optical block
+Inventory startup suppresses kernel branding and displays the Atlaso appliance
+boot artwork without Photon OS attribution. The local full-screen console uses
+the appliance console's pale-blue header, light content, and bottom-anchored
+blue action footer across **System / CPU / DIMMs**, **Network**, and **Storage**
+pages. Use `N`/`P` or `1`-`3` to page. Only after successful report submission,
+a five-minute reboot countdown begins. Use `J`/`K` to move through bounded list
+windows when a hardware list is larger than the console viewport. Capacity is
+derived from the actual terminal height; a normal 80x30 console shows up to 12
+DIMMs, eight adapters, or 12 disks/controllers before list paging is needed.
+All rows clip to the console width. Optical block
 devices are identified from the authoritative sysfs peripheral type.
 PCI identity is attached only to directly PCI-backed devices; controller sysfs
 also retains non-PCI SCSI hosts such as Hyper-V StorVSC. Large inventories are

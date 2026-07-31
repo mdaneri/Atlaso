@@ -230,7 +230,11 @@ assert_jq "${cpu}" '.sockets == 2 and .cores == 16 and .threads == 32 and .cores
 [ "$(console_window_offset 0 12 5 next)" = "5" ] || fail 'list paging advances'
 [ "$(console_window_offset 10 12 5 next)" = "0" ] || fail 'list paging wraps'
 [ "$(console_window_offset 0 12 5 previous)" = "10" ] || fail 'list paging wraps backward'
-[ "$(countdown_after_elapsed 120 false 30)" = "90" ] || fail 'countdown advances'
+[ "$(console_page_size dimm 30)" = "12" ] || fail '30-row DIMM capacity'
+[ "$(console_page_size network 30)" = "8" ] || fail '30-row network capacity'
+[ "$(console_page_size storage 30)" = "12" ] || fail '30-row storage capacity'
+[ "$(console_page_size network 22)" = "5" ] || fail 'compact network capacity'
+[ "$(countdown_after_elapsed 300 false 30)" = "270" ] || fail 'countdown advances from five minutes'
 [ "$(countdown_after_elapsed 90 true 30)" = "90" ] || fail 'countdown pauses'
 [ "$(countdown_after_elapsed 90 false 90)" = "0" ] || fail 'countdown reaches automatic reboot boundary'
 [ "$(console_key_action S 2 false)" = "2|true|none" ] || fail 'pause key'
@@ -262,12 +266,18 @@ printf '%s' "${console}" | grep -F 'Network' >/dev/null || fail 'network page'
 printf '%s' "${console}" | grep -F 'Interfaces 1-3 of 3' >/dev/null || fail 'network list window'
 printf '%s' "${console}" | grep -F 'Page 2/3' >/dev/null || fail 'console paging footer'
 printf '%s' "${console}" | grep -F '[S] Pause/resume' >/dev/null || fail 'console actions'
-printf '%s' "${console}" | grep -F "$(printf '\033[106m')" >/dev/null || fail 'console-native pale-blue header'
-printf '%s' "${console}" | grep -F "$(printf '\033[107m')" >/dev/null || fail 'console-native light content'
+printf '%s' "${console}" | grep -F "$(printf '\033]P6dbeafe')" >/dev/null || fail 'appliance pale-blue palette'
+printf '%s' "${console}" | grep -F "$(printf '\033]P7eef2f7')" >/dev/null || fail 'appliance light palette'
+printf '%s' "${console}" | grep -F "$(printf '\033[46m')" >/dev/null || fail 'console-native pale-blue header'
+printf '%s' "${console}" | grep -F "$(printf '\033[47m')" >/dev/null || fail 'console-native light content'
 printf '%s' "${console}" | grep -F "$(printf '\033[44m')" >/dev/null || fail 'console-native blue footer'
+printf '%s' "${console}" | grep -F "$(printf '\033[29;1H')" >/dev/null || fail 'footer anchored to terminal bottom'
+if printf '%s' "${console}" | grep -F "$(printf '\033[0m')" >/dev/null; then fail 'content resets to black terminal background'; fi
 footer="$(refresh_inventory_console_footer 2 89 true 7)"
 printf '%s' "${footer}" | grep -F 'Paused at 89s' >/dev/null || fail 'in-place countdown footer refresh'
 many_report="$(printf '%s' "${report}" | jq '.interfaces = [range(0;8) as $index | (.interfaces[0] | .name = ("nic" + ($index|tostring)))]')"
+network_full="$(render_inventory_console "${many_report}" 2 90 false 7)"
+printf '%s' "${network_full}" | grep -F 'Interfaces 1-8 of 8' >/dev/null || fail '30-row network capacity reduces paging'
 network_window="$(render_inventory_console "${many_report}" 2 90 false 7 5)"
 printf '%s' "${network_window}" | grep -F 'Interfaces 6-8 of 8' >/dev/null || fail 'network list subpage status'
 printf '%s' "${network_window}" | grep -F 'nic5' >/dev/null || fail 'network list subpage first row'

@@ -456,7 +456,7 @@ status: current
   accept v1 and normalize it into retained v2 JSON without a database migration,
   enforce collection/string limits plus the 256 KiB report boundary, and use
   pciutils/pci.ids only to enrich readable names rather than submitting raw
-  command output. Start the local 120-second reboot countdown only after a
+  command output. Start the local five-minute reboot countdown only after a
   successful report; pause/resume preserves remaining time, local immediate
   reboot stays explicit, and acknowledged audited remote reboot is authoritative.
 - `pxe-media-sync` may populate immutable verified cache versions, but must not

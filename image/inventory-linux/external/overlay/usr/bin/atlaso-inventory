@@ -132,20 +132,21 @@ identity_key="$(printf '%s' "${submission}" | jq -r '.identity_key')"
 
 # The reboot timer begins only after the API has accepted the complete report.
 page=1
-remaining=120
+remaining=300
 paused=false
 pending_reboot_id=""
 last_tick="$(date +%s)"
 next_poll="${last_tick}"
 rendered_page=0
+console_rows="$(console_terminal_rows)"
 network_start=0
-network_page_size=5
+network_page_size="$(console_page_size network "${console_rows}")"
 network_total="$(printf '%s' "${report}" | jq -r '.interfaces | length')"
 storage_start=0
-storage_page_size=5
+storage_page_size="$(console_page_size storage "${console_rows}")"
 storage_total="$(printf '%s' "${report}" | jq -r '(.disks | length) + (.storage_controllers | length)')"
 dimm_start=0
-dimm_page_size=5
+dimm_page_size="$(console_page_size dimm "${console_rows}")"
 dimm_total="$(printf '%s' "${report}" | jq -r '.memory.dimms | length')"
 while :; do
   now="$(date +%s)"
@@ -176,10 +177,10 @@ while :; do
 
   render_state="${page}:${network_start}:${storage_start}:${dimm_start}"
   if [ "${render_state}" != "${rendered_page}" ]; then
-    render_inventory_console "${report}" "${page}" "${remaining}" "${paused}" "${host_id}" "${network_start}" "${storage_start}" "${dimm_start}"
+    render_inventory_console "${report}" "${page}" "${remaining}" "${paused}" "${host_id}" "${network_start}" "${storage_start}" "${dimm_start}" "${console_rows}"
     rendered_page="${render_state}"
   else
-    refresh_inventory_console_footer "${page}" "${remaining}" "${paused}" "${host_id}"
+    refresh_inventory_console_footer "${page}" "${remaining}" "${paused}" "${host_id}" "${console_rows}"
   fi
   key=""
   if read -r -n 1 -t 1 key; then

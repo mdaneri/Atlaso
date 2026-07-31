@@ -2242,7 +2242,7 @@ def _media_boot_manifest(
             "boot": {
                 "kernel": f"{base}/bzImage",
                 "initrd": f"{base}/rootfs.cpio.gz",
-                "arguments": "rdinit=/sbin/init console=tty0 atlaso.inventory=1",
+                "arguments": "rdinit=/sbin/init console=tty0 quiet loglevel=3 logo.nologo vt.global_cursor_default=0 atlaso.inventory=1",
             },
             "files": files,
         }

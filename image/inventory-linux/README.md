@@ -127,17 +127,21 @@ existence and size come from kernel-exposed sysfs DMI Type-17 entries;
 in the authoritative sysfs raw entry. The Inventory kernel enables the DMI
 sysfs interface so those records are available on supported firmware.
 
-After a report is accepted, the local console opens full-screen Atlaso-style
-System/CPU/DIMMs, Network, and Storage pages. Use `N`/`P` or `1`-`3` to move
-between pages. On lists larger than the fixed console viewport, use `J`/`K` to
-move through bounded list windows; network windows show at most five adapters
-and System/Storage windows show at most five DIMMs or disks/controllers. All
-clip individual rows to the console width. Countdown updates repaint only
-the fixed action footer so the hardware pages remain stable without full-screen
-flicker. The 120-second reboot countdown starts only after successful
-submission; navigation time still advances the countdown, `S` pauses or
-resumes the remaining time, and `R` reboots immediately. An acknowledged
-audited remote reboot remains authoritative.
+Inventory startup suppresses kernel branding and uses an Inventory-specific
+Atlaso splash derived from the appliance boot artwork without Photon OS
+attribution. After a report is accepted, the local console opens full-screen
+System/CPU/DIMMs, Network, and Storage pages using the same pale-blue header,
+light content, and blue footer palette as the appliance console. Use `N`/`P` or
+`1`-`3` to move between pages. List capacity is calculated from the actual
+terminal height, so a normal 80x30 console shows up to 12 DIMMs, eight adapters,
+or 12 disks/controllers before `J`/`K` paging is needed. Smaller supported
+terminals retain bounded windows, and all rows clip to the console width. The
+footer stays anchored to the bottom two rows; countdown updates repaint only
+that footer so the hardware pages remain stable without full-screen flicker.
+The five-minute reboot countdown starts only after successful submission;
+navigation time still advances the countdown, `S` pauses or resumes the
+remaining time, and `R` reboots immediately. An acknowledged audited remote
+reboot remains authoritative.
 
 ## Included upstream components
 

@@ -1,2 +1,3 @@
 # CONFIG_LSBLK is not set
 CONFIG_OD=y
+CONFIG_FBSPLASH=y

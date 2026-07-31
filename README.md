@@ -19,8 +19,9 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   single-kernel ShredOS PXE,
   and retain the ESX scripted-install workflow. Inventory schema v2 retains
   bounded CPU/DIMM, NIC, disk/controller, PCI/USB, and system identity details;
-  its local console provides paged review and a suspendable post-submission
-  reboot countdown.
+  its appliance-colored local console provides height-aware paged review, an
+  Atlaso boot splash, and a suspendable five-minute post-submission reboot
+  countdown.
 - [Vaults](docs/services/vaults.md) — scope encrypted VCF and ESX passwords to managed scripts and exact Kickstart
   source markers.
 - [OpenID Connect provider](docs/services/oidc-provider.md) — use the dedicated tabbed administration page for

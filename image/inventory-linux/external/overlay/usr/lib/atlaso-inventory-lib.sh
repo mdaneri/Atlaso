@@ -516,6 +516,38 @@ console_window_offset() {
   printf '%s' "${offset}"
 }
 
+console_terminal_rows() {
+  rows=""
+  if [ -c /dev/tty ]; then
+    rows="$(stty size </dev/tty 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
+  fi
+  rows="$(unsigned_value "${rows:-0}")"
+  [ "${rows}" -ge 22 ] || rows=30
+  printf '%s' "${rows}"
+}
+
+console_page_size() {
+  kind="$1"
+  rows="$(unsigned_value "${2:-30}")"
+  [ "${rows}" -ge 22 ] || rows=30
+  case "${kind}" in
+    dimm) size=$((rows - 18)) ;;
+    network) size=$(((rows - 6) / 3)) ;;
+    storage) size=$(((rows - 6) / 2)) ;;
+    *) size=1 ;;
+  esac
+  [ "${size}" -gt 0 ] || size=1
+  printf '%s' "${size}"
+}
+
+console_apply_palette() {
+  # Match the appliance console's slate, light body, brand blue, and pale-blue
+  # header. Linux virtual terminals accept these palette definitions even when
+  # only the base eight ANSI color slots are advertised.
+  printf '\033]P00f172a\033]P42563eb'
+  printf '\033]P6dbeafe\033]P7eef2f7'
+}
+
 console_key_action() {
   key="$1"
   page="$2"
@@ -560,25 +592,28 @@ render_inventory_console() {
   network_start="$(unsigned_value "${6:-0}")"
   storage_start="$(unsigned_value "${7:-0}")"
   dimm_start="$(unsigned_value "${8:-0}")"
-  network_page_size=5
-  storage_page_size=5
-  dimm_page_size=5
-  printf '\033[107m\033[30m\033[2J\033[H'
-  printf '\033[106m\033[34m\033[1m  Atlaso Inventory Linux  \033[22m\033[K\n'
-  printf '\033[107m\033[30m\033[K'
+  console_rows="$(unsigned_value "${9:-0}")"
+  [ "${console_rows}" -ge 22 ] || console_rows="$(console_terminal_rows)"
+  network_page_size="$(console_page_size network "${console_rows}")"
+  storage_page_size="$(console_page_size storage "${console_rows}")"
+  dimm_page_size="$(console_page_size dimm "${console_rows}")"
+  console_apply_palette
+  printf '\033[?25l\033[47m\033[30m\033[2J\033[H'
+  printf '\033[46m\033[30m\033[1m  Atlaso Inventory Linux  \033[22m\033[K\n'
+  printf '\033[47m\033[30m\033[K'
   case "${page}" in
     1)
-      printf '\033[1m  System / CPU / DIMMs\033[0m\033[K\n\n'
+      printf '\033[1m  System / CPU / DIMMs\033[22m\033[K\n'
       console_line 'Manufacturer' "$(printf '%s' "${report}" | jq -r '.system.manufacturer')"
       console_line 'Product' "$(printf '%s' "${report}" | jq -r '[.system.product_name,.system.product_version] | map(select(length>0)) | join(" ")')"
       console_line 'Serial / UUID' "$(printf '%s' "${report}" | jq -r '(.system.serial_number + " / " + .system.dmi_uuid)')"
       console_line 'BIOS' "$(printf '%s' "${report}" | jq -r '[.system.bios_vendor,.system.bios_version,.system.bios_date] | map(select(length>0)) | join(" ")')"
       console_line 'Baseboard' "$(printf '%s' "${report}" | jq -r '[.system.baseboard.manufacturer,.system.baseboard.product,.system.baseboard.serial] | map(select(length>0)) | join(" / ")')"
       console_line 'Chassis' "$(printf '%s' "${report}" | jq -r '[.system.chassis.manufacturer,.system.chassis.type,.system.chassis.serial] | map(select(length>0)) | join(" / ")')"
-      printf '\n\033[1m  CPU\033[0m\n'
+      printf '\n\033[1m  CPU\033[22m\n'
       console_line 'Model' "$(printf '%s' "${report}" | jq -r '.cpu.model')"
       console_line 'Topology' "$(printf '%s' "${report}" | jq -r '"\(.cpu.sockets) sockets / \(.cpu.cores) cores / \(.cpu.threads) threads (\(.cpu.cores_per_socket) cores/socket, \(.cpu.threads_per_core) threads/core)"')"
-      printf '\n\033[1m  Memory: %s\033[0m\n' "$(printf '%s' "${report}" | jq -r '.memory.total_human')"
+      printf '\n\033[1m  Memory: %s\033[22m\n' "$(printf '%s' "${report}" | jq -r '.memory.total_human')"
       dimm_total="$(printf '%s' "${report}" | jq -r '.memory.dimms | length')"
       if [ "${dimm_start}" -ge "${dimm_total}" ]; then dimm_start=0; fi
       dimm_end=$((dimm_start + dimm_page_size))
@@ -588,7 +623,7 @@ render_inventory_console() {
       printf '%s' "${report}" | jq -r --argjson start "${dimm_start}" --argjson limit "${dimm_page_size}" '.memory.dimms[$start:($start + $limit)][] | "  \(.locator) | \(.bank) | \(.size_human) | \(.type) | \(.speed_mts) MT/s | \(.manufacturer) \(.part_number) | S/N \(.serial)"' | console_clip_lines 78
       ;;
     2)
-      printf '\033[1m  Network\033[0m\033[K\n\n'
+      printf '\033[1m  Network\033[22m\033[K\n'
       network_total="$(printf '%s' "${report}" | jq -r '.interfaces | length')"
       if [ "${network_start}" -ge "${network_total}" ]; then network_start=0; fi
       network_end=$((network_start + network_page_size))
@@ -598,7 +633,7 @@ render_inventory_console() {
       printf '%s' "${report}" | jq -r --argjson start "${network_start}" --argjson limit "${network_page_size}" '.interfaces[$start:($start + $limit)][] | "  " + (if .boot_interface then "* " else "  " end) + .name + "  " + ([.vendor,.device] | map(select(length > 0)) | join(" ")) + "\n      permanent " + .permanent_mac + "  current " + .current_mac + "  " + .link_state + " " + (.speed_mbps|tostring) + " Mb/s\n      " + (.addresses|join(", ")) + "  driver " + .driver + "  PCI " + .pci_address' | console_clip_lines 78
       ;;
     *)
-      printf '\033[1m  Storage\033[0m\033[K\n\n'
+      printf '\033[1m  Storage\033[22m\033[K\n'
       storage_total="$(printf '%s' "${report}" | jq -r '(.disks | length) + (.storage_controllers | length)')"
       if [ "${storage_start}" -ge "${storage_total}" ]; then storage_start=0; fi
       storage_end=$((storage_start + storage_page_size))
@@ -617,8 +652,7 @@ render_inventory_console() {
         end' | console_clip_lines 78
       ;;
   esac
-  printf '\033[0m\033[44m\033[97m\033[K\n'
-  printf '\033[s'
+  printf '\033[%s;1H\033[44m\033[37m' "$((console_rows - 1))"
   render_inventory_console_footer_lines "${page}" "${remaining}" "${paused}" "${host_id}"
 }
 
@@ -630,10 +664,12 @@ render_inventory_console_footer_lines() {
   if [ "${paused}" = "true" ]; then countdown="Paused at ${remaining}s"; else countdown="Reboot in ${remaining}s"; fi
   printf '  Host %s  |  Page %s/3  |  %s\033[K\n' "${host_id}" "${page}" "${countdown}"
   printf '  [N/P] Page  [1-3] Select  [J/K] List  [S] Pause/resume  [R] Reboot now\033[K\n'
-  printf '\033[107m\033[30m\033[J\033[0m'
+  printf '\033[47m\033[30m\033[?25l'
 }
 
 refresh_inventory_console_footer() {
-  printf '\033[u\033[44m\033[97m'
+  console_rows="$(unsigned_value "${5:-0}")"
+  [ "${console_rows}" -ge 22 ] || console_rows="$(console_terminal_rows)"
+  printf '\033[%s;1H\033[44m\033[37m' "$((console_rows - 1))"
   render_inventory_console_footer_lines "$1" "$2" "$3" "$4"
 }
