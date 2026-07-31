@@ -14,6 +14,7 @@ payload.
 
 ## Prerequisites
 
+- PowerShell 7.x (`pwsh`). Windows PowerShell 5.1 (`powershell.exe`) is not supported.
 - VMware Workstation Pro with `vmrun.exe` available under `C:\Program Files\VMware\VMware Workstation`.
 - VMware Workstation's bundled OVF Tool with `ovftool.exe` available under
   `C:\Program Files\VMware\VMware Workstation\OVFTool` when exporting OVF/OVA artifacts.
@@ -52,7 +53,7 @@ through Packer. Successful operations report their duration, while failures reta
 normalized, bounded output tail.
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/build-photon-image.ps1 `
   -IsoUrl "https://packages.vmware.com/photon/5.0/GA/iso/photon-5.0-dde71ec57.x86_64.iso" `
   -IsoChecksum "sha512:<checksum>"
@@ -66,7 +67,7 @@ output directory.
 For lifecycle/demo images that should use real appliance adapters:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/build-photon-image.ps1 `
   -IsoUrl "<photon-iso-url-or-path>" `
   -IsoChecksum "<packer-checksum>" `
@@ -91,7 +92,7 @@ The default Workstation builder and lifecycle scripts expect:
 Validate the current Workstation network inventory with:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/prepare-networks.ps1 `
   -PlanOnly
 ```
@@ -149,7 +150,7 @@ available.
 After a VMware image build, export a deployable OVF folder and OVA archive:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/export-ovf.ps1 `
   -SourceVmxPath image/vmware-workstation/output/atlaso-photon-vmware-workstation/Atlaso-Photon-Builder-VMware.vmx `
   -Name Atlaso-Photon `
@@ -196,7 +197,7 @@ in the guest OVF environment as `atlaso.<property>`; do not repeat the class pre
 Run the Workstation lifecycle wrapper after building an appliance VM:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/invoke-lifecycle-test.ps1
 ```
 
@@ -211,7 +212,7 @@ Pass `-PlanOnly` to print the selected VMX, client VMDK, vmnets, and result path
 Create and start a normal Workstation test appliance from the latest built VMX:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/create-atlaso-test-vm.ps1 `
   -Redeploy `
   -ResetDataDisks `

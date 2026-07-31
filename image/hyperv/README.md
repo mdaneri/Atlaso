@@ -8,12 +8,13 @@ management UI or API content.
 ## Host Prerequisites
 
 - Windows host with Hyper-V enabled.
-- Run Packer from an elevated PowerShell session or as a user in the `Hyper-V Administrators` group.
+- PowerShell 7.x (`pwsh`). Windows PowerShell 5.1 (`powershell.exe`) is not supported.
+- Run Packer from an elevated PowerShell 7 session or as a user in the `Hyper-V Administrators` group.
 - Packer `>= 1.10`.
 - Atlaso Hyper-V lab switches created before the build:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass -File scripts/windows/hyperv/create-switches.ps1
+pwsh -ExecutionPolicy Bypass -File scripts/windows/hyperv/create-switches.ps1
 ```
 
 The Packer builder uses `Atlaso-Mgmt` by default. The script assigns the host-side switch adapter `192.168.49.254/24`
@@ -25,7 +26,7 @@ Photon publishes the ISO and checksum from the Photon OS download page. The curr
 OS 5.0 GA full ISO:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/hyperv/build-photon-image.ps1 `
   -IsoUrl "https://packages.vmware.com/photon/5.0/GA/iso/photon-5.0-dde71ec57.x86_64.iso" `
   -IsoChecksum "sha512:6a7a258399a258da742032987c043ab25503698d35edafaf1ae000f12127da1a161d8b84caa17fd8f23d129e81e1faa7ab087c20ab9229772a643f8f9475305f" `
@@ -58,7 +59,7 @@ virtual environment's `pip.conf`, and exports `PIP_INDEX_URL` for the provisioni
 upgrading Python packages. Virtualenv pip commands therefore use the same mirror as system pip:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/hyperv/build-photon-image.ps1 `
   -IsoUrl "<photon-5.0-iso-url>" `
   -IsoChecksum "<packer-checksum>" `
@@ -131,7 +132,7 @@ If Photon installs and SSH works from the Windows host but Packer remains at `Wa
 query the IPv4 reported by Hyper-V:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass -File ..\..\scripts\windows\hyperv\get-atlaso-vm-ip.ps1 `
+pwsh -ExecutionPolicy Bypass -File ..\..\scripts\windows\hyperv\get-atlaso-vm-ip.ps1 `
   -Name Atlaso-Photon-Builder `
   -SwitchName "Atlaso-Mgmt"
 ```
@@ -146,11 +147,11 @@ The Packer template sets `ssh_host` to the static builder address by default. If
 reachable but Packer still does not detect the guest IP, stop the build and rerun with a queried `ssh_host`:
 
 ```powershell
-$photonVmIp = powershell.exe -ExecutionPolicy Bypass -File ..\..\scripts\windows\hyperv\get-atlaso-vm-ip.ps1 `
+$photonVmIp = pwsh -ExecutionPolicy Bypass -File ..\..\scripts\windows\hyperv\get-atlaso-vm-ip.ps1 `
   -Name Atlaso-Photon-Builder `
   -SwitchName "Atlaso-Mgmt"
 
-powershell.exe -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File ..\..\scripts\windows\hyperv\build-photon-image.ps1 `
   -SshHost "$photonVmIp" `
   -IsoUrl "https://packages.vmware.com/photon/5.0/GA/iso/photon-5.0-dde71ec57.x86_64.iso" `
@@ -319,7 +320,7 @@ helper scripts, the Photon compatibility check, systemd unit, and sudoers templa
 After Packer completes, create and start the test appliance VM with the wrapper:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass -File scripts/windows/hyperv/create-atlaso-test-vm.ps1 -WaitForIp
+pwsh -ExecutionPolicy Bypass -File scripts/windows/hyperv/create-atlaso-test-vm.ps1 -WaitForIp
 ```
 
 The wrapper finds the latest appliance VHDX under `image/hyperv/output`, prepares the Atlaso Hyper-V switches, creates
@@ -336,7 +337,7 @@ For a clean appliance data start, also pass `-ResetDataDisks`. The wrapper remov
 VHDX files next to the selected OS disk, then lets `create-atlaso-vm.ps1` create fresh empty data disks:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass -File scripts/windows/hyperv/create-atlaso-test-vm.ps1 -Redeploy -ResetDataDisks -WaitForIp
+pwsh -ExecutionPolicy Bypass -File scripts/windows/hyperv/create-atlaso-test-vm.ps1 -Redeploy -ResetDataDisks -WaitForIp
 ```
 
 The finished appliance VM gets two additional dynamic VHDX data disks by default:

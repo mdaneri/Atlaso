@@ -35,6 +35,16 @@ Run on Linux:
 ./image/inventory-linux/build.sh
 ```
 
+The shared Windows Photon image wrappers build Inventory Linux through WSL.
+They give Buildroot a Linux-only `PATH` for that child process because WSL's
+default Windows path import can contain spaces that Buildroot rejects. The
+wrappers also keep Buildroot's cache and work tree beneath the WSL user's native
+Linux cache directory because a Windows-mounted, case-insensitive work tree can
+corrupt host-package configuration. Final artifacts still land in the output
+directory documented below. A per-repository lock serializes concurrent Windows
+build requests that share this cache. This does not change the caller's Windows
+`PATH` or global WSL configuration.
+
 On Debian or Ubuntu, install the Buildroot host prerequisites first:
 
 ```bash
