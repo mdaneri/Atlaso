@@ -1,10 +1,10 @@
 {
   "channel": "development",
-  "git_commit": "c2927bccfa5e29683be86977d30bdd96fa480b95",
-  "issued_at": "2026-07-31T19:52:34Z",
+  "git_commit": "051515cfdca5344d67954462b6f04079e88bbb6d",
+  "issued_at": "2026-07-31T20:13:07Z",
   "kind": "atlaso-channel",
-  "release_manifest_url": "https://github.com/mdaneri/Atlaso/releases/download/v0.9.62/release-manifest.json",
+  "release_manifest_url": "https://github.com/mdaneri/Atlaso/releases/download/v0.9.63/release-manifest.json",
   "schema_version": 2,
   "signing_key_id": "atlaso-release-2026-01",
-  "version": "0.9.62"
+  "version": "0.9.63"
 }
