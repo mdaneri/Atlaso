@@ -3867,6 +3867,48 @@ def test_esxi_custom_variable_errors_do_not_expose_exception_details(client, mon
     assert "database details" not in update_error.text
 
 
+def test_esxi_pxe_autosave_validation_does_not_expose_exception_details(client, monkeypatch):
+    import atlaso.app.ui as ui_module
+
+    login(client)
+    page = client.get("/esxi-pxe")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    created = client.post(
+        "/esxi-pxe/kickstarts",
+        headers={"Accept": "application/json"},
+        data={
+            "csrf": csrf,
+            "name": "Safe validation",
+            "description": "",
+            "content": "network --bootproto=dhcp\nrootpw --iscrypted placeholder\n",
+        },
+    )
+    assert created.status_code == 200
+
+    def reject_references(*_args, **_kwargs):
+        raise ValueError("backend details that must not reach the browser")
+
+    monkeypatch.setattr(ui_module, "validate_kickstart_custom_references", reject_references)
+    response = client.post(
+        "/esxi-pxe/boot-settings",
+        headers={"X-Atlaso-Autosave": "1"},
+        data={
+            "csrf": csrf,
+            "hostname": "esxi-pxe.atlaso.internal",
+            "tftp_root": "/var/lib/atlaso/pxe/tftp",
+            "http_port": "8080",
+            "bios_bootfile": "undionly.kpxe",
+            "uefi_bootfile": "snponly.efi",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["validation_errors"] == [
+        "Safe validation: Kickstart source is invalid. Review its variable and vault markers."
+    ]
+    assert "backend details" not in response.text
+
+
 def test_esxi_pxe_iso_upload_and_host_selection(client, monkeypatch, tmp_path):
     import json
     from types import SimpleNamespace

@@ -645,6 +645,7 @@ ATLASO_APP_LOG_PATH = get_settings().app_log_path
 KMS_SERVER_LOG_PATH = Path("/var/log/atlaso/kmip/server.log")
 APPLY_LOGGER = logging.getLogger("atlaso.appliance_apply")
 APPLIANCE_UPDATE_LOGGER = logging.getLogger("atlaso.appliance_update")
+KICKSTART_REFERENCE_VALIDATION_ERROR = "Kickstart source is invalid. Review its variable and vault markers."
 NETWORK_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/network/atlaso-network.conf"
 DNSMASQ_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/dnsmasq/atlaso.conf"
 
@@ -7195,8 +7196,8 @@ def esxi_pxe_context(db: Session) -> dict[str, Any]:
         try:
             validate_kickstart_custom_references(db, kickstart.content)
             validate_kickstart_vault_references(db, kickstart.content)
-        except ValueError as exc:
-            validation_errors.append(f"{kickstart.name}: {exc}")
+        except ValueError:
+            validation_errors.append(f"{kickstart.name}: {KICKSTART_REFERENCE_VALIDATION_ERROR}")
     esxi_service_state = esxi_pxe_service_state_from_boot(boot_settings)
     network_boot_environments = desired_environment_manifest_rows(db)
     return {
@@ -20736,7 +20737,7 @@ def create_esxi_kickstart_from_ui(
         detail = (
             "A Kickstart with that name already exists."
             if isinstance(exc, IntegrityError)
-            else "Kickstart source is invalid. Review its variable and vault markers."
+            else KICKSTART_REFERENCE_VALIDATION_ERROR
         )
         if "application/json" in request.headers.get("accept", ""):
             return JSONResponse({"detail": detail}, status_code=400)
@@ -20787,7 +20788,7 @@ def update_esxi_kickstart_from_ui(
         detail = (
             "A Kickstart with that name already exists."
             if isinstance(exc, IntegrityError)
-            else "Kickstart source is invalid. Review its variable and vault markers."
+            else KICKSTART_REFERENCE_VALIDATION_ERROR
         )
         if "application/json" in request.headers.get("accept", ""):
             return JSONResponse({"detail": detail}, status_code=400)
@@ -20875,8 +20876,8 @@ def validate_esxi_kickstart_from_ui(
     try:
         validate_kickstart_custom_references(db, kickstart.content)
         validate_kickstart_vault_references(db, kickstart.content)
-    except ValueError as exc:
-        errors.append(str(exc))
+    except ValueError:
+        errors.append(KICKSTART_REFERENCE_VALIDATION_ERROR)
     record_audit(db, actor=identity.username, action="validate_esxi_kickstart", resource_type="esxi_kickstart", resource_id=str(kickstart.id), detail=f"errors={len(errors)} warnings={len(warnings)}", request_id=request.state.request_id)
     return render(
         request,
