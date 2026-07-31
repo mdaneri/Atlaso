@@ -305,6 +305,9 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert "Set-PowerCLIConfiguration -ParticipateInCeip $false -Scope AllUsers -Confirm:$false" in script
     assert "Get-PowerCLIConfiguration -Scope AllUsers" in script
     assert "ATLASO_POWERCLI_MODULE_SOURCE" in script
+    assert 'awk \'$2 == "/tmp" { print $3; exit }\' /proc/mounts' in script
+    assert "mount -o remount,size=4G /tmp" in script
+    assert script.index("mount -o remount,size=4G /tmp") < script.index("Install-Module -Name VCF.PowerCLI")
     assert "chmod 0755 /usr/local/share/powershell /usr/local/share/powershell/Modules" in script
     assert "chmod -R a+rX,go-w /usr/local/share/powershell/Modules" in script
     assert "ipxe" in script

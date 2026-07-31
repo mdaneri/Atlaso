@@ -6,6 +6,9 @@ also disables and verifies PowerCLI CEIP participation at `AllUsers` scope; Appl
 preference after deployment without product-specific prompts. The system module tree remains root-owned and writable
 only by root, while every local `/usr/bin/pwsh` user can read and import its modules. Set
 `ATLASO_POWERCLI_MODULE_SOURCE` to a pre-staged module directory for offline image builds; otherwise PSGallery is used.
+Before a PSGallery install, the shared provisioner expands Photon's build-time `/tmp` tmpfs to 4 GiB so PowerCLI's
+dependency extraction does not exhaust the default memory-backed temporary filesystem. The deployed appliance returns
+to Photon's normal `/tmp` sizing after reboot.
 
 This target builds a Photon OS 5.0 VMware Workstation VMX/VMDK appliance with the same Atlaso control plane provisioning
 used by the Hyper-V image. Fresh appliances enable the integrated CA on deployed-VM first boot, serve the management

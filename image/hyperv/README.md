@@ -271,7 +271,9 @@ apply. The image installs Photon's `powershell` package for this shell, installs
 `Connect-VIServer` from the unprivileged bootstrap administrator's PowerShell session, installs `vcf-sdk==9.1.0.0` in
 the Atlaso virtualenv, and grants the bootstrap admin normal password-backed sudo through
 `/etc/sudoers.d/atlaso-bootstrap-admin`. The system PowerShell module tree remains root-owned and writable only by root,
-while every local `/usr/bin/pwsh` user can read and import its modules.
+while every local `/usr/bin/pwsh` user can read and import its modules. Before a PSGallery install, the shared
+provisioner expands Photon's build-time `/tmp` tmpfs to 4 GiB so dependency extraction does not exhaust its default
+capacity; the deployed appliance returns to Photon's normal `/tmp` sizing after reboot.
 
 VCF Backups desired state is OpenSSH-backed. Provisioning leaves the default `vcf-backup` account absent from Photon OS
 until Local Users apply creates it. When VCF Backup desired state is off, Atlaso keeps the default `vcf-backup` user

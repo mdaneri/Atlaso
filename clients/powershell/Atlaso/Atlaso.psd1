@@ -1,6 +1,6 @@
 @{
     RootModule = 'Atlaso.psm1'
-    ModuleVersion = '0.9.58'
+    ModuleVersion = '0.9.59'
     GUID = 'f55945ee-ff8d-4ce1-9b5e-296c6f0a6f5a'
     Author = 'Atlaso'
     CompanyName = 'Atlaso'
