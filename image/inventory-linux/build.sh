@@ -52,7 +52,8 @@ for inventory_tool_path in \
   fi
 done
 if [[ ! -s "${source_root}/output/target/usr/share/hwdata/pci.ids" && \
-      ! -s "${source_root}/output/target/usr/share/pci.ids" ]]; then
+      ! -s "${source_root}/output/target/usr/share/pci.ids" && \
+      ! -s "${source_root}/output/target/usr/share/pci.ids.gz" ]]; then
   printf 'Required pci.ids metadata is missing.\n' >&2
   exit 1
 fi

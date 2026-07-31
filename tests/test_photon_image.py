@@ -143,6 +143,7 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     assert '"${source_root}/output/target/usr/bin/lscpu"' in build
     assert '"${source_root}/output/target/bin/lsblk"' in build
     assert '"${source_root}/output/target/usr/bin/lspci"' in build
+    assert '"${source_root}/output/target/usr/share/pci.ids.gz"' in build
     assert "Required pci.ids metadata is missing" in build
     assert "Required util-linux tool is missing" in build
     assert "Required util-linux tool resolves to BusyBox" in build
