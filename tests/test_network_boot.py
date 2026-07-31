@@ -2887,6 +2887,28 @@ def test_media_sync_replaces_verified_legacy_shredos_image_cache(
     assert active.installed_path == str(installed.resolve())
     assert json.loads(active.manifest_json)["artifacts"] == legacy_manifest["artifacts"]
 
+    (replacement_directory / "shredos").write_bytes(b"corrupt before apply")
+    repaired_pending = sync_network_boot_media(
+        db_session,
+        environment_key="shredos",
+        media_root=media_root,
+    )
+    pending_replacement_directory = Path(repaired_pending.installed_path)
+    pending_manifest = json.loads(repaired_pending.manifest_json)
+
+    assert pending_replacement_directory != replacement_directory
+    assert not replacement_directory.exists()
+    assert (pending_replacement_directory / "shredos").read_bytes() == replacement
+    active = network_boot.active_network_boot_media(
+        db_session,
+        environment_key="shredos",
+    )
+    assert active is not None
+    assert active.installed_path == str(installed.resolve())
+
+    media = repaired_pending
+    manifest = pending_manifest
+    replacement_directory = pending_replacement_directory
     set_applied_pxe_runtime(
         db_session,
         environments=[

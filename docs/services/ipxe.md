@@ -121,7 +121,10 @@ appliance apply moves the applied snapshot to the replacement; a successful
 apply then removes superseded ShredOS snapshots that are no longer referenced
 by either the installed-media catalog or the applied manifest, preventing
 repeated repairs from consuming appliance storage. A successful sync alone
-cannot expose the new kernel. The replacement's generated boot
+cannot expose the new kernel. If a pending replacement becomes corrupt before
+apply, another repair publishes a new immutable identity and removes the
+superseded pending directory only after the replacement database row commits.
+The replacement's generated boot
 paths include the digest-qualified directory identity, so year-long immutable
 HTTP caching never assigns different bytes to the same public URL. Before the
 task commits its database row, Atlaso synchronizes the staged artifacts, their

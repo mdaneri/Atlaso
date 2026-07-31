@@ -174,6 +174,7 @@ class DeferredNetworkBootMediaSync:
     media: NetworkBootMedia
     final_dir: Path
     backup_dir: Path | None
+    superseded_dirs: tuple[Path, ...] = ()
     journal_path: Path | None = None
     filesystem_changed: bool = True
     recovery_lock: _MediaSwapRecoveryLock | None = None
@@ -182,6 +183,9 @@ class DeferredNetworkBootMediaSync:
         try:
             if self.backup_dir is not None and self.backup_dir.exists():
                 shutil.rmtree(self.backup_dir)
+            for directory in self.superseded_dirs:
+                if directory.exists():
+                    shutil.rmtree(directory)
             _fsync_directory(self.final_dir.parent)
             if self.journal_path is not None:
                 self.journal_path.unlink(missing_ok=True)
@@ -2673,6 +2677,7 @@ def sync_network_boot_media(
         )
     ).scalar_one_or_none()
     replaced_directory: Path | None = None
+    superseded_directories: list[Path] = []
     if existing is not None:
         if _verified_cached_media(existing, media_root=media_root) is not None:
             if defer_filesystem_commit:
@@ -2688,14 +2693,20 @@ def sync_network_boot_media(
             and state is not None
             and state.active_version == version
         ):
-            if (
-                active_snapshot is None
-                or active_snapshot.installed_path != existing.installed_path
-            ):
+            if active_snapshot is None:
                 raise ValueError(
                     "Active same-version media cannot be repaired until its "
                     "applied snapshot is available."
                 )
+            if active_snapshot.installed_path != existing.installed_path:
+                pending_directory = Path(existing.installed_path)
+                if (
+                    not pending_directory.is_symlink()
+                    and pending_directory.is_dir()
+                ):
+                    resolved_pending = pending_directory.resolve()
+                    if resolved_pending.parent == environment_root:
+                        superseded_directories.append(resolved_pending)
             descriptor_sha256 = str(descriptor.get("sha256") or "")
             if not re.fullmatch(r"[0-9a-f]{64}", descriptor_sha256):
                 raise ValueError(
@@ -2975,6 +2986,7 @@ def sync_network_boot_media(
             media=media,
             final_dir=final_dir,
             backup_dir=backup_dir,
+            superseded_dirs=tuple(superseded_directories),
             journal_path=journal_path,
             recovery_lock=media_swap_lock,
         )
