@@ -740,32 +740,25 @@ def test_report_download_is_exact_self_contained_and_rejects_cross_host(client):
         headers={"Authorization": f"Bearer {first_session['access_token']}"},
     )
     assert first.status_code == 201, first.text
-    second_payload = inventory_report_v2()
-    second_payload["system"]["dmi_uuid"] = "4c4c4544-004b-4d10-8052-cac04f4c5199"
-    second_payload["boot_mac"] = "52:54:00:12:34:99"
-    second_payload["interfaces"][0]["permanent_mac"] = "52:54:00:12:34:99"
-    second_payload["interfaces"][0]["current_mac"] = "52:54:00:12:34:99"
+    first_download = client.get(
+        f"/api/v1/network-boot/hosts/{first.json()['host_id']}/reports/"
+        f"{first.json()['report_id']}/download",
+        headers=headers,
+    )
+    assert first_download.status_code == 200, first_download.text
+
+    newer_payload = inventory_report_v2()
+    newer_payload["system"]["manufacturer"] = "Newer Vendor"
+    newer_payload["cpu"]["model"] = "Newer CPU"
+    newer_payload["disks"].append(dict(newer_payload["disks"][0], device="/dev/sdb"))
     second_session = client.post("/pxe/inventory/sessions").json()
     second = client.post(
         "/pxe/inventory/report",
-        json=second_payload,
+        json=newer_payload,
         headers={"Authorization": f"Bearer {second_session['access_token']}"},
     )
     assert second.status_code == 201, second.text
-
-    from atlaso.app.database import SessionLocal
-
-    with SessionLocal() as db:
-        report = db.get(NetworkBootInventoryReport, first.json()["report_id"])
-        host = db.get(NetworkBootDiscoveredHost, first.json()["host_id"])
-        expected = {
-            "host": network_boot.host_to_dict(db, host),
-            "report_id": report.id,
-            "received_at": report.received_at.isoformat(),
-            "schema_version": report.schema_version,
-            "report": json.loads(report.payload_json),
-        }
-        expected_bytes = (json.dumps(expected, indent=2, sort_keys=True) + "\n").encode()
+    assert second.json()["host_id"] == first.json()["host_id"]
 
     download = client.get(
         f"/api/v1/network-boot/hosts/{first.json()['host_id']}/reports/"
@@ -773,7 +766,25 @@ def test_report_download_is_exact_self_contained_and_rejects_cross_host(client):
         headers=headers,
     )
     assert download.status_code == 200, download.text
-    assert download.content == expected_bytes
+    assert download.content == first_download.content
+    exported = download.json()
+    assert exported["host"] == {
+        "id": first.json()["host_id"],
+        "identity_key": (
+            "uuid:4c4c4544-004b-4d10-8052-cac04f4c5132:"
+            "6aa1a7a23e5008c9"
+        ),
+        "dmi_uuid": "4c4c4544-004b-4d10-8052-cac04f4c5132",
+        "boot_mac": "52:54:00:12:34:56",
+        "macs": ["52:54:00:12:34:56"],
+        "manufacturer": "Atlaso Test",
+        "product_name": "Inventory VM",
+        "serial_number": "SERIAL-1",
+        "cpu_model": "Example CPU",
+        "total_memory_bytes": 8 * 1024**3,
+        "disk_count": 1,
+        "interface_count": 1,
+    }
     assert download.headers["content-type"] == "application/json"
     assert download.headers["cache-control"] == "no-store"
     assert download.headers["content-disposition"] == (
@@ -781,8 +792,20 @@ def test_report_download_is_exact_self_contained_and_rejects_cross_host(client):
         f'-report-{first.json()["report_id"]}.json"'
     )
 
+    other_payload = inventory_report_v2()
+    other_payload["system"]["dmi_uuid"] = "4c4c4544-004b-4d10-8052-cac04f4c5199"
+    other_payload["boot_mac"] = "52:54:00:12:34:99"
+    other_payload["interfaces"][0]["permanent_mac"] = "52:54:00:12:34:99"
+    other_payload["interfaces"][0]["current_mac"] = "52:54:00:12:34:99"
+    other_session = client.post("/pxe/inventory/sessions").json()
+    other = client.post(
+        "/pxe/inventory/report",
+        json=other_payload,
+        headers={"Authorization": f"Bearer {other_session['access_token']}"},
+    )
+    assert other.status_code == 201, other.text
     cross_host = client.get(
-        f"/api/v1/network-boot/hosts/{second.json()['host_id']}/reports/"
+        f"/api/v1/network-boot/hosts/{other.json()['host_id']}/reports/"
         f"{first.json()['report_id']}/download",
         headers=headers,
     )

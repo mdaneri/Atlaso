@@ -55,6 +55,7 @@ from atlaso.app.services.network_boot import (
     poll_inventory_command,
     queue_reboot_command,
     render_network_boot_menu,
+    report_identity,
     report_history,
     request_host_boot_override,
     send_wake_on_lan,
@@ -522,12 +523,30 @@ def download_discovered_host_report(
     report = db.get(NetworkBootInventoryReport, report_id)
     if host is None or report is None or report.host_id != host.id:
         raise HTTPException(status_code=404, detail="Inventory report not found.")
+    report_payload = json.loads(report.payload_json)
+    identity_key, dmi_uuid, macs = report_identity(report_payload)
+    system = report_payload["system"]
+    cpu = report_payload["cpu"]
+    memory = report_payload["memory"]
     exported = {
-        "host": host_to_dict(db, host),
+        "host": {
+            "id": host.id,
+            "identity_key": identity_key,
+            "dmi_uuid": dmi_uuid,
+            "boot_mac": report_payload["boot_mac"],
+            "macs": macs,
+            "manufacturer": system["manufacturer"],
+            "product_name": system["product_name"],
+            "serial_number": system["serial_number"],
+            "cpu_model": cpu["model"],
+            "total_memory_bytes": memory["total_bytes"],
+            "disk_count": len(report_payload["disks"]),
+            "interface_count": len(report_payload["interfaces"]),
+        },
         "report_id": report.id,
         "received_at": report.received_at.isoformat(),
         "schema_version": report.schema_version,
-        "report": json.loads(report.payload_json),
+        "report": report_payload,
     }
     filename = f"atlaso-inventory-host-{host.id}-report-{report.id}.json"
     return Response(

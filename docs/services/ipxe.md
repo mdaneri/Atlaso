@@ -284,6 +284,9 @@ Read access includes
 `DELETE /hosts/{host_id}`, `POST /hosts/{host_id}/wake`, and
 `POST /esxi-hosts/{host_id}/wake`. A report download returns 404 when the report
 does not belong to the requested host rather than exposing cross-host history.
+The attachment derives its host identity and summary metadata from the selected
+retained report, so downloading a historical report remains byte-stable after a
+newer report or heartbeat changes the current discovered-host state.
 
 Inventory Linux receives a one-use report session with an eight-hour maximum
 lifetime. Only the token hash is persisted. The bearer token is sent in the
