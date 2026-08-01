@@ -97,8 +97,7 @@ textarea {
 
 .sidebar-brand-logo {
   display: block;
-  width: 208px;
-  max-width: 100%;
+  max-width: 140%;
   height: auto;
 }
 
