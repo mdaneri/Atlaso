@@ -44,6 +44,7 @@ from atlaso.app.services.esxi_pxe import (
     esxi_http_base_url,
     normalize_pxe_mac,
 )
+from atlaso.app.services.release_updates import verify_signed_json
 
 try:
     import fcntl
@@ -71,6 +72,10 @@ NETWORK_BOOT_OVERRIDE_CLAIM_GRACE = timedelta(minutes=5)
 NETWORK_BOOT_MEDIA_ROOT = Path("/var/lib/atlaso/pxe/media")
 NETWORK_BOOT_UPLOAD_ROOT = Path("/var/lib/atlaso/pxe/uploads")
 NETWORK_BOOT_UPLOAD_MAX_BYTES = 2 * 1024 * 1024 * 1024
+INVENTORY_LINUX_LATEST_MANIFEST_URL = (
+    "https://mdaneri.github.io/Atlaso/updates/inventory-linux/latest/manifest.json"
+)
+INVENTORY_LINUX_LATEST_SIGNATURE_URL = f"{INVENTORY_LINUX_LATEST_MANIFEST_URL}.sig"
 NETWORK_BOOT_SHREDOS_KERNEL_MAX_BYTES = 512 * 1024 * 1024
 NETWORK_BOOT_HTTP_ROOT = Path("/var/lib/atlaso/pxe/http")
 NETWORK_BOOT_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/esxi-pxe/atlaso-esxi-pxe.json"
@@ -111,9 +116,9 @@ ENVIRONMENT_CATALOG: tuple[EnvironmentCatalogEntry, ...] = (
         description="Read-only hardware inventory that runs from RAM.",
         risk="safe",
         license_name="GPL-2.0-or-later and bundled component licenses",
-        verification_method="Atlaso release-asset SHA-256 and reproducible build manifest",
-        source_label="Atlaso GitHub releases",
-        release_page="https://github.com/mdaneri/Atlaso/releases/latest",
+        verification_method="signed Atlaso Inventory Linux manifest and package SHA-256",
+        source_label="Atlaso Inventory Linux releases",
+        release_page="https://github.com/mdaneri/Atlaso/releases?q=inventory-linux-v&expanded=true",
     ),
     EnvironmentCatalogEntry(
         key="memtest86plus",
@@ -2089,7 +2094,7 @@ def record_verified_media(
     return row
 
 
-def _fetch_https_text(url: str, *, max_bytes: int = 2 * 1024 * 1024) -> str:
+def _fetch_https_bytes(url: str, *, max_bytes: int = 2 * 1024 * 1024) -> bytes:
     with tempfile.TemporaryDirectory(prefix="atlaso-network-boot-resolve-") as temp_dir:
         path = Path(temp_dir) / "response"
         BoundedHttpsDownloader(
@@ -2097,45 +2102,38 @@ def _fetch_https_text(url: str, *, max_bytes: int = 2 * 1024 * 1024) -> str:
             timeout_seconds=30,
             max_redirects=3,
         ).download(url, path)
-        return path.read_text(encoding="utf-8")
+        return path.read_bytes()
+
+
+def _fetch_https_text(url: str, *, max_bytes: int = 2 * 1024 * 1024) -> str:
+    return _fetch_https_bytes(url, max_bytes=max_bytes).decode("utf-8")
 
 
 def _release_descriptor(environment_key: str) -> dict[str, str]:
     key = normalize_environment_key(environment_key)
     if key == "inventory":
-        payload = json.loads(
-            _fetch_https_text(
-                "https://api.github.com/repos/mdaneri/Atlaso/releases/latest"
-            )
+        try:
+            raw_manifest = _fetch_https_bytes(INVENTORY_LINUX_LATEST_MANIFEST_URL)
+            raw_signature = _fetch_https_bytes(INVENTORY_LINUX_LATEST_SIGNATURE_URL)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                raise ValueError(
+                    "No Atlaso Inventory Linux release has been published. "
+                    "Publish one with the Inventory Linux release workflow, then retry."
+                ) from exc
+            raise
+        payload = verify_signed_json(
+            raw_manifest,
+            raw_signature,
+            document_kind="inventory",
         )
-        if payload.get("draft") or payload.get("prerelease"):
-            raise ValueError("Atlaso latest GitHub release is not stable.")
-        assets = payload.get("assets")
-        if not isinstance(assets, list):
-            raise ValueError("Atlaso latest release has no Inventory Linux package.")
-        asset = next(
-            (
-                row
-                for row in assets
-                if isinstance(row, dict)
-                and re.fullmatch(
-                    r"atlaso-inventory-linux-[A-Za-z0-9][A-Za-z0-9._+-]{0,118}[A-Za-z0-9]\.zip",
-                    str(row.get("name") or ""),
-                )
-            ),
-            None,
-        )
-        digest = str((asset or {}).get("digest") or "")
-        if not asset or not digest.startswith("sha256:"):
-            raise ValueError(
-                "Atlaso Inventory Linux package does not publish a SHA-256 asset digest."
-            )
-        filename = str(asset["name"])
+        package = payload["package"]
         return {
-            "version": filename.removeprefix("atlaso-inventory-linux-").removesuffix(".zip"),
-            "filename": filename,
-            "asset_url": str(asset["browser_download_url"]),
-            "sha256": digest.removeprefix("sha256:").lower(),
+            "version": str(payload["version"]),
+            "filename": str(package["name"]),
+            "asset_url": str(package["url"]),
+            "sha256": str(package["sha256"]),
+            "size": str(package["size"]),
         }
     if key == "memtest86plus":
         html = _fetch_https_text("https://www.memtest.org/")
@@ -2302,7 +2300,11 @@ def _media_boot_manifest(
             "boot": {
                 "kernel": f"{base}/bzImage",
                 "initrd": f"{base}/rootfs.cpio.gz",
-                "arguments": "rdinit=/sbin/init console=tty0 quiet loglevel=3 logo.nologo vt.global_cursor_default=0 atlaso.inventory=1",
+                "arguments": (
+                    "rdinit=/sbin/init console=tty0 quiet loglevel=3 "
+                    "logo.nologo vt.global_cursor_default=0 vga=791 "
+                    "video=1024x768 fbcon=font:VGA8x16 atlaso.inventory=1"
+                ),
             },
             "files": files,
         }
@@ -3158,6 +3160,9 @@ def sync_network_boot_media(
             )
         if not secrets.compare_digest(artifact_sha256, expected_sha256):
             raise ValueError("Boot media artifact did not match its verified SHA-256 digest.")
+        expected_size = descriptor.get("size")
+        if expected_size is not None and artifact.stat().st_size != int(expected_size):
+            raise ValueError("Boot media artifact did not match its verified size.")
         staging = temporary / "install"
         staging.mkdir()
         extracted: list[str]
@@ -3178,6 +3183,21 @@ def sync_network_boot_media(
             source_hashes = source_manifest.get("artifacts")
             if not isinstance(source_hashes, dict):
                 raise ValueError("Atlaso Inventory Linux package artifact manifest is invalid.")
+            source_boot = source_manifest.get("boot")
+            source_boot_arguments = (
+                source_boot.get("arguments")
+                if isinstance(source_boot, dict)
+                else None
+            )
+            if source_boot_arguments is not None and (
+                not isinstance(source_boot_arguments, str)
+                or not source_boot_arguments
+                or len(source_boot_arguments) > 4096
+                or re.search(r"[\x00-\x1f\x7f]", source_boot_arguments)
+            ):
+                raise ValueError(
+                    "Atlaso Inventory Linux package boot arguments are invalid."
+                )
             extracted = _extract_zip_allowlist(
                 artifact,
                 staging,
@@ -3235,6 +3255,8 @@ def sync_network_boot_media(
             final_directory_name,
             extracted=extracted,
         )
+        if key == "inventory" and source_boot_arguments is not None:
+            manifest["boot"]["arguments"] = source_boot_arguments
         manifest.update(
             {
                 "kind": "atlaso-network-boot-media",

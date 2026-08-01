@@ -70,14 +70,19 @@ normalizes it into retained v2 JSON in the existing report column.
 
 Inventory startup suppresses kernel branding and displays the Atlaso appliance
 boot artwork without Photon OS attribution. The local full-screen console uses
-the appliance console's pale-blue header, light content, and bottom-anchored
-blue action footer across **System / CPU / DIMMs**, **Network**, and **Storage**
-pages. Use `N`/`P` or `1`-`3` to page. Only after successful report submission,
-a five-minute reboot countdown begins. Use `J`/`K` to move through bounded list
+the appliance console's pale-blue header, light content, and adaptive blue
+action footer across **System / CPU / DIMMs**, **Network**, and **Storage**
+pages, with a blank light row below the header. Use `N`/`P` or `1`-`3` to page.
+Only after successful report submission, a five-minute reboot countdown begins.
+Use `J`/`K` to move through bounded list
 windows when a hardware list is larger than the console viewport. Capacity is
-derived from the actual terminal height; a normal 80x30 console shows up to 12
-DIMMs, eight adapters, or 12 disks/controllers before list paging is needed.
-All rows clip to the console width. Optical block
+derived from framebuffer geometry when available and otherwise from the TTY;
+higher-resolution consoles therefore use their additional rows, while a normal
+80x30 fallback shows up to 12 DIMMs, eight adapters, or 12 disks/controllers
+before list paging is needed. The action footer spans the console and follows
+the populated rows; dense pages expand it toward the terminal bottom. Silent
+keyboard reads keep navigation input out of the content area. All rows clip to
+the console width. Optical block
 devices are identified from the authoritative sysfs peripheral type.
 PCI identity is attached only to directly PCI-backed devices; controller sysfs
 also retains non-PCI SCSI hosts such as Hyper-V StorVSC. Large inventories are
@@ -131,15 +136,34 @@ desired state only.
 
 The fixed catalog contains Atlaso Inventory Linux, Memtest86+, ShredOS, GParted
 Live, and Clonezilla Live. Full appliance images preinstall the independently
-versioned `atlaso-inventory-linux-<version>.zip` package. The same package is a
-GitHub release asset, so an operator can download or upload a newer verified
+versioned `atlaso-inventory-linux-<version>.zip` package. New Inventory builds
+are final independent GitHub Releases under immutable
+`inventory-linux-v<version>` tags; ordinary Atlaso appliance releases no longer
+contain the package. An operator can still download or upload a newer verified
 Inventory Linux build without updating the Atlaso Python wheel. The other
 environments are disabled and uninstalled by default. Full appliance images
 include GnuPG for signed checksum verification; the development VMware wheel
 deployment bridge repairs that dependency on older test appliances before
 installing the new wheel. The **Source** column
-names and links to the authoritative release page from which Atlaso resolves
-each download. **Download latest stable** queues a durable `pxe-media-sync`
+names and links to the authoritative release history from which Atlaso resolves
+each download; Inventory Linux points to its independent release history.
+
+**Download latest** resolves only these fixed signed endpoints:
+
+- `https://mdaneri.github.io/Atlaso/updates/inventory-linux/latest/manifest.json`
+- `https://mdaneri.github.io/Atlaso/updates/inventory-linux/latest/manifest.json.sig`
+
+Atlaso verifies the detached Ed25519 signature with a public key under
+`/etc/atlaso/update-trust.d`, requires `X.Y.Z+revision`, and requires the package
+URL to target the matching `inventory-linux-v<version>` tag in the Atlaso
+repository. It then enforces the signed package size and SHA-256 before applying
+the existing ZIP allowlist, embedded package identity, inner artifact hashes,
+and atomic installation. If no independent release exists, the task tells the
+operator to publish one with the Inventory Linux workflow. Atlaso versions
+before `0.9.65` still search ordinary appliance releases, so they must upgrade
+before downloading `2026.05.1+8`; already installed Inventory media remains
+usable and activation still occurs only through global appliance apply.
+**Download latest** queues a durable `pxe-media-sync`
 task that:
 
 1. resolves one concrete stable release from the fixed upstream;

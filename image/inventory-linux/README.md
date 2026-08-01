@@ -37,15 +37,26 @@ Run on Linux:
 ./image/inventory-linux/build.sh
 ```
 
-The shared Windows Photon image wrappers build Inventory Linux through WSL.
-They give Buildroot a Linux-only `PATH` for that child process because WSL's
-default Windows path import can contain spaces that Buildroot rejects. The
-wrappers also keep Buildroot's cache and work tree beneath the WSL user's native
-Linux cache directory because a Windows-mounted, case-insensitive work tree can
-corrupt host-package configuration. Final artifacts still land in the output
-directory documented below. A per-repository lock serializes concurrent Windows
-build requests that share this cache. This does not change the caller's Windows
-`PATH` or global WSL configuration.
+The shared Windows Inventory Linux and Photon image wrappers use the isolated
+`Atlaso-Build` WSL distribution by default. WSL must already be installed; Atlaso
+does not enable Windows features, install WSL, elevate, reboot, or silently
+provision a missing distribution. Run the explicit setup once:
+
+```powershell
+pwsh -ExecutionPolicy Bypass `
+  -File scripts/windows/common/Initialize-AtlasoBuildWslDistribution.ps1
+```
+
+Pass `-WslDistribution <name>` to use an existing compatible distribution. The
+wrappers use the selected distribution for every build subprocess, give
+Buildroot a Linux-only `PATH`, and keep downloads and mutable work beneath the
+WSL user's native Linux cache. Final artifacts still land in the output
+directory documented below, and a per-repository `flock` serializes builds that
+share a work tree. A checkout-wide Windows mutex also protects the shared final
+output when different distributions target the same checkout. See the canonical
+[Windows image-build WSL environment](../../docs/contribute/windows-image-build-wsl.md)
+guide for setup, selection, storage, updates, export/import, recreation,
+troubleshooting, and removal.
 
 Atlaso's `.gitattributes` keeps Bash and PowerShell sources at LF in every
 checkout, including Windows clones with Git's automatic line-ending conversion
@@ -87,10 +98,38 @@ python scripts/build_inventory_linux_package.py
 ```
 
 This creates the deterministic, independently versioned
-`dist/inventory-linux/atlaso-inventory-linux-<version>.zip` release asset. Full
-appliance images preinstall its runtime files; Atlaso releases publish the same
-package so Network Boot can download or upload Inventory Linux updates without
-coupling them to the Python wheel version.
+`dist/inventory-linux/atlaso-inventory-linux-<version>.zip` package. Full
+appliance images preinstall its runtime files, and supported VMware wheel
+deployment synchronizes the package unless explicitly skipped. Ordinary Atlaso
+appliance releases do not contain Inventory Linux.
+
+## Publish a final Inventory Linux release
+
+The protected **Publish Inventory Linux release** GitHub Actions workflow is
+manual-only. Supply the exact full commit SHA of a successful `main` push CI
+run. It rebuilds the pinned Buildroot inputs, derives the `X.Y.Z+revision`
+Inventory version from the package manifest, and immediately publishes a final
+release; there are no development, preview, or staging channels. Independent
+release history begins at `2026.05.1+8`; `+7` is not backfilled.
+
+For version `<version>`, publication creates:
+
+- immutable tag `inventory-linux-v<version>` at the requested commit;
+- final, non-latest GitHub Release with
+  `atlaso-inventory-linux-<version>.zip`,
+  `inventory-linux-manifest.json`, and
+  `inventory-linux-manifest.json.sig`;
+- signed permanent metadata under
+  `/updates/inventory-linux/releases/<version>/`; and
+- the monotonic signed `/updates/inventory-linux/latest/` pointer.
+
+The manifest records the version, source commit, deterministic commit build
+timestamp, signing key ID, `x86_64` architecture, and the package's exact HTTPS
+URL, size, and SHA-256. Publication is idempotent only when an existing tag
+identifies the same commit and every release and Pages asset is byte-identical.
+Conflicts and attempts to move `latest` backward fail closed. The Pages update
+is committed without replacing existing documentation or appliance-update
+content.
 
 The iPXE menu passes the PXE adapter MAC address to Inventory Linux. At startup,
 the utility requests DHCP on that adapter first and falls back across the
@@ -133,13 +172,18 @@ Inventory startup suppresses kernel branding and uses an Inventory-specific
 Atlaso splash derived from the appliance boot artwork without Photon OS
 attribution. After a report is accepted, the local console opens full-screen
 System/CPU/DIMMs, Network, and Storage pages using the same pale-blue header,
-light content, and blue footer palette as the appliance console. Use `N`/`P` or
-`1`-`3` to move between pages. List capacity is calculated from the actual
-terminal height, so a normal 80x30 console shows up to 12 DIMMs, eight adapters,
-or 12 disks/controllers before `J`/`K` paging is needed. Smaller supported
-terminals retain bounded windows, and all rows clip to the console width. The
-footer stays anchored to the bottom two rows; countdown updates repaint only
-that footer so the hardware pages remain stable without full-screen flicker.
+light content, and blue footer palette as the appliance console. A blank light
+row separates the header from each page. Use `N`/`P` or
+`1`-`3` to move between pages. List capacity is calculated from the framebuffer
+geometry when available, with the TTY size as a fallback, so higher-resolution
+consoles use their additional rows and need fewer `J`/`K` list pages. A normal
+80x30 fallback shows up to 12 DIMMs, eight adapters, or 12 disks/controllers.
+Smaller supported terminals retain bounded windows, and all rows clip to the
+console width. The footer spans the console and follows the populated page
+area, while dense Network and Storage pages expand it toward the terminal
+bottom. Countdown updates repaint only that footer, and silent key reads keep
+navigation from appearing below it, so the hardware pages remain stable
+without full-screen flicker.
 The five-minute reboot countdown starts only after successful submission;
 navigation time still advances the countdown, `S` pauses or resumes the
 remaining time, and `R` reboots immediately. An acknowledged audited remote

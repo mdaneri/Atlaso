@@ -123,47 +123,15 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  inventory-linux:
-    name: Build Inventory Linux package
-    needs:
-      - prepare
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (
-        github.event.workflow_run.head_repository.full_name == github.repository &&
-        github.event.workflow_run.head_branch == 'main' &&
-        github.event.workflow_run.event == 'push'
-      )
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out the successful main commit
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.prepare.outputs.release_sha }}
-          fetch-depth: 0
-      - name: Install Buildroot host prerequisites
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential bison flex cpio rsync bc file wget curl git perl python3 unzip patch gzip bzip2 xz-utils ca-certificates libelf-dev
-      - name: Build reproducible Inventory Linux
-        run: |
-          ./image/inventory-linux/build.sh
-          python scripts/build_inventory_linux_package.py
-      - name: Upload Inventory Linux package
-        uses: actions/upload-artifact@v7
-        with:
-          name: inventory-linux-package
-          path: dist/inventory-linux/atlaso-inventory-linux-*.zip
-          if-no-files-found: error
-          retention-days: 7
-
   publish:
     name: Sign and publish release
     needs:
       - prepare
       - wheelhouse
-      - inventory-linux
     runs-on: ubuntu-latest
+    concurrency:
+      group: atlaso-github-pages
+      cancel-in-progress: false
     environment: appliance-release
     permissions:
       contents: write
@@ -194,11 +162,6 @@ jobs:
         with:
           name: wheelhouse-cp314
           path: wheelhouses/cp314
-      - name: Download Inventory Linux package
-        uses: actions/download-artifact@v8
-        with:
-          name: inventory-linux-package
-          path: inventory-linux
       - name: Materialize the protected signing key
         env:
           RELEASE_SIGNING_PRIVATE_KEY: ${{ secrets.RELEASE_SIGNING_PRIVATE_KEY }}
@@ -214,7 +177,6 @@ jobs:
           BUILT_AT="$(git show -s --format=%cI "$RELEASE_SHA")"
           python scripts/build_release_bundle.py \
             --wheelhouses wheelhouses \
-            --inventory-package "$(find inventory-linux -maxdepth 1 -name 'atlaso-inventory-linux-*.zip' -type f -print -quit)" \
             --signing-key "$RUNNER_TEMP/release-signing-key.pem" \
             --signing-key-id "$RELEASE_KEY_ID" \
             --commit "$RELEASE_SHA" \

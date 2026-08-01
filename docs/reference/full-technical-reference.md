@@ -138,6 +138,14 @@ python3 scripts/check_photon_compatibility.py
 Atlaso Windows automation supports only PowerShell 7.x (`pwsh`). Windows PowerShell 5.1 (`powershell.exe`) is not
 supported. Run every documented Windows command from `pwsh`, including elevated Hyper-V operations.
 
+Windows image wrappers require an already functional WSL 2 installation and use the explicitly provisioned
+`Atlaso-Build` distribution for Inventory Linux by default. They do not install WSL or silently create a missing
+distribution. `-WslDistribution <name>` selects an existing compatible alternative and is forwarded through the Photon
+entry points. Buildroot's Linux-only `PATH`, native-filesystem cache, repository-specific work tree, and `flock` remain
+in force for every distribution. A checkout-wide Windows mutex protects shared final output across distributions. See
+[Windows image-build WSL environment](../contribute/windows-image-build-wsl.md) for the pinned setup, safety boundary,
+storage, recovery, and removal procedures.
+
 Build inputs are the current Photon OS 5.0 ISO URL and checksum. On Hyper-V, use the Windows wrapper so the Photon
 kickstart is attached as a local single remastered ISO instead of depending on early installer networking:
 

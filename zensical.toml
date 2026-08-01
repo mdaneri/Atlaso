@@ -67,6 +67,7 @@ nav = [
     { "Overview" = "contribute/index.md" },
     { "Dependency management" = "contribute/dependency-management.md" },
     { "Documentation authoring" = "contribute/documentation-authoring.md" },
+    { "Windows image-build WSL environment" = "contribute/windows-image-build-wsl.md" },
     { "UI design guide" = "contribute/ui-design-guide.md" },
     { "Detailed agent policies" = "contribute/agent-policies.md" },
   ] },

@@ -451,6 +451,14 @@ status: current
 - Keep Inventory Linux reproducible and read-only: pin Buildroot source and
   digest, run from initramfs, collect only bounded hardware metadata, and never
   add filesystem mounts, block writes, a remote shell, or arbitrary commands.
+- Publish Inventory Linux only through the protected **Publish Inventory Linux release** manual dispatch with the exact
+  SHA of a successful `main` push CI run. Derive its `X.Y.Z+revision` version from the built package, sign deterministic
+  release metadata with the Atlaso Ed25519 release key, and publish an immutable final
+  `inventory-linux-v<version>` release without making it the repository-wide latest release. The matching versioned
+  Pages metadata and `/updates/inventory-linux/latest/` pointer must advance monotonically in the same commit while
+  preserving documentation and appliance-update content. Existing tags, assets, or Pages metadata must be
+  byte-identical on a rerun; fail closed on collisions. Do not attach Inventory Linux packages to ordinary appliance
+  releases and do not add development, preview, or staging channels for Inventory Linux.
 - Inventory report schema v2 uses sysfs as the authoritative source for bounded
   CPU/DIMM, NIC, disk/controller, PCI/USB, and system identity data. Continue to
   accept v1 and normalize it into retained v2 JSON without a database migration,
@@ -469,6 +477,13 @@ status: current
   hosts and saved ESXi Host References. Use only the server-owned MAC, deduplicate
   IPv4 broadcasts derived from effective Network Boot DHCP zones, perform no
   retries, and never represent packet send as proof that a host woke.
+- Windows Inventory Linux and Photon builds use `Atlaso-Build` unless the caller explicitly selects another compatible
+  WSL distribution. Treat WSL itself as a pre-existing prerequisite: no ordinary build or Atlaso setup path may enable
+  Windows features, install WSL, elevate, reboot, change the default distribution, or remove an existing distribution.
+  Keep the dedicated base archive and host-package contract pinned and recorded. Use the same explicit distribution for
+  path conversion, readiness checks, native-Linux cache discovery, per-repository `flock`, and build execution. Hold a
+  checkout-wide host lock through final artifact verification so different distributions cannot write the shared output
+  concurrently. See [Windows image-build WSL environment](windows-image-build-wsl.md).
 - `pxe-media-sync` may populate immutable verified cache versions, but must not
   alter active menu state. Fixed upstreams, HTTPS limits, pinned verification,
   allowlisted extraction, and atomic installation are mandatory.

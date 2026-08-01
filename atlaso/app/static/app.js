@@ -18813,7 +18813,7 @@ function initializeNetworkBootPage() {
           },
         },
         {
-          label: "Download latest stable",
+          label: "Download latest",
           action: async (_event, row) => {
             await queueEnvironmentDownload(row.getData());
           },

@@ -7,7 +7,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
@@ -16,6 +16,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 CHANNEL_MANIFEST_SCHEMA = 2
 RELEASE_MANIFEST_SCHEMA = 2
+INVENTORY_RELEASE_MANIFEST_SCHEMA = 1
 SIGNATURE_SCHEMA = 1
 UPDATER_PROTOCOL = 2
 SUPPORTED_PYTHON_ABIS = ("cp314",)
@@ -24,6 +25,9 @@ SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 KEY_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+INVENTORY_VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+\+[0-9]+$")
+INVENTORY_PACKAGE_MAX_BYTES = 2 * 1024 * 1024 * 1024
+INVENTORY_RELEASE_REPOSITORY = "mdaneri/Atlaso"
 
 
 class ReleaseManifestError(ValueError):
@@ -141,6 +145,64 @@ def validate_release_manifest(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def inventory_version_tuple(value: str) -> tuple[int, int, int, int]:
+    if INVENTORY_VERSION_RE.fullmatch(value) is None:
+        raise ReleaseManifestError("Inventory Linux version must use X.Y.Z+revision versioning.")
+    release, revision = value.split("+", 1)
+    return (*[int(part) for part in release.split(".")], int(revision))
+
+
+def validate_inventory_release_manifest(payload: dict[str, Any]) -> dict[str, Any]:
+    if (
+        payload.get("schema_version") != INVENTORY_RELEASE_MANIFEST_SCHEMA
+        or payload.get("kind") != "atlaso-inventory-linux-release"
+    ):
+        raise ReleaseManifestError("Unsupported Atlaso Inventory Linux release manifest.")
+    version = _required_text(payload, "version")
+    inventory_version_tuple(version)
+    commit = _required_text(payload, "git_commit").lower()
+    if COMMIT_RE.fullmatch(commit) is None:
+        raise ReleaseManifestError("Inventory Linux git_commit must be a full hexadecimal commit.")
+    key_id = _required_text(payload, "signing_key_id")
+    if KEY_ID_RE.fullmatch(key_id) is None:
+        raise ReleaseManifestError("Inventory Linux signing_key_id is invalid.")
+    if _required_text(payload, "architecture") != "x86_64":
+        raise ReleaseManifestError("Inventory Linux architecture must be x86_64.")
+    _timestamp(payload, "built_at")
+    package = payload.get("package")
+    if not isinstance(package, dict):
+        raise ReleaseManifestError("Inventory Linux package must be an object.")
+    expected_name = f"atlaso-inventory-linux-{version}.zip"
+    if _required_text(package, "name") != expected_name:
+        raise ReleaseManifestError("Inventory Linux package name does not match its version.")
+    package_url = _https_url(package, "url")
+    parsed = urlparse(package_url)
+    expected_path = (
+        f"/{INVENTORY_RELEASE_REPOSITORY}/releases/download/"
+        f"inventory-linux-v{version}/{expected_name}"
+    )
+    if (
+        parsed.hostname != "github.com"
+        or parsed.port is not None
+        or parsed.query
+        or parsed.fragment
+        or unquote(parsed.path) != expected_path
+    ):
+        raise ReleaseManifestError(
+            "Inventory Linux package URL must target the matching dedicated Atlaso release tag."
+        )
+    size = package.get("size")
+    if (
+        not isinstance(size, int)
+        or isinstance(size, bool)
+        or size <= 0
+        or size > INVENTORY_PACKAGE_MAX_BYTES
+    ):
+        raise ReleaseManifestError("Inventory Linux package size is invalid.")
+    _sha256(package, "sha256")
+    return payload
+
+
 def signature_document(raw_signature: bytes) -> dict[str, str]:
     try:
         payload = json.loads(raw_signature.decode("utf-8"))
@@ -194,4 +256,6 @@ def verify_signed_json(
         return validate_channel_manifest(payload)
     if document_kind == "release":
         return validate_release_manifest(payload)
+    if document_kind == "inventory":
+        return validate_inventory_release_manifest(payload)
     raise ValueError(f"Unsupported document kind {document_kind}.")

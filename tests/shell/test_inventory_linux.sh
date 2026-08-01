@@ -8,6 +8,8 @@ trap 'rm -rf "${fixture_root}"' EXIT
 export ATLASO_SYSFS_ROOT="${fixture_root}/sys"
 export ATLASO_PROC_ROOT="${fixture_root}/proc"
 export ATLASO_RUNTIME_ROOT="${fixture_root}/run"
+# Keep console geometry deterministic on CI hosts that expose a framebuffer.
+export FRAMEBUFFER_SIZE="0,0"
 mkdir -p "${ATLASO_SYSFS_ROOT}" "${ATLASO_PROC_ROOT}" "${ATLASO_RUNTIME_ROOT}" "${fixture_root}/bin"
 PATH="${fixture_root}/bin:${PATH}"
 export PATH
@@ -88,13 +90,13 @@ make_disk() {
 make_disk sda 0000:03:00.0 209715200 1 0 'Fixture HDD' ''
 make_disk nvme0n1 0000:03:00.0 104857600 0 0 'Fixture NVMe' NVME-1
 make_disk sr0 0000:03:00.0 1048576 0 1 'Fixture DVD' DVD-1
+make_disk sdb '0000:04:00.0/usb1/1-2/1-2:1.0/host99/target99:0:0/99:0:0:0' 8388608 0 1 'Fixture USB Disk' USB-DISK-1
 printf '5\n' >"${ATLASO_SYSFS_ROOT}/bus/pci/devices/0000:03:00.0/disk-sr0/type"
 
 mkdir -p "${ATLASO_SYSFS_ROOT}/class/scsi_host/host9/device"
 printf 'storvsc_host\n' >"${ATLASO_SYSFS_ROOT}/class/scsi_host/host9/proc_name"
 printf 'Microsoft\n' >"${ATLASO_SYSFS_ROOT}/class/scsi_host/host9/device/vendor"
 printf 'Virtual SCSI\n' >"${ATLASO_SYSFS_ROOT}/class/scsi_host/host9/device/model"
-
 for usb in 1-1 1-2; do
   path="${ATLASO_SYSFS_ROOT}/bus/usb/devices/${usb}"
   mkdir -p "${path}"
@@ -107,6 +109,12 @@ for usb in 1-1 1-2; do
   printf 'Fixture USB\n' >"${path}/product"
   printf '%s\n' "USB-${usb}" >"${path}/serial"
 done
+usb_scsi_device="${ATLASO_SYSFS_ROOT}/bus/pci/devices/0000:04:00.0/usb1/1-2/1-2:1.0/host99"
+mkdir -p "${usb_scsi_device}" "${ATLASO_SYSFS_ROOT}/class/scsi_host/host99"
+ln -s "${usb_scsi_device}" "${ATLASO_SYSFS_ROOT}/class/scsi_host/host99/device"
+printf 'usb-storage\n' >"${ATLASO_SYSFS_ROOT}/class/scsi_host/host99/proc_name"
+printf 'USB Vendor\n' >"${usb_scsi_device}/vendor"
+printf 'Fixture USB Disk\n' >"${usb_scsi_device}/model"
 
 make_dmi_dimm() {
   instance="$1"
@@ -158,7 +166,7 @@ printf '[{"addr_info":[{"local":"%s","prefixlen":24}]}]\n' "${address}"
 EOF
 cat >"${fixture_root}/bin/lsblk" <<'EOF'
 #!/bin/sh
-printf '%s\n' '{"blockdevices":[{"name":"sda","wwn":"0x5000","tran":"sata","serial":"HDD-LSBLK-1"},{"name":"nvme0n1","wwn":"eui.0001","tran":"nvme","serial":"NVME-UDEV"},{"name":"sr0","wwn":"","tran":"sata","serial":"DVD-UDEV"}]}'
+printf '%s\n' '{"blockdevices":[{"name":"sda","wwn":"0x5000","tran":"sata","serial":"HDD-LSBLK-1"},{"name":"sdb","wwn":"","tran":"usb","serial":"USB-DISK-UDEV"},{"name":"nvme0n1","wwn":"eui.0001","tran":"nvme","serial":"NVME-UDEV"},{"name":"sr0","wwn":"","tran":"sata","serial":"DVD-UDEV"}]}'
 EOF
 cat >"${fixture_root}/bin/dmidecode" <<'EOF'
 #!/bin/sh
@@ -199,9 +207,20 @@ DMI
 EOF
 cat >"${fixture_root}/bin/lscpu" <<'EOF'
 #!/bin/sh
-printf '%s\n' '{"lscpu":[{"field":"Architecture:","data":"x86_64"},{"field":"Vendor ID:","data":"GenuineIntel"},{"field":"Model name:","data":"Fixture CPU"},{"field":"CPU(s):","data":"32"},{"field":"Socket(s):","data":"2"},{"field":"Core(s) per socket:","data":"8"},{"field":"Thread(s) per core:","data":"2"}]}'
+printf '%s\n' '{"lscpu":[{"field":"Architecture:","data":"x86_64"},{"field":"Vendor ID:","data":"GenuineIntel"},{"field":"Model name:","data":"Fixture CPU"}]}'
 EOF
 chmod +x "${fixture_root}/bin/"*
+
+cpu_index=0
+while [ "${cpu_index}" -lt 32 ]; do
+  package_id=$((cpu_index / 16))
+  core_id=$(((cpu_index % 16) / 2))
+  cpu_path="${ATLASO_SYSFS_ROOT}/devices/system/cpu/cpu${cpu_index}"
+  mkdir -p "${cpu_path}/topology"
+  printf '%s\n' "${package_id}" >"${cpu_path}/topology/physical_package_id"
+  printf '%s\n' "${core_id}" >"${cpu_path}/topology/core_id"
+  cpu_index=$((cpu_index + 1))
+done
 
 pci="$(collect_pci_devices)"
 pci_file="${fixture_root}/pci.json"
@@ -214,9 +233,9 @@ usb="$(collect_usb_devices)"
 cpu="$(collect_cpu)"
 
 assert_jq "${pci}" 'length == 3 and .[0].vendor_id == "8086" and .[1].class_id == "010601"'
-assert_jq "${controllers}" 'length == 2 and .[0].type == "SATA" and .[0].driver == "ahci" and .[1].type == "Hyper-V SCSI" and .[1].driver == "storvsc_host" and .[1].pci_address == ""'
+assert_jq "${controllers}" 'length == 3 and (map(select(.driver == "ahci"))[0] | .type == "SATA" and .pci_address == "0000:03:00.0") and (map(select(.driver == "storvsc_host"))[0] | .type == "Hyper-V SCSI" and .pci_address == "") and (map(select(.driver == "usb-storage"))[0] | .type == "SCSI" and .pci_address == "")'
 assert_jq "${interfaces}" 'length == 3 and .[0].boot_interface and .[1].current_mac == "52:54:00:44:55:66" and (map(select(.name == "usb0"))[0].pci_address == "")'
-assert_jq "${disks}" 'length == 3 and (map(select(.device == "/dev/sda"))[0].type == "HDD") and (map(select(.device == "/dev/sda"))[0].serial == "HDD-LSBLK-1") and (map(select(.device == "/dev/nvme0n1"))[0].type == "NVMe") and (map(select(.device == "/dev/nvme0n1"))[0].serial == "NVME-1") and (map(select(.device == "/dev/sr0"))[0].type == "Optical") and (map(select(.device == "/dev/nvme0n1"))[0].size_human == "50.0 GiB") and (map(select(.device == "/dev/sda"))[0].controller_pci_address == "0000:03:00.0")'
+assert_jq "${disks}" 'length == 4 and (map(select(.device == "/dev/sda"))[0].type == "HDD") and (map(select(.device == "/dev/sda"))[0].serial == "HDD-LSBLK-1") and (map(select(.device == "/dev/nvme0n1"))[0].type == "NVMe") and (map(select(.device == "/dev/nvme0n1"))[0].serial == "NVME-1") and (map(select(.device == "/dev/sr0"))[0].type == "Optical") and (map(select(.device == "/dev/nvme0n1"))[0].size_human == "50.0 GiB") and (map(select(.device == "/dev/sda"))[0].controller_pci_address == "0000:03:00.0") and (map(select(.device == "/dev/sdb"))[0] | .type == "USB" and .controller_pci_address == "")'
 assert_jq "${dimms}" 'length == 3 and .[0].locator == "DIMM_A1" and .[1].speed_mts == 4800 and .[0].size_bytes == 17179869184 and .[2].size_bytes == 8589934592 and .[2].locator == "" and (map(.locator) | index("PHANTOM") == null)'
 assert_jq "${usb}" 'length == 2 and .[0].class == "Mass storage" and .[1].serial == "USB-1-2"'
 assert_jq "${cpu}" '.sockets == 2 and .cores == 16 and .threads == 32 and .cores_per_socket == 8 and .threads_per_core == 2'
@@ -224,6 +243,16 @@ assert_jq "${cpu}" '.sockets == 2 and .cores == 16 and .threads == 32 and .cores
 [ "$(dmi_sysfs_handle "${ATLASO_SYSFS_ROOT}/firmware/dmi/entries/17-0/raw")" = "0x0011" ] || fail 'sysfs DIMM handle'
 [ "$(dimm_size_bytes '4096 MiB')" = "4294967296" ] || fail 'dmidecode 3.7 binary DIMM size'
 [ "$(dimm_size_bytes '4 GB')" = "4294967296" ] || fail 'legacy decimal DIMM size'
+extended_mib_raw="${fixture_root}/extended-mib.raw"
+extended_kib_raw="${fixture_root}/extended-kib.raw"
+awk 'BEGIN { for (i = 0; i < 32; i++) printf "%c", 0 }' >"${extended_mib_raw}"
+awk 'BEGIN { for (i = 0; i < 32; i++) printf "%c", 0 }' >"${extended_kib_raw}"
+printf '\377\177' | dd of="${extended_mib_raw}" bs=1 seek=12 conv=notrunc 2>/dev/null
+printf '\000\020\000\000' | dd of="${extended_mib_raw}" bs=1 seek=28 conv=notrunc 2>/dev/null
+printf '\377\177' | dd of="${extended_kib_raw}" bs=1 seek=12 conv=notrunc 2>/dev/null
+printf '\000\000\020\200' | dd of="${extended_kib_raw}" bs=1 seek=28 conv=notrunc 2>/dev/null
+[ "$(dimm_sysfs_size_bytes "${extended_mib_raw}")" = "4294967296" ] || fail 'extended DIMM MiB unit'
+[ "$(dimm_sysfs_size_bytes "${extended_kib_raw}")" = "1073741824" ] || fail 'extended DIMM KiB unit bit'
 [ "$(printf '%s' "$(bounded_text 240 "$(printf '%0241d' 0)")" | wc -c)" -eq 240 ] || fail 'string limit'
 [ "$(cycle_console_page 3 next)" = "1" ] || fail 'next page wraps'
 [ "$(cycle_console_page 1 previous)" = "3" ] || fail 'previous page wraps'
@@ -234,6 +263,19 @@ assert_jq "${cpu}" '.sockets == 2 and .cores == 16 and .threads == 32 and .cores
 [ "$(console_page_size network 30)" = "8" ] || fail '30-row network capacity'
 [ "$(console_page_size storage 30)" = "12" ] || fail '30-row storage capacity'
 [ "$(console_page_size network 22)" = "5" ] || fail 'compact network capacity'
+[ "$(console_viewport_dimension 48 30)" = "30" ] || fail 'TTY caps framebuffer rows'
+[ "$(console_viewport_dimension 128 160)" = "128" ] || fail 'larger TTY does not expand framebuffer columns'
+[ "$(console_viewport_dimension 0 40)" = "40" ] || fail 'TTY supplies missing framebuffer dimension'
+[ "$(console_viewport_dimension 48 0)" = "48" ] || fail 'missing TTY preserves framebuffer dimension'
+# Keep framebuffer-only assertions independent of the invoking terminal size.
+stty() { printf '0 0\n'; }
+framebuffer_root="${fixture_root}/graphics"
+mkdir -p "${framebuffer_root}/fb0"
+printf '1024,768\n' >"${framebuffer_root}/fb0/virtual_size"
+[ "$(FRAMEBUFFER_ROOT="${framebuffer_root}" console_terminal_rows)" = "48" ] || fail 'framebuffer row capacity'
+[ "$(FRAMEBUFFER_ROOT="${framebuffer_root}" console_terminal_columns)" = "128" ] || fail 'framebuffer column capacity'
+[ "$(FRAMEBUFFER_SIZE='1024,768' console_terminal_rows)" = "48" ] || fail 'fbset row capacity'
+[ "$(FRAMEBUFFER_SIZE='1024,768' console_terminal_columns)" = "128" ] || fail 'fbset column capacity'
 [ "$(countdown_after_elapsed 300 false 30)" = "270" ] || fail 'countdown advances from five minutes'
 [ "$(countdown_after_elapsed 90 true 30)" = "90" ] || fail 'countdown pauses'
 [ "$(countdown_after_elapsed 90 false 90)" = "0" ] || fail 'countdown reaches automatic reboot boundary'
@@ -262,6 +304,7 @@ report="$(jq -cn --argjson interfaces "${interfaces}" --argjson disks "${disks}"
   '{system:{manufacturer:"Atlaso",product_name:"Fixture",product_version:"1",serial_number:"S",dmi_uuid:"U",bios_vendor:"B",bios_version:"1",bios_date:"D",baseboard:{manufacturer:"BM",product:"BP",serial:"BS"},chassis:{manufacturer:"CM",type:"Rack",serial:"CS"}},cpu:$cpu,memory:{total_human:"32.0 GiB",dimms:$dimms},interfaces:$interfaces,disks:$disks,storage_controllers:$controllers}')"
 console="$(render_inventory_console "${report}" 2 90 false 7)"
 printf '%s' "${console}" | grep -F 'Atlaso Inventory Linux' >/dev/null || fail 'console header'
+printf '%s' "${console}" | grep -F "$(printf 'Atlaso Inventory Linux  \033[22m\033[K\n\033[47m\033[30m\033[K\n')" >/dev/null || fail 'blank line below console header'
 printf '%s' "${console}" | grep -F 'Network' >/dev/null || fail 'network page'
 printf '%s' "${console}" | grep -F 'Interfaces 1-3 of 3' >/dev/null || fail 'network list window'
 printf '%s' "${console}" | grep -F 'Page 2/3' >/dev/null || fail 'console paging footer'
@@ -271,10 +314,12 @@ printf '%s' "${console}" | grep -F "$(printf '\033]P7eef2f7')" >/dev/null || fai
 printf '%s' "${console}" | grep -F "$(printf '\033[46m')" >/dev/null || fail 'console-native pale-blue header'
 printf '%s' "${console}" | grep -F "$(printf '\033[47m')" >/dev/null || fail 'console-native light content'
 printf '%s' "${console}" | grep -F "$(printf '\033[44m')" >/dev/null || fail 'console-native blue footer'
-printf '%s' "${console}" | grep -F "$(printf '\033[29;1H')" >/dev/null || fail 'footer anchored to terminal bottom'
+printf '%s' "${console}" | grep -F "$(printf '\033[14;1H')" >/dev/null || fail 'network footer follows populated rows'
 if printf '%s' "${console}" | grep -F "$(printf '\033[0m')" >/dev/null; then fail 'content resets to black terminal background'; fi
 footer="$(refresh_inventory_console_footer 2 89 true 7)"
 printf '%s' "${footer}" | grep -F 'Paused at 89s' >/dev/null || fail 'in-place countdown footer refresh'
+wide_footer="$(FRAMEBUFFER_SIZE='1024,768' refresh_inventory_console_footer 2 89 true 7 48)"
+printf '%s' "${wide_footer}" | grep -F "$(printf '\033[47;1H')" >/dev/null || fail 'framebuffer footer uses physical bottom row'
 many_report="$(printf '%s' "${report}" | jq '.interfaces = [range(0;8) as $index | (.interfaces[0] | .name = ("nic" + ($index|tostring)))]')"
 network_full="$(render_inventory_console "${many_report}" 2 90 false 7)"
 printf '%s' "${network_full}" | grep -F 'Interfaces 1-8 of 8' >/dev/null || fail '30-row network capacity reduces paging'
@@ -284,7 +329,7 @@ printf '%s' "${network_window}" | grep -F 'nic5' >/dev/null || fail 'network lis
 if printf '%s' "${network_window}" | grep -F 'nic0' >/dev/null; then fail 'network list subpage bounds'; fi
 many_storage_report="$(printf '%s' "${report}" | jq '.disks = [range(0;8) as $index | (.disks[0] | .device = ("/dev/disk" + ($index|tostring)))]')"
 storage_window="$(render_inventory_console "${many_storage_report}" 3 90 false 7 0 5)"
-printf '%s' "${storage_window}" | grep -F 'Devices 6-10 of 10' >/dev/null || fail 'storage list subpage status'
+printf '%s' "${storage_window}" | grep -F 'Devices 6-11 of 11' >/dev/null || fail 'storage list subpage status'
 printf '%s' "${storage_window}" | grep -F '/dev/disk5' >/dev/null || fail 'storage list subpage first row'
 printf '%s' "${storage_window}" | grep -F '[Controller]' >/dev/null || fail 'storage controller retained in list window'
 if printf '%s' "${storage_window}" | grep -F '/dev/disk0' >/dev/null; then fail 'storage list subpage bounds'; fi
@@ -294,6 +339,7 @@ printf '%s' "${dimm_window}" | grep -F 'DIMMs 6-8 of 8' >/dev/null || fail 'DIMM
 printf '%s' "${dimm_window}" | grep -F 'DIMM_5' >/dev/null || fail 'DIMM list subpage first row'
 if printf '%s' "${dimm_window}" | grep -F 'DIMM_0' >/dev/null; then fail 'DIMM list subpage bounds'; fi
 [ "$(printf '%0100d\n' 0 | console_clip_lines 78 | awk '{ print length }')" = "78" ] || fail 'console line clipping'
+[ "$(CONSOLE_CONTENT_WIDTH=78 console_line Product "$(printf '%0200d' 0)" | awk '{ print length }')" = "78" ] || fail 'fixed system field clipping'
 if grep -F '| gsub(' "${library}" >/dev/null; then fail 'Buildroot jq regex dependency'; fi
 grep -F -- '--slurpfile pci_devices' "${client}" >/dev/null || fail 'large inventory file input'
 grep -F 'report="$(jq -cn' "${client}" >/dev/null || fail 'compact report serialization'

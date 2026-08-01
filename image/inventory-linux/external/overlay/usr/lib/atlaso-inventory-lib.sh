@@ -123,6 +123,13 @@ collect_pci_devices() {
   rm -f "${output}"
 }
 
+device_path_is_usb_backed() {
+  case "${1:-}" in
+    */usb[0-9]*/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 collect_storage_controllers() {
   pci_file="$1"
   output="$(mktemp "${RUNTIME_ROOT}/atlaso-controller.XXXXXX")"
@@ -140,7 +147,10 @@ collect_storage_controllers() {
     [ -d "${path}" ] || continue
     [ "${count}" -lt 64 ] || break
     device_path="$(readlink -f "${path}/device" 2>/dev/null || true)"
-    pci_address="$(printf '%s\n' "${device_path}" | grep -Eo '[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]' | tail -n1 | tr 'A-F' 'a-f')"
+    pci_address=''
+    if ! device_path_is_usb_backed "${device_path}"; then
+      pci_address="$(printf '%s\n' "${device_path}" | grep -Eo '[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]' | tail -n1 | tr 'A-F' 'a-f')"
+    fi
     if [ -n "${pci_address}" ] && jq -e --arg address "${pci_address}" 'select(.pci_address == $address)' "${output}" >/dev/null 2>&1; then
       continue
     fi
@@ -267,7 +277,10 @@ collect_disks() {
     [ "$(read_value "${path}/ro")" = "1" ] && read_only=true
     device_path="$(readlink -f "${path}/device" 2>/dev/null || true)"
     peripheral_type="$(unsigned_value "$(read_value "${path}/device/type")")"
-    controller="$(printf '%s\n' "${device_path}" | grep -Eo '[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]' | tail -n1 | tr 'A-F' 'a-f')"
+    controller=''
+    if ! device_path_is_usb_backed "${device_path}"; then
+      controller="$(printf '%s\n' "${device_path}" | grep -Eo '[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]' | tail -n1 | tr 'A-F' 'a-f')"
+    fi
     type="$(disk_type "${name}" "${transport}" "${rotational}" "${peripheral_type}")"
     flags="$(jq -cn --argjson rotational "${rotational}" --argjson removable "${removable}" \
       --argjson read_only "${read_only}" '[if $rotational then "rotational" else empty end,
@@ -321,8 +334,12 @@ dimm_sysfs_size_bytes() {
       count = split(extended, ext)
       if (count < 4) { print "0"; exit }
       amount = ext[1] + ext[2] * 256 + ext[3] * 65536 + ext[4] * 16777216
-      if (amount >= 2147483648) amount -= 2147483648
-      printf "%.0f\n", amount * 1024 * 1024
+      factor = 1024 * 1024
+      if (amount >= 2147483648) {
+        amount -= 2147483648
+        factor = 1024
+      }
+      printf "%.0f\n", amount * factor
       exit
     }
     if (encoded >= 32768) {
@@ -454,13 +471,38 @@ collect_cpu() {
   architecture="$(bounded_text 64 "$(cpu_field Architecture)")"
   vendor="$(bounded_text 120 "$(cpu_field "Vendor ID")")"
   model="$(bounded_text 240 "$(cpu_field "Model name")")"
-  sockets="$(unsigned_value "$(cpu_field "Socket(s)")")"
-  cores_per_socket="$(unsigned_value "$(cpu_field "Core(s) per socket")")"
-  threads_per_core="$(unsigned_value "$(cpu_field "Thread(s) per core")")"
-  cores=$((sockets * cores_per_socket))
-  threads=$((cores * threads_per_core))
-  [ "${cores}" -gt 0 ] || cores="$(unsigned_value "$(cpu_field "CPU(s)")")"
-  [ "${threads}" -gt 0 ] || threads="$(unsigned_value "$(cpu_field "CPU(s)")")"
+  topology="$(mktemp "${RUNTIME_ROOT}/atlaso-cpu-topology.XXXXXX")"
+  : >"${topology}"
+  for cpu_path in "${SYSFS_ROOT}"/devices/system/cpu/cpu[0-9]*; do
+    [ -d "${cpu_path}" ] || continue
+    cpu_index="${cpu_path##*cpu}"
+    printf '%s' "${cpu_index}" | grep -Eq '^[0-9]+$' || continue
+    if [ -r "${cpu_path}/online" ] && [ "$(read_value "${cpu_path}/online")" = "0" ]; then
+      continue
+    fi
+    package_id="$(read_value "${cpu_path}/topology/physical_package_id")"
+    core_id="$(read_value "${cpu_path}/topology/core_id")"
+    printf '%s' "${package_id}" | grep -Eq '^[0-9]+$' || package_id=0
+    printf '%s' "${core_id}" | grep -Eq '^[0-9]+$' || core_id="${cpu_index}"
+    printf '%s %s\n' "${package_id}" "${core_id}" >>"${topology}"
+  done
+  threads="$(wc -l <"${topology}" | tr -d ' ')"
+  sockets="$(awk '{print $1}' "${topology}" | sort -u | wc -l | tr -d ' ')"
+  cores="$(sort -u "${topology}" | wc -l | tr -d ' ')"
+  cores_per_socket="$(sort -u "${topology}" | awk '
+    { count[$1] += 1 }
+    END { maximum = 0; for (package in count) if (count[package] > maximum) maximum = count[package]; print maximum }
+  ')"
+  threads_per_core="$(awk '
+    { count[$1 " " $2] += 1 }
+    END { maximum = 0; for (core in count) if (count[core] > maximum) maximum = count[core]; print maximum }
+  ' "${topology}")"
+  rm -f "${topology}"
+  sockets="$(unsigned_value "${sockets}")"
+  cores="$(unsigned_value "${cores}")"
+  threads="$(unsigned_value "${threads}")"
+  cores_per_socket="$(unsigned_value "${cores_per_socket}")"
+  threads_per_core="$(unsigned_value "${threads_per_core}")"
   jq -cn --arg architecture "${architecture}" --arg vendor "${vendor}" --arg model "${model}" \
     --argjson sockets "${sockets}" --argjson cores "${cores}" --argjson threads "${threads}" \
     --argjson cores_per_socket "${cores_per_socket}" --argjson threads_per_core "${threads_per_core}" \
@@ -518,14 +560,72 @@ console_window_offset() {
   printf '%s' "${offset}"
 }
 
-console_terminal_rows() {
-  rows=""
-  if [ -c /dev/tty ]; then
-    rows="$(stty size </dev/tty 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
+console_framebuffer_size() {
+  configured_size="${FRAMEBUFFER_SIZE:-}"
+  if [ "${configured_size}" != "0,0" ] && printf '%s' "${configured_size}" | grep -Eq '^[0-9]+,[0-9]+$'; then
+    printf '%s' "${configured_size}"
+    return
   fi
-  rows="$(unsigned_value "${rows:-0}")"
+  framebuffer_root="${FRAMEBUFFER_ROOT:-/sys/class/graphics}"
+  for virtual_size in "${framebuffer_root}"/fb*/virtual_size; do
+    [ -r "${virtual_size}" ] || continue
+    configured_size="$(awk -F, 'NR == 1 {print $1 "," $2}' "${virtual_size}" 2>/dev/null || true)"
+    if printf '%s' "${configured_size}" | grep -Eq '^[0-9]+,[0-9]+$'; then
+      printf '%s' "${configured_size}"
+      return
+    fi
+  done
+  if command -v fbset >/dev/null 2>&1; then
+    configured_size="$(fbset -s 2>/dev/null | awk '$1 == "geometry" {print $2 "," $3; exit}' || true)"
+    if printf '%s' "${configured_size}" | grep -Eq '^[0-9]+,[0-9]+$'; then
+      printf '%s' "${configured_size}"
+      return
+    fi
+  fi
+  printf '0,0'
+}
+
+console_viewport_dimension() {
+  detected_dimension="$(unsigned_value "${1:-0}")"
+  tty_dimension="$(unsigned_value "${2:-0}")"
+  if [ "${tty_dimension}" -gt 0 ] && {
+    [ "${detected_dimension}" -eq 0 ] ||
+      [ "${tty_dimension}" -lt "${detected_dimension}" ]
+  }; then
+    printf '%s' "${tty_dimension}"
+  else
+    printf '%s' "${detected_dimension}"
+  fi
+}
+
+console_terminal_rows() {
+  rows=0
+  framebuffer_size="$(console_framebuffer_size)"
+  height="$(unsigned_value "${framebuffer_size#*,}")"
+  candidate=$((height / 16))
+  if [ "${candidate}" -ge 22 ] && [ "${candidate}" -le 120 ]; then rows="${candidate}"; fi
+  if [ -c /dev/tty ]; then
+    tty_rows="$(stty size 2>/dev/null </dev/tty | awk 'NR == 1 {print $1}' || true)"
+    tty_rows="$(unsigned_value "${tty_rows:-0}")"
+    rows="$(console_viewport_dimension "${rows}" "${tty_rows}")"
+  fi
   [ "${rows}" -ge 22 ] || rows=30
   printf '%s' "${rows}"
+}
+
+console_terminal_columns() {
+  columns=0
+  framebuffer_size="$(console_framebuffer_size)"
+  width="$(unsigned_value "${framebuffer_size%%,*}")"
+  candidate=$((width / 8))
+  if [ "${candidate}" -ge 80 ] && [ "${candidate}" -le 240 ]; then columns="${candidate}"; fi
+  if [ -c /dev/tty ]; then
+    tty_columns="$(stty size 2>/dev/null </dev/tty | awk 'NR == 1 {print $2}' || true)"
+    tty_columns="$(unsigned_value "${tty_columns:-0}")"
+    columns="$(console_viewport_dimension "${columns}" "${tty_columns}")"
+  fi
+  [ "${columns}" -ge 80 ] || columns=80
+  printf '%s' "${columns}"
 }
 
 console_page_size() {
@@ -576,7 +676,7 @@ acknowledge_remote_reboot() {
 }
 
 console_line() {
-  printf '  %-22s %s\n' "$1" "$2"
+  printf '  %-22s %s\n' "$1" "$2" | console_clip_lines "${CONSOLE_CONTENT_WIDTH:-78}"
 }
 
 console_clip_lines() {
@@ -599,10 +699,13 @@ render_inventory_console() {
   network_page_size="$(console_page_size network "${console_rows}")"
   storage_page_size="$(console_page_size storage "${console_rows}")"
   dimm_page_size="$(console_page_size dimm "${console_rows}")"
+  console_columns="$(console_terminal_columns)"
+  CONSOLE_CONTENT_WIDTH=$((console_columns - 2))
+  [ "${CONSOLE_CONTENT_WIDTH}" -gt 0 ] || CONSOLE_CONTENT_WIDTH=78
   console_apply_palette
   printf '\033[?25l\033[47m\033[30m\033[2J\033[H'
   printf '\033[46m\033[30m\033[1m  Atlaso Inventory Linux  \033[22m\033[K\n'
-  printf '\033[47m\033[30m\033[K'
+  printf '\033[47m\033[30m\033[K\n'
   case "${page}" in
     1)
       printf '\033[1m  System / CPU / DIMMs\033[22m\033[K\n'
@@ -622,7 +725,9 @@ render_inventory_console() {
       [ "${dimm_end}" -le "${dimm_total}" ] || dimm_end="${dimm_total}"
       if [ "${dimm_total}" -gt 0 ]; then dimm_first=$((dimm_start + 1)); else dimm_first=0; fi
       printf '  DIMMs %s-%s of %s  [J] More  [K] Back\n' "${dimm_first}" "${dimm_end}" "${dimm_total}"
-      printf '%s' "${report}" | jq -r --argjson start "${dimm_start}" --argjson limit "${dimm_page_size}" '.memory.dimms[$start:($start + $limit)][] | "  \(.locator) | \(.bank) | \(.size_human) | \(.type) | \(.speed_mts) MT/s | \(.manufacturer) \(.part_number) | S/N \(.serial)"' | console_clip_lines 78
+      printf '%s' "${report}" | jq -r --argjson start "${dimm_start}" --argjson limit "${dimm_page_size}" '.memory.dimms[$start:($start + $limit)][] | "  \(.locator) | \(.bank) | \(.size_human) | \(.type) | \(.speed_mts) MT/s | \(.manufacturer) \(.part_number) | S/N \(.serial)"' | console_clip_lines "${CONSOLE_CONTENT_WIDTH}"
+      footer_row=$((18 + dimm_end - dimm_start))
+      [ "${footer_row}" -ge 20 ] || footer_row=20
       ;;
     2)
       printf '\033[1m  Network\033[22m\033[K\n'
@@ -632,7 +737,9 @@ render_inventory_console() {
       [ "${network_end}" -le "${network_total}" ] || network_end="${network_total}"
       if [ "${network_total}" -gt 0 ]; then network_first=$((network_start + 1)); else network_first=0; fi
       printf '  Interfaces %s-%s of %s  [J] More  [K] Back\n' "${network_first}" "${network_end}" "${network_total}"
-      printf '%s' "${report}" | jq -r --argjson start "${network_start}" --argjson limit "${network_page_size}" '.interfaces[$start:($start + $limit)][] | "  " + (if .boot_interface then "* " else "  " end) + .name + "  " + ([.vendor,.device] | map(select(length > 0)) | join(" ")) + "\n      permanent " + .permanent_mac + "  current " + .current_mac + "  " + .link_state + " " + (.speed_mbps|tostring) + " Mb/s\n      " + (.addresses|join(", ")) + "  driver " + .driver + "  PCI " + .pci_address' | console_clip_lines 78
+      printf '%s' "${report}" | jq -r --argjson start "${network_start}" --argjson limit "${network_page_size}" '.interfaces[$start:($start + $limit)][] | "  " + (if .boot_interface then "* " else "  " end) + .name + "  " + ([.vendor,.device] | map(select(length > 0)) | join(" ")) + "\n      permanent " + .permanent_mac + "  current " + .current_mac + "  " + .link_state + " " + (.speed_mbps|tostring) + " Mb/s\n      " + (.addresses|join(", ")) + "  driver " + .driver + "  PCI " + .pci_address' | console_clip_lines "${CONSOLE_CONTENT_WIDTH}"
+      footer_row=$((5 + (network_end - network_start) * 3))
+      [ "${footer_row}" -ge 12 ] || footer_row=12
       ;;
     *)
       printf '\033[1m  Storage\033[22m\033[K\n'
@@ -651,10 +758,15 @@ render_inventory_console() {
         else
           "  [Controller] " + .value.pci_address + "  " + .value.type + "  " +
           ([.value.vendor,.value.device] | map(select(length > 0)) | join(" ")) + "  driver " + .value.driver
-        end' | console_clip_lines 78
+        end' | console_clip_lines "${CONSOLE_CONTENT_WIDTH}"
+      storage_lines="$(printf '%s' "${report}" | jq -r --argjson start "${storage_start}" --argjson limit "${storage_page_size}" '([.disks[] | 2] + [.storage_controllers[] | 1])[$start:($start + $limit)] | add // 0')"
+      footer_row=$((5 + storage_lines))
+      [ "${footer_row}" -ge 12 ] || footer_row=12
       ;;
   esac
-  printf '\033[%s;1H\033[44m\033[37m' "$((console_rows - 1))"
+  [ "${footer_row}" -lt "${console_rows}" ] || footer_row=$((console_rows - 1))
+  CONSOLE_FOOTER_ROW="${footer_row}"
+  printf '\033[%s;1H\033[44m\033[37m' "${CONSOLE_FOOTER_ROW}"
   render_inventory_console_footer_lines "${page}" "${remaining}" "${paused}" "${host_id}"
 }
 
@@ -663,15 +775,19 @@ render_inventory_console_footer_lines() {
   remaining="$2"
   paused="$3"
   host_id="$4"
+  console_columns="$(console_terminal_columns)"
   if [ "${paused}" = "true" ]; then countdown="Paused at ${remaining}s"; else countdown="Reboot in ${remaining}s"; fi
-  printf '  Host %s  |  Page %s/3  |  %s\033[K\n' "${host_id}" "${page}" "${countdown}"
-  printf '  [N/P] Page  [1-3] Select  [J/K] List  [S] Pause/resume  [R] Reboot now\033[K\n'
+  printf '%*s\r  Host %s  |  Page %s/3  |  %s\n' "${console_columns}" '' "${host_id}" "${page}" "${countdown}"
+  printf '%*s\r  [N/P] Page  [1-3] Select  [J/K] List  [S] Pause/resume  [R] Reboot now\n' "${console_columns}" ''
   printf '\033[47m\033[30m\033[?25l'
 }
 
 refresh_inventory_console_footer() {
   console_rows="$(unsigned_value "${5:-0}")"
   [ "${console_rows}" -ge 22 ] || console_rows="$(console_terminal_rows)"
-  printf '\033[%s;1H\033[44m\033[37m' "$((console_rows - 1))"
+  footer_row="$(unsigned_value "${CONSOLE_FOOTER_ROW:-0}")"
+  [ "${footer_row}" -ge 2 ] || footer_row=$((console_rows - 1))
+  [ "${footer_row}" -lt "${console_rows}" ] || footer_row=$((console_rows - 1))
+  printf '\033[%s;1H\033[44m\033[37m' "${footer_row}"
   render_inventory_console_footer_lines "$1" "$2" "$3" "$4"
 }
