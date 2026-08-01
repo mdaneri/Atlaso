@@ -431,6 +431,22 @@ def test_network_boot_mutation_endpoints_persist_jobs_commands_profiles_and_audi
     assert acknowledged.status_code == 200
     assert acknowledged.json()["status"] == "acknowledged"
 
+    overlong_promotion = client.post(
+        f"/api/v1/network-boot/hosts/{host_id}/promote",
+        headers=api_headers,
+        json={
+            "hostname": "h" * 121,
+            "mac_address": "52:54:00:12:34:56",
+            "ip_address": "192.0.2.10",
+            "kickstart_id": None,
+            "installer_iso_path": "",
+            "variables": {},
+            "enabled": False,
+        },
+    )
+    assert overlong_promotion.status_code == 422
+    assert "Promotion hostname is invalid" in overlong_promotion.json()["detail"]
+
     promotion = client.post(
         f"/api/v1/network-boot/hosts/{host_id}/promote",
         headers=api_headers,

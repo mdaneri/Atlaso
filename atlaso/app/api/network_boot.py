@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse
+from pydantic import ValidationError
 from sqlalchemy import delete, desc, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -32,6 +33,7 @@ from atlaso.app.models import (
     utcnow,
 )
 from atlaso.app.security import Identity, require_api_or_session_scope
+from atlaso.app.schemas import EsxiPxeHostCreate
 from atlaso.app.services.esxi_pxe import (
     esxi_pxe_boot_settings,
     host_variables_json,
@@ -883,7 +885,18 @@ def promote_discovered_host(
             status_code=422,
             detail=f"Promotion requires explicit review of {missing[0]}.",
         )
-    mac_address = str(payload.get("mac_address") or "").strip().lower().replace("-", ":")
+    if not isinstance(payload.get("enabled"), bool):
+        raise HTTPException(status_code=422, detail="Promotion enabled state must be a boolean.")
+    try:
+        promotion = EsxiPxeHostCreate.model_validate(payload)
+    except ValidationError as exc:
+        error = exc.errors(include_url=False)[0]
+        field = ".".join(str(part) for part in error.get("loc", ())) or "request"
+        raise HTTPException(
+            status_code=422,
+            detail=f"Promotion {field} is invalid: {error['msg']}.",
+        ) from exc
+    mac_address = promotion.mac_address.strip().lower().replace("-", ":")
     if mac_address not in set(json.loads(discovered.macs_json or "[]")):
         raise HTTPException(
             status_code=422,
@@ -895,26 +908,23 @@ def promote_discovered_host(
         select(EsxiPxeHost).where(EsxiPxeHost.mac_address == mac_address)
     ).scalar_one_or_none():
         raise HTTPException(status_code=409, detail="An ESXi profile already uses this MAC.")
-    hostname = str(payload.get("hostname") or "").strip()
+    hostname = promotion.hostname.strip()
     if any(
         row.hostname.lower() == hostname.lower()
         for row in db.execute(select(EsxiPxeHost)).scalars().all()
     ):
         raise HTTPException(status_code=409, detail="An ESXi profile already uses this hostname.")
-    if not isinstance(payload.get("enabled"), bool):
-        raise HTTPException(status_code=422, detail="Promotion enabled state must be a boolean.")
-    kickstart_id = payload.get("kickstart_id")
     try:
         host = EsxiPxeHost(
             hostname=hostname,
             mac_address=mac_address,
-            ip_address=str(payload.get("ip_address") or "").strip(),
-            kickstart_id=int(kickstart_id) if kickstart_id not in (None, "") else None,
+            ip_address=promotion.ip_address.strip(),
+            kickstart_id=promotion.kickstart_id,
             installer_iso_path=normalize_installer_iso_path(
-                str(payload.get("installer_iso_path") or "")
+                promotion.installer_iso_path
             ),
-            variables_json=host_variables_json(payload.get("variables")),
-            enabled=payload["enabled"],
+            variables_json=host_variables_json(promotion.variables),
+            enabled=promotion.enabled,
         )
         if not host.hostname:
             raise ValueError("Promotion hostname is required.")

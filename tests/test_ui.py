@@ -4239,7 +4239,8 @@ def test_network_boot_host_management_report_and_print_contract(client):
     )[0]
     assert ".innerHTML" not in renderer
     assert "textContent" in renderer
-    assert 'legacyReport ? "Not reported"' in renderer
+    assert renderer.count('legacyReport ? "Not reported"') >= 4
+    assert '<input name="hostname" required maxlength="120">' in page.text
     for section in (
         "Report and boot identity",
         "System",
