@@ -183,7 +183,7 @@ while :; do
     refresh_inventory_console_footer "${page}" "${remaining}" "${paused}" "${host_id}" "${console_rows}"
   fi
   key=""
-  if read -r -n 1 -t 1 key; then
+  if read -r -s -n 1 -t 1 key; then
     key_now="$(date +%s)"
     key_elapsed=$((key_now - last_tick))
     [ "${key_elapsed}" -ge 0 ] || key_elapsed=0

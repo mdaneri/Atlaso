@@ -234,6 +234,11 @@ assert_jq "${cpu}" '.sockets == 2 and .cores == 16 and .threads == 32 and .cores
 [ "$(console_page_size network 30)" = "8" ] || fail '30-row network capacity'
 [ "$(console_page_size storage 30)" = "12" ] || fail '30-row storage capacity'
 [ "$(console_page_size network 22)" = "5" ] || fail 'compact network capacity'
+framebuffer_root="${fixture_root}/graphics"
+mkdir -p "${framebuffer_root}/fb0"
+printf '1024,768\n' >"${framebuffer_root}/fb0/virtual_size"
+[ "$(FRAMEBUFFER_ROOT="${framebuffer_root}" console_terminal_rows)" = "48" ] || fail 'framebuffer row capacity'
+[ "$(FRAMEBUFFER_ROOT="${framebuffer_root}" console_terminal_columns)" = "128" ] || fail 'framebuffer column capacity'
 [ "$(countdown_after_elapsed 300 false 30)" = "270" ] || fail 'countdown advances from five minutes'
 [ "$(countdown_after_elapsed 90 true 30)" = "90" ] || fail 'countdown pauses'
 [ "$(countdown_after_elapsed 90 false 90)" = "0" ] || fail 'countdown reaches automatic reboot boundary'
@@ -262,6 +267,7 @@ report="$(jq -cn --argjson interfaces "${interfaces}" --argjson disks "${disks}"
   '{system:{manufacturer:"Atlaso",product_name:"Fixture",product_version:"1",serial_number:"S",dmi_uuid:"U",bios_vendor:"B",bios_version:"1",bios_date:"D",baseboard:{manufacturer:"BM",product:"BP",serial:"BS"},chassis:{manufacturer:"CM",type:"Rack",serial:"CS"}},cpu:$cpu,memory:{total_human:"32.0 GiB",dimms:$dimms},interfaces:$interfaces,disks:$disks,storage_controllers:$controllers}')"
 console="$(render_inventory_console "${report}" 2 90 false 7)"
 printf '%s' "${console}" | grep -F 'Atlaso Inventory Linux' >/dev/null || fail 'console header'
+printf '%s' "${console}" | grep -F "$(printf 'Atlaso Inventory Linux  \033[22m\033[K\n\033[47m\033[30m\033[K\n')" >/dev/null || fail 'blank line below console header'
 printf '%s' "${console}" | grep -F 'Network' >/dev/null || fail 'network page'
 printf '%s' "${console}" | grep -F 'Interfaces 1-3 of 3' >/dev/null || fail 'network list window'
 printf '%s' "${console}" | grep -F 'Page 2/3' >/dev/null || fail 'console paging footer'
@@ -275,6 +281,8 @@ printf '%s' "${console}" | grep -F "$(printf '\033[29;1H')" >/dev/null || fail '
 if printf '%s' "${console}" | grep -F "$(printf '\033[0m')" >/dev/null; then fail 'content resets to black terminal background'; fi
 footer="$(refresh_inventory_console_footer 2 89 true 7)"
 printf '%s' "${footer}" | grep -F 'Paused at 89s' >/dev/null || fail 'in-place countdown footer refresh'
+wide_footer="$(FRAMEBUFFER_ROOT="${framebuffer_root}" refresh_inventory_console_footer 2 89 true 7 48)"
+printf '%s' "${wide_footer}" | grep -F "$(printf '\033[47;1H')" >/dev/null || fail 'framebuffer footer uses physical bottom row'
 many_report="$(printf '%s' "${report}" | jq '.interfaces = [range(0;8) as $index | (.interfaces[0] | .name = ("nic" + ($index|tostring)))]')"
 network_full="$(render_inventory_console "${many_report}" 2 90 false 7)"
 printf '%s' "${network_full}" | grep -F 'Interfaces 1-8 of 8' >/dev/null || fail '30-row network capacity reduces paging'

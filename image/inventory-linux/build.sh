@@ -5,12 +5,24 @@ buildroot_version="2026.05.1"
 package_version="2026.05.1+8"
 buildroot_sha256="ae7f706f087b9ae9083a10a587368dfbf53103c28bf81c2d690198dc4090cb58"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "${script_dir}/../.." && pwd)"
 source_root="${ATLASO_INVENTORY_BUILD_ROOT:-${script_dir}/.build}"
 download_dir="${source_root}/downloads"
 build_dir="${source_root}/buildroot-${buildroot_version}"
 output_dir="${script_dir}/output"
 archive="${download_dir}/buildroot-${buildroot_version}.tar.xz"
-source_date_epoch="$(git -C "${script_dir}" log -1 --format=%ct -- . 2>/dev/null || printf '0')"
+git_dir="${repo_root}/.git"
+if [[ -f "${git_dir}" ]]; then
+  git_dir="$(sed -n 's/^gitdir: //p' "${git_dir}")"
+  if [[ "${git_dir}" =~ ^([A-Za-z]):[/\\](.*)$ ]]; then
+    git_drive="$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:upper:]' '[:lower:]')"
+    git_tail="${BASH_REMATCH[2]//\\//}"
+    git_dir="/mnt/${git_drive}/${git_tail}"
+  elif [[ "${git_dir}" != /* ]]; then
+    git_dir="${repo_root}/${git_dir}"
+  fi
+fi
+source_date_epoch="$(git --git-dir="${git_dir}" --work-tree="${repo_root}" log -1 --format=%ct -- image/inventory-linux 2>/dev/null || printf '0')"
 export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-${source_date_epoch}}"
 
 mkdir -p "${download_dir}" "${output_dir}"

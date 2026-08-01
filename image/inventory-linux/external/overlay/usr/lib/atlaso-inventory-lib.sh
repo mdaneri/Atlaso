@@ -519,13 +519,45 @@ console_window_offset() {
 }
 
 console_terminal_rows() {
-  rows=""
+  rows=0
+  framebuffer_root="${FRAMEBUFFER_ROOT:-/sys/class/graphics}"
+  for virtual_size in "${framebuffer_root}"/fb*/virtual_size; do
+    [ -r "${virtual_size}" ] || continue
+    height="$(awk -F, 'NR == 1 {print $2}' "${virtual_size}" 2>/dev/null || true)"
+    height="$(unsigned_value "${height:-0}")"
+    candidate=$((height / 16))
+    if [ "${candidate}" -ge 22 ] && [ "${candidate}" -le 120 ] && [ "${candidate}" -gt "${rows}" ]; then
+      rows="${candidate}"
+    fi
+  done
   if [ -c /dev/tty ]; then
-    rows="$(stty size </dev/tty 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
+    tty_rows="$(stty size </dev/tty 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
+    tty_rows="$(unsigned_value "${tty_rows:-0}")"
+    [ "${tty_rows}" -le "${rows}" ] || rows="${tty_rows}"
   fi
-  rows="$(unsigned_value "${rows:-0}")"
   [ "${rows}" -ge 22 ] || rows=30
   printf '%s' "${rows}"
+}
+
+console_terminal_columns() {
+  columns=0
+  framebuffer_root="${FRAMEBUFFER_ROOT:-/sys/class/graphics}"
+  for virtual_size in "${framebuffer_root}"/fb*/virtual_size; do
+    [ -r "${virtual_size}" ] || continue
+    width="$(awk -F, 'NR == 1 {print $1}' "${virtual_size}" 2>/dev/null || true)"
+    width="$(unsigned_value "${width:-0}")"
+    candidate=$((width / 8))
+    if [ "${candidate}" -ge 80 ] && [ "${candidate}" -le 240 ] && [ "${candidate}" -gt "${columns}" ]; then
+      columns="${candidate}"
+    fi
+  done
+  if [ -c /dev/tty ]; then
+    tty_columns="$(stty size </dev/tty 2>/dev/null | awk 'NR == 1 {print $2}' || true)"
+    tty_columns="$(unsigned_value "${tty_columns:-0}")"
+    [ "${tty_columns}" -le "${columns}" ] || columns="${tty_columns}"
+  fi
+  [ "${columns}" -ge 80 ] || columns=80
+  printf '%s' "${columns}"
 }
 
 console_page_size() {
@@ -602,7 +634,7 @@ render_inventory_console() {
   console_apply_palette
   printf '\033[?25l\033[47m\033[30m\033[2J\033[H'
   printf '\033[46m\033[30m\033[1m  Atlaso Inventory Linux  \033[22m\033[K\n'
-  printf '\033[47m\033[30m\033[K'
+  printf '\033[47m\033[30m\033[K\n'
   case "${page}" in
     1)
       printf '\033[1m  System / CPU / DIMMs\033[22m\033[K\n'
@@ -663,9 +695,10 @@ render_inventory_console_footer_lines() {
   remaining="$2"
   paused="$3"
   host_id="$4"
+  console_columns="$(console_terminal_columns)"
   if [ "${paused}" = "true" ]; then countdown="Paused at ${remaining}s"; else countdown="Reboot in ${remaining}s"; fi
-  printf '  Host %s  |  Page %s/3  |  %s\033[K\n' "${host_id}" "${page}" "${countdown}"
-  printf '  [N/P] Page  [1-3] Select  [J/K] List  [S] Pause/resume  [R] Reboot now\033[K\n'
+  printf '%*s\r  Host %s  |  Page %s/3  |  %s\n' "${console_columns}" '' "${host_id}" "${page}" "${countdown}"
+  printf '%*s\r  [N/P] Page  [1-3] Select  [J/K] List  [S] Pause/resume  [R] Reboot now\n' "${console_columns}" ''
   printf '\033[47m\033[30m\033[?25l'
 }
 

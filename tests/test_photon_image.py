@@ -138,6 +138,8 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     build = Path("image/inventory-linux/build.sh").read_text(encoding="utf-8")
     assert 'buildroot_version="2026.05.1"' in build
     assert 'package_version="2026.05.1+8"' in build
+    assert 'git --git-dir="${git_dir}" --work-tree="${repo_root}"' in build
+    assert 'git_dir="/mnt/${git_drive}/${git_tail}"' in build
     assert '"version": "${package_version}"' in build
     assert (
         '"arguments": "rdinit=/sbin/init console=tty0 quiet loglevel=3 logo.nologo '
@@ -182,8 +184,10 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     assert '"${SYSFS_ROOT}"/firmware/dmi/entries/17-*' in inventory_library
     assert 'tolower($1) == tolower(expected)' in inventory_library
     assert "remaining=300" in inventory_client
+    assert "read -r -s -n 1 -t 1 key" in inventory_client
     assert "render_inventory_console" in inventory_client
     assert "refresh_inventory_console_footer" in inventory_client
+    assert "FRAMEBUFFER_ROOT" in inventory_library
     assert "| gsub(" not in inventory_library
     assert "\\033]P6dbeafe" in inventory_library
     assert "\\033]P7eef2f7" in inventory_library

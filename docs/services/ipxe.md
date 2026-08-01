@@ -67,12 +67,16 @@ Inventory startup suppresses kernel branding and displays the Atlaso appliance
 boot artwork without Photon OS attribution. The local full-screen console uses
 the appliance console's pale-blue header, light content, and bottom-anchored
 blue action footer across **System / CPU / DIMMs**, **Network**, and **Storage**
-pages. Use `N`/`P` or `1`-`3` to page. Only after successful report submission,
-a five-minute reboot countdown begins. Use `J`/`K` to move through bounded list
+pages, with a blank light row below the header. Use `N`/`P` or `1`-`3` to page.
+Only after successful report submission, a five-minute reboot countdown begins.
+Use `J`/`K` to move through bounded list
 windows when a hardware list is larger than the console viewport. Capacity is
-derived from the actual terminal height; a normal 80x30 console shows up to 12
-DIMMs, eight adapters, or 12 disks/controllers before list paging is needed.
-All rows clip to the console width. Optical block
+derived from framebuffer geometry when available and otherwise from the TTY;
+higher-resolution consoles therefore use their additional rows, while a normal
+80x30 fallback shows up to 12 DIMMs, eight adapters, or 12 disks/controllers
+before list paging is needed. The action footer spans the framebuffer, and
+silent keyboard reads keep navigation input out of the content area. All rows
+clip to the console width. Optical block
 devices are identified from the authoritative sysfs peripheral type.
 PCI identity is attached only to directly PCI-backed devices; controller sysfs
 also retains non-PCI SCSI hosts such as Hyper-V StorVSC. Large inventories are

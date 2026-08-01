@@ -133,13 +133,17 @@ Inventory startup suppresses kernel branding and uses an Inventory-specific
 Atlaso splash derived from the appliance boot artwork without Photon OS
 attribution. After a report is accepted, the local console opens full-screen
 System/CPU/DIMMs, Network, and Storage pages using the same pale-blue header,
-light content, and blue footer palette as the appliance console. Use `N`/`P` or
-`1`-`3` to move between pages. List capacity is calculated from the actual
-terminal height, so a normal 80x30 console shows up to 12 DIMMs, eight adapters,
-or 12 disks/controllers before `J`/`K` paging is needed. Smaller supported
-terminals retain bounded windows, and all rows clip to the console width. The
-footer stays anchored to the bottom two rows; countdown updates repaint only
-that footer so the hardware pages remain stable without full-screen flicker.
+light content, and blue footer palette as the appliance console. A blank light
+row separates the header from each page. Use `N`/`P` or
+`1`-`3` to move between pages. List capacity is calculated from the framebuffer
+geometry when available, with the TTY size as a fallback, so higher-resolution
+consoles use their additional rows and need fewer `J`/`K` list pages. A normal
+80x30 fallback shows up to 12 DIMMs, eight adapters, or 12 disks/controllers.
+Smaller supported terminals retain bounded windows, and all rows clip to the
+console width. The footer spans the framebuffer and stays anchored to its
+bottom two rows; countdown updates repaint only that footer, and silent key
+reads keep navigation from appearing below it, so the hardware pages remain
+stable without full-screen flicker.
 The five-minute reboot countdown starts only after successful submission;
 navigation time still advances the countdown, `S` pauses or resumes the
 remaining time, and `R` reboots immediately. An acknowledged audited remote
