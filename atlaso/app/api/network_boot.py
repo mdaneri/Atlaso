@@ -887,8 +887,11 @@ def promote_discovered_host(
         )
     if not isinstance(payload.get("enabled"), bool):
         raise HTTPException(status_code=422, detail="Promotion enabled state must be a boolean.")
+    promotion_payload = dict(payload)
+    if promotion_payload.get("kickstart_id") == "":
+        promotion_payload["kickstart_id"] = None
     try:
-        promotion = EsxiPxeHostCreate.model_validate(payload)
+        promotion = EsxiPxeHostCreate.model_validate(promotion_payload)
     except ValidationError as exc:
         error = exc.errors(include_url=False)[0]
         field = ".".join(str(part) for part in error.get("loc", ())) or "request"

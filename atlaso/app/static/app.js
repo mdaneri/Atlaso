@@ -19005,7 +19005,7 @@ function initializeNetworkBootPage() {
           hostname: promoteForm.elements.hostname.value,
           mac_address: promoteForm.elements.mac_address.value,
           ip_address: promoteForm.elements.ip_address.value,
-          kickstart_id: promoteForm.elements.kickstart_id.value,
+          kickstart_id: promoteForm.elements.kickstart_id.value || null,
           installer_iso_path: promoteForm.elements.installer_iso_path.value,
           variables,
           enabled: promoteForm.elements.enabled.checked,

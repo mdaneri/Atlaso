@@ -438,7 +438,7 @@ def test_network_boot_mutation_endpoints_persist_jobs_commands_profiles_and_audi
             "hostname": "h" * 121,
             "mac_address": "52:54:00:12:34:56",
             "ip_address": "192.0.2.10",
-            "kickstart_id": None,
+            "kickstart_id": "",
             "installer_iso_path": "",
             "variables": {},
             "enabled": False,
@@ -454,7 +454,7 @@ def test_network_boot_mutation_endpoints_persist_jobs_commands_profiles_and_audi
             "hostname": "esxi-inventory-01",
             "mac_address": "52:54:00:12:34:56",
             "ip_address": "192.0.2.10",
-            "kickstart_id": None,
+            "kickstart_id": "",
             "installer_iso_path": "",
             "variables": {},
             "enabled": False,
@@ -467,7 +467,9 @@ def test_network_boot_mutation_endpoints_persist_jobs_commands_profiles_and_audi
     with SessionLocal() as db:
         assert db.get(Job, sync.json()["job_id"]) is not None
         assert db.get(NetworkBootInventoryCommand, command_id) is not None
-        assert db.get(EsxiPxeHost, promotion.json()["id"]) is not None
+        promoted_host = db.get(EsxiPxeHost, promotion.json()["id"])
+        assert promoted_host is not None
+        assert promoted_host.kickstart_id is None
         actions = set(
             db.execute(
                 select(AuditEvent.action).where(
