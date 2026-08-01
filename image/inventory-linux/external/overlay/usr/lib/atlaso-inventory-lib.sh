@@ -123,6 +123,13 @@ collect_pci_devices() {
   rm -f "${output}"
 }
 
+device_path_is_usb_backed() {
+  case "${1:-}" in
+    */usb[0-9]*/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 collect_storage_controllers() {
   pci_file="$1"
   output="$(mktemp "${RUNTIME_ROOT}/atlaso-controller.XXXXXX")"
@@ -140,12 +147,10 @@ collect_storage_controllers() {
     [ -d "${path}" ] || continue
     [ "${count}" -lt 64 ] || break
     device_path="$(readlink -f "${path}/device" 2>/dev/null || true)"
-    case "${device_path}" in
-      */usb[0-9]*/*) pci_address='' ;;
-      *)
-        pci_address="$(printf '%s\n' "${device_path}" | grep -Eo '[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]' | tail -n1 | tr 'A-F' 'a-f')"
-        ;;
-    esac
+    pci_address=''
+    if ! device_path_is_usb_backed "${device_path}"; then
+      pci_address="$(printf '%s\n' "${device_path}" | grep -Eo '[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]' | tail -n1 | tr 'A-F' 'a-f')"
+    fi
     if [ -n "${pci_address}" ] && jq -e --arg address "${pci_address}" 'select(.pci_address == $address)' "${output}" >/dev/null 2>&1; then
       continue
     fi
@@ -272,7 +277,10 @@ collect_disks() {
     [ "$(read_value "${path}/ro")" = "1" ] && read_only=true
     device_path="$(readlink -f "${path}/device" 2>/dev/null || true)"
     peripheral_type="$(unsigned_value "$(read_value "${path}/device/type")")"
-    controller="$(printf '%s\n' "${device_path}" | grep -Eo '[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]' | tail -n1 | tr 'A-F' 'a-f')"
+    controller=''
+    if ! device_path_is_usb_backed "${device_path}"; then
+      controller="$(printf '%s\n' "${device_path}" | grep -Eo '[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]' | tail -n1 | tr 'A-F' 'a-f')"
+    fi
     type="$(disk_type "${name}" "${transport}" "${rotational}" "${peripheral_type}")"
     flags="$(jq -cn --argjson rotational "${rotational}" --argjson removable "${removable}" \
       --argjson read_only "${read_only}" '[if $rotational then "rotational" else empty end,
