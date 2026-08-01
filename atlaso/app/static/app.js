@@ -9045,7 +9045,7 @@ function initializeEsxiCustomVariablesTable() {
       title: "Custom variable name",
       field: "name",
       formatter: (cell) => cell.getRow().getData().is_new
-        ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add custom variable</button>'
+        ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add custom variable here</button>'
         : `<code>custom.${escapeHtml(cell.getValue())}</code>`,
       minWidth: 220,
     },
@@ -9127,6 +9127,7 @@ function initializeEsxiCustomVariablesTable() {
       height: "calc(100vh - 250px)",
       placeholder: "No custom Kickstart variables configured.",
       columns,
+      rowFormatter: (row) => markNewRecordRow(row, "name"),
     },
   });
 }
@@ -18355,7 +18356,6 @@ function initializeNetworkBootWorkspace() {
   kickstartsSection.classList.remove("panel", "wide-panel");
   kickstartsSection.classList.add("network-boot-inner-section");
   networkSlot.append(networkSection);
-  networkSlot.append(tasksPanel);
   kickstartsSlot.append(kickstartsSection);
   staticRail.append(bootService);
   Array.from(legacyRail?.children || []).forEach((panel) => staticRail.append(panel));

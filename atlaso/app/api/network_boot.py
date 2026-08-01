@@ -32,7 +32,6 @@ from atlaso.app.models import (
     NetworkBootMedia,
     utcnow,
 )
-from atlaso.app.operational_logging import log_audit_event
 from atlaso.app.security import Identity, require_api_or_session_scope
 from atlaso.app.schemas import EsxiPxeHostCreate
 from atlaso.app.services.esxi_pxe import (
@@ -678,7 +677,6 @@ def _wake_host(
         db.add(audit_event)
         db.commit()
         db.refresh(audit_event)
-        log_audit_event(audit_event)
         return JSONResponse(
             status_code=status.HTTP_207_MULTI_STATUS,
             content={
@@ -697,7 +695,6 @@ def _wake_host(
         db.add(audit_event)
         db.commit()
         db.refresh(audit_event)
-        log_audit_event(audit_event)
         status_code = 409 if isinstance(exc, ValueError) else 503
         raise HTTPException(status_code=status_code, detail=str(exc)) from exc
     audit_event.success = True
@@ -705,7 +702,6 @@ def _wake_host(
     db.add(audit_event)
     db.commit()
     db.refresh(audit_event)
-    log_audit_event(audit_event)
     return {
         "status": "packet_sent",
         "mac_address": display_mac,

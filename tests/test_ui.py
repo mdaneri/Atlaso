@@ -958,7 +958,7 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     assert "row.getData().key === \"inventory\"" not in network_boot
     network_boot_workspace = function_block("initializeNetworkBootWorkspace")
     assert "networkSlot.append(networkSection)" in network_boot_workspace
-    assert "networkSlot.append(tasksPanel)" in network_boot_workspace
+    assert "networkSlot.append(tasksPanel)" not in network_boot_workspace
     assert "kickstartsSlot.append(kickstartsSection)" in network_boot_workspace
     assert "staticRail.append(bootService)" in network_boot_workspace
 
@@ -1022,7 +1022,8 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     assert "includeNewRow: false" not in custom_variables_block
     assert "addLauncherSelector:" not in custom_variables_block
     assert "data-atlaso-wizard-add" in custom_variables_block
-    assert "+ Add custom variable" in custom_variables_block
+    assert "+ Add custom variable here" in custom_variables_block
+    assert 'rowFormatter: (row) => markNewRecordRow(row, "name")' in custom_variables_block
     assert 'editLabel: "Edit"' in custom_variables_block
     assert 'deleteLabel: "Remove"' in custom_variables_block
     assert 'confirmLabel: "Remove custom variable"' in custom_variables_block
@@ -3639,6 +3640,12 @@ def test_esxi_pxe_ui_create_apply_and_job_redaction(client):
     assert 'data-task-grid-height="100%"' in page.text
     assert "Downloads and uploads only" in page.text
     assert "Media ready" in page.text
+    assert 'data-tab-target="network-boot-settings-panel"' not in page.text
+    assert 'id="network-boot-settings-panel"' not in page.text
+    boot_environments_panel = page.text.index('id="network-boot-environments-panel"')
+    boot_media_tasks = page.text.index('data-network-boot-tasks-panel')
+    network_boot_dialog = page.text.index('id="network-boot-host-dialog"')
+    assert boot_environments_panel < boot_media_tasks < network_boot_dialog
     assert "Delete newest inactive media" in Path("atlaso/app/static/app.js").read_text()
     app_css = Path("atlaso/app/static/app.css").read_text()
     kickstart_description_css = app_css.split(".kickstart-description-field {", 1)[1].split("}", 1)[0]

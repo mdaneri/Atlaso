@@ -25,7 +25,6 @@
   <div class="tab-buttons tool-tabs" role="tablist" aria-label="Network Boot views" data-tab-storage-key="atlaso:network-boot:active-tab">
     <button class="tab-button active" type="button" role="tab" data-tab-target="network-boot-discovered-panel" aria-controls="network-boot-discovered-panel" aria-selected="true">Discovered Hosts</button>
     <button class="tab-button" type="button" role="tab" data-tab-target="network-boot-environments-panel" aria-controls="network-boot-environments-panel" aria-selected="false">Boot Environments</button>
-    <button class="tab-button" type="button" role="tab" data-tab-target="network-boot-settings-panel" aria-controls="network-boot-settings-panel" aria-selected="false">Settings</button>
   </div>
   <div class="tab-panels">
     <div id="network-boot-discovered-panel" class="tab-panel active network-boot-discovered-panel" role="tabpanel">
@@ -59,37 +58,23 @@
         </tbody>
       </table>
       <p class="muted">Right-click a row for Enable/Disable, Download, Upload, and inactive-media cleanup actions. Media ready confirms that at least one verified version is installed; Active version changes only after enablement and global appliance apply. The Source column names and links to the authoritative release page used to resolve the latest stable download; uploads accept the matching upstream asset. Both paths verify the authoritative digest or signature before creating an immutable cache entry.</p>
-    </div>
-    <div id="network-boot-settings-panel" class="tab-panel" role="tabpanel" hidden>
-      <div class="settings-list compact-settings-list">
-        <div><span>PXE/TFTP bootstrap</span><strong>{{ "Enabled" if esxi_pxe_boot.enabled else "Disabled" }}</strong></div>
-        <div><span>Interface binding</span><strong>{{ esxi_pxe_bind_label }}</strong></div>
-        <div><span>HTTP menu</span><strong><code>/pxe/boot.ipxe</code></strong></div>
-        <div><span>Inventory default</span><strong>10 seconds for unknown hosts</strong></div>
-        <div><span>Apply unit</span><strong><code>esxi_pxe</code> (compatibility retained)</strong></div>
+      <div class="network-boot-task-history-container" data-network-boot-tasks-panel>
+        {% set task_grid_class = "network-boot-task-history task-grid-section" %}
+        {% set task_grid_title = "Boot media tasks" %}
+        {% set task_grid_description = "The same task grid used by Tasks, scoped to Network Boot media downloads and uploads." %}
+        {% set task_grid_rows = network_boot_media_tasks %}
+        {% set task_grid_component_options = task_component_filter_options %}
+        {% set task_grid_type = "pxe-media-sync" %}
+        {% set task_grid_lock_component_filter = true %}
+        {% set task_grid_height = "100%" %}
+        {% set task_grid_scope_label = "Downloads and uploads only" %}
+        {% set task_grid_history_url = "/tasks" %}
+        {% set task_grid_empty_message = "No Network Boot media tasks have been recorded yet." %}
+        {% include "partials/task_grid.html" %}
       </div>
-      {% if esxi_pxe_validation_errors %}
-        <div class="alert error"><strong>Validation blocks apply.</strong><p>{{ esxi_pxe_validation_errors | join(" ") }}</p></div>
-      {% elif esxi_pxe_validation_warnings %}
-        <div class="alert warn"><strong>Review pending state.</strong><p>{{ esxi_pxe_validation_warnings | join(" ") }}</p></div>
-      {% endif %}
     </div>
   </div>
 </section>
-<div class="network-boot-task-history-container" data-network-boot-tasks-panel>
-  {% set task_grid_class = "network-boot-task-history task-grid-section" %}
-  {% set task_grid_title = "Boot media tasks" %}
-  {% set task_grid_description = "The same task grid used by Tasks, scoped to Network Boot media downloads and uploads." %}
-  {% set task_grid_rows = network_boot_media_tasks %}
-  {% set task_grid_component_options = task_component_filter_options %}
-  {% set task_grid_type = "pxe-media-sync" %}
-  {% set task_grid_lock_component_filter = true %}
-  {% set task_grid_height = "100%" %}
-  {% set task_grid_scope_label = "Downloads and uploads only" %}
-  {% set task_grid_history_url = "/tasks" %}
-  {% set task_grid_empty_message = "No Network Boot media tasks have been recorded yet." %}
-  {% include "partials/task_grid.html" %}
-</div>
 {% include "partials/task_modals.html" %}
 <dialog id="network-boot-host-dialog" class="confirm-modal wide-modal task-modal" aria-labelledby="network-boot-host-title">
   <div class="confirm-modal-panel form-stack network-boot-report-dialog-panel">
