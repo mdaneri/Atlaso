@@ -696,6 +696,8 @@ render_inventory_console() {
       if [ "${dimm_total}" -gt 0 ]; then dimm_first=$((dimm_start + 1)); else dimm_first=0; fi
       printf '  DIMMs %s-%s of %s  [J] More  [K] Back\n' "${dimm_first}" "${dimm_end}" "${dimm_total}"
       printf '%s' "${report}" | jq -r --argjson start "${dimm_start}" --argjson limit "${dimm_page_size}" '.memory.dimms[$start:($start + $limit)][] | "  \(.locator) | \(.bank) | \(.size_human) | \(.type) | \(.speed_mts) MT/s | \(.manufacturer) \(.part_number) | S/N \(.serial)"' | console_clip_lines "${CONSOLE_CONTENT_WIDTH}"
+      footer_row=$((18 + dimm_end - dimm_start))
+      [ "${footer_row}" -ge 20 ] || footer_row=20
       ;;
     2)
       printf '\033[1m  Network\033[22m\033[K\n'
@@ -706,6 +708,8 @@ render_inventory_console() {
       if [ "${network_total}" -gt 0 ]; then network_first=$((network_start + 1)); else network_first=0; fi
       printf '  Interfaces %s-%s of %s  [J] More  [K] Back\n' "${network_first}" "${network_end}" "${network_total}"
       printf '%s' "${report}" | jq -r --argjson start "${network_start}" --argjson limit "${network_page_size}" '.interfaces[$start:($start + $limit)][] | "  " + (if .boot_interface then "* " else "  " end) + .name + "  " + ([.vendor,.device] | map(select(length > 0)) | join(" ")) + "\n      permanent " + .permanent_mac + "  current " + .current_mac + "  " + .link_state + " " + (.speed_mbps|tostring) + " Mb/s\n      " + (.addresses|join(", ")) + "  driver " + .driver + "  PCI " + .pci_address' | console_clip_lines "${CONSOLE_CONTENT_WIDTH}"
+      footer_row=$((5 + (network_end - network_start) * 3))
+      [ "${footer_row}" -ge 12 ] || footer_row=12
       ;;
     *)
       printf '\033[1m  Storage\033[22m\033[K\n'
@@ -725,9 +729,14 @@ render_inventory_console() {
           "  [Controller] " + .value.pci_address + "  " + .value.type + "  " +
           ([.value.vendor,.value.device] | map(select(length > 0)) | join(" ")) + "  driver " + .value.driver
         end' | console_clip_lines "${CONSOLE_CONTENT_WIDTH}"
+      storage_lines="$(printf '%s' "${report}" | jq -r --argjson start "${storage_start}" --argjson limit "${storage_page_size}" '([.disks[] | 2] + [.storage_controllers[] | 1])[$start:($start + $limit)] | add // 0')"
+      footer_row=$((5 + storage_lines))
+      [ "${footer_row}" -ge 12 ] || footer_row=12
       ;;
   esac
-  printf '\033[%s;1H\033[44m\033[37m' "$((console_rows - 1))"
+  [ "${footer_row}" -lt "${console_rows}" ] || footer_row=$((console_rows - 1))
+  CONSOLE_FOOTER_ROW="${footer_row}"
+  printf '\033[%s;1H\033[44m\033[37m' "${CONSOLE_FOOTER_ROW}"
   render_inventory_console_footer_lines "${page}" "${remaining}" "${paused}" "${host_id}"
 }
 
@@ -746,6 +755,9 @@ render_inventory_console_footer_lines() {
 refresh_inventory_console_footer() {
   console_rows="$(unsigned_value "${5:-0}")"
   [ "${console_rows}" -ge 22 ] || console_rows="$(console_terminal_rows)"
-  printf '\033[%s;1H\033[44m\033[37m' "$((console_rows - 1))"
+  footer_row="$(unsigned_value "${CONSOLE_FOOTER_ROW:-0}")"
+  [ "${footer_row}" -ge 2 ] || footer_row=$((console_rows - 1))
+  [ "${footer_row}" -lt "${console_rows}" ] || footer_row=$((console_rows - 1))
+  printf '\033[%s;1H\033[44m\033[37m' "${footer_row}"
   render_inventory_console_footer_lines "$1" "$2" "$3" "$4"
 }

@@ -179,10 +179,11 @@ geometry when available, with the TTY size as a fallback, so higher-resolution
 consoles use their additional rows and need fewer `J`/`K` list pages. A normal
 80x30 fallback shows up to 12 DIMMs, eight adapters, or 12 disks/controllers.
 Smaller supported terminals retain bounded windows, and all rows clip to the
-console width. The footer spans the framebuffer and stays anchored to its
-bottom two rows; countdown updates repaint only that footer, and silent key
-reads keep navigation from appearing below it, so the hardware pages remain
-stable without full-screen flicker.
+console width. The footer spans the console and follows the populated page
+area, while dense Network and Storage pages expand it toward the terminal
+bottom. Countdown updates repaint only that footer, and silent key reads keep
+navigation from appearing below it, so the hardware pages remain stable
+without full-screen flicker.
 The five-minute reboot countdown starts only after successful submission;
 navigation time still advances the countdown, `S` pauses or resumes the
 remaining time, and `R` reboots immediately. An acknowledged audited remote
