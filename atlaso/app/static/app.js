@@ -18558,6 +18558,8 @@ function initializeNetworkBootPage() {
   const reportMeta = hostDialog?.querySelector("[data-network-boot-report-meta]");
   const reportDownload = hostDialog?.querySelector("[data-network-boot-report-download]");
   const reportTitle = hostDialog?.querySelector("[data-network-boot-host-title]");
+  const reportPrintClass = "network-boot-report-printing";
+  const clearReportPrintState = () => document.body.classList.remove(reportPrintClass);
   const uploadDialog = document.getElementById("network-boot-upload-dialog");
   const uploadForm = uploadDialog?.querySelector("[data-network-boot-upload-form]");
   const uploadLabel = uploadDialog?.querySelector("[data-network-boot-upload-label]");
@@ -18729,7 +18731,13 @@ function initializeNetworkBootPage() {
   });
   hostsTable = hostGrid.table;
   hostDialog?.querySelector("[data-network-boot-host-close]")?.addEventListener("click", () => hostDialog.close());
-  hostDialog?.querySelector("[data-network-boot-report-print]")?.addEventListener("click", () => window.print());
+  window.addEventListener("afterprint", clearReportPrintState);
+  hostDialog?.addEventListener("close", clearReportPrintState);
+  hostDialog?.querySelector("[data-network-boot-report-print]")?.addEventListener("click", () => {
+    if (!hostDialog?.open || !selectedReport) return;
+    document.body.classList.add(reportPrintClass);
+    window.print();
+  });
   hostDialog?.querySelector("[data-network-boot-wake]")?.addEventListener("click", () => wakeHost(selectedHost));
   hostDialog?.querySelector("[data-network-boot-reboot]")?.addEventListener("click", () => rebootHost(selectedHost));
   hostDialog?.querySelector("[data-network-boot-remove]")?.addEventListener("click", () => removeHost(selectedHost));

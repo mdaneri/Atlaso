@@ -4271,6 +4271,10 @@ def test_network_boot_host_management_report_and_print_contract(client):
     assert "await refreshTasksPage()" in page_initializer
     assert "requestConfirmation({" in page_initializer
     assert "/reports/${historyItem.id}/download" in page_initializer
+    assert 'reportPrintClass = "network-boot-report-printing"' in page_initializer
+    assert 'window.addEventListener("afterprint", clearReportPrintState)' in page_initializer
+    assert 'hostDialog?.addEventListener("close", clearReportPrintState)' in page_initializer
+    assert "document.body.classList.add(reportPrintClass)" in page_initializer
     assert "window.print()" in page_initializer
 
     host_reference = app_js.split("function initializeEsxiPxeHostsTable", 1)[1].split(
@@ -4284,8 +4288,11 @@ def test_network_boot_host_management_report_and_print_contract(client):
     assert "min-height: 300px;" in app_css
     assert "height: 240px !important;" in app_css
     print_css = app_css.split("@media print", 1)[1]
-    assert "#network-boot-host-dialog .network-boot-report" in print_css
-    assert "body *" in print_css
+    assert "@page atlaso-network-boot-report" in print_css
+    assert "page: atlaso-network-boot-report;" in print_css
+    assert "body.network-boot-report-printing #network-boot-host-dialog .network-boot-report" in print_css
+    assert "body.network-boot-report-printing *" in print_css
+    assert "\n  body * {" not in print_css
     assert ".network-boot-report-history" in print_css
 
 

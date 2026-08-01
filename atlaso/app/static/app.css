@@ -8340,21 +8340,22 @@ dialog.has-expanded-monaco .confirm-modal-panel {
 }
 
 @media print {
-  @page {
+  @page atlaso-network-boot-report {
     margin: 12mm;
   }
 
-  body * {
+  body.network-boot-report-printing * {
     visibility: hidden !important;
   }
 
-  #network-boot-host-dialog,
-  #network-boot-host-dialog .network-boot-report,
-  #network-boot-host-dialog .network-boot-report * {
+  body.network-boot-report-printing #network-boot-host-dialog,
+  body.network-boot-report-printing #network-boot-host-dialog .network-boot-report,
+  body.network-boot-report-printing #network-boot-host-dialog .network-boot-report * {
     visibility: visible !important;
   }
 
-  #network-boot-host-dialog {
+  body.network-boot-report-printing #network-boot-host-dialog {
+    page: atlaso-network-boot-report;
     position: absolute;
     inset: 0;
     display: block;
@@ -8369,16 +8370,16 @@ dialog.has-expanded-monaco .confirm-modal-panel {
     background: white;
   }
 
-  #network-boot-host-dialog::backdrop,
-  #network-boot-host-dialog .network-boot-report-dialog-heading,
-  #network-boot-host-dialog .network-boot-report-history,
-  #network-boot-host-dialog .confirm-modal-actions {
+  body.network-boot-report-printing #network-boot-host-dialog::backdrop,
+  body.network-boot-report-printing #network-boot-host-dialog .network-boot-report-dialog-heading,
+  body.network-boot-report-printing #network-boot-host-dialog .network-boot-report-history,
+  body.network-boot-report-printing #network-boot-host-dialog .confirm-modal-actions {
     display: none !important;
   }
 
-  #network-boot-host-dialog .network-boot-report-dialog-panel,
-  #network-boot-host-dialog .network-boot-report-dialog-body,
-  #network-boot-host-dialog .network-boot-report-workspace {
+  body.network-boot-report-printing #network-boot-host-dialog .network-boot-report-dialog-panel,
+  body.network-boot-report-printing #network-boot-host-dialog .network-boot-report-dialog-body,
+  body.network-boot-report-printing #network-boot-host-dialog .network-boot-report-workspace {
     display: block;
     width: 100%;
     max-width: none;
@@ -8387,18 +8388,18 @@ dialog.has-expanded-monaco .confirm-modal-panel {
     overflow: visible;
   }
 
-  #network-boot-host-dialog .network-boot-report > header,
-  #network-boot-host-dialog .network-boot-report > section {
+  body.network-boot-report-printing #network-boot-host-dialog .network-boot-report > header,
+  body.network-boot-report-printing #network-boot-host-dialog .network-boot-report > section {
     break-inside: avoid;
     border-color: #cbd5e1;
     box-shadow: none;
   }
 
-  #network-boot-host-dialog .network-boot-report-table-wrap {
+  body.network-boot-report-printing #network-boot-host-dialog .network-boot-report-table-wrap {
     overflow: visible;
   }
 
-  #network-boot-host-dialog .network-boot-report-table {
+  body.network-boot-report-printing #network-boot-host-dialog .network-boot-report-table {
     min-width: 100%;
     font-size: 8pt;
   }
