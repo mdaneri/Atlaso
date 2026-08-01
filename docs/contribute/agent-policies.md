@@ -489,7 +489,9 @@ status: current
   allowlisted extraction, and atomic installation are mandatory.
 - Permit distinct download jobs to queue behind the single FIFO worker and
   reject only an active duplicate for the same environment and download source.
-  Preserve the stricter upload staging and cleanup guards.
+  Enforce that admission atomically in the database across concurrent web
+  workers, returning `409 Conflict` to competing requests. Preserve the stricter
+  upload staging and cleanup guards.
 - Preserve generic `read:pxe` and `write:pxe` isolation from legacy
   `read:esxi-pxe`. Never place inventory bearer tokens in URLs, logs, audits,
   jobs, or browser state; store only hashes and bind each session to one

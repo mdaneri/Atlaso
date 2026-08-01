@@ -118,7 +118,9 @@ report. A compact history selector switches among retained reports without
 reloading the page. The selected report covers all available system, firmware,
 CPU, DIMM, NIC, disk/controller, PCI, and USB fields; legacy v1 fields that were
 never submitted are labeled **Not reported** instead of being inferred. Report
-values are inserted as text, not markup.
+values are inserted as text, not markup. An explicit empty address list in a v2
+report is labeled **None**; **Not reported** remains reserved for an absent
+legacy field.
 
 Use **Print / Save as PDF** to print only the selected report, or **Download
 JSON** to save a no-cache attachment containing the host identity, report
@@ -237,10 +239,12 @@ downloads and uploads. The Network Boot and ESXi Kickstarts workspaces scroll
 inside the main panel so the Boot Service rail remains fixed on the right.
 Distinct download requests may queue while another media sync is active; the
 single worker preserves FIFO execution. Atlaso rejects only an active duplicate
-for the same environment and download source. Upload staging and cleanup guards
-remain unchanged. After a download is accepted, its new task is immediately
-loaded, selected, highlighted, and followed by the normal live refresh without
-reloading the page.
+for the same environment and download source. Database-backed admission keeps
+that duplicate check atomic across concurrent web workers: exactly one request
+queues the download and competitors receive `409 Conflict`. Upload staging and
+cleanup guards remain unchanged. After a download is accepted, its new task is
+immediately loaded, selected, highlighted, and followed by the normal live
+refresh without reloading the page.
 The same menu provides a state-aware **Enable** or **Disable** action. Enable
 remains unavailable until that environment has verified installed media.
 **Media ready** indicates that verified media is installed; **Active version**

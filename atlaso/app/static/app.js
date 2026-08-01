@@ -18378,14 +18378,19 @@ function initializeNetworkBootWorkspace() {
   }
 }
 
-function networkBootReportValue(value, { bytes = false, list = false } = {}) {
+function networkBootReportValue(value, { bytes = false, list = false, emptyList = "Not reported" } = {}) {
   if (list) {
-    return Array.isArray(value) && value.length ? value.join(", ") : "Not reported";
+    if (!Array.isArray(value)) return "Not reported";
+    return value.length ? value.join(", ") : emptyList;
   }
   if (bytes && Number(value) > 0) return formatMonitorBytes(Number(value));
   if (typeof value === "boolean") return value ? "Yes" : "No";
   if (value === 0 || value) return String(value);
   return "Not reported";
+}
+
+function networkBootAddressListOptions(legacyReport) {
+  return { list: true, emptyList: legacyReport ? "Not reported" : "None" };
 }
 
 function appendNetworkBootReportFacts(parent, facts) {
@@ -18486,7 +18491,7 @@ function renderNetworkBootReport(article, historyItem) {
     ["DMI UUID", system.dmi_uuid],
     ["Boot interface", report.boot_interface],
     ["Boot MAC", report.boot_mac],
-    ["Assigned addresses", report.assigned_addresses, { list: true }],
+    ["Assigned addresses", report.assigned_addresses, networkBootAddressListOptions(legacyReport)],
     ["Firmware mode", report.firmware_mode],
   ]);
   appendNetworkBootReportSection(article, "System", [
@@ -18523,7 +18528,7 @@ function renderNetworkBootReport(article, historyItem) {
     ["Name", "name"], ["Permanent MAC", "permanent_mac"], ["Current MAC", "current_mac"],
     ["Link", "link_state"], ["Speed Mbps", "speed_mbps"], ["Driver", "driver"],
     ["PCI address", "pci_address"], ["Vendor", "vendor"], ["Device", "device"],
-    ["Vendor ID", "vendor_id"], ["Device ID", "device_id"], ["Addresses", "addresses", { list: true }],
+    ["Vendor ID", "vendor_id"], ["Device ID", "device_id"], ["Addresses", "addresses", networkBootAddressListOptions(legacyReport)],
     ["Boot interface", "boot_interface"],
   ], "No network interfaces were reported.");
   appendNetworkBootReportCollection(article, "Storage controllers", report.storage_controllers, [
