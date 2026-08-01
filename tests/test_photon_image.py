@@ -5,10 +5,13 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import struct
 import subprocess
 import sys
 import zipfile
+
+import pytest
 
 
 def load_lifecycle_runner():
@@ -258,19 +261,133 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     assert 'installed_manifest.get("environment") != "inventory"' in deploy
 
 
-def test_windows_inventory_linux_build_uses_linux_only_path():
+def test_windows_inventory_linux_build_selects_one_distribution_and_native_cache():
     wrapper = Path("scripts/windows/common/Build-AtlasoInventoryLinux.ps1").read_text(
+        encoding="utf-8"
+    )
+    module = Path("scripts/windows/common/Atlaso.WslBuild.psm1").read_text(
         encoding="utf-8"
     )
 
     linux_path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    assert "[string]$WslDistribution = 'Atlaso-Build'" in wrapper
+    assert "Assert-AtlasoWslBuildEnvironment" in wrapper
+    assert "@('--distribution', $WslDistribution)" in wrapper
+    assert "-Distribution $WslDistribution" in wrapper
     assert f"$linuxPath = '{linux_path}'" in wrapper
-    assert "${XDG_CACHE_HOME:-$HOME/.cache}/atlaso/inventory-linux" in wrapper
+    assert '${XDG_CACHE_HOME:-$HOME/.cache}/atlaso/inventory-linux' in module
     assert "[System.Security.Cryptography.SHA256]::HashData" in wrapper
     assert '"ATLASO_INVENTORY_BUILD_ROOT=$linuxBuildRoot"' in wrapper
     assert 'exec flock --exclusive "$2" bash "$3"' in wrapper
     assert '"$linuxBuildRoot.lock"' in wrapper
+    assert '"Global\\Atlaso.InventoryLinux.$repositoryKey"' in wrapper
+    assert "$checkoutMutex.WaitOne()" in wrapper
+    assert wrapper.index("$checkoutMutex.WaitOne()") < wrapper.index("& $wsl @wslArguments")
+    assert wrapper.index("Buildroot legal-info") < wrapper.index("$checkoutMutex.ReleaseMutex()")
+    assert 'Buildroot must run as a non-root WSL user.' in module
+    assert 'cache storage is not case-sensitive' in module
     assert "wsl.exe --exec bash $linuxScript" not in wrapper
+
+
+def test_wsl_build_state_errors_are_non_mutating_and_actionable():
+    module = Path("scripts/windows/common/Atlaso.WslBuild.psm1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "WSL is required for Atlaso image builds" in module
+    assert "WSL is installed but unavailable or incomplete" in module
+    assert "no Linux distributions are installed" in module
+    assert "is not installed. Provision it explicitly with" in module
+    assert "wsl --list --verbose" in module
+    assert "wsl --terminate $Distribution" in module
+    assert "Enable-WindowsOptionalFeature" not in module
+    assert "--import" not in module
+    assert "--unregister" not in module
+
+
+def test_wsl_build_module_behavior():
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is not available")
+
+    result = subprocess.run(
+        [
+            pwsh,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            "tests/powershell/Test-AtlasoWslBuild.ps1",
+            "-RepositoryRoot",
+            str(Path.cwd()),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Atlaso WSL build module behavior tests passed." in result.stdout
+
+
+def test_wsl_build_contract_and_setup_are_pinned_idempotent_and_non_destructive():
+    contract = json.loads(
+        Path("image/inventory-linux/wsl-build-contract.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    setup = Path(
+        "scripts/windows/common/Initialize-AtlasoBuildWslDistribution.ps1"
+    ).read_text(encoding="utf-8")
+    provision = Path(
+        "image/inventory-linux/provision-wsl-build-host.sh"
+    ).read_text(encoding="utf-8")
+
+    assert contract["distribution_name"] == "Atlaso-Build"
+    assert contract["build_user"] == "atlaso-build"
+    assert contract["base"] == {
+        "name": "Ubuntu Base 24.04.4",
+        "architecture": "amd64",
+        "filename": "ubuntu-base-24.04.4-base-amd64.tar.gz",
+        "import_filename": "ubuntu-base-24.04.4-base-amd64.tar",
+        "url": "https://cdimages.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.4-base-amd64.tar.gz",
+        "sha256": "c1e67ef7b17a6300e136118bd1dc04725009cb376c1aad10abcf8cd453628d58",
+    }
+    for command in ("bash", "flock", "make", "rsync", "sha256sum", "tar"):
+        assert command in contract["required_commands"]
+
+    assert "[System.IO.Compression.GZipStream]" in setup
+    assert "--import $distribution $InstallLocation $importArchivePath --version 2" in setup
+    assert "Remove-Item -LiteralPath $importArchivePath -Force" in setup
+    assert "Get-FileHash" in setup
+    assert "Get-AtlasoWslDefaultDistribution" in setup
+    assert "--set-default $defaultBefore" in setup
+    assert "$importSucceeded" in setup
+    assert "} finally {\n        if ($importSucceeded" in setup
+    assert setup.index("$importSucceeded = $true") < setup.index("$ownershipScript")
+    assert setup.index("$ownershipScript") < setup.index("if ($importSucceeded")
+    assert "Default-distribution restoration also failed" in setup
+    assert "no default could be identified" in setup
+    assert "/var/lib/atlaso-build/ownership.json" in setup
+    assert setup.index("/var/lib/atlaso-build/ownership.json") < setup.index(
+        "--set-default $defaultBefore"
+    )
+    assert "already exists without an Atlaso ownership marker" in setup
+    assert "--unregister" not in setup
+    assert "Enable-WindowsOptionalFeature" not in setup
+    assert "Start-Process" not in setup
+    assert "apt-get install -y --no-install-recommends" in provision
+    assert "if ! id -u" in provision
+    assert "/var/lib/atlaso-build/contract.json" in provision
+
+
+def test_photon_wrappers_forward_explicit_wsl_distribution():
+    for path in (
+        "scripts/windows/hyperv/build-photon-image.ps1",
+        "scripts/windows/vmware/build-photon-image.ps1",
+    ):
+        wrapper = Path(path).read_text(encoding="utf-8")
+        assert "[string]$WslDistribution = 'Atlaso-Build'" in wrapper
+        assert "Build-AtlasoInventoryLinux.ps1') -WslDistribution $WslDistribution" in wrapper
 
 
 def test_inventory_linux_retries_uncertain_reboot_acknowledgments():

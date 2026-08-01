@@ -9,6 +9,8 @@ management UI or API content.
 
 - Windows host with Hyper-V enabled.
 - PowerShell 7.x (`pwsh`). Windows PowerShell 5.1 (`powershell.exe`) is not supported.
+- WSL 2 installed and initialized before provisioning the default `Atlaso-Build` image-build distribution. See
+  [Windows image-build WSL environment](../../docs/contribute/windows-image-build-wsl.md).
 - Run Packer from an elevated PowerShell 7 session or as a user in the `Hyper-V Administrators` group.
 - Packer `>= 1.10`.
 - Atlaso Hyper-V lab switches created before the build:
@@ -51,6 +53,10 @@ command. Use `-OutputDirectory <path>` to keep multiple artifacts or `-KeepExist
 instead of replacing an existing output directory. By default, failed builds still use Packer's normal cleanup behavior.
 To keep the temporary builder VM for debugging, add `-PackerOnError abort`; to choose at failure time, use
 `-PackerOnError ask`.
+
+The wrapper builds Inventory Linux in `Atlaso-Build` by default. Pass `-WslDistribution <name>` to validate and use an
+existing compatible WSL distribution instead; the wrapper forwards that selection to every Inventory Linux build
+subprocess.
 
 The wrapper leaves pip's index configuration untouched by default. When the builder can reach Python packages only
 through an internal mirror, add `-PipGlobalIndex` or `-PipGlobalIndexUrl`; each option is optional and only sets the

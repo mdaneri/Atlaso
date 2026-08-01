@@ -35,6 +35,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   published packages that approved mirrors may not have synchronized.
 - [UI Design Guide](docs/contribute/ui-design-guide.md) — approved Atlaso patterns and the shared
   `AtlasoUiPatterns.createGrid(...)` / `createWizard(...)` foundation used by every grid and wizard.
+- [Windows image-build WSL environment](docs/contribute/windows-image-build-wsl.md) — provision and select the pinned,
+  isolated `Atlaso-Build` host used by Inventory Linux and Photon image wrappers.
 
 ## Supported appliance targets
 
