@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from sqlalchemy.orm import Session
 
 from atlaso.app.models import AuditEvent
@@ -14,6 +16,7 @@ def record_audit(
     success: bool = True,
     detail: str | None = None,
     request_id: str | None = None,
+    emit_operational: bool = True,
 ) -> AuditEvent:
     event = AuditEvent(
         actor=actor,
@@ -27,5 +30,37 @@ def record_audit(
     db.add(event)
     db.commit()
     db.refresh(event)
-    log_audit_event(event)
+    if emit_operational:
+        log_audit_event(event)
+    return event
+
+
+def finalize_audit(
+    db: Session,
+    event: AuditEvent,
+    *,
+    success: bool,
+    detail: str,
+    operational_outcome: str,
+    delivered_count: int,
+) -> AuditEvent:
+    event.success = success
+    event.detail = detail
+    db.add(event)
+    db.commit()
+    db.refresh(event)
+    log_audit_event(
+        SimpleNamespace(
+            actor=event.actor,
+            action=event.action,
+            resource_type=event.resource_type,
+            resource_id=event.resource_id,
+            success=event.success,
+            request_id=event.request_id,
+            detail=(
+                f"outcome={operational_outcome}; "
+                f"broadcasts_sent={max(0, int(delivered_count))}"
+            ),
+        )
+    )
     return event

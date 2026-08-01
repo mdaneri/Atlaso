@@ -17,8 +17,9 @@ import pycdlib
 from sqlalchemy import select
 from starlette.requests import Request as StarletteRequest
 
-import atlaso.app.services.network_boot as network_boot
+import atlaso.app.audit as audit_service
 import atlaso.app.api.network_boot as network_boot_api
+import atlaso.app.services.network_boot as network_boot
 from atlaso.app.api.network_boot import (
     _allowlisted_media_file,
     _installed_media_directory,
@@ -691,6 +692,14 @@ def test_wake_endpoints_send_server_owned_macs_and_audit(client, monkeypatch):
         reference_id = reference.id
 
     sent = []
+    logged_wake_events = []
+    monkeypatch.setattr(
+        audit_service,
+        "log_audit_event",
+        lambda event: logged_wake_events.append(
+            (event.success, event.detail)
+        ) if event.action == "send_wake_on_lan" else None,
+    )
     monkeypatch.setattr(
         network_boot_api,
         "wake_on_lan_broadcast_targets",
@@ -708,6 +717,8 @@ def test_wake_endpoints_send_server_owned_macs_and_audit(client, monkeypatch):
             assert pending.success is False
             assert "outcome=pending" in pending.detail
             assert "broadcasts_planned=192.0.2.255,198.51.100.255" in pending.detail
+        assert len(logged_wake_events) == len(sent)
+        assert all("outcome=pending" not in detail for _success, detail in logged_wake_events)
         sent.append((mac_address, list(targets)))
         return list(targets)
 
@@ -729,6 +740,10 @@ def test_wake_endpoints_send_server_owned_macs_and_audit(client, monkeypatch):
     assert sent == [
         ("52:54:00:12:34:56", ["192.0.2.255", "198.51.100.255"]),
         ("52:54:00:aa:bb:cc", ["192.0.2.255", "198.51.100.255"]),
+    ]
+    assert logged_wake_events == [
+        (True, "outcome=packet_sent; broadcasts_sent=2"),
+        (True, "outcome=packet_sent; broadcasts_sent=2"),
     ]
 
     with SessionLocal() as db:
@@ -792,6 +807,14 @@ def test_wake_endpoint_reports_udp_send_failure_as_retryable_service_error(
         headers={"Authorization": f"Bearer {inventory_session['access_token']}"},
     )
     host_id = submitted.json()["host_id"]
+    logged_wake_events = []
+    monkeypatch.setattr(
+        audit_service,
+        "log_audit_event",
+        lambda event: logged_wake_events.append(
+            (event.success, event.detail)
+        ) if event.action == "send_wake_on_lan" else None,
+    )
     monkeypatch.setattr(
         network_boot_api,
         "wake_on_lan_broadcast_targets",
@@ -810,6 +833,9 @@ def test_wake_endpoint_reports_udp_send_failure_as_retryable_service_error(
 
     assert response.status_code == 503
     assert response.json()["detail"] == "test UDP send failed"
+    assert logged_wake_events == [
+        (False, "outcome=packet_not_sent; broadcasts_sent=0")
+    ]
 
 
 def test_wake_endpoint_reports_and_audits_partial_udp_delivery(client, monkeypatch):
@@ -821,6 +847,14 @@ def test_wake_endpoint_reports_and_audits_partial_udp_delivery(client, monkeypat
         headers={"Authorization": f"Bearer {inventory_session['access_token']}"},
     )
     host_id = submitted.json()["host_id"]
+    logged_wake_events = []
+    monkeypatch.setattr(
+        audit_service,
+        "log_audit_event",
+        lambda event: logged_wake_events.append(
+            (event.success, event.detail)
+        ) if event.action == "send_wake_on_lan" else None,
+    )
     monkeypatch.setattr(
         network_boot_api,
         "wake_on_lan_broadcast_targets",
@@ -854,6 +888,9 @@ def test_wake_endpoint_reports_and_audits_partial_udp_delivery(client, monkeypat
             "Do not retry automatically; host power-on is not confirmed."
         ),
     }
+    assert logged_wake_events == [
+        (False, "outcome=packet_partially_sent; broadcasts_sent=1")
+    ]
 
     from atlaso.app.database import SessionLocal
 

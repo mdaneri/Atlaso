@@ -18,7 +18,7 @@ from sqlalchemy import delete, desc, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from atlaso.app.audit import record_audit
+from atlaso.app.audit import finalize_audit, record_audit
 from atlaso.app.database import get_db
 from atlaso.app.models import (
     EsxiPxeHost,
@@ -666,17 +666,22 @@ def _wake_host(
             "udp_port=9; outcome=pending"
         ),
         request_id=request.state.request_id,
+        emit_operational=False,
     )
     try:
         sent_targets = send_wake_on_lan(mac_address, targets)
     except WakeOnLanDeliveryError as exc:
-        audit_event.detail = (
-            f"mac={display_mac}; broadcasts_sent={','.join(exc.sent_targets)}; "
-            f"failed_broadcast={exc.failed_target}; udp_port=9; error={exc}"
+        finalize_audit(
+            db,
+            audit_event,
+            success=False,
+            detail=(
+                f"mac={display_mac}; broadcasts_sent={','.join(exc.sent_targets)}; "
+                f"failed_broadcast={exc.failed_target}; udp_port=9; error={exc}"
+            ),
+            operational_outcome="packet_partially_sent",
+            delivered_count=len(exc.sent_targets),
         )
-        db.add(audit_event)
-        db.commit()
-        db.refresh(audit_event)
         return JSONResponse(
             status_code=status.HTTP_207_MULTI_STATUS,
             content={
@@ -691,17 +696,24 @@ def _wake_host(
             },
         )
     except (OSError, ValueError) as exc:
-        audit_event.detail = f"mac={display_mac}; broadcasts_sent=; udp_port=9; error={exc}"
-        db.add(audit_event)
-        db.commit()
-        db.refresh(audit_event)
+        finalize_audit(
+            db,
+            audit_event,
+            success=False,
+            detail=f"mac={display_mac}; broadcasts_sent=; udp_port=9; error={exc}",
+            operational_outcome="packet_not_sent",
+            delivered_count=0,
+        )
         status_code = 409 if isinstance(exc, ValueError) else 503
         raise HTTPException(status_code=status_code, detail=str(exc)) from exc
-    audit_event.success = True
-    audit_event.detail = f"mac={display_mac}; broadcasts={','.join(sent_targets)}; udp_port=9"
-    db.add(audit_event)
-    db.commit()
-    db.refresh(audit_event)
+    finalize_audit(
+        db,
+        audit_event,
+        success=True,
+        detail=f"mac={display_mac}; broadcasts={','.join(sent_targets)}; udp_port=9",
+        operational_outcome="packet_sent",
+        delivered_count=len(sent_targets),
+    )
     return {
         "status": "packet_sent",
         "mac_address": display_mac,
