@@ -882,7 +882,11 @@ def test_lifecycle_hyperv_script_uses_separate_vm_set_by_default():
     assert "$pxeClientName = \"$LabName-PxeBoot\"" in script
     assert "New-LifecyclePxeVm -Name $pxeClientName -SwitchName 'Atlaso-SiteA'" in script
     assert "Invoke-PxeBootSmoke -Name $pxeClientName -MacAddress $pxeClientMac" in script
-    assert "sudo timeout 60 nc -u -l -p 9 | head -c 102 | od -An -v -tx1" in script
+    assert "$inventoryDiscoveryTimeoutSeconds = 180" in script
+    assert "$captureTimeoutSeconds = $inventoryDiscoveryTimeoutSeconds + 30" in script
+    assert '"sudo timeout $captureTimeoutSeconds nc -u -l -p 9 | head -c 102 | od -An -v -tx1"' in script
+    assert "--timeout $inventoryDiscoveryTimeoutSeconds" in script
+    assert "Wait-Job -Job $captureJob -Timeout ($captureTimeoutSeconds + 15)" in script
     assert "$expectedHex = ('ff' * 6) + ($compactMac * 16)" in script
     assert "wake_packet_capture" in script
     assert "exact_match = $true" in script

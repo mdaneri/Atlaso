@@ -488,7 +488,9 @@ function Invoke-NetworkBootInventoryProof {
     if (-not (Get-Command plink -ErrorAction SilentlyContinue) -or -not $SshPassword -or -not $CaptureHost) {
         throw 'Exact Wake-on-LAN capture requires Plink, the lifecycle client SSH password, and a reachable Client A address.'
     }
-    $captureCommand = 'sudo timeout 60 nc -u -l -p 9 | head -c 102 | od -An -v -tx1'
+    $inventoryDiscoveryTimeoutSeconds = 180
+    $captureTimeoutSeconds = $inventoryDiscoveryTimeoutSeconds + 30
+    $captureCommand = "sudo timeout $captureTimeoutSeconds nc -u -l -p 9 | head -c 102 | od -An -v -tx1"
     $captureArgs = @('-batch', '-ssh')
     if ($CaptureHostKey) {
         $captureArgs += @('-hostkey', $CaptureHostKey)
@@ -506,6 +508,7 @@ function Invoke-NetworkBootInventoryProof {
             --appliance-url $ApplianceUrl `
             --username $AdminUsername `
             --mac $MacAddress `
+            --timeout $inventoryDiscoveryTimeoutSeconds `
             --output $OutputPath
         if ($LASTEXITCODE -ne 0) {
             throw "Network Boot inventory proof failed with exit code $LASTEXITCODE."
@@ -517,7 +520,7 @@ function Invoke-NetworkBootInventoryProof {
     } finally {
         Remove-Item Env:\ATLASO_LIFECYCLE_ADMIN_PASSWORD -ErrorAction SilentlyContinue
     }
-    $captureCompleted = Wait-Job -Job $captureJob -Timeout 75
+    $captureCompleted = Wait-Job -Job $captureJob -Timeout ($captureTimeoutSeconds + 15)
     if (-not $captureCompleted) {
         Stop-Job -Job $captureJob -ErrorAction SilentlyContinue
         Remove-Job -Job $captureJob -Force -ErrorAction SilentlyContinue
