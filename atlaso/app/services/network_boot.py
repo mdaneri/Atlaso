@@ -2240,7 +2240,11 @@ def _media_boot_manifest(
             "boot": {
                 "kernel": f"{base}/bzImage",
                 "initrd": f"{base}/rootfs.cpio.gz",
-                "arguments": "rdinit=/sbin/init console=tty0 quiet loglevel=3 logo.nologo vt.global_cursor_default=0 atlaso.inventory=1",
+                "arguments": (
+                    "rdinit=/sbin/init console=tty0 quiet loglevel=3 "
+                    "logo.nologo vt.global_cursor_default=0 vga=791 "
+                    "video=1024x768 fbcon=font:VGA8x16 atlaso.inventory=1"
+                ),
             },
             "files": files,
         }
@@ -3119,6 +3123,21 @@ def sync_network_boot_media(
             source_hashes = source_manifest.get("artifacts")
             if not isinstance(source_hashes, dict):
                 raise ValueError("Atlaso Inventory Linux package artifact manifest is invalid.")
+            source_boot = source_manifest.get("boot")
+            source_boot_arguments = (
+                source_boot.get("arguments")
+                if isinstance(source_boot, dict)
+                else None
+            )
+            if source_boot_arguments is not None and (
+                not isinstance(source_boot_arguments, str)
+                or not source_boot_arguments
+                or len(source_boot_arguments) > 4096
+                or re.search(r"[\x00-\x1f\x7f]", source_boot_arguments)
+            ):
+                raise ValueError(
+                    "Atlaso Inventory Linux package boot arguments are invalid."
+                )
             extracted = _extract_zip_allowlist(
                 artifact,
                 staging,
@@ -3176,6 +3195,8 @@ def sync_network_boot_media(
             final_directory_name,
             extracted=extracted,
         )
+        if key == "inventory" and source_boot_arguments is not None:
+            manifest["boot"]["arguments"] = source_boot_arguments
         manifest.update(
             {
                 "kind": "atlaso-network-boot-media",

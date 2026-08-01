@@ -1986,6 +1986,13 @@ def test_inventory_linux_package_upload_installs_verified_immutable_media(
         "schema_version": 1,
         "environment": "inventory",
         "version": "2026.05.1",
+        "boot": {
+            "arguments": (
+                "rdinit=/sbin/init console=tty0 quiet loglevel=3 "
+                "vga=791 video=1024x768 fbcon=font:VGA8x16 "
+                "atlaso.inventory=1"
+            ),
+        },
         "artifacts": {
             "bzImage": hashlib.sha256(kernel).hexdigest(),
             "rootfs.cpio.gz": hashlib.sha256(initrd).hexdigest(),
@@ -2029,6 +2036,11 @@ def test_inventory_linux_package_upload_installs_verified_immutable_media(
     manifest = json.loads(media.manifest_json)
 
     assert manifest["boot"]["kernel"].endswith("/inventory/2026.05.1/bzImage")
+    assert manifest["boot"]["arguments"] == source_manifest["boot"]["arguments"]
+    chain = network_boot._chain_line(media, http_origin="http://192.0.2.10:8080")
+    assert "vga=791" in chain
+    assert "video=1024x768" in chain
+    assert "fbcon=font:VGA8x16" in chain
     assert manifest["acquisition"] == "upload"
     assert (Path(media.installed_path) / "rootfs.cpio.gz").read_bytes() == initrd
     assert replacements
