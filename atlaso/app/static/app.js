@@ -18710,7 +18710,7 @@ function initializeNetworkBootPage() {
       index: "id",
       height: "300px",
       rowContextMenu: canWrite ? [
-        { label: "Promote to ESXi", action: (event, row) => promoteHost(row, event?.currentTarget || row.getElement()) },
+        { label: "Promote to ESXi", action: (_event, row) => promoteHost(row, row.getElement()) },
         { label: "Reboot", disabled: (component) => component.getData().session_state !== "online", action: (_event, row) => rebootHost(row) },
         { label: "Wake host", disabled: (component) => !component.getData().boot_mac, action: (_event, row) => wakeHost(row) },
         { label: "Remove discovered host", action: (_event, row) => removeHost(row) },

@@ -39,11 +39,7 @@ from atlaso.app.models import (
     Setting,
     utcnow,
 )
-from atlaso.app.services.esxi_pxe import (
-    esxi_pxe_boot_settings,
-    esxi_http_base_url,
-    normalize_pxe_mac,
-)
+from atlaso.app.services.esxi_pxe import esxi_http_base_url, normalize_pxe_mac
 from atlaso.app.services.release_updates import verify_signed_json
 
 try:
@@ -1384,10 +1380,10 @@ def wake_on_lan_packet(mac_address: str) -> bytes:
 
 
 def wake_on_lan_broadcast_targets(db: Session) -> list[str]:
-    """Return distinct IPv4 broadcasts for the effective Network Boot zones."""
+    """Return distinct IPv4 broadcasts for the applied Network Boot zones."""
     targets: set[str] = set()
-    settings = esxi_pxe_boot_settings(db)
-    for scope in settings.get("dhcp_scopes") or []:
+    boot, _artifacts = _applied_esxi_pxe_runtime(db)
+    for scope in boot.get("dhcp_scopes") or []:
         if not isinstance(scope, dict) or scope.get("address_family") != "ipv4":
             continue
         address = str(scope.get("site_address") or "").strip()

@@ -559,14 +559,12 @@ def test_wake_on_lan_packet_and_distinct_broadcast_delivery():
     assert all(entry[1] == packet for entry in calls if entry[0] == "sendto")
 
 
-def test_wake_broadcast_targets_use_effective_ipv4_network_boot_scopes(
+def test_wake_broadcast_targets_use_applied_ipv4_network_boot_scopes(
     db_session,
-    monkeypatch,
 ):
-    monkeypatch.setattr(
-        network_boot,
-        "esxi_pxe_boot_settings",
-        lambda _db: {
+    set_applied_pxe_runtime(
+        db_session,
+        boot={
             "dhcp_scopes": [
                 {"address_family": "ipv4", "site_address": "192.0.2.1", "prefix_length": 24},
                 {"address_family": "ipv4", "site_address": "192.0.2.9", "prefix_length": 24},
@@ -576,7 +574,6 @@ def test_wake_broadcast_targets_use_effective_ipv4_network_boot_scopes(
             ]
         },
     )
-
     assert wake_on_lan_broadcast_targets(db_session) == [
         "192.0.2.255",
         "198.51.100.127",
