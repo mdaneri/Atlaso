@@ -247,6 +247,10 @@ assert_jq "${cpu}" '.sockets == 2 and .cores == 16 and .threads == 32 and .cores
 [ "$(console_page_size network 30)" = "8" ] || fail '30-row network capacity'
 [ "$(console_page_size storage 30)" = "12" ] || fail '30-row storage capacity'
 [ "$(console_page_size network 22)" = "5" ] || fail 'compact network capacity'
+[ "$(console_viewport_dimension 48 30)" = "30" ] || fail 'TTY caps framebuffer rows'
+[ "$(console_viewport_dimension 128 160)" = "128" ] || fail 'larger TTY does not expand framebuffer columns'
+[ "$(console_viewport_dimension 0 40)" = "40" ] || fail 'TTY supplies missing framebuffer dimension'
+[ "$(console_viewport_dimension 48 0)" = "48" ] || fail 'missing TTY preserves framebuffer dimension'
 framebuffer_root="${fixture_root}/graphics"
 mkdir -p "${framebuffer_root}/fb0"
 printf '1024,768\n' >"${framebuffer_root}/fb0/virtual_size"

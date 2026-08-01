@@ -568,6 +568,19 @@ console_framebuffer_size() {
   printf '0,0'
 }
 
+console_viewport_dimension() {
+  detected_dimension="$(unsigned_value "${1:-0}")"
+  tty_dimension="$(unsigned_value "${2:-0}")"
+  if [ "${tty_dimension}" -gt 0 ] && {
+    [ "${detected_dimension}" -eq 0 ] ||
+      [ "${tty_dimension}" -lt "${detected_dimension}" ]
+  }; then
+    printf '%s' "${tty_dimension}"
+  else
+    printf '%s' "${detected_dimension}"
+  fi
+}
+
 console_terminal_rows() {
   rows=0
   framebuffer_size="$(console_framebuffer_size)"
@@ -577,7 +590,7 @@ console_terminal_rows() {
   if [ -c /dev/tty ]; then
     tty_rows="$(stty size 2>/dev/null </dev/tty | awk 'NR == 1 {print $1}' || true)"
     tty_rows="$(unsigned_value "${tty_rows:-0}")"
-    [ "${tty_rows}" -le "${rows}" ] || rows="${tty_rows}"
+    rows="$(console_viewport_dimension "${rows}" "${tty_rows}")"
   fi
   [ "${rows}" -ge 22 ] || rows=30
   printf '%s' "${rows}"
@@ -592,7 +605,7 @@ console_terminal_columns() {
   if [ -c /dev/tty ]; then
     tty_columns="$(stty size 2>/dev/null </dev/tty | awk 'NR == 1 {print $2}' || true)"
     tty_columns="$(unsigned_value "${tty_columns:-0}")"
-    [ "${tty_columns}" -le "${columns}" ] || columns="${tty_columns}"
+    columns="$(console_viewport_dimension "${columns}" "${tty_columns}")"
   fi
   [ "${columns}" -ge 80 ] || columns=80
   printf '%s' "${columns}"
