@@ -35,15 +35,26 @@ Run on Linux:
 ./image/inventory-linux/build.sh
 ```
 
-The shared Windows Photon image wrappers build Inventory Linux through WSL.
-They give Buildroot a Linux-only `PATH` for that child process because WSL's
-default Windows path import can contain spaces that Buildroot rejects. The
-wrappers also keep Buildroot's cache and work tree beneath the WSL user's native
-Linux cache directory because a Windows-mounted, case-insensitive work tree can
-corrupt host-package configuration. Final artifacts still land in the output
-directory documented below. A per-repository lock serializes concurrent Windows
-build requests that share this cache. This does not change the caller's Windows
-`PATH` or global WSL configuration.
+The shared Windows Inventory Linux and Photon image wrappers use the isolated
+`Atlaso-Build` WSL distribution by default. WSL must already be installed; Atlaso
+does not enable Windows features, install WSL, elevate, reboot, or silently
+provision a missing distribution. Run the explicit setup once:
+
+```powershell
+pwsh -ExecutionPolicy Bypass `
+  -File scripts/windows/common/Initialize-AtlasoBuildWslDistribution.ps1
+```
+
+Pass `-WslDistribution <name>` to use an existing compatible distribution. The
+wrappers use the selected distribution for every build subprocess, give
+Buildroot a Linux-only `PATH`, and keep downloads and mutable work beneath the
+WSL user's native Linux cache. Final artifacts still land in the output
+directory documented below, and a per-repository `flock` serializes builds that
+share a work tree. A checkout-wide Windows mutex also protects the shared final
+output when different distributions target the same checkout. See the canonical
+[Windows image-build WSL environment](../../docs/contribute/windows-image-build-wsl.md)
+guide for setup, selection, storage, updates, export/import, recreation,
+troubleshooting, and removal.
 
 Atlaso's `.gitattributes` keeps Bash and PowerShell sources at LF in every
 checkout, including Windows clones with Git's automatic line-ending conversion

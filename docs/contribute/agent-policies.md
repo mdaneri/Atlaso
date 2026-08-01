@@ -451,6 +451,13 @@ status: current
 - Keep Inventory Linux reproducible and read-only: pin Buildroot source and
   digest, run from initramfs, collect only bounded hardware metadata, and never
   add filesystem mounts, block writes, a remote shell, or arbitrary commands.
+- Windows Inventory Linux and Photon builds use `Atlaso-Build` unless the caller explicitly selects another compatible
+  WSL distribution. Treat WSL itself as a pre-existing prerequisite: no ordinary build or Atlaso setup path may enable
+  Windows features, install WSL, elevate, reboot, change the default distribution, or remove an existing distribution.
+  Keep the dedicated base archive and host-package contract pinned and recorded. Use the same explicit distribution for
+  path conversion, readiness checks, native-Linux cache discovery, per-repository `flock`, and build execution. Hold a
+  checkout-wide host lock through final artifact verification so different distributions cannot write the shared output
+  concurrently. See [Windows image-build WSL environment](windows-image-build-wsl.md).
 - `pxe-media-sync` may populate immutable verified cache versions, but must not
   alter active menu state. Fixed upstreams, HTTPS limits, pinned verification,
   allowlisted extraction, and atomic installation are mandatory.

@@ -12,6 +12,7 @@ status: current
 - [Contributing workflow](https://github.com/mdaneri/Atlaso/blob/main/CONTRIBUTING.md)
 - [Dependency management](dependency-management.md)
 - [Documentation authoring](documentation-authoring.md)
+- [Windows image-build WSL environment](windows-image-build-wsl.md)
 - [Atlaso UI Design Guide](ui-design-guide.md)
 - [Detailed agent policies](agent-policies.md)
 - [Security policy](https://github.com/mdaneri/Atlaso/blob/main/SECURITY.md)
