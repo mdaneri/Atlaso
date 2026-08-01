@@ -109,6 +109,12 @@ for usb in 1-1 1-2; do
   printf 'Fixture USB\n' >"${path}/product"
   printf '%s\n' "USB-${usb}" >"${path}/serial"
 done
+usb_scsi_device="${ATLASO_SYSFS_ROOT}/bus/pci/devices/0000:04:00.0/usb1/1-2/1-2:1.0/host99"
+mkdir -p "${usb_scsi_device}" "${ATLASO_SYSFS_ROOT}/class/scsi_host/host99"
+ln -s "${usb_scsi_device}" "${ATLASO_SYSFS_ROOT}/class/scsi_host/host99/device"
+printf 'usb-storage\n' >"${ATLASO_SYSFS_ROOT}/class/scsi_host/host99/proc_name"
+printf 'USB Vendor\n' >"${usb_scsi_device}/vendor"
+printf 'Fixture USB Disk\n' >"${usb_scsi_device}/model"
 
 make_dmi_dimm() {
   instance="$1"
@@ -227,7 +233,7 @@ usb="$(collect_usb_devices)"
 cpu="$(collect_cpu)"
 
 assert_jq "${pci}" 'length == 3 and .[0].vendor_id == "8086" and .[1].class_id == "010601"'
-assert_jq "${controllers}" 'length == 2 and .[0].type == "SATA" and .[0].driver == "ahci" and .[1].type == "Hyper-V SCSI" and .[1].driver == "storvsc_host" and .[1].pci_address == ""'
+assert_jq "${controllers}" 'length == 3 and (map(select(.driver == "ahci"))[0] | .type == "SATA" and .pci_address == "0000:03:00.0") and (map(select(.driver == "storvsc_host"))[0] | .type == "Hyper-V SCSI" and .pci_address == "") and (map(select(.driver == "usb-storage"))[0] | .type == "SCSI" and .pci_address == "")'
 assert_jq "${interfaces}" 'length == 3 and .[0].boot_interface and .[1].current_mac == "52:54:00:44:55:66" and (map(select(.name == "usb0"))[0].pci_address == "")'
 assert_jq "${disks}" 'length == 3 and (map(select(.device == "/dev/sda"))[0].type == "HDD") and (map(select(.device == "/dev/sda"))[0].serial == "HDD-LSBLK-1") and (map(select(.device == "/dev/nvme0n1"))[0].type == "NVMe") and (map(select(.device == "/dev/nvme0n1"))[0].serial == "NVME-1") and (map(select(.device == "/dev/sr0"))[0].type == "Optical") and (map(select(.device == "/dev/nvme0n1"))[0].size_human == "50.0 GiB") and (map(select(.device == "/dev/sda"))[0].controller_pci_address == "0000:03:00.0")'
 assert_jq "${dimms}" 'length == 3 and .[0].locator == "DIMM_A1" and .[1].speed_mts == 4800 and .[0].size_bytes == 17179869184 and .[2].size_bytes == 8589934592 and .[2].locator == "" and (map(.locator) | index("PHANTOM") == null)'
