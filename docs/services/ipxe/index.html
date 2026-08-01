@@ -4887,7 +4887,9 @@ report. A compact history selector switches among retained reports without
 reloading the page. The selected report covers all available system, firmware,
 CPU, DIMM, NIC, disk/controller, PCI, and USB fields; legacy v1 fields that were
 never submitted are labeled <strong>Not reported</strong> instead of being inferred. Report
-values are inserted as text, not markup.</p>
+values are inserted as text, not markup. An explicit empty address list in a v2
+report is labeled <strong>None</strong>; <strong>Not reported</strong> remains reserved for an absent
+legacy field.</p>
 <p>Use <strong>Print / Save as PDF</strong> to print only the selected report, or <strong>Download
 JSON</strong> to save a no-cache attachment containing the host identity, report
 metadata, and unchanged normalized payload. The exported identity is captured
@@ -5000,10 +5002,12 @@ downloads and uploads. The Network Boot and ESXi Kickstarts workspaces scroll
 inside the main panel so the Boot Service rail remains fixed on the right.
 Distinct download requests may queue while another media sync is active; the
 single worker preserves FIFO execution. Atlaso rejects only an active duplicate
-for the same environment and download source. Upload staging and cleanup guards
-remain unchanged. After a download is accepted, its new task is immediately
-loaded, selected, highlighted, and followed by the normal live refresh without
-reloading the page.
+for the same environment and download source. Database-backed admission keeps
+that duplicate check atomic across concurrent web workers: exactly one request
+queues the download and competitors receive <code>409 Conflict</code>. Upload staging and
+cleanup guards remain unchanged. After a download is accepted, its new task is
+immediately loaded, selected, highlighted, and followed by the normal live
+refresh without reloading the page.
 The same menu provides a state-aware <strong>Enable</strong> or <strong>Disable</strong> action. Enable
 remains unavailable until that environment has verified installed media.
 <strong>Media ready</strong> indicates that verified media is installed; <strong>Active version</strong>
