@@ -545,7 +545,7 @@ console_window_offset() {
 
 console_framebuffer_size() {
   configured_size="${FRAMEBUFFER_SIZE:-}"
-  if printf '%s' "${configured_size}" | grep -Eq '^[0-9]+,[0-9]+$'; then
+  if [ "${configured_size}" != "0,0" ] && printf '%s' "${configured_size}" | grep -Eq '^[0-9]+,[0-9]+$'; then
     printf '%s' "${configured_size}"
     return
   fi
