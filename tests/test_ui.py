@@ -3642,12 +3642,18 @@ def test_esxi_pxe_ui_create_apply_and_job_redaction(client):
     assert "Media ready" in page.text
     assert 'data-tab-target="network-boot-settings-panel"' not in page.text
     assert 'id="network-boot-settings-panel"' not in page.text
+    assert 'id="network-boot-environments-panel" class="tab-panel network-boot-environments-panel"' in page.text
     boot_environments_panel = page.text.index('id="network-boot-environments-panel"')
     boot_media_tasks = page.text.index('data-network-boot-tasks-panel')
     network_boot_dialog = page.text.index('id="network-boot-host-dialog"')
     assert boot_environments_panel < boot_media_tasks < network_boot_dialog
     assert "Delete newest inactive media" in Path("atlaso/app/static/app.js").read_text()
     app_css = Path("atlaso/app/static/app.css").read_text()
+    environments_css = app_css.split(".network-boot-overview > .tab-panels > .tab-panel.active {", 1)[1].split("}", 1)[0]
+    assert "height: 100%;" in environments_css
+    assert "overflow-y: auto;" in environments_css
+    task_history_css = app_css.split(".network-boot-environments-panel > .network-boot-task-history-container {", 1)[1].split("}", 1)[0]
+    assert "flex: 0 0 max(420px, calc(100vh - 240px));" in task_history_css
     kickstart_description_css = app_css.split(".kickstart-description-field {", 1)[1].split("}", 1)[0]
     assert "grid-column: 1;" in kickstart_description_css
     host_tab = page.text.index('data-tab-target="esxi-pxe-hosts-panel"')

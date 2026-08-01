@@ -1308,6 +1308,36 @@ textarea {
   min-width: 0;
 }
 
+.network-boot-overview {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.network-boot-overview > .tab-panels {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.network-boot-overview > .tab-panels > .tab-panel.active {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
+}
+
+.network-boot-environments-panel.active {
+  display: flex;
+  flex-direction: column;
+}
+
+.network-boot-environments-panel > .network-boot-task-history-container {
+  flex: 0 0 max(420px, calc(100vh - 240px));
+}
+
 .network-boot-inner-section > .panel-head {
   margin-bottom: 12px;
 }
@@ -8055,6 +8085,17 @@ dialog.has-expanded-monaco .confirm-modal-panel {
   .network-boot-section-panels > .tab-panel.active {
     height: auto;
     overflow: visible;
+  }
+
+  .network-boot-overview,
+  .network-boot-overview > .tab-panels,
+  .network-boot-overview > .tab-panels > .tab-panel.active {
+    height: auto;
+    overflow: visible;
+  }
+
+  .network-boot-environments-panel > .network-boot-task-history-container {
+    flex-basis: 560px;
   }
 
   .network-boot-static-rail {

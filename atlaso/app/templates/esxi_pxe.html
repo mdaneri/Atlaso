@@ -44,7 +44,7 @@
       </table>
       <p class="muted">Double-click a row, or focus it and press Enter, to inspect its latest bounded report and history. Right-click for permitted host actions. Promotion, Wake-on-LAN, reboot, and removal require Network Boot write access.</p>
     </div>
-    <div id="network-boot-environments-panel" class="tab-panel" role="tabpanel" hidden>
+    <div id="network-boot-environments-panel" class="tab-panel network-boot-environments-panel" role="tabpanel" hidden>
       <div id="network-boot-environments-table" class="tabulator-shell"
            data-rows='{{ network_boot_environments | tojson }}'
            data-can-write="{{ 'true' if network_boot_can_write else 'false' }}"
