@@ -3536,7 +3536,7 @@ verify compliance before using the work.</p>
 <tr>
 <td>Read-only Tabulator</td>
 <td>A primary resource or operational collection is inspected, filtered, sorted, paginated, or opened for detail without inline mutation.</td>
-<td><strong>Tasks</strong>; <strong>Audit Events</strong></td>
+<td><strong>Tasks</strong>; <strong>Audit Events</strong>; <strong>Network Boot Discovered Hosts</strong></td>
 </tr>
 <tr>
 <td>Non-grid settings</td>
@@ -3613,7 +3613,10 @@ Physical Interfaces is the reference.</p>
 </ul>
 <p>If a record cannot satisfy these constraints, keep its collection in Tabulator and move add/edit into a wizard.</p>
 <h3 id="read-only-collections">Read-only collections<a class="headerlink" href="#read-only-collections" title="Permanent link">&para;</a></h3>
-<p>Tasks and Audit Events are the references for operational collections.</p>
+<p>Tasks and Audit Events are the references for operational collections. Network
+Boot Discovered Hosts reuses that read-only grid contract while placing
+permission-gated secondary actions in the row context menu and opening an
+escaped semantic report with a compact history selector.</p>
 <ul>
 <li>Keep sorting, filtering, pagination, status, and detail navigation consistent with the established operational grids.</li>
 <li>Do not imply editability through editable-cell styling, input-shaped content, or hover behavior.</li>
