@@ -530,7 +530,7 @@ function Invoke-NetworkBootInventoryProof {
     Remove-Job -Job $captureJob -Force
     $capturedHex = ($captureText -replace '[^0-9A-Fa-f]', '').ToLowerInvariant()
     $compactMac = ($MacAddress -replace '[^0-9A-Fa-f]', '').ToLowerInvariant()
-    $expectedHex = ('ff' * 6) + ($compactMac * 16)
+    $expectedHex = -join (('ff' * 6) + ($compactMac * 16))
     if ($capturedHex -ne $expectedHex) {
         throw "Wake-on-LAN capture did not match the exact 102-byte magic packet for $MacAddress."
     }
