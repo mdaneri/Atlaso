@@ -96,6 +96,10 @@ mkdir -p "${ATLASO_SYSFS_ROOT}/class/scsi_host/host9/device"
 printf 'storvsc_host\n' >"${ATLASO_SYSFS_ROOT}/class/scsi_host/host9/proc_name"
 printf 'Microsoft\n' >"${ATLASO_SYSFS_ROOT}/class/scsi_host/host9/device/vendor"
 printf 'Virtual SCSI\n' >"${ATLASO_SYSFS_ROOT}/class/scsi_host/host9/device/model"
+mkdir -p "${ATLASO_SYSFS_ROOT}/devices/pci0000:00/0000:00:14.0/usb2/2-2/2-2:1.0/host10"
+printf 'usb-storage\n' >"${ATLASO_SYSFS_ROOT}/devices/pci0000:00/0000:00:14.0/usb2/2-2/2-2:1.0/host10/proc_name"
+ln -s "${ATLASO_SYSFS_ROOT}/devices/pci0000:00/0000:00:14.0/usb2/2-2/2-2:1.0/host10" \
+  "${ATLASO_SYSFS_ROOT}/class/scsi_host/host10"
 
 for usb in 1-1 1-2; do
   path="${ATLASO_SYSFS_ROOT}/bus/usb/devices/${usb}"
@@ -227,7 +231,7 @@ usb="$(collect_usb_devices)"
 cpu="$(collect_cpu)"
 
 assert_jq "${pci}" 'length == 3 and .[0].vendor_id == "8086" and .[1].class_id == "010601"'
-assert_jq "${controllers}" 'length == 2 and .[0].type == "SATA" and .[0].driver == "ahci" and .[1].type == "Hyper-V SCSI" and .[1].driver == "storvsc_host" and .[1].pci_address == ""'
+assert_jq "${controllers}" 'length == 3 and .[0].type == "SATA" and .[0].driver == "ahci" and .[1].type == "SCSI" and .[1].driver == "usb-storage" and .[1].pci_address == "" and .[2].type == "Hyper-V SCSI" and .[2].driver == "storvsc_host" and .[2].pci_address == ""'
 assert_jq "${interfaces}" 'length == 3 and .[0].boot_interface and .[1].current_mac == "52:54:00:44:55:66" and (map(select(.name == "usb0"))[0].pci_address == "")'
 assert_jq "${disks}" 'length == 3 and (map(select(.device == "/dev/sda"))[0].type == "HDD") and (map(select(.device == "/dev/sda"))[0].serial == "HDD-LSBLK-1") and (map(select(.device == "/dev/nvme0n1"))[0].type == "NVMe") and (map(select(.device == "/dev/nvme0n1"))[0].serial == "NVME-1") and (map(select(.device == "/dev/sr0"))[0].type == "Optical") and (map(select(.device == "/dev/nvme0n1"))[0].size_human == "50.0 GiB") and (map(select(.device == "/dev/sda"))[0].controller_pci_address == "0000:03:00.0")'
 assert_jq "${dimms}" 'length == 3 and .[0].locator == "DIMM_A1" and .[1].speed_mts == 4800 and .[0].size_bytes == 17179869184 and .[2].size_bytes == 8589934592 and .[2].locator == "" and (map(.locator) | index("PHANTOM") == null)'
@@ -251,6 +255,8 @@ assert_jq "${cpu}" '.sockets == 2 and .cores == 16 and .threads == 32 and .cores
 [ "$(console_viewport_dimension 128 160)" = "128" ] || fail 'larger TTY does not expand framebuffer columns'
 [ "$(console_viewport_dimension 0 40)" = "40" ] || fail 'TTY supplies missing framebuffer dimension'
 [ "$(console_viewport_dimension 48 0)" = "48" ] || fail 'missing TTY preserves framebuffer dimension'
+# Keep framebuffer-only assertions independent of the invoking terminal size.
+stty() { printf '0 0\n'; }
 framebuffer_root="${fixture_root}/graphics"
 mkdir -p "${framebuffer_root}/fb0"
 printf '1024,768\n' >"${framebuffer_root}/fb0/virtual_size"
@@ -311,7 +317,7 @@ printf '%s' "${network_window}" | grep -F 'nic5' >/dev/null || fail 'network lis
 if printf '%s' "${network_window}" | grep -F 'nic0' >/dev/null; then fail 'network list subpage bounds'; fi
 many_storage_report="$(printf '%s' "${report}" | jq '.disks = [range(0;8) as $index | (.disks[0] | .device = ("/dev/disk" + ($index|tostring)))]')"
 storage_window="$(render_inventory_console "${many_storage_report}" 3 90 false 7 0 5)"
-printf '%s' "${storage_window}" | grep -F 'Devices 6-10 of 10' >/dev/null || fail 'storage list subpage status'
+printf '%s' "${storage_window}" | grep -F 'Devices 6-11 of 11' >/dev/null || fail 'storage list subpage status'
 printf '%s' "${storage_window}" | grep -F '/dev/disk5' >/dev/null || fail 'storage list subpage first row'
 printf '%s' "${storage_window}" | grep -F '[Controller]' >/dev/null || fail 'storage controller retained in list window'
 if printf '%s' "${storage_window}" | grep -F '/dev/disk0' >/dev/null; then fail 'storage list subpage bounds'; fi

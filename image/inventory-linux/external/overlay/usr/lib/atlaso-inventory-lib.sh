@@ -140,7 +140,10 @@ collect_storage_controllers() {
     [ -d "${path}" ] || continue
     [ "${count}" -lt 64 ] || break
     device_path="$(readlink -f "${path}/device" 2>/dev/null || true)"
-    pci_address="$(printf '%s\n' "${device_path}" | grep -Eo '[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]' | tail -n1 | tr 'A-F' 'a-f')"
+    pci_address=''
+    if ! printf '%s\n' "${device_path}" | grep -Eq '/usb[0-9]+/|/[0-9]+-[0-9]+(\.[0-9]+)*(:[0-9]+\.[0-9]+)?/'; then
+      pci_address="$(printf '%s\n' "${device_path}" | grep -Eo '[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]' | tail -n1 | tr 'A-F' 'a-f')"
+    fi
     if [ -n "${pci_address}" ] && jq -e --arg address "${pci_address}" 'select(.pci_address == $address)' "${output}" >/dev/null 2>&1; then
       continue
     fi
