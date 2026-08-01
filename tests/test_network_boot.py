@@ -9,7 +9,7 @@ from datetime import timedelta
 from email.message import Message
 from pathlib import Path
 from subprocess import CompletedProcess
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 import pytest
@@ -164,8 +164,8 @@ def test_network_boot_catalog_identifies_authoritative_download_sources(db_sessi
 
     assert sources == {
         "inventory": (
-            "Atlaso GitHub releases",
-            "https://github.com/mdaneri/Atlaso/releases/latest",
+            "Atlaso Inventory Linux releases",
+            "https://github.com/mdaneri/Atlaso/releases?q=inventory-linux-v&expanded=true",
         ),
         "memtest86plus": ("Memtest86+ official site", "https://www.memtest.org/"),
         "shredos": (
@@ -1926,25 +1926,52 @@ def test_shredos_iso_rejects_missing_or_invalid_kernel(tmp_path, mode):
         _extract_shredos_kernel(archive, destination)
 
 
-def test_inventory_linux_resolves_versioned_atlaso_release_package(monkeypatch):
+def test_inventory_linux_resolves_signed_dedicated_release_package(monkeypatch):
     payload = {
-        "draft": False,
-        "prerelease": False,
-        "assets": [
-            {
-                "name": "atlaso-inventory-linux-2026.05.1.zip",
-                "browser_download_url": "https://github.com/mdaneri/Atlaso/releases/download/v0.9.52/atlaso-inventory-linux-2026.05.1.zip",
-                "digest": "sha256:" + ("b" * 64),
-            }
-        ],
+        "version": "2026.05.1+8",
+        "package": {
+            "name": "atlaso-inventory-linux-2026.05.1+8.zip",
+            "url": "https://github.com/mdaneri/Atlaso/releases/download/inventory-linux-v2026.05.1%2B8/atlaso-inventory-linux-2026.05.1%2B8.zip",
+            "size": 123,
+            "sha256": "b" * 64,
+        },
     }
+    requests = []
+
+    def fetch(url, **_kwargs):
+        requests.append(url)
+        return b"signed document" if url.endswith("manifest.json") else b"signature"
+
     monkeypatch.setattr(
-        "atlaso.app.services.network_boot._fetch_https_text",
-        lambda *_args, **_kwargs: json.dumps(payload),
+        "atlaso.app.services.network_boot._fetch_https_bytes",
+        fetch,
+    )
+    monkeypatch.setattr(
+        "atlaso.app.services.network_boot.verify_signed_json",
+        lambda raw, signature, *, document_kind: (
+            payload
+            if raw == b"signed document"
+            and signature == b"signature"
+            and document_kind == "inventory"
+            else pytest.fail("unexpected signed manifest verification")
+        ),
     )
     descriptor = _release_descriptor("inventory")
-    assert descriptor["version"] == "2026.05.1"
+    assert descriptor["version"] == "2026.05.1+8"
     assert descriptor["sha256"] == "b" * 64
+    assert requests == [
+        "https://mdaneri.github.io/Atlaso/updates/inventory-linux/latest/manifest.json",
+        "https://mdaneri.github.io/Atlaso/updates/inventory-linux/latest/manifest.json.sig",
+    ]
+
+
+def test_inventory_linux_missing_release_is_actionable(monkeypatch):
+    def missing(url, **_kwargs):
+        raise HTTPError(url, 404, "Not Found", {}, None)
+
+    monkeypatch.setattr(network_boot, "_fetch_https_bytes", missing)
+    with pytest.raises(ValueError, match="No Atlaso Inventory Linux release has been published"):
+        _release_descriptor("inventory")
 
 
 def test_inventory_linux_package_upload_installs_verified_immutable_media(
@@ -2005,6 +2032,54 @@ def test_inventory_linux_package_upload_installs_verified_immutable_media(
     assert manifest["acquisition"] == "upload"
     assert (Path(media.installed_path) / "rootfs.cpio.gz").read_bytes() == initrd
     assert replacements
+
+
+def test_inventory_linux_package_rejects_signed_size_mismatch(
+    db_session,
+    monkeypatch,
+    tmp_path,
+):
+    kernel = b"inventory kernel"
+    initrd = b"inventory initramfs"
+    version = "2026.05.1+8"
+    package = tmp_path / f"atlaso-inventory-linux-{version}.zip"
+    with zipfile.ZipFile(package, "w") as archive:
+        archive.writestr(
+            "manifest.json",
+            json.dumps(
+                {
+                    "kind": "atlaso-inventory-linux",
+                    "schema_version": 1,
+                    "environment": "inventory",
+                    "version": version,
+                    "artifacts": {
+                        "bzImage": hashlib.sha256(kernel).hexdigest(),
+                        "rootfs.cpio.gz": hashlib.sha256(initrd).hexdigest(),
+                    },
+                }
+            ),
+        )
+        archive.writestr("bzImage", kernel)
+        archive.writestr("rootfs.cpio.gz", initrd)
+    monkeypatch.setattr(
+        network_boot,
+        "_release_descriptor",
+        lambda _key: {
+            "version": version,
+            "filename": package.name,
+            "asset_url": "https://example.test/" + package.name,
+            "sha256": hashlib.sha256(package.read_bytes()).hexdigest(),
+            "size": str(package.stat().st_size + 1),
+        },
+    )
+    with pytest.raises(ValueError, match="verified size"):
+        sync_network_boot_media(
+            db_session,
+            environment_key="inventory",
+            media_root=tmp_path / "media",
+            uploaded_artifact=package,
+            uploaded_filename=package.name,
+        )
 
 
 def test_boot_media_archive_rejects_traversal(tmp_path):

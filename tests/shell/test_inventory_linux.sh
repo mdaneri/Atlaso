@@ -239,6 +239,8 @@ mkdir -p "${framebuffer_root}/fb0"
 printf '1024,768\n' >"${framebuffer_root}/fb0/virtual_size"
 [ "$(FRAMEBUFFER_ROOT="${framebuffer_root}" console_terminal_rows)" = "48" ] || fail 'framebuffer row capacity'
 [ "$(FRAMEBUFFER_ROOT="${framebuffer_root}" console_terminal_columns)" = "128" ] || fail 'framebuffer column capacity'
+[ "$(FRAMEBUFFER_SIZE='1024,768' console_terminal_rows)" = "48" ] || fail 'fbset row capacity'
+[ "$(FRAMEBUFFER_SIZE='1024,768' console_terminal_columns)" = "128" ] || fail 'fbset column capacity'
 [ "$(countdown_after_elapsed 300 false 30)" = "270" ] || fail 'countdown advances from five minutes'
 [ "$(countdown_after_elapsed 90 true 30)" = "90" ] || fail 'countdown pauses'
 [ "$(countdown_after_elapsed 90 false 90)" = "0" ] || fail 'countdown reaches automatic reboot boundary'
@@ -281,7 +283,7 @@ printf '%s' "${console}" | grep -F "$(printf '\033[29;1H')" >/dev/null || fail '
 if printf '%s' "${console}" | grep -F "$(printf '\033[0m')" >/dev/null; then fail 'content resets to black terminal background'; fi
 footer="$(refresh_inventory_console_footer 2 89 true 7)"
 printf '%s' "${footer}" | grep -F 'Paused at 89s' >/dev/null || fail 'in-place countdown footer refresh'
-wide_footer="$(FRAMEBUFFER_ROOT="${framebuffer_root}" refresh_inventory_console_footer 2 89 true 7 48)"
+wide_footer="$(FRAMEBUFFER_SIZE='1024,768' refresh_inventory_console_footer 2 89 true 7 48)"
 printf '%s' "${wide_footer}" | grep -F "$(printf '\033[47;1H')" >/dev/null || fail 'framebuffer footer uses physical bottom row'
 many_report="$(printf '%s' "${report}" | jq '.interfaces = [range(0;8) as $index | (.interfaces[0] | .name = ("nic" + ($index|tostring)))]')"
 network_full="$(render_inventory_console "${many_report}" 2 90 false 7)"

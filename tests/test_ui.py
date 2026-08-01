@@ -948,7 +948,7 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     assert 'title: "Actions"' not in network_boot
     assert "/api/v1/network-boot/environments/${environmentKey}/upload" in network_boot
     assert 'component.getData().enabled ? "Disable" : "Enable"' in network_boot
-    assert 'label: "Download latest stable"' in network_boot
+    assert 'label: "Download latest"' in network_boot
     assert 'label: "Upload release asset"' in network_boot
     assert 'title: "Source"' in network_boot
     assert 'field: "source_label"' in network_boot

@@ -451,6 +451,14 @@ status: current
 - Keep Inventory Linux reproducible and read-only: pin Buildroot source and
   digest, run from initramfs, collect only bounded hardware metadata, and never
   add filesystem mounts, block writes, a remote shell, or arbitrary commands.
+- Publish Inventory Linux only through the protected **Publish Inventory Linux release** manual dispatch with the exact
+  SHA of a successful `main` push CI run. Derive its `X.Y.Z+revision` version from the built package, sign deterministic
+  release metadata with the Atlaso Ed25519 release key, and publish an immutable final
+  `inventory-linux-v<version>` release without making it the repository-wide latest release. The matching versioned
+  Pages metadata and `/updates/inventory-linux/latest/` pointer must advance monotonically in the same commit while
+  preserving documentation and appliance-update content. Existing tags, assets, or Pages metadata must be
+  byte-identical on a rerun; fail closed on collisions. Do not attach Inventory Linux packages to ordinary appliance
+  releases and do not add development, preview, or staging channels for Inventory Linux.
 - Inventory report schema v2 uses sysfs as the authoritative source for bounded
   CPU/DIMM, NIC, disk/controller, PCI/USB, and system identity data. Continue to
   accept v1 and normalize it into retained v2 JSON without a database migration,

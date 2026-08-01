@@ -98,10 +98,38 @@ python scripts/build_inventory_linux_package.py
 ```
 
 This creates the deterministic, independently versioned
-`dist/inventory-linux/atlaso-inventory-linux-<version>.zip` release asset. Full
-appliance images preinstall its runtime files; Atlaso releases publish the same
-package so Network Boot can download or upload Inventory Linux updates without
-coupling them to the Python wheel version.
+`dist/inventory-linux/atlaso-inventory-linux-<version>.zip` package. Full
+appliance images preinstall its runtime files, and supported VMware wheel
+deployment synchronizes the package unless explicitly skipped. Ordinary Atlaso
+appliance releases do not contain Inventory Linux.
+
+## Publish a final Inventory Linux release
+
+The protected **Publish Inventory Linux release** GitHub Actions workflow is
+manual-only. Supply the exact full commit SHA of a successful `main` push CI
+run. It rebuilds the pinned Buildroot inputs, derives the `X.Y.Z+revision`
+Inventory version from the package manifest, and immediately publishes a final
+release; there are no development, preview, or staging channels. Independent
+release history begins at `2026.05.1+8`; `+7` is not backfilled.
+
+For version `<version>`, publication creates:
+
+- immutable tag `inventory-linux-v<version>` at the requested commit;
+- final, non-latest GitHub Release with
+  `atlaso-inventory-linux-<version>.zip`,
+  `inventory-linux-manifest.json`, and
+  `inventory-linux-manifest.json.sig`;
+- signed permanent metadata under
+  `/updates/inventory-linux/releases/<version>/`; and
+- the monotonic signed `/updates/inventory-linux/latest/` pointer.
+
+The manifest records the version, source commit, deterministic commit build
+timestamp, signing key ID, `x86_64` architecture, and the package's exact HTTPS
+URL, size, and SHA-256. Publication is idempotent only when an existing tag
+identifies the same commit and every release and Pages asset is byte-identical.
+Conflicts and attempts to move `latest` backward fail closed. The Pages update
+is committed without replacing existing documentation or appliance-update
+content.
 
 The iPXE menu passes the PXE adapter MAC address to Inventory Linux. At startup,
 the utility requests DHCP on that adapter first and falls back across the

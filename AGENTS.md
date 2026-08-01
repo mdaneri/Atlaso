@@ -62,7 +62,10 @@ The following cross-cutting boundaries always apply:
 - Keep development system adapters in dry-run mode unless a reviewed apply unit explicitly promotes real mutation.
 - VMware Workstation is the default live appliance target; use Hyper-V lifecycle coverage for exact VLAN behavior.
 - Inventory Linux is an independently versioned Atlaso release package; full images preinstall it and supported VMware
-  wheel deployment synchronizes it unless explicitly skipped.
+  wheel deployment synchronizes it unless explicitly skipped. Publish it only through the protected manual Inventory
+  Linux release workflow for an exact successful `main` CI SHA. Every workflow build is a final immutable
+  `inventory-linux-v<version>` release and signed Pages pointer; never attach it to an appliance release or introduce
+  development, preview, or staging channels.
 - Inventory Linux reports use bounded schema v2 while accepting and normalizing legacy v1. Keep sysfs authoritative for
   device enumeration, use metadata tools only for structured enrichment/readable names, retain JSON in the existing
   report column, enforce the 256 KiB boundary, and never submit raw command output. Its five-minute local console

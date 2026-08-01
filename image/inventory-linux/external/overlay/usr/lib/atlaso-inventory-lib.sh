@@ -518,18 +518,37 @@ console_window_offset() {
   printf '%s' "${offset}"
 }
 
-console_terminal_rows() {
-  rows=0
+console_framebuffer_size() {
+  configured_size="${FRAMEBUFFER_SIZE:-}"
+  if printf '%s' "${configured_size}" | grep -Eq '^[0-9]+,[0-9]+$'; then
+    printf '%s' "${configured_size}"
+    return
+  fi
   framebuffer_root="${FRAMEBUFFER_ROOT:-/sys/class/graphics}"
   for virtual_size in "${framebuffer_root}"/fb*/virtual_size; do
     [ -r "${virtual_size}" ] || continue
-    height="$(awk -F, 'NR == 1 {print $2}' "${virtual_size}" 2>/dev/null || true)"
-    height="$(unsigned_value "${height:-0}")"
-    candidate=$((height / 16))
-    if [ "${candidate}" -ge 22 ] && [ "${candidate}" -le 120 ] && [ "${candidate}" -gt "${rows}" ]; then
-      rows="${candidate}"
+    configured_size="$(awk -F, 'NR == 1 {print $1 "," $2}' "${virtual_size}" 2>/dev/null || true)"
+    if printf '%s' "${configured_size}" | grep -Eq '^[0-9]+,[0-9]+$'; then
+      printf '%s' "${configured_size}"
+      return
     fi
   done
+  if command -v fbset >/dev/null 2>&1; then
+    configured_size="$(fbset -s 2>/dev/null | awk '$1 == "geometry" {print $2 "," $3; exit}' || true)"
+    if printf '%s' "${configured_size}" | grep -Eq '^[0-9]+,[0-9]+$'; then
+      printf '%s' "${configured_size}"
+      return
+    fi
+  fi
+  printf '0,0'
+}
+
+console_terminal_rows() {
+  rows=0
+  framebuffer_size="$(console_framebuffer_size)"
+  height="$(unsigned_value "${framebuffer_size#*,}")"
+  candidate=$((height / 16))
+  if [ "${candidate}" -ge 22 ] && [ "${candidate}" -le 120 ]; then rows="${candidate}"; fi
   if [ -c /dev/tty ]; then
     tty_rows="$(stty size </dev/tty 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
     tty_rows="$(unsigned_value "${tty_rows:-0}")"
@@ -541,16 +560,10 @@ console_terminal_rows() {
 
 console_terminal_columns() {
   columns=0
-  framebuffer_root="${FRAMEBUFFER_ROOT:-/sys/class/graphics}"
-  for virtual_size in "${framebuffer_root}"/fb*/virtual_size; do
-    [ -r "${virtual_size}" ] || continue
-    width="$(awk -F, 'NR == 1 {print $1}' "${virtual_size}" 2>/dev/null || true)"
-    width="$(unsigned_value "${width:-0}")"
-    candidate=$((width / 8))
-    if [ "${candidate}" -ge 80 ] && [ "${candidate}" -le 240 ] && [ "${candidate}" -gt "${columns}" ]; then
-      columns="${candidate}"
-    fi
-  done
+  framebuffer_size="$(console_framebuffer_size)"
+  width="$(unsigned_value "${framebuffer_size%%,*}")"
+  candidate=$((width / 8))
+  if [ "${candidate}" -ge 80 ] && [ "${candidate}" -le 240 ]; then columns="${candidate}"; fi
   if [ -c /dev/tty ]; then
     tty_columns="$(stty size </dev/tty 2>/dev/null | awk 'NR == 1 {print $2}' || true)"
     tty_columns="$(unsigned_value "${tty_columns:-0}")"

@@ -15,6 +15,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from atlaso.app.services.release_updates import (
     ReleaseManifestError,
+    inventory_version_tuple,
+    validate_inventory_release_manifest,
     validate_release_manifest,
     verify_signed_json,
 )
@@ -45,6 +47,24 @@ def release_payload() -> dict:
             "sha256": "b" * 64,
         },
         "content_hashes": {"packages/atlaso.whl": "c" * 64},
+    }
+
+
+def inventory_payload() -> dict:
+    return {
+        "schema_version": 1,
+        "kind": "atlaso-inventory-linux-release",
+        "version": "2026.05.1+8",
+        "git_commit": "a" * 40,
+        "built_at": "2026-07-31T12:00:00Z",
+        "signing_key_id": KEY_ID,
+        "architecture": "x86_64",
+        "package": {
+            "name": "atlaso-inventory-linux-2026.05.1+8.zip",
+            "url": "https://github.com/mdaneri/Atlaso/releases/download/inventory-linux-v2026.05.1%2B8/atlaso-inventory-linux-2026.05.1%2B8.zip",
+            "size": 123,
+            "sha256": "d" * 64,
+        },
     }
 
 
@@ -117,6 +137,60 @@ def test_channel_pointer_must_match_named_key(trust):
         verify_signed_json(mismatched_raw, mismatched_signature, trust_dir=trust_dir, document_kind="channel")
 
 
+def test_signed_inventory_release_verification_detects_tampering(trust):
+    private_key, trust_dir = trust
+    raw, signature = signed(inventory_payload(), private_key)
+    assert verify_signed_json(
+        raw,
+        signature,
+        trust_dir=trust_dir,
+        document_kind="inventory",
+    )["version"] == "2026.05.1+8"
+    with pytest.raises(ReleaseManifestError, match="signature is invalid"):
+        verify_signed_json(
+            raw.replace(b'"size": 123', b'"size": 124'),
+            signature,
+            trust_dir=trust_dir,
+            document_kind="inventory",
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ({"version": "2026.05.1"}, "X.Y.Z\\+revision"),
+        ({"architecture": "aarch64"}, "x86_64"),
+        ({"package": {"size": 0}}, "size"),
+        ({"package": {"size": 2 * 1024 * 1024 * 1024 + 1}}, "size"),
+        ({"package": {"sha256": "nope"}}, "SHA256"),
+        ({"package": {"url": "http://github.com/example.zip"}}, "HTTPS URL"),
+        ({"package": {"url": "https://example.test/example.zip"}}, "dedicated Atlaso release tag"),
+        (
+            {
+                "package": {
+                    "url": "https://github.com/mdaneri/Atlaso/releases/download/inventory-linux-v2026.05.1%2B9/atlaso-inventory-linux-2026.05.1%2B8.zip"
+                }
+            },
+            "dedicated Atlaso release tag",
+        ),
+    ],
+)
+def test_inventory_release_manifest_fails_closed(mutation, message):
+    payload = inventory_payload()
+    for key, value in mutation.items():
+        if key == "package":
+            payload["package"].update(value)
+        else:
+            payload[key] = value
+    with pytest.raises(ReleaseManifestError, match=message):
+        validate_inventory_release_manifest(payload)
+
+
+def test_inventory_version_order_includes_revision():
+    assert inventory_version_tuple("2026.05.1+8") > inventory_version_tuple("2026.05.1+7")
+    assert inventory_version_tuple("2026.06.0+1") > inventory_version_tuple("2026.05.99+99")
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
@@ -142,13 +216,22 @@ def test_release_manifest_rejects_non_appliance_python_abi():
 
 def test_release_workflows_use_successful_main_sha_and_promote_without_rebuilding():
     publication = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    inventory = (ROOT / ".github/workflows/inventory-linux-release.yml").read_text(
+        encoding="utf-8"
+    )
+    inventory_publisher = (
+        ROOT / "scripts/publish_inventory_linux_release.py"
+    ).read_text(encoding="utf-8")
     promotion = (ROOT / ".github/workflows/promote-release.yml").read_text(encoding="utf-8")
     ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     assert "github.event.workflow_run.head_branch == 'main'" in publication
     assert "github.event.workflow_run.event == 'push'" in publication
-    assert publication.count(
-        "github.event.workflow_run.head_repository.full_name == github.repository"
-    ) >= 2
+    assert (
+        publication.count(
+            "github.event.workflow_run.head_repository.full_name == github.repository"
+        )
+        == 1
+    )
     assert "github.event_name == 'workflow_dispatch'" in publication
     assert "-f head_sha=\"$RELEASE_SHA\"" in publication
     assert "-f status=success" in publication
@@ -159,9 +242,9 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "Infrastructure • Storage • Identity • Networking • Lifecycle" in publication
     assert "The HTML page is informational." in publication
     assert "<script" not in publication
-    assert publication.count("ref: ${{ needs.prepare.outputs.release_sha }}") == 3
+    assert publication.count("ref: ${{ needs.prepare.outputs.release_sha }}") == 2
     assert "actions/upload-artifact@v7" in publication
-    assert publication.count("actions/download-artifact@v8") == 2
+    assert publication.count("actions/download-artifact@v8") == 1
     assert "python-version: '3.14'" in publication
     assert "python-version: '3.14'" in promotion
     assert ci.count("python-version: '3.14'") == 2
@@ -176,6 +259,23 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "gh release download" in promotion
     assert "build_release_bundle.py" not in promotion
     assert "--expected-version \"$RELEASE_VERSION\"" in promotion
+    assert "workflow_dispatch:" in inventory
+    assert "workflow_run:" not in inventory
+    assert "schedule:" not in inventory
+    assert "environment: appliance-release" in inventory
+    assert '-f head_sha="$RELEASE_SHA"' in inventory
+    assert "-f branch=main" in inventory
+    assert "-f event=push" in inventory
+    assert "-f status=success" in inventory
+    assert "has no successful main push CI run" in inventory
+    assert "--latest=false" in inventory_publisher
+    assert '"--draft"' not in inventory_publisher
+    assert '"--prerelease"' not in inventory_publisher
+    assert "inventory-linux-v" not in publication
+    assert "--inventory-package" not in publication
+    assert "development" not in inventory
+    assert "preview" not in inventory
+    assert "staging" not in inventory
 
 
 def test_idempotent_publisher_refuses_existing_tag_for_another_commit(monkeypatch, tmp_path):

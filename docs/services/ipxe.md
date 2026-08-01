@@ -115,15 +115,34 @@ review. It creates desired state only.
 
 The fixed catalog contains Atlaso Inventory Linux, Memtest86+, ShredOS, GParted
 Live, and Clonezilla Live. Full appliance images preinstall the independently
-versioned `atlaso-inventory-linux-<version>.zip` package. The same package is a
-GitHub release asset, so an operator can download or upload a newer verified
+versioned `atlaso-inventory-linux-<version>.zip` package. New Inventory builds
+are final independent GitHub Releases under immutable
+`inventory-linux-v<version>` tags; ordinary Atlaso appliance releases no longer
+contain the package. An operator can still download or upload a newer verified
 Inventory Linux build without updating the Atlaso Python wheel. The other
 environments are disabled and uninstalled by default. Full appliance images
 include GnuPG for signed checksum verification; the development VMware wheel
 deployment bridge repairs that dependency on older test appliances before
 installing the new wheel. The **Source** column
-names and links to the authoritative release page from which Atlaso resolves
-each download. **Download latest stable** queues a durable `pxe-media-sync`
+names and links to the authoritative release history from which Atlaso resolves
+each download; Inventory Linux points to its independent release history.
+
+**Download latest** resolves only these fixed signed endpoints:
+
+- `https://mdaneri.github.io/Atlaso/updates/inventory-linux/latest/manifest.json`
+- `https://mdaneri.github.io/Atlaso/updates/inventory-linux/latest/manifest.json.sig`
+
+Atlaso verifies the detached Ed25519 signature with a public key under
+`/etc/atlaso/update-trust.d`, requires `X.Y.Z+revision`, and requires the package
+URL to target the matching `inventory-linux-v<version>` tag in the Atlaso
+repository. It then enforces the signed package size and SHA-256 before applying
+the existing ZIP allowlist, embedded package identity, inner artifact hashes,
+and atomic installation. If no independent release exists, the task tells the
+operator to publish one with the Inventory Linux workflow. Atlaso versions
+before `0.9.65` still search ordinary appliance releases, so they must upgrade
+before downloading `2026.05.1+8`; already installed Inventory media remains
+usable and activation still occurs only through global appliance apply.
+**Download latest** queues a durable `pxe-media-sync`
 task that:
 
 1. resolves one concrete stable release from the fixed upstream;

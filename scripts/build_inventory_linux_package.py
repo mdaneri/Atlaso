@@ -4,11 +4,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import zipfile
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+INVENTORY_VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+\+[0-9]+$")
 
 
 def sha256(path: Path) -> str:
@@ -26,9 +28,11 @@ def package_inventory_linux(source: Path, output: Path) -> Path:
     if (
         manifest.get("kind") != "atlaso-inventory-linux"
         or manifest.get("schema_version") != 1
-        or not version
+        or INVENTORY_VERSION_RE.fullmatch(version) is None
     ):
-        raise SystemExit("Inventory Linux manifest identity is invalid.")
+        raise SystemExit(
+            "Inventory Linux manifest identity is invalid; version must use X.Y.Z+revision."
+        )
     artifacts = manifest.get("artifacts")
     if not isinstance(artifacts, dict):
         raise SystemExit("Inventory Linux manifest artifacts are invalid.")

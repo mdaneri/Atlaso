@@ -97,7 +97,7 @@ cat >"${output_dir}/manifest.json" <<EOF
   "boot": {
     "kernel": "/pxe/media/inventory/${package_version}/bzImage",
     "initrd": "/pxe/media/inventory/${package_version}/rootfs.cpio.gz",
-    "arguments": "rdinit=/sbin/init console=tty0 quiet loglevel=3 logo.nologo vt.global_cursor_default=0 atlaso.inventory=1"
+    "arguments": "rdinit=/sbin/init console=tty0 quiet loglevel=3 logo.nologo vt.global_cursor_default=0 vga=791 atlaso.inventory=1"
   },
   "artifacts": {
     "bzImage": "${kernel_sha256}",

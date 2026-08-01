@@ -69,7 +69,7 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
             {
                 "kind": "atlaso-inventory-linux",
                 "schema_version": 1,
-                "version": "2026.05.1",
+                "version": "2026.05.1+8",
                 "artifacts": {
                     "bzImage": hashlib.sha256(kernel).hexdigest(),
                     "rootfs.cpio.gz": hashlib.sha256(initrd).hexdigest(),
@@ -136,11 +136,17 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     )
     assert "command -v gpg" in deploy
     assert "tdnf -y install gnupg" in deploy
-    assert "Build Inventory Linux package" in release
-    assert "--inventory-package" in release
+    inventory_release = Path(
+        ".github/workflows/inventory-linux-release.yml"
+    ).read_text(encoding="utf-8")
+    assert "Build Inventory Linux package" not in release
+    assert "--inventory-package" not in release
+    assert "Build reproducible Inventory Linux package" in inventory_release
+    assert "build_inventory_linux_release.py" in inventory_release
     build = Path("image/inventory-linux/build.sh").read_text(encoding="utf-8")
     assert 'buildroot_version="2026.05.1"' in build
     assert 'package_version="2026.05.1+8"' in build
+    assert "vga=791" in build
     assert 'git --git-dir="${git_dir}" --work-tree="${repo_root}"' in build
     assert 'git_dir="/mnt/${git_drive}/${git_tail}"' in build
     assert '"version": "${package_version}"' in build
@@ -257,6 +263,7 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     )
     assert splash.read_bytes().startswith(b"P6\n640 480\n255\n")
     assert "CONFIG_FBSPLASH=y" in busybox_fragment
+    assert "CONFIG_FBSET=y" in busybox_fragment
     assert 'installed_manifest.get("kind") != "atlaso-network-boot-media"' in deploy
     assert 'installed_manifest.get("environment") != "inventory"' in deploy
 
