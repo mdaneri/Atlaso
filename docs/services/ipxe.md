@@ -301,7 +301,10 @@ Heartbeats run every 10 seconds, and the UI treats a host as offline after 30
 seconds. Reboot uses the live report session; Wake-on-LAN is an immediate,
 audited, no-retry packet send based only on the server-owned discovered or ESXi
 reference MAC. A missing valid MAC or IPv4 broadcast target is a recoverable
-conflict, while a UDP send failure is reported as a retryable service error.
+conflict, while a UDP send failure before any delivery is reported as a
+retryable service error. If a later broadcast fails, Atlaso returns and audits
+the targets already sent so callers do not automatically duplicate that partial
+delivery.
 Runtime inventory storage retains at
 most 512 discovered hosts, 2,048 reports across all hosts, 11 reports per host,
 and 4,096 sessions; expired sessions and the oldest inactive inventory are

@@ -1379,6 +1379,15 @@ def wake_on_lan_packet(mac_address: str) -> bytes:
     return (b"\xff" * 6) + (hardware_address * 16)
 
 
+class WakeOnLanDeliveryError(OSError):
+    """Record broadcasts sent before a later UDP delivery failed."""
+
+    def __init__(self, failed_target: str, sent_targets: list[str], cause: OSError):
+        super().__init__(str(cause))
+        self.failed_target = failed_target
+        self.sent_targets = list(sent_targets)
+
+
 def wake_on_lan_broadcast_targets(db: Session) -> list[str]:
     """Return distinct IPv4 broadcasts for the applied Network Boot zones."""
     targets: set[str] = set()
@@ -1419,11 +1428,18 @@ def send_wake_on_lan(
             "Configure an IPv4 Network Boot DHCP zone before waking hosts."
         )
     ordered_targets = sorted(normalized_targets, key=lambda value: int(ip_address(value)))
+    sent_targets: list[str] = []
     with socket_factory(socket.AF_INET, socket.SOCK_DGRAM) as transport:
         transport.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         for target in ordered_targets:
-            transport.sendto(packet, (target, WAKE_ON_LAN_PORT))
-    return ordered_targets
+            try:
+                transport.sendto(packet, (target, WAKE_ON_LAN_PORT))
+            except OSError as exc:
+                if not sent_targets:
+                    raise
+                raise WakeOnLanDeliveryError(target, sent_targets, exc) from exc
+            sent_targets.append(target)
+    return sent_targets
 
 
 def _applied_esxi_pxe_manifest(db: Session) -> dict[str, Any]:

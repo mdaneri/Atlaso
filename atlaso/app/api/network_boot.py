@@ -12,7 +12,7 @@ from typing import Annotated, Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy import delete, desc, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -62,6 +62,7 @@ from atlaso.app.services.network_boot import (
     set_environment_desired_state,
     store_inventory_report,
     touch_inventory_heartbeat,
+    WakeOnLanDeliveryError,
     wake_on_lan_broadcast_targets,
 )
 
@@ -635,10 +636,39 @@ def _wake_host(
     mac_address: str,
     resource_type: str,
     resource_id: str,
-) -> dict[str, Any]:
+) -> Any:
     try:
         targets = wake_on_lan_broadcast_targets(db)
         sent_targets = send_wake_on_lan(mac_address, targets)
+    except WakeOnLanDeliveryError as exc:
+        display_mac = normalize_mac(mac_address, required=True)
+        record_audit(
+            db,
+            actor=identity.username,
+            action="send_wake_on_lan",
+            resource_type=resource_type,
+            resource_id=resource_id,
+            success=False,
+            detail=(
+                f"mac={display_mac}; broadcasts_sent={','.join(exc.sent_targets)}; "
+                f"failed_broadcast={exc.failed_target}; udp_port=9; error={exc}"
+            ),
+            request_id=request.state.request_id,
+        )
+        db.commit()
+        return JSONResponse(
+            status_code=status.HTTP_207_MULTI_STATUS,
+            content={
+                "status": "packet_partially_sent",
+                "mac_address": display_mac,
+                "broadcast_targets": exc.sent_targets,
+                "failed_broadcast_target": exc.failed_target,
+                "message": (
+                    "Wake-on-LAN reached only some broadcasts before a UDP send failed. "
+                    "Do not retry automatically; host power-on is not confirmed."
+                ),
+            },
+        )
     except (OSError, ValueError) as exc:
         record_audit(
             db,

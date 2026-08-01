@@ -18533,7 +18533,7 @@ function renderNetworkBootReport(article, host, historyItem) {
   appendNetworkBootReportCollection(article, "Disks", report.disks, [
     ["Device", "device"], ["Model", "model"], ["Serial", "serial"], ["WWN", "wwn"],
     ["Type", "type"], ["Transport", "transport"], ["Size", (row) => row?.size_human || (row?.size_bytes ? formatMonitorBytes(row.size_bytes) : "")], ["Controller", "controller_pci_address"],
-    ["Flags", (row) => Array.isArray(row?.flags) && row.flags.length ? row.flags.join(", ") : "None"], ["Rotational", "rotational"], ["Removable", "removable"], ["Read only", "read_only"],
+    ["Flags", (row) => legacyReport ? "Not reported" : (Array.isArray(row?.flags) && row.flags.length ? row.flags.join(", ") : "None")], ["Rotational", "rotational"], ["Removable", "removable"], ["Read only", "read_only"],
   ], "No disks were reported.");
   appendNetworkBootReportCollection(article, "PCI devices", report.pci_devices, [
     ["PCI address", "pci_address"], ["Class", "class"], ["Class ID", "class_id"],

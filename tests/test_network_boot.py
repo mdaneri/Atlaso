@@ -74,6 +74,7 @@ from atlaso.app.services.network_boot import (
     acknowledge_inventory_command,
     send_wake_on_lan,
     verify_signed_checksum,
+    WakeOnLanDeliveryError,
     wake_on_lan_broadcast_targets,
     wake_on_lan_packet,
 )
@@ -559,6 +560,59 @@ def test_wake_on_lan_packet_and_distinct_broadcast_delivery():
     assert all(entry[1] == packet for entry in calls if entry[0] == "sendto")
 
 
+def test_wake_on_lan_preserves_targets_sent_before_udp_failure():
+    calls = []
+
+    class FakeSocket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def setsockopt(self, *_args):
+            return None
+
+        def sendto(self, _payload, target):
+            calls.append(target)
+            if len(calls) == 2:
+                raise OSError("test second broadcast failed")
+
+    with pytest.raises(WakeOnLanDeliveryError) as captured:
+        send_wake_on_lan(
+            "52:54:00:12:34:56",
+            ["192.0.2.255", "198.51.100.255"],
+            socket_factory=lambda *_args: FakeSocket(),
+        )
+
+    assert captured.value.sent_targets == ["192.0.2.255"]
+    assert captured.value.failed_target == "198.51.100.255"
+    assert calls == [("192.0.2.255", 9), ("198.51.100.255", 9)]
+
+
+def test_wake_on_lan_preserves_retryable_error_before_any_delivery():
+    class FakeSocket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def setsockopt(self, *_args):
+            return None
+
+        def sendto(self, *_args):
+            raise OSError("test first broadcast failed")
+
+    with pytest.raises(OSError, match="test first broadcast failed") as captured:
+        send_wake_on_lan(
+            "52:54:00:12:34:56",
+            ["192.0.2.255"],
+            socket_factory=lambda *_args: FakeSocket(),
+        )
+    assert not isinstance(captured.value, WakeOnLanDeliveryError)
+
+
 def test_wake_broadcast_targets_use_applied_ipv4_network_boot_scopes(
     db_session,
 ):
@@ -728,6 +782,63 @@ def test_wake_endpoint_reports_udp_send_failure_as_retryable_service_error(
 
     assert response.status_code == 503
     assert response.json()["detail"] == "test UDP send failed"
+
+
+def test_wake_endpoint_reports_and_audits_partial_udp_delivery(client, monkeypatch):
+    raw_token = create_api_token(client, ["write:pxe"])
+    inventory_session = client.post("/pxe/inventory/sessions").json()
+    submitted = client.post(
+        "/pxe/inventory/report",
+        json=inventory_report(),
+        headers={"Authorization": f"Bearer {inventory_session['access_token']}"},
+    )
+    host_id = submitted.json()["host_id"]
+    monkeypatch.setattr(
+        network_boot_api,
+        "wake_on_lan_broadcast_targets",
+        lambda _db: ["192.0.2.255", "198.51.100.255"],
+    )
+    monkeypatch.setattr(
+        network_boot_api,
+        "send_wake_on_lan",
+        lambda *_args: (_ for _ in ()).throw(
+            WakeOnLanDeliveryError(
+                "198.51.100.255",
+                ["192.0.2.255"],
+                OSError("test second broadcast failed"),
+            )
+        ),
+    )
+
+    response = client.post(
+        f"/api/v1/network-boot/hosts/{host_id}/wake",
+        headers={"Authorization": f"Bearer {raw_token}"},
+    )
+
+    assert response.status_code == 207
+    assert response.json() == {
+        "status": "packet_partially_sent",
+        "mac_address": "52:54:00:12:34:56",
+        "broadcast_targets": ["192.0.2.255"],
+        "failed_broadcast_target": "198.51.100.255",
+        "message": (
+            "Wake-on-LAN reached only some broadcasts before a UDP send failed. "
+            "Do not retry automatically; host power-on is not confirmed."
+        ),
+    }
+
+    from atlaso.app.database import SessionLocal
+
+    with SessionLocal() as db:
+        event = db.execute(
+            select(AuditEvent).where(
+                AuditEvent.action == "send_wake_on_lan",
+                AuditEvent.resource_id == str(host_id),
+            )
+        ).scalar_one()
+        assert event.success is False
+        assert "broadcasts_sent=192.0.2.255" in event.detail
+        assert "failed_broadcast=198.51.100.255" in event.detail
 
 
 def test_report_download_is_exact_self_contained_and_rejects_cross_host(client):
