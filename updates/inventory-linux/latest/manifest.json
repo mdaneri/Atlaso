@@ -1,0 +1,15 @@
+{
+  "architecture": "x86_64",
+  "built_at": "2026-08-01T03:41:49Z",
+  "git_commit": "ab3f70faa332ba4e2566bd4c87091b5e16309b14",
+  "kind": "atlaso-inventory-linux-release",
+  "package": {
+    "name": "atlaso-inventory-linux-2026.05.1+8.zip",
+    "sha256": "3dc1fd9f527d84da61976eb02527d13df66b60d62cf3c3dc7738efc23c759c08",
+    "size": 1490723239,
+    "url": "https://github.com/mdaneri/Atlaso/releases/download/inventory-linux-v2026.05.1%2B8/atlaso-inventory-linux-2026.05.1%2B8.zip"
+  },
+  "schema_version": 1,
+  "signing_key_id": "atlaso-release-2026-01",
+  "version": "2026.05.1+8"
+}
