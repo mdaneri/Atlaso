@@ -422,6 +422,8 @@
       
         
       
+        
+      
     
     
     
@@ -2656,6 +2658,8 @@
       
         
       
+        
+      
     
     
     
@@ -2764,6 +2768,40 @@
     
   
   Documentation authoring
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/windows-image-build-wsl/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Windows image-build WSL environment
 
     
   </span>
@@ -3740,6 +3778,13 @@ June 21, 2026, live repository metadata showed <code>python3</code> as <code>3.1
 </span></code></pre></div>
 <p>Atlaso Windows automation supports only PowerShell 7.x (<code>pwsh</code>). Windows PowerShell 5.1 (<code>powershell.exe</code>) is not
 supported. Run every documented Windows command from <code>pwsh</code>, including elevated Hyper-V operations.</p>
+<p>Windows image wrappers require an already functional WSL 2 installation and use the explicitly provisioned
+<code>Atlaso-Build</code> distribution for Inventory Linux by default. They do not install WSL or silently create a missing
+distribution. <code>-WslDistribution &lt;name&gt;</code> selects an existing compatible alternative and is forwarded through the Photon
+entry points. Buildroot's Linux-only <code>PATH</code>, native-filesystem cache, repository-specific work tree, and <code>flock</code> remain
+in force for every distribution. A checkout-wide Windows mutex protects shared final output across distributions. See
+<a href="../../contribute/windows-image-build-wsl/">Windows image-build WSL environment</a> for the pinned setup, safety boundary,
+storage, recovery, and removal procedures.</p>
 <p>Build inputs are the current Photon OS 5.0 ISO URL and checksum. On Hyper-V, use the Windows wrapper so the Photon
 kickstart is attached as a local single remastered ISO instead of depending on early installer networking:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
