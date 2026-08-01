@@ -243,6 +243,16 @@ assert_jq "${cpu}" '.sockets == 2 and .cores == 16 and .threads == 32 and .cores
 [ "$(dmi_sysfs_handle "${ATLASO_SYSFS_ROOT}/firmware/dmi/entries/17-0/raw")" = "0x0011" ] || fail 'sysfs DIMM handle'
 [ "$(dimm_size_bytes '4096 MiB')" = "4294967296" ] || fail 'dmidecode 3.7 binary DIMM size'
 [ "$(dimm_size_bytes '4 GB')" = "4294967296" ] || fail 'legacy decimal DIMM size'
+extended_mib_raw="${fixture_root}/extended-mib.raw"
+extended_kib_raw="${fixture_root}/extended-kib.raw"
+awk 'BEGIN { for (i = 0; i < 32; i++) printf "%c", 0 }' >"${extended_mib_raw}"
+awk 'BEGIN { for (i = 0; i < 32; i++) printf "%c", 0 }' >"${extended_kib_raw}"
+printf '\377\177' | dd of="${extended_mib_raw}" bs=1 seek=12 conv=notrunc 2>/dev/null
+printf '\000\020\000\000' | dd of="${extended_mib_raw}" bs=1 seek=28 conv=notrunc 2>/dev/null
+printf '\377\177' | dd of="${extended_kib_raw}" bs=1 seek=12 conv=notrunc 2>/dev/null
+printf '\000\000\020\200' | dd of="${extended_kib_raw}" bs=1 seek=28 conv=notrunc 2>/dev/null
+[ "$(dimm_sysfs_size_bytes "${extended_mib_raw}")" = "4294967296" ] || fail 'extended DIMM MiB unit'
+[ "$(dimm_sysfs_size_bytes "${extended_kib_raw}")" = "1073741824" ] || fail 'extended DIMM KiB unit bit'
 [ "$(printf '%s' "$(bounded_text 240 "$(printf '%0241d' 0)")" | wc -c)" -eq 240 ] || fail 'string limit'
 [ "$(cycle_console_page 3 next)" = "1" ] || fail 'next page wraps'
 [ "$(cycle_console_page 1 previous)" = "3" ] || fail 'previous page wraps'

@@ -334,8 +334,12 @@ dimm_sysfs_size_bytes() {
       count = split(extended, ext)
       if (count < 4) { print "0"; exit }
       amount = ext[1] + ext[2] * 256 + ext[3] * 65536 + ext[4] * 16777216
-      if (amount >= 2147483648) amount -= 2147483648
-      printf "%.0f\n", amount * 1024 * 1024
+      factor = 1024 * 1024
+      if (amount >= 2147483648) {
+        amount -= 2147483648
+        factor = 1024
+      }
+      printf "%.0f\n", amount * factor
       exit
     }
     if (encoded >= 32768) {
