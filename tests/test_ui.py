@@ -4239,6 +4239,9 @@ def test_network_boot_host_management_report_and_print_contract(client):
     )[0]
     assert ".innerHTML" not in renderer
     assert "textContent" in renderer
+    assert "host?." not in renderer
+    assert 'system.product_name || "Product not reported"' in renderer
+    assert 'system.manufacturer || "Manufacturer not reported"' in renderer
     assert renderer.count('legacyReport ? "Not reported"') >= 4
     assert '<input name="hostname" required maxlength="120">' in page.text
     for section in (
@@ -4273,6 +4276,7 @@ def test_network_boot_host_management_report_and_print_contract(client):
     assert "promoteHost(selectedHost, hostRow?.getElement?.() || null);" in page_initializer
     assert "promoteHost(selectedHost, event.currentTarget);" not in page_initializer
     assert "kickstart_id: promoteForm.elements.kickstart_id.value || null" in page_initializer
+    assert "renderNetworkBootReport(reportArticle, historyItem);" in page_initializer
     assert "atlasoNewTaskId = queued.job_id" in page_initializer
     assert "await refreshTasksPage()" in page_initializer
     assert "requestConfirmation({" in page_initializer

@@ -32,6 +32,7 @@ from atlaso.app.models import (
     NetworkBootMedia,
     utcnow,
 )
+from atlaso.app.operational_logging import log_audit_event
 from atlaso.app.security import Identity, require_api_or_session_scope
 from atlaso.app.schemas import EsxiPxeHostCreate
 from atlaso.app.services.esxi_pxe import (
@@ -641,9 +642,8 @@ def _wake_host(
 ) -> Any:
     try:
         targets = wake_on_lan_broadcast_targets(db)
-        sent_targets = send_wake_on_lan(mac_address, targets)
-    except WakeOnLanDeliveryError as exc:
         display_mac = normalize_mac(mac_address, required=True)
+    except ValueError as exc:
         record_audit(
             db,
             actor=identity.username,
@@ -651,13 +651,34 @@ def _wake_host(
             resource_type=resource_type,
             resource_id=resource_id,
             success=False,
-            detail=(
-                f"mac={display_mac}; broadcasts_sent={','.join(exc.sent_targets)}; "
-                f"failed_broadcast={exc.failed_target}; udp_port=9; error={exc}"
-            ),
+            detail=str(exc),
             request_id=request.state.request_id,
         )
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    audit_event = record_audit(
+        db,
+        actor=identity.username,
+        action="send_wake_on_lan",
+        resource_type=resource_type,
+        resource_id=resource_id,
+        success=False,
+        detail=(
+            f"mac={display_mac}; broadcasts_planned={','.join(targets)}; "
+            "udp_port=9; outcome=pending"
+        ),
+        request_id=request.state.request_id,
+    )
+    try:
+        sent_targets = send_wake_on_lan(mac_address, targets)
+    except WakeOnLanDeliveryError as exc:
+        audit_event.detail = (
+            f"mac={display_mac}; broadcasts_sent={','.join(exc.sent_targets)}; "
+            f"failed_broadcast={exc.failed_target}; udp_port=9; error={exc}"
+        )
+        db.add(audit_event)
         db.commit()
+        db.refresh(audit_event)
+        log_audit_event(audit_event)
         return JSONResponse(
             status_code=status.HTTP_207_MULTI_STATUS,
             content={
@@ -672,30 +693,19 @@ def _wake_host(
             },
         )
     except (OSError, ValueError) as exc:
-        record_audit(
-            db,
-            actor=identity.username,
-            action="send_wake_on_lan",
-            resource_type=resource_type,
-            resource_id=resource_id,
-            success=False,
-            detail=str(exc),
-            request_id=request.state.request_id,
-        )
+        audit_event.detail = f"mac={display_mac}; broadcasts_sent=; udp_port=9; error={exc}"
+        db.add(audit_event)
         db.commit()
+        db.refresh(audit_event)
+        log_audit_event(audit_event)
         status_code = 409 if isinstance(exc, ValueError) else 503
         raise HTTPException(status_code=status_code, detail=str(exc)) from exc
-    display_mac = normalize_mac(mac_address, required=True)
-    record_audit(
-        db,
-        actor=identity.username,
-        action="send_wake_on_lan",
-        resource_type=resource_type,
-        resource_id=resource_id,
-        detail=f"mac={display_mac}; broadcasts={','.join(sent_targets)}; udp_port=9",
-        request_id=request.state.request_id,
-    )
+    audit_event.success = True
+    audit_event.detail = f"mac={display_mac}; broadcasts={','.join(sent_targets)}; udp_port=9"
+    db.add(audit_event)
     db.commit()
+    db.refresh(audit_event)
+    log_audit_event(audit_event)
     return {
         "status": "packet_sent",
         "mac_address": display_mac,

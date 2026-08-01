@@ -300,7 +300,8 @@ inactive client entries and remains bounded across address-rotating clients.
 Heartbeats run every 10 seconds, and the UI treats a host as offline after 30
 seconds. Reboot uses the live report session; Wake-on-LAN is an immediate,
 audited, no-retry packet send based only on the server-owned discovered or ESXi
-reference MAC. A missing valid MAC or IPv4 broadcast target is a recoverable
+reference MAC. Atlaso commits an attributable pending audit before the UDP side
+effect and updates that record with the delivery outcome. A missing valid MAC or IPv4 broadcast target is a recoverable
 conflict, while a UDP send failure before any delivery is reported as a
 retryable service error. If a later broadcast fails, Atlaso returns and audits
 the targets already sent so callers do not automatically duplicate that partial

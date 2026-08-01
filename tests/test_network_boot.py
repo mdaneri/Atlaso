@@ -698,6 +698,16 @@ def test_wake_endpoints_send_server_owned_macs_and_audit(client, monkeypatch):
     )
 
     def capture(mac_address, targets):
+        with SessionLocal() as db:
+            pending = db.execute(
+                select(AuditEvent)
+                .where(AuditEvent.action == "send_wake_on_lan")
+                .order_by(AuditEvent.id.desc())
+                .limit(1)
+            ).scalar_one()
+            assert pending.success is False
+            assert "outcome=pending" in pending.detail
+            assert "broadcasts_planned=192.0.2.255,198.51.100.255" in pending.detail
         sent.append((mac_address, list(targets)))
         return list(targets)
 

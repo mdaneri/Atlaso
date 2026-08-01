@@ -18455,7 +18455,7 @@ function appendNetworkBootReportCollection(article, title, rows, fields, emptyMe
   article.append(section);
 }
 
-function renderNetworkBootReport(article, host, historyItem) {
+function renderNetworkBootReport(article, historyItem) {
   if (!(article instanceof HTMLElement)) return;
   article.replaceChildren();
   const report = historyItem?.report;
@@ -18474,9 +18474,9 @@ function renderNetworkBootReport(article, host, historyItem) {
   const legacyReport = Number(report.source_schema_version || historyItem.schema_version || 1) < 2;
   const header = document.createElement("header");
   const title = document.createElement("h2");
-  title.textContent = system.product_name || host?.product_name || "Discovered host report";
+  title.textContent = system.product_name || "Product not reported";
   const subtitle = document.createElement("p");
-  subtitle.textContent = `${system.manufacturer || host?.manufacturer || "Unknown manufacturer"} · ${system.serial_number || host?.serial_number || "Serial not reported"}`;
+  subtitle.textContent = `${system.manufacturer || "Manufacturer not reported"} · ${system.serial_number || "Serial not reported"}`;
   header.append(title, subtitle);
   article.append(header);
   appendNetworkBootReportSection(article, "Report and boot identity", [
@@ -18581,7 +18581,7 @@ function initializeNetworkBootPage() {
   const selectReport = (historyItem) => {
     if (!selectedHost || !historyItem) return;
     selectedReport = historyItem;
-    renderNetworkBootReport(reportArticle, selectedHost, historyItem);
+    renderNetworkBootReport(reportArticle, historyItem);
     if (reportMeta instanceof HTMLElement) {
       const received = new Date(historyItem.received_at);
       const receivedLabel = Number.isNaN(received.getTime()) ? historyItem.received_at : received.toLocaleString();
@@ -18633,7 +18633,7 @@ function initializeNetworkBootPage() {
       }
       renderReportHistory(loaded.history);
       if (selectedReport) selectReport(selectedReport);
-      else renderNetworkBootReport(reportArticle, selectedHost, null);
+      else renderNetworkBootReport(reportArticle, null);
       updateHostActionState();
       hostDialog?.showModal();
     } catch (error) {
