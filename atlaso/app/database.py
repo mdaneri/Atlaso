@@ -199,6 +199,36 @@ def init_db() -> None:
                         "ADD COLUMN certificate_fingerprint VARCHAR(64) NOT NULL DEFAULT ''"
                     )
                 )
+            job_columns = {
+                row[1]
+                for row in connection.execute(
+                    text("PRAGMA table_info(jobs)")
+                ).all()
+            }
+            if "network_boot_environment_key" not in job_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE jobs "
+                        "ADD COLUMN network_boot_environment_key VARCHAR(80)"
+                    )
+                )
+            if "network_boot_source" not in job_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE jobs "
+                        "ADD COLUMN network_boot_source VARCHAR(20)"
+                    )
+                )
+            connection.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS "
+                    "uq_jobs_active_network_boot_download "
+                    "ON jobs (network_boot_environment_key) "
+                    "WHERE type = 'pxe-media-sync' "
+                    "AND network_boot_source = 'download' "
+                    "AND status IN ('pending', 'running')"
+                )
+            )
 
 
 def get_db() -> Generator[Session, None, None]:

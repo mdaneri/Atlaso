@@ -295,18 +295,36 @@ def sync_network_boot_environment(
             },
             sort_keys=True,
         ),
+        network_boot_environment_key=environment_key,
+        network_boot_source="download",
     )
     db.add(job)
-    record_audit(
-        db,
-        actor=identity.username,
-        action="queue_pxe_media_sync",
-        resource_type="job",
-        resource_id=job.id,
-        detail=f"environment={environment_key}",
-        request_id=request.state.request_id,
-    )
-    db.commit()
+    try:
+        record_audit(
+            db,
+            actor=identity.username,
+            action="queue_pxe_media_sync",
+            resource_type="job",
+            resource_id=job.id,
+            detail=f"environment={environment_key}",
+            request_id=request.state.request_id,
+        )
+    except IntegrityError as exc:
+        db.rollback()
+        duplicate = _active_media_job(
+            db,
+            environment_key=environment_key,
+            source="download",
+        )
+        if duplicate is None:
+            raise
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Network Boot download task {duplicate.id} is already active "
+                f"for {environment_key}."
+            ),
+        ) from exc
     return {"job_id": job.id, "status": job.status, "environment": environment_key}
 
 

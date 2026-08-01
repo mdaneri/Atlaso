@@ -2,18 +2,22 @@ import hashlib
 import io
 import json
 import re
+import threading
 import time
 import zipfile
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from email.message import Message
 from pathlib import Path
 from subprocess import CompletedProcess
+from types import SimpleNamespace
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 import pytest
 import pycdlib
+from fastapi import HTTPException
 from sqlalchemy import select
 from starlette.requests import Request as StarletteRequest
 
@@ -1154,6 +1158,66 @@ def test_media_downloads_queue_fifo_and_only_deduplicate_same_source(client):
     )
     assert upload.status_code == 409
     assert first.json()["job_id"] in upload.json()["detail"]
+
+
+def test_concurrent_duplicate_media_download_admission_is_atomic(client, monkeypatch):
+    original_active_media_job = network_boot_api._active_media_job
+    barrier = threading.Barrier(2)
+    call_lock = threading.Lock()
+    initial_calls = 0
+
+    def synchronized_active_media_job(*args, **kwargs):
+        nonlocal initial_calls
+        result = original_active_media_job(*args, **kwargs)
+        with call_lock:
+            initial_calls += 1
+            wait_for_competitor = initial_calls <= 2
+        if wait_for_competitor:
+            barrier.wait(timeout=5)
+        return result
+
+    monkeypatch.setattr(
+        network_boot_api,
+        "_active_media_job",
+        synchronized_active_media_job,
+    )
+
+    from atlaso.app.database import SessionLocal
+
+    def queue_download(index):
+        request = SimpleNamespace(
+            state=SimpleNamespace(request_id=f"concurrent-download-{index}")
+        )
+        identity = SimpleNamespace(username="admin")
+        with SessionLocal() as db:
+            try:
+                return network_boot_api.sync_network_boot_environment(
+                    "gparted",
+                    request,
+                    identity,
+                    db,
+                )
+            except HTTPException as exc:
+                return exc
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        responses = list(executor.map(queue_download, range(2)))
+
+    accepted = next(response for response in responses if isinstance(response, dict))
+    rejected = next(response for response in responses if isinstance(response, HTTPException))
+    assert rejected.status_code == 409
+    assert accepted["job_id"] in rejected.detail
+
+    with SessionLocal() as db:
+        jobs = db.execute(
+            select(Job).where(
+                Job.type == "pxe-media-sync",
+                Job.network_boot_environment_key == "gparted",
+                Job.network_boot_source == "download",
+                Job.status.in_((JobStatus.PENDING.value, JobStatus.RUNNING.value)),
+            )
+        ).scalars().all()
+        assert [job.id for job in jobs] == [accepted["job_id"]]
 
 
 def test_inventory_report_is_bounded_and_uses_mac_for_placeholder_uuid():

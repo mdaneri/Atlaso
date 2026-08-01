@@ -2,7 +2,19 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from uuid import uuid4
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from atlaso.app.database import Base
@@ -1483,6 +1495,23 @@ class NetworkBootHostBootOverride(Base):
 
 class Job(Base):
     __tablename__ = "jobs"
+    __table_args__ = (
+        Index(
+            "uq_jobs_active_network_boot_download",
+            "network_boot_environment_key",
+            unique=True,
+            sqlite_where=text(
+                "type = 'pxe-media-sync' "
+                "AND network_boot_source = 'download' "
+                "AND status IN ('pending', 'running')"
+            ),
+            postgresql_where=text(
+                "type = 'pxe-media-sync' "
+                "AND network_boot_source = 'download' "
+                "AND status IN ('pending', 'running')"
+            ),
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     type: Mapped[str] = mapped_column(String(80))
@@ -1498,6 +1527,8 @@ class Job(Base):
     trigger: Mapped[str] = mapped_column(String(20), default="manual")
     planned_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     task_config_json: Mapped[str] = mapped_column(Text, default="{}")
+    network_boot_environment_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    network_boot_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     steps: Mapped[list["JobStep"]] = relationship(
         back_populates="job",
