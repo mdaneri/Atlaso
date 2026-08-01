@@ -238,7 +238,7 @@ disk_type() {
 }
 
 collect_disks() {
-  lsblk_json="$(lsblk --json --bytes --nodeps --output NAME,WWN,TRAN 2>/dev/null || printf '{"blockdevices":[]}')"
+  lsblk_json="$(lsblk --json --bytes --nodeps --output NAME,WWN,TRAN,SERIAL 2>/dev/null || printf '{"blockdevices":[]}')"
   output="$(mktemp "${RUNTIME_ROOT}/atlaso-disk.XXXXXX")"
   : >"${output}"
   count=0
@@ -252,6 +252,8 @@ collect_disks() {
     size_bytes=$((sectors * 512))
     model="$(read_value "${path}/device/model")"
     serial="$(read_value "${path}/device/serial")"
+    [ -n "${serial}" ] || serial="$(printf '%s' "${lsblk_json}" | jq -r --arg name "${name}" '.blockdevices[]? | select(.name == $name) | .serial // ""' | head -n1)"
+    serial="$(bounded_text 240 "${serial}")"
     wwn="$(read_value "${path}/device/wwid")"
     [ -n "${wwn}" ] || wwn="$(printf '%s' "${lsblk_json}" | jq -r --arg name "${name}" '.blockdevices[]? | select(.name == $name) | .wwn // ""' | head -n1)"
     wwn="$(bounded_text 240 "${wwn}")"

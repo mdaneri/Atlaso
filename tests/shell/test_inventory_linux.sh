@@ -85,7 +85,7 @@ make_disk() {
   printf '%s\n' "${model}" >"${device_path}/model"
   printf '%s\n' "${serial}" >"${device_path}/serial"
 }
-make_disk sda 0000:03:00.0 209715200 1 0 'Fixture HDD' HDD-1
+make_disk sda 0000:03:00.0 209715200 1 0 'Fixture HDD' ''
 make_disk nvme0n1 0000:03:00.0 104857600 0 0 'Fixture NVMe' NVME-1
 make_disk sr0 0000:03:00.0 1048576 0 1 'Fixture DVD' DVD-1
 printf '5\n' >"${ATLASO_SYSFS_ROOT}/bus/pci/devices/0000:03:00.0/disk-sr0/type"
@@ -158,7 +158,7 @@ printf '[{"addr_info":[{"local":"%s","prefixlen":24}]}]\n' "${address}"
 EOF
 cat >"${fixture_root}/bin/lsblk" <<'EOF'
 #!/bin/sh
-printf '%s\n' '{"blockdevices":[{"name":"sda","wwn":"0x5000","tran":"sata"},{"name":"nvme0n1","wwn":"eui.0001","tran":"nvme"},{"name":"sr0","wwn":"","tran":"sata"}]}'
+printf '%s\n' '{"blockdevices":[{"name":"sda","wwn":"0x5000","tran":"sata","serial":"HDD-LSBLK-1"},{"name":"nvme0n1","wwn":"eui.0001","tran":"nvme","serial":"NVME-UDEV"},{"name":"sr0","wwn":"","tran":"sata","serial":"DVD-UDEV"}]}'
 EOF
 cat >"${fixture_root}/bin/dmidecode" <<'EOF'
 #!/bin/sh
@@ -216,7 +216,7 @@ cpu="$(collect_cpu)"
 assert_jq "${pci}" 'length == 3 and .[0].vendor_id == "8086" and .[1].class_id == "010601"'
 assert_jq "${controllers}" 'length == 2 and .[0].type == "SATA" and .[0].driver == "ahci" and .[1].type == "Hyper-V SCSI" and .[1].driver == "storvsc_host" and .[1].pci_address == ""'
 assert_jq "${interfaces}" 'length == 3 and .[0].boot_interface and .[1].current_mac == "52:54:00:44:55:66" and (map(select(.name == "usb0"))[0].pci_address == "")'
-assert_jq "${disks}" 'length == 3 and (map(select(.device == "/dev/sda"))[0].type == "HDD") and (map(select(.device == "/dev/nvme0n1"))[0].type == "NVMe") and (map(select(.device == "/dev/sr0"))[0].type == "Optical") and (map(select(.device == "/dev/nvme0n1"))[0].size_human == "50.0 GiB") and (map(select(.device == "/dev/sda"))[0].controller_pci_address == "0000:03:00.0")'
+assert_jq "${disks}" 'length == 3 and (map(select(.device == "/dev/sda"))[0].type == "HDD") and (map(select(.device == "/dev/sda"))[0].serial == "HDD-LSBLK-1") and (map(select(.device == "/dev/nvme0n1"))[0].type == "NVMe") and (map(select(.device == "/dev/nvme0n1"))[0].serial == "NVME-1") and (map(select(.device == "/dev/sr0"))[0].type == "Optical") and (map(select(.device == "/dev/nvme0n1"))[0].size_human == "50.0 GiB") and (map(select(.device == "/dev/sda"))[0].controller_pci_address == "0000:03:00.0")'
 assert_jq "${dimms}" 'length == 3 and .[0].locator == "DIMM_A1" and .[1].speed_mts == 4800 and .[0].size_bytes == 17179869184 and .[2].size_bytes == 8589934592 and .[2].locator == "" and (map(.locator) | index("PHANTOM") == null)'
 assert_jq "${usb}" 'length == 2 and .[0].class == "Mass storage" and .[1].serial == "USB-1-2"'
 assert_jq "${cpu}" '.sockets == 2 and .cores == 16 and .threads == 32 and .cores_per_socket == 8 and .threads_per_core == 2'

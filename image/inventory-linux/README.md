@@ -110,7 +110,9 @@ every NIC and disk, storage controllers, PCI and USB devices, and
 system/BIOS/baseboard/chassis identity. `pciutils` and its `pci.ids` data add
 readable PCI names only; raw command output is never submitted. The collector
 uses the sysfs SCSI peripheral type to identify optical block devices instead
-of misclassifying them from rotational-media flags. PCI metadata is attached
+of misclassifying them from rotational-media flags. Structured `lsblk` data
+enriches a missing SCSI disk serial without deciding which disks exist. PCI
+metadata is attached
 only to devices directly backed by PCI, while non-PCI SCSI hosts such as
 Hyper-V StorVSC are retained from controller sysfs. Large collections flow
 through files into compact JSON so Linux argument limits and formatting
