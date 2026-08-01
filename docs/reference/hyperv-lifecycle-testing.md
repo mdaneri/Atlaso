@@ -165,6 +165,11 @@ The lifecycle runner records structured evidence in `test-results/hyperv-lifecyc
   targets, IPv4 and IPv6 storage VMkernel paths, NFS 3 and NFS 4.1 mounts, create/read/delete probes for every
   protocol/family pair, one dual-stack share, and appliance/ESX reboot persistence evidence
 - client-side DNS/DHCP/routing probes when client SSH addresses are available
+- Network Boot Inventory Linux report submission and audited reboot, plus an
+  Alpine client capture of the exact 102-byte UDP/9 Wake-on-LAN magic packet on
+  the private SiteA switch. The capture must equal six `ff` octets followed by
+  the discovered host MAC repeated 16 times; API success alone is insufficient
+  lifecycle evidence.
 - settings backup export, appliance redeploy, settings restore, restored desired-state apply, downloaded Client A
   certificate comparison, and restored CA archive certificate comparison unless `-SkipBackupRestoreTest` is used
 

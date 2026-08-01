@@ -861,6 +861,7 @@ def test_lifecycle_hyperv_script_uses_separate_vm_set_by_default():
     script = Path("scripts/windows/hyperv/run-lifecycle-test.ps1").read_text(encoding="utf-8")
     wrapper = Path("scripts/windows/hyperv/invoke-lifecycle-test.ps1").read_text(encoding="utf-8")
     runner = Path("scripts/interop/lifecycle_test.py").read_text(encoding="utf-8")
+    network_boot_runner = Path("scripts/interop/network_boot_lifecycle.py").read_text(encoding="utf-8")
 
     assert "[string]$LabName = 'AtlasoLifecycle'" in script
     assert "[string]$ApplianceUrl = ''" in script
@@ -881,6 +882,16 @@ def test_lifecycle_hyperv_script_uses_separate_vm_set_by_default():
     assert "$pxeClientName = \"$LabName-PxeBoot\"" in script
     assert "New-LifecyclePxeVm -Name $pxeClientName -SwitchName 'Atlaso-SiteA'" in script
     assert "Invoke-PxeBootSmoke -Name $pxeClientName -MacAddress $pxeClientMac" in script
+    assert "$inventoryDiscoveryTimeoutSeconds = 180" in script
+    assert "$captureTimeoutSeconds = $inventoryDiscoveryTimeoutSeconds + 30" in script
+    assert '"sudo timeout $captureTimeoutSeconds nc -u -l -p 9 | head -c 102 | od -An -v -tx1"' in script
+    assert "--timeout $inventoryDiscoveryTimeoutSeconds" in script
+    assert "Wait-Job -Job $captureJob -Timeout ($captureTimeoutSeconds + 15)" in script
+    assert "$expectedHex = -join (('ff' * 6) + ($compactMac * 16))" in script
+    assert "wake_packet_capture" in script
+    assert "exact_match = $true" in script
+    assert 'f"/api/v1/network-boot/hosts/{host[\'id\']}/wake"' in network_boot_runner
+    assert 'wake.get("status") != "packet_sent"' in network_boot_runner
     assert "[string]$EsxIsoPath = ''" in script
     assert "[string]$EsxIsoPath = ''" in wrapper
     assert "'-EsxIsoPath', $EsxIsoPath" in wrapper

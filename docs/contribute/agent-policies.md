@@ -467,6 +467,16 @@ status: current
   command output. Start the local five-minute reboot countdown only after a
   successful report; pause/resume preserves remaining time, local immediate
   reboot stays explicit, and acknowledged audited remote reboot is authoritative.
+- Render retained inventory as escaped semantic report sections with explicit
+  legacy not-reported states. Print only the selected report and export a
+  self-contained no-cache JSON attachment with host identity, metadata, and the
+  unchanged normalized payload. Discovered-host removal must transactionally
+  delete its commands, sessions, reports, and host row while retaining separate
+  ESXi desired state.
+- Wake-on-LAN is an immediate audited UDP/9 magic-packet send for discovered
+  hosts and saved ESXi Host References. Use only the server-owned MAC, deduplicate
+  IPv4 broadcasts derived from effective Network Boot DHCP zones, perform no
+  retries, and never represent packet send as proof that a host woke.
 - Windows Inventory Linux and Photon builds use `Atlaso-Build` unless the caller explicitly selects another compatible
   WSL distribution. Treat WSL itself as a pre-existing prerequisite: no ordinary build or Atlaso setup path may enable
   Windows features, install WSL, elevate, reboot, change the default distribution, or remove an existing distribution.
@@ -477,6 +487,9 @@ status: current
 - `pxe-media-sync` may populate immutable verified cache versions, but must not
   alter active menu state. Fixed upstreams, HTTPS limits, pinned verification,
   allowlisted extraction, and atomic installation are mandatory.
+- Permit distinct download jobs to queue behind the single FIFO worker and
+  reject only an active duplicate for the same environment and download source.
+  Preserve the stricter upload staging and cleanup guards.
 - Preserve generic `read:pxe` and `write:pxe` isolation from legacy
   `read:esxi-pxe`. Never place inventory bearer tokens in URLs, logs, audits,
   jobs, or browser state; store only hashes and bind each session to one

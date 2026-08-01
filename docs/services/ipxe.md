@@ -51,6 +51,11 @@ Linux once** to override that exact MAC's next menu default for 30 minutes. The
 first claim retains a five-minute retry window so firmware retries remain on
 Inventory Linux; later boots return to the normal ESXi assignment. The request
 is audited and does not change the host's permanent ESXi desired state.
+The same row menu offers **Wake host** for saved references with a valid MAC.
+Wake-on-LAN sends one standard magic packet over UDP/9 to every distinct IPv4
+broadcast derived from the effective Network Boot DHCP zones. A successful
+response means only that Atlaso sent the packet; it does not prove the host
+powered on.
 
 Inventory Linux is a purpose-built Buildroot environment that runs from an
 initramfs in RAM; it is not an Ubuntu, Debian, or Photon OS installation. It
@@ -106,11 +111,28 @@ Each report is limited to 256 KiB, 64 NICs, 128 disks, 64 storage controllers,
 and address/flag lists are also bounded; malformed hardware objects are
 rejected rather than retained partially.
 
-The **Discovered Hosts** grid is read-only. Open a host to review its latest
-report and history, queue a reboot while its Inventory Linux heartbeat is
-online, or use **Promote to ESXi**. Promotion requires explicit hostname, a
-discovered MAC, address, Kickstart, installer ISO, variables, and enabled-state
-review. It creates desired state only.
+The **Discovered Hosts** grid is read-only and keeps a 300 px desktop or 240 px
+narrow-viewport working area above the separately framed media task history.
+Double-click a row or focus it and press Enter to open its semantic hardware
+report. A compact history selector switches among retained reports without
+reloading the page. The selected report covers all available system, firmware,
+CPU, DIMM, NIC, disk/controller, PCI, and USB fields; legacy v1 fields that were
+never submitted are labeled **Not reported** instead of being inferred. Report
+values are inserted as text, not markup.
+
+Use **Print / Save as PDF** to print only the selected report, or **Download
+JSON** to save a no-cache attachment containing the host identity, report
+metadata, and unchanged normalized payload. The exported identity is captured
+from the selected retained report, so later reports and heartbeat changes do
+not alter an older attachment. Operators with Network Boot write
+access can use the row context menu to **Promote to ESXi**, **Reboot**, **Wake
+host**, or **Remove discovered host**. Wake, reboot, and removal share Atlaso's
+confirmation flow. Reboot is available only for an online Inventory Linux
+session. Removal transactionally deletes that discovered host's commands,
+sessions, and reports, but retains any separately promoted ESXi desired-state
+reference. Promotion requires explicit hostname, a discovered MAC, address,
+Kickstart, installer ISO, variables, and enabled-state review. It creates
+desired state only.
 
 ## Boot media packages and activation
 
@@ -213,6 +235,12 @@ The **Boot media tasks** panel reuses the Tasks grid and detail dialogs while
 scoping live refresh, filtering, logs, and cancellation to Network Boot media
 downloads and uploads. The Network Boot and ESXi Kickstarts workspaces scroll
 inside the main panel so the Boot Service rail remains fixed on the right.
+Distinct download requests may queue while another media sync is active; the
+single worker preserves FIFO execution. Atlaso rejects only an active duplicate
+for the same environment and download source. Upload staging and cleanup guards
+remain unchanged. After a download is accepted, its new task is immediately
+loaded, selected, highlighted, and followed by the normal live refresh without
+reloading the page.
 The same menu provides a state-aware **Enable** or **Disable** action. Enable
 remains unavailable until that environment has verified installed media.
 **Media ready** indicates that verified media is installed; **Active version**
@@ -253,6 +281,14 @@ reset preserve installed-media metadata while clearing active activation state.
 Generic automation uses `/api/v1/network-boot` with `read:pxe` or `write:pxe`.
 Viewer has read access; service-admin and admin have read/write access. Legacy
 `read:esxi-pxe` does not grant access to discovered hosts or maintenance media.
+Read access includes
+`GET /hosts/{host_id}/reports/{report_id}/download`. Write access controls
+`DELETE /hosts/{host_id}`, `POST /hosts/{host_id}/wake`, and
+`POST /esxi-hosts/{host_id}/wake`. A report download returns 404 when the report
+does not belong to the requested host rather than exposing cross-host history.
+The attachment derives its host identity and summary metadata from the selected
+retained report, so downloading a historical report remains byte-stable after a
+newer report or heartbeat changes the current discovered-host state.
 
 Inventory Linux receives a one-use report session with an eight-hour maximum
 lifetime. Only the token hash is persisted. The bearer token is sent in the
@@ -262,7 +298,15 @@ Reboot-command acknowledgment is idempotent so the client can retry an
 uncertain response before rebooting. Public endpoint rate-limit state expires
 inactive client entries and remains bounded across address-rotating clients.
 Heartbeats run every 10 seconds, and the UI treats a host as offline after 30
-seconds. Reboot is the only remote action. Runtime inventory storage retains at
+seconds. Reboot uses the live report session; Wake-on-LAN is an immediate,
+audited, no-retry packet send based only on the server-owned discovered or ESXi
+reference MAC. Atlaso commits an attributable pending audit before the UDP side
+effect and updates that record with the delivery outcome. A missing valid MAC or IPv4 broadcast target is a recoverable
+conflict, while a UDP send failure before any delivery is reported as a
+retryable service error. If a later broadcast fails, Atlaso returns and audits
+the targets already sent so callers do not automatically duplicate that partial
+delivery.
+Runtime inventory storage retains at
 most 512 discovered hosts, 2,048 reports across all hosts, 11 reports per host,
 and 4,096 sessions; expired sessions and the oldest inactive inventory are
 pruned as new sessions and reports arrive. Hosts with a recent heartbeat or an

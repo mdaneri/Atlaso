@@ -40,7 +40,7 @@ verify compliance before using the work.
 | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | Direct-edit Tabulator            | A collection has independent, compact fields that can be validated and saved one row at a time.                                                                              | **Physical Interfaces**                                                        |
 | Wizard-backed Tabulator          | A collection remains useful to browse in a grid, but add or edit requires dependent choices, discovery, credentials, safety decisions, or a review step.                     | **ESX Storage**; **Automation Schedules**                                      |
-| Read-only Tabulator              | A primary resource or operational collection is inspected, filtered, sorted, paginated, or opened for detail without inline mutation.                                        | **Tasks**; **Audit Events**                                                    |
+| Read-only Tabulator              | A primary resource or operational collection is inspected, filtered, sorted, paginated, or opened for detail without inline mutation.                                        | **Tasks**; **Audit Events**; **Network Boot Discovered Hosts**                 |
 | Non-grid settings                | A small set of singleton service or appliance settings is edited as desired state rather than as a resource collection.                                                      | **DNS** service settings and validation rail                                   |
 | Custom/other (approval required) | The work is not truthfully a collection or settings pattern, such as a dashboard, chart, public portal, or standalone dialog, and no established Atlaso interaction applies. | Cite explicit maintainer approval and name the closest related Atlaso surface. |
 
@@ -117,7 +117,10 @@ If a record cannot satisfy these constraints, keep its collection in Tabulator a
 
 ### Read-only collections
 
-Tasks and Audit Events are the references for operational collections.
+Tasks and Audit Events are the references for operational collections. Network
+Boot Discovered Hosts reuses that read-only grid contract while placing
+permission-gated secondary actions in the row context menu and opening an
+escaped semantic report with a compact history selector.
 
 - Keep sorting, filtering, pagination, status, and detail navigation consistent with the established operational grids.
 - Do not imply editability through editable-cell styling, input-shaped content, or hover behavior.

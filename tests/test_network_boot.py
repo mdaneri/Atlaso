@@ -17,8 +17,9 @@ import pycdlib
 from sqlalchemy import select
 from starlette.requests import Request as StarletteRequest
 
-import atlaso.app.services.network_boot as network_boot
+import atlaso.app.audit as audit_service
 import atlaso.app.api.network_boot as network_boot_api
+import atlaso.app.services.network_boot as network_boot
 from atlaso.app.api.network_boot import (
     _allowlisted_media_file,
     _installed_media_directory,
@@ -72,7 +73,11 @@ from atlaso.app.services.network_boot import (
     sync_network_boot_media,
     touch_inventory_heartbeat,
     acknowledge_inventory_command,
+    send_wake_on_lan,
     verify_signed_checksum,
+    WakeOnLanDeliveryError,
+    wake_on_lan_broadcast_targets,
+    wake_on_lan_packet,
 )
 from atlaso.app.services.esxi_pxe import (
     esxi_pxe_boot_settings,
@@ -427,6 +432,22 @@ def test_network_boot_mutation_endpoints_persist_jobs_commands_profiles_and_audi
     assert acknowledged.status_code == 200
     assert acknowledged.json()["status"] == "acknowledged"
 
+    overlong_promotion = client.post(
+        f"/api/v1/network-boot/hosts/{host_id}/promote",
+        headers=api_headers,
+        json={
+            "hostname": "h" * 121,
+            "mac_address": "52:54:00:12:34:56",
+            "ip_address": "192.0.2.10",
+            "kickstart_id": "",
+            "installer_iso_path": "",
+            "variables": {},
+            "enabled": False,
+        },
+    )
+    assert overlong_promotion.status_code == 422
+    assert "Promotion hostname is invalid" in overlong_promotion.json()["detail"]
+
     promotion = client.post(
         f"/api/v1/network-boot/hosts/{host_id}/promote",
         headers=api_headers,
@@ -434,7 +455,7 @@ def test_network_boot_mutation_endpoints_persist_jobs_commands_profiles_and_audi
             "hostname": "esxi-inventory-01",
             "mac_address": "52:54:00:12:34:56",
             "ip_address": "192.0.2.10",
-            "kickstart_id": None,
+            "kickstart_id": "",
             "installer_iso_path": "",
             "variables": {},
             "enabled": False,
@@ -447,7 +468,9 @@ def test_network_boot_mutation_endpoints_persist_jobs_commands_profiles_and_audi
     with SessionLocal() as db:
         assert db.get(Job, sync.json()["job_id"]) is not None
         assert db.get(NetworkBootInventoryCommand, command_id) is not None
-        assert db.get(EsxiPxeHost, promotion.json()["id"]) is not None
+        promoted_host = db.get(EsxiPxeHost, promotion.json()["id"])
+        assert promoted_host is not None
+        assert promoted_host.kickstart_id is None
         actions = set(
             db.execute(
                 select(AuditEvent.action).where(
@@ -521,6 +544,616 @@ def test_api_schedules_and_claims_esxi_inventory_boot_override(client):
                 AuditEvent.resource_id == str(host_id),
             )
         ).scalar_one_or_none() is not None
+
+
+def test_wake_on_lan_packet_and_distinct_broadcast_delivery():
+    packet = wake_on_lan_packet("52:54:00:12:34:56")
+    assert packet == (b"\xff" * 6) + (bytes.fromhex("525400123456") * 16)
+
+    calls = []
+
+    class FakeSocket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def setsockopt(self, *args):
+            calls.append(("setsockopt", args))
+
+        def sendto(self, payload, target):
+            calls.append(("sendto", payload, target))
+
+    targets = send_wake_on_lan(
+        "52:54:00:12:34:56",
+        ["192.0.2.255", "198.51.100.255", "192.0.2.255"],
+        socket_factory=lambda *_args: FakeSocket(),
+    )
+
+    assert targets == ["192.0.2.255", "198.51.100.255"]
+    assert [entry[2] for entry in calls if entry[0] == "sendto"] == [
+        ("192.0.2.255", 9),
+        ("198.51.100.255", 9),
+    ]
+    assert all(entry[1] == packet for entry in calls if entry[0] == "sendto")
+
+
+def test_wake_on_lan_preserves_targets_sent_before_udp_failure():
+    calls = []
+
+    class FakeSocket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def setsockopt(self, *_args):
+            return None
+
+        def sendto(self, _payload, target):
+            calls.append(target)
+            if len(calls) == 2:
+                raise OSError("test second broadcast failed")
+
+    with pytest.raises(WakeOnLanDeliveryError) as captured:
+        send_wake_on_lan(
+            "52:54:00:12:34:56",
+            ["192.0.2.255", "198.51.100.255"],
+            socket_factory=lambda *_args: FakeSocket(),
+        )
+
+    assert captured.value.sent_targets == ["192.0.2.255"]
+    assert captured.value.failed_target == "198.51.100.255"
+    assert calls == [("192.0.2.255", 9), ("198.51.100.255", 9)]
+
+
+def test_wake_on_lan_preserves_retryable_error_before_any_delivery():
+    class FakeSocket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def setsockopt(self, *_args):
+            return None
+
+        def sendto(self, *_args):
+            raise OSError("test first broadcast failed")
+
+    with pytest.raises(OSError, match="test first broadcast failed") as captured:
+        send_wake_on_lan(
+            "52:54:00:12:34:56",
+            ["192.0.2.255"],
+            socket_factory=lambda *_args: FakeSocket(),
+        )
+    assert not isinstance(captured.value, WakeOnLanDeliveryError)
+
+
+def test_wake_broadcast_targets_use_applied_ipv4_network_boot_scopes(
+    db_session,
+):
+    set_applied_pxe_runtime(
+        db_session,
+        boot={
+            "dhcp_scopes": [
+                {"address_family": "ipv4", "site_address": "192.0.2.1", "prefix_length": 24},
+                {"address_family": "ipv4", "site_address": "192.0.2.9", "prefix_length": 24},
+                {"address_family": "ipv4", "site_address": "198.51.100.1", "prefix_length": 25},
+                {"address_family": "ipv6", "site_address": "2001:db8::1", "prefix_length": 64},
+                {"address_family": "ipv4", "site_address": "invalid", "prefix_length": 24},
+            ]
+        },
+    )
+    assert wake_on_lan_broadcast_targets(db_session) == [
+        "192.0.2.255",
+        "198.51.100.127",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("mac_address", "targets", "message"),
+    [
+        ("not-a-mac", ["192.0.2.255"], "valid host MAC"),
+        ("00:00:00:00:00:00", ["192.0.2.255"], "valid host MAC"),
+        ("52:54:00:12:34:56", [], "Configure an IPv4"),
+        ("52:54:00:12:34:56", ["2001:db8::ffff"], "IPv4"),
+    ],
+)
+def test_wake_on_lan_rejects_invalid_inputs(mac_address, targets, message):
+    with pytest.raises(ValueError, match=message):
+        send_wake_on_lan(mac_address, targets)
+
+
+def test_wake_endpoints_send_server_owned_macs_and_audit(client, monkeypatch):
+    raw_token = create_api_token(client, ["read:pxe", "write:pxe"])
+    headers = {"Authorization": f"Bearer {raw_token}"}
+    inventory_session = client.post("/pxe/inventory/sessions").json()
+    submitted = client.post(
+        "/pxe/inventory/report",
+        json=inventory_report(),
+        headers={"Authorization": f"Bearer {inventory_session['access_token']}"},
+    )
+    assert submitted.status_code == 201, submitted.text
+    discovered_id = submitted.json()["host_id"]
+
+    from atlaso.app.database import SessionLocal
+
+    with SessionLocal() as db:
+        reference = EsxiPxeHost(
+            hostname="esxi-wake-test",
+            mac_address="52:54:00:aa:bb:cc",
+            enabled=False,
+        )
+        db.add(reference)
+        db.commit()
+        reference_id = reference.id
+
+    sent = []
+    logged_wake_events = []
+    monkeypatch.setattr(
+        audit_service,
+        "log_audit_event",
+        lambda event: logged_wake_events.append(
+            (event.success, event.detail)
+        ) if event.action == "send_wake_on_lan" else None,
+    )
+    monkeypatch.setattr(
+        network_boot_api,
+        "wake_on_lan_broadcast_targets",
+        lambda _db: ["192.0.2.255", "198.51.100.255"],
+    )
+
+    def capture(mac_address, targets):
+        with SessionLocal() as db:
+            pending = db.execute(
+                select(AuditEvent)
+                .where(AuditEvent.action == "send_wake_on_lan")
+                .order_by(AuditEvent.id.desc())
+                .limit(1)
+            ).scalar_one()
+            assert pending.success is False
+            assert "outcome=pending" in pending.detail
+            assert "broadcasts_planned=192.0.2.255,198.51.100.255" in pending.detail
+        assert len(logged_wake_events) == len(sent)
+        assert all("outcome=pending" not in detail for _success, detail in logged_wake_events)
+        sent.append((mac_address, list(targets)))
+        return list(targets)
+
+    monkeypatch.setattr(network_boot_api, "send_wake_on_lan", capture)
+
+    discovered = client.post(
+        f"/api/v1/network-boot/hosts/{discovered_id}/wake",
+        headers=headers,
+    )
+    reference_response = client.post(
+        f"/api/v1/network-boot/esxi-hosts/{reference_id}/wake",
+        headers=headers,
+    )
+
+    assert discovered.status_code == 200, discovered.text
+    assert reference_response.status_code == 200, reference_response.text
+    assert discovered.json()["status"] == "packet_sent"
+    assert "not confirmed" in discovered.json()["message"]
+    assert sent == [
+        ("52:54:00:12:34:56", ["192.0.2.255", "198.51.100.255"]),
+        ("52:54:00:aa:bb:cc", ["192.0.2.255", "198.51.100.255"]),
+    ]
+    assert logged_wake_events == [
+        (True, "outcome=packet_sent; broadcasts_sent=2"),
+        (True, "outcome=packet_sent; broadcasts_sent=2"),
+    ]
+
+    with SessionLocal() as db:
+        events = db.execute(
+            select(AuditEvent).where(AuditEvent.action == "send_wake_on_lan")
+        ).scalars().all()
+        assert {(event.resource_type, event.resource_id) for event in events} == {
+            ("network_boot_discovered_host", str(discovered_id)),
+            ("esxi_pxe_host", str(reference_id)),
+        }
+        assert all(event.success for event in events)
+
+
+def test_wake_endpoint_returns_recoverable_conflict_and_audits_failure(
+    client,
+    monkeypatch,
+):
+    raw_token = create_api_token(client, ["write:pxe"])
+    inventory_session = client.post("/pxe/inventory/sessions").json()
+    submitted = client.post(
+        "/pxe/inventory/report",
+        json=inventory_report(),
+        headers={"Authorization": f"Bearer {inventory_session['access_token']}"},
+    )
+    host_id = submitted.json()["host_id"]
+    monkeypatch.setattr(
+        network_boot_api,
+        "wake_on_lan_broadcast_targets",
+        lambda _db: [],
+    )
+
+    response = client.post(
+        f"/api/v1/network-boot/hosts/{host_id}/wake",
+        headers={"Authorization": f"Bearer {raw_token}"},
+    )
+
+    assert response.status_code == 409
+    assert "Configure an IPv4" in response.json()["detail"]
+
+    from atlaso.app.database import SessionLocal
+
+    with SessionLocal() as db:
+        event = db.execute(
+            select(AuditEvent).where(
+                AuditEvent.action == "send_wake_on_lan",
+                AuditEvent.resource_id == str(host_id),
+            )
+        ).scalar_one()
+        assert event.success is False
+
+
+def test_wake_endpoint_reports_udp_send_failure_as_retryable_service_error(
+    client,
+    monkeypatch,
+):
+    raw_token = create_api_token(client, ["write:pxe"])
+    inventory_session = client.post("/pxe/inventory/sessions").json()
+    submitted = client.post(
+        "/pxe/inventory/report",
+        json=inventory_report(),
+        headers={"Authorization": f"Bearer {inventory_session['access_token']}"},
+    )
+    host_id = submitted.json()["host_id"]
+    logged_wake_events = []
+    monkeypatch.setattr(
+        audit_service,
+        "log_audit_event",
+        lambda event: logged_wake_events.append(
+            (event.success, event.detail)
+        ) if event.action == "send_wake_on_lan" else None,
+    )
+    monkeypatch.setattr(
+        network_boot_api,
+        "wake_on_lan_broadcast_targets",
+        lambda _db: ["192.0.2.255"],
+    )
+    monkeypatch.setattr(
+        network_boot_api,
+        "send_wake_on_lan",
+        lambda *_args: (_ for _ in ()).throw(OSError("test UDP send failed")),
+    )
+
+    response = client.post(
+        f"/api/v1/network-boot/hosts/{host_id}/wake",
+        headers={"Authorization": f"Bearer {raw_token}"},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "test UDP send failed"
+    assert logged_wake_events == [
+        (False, "outcome=packet_not_sent; broadcasts_sent=0")
+    ]
+
+
+def test_wake_endpoint_reports_and_audits_partial_udp_delivery(client, monkeypatch):
+    raw_token = create_api_token(client, ["write:pxe"])
+    inventory_session = client.post("/pxe/inventory/sessions").json()
+    submitted = client.post(
+        "/pxe/inventory/report",
+        json=inventory_report(),
+        headers={"Authorization": f"Bearer {inventory_session['access_token']}"},
+    )
+    host_id = submitted.json()["host_id"]
+    logged_wake_events = []
+    monkeypatch.setattr(
+        audit_service,
+        "log_audit_event",
+        lambda event: logged_wake_events.append(
+            (event.success, event.detail)
+        ) if event.action == "send_wake_on_lan" else None,
+    )
+    monkeypatch.setattr(
+        network_boot_api,
+        "wake_on_lan_broadcast_targets",
+        lambda _db: ["192.0.2.255", "198.51.100.255"],
+    )
+    monkeypatch.setattr(
+        network_boot_api,
+        "send_wake_on_lan",
+        lambda *_args: (_ for _ in ()).throw(
+            WakeOnLanDeliveryError(
+                "198.51.100.255",
+                ["192.0.2.255"],
+                OSError("test second broadcast failed"),
+            )
+        ),
+    )
+
+    response = client.post(
+        f"/api/v1/network-boot/hosts/{host_id}/wake",
+        headers={"Authorization": f"Bearer {raw_token}"},
+    )
+
+    assert response.status_code == 207
+    assert response.json() == {
+        "status": "packet_partially_sent",
+        "mac_address": "52:54:00:12:34:56",
+        "broadcast_targets": ["192.0.2.255"],
+        "failed_broadcast_target": "198.51.100.255",
+        "message": (
+            "Wake-on-LAN reached only some broadcasts before a UDP send failed. "
+            "Do not retry automatically; host power-on is not confirmed."
+        ),
+    }
+    assert logged_wake_events == [
+        (False, "outcome=packet_partially_sent; broadcasts_sent=1")
+    ]
+
+    from atlaso.app.database import SessionLocal
+
+    with SessionLocal() as db:
+        event = db.execute(
+            select(AuditEvent).where(
+                AuditEvent.action == "send_wake_on_lan",
+                AuditEvent.resource_id == str(host_id),
+            )
+        ).scalar_one()
+        assert event.success is False
+        assert "broadcasts_sent=192.0.2.255" in event.detail
+        assert "failed_broadcast=198.51.100.255" in event.detail
+
+
+def test_report_download_is_exact_self_contained_and_rejects_cross_host(client):
+    raw_token = create_api_token(client, ["read:pxe"])
+    headers = {"Authorization": f"Bearer {raw_token}"}
+    first_session = client.post("/pxe/inventory/sessions").json()
+    first_payload = inventory_report_v2()
+    first = client.post(
+        "/pxe/inventory/report",
+        json=first_payload,
+        headers={"Authorization": f"Bearer {first_session['access_token']}"},
+    )
+    assert first.status_code == 201, first.text
+    first_download = client.get(
+        f"/api/v1/network-boot/hosts/{first.json()['host_id']}/reports/"
+        f"{first.json()['report_id']}/download",
+        headers=headers,
+    )
+    assert first_download.status_code == 200, first_download.text
+
+    newer_payload = inventory_report_v2()
+    newer_payload["system"]["manufacturer"] = "Newer Vendor"
+    newer_payload["cpu"]["model"] = "Newer CPU"
+    newer_payload["disks"].append(dict(newer_payload["disks"][0], device="/dev/sdb"))
+    second_session = client.post("/pxe/inventory/sessions").json()
+    newer = client.post(
+        "/pxe/inventory/report",
+        json=newer_payload,
+        headers={"Authorization": f"Bearer {second_session['access_token']}"},
+    )
+    assert newer.status_code == 201, newer.text
+    assert newer.json()["host_id"] == first.json()["host_id"]
+
+    download = client.get(
+        f"/api/v1/network-boot/hosts/{first.json()['host_id']}/reports/"
+        f"{first.json()['report_id']}/download",
+        headers=headers,
+    )
+    assert download.status_code == 200, download.text
+    assert download.content == first_download.content
+    exported = download.json()
+    assert exported["host"] == {
+        "id": first.json()["host_id"],
+        "identity_key": (
+            "uuid:4c4c4544-004b-4d10-8052-cac04f4c5132:"
+            "6aa1a7a23e5008c9"
+        ),
+        "dmi_uuid": "4c4c4544-004b-4d10-8052-cac04f4c5132",
+        "boot_mac": "52:54:00:12:34:56",
+        "macs": ["52:54:00:12:34:56"],
+        "manufacturer": "Atlaso Test",
+        "product_name": "Inventory VM",
+        "serial_number": "SERIAL-1",
+        "cpu_model": "Example CPU",
+        "total_memory_bytes": 8 * 1024**3,
+        "disk_count": 1,
+        "interface_count": 1,
+    }
+    assert download.headers["content-type"] == "application/json"
+    assert download.headers["cache-control"] == "no-store"
+    assert download.headers["content-disposition"] == (
+        f'attachment; filename="atlaso-inventory-host-{first.json()["host_id"]}'
+        f'-report-{first.json()["report_id"]}.json"'
+    )
+
+    other_payload = inventory_report_v2()
+    other_payload["system"]["dmi_uuid"] = "4c4c4544-004b-4d10-8052-cac04f4c5199"
+    other_payload["boot_mac"] = "52:54:00:12:34:99"
+    other_payload["interfaces"][0]["permanent_mac"] = "52:54:00:12:34:99"
+    other_payload["interfaces"][0]["current_mac"] = "52:54:00:12:34:99"
+    other_session = client.post("/pxe/inventory/sessions").json()
+    other = client.post(
+        "/pxe/inventory/report",
+        json=other_payload,
+        headers={"Authorization": f"Bearer {other_session['access_token']}"},
+    )
+    assert other.status_code == 201, other.text
+    cross_host = client.get(
+        f"/api/v1/network-boot/hosts/{other.json()['host_id']}/reports/"
+        f"{first.json()['report_id']}/download",
+        headers=headers,
+    )
+    assert cross_host.status_code == 404
+
+
+def test_remove_discovered_host_cleans_inventory_and_preserves_esxi_state(client):
+    raw_token = create_api_token(client, ["write:pxe"])
+    headers = {"Authorization": f"Bearer {raw_token}"}
+    inventory_session = client.post("/pxe/inventory/sessions").json()
+    submitted = client.post(
+        "/pxe/inventory/report",
+        json=inventory_report(),
+        headers={"Authorization": f"Bearer {inventory_session['access_token']}"},
+    )
+    host_id = submitted.json()["host_id"]
+    reboot = client.post(
+        f"/api/v1/network-boot/hosts/{host_id}/reboot",
+        headers=headers,
+    )
+    assert reboot.status_code == 202, reboot.text
+
+    from atlaso.app.database import SessionLocal
+
+    with SessionLocal() as db:
+        reference = EsxiPxeHost(
+            hostname="promoted-state-remains",
+            mac_address="52:54:00:12:34:56",
+            enabled=False,
+        )
+        db.add(reference)
+        db.commit()
+        reference_id = reference.id
+
+    response = client.delete(
+        f"/api/v1/network-boot/hosts/{host_id}",
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "host_id": host_id,
+        "removed": True,
+        "commands": 1,
+        "sessions": 1,
+        "reports": 1,
+    }
+
+    with SessionLocal() as db:
+        assert db.get(NetworkBootDiscoveredHost, host_id) is None
+        assert db.get(NetworkBootInventorySession, inventory_session["session_id"]) is None
+        assert db.get(NetworkBootInventoryCommand, reboot.json()["id"]) is None
+        assert db.get(NetworkBootInventoryReport, submitted.json()["report_id"]) is None
+        assert db.get(EsxiPxeHost, reference_id) is not None
+        event = db.execute(
+            select(AuditEvent).where(
+                AuditEvent.action == "remove_discovered_host",
+                AuditEvent.resource_id == str(host_id),
+            )
+        ).scalar_one()
+        assert event.detail == "reports=1; sessions=1; commands=1"
+
+
+def test_host_management_requires_scopes_and_returns_missing_resources(client):
+    read_token = create_api_token(client, ["read:pxe"])
+    write_token = create_api_token(client, ["write:pxe"])
+    read_headers = {"Authorization": f"Bearer {read_token}"}
+    write_headers = {"Authorization": f"Bearer {write_token}"}
+
+    assert client.delete(
+        "/api/v1/network-boot/hosts/999999", headers=read_headers
+    ).status_code == 403
+    assert client.post(
+        "/api/v1/network-boot/hosts/999999/wake", headers=read_headers
+    ).status_code == 403
+    assert client.get(
+        "/api/v1/network-boot/hosts/999999/reports/999999/download",
+        headers=write_headers,
+    ).status_code == 403
+    assert client.delete(
+        "/api/v1/network-boot/hosts/999999", headers=write_headers
+    ).status_code == 404
+    assert client.post(
+        "/api/v1/network-boot/hosts/999999/wake", headers=write_headers
+    ).status_code == 404
+    assert client.post(
+        "/api/v1/network-boot/esxi-hosts/999999/wake", headers=write_headers
+    ).status_code == 404
+    assert client.get(
+        "/api/v1/network-boot/hosts/999999/reports/999999/download",
+        headers=read_headers,
+    ).status_code == 404
+
+
+def test_remove_discovered_host_rolls_back_cleanup_when_audit_fails(
+    client,
+    monkeypatch,
+):
+    raw_token = create_api_token(client, ["write:pxe"])
+    inventory_session = client.post("/pxe/inventory/sessions").json()
+    submitted = client.post(
+        "/pxe/inventory/report",
+        json=inventory_report(),
+        headers={"Authorization": f"Bearer {inventory_session['access_token']}"},
+    )
+    host_id = submitted.json()["host_id"]
+    monkeypatch.setattr(
+        network_boot_api,
+        "record_audit",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("audit failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="audit failed"):
+        client.delete(
+            f"/api/v1/network-boot/hosts/{host_id}",
+            headers={"Authorization": f"Bearer {raw_token}"},
+        )
+
+    from atlaso.app.database import SessionLocal
+
+    with SessionLocal() as db:
+        assert db.get(NetworkBootDiscoveredHost, host_id) is not None
+        assert db.get(NetworkBootInventorySession, inventory_session["session_id"]) is not None
+        assert db.get(NetworkBootInventoryReport, submitted.json()["report_id"]) is not None
+
+
+def test_media_downloads_queue_fifo_and_only_deduplicate_same_source(client):
+    raw_token = create_api_token(client, ["write:pxe"])
+    headers = {"Authorization": f"Bearer {raw_token}"}
+
+    first = client.post(
+        "/api/v1/network-boot/environments/gparted/sync",
+        headers=headers,
+    )
+    second = client.post(
+        "/api/v1/network-boot/environments/clonezilla/sync",
+        headers=headers,
+    )
+    duplicate = client.post(
+        "/api/v1/network-boot/environments/gparted/sync",
+        headers=headers,
+    )
+
+    assert first.status_code == 202, first.text
+    assert second.status_code == 202, second.text
+    assert duplicate.status_code == 409
+    assert first.json()["job_id"] in duplicate.json()["detail"]
+
+    from atlaso.app.database import SessionLocal
+
+    with SessionLocal() as db:
+        jobs = db.execute(
+            select(Job)
+            .where(Job.type == "pxe-media-sync")
+            .order_by(Job.created_at, Job.id)
+        ).scalars().all()
+        assert [job.id for job in jobs] == [
+            first.json()["job_id"],
+            second.json()["job_id"],
+        ]
+        assert [json.loads(job.task_config_json)["environment"] for job in jobs] == [
+            "gparted",
+            "clonezilla",
+        ]
+
+    upload = client.post(
+        "/api/v1/network-boot/environments/shredos/upload",
+        headers=headers,
+        files={"artifact": ("shredos.iso", b"not-read-while-active", "application/octet-stream")},
+    )
+    assert upload.status_code == 409
+    assert first.json()["job_id"] in upload.json()["detail"]
 
 
 def test_inventory_report_is_bounded_and_uses_mac_for_placeholder_uuid():

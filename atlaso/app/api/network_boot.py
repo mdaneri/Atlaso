@@ -12,12 +12,13 @@ from typing import Annotated, Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
-from fastapi.responses import FileResponse
-from sqlalchemy import desc, select
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import ValidationError
+from sqlalchemy import delete, desc, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from atlaso.app.audit import record_audit
+from atlaso.app.audit import finalize_audit, record_audit
 from atlaso.app.database import get_db
 from atlaso.app.models import (
     EsxiPxeHost,
@@ -26,11 +27,13 @@ from atlaso.app.models import (
     NetworkBootDiscoveredHost,
     NetworkBootEnvironment,
     NetworkBootInventoryCommand,
+    NetworkBootInventoryReport,
     NetworkBootInventorySession,
     NetworkBootMedia,
     utcnow,
 )
 from atlaso.app.security import Identity, require_api_or_session_scope
+from atlaso.app.schemas import EsxiPxeHostCreate
 from atlaso.app.services.esxi_pxe import (
     esxi_pxe_boot_settings,
     host_variables_json,
@@ -50,14 +53,19 @@ from atlaso.app.services.network_boot import (
     inventory_session_for_token,
     issue_inventory_session,
     network_boot_upload_path,
+    normalize_mac,
     poll_inventory_command,
     queue_reboot_command,
     render_network_boot_menu,
+    report_identity,
     report_history,
     request_host_boot_override,
+    send_wake_on_lan,
     set_environment_desired_state,
     store_inventory_report,
     touch_inventory_heartbeat,
+    WakeOnLanDeliveryError,
+    wake_on_lan_broadcast_targets,
 )
 
 
@@ -72,6 +80,36 @@ _MEDIA_ENVIRONMENT_ROOTS = {
     for key in ("inventory", "memtest86plus", "shredos", "gparted", "clonezilla")
 }
 _MAX_MEDIA_FILES = 256
+
+
+def _media_job_config(job: Job) -> dict[str, Any]:
+    try:
+        payload = json.loads(job.task_config_json or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _active_media_job(
+    db: Session,
+    *,
+    environment_key: str,
+    source: str,
+) -> Job | None:
+    active_jobs = db.execute(
+        select(Job).where(
+            Job.type == "pxe-media-sync",
+            Job.status.in_((JobStatus.PENDING.value, JobStatus.RUNNING.value)),
+        )
+    ).scalars().all()
+    for job in active_jobs:
+        config = _media_job_config(job)
+        if (
+            str(config.get("environment") or "") == environment_key
+            and str(config.get("source") or "download") == source
+        ):
+            return job
+    return None
 
 
 def _installed_media_directory(media: Any) -> Path | None:
@@ -230,16 +268,18 @@ def sync_network_boot_environment(
             status_code=422,
             detail="Select a downloadable Network Boot environment.",
         )
-    active = db.execute(
-        select(Job).where(
-            Job.type == "pxe-media-sync",
-            Job.status.in_((JobStatus.PENDING.value, JobStatus.RUNNING.value)),
-        )
-    ).scalars().first()
-    if active is not None:
+    duplicate = _active_media_job(
+        db,
+        environment_key=environment_key,
+        source="download",
+    )
+    if duplicate is not None:
         raise HTTPException(
             status_code=409,
-            detail=f"Network Boot media task {active.id} is already active.",
+            detail=(
+                f"Network Boot download task {duplicate.id} is already active "
+                f"for {environment_key}."
+            ),
         )
     job = Job(
         id=f"job_{uuid4().hex}",
@@ -251,6 +291,7 @@ def sync_network_boot_environment(
             {
                 "environment": environment_key,
                 "request_id": request.state.request_id,
+                "source": "download",
             },
             sort_keys=True,
         ),
@@ -474,6 +515,233 @@ def get_discovered_host_history(
     return report_history(db, host_id)
 
 
+@router.get("/hosts/{host_id}/reports/{report_id}/download")
+def download_discovered_host_report(
+    host_id: int,
+    report_id: int,
+    _identity: Annotated[Identity, Depends(require_api_or_session_scope("read:pxe"))],
+    db: Session = Depends(get_db),
+) -> Response:
+    host = db.get(NetworkBootDiscoveredHost, host_id)
+    report = db.get(NetworkBootInventoryReport, report_id)
+    if host is None or report is None or report.host_id != host.id:
+        raise HTTPException(status_code=404, detail="Inventory report not found.")
+    report_payload = json.loads(report.payload_json)
+    identity_key, dmi_uuid, macs = report_identity(report_payload)
+    system = report_payload["system"]
+    cpu = report_payload["cpu"]
+    memory = report_payload["memory"]
+    exported = {
+        "host": {
+            "id": host.id,
+            "identity_key": identity_key,
+            "dmi_uuid": dmi_uuid,
+            "boot_mac": report_payload["boot_mac"],
+            "macs": macs,
+            "manufacturer": system["manufacturer"],
+            "product_name": system["product_name"],
+            "serial_number": system["serial_number"],
+            "cpu_model": cpu["model"],
+            "total_memory_bytes": memory["total_bytes"],
+            "disk_count": len(report_payload["disks"]),
+            "interface_count": len(report_payload["interfaces"]),
+        },
+        "report_id": report.id,
+        "received_at": report.received_at.isoformat(),
+        "schema_version": report.schema_version,
+        "report": report_payload,
+    }
+    filename = f"atlaso-inventory-host-{host.id}-report-{report.id}.json"
+    return Response(
+        json.dumps(exported, indent=2, sort_keys=True) + "\n",
+        media_type="application/json",
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
+
+
+@router.delete("/hosts/{host_id}")
+def remove_discovered_host(
+    host_id: int,
+    request: Request,
+    identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    host = db.get(NetworkBootDiscoveredHost, host_id)
+    if host is None:
+        raise HTTPException(status_code=404, detail="Discovered host not found.")
+    counts = {
+        "commands": int(
+            db.scalar(
+                select(func.count(NetworkBootInventoryCommand.id)).where(
+                    NetworkBootInventoryCommand.host_id == host.id
+                )
+            )
+            or 0
+        ),
+        "sessions": int(
+            db.scalar(
+                select(func.count(NetworkBootInventorySession.id)).where(
+                    NetworkBootInventorySession.host_id == host.id
+                )
+            )
+            or 0
+        ),
+        "reports": int(
+            db.scalar(
+                select(func.count(NetworkBootInventoryReport.id)).where(
+                    NetworkBootInventoryReport.host_id == host.id
+                )
+            )
+            or 0
+        ),
+    }
+    db.execute(
+        delete(NetworkBootInventoryCommand).where(
+            NetworkBootInventoryCommand.host_id == host.id
+        )
+    )
+    db.execute(
+        delete(NetworkBootInventorySession).where(
+            NetworkBootInventorySession.host_id == host.id
+        )
+    )
+    db.execute(
+        delete(NetworkBootInventoryReport).where(
+            NetworkBootInventoryReport.host_id == host.id
+        )
+    )
+    db.delete(host)
+    record_audit(
+        db,
+        actor=identity.username,
+        action="remove_discovered_host",
+        resource_type="network_boot_discovered_host",
+        resource_id=str(host_id),
+        detail=(
+            f"reports={counts['reports']}; sessions={counts['sessions']}; "
+            f"commands={counts['commands']}"
+        ),
+        request_id=request.state.request_id,
+    )
+    db.commit()
+    return {"host_id": host_id, "removed": True, **counts}
+
+
+def _wake_host(
+    *,
+    db: Session,
+    request: Request,
+    identity: Identity,
+    mac_address: str,
+    resource_type: str,
+    resource_id: str,
+) -> Any:
+    try:
+        targets = wake_on_lan_broadcast_targets(db)
+        display_mac = normalize_mac(mac_address, required=True)
+    except ValueError as exc:
+        record_audit(
+            db,
+            actor=identity.username,
+            action="send_wake_on_lan",
+            resource_type=resource_type,
+            resource_id=resource_id,
+            success=False,
+            detail=str(exc),
+            request_id=request.state.request_id,
+        )
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    audit_event = record_audit(
+        db,
+        actor=identity.username,
+        action="send_wake_on_lan",
+        resource_type=resource_type,
+        resource_id=resource_id,
+        success=False,
+        detail=(
+            f"mac={display_mac}; broadcasts_planned={','.join(targets)}; "
+            "udp_port=9; outcome=pending"
+        ),
+        request_id=request.state.request_id,
+        emit_operational=False,
+    )
+    try:
+        sent_targets = send_wake_on_lan(mac_address, targets)
+    except WakeOnLanDeliveryError as exc:
+        finalize_audit(
+            db,
+            audit_event,
+            success=False,
+            detail=(
+                f"mac={display_mac}; broadcasts_sent={','.join(exc.sent_targets)}; "
+                f"failed_broadcast={exc.failed_target}; udp_port=9; error={exc}"
+            ),
+            operational_outcome="packet_partially_sent",
+            delivered_count=len(exc.sent_targets),
+        )
+        return JSONResponse(
+            status_code=status.HTTP_207_MULTI_STATUS,
+            content={
+                "status": "packet_partially_sent",
+                "mac_address": display_mac,
+                "broadcast_targets": exc.sent_targets,
+                "failed_broadcast_target": exc.failed_target,
+                "message": (
+                    "Wake-on-LAN reached only some broadcasts before a UDP send failed. "
+                    "Do not retry automatically; host power-on is not confirmed."
+                ),
+            },
+        )
+    except (OSError, ValueError) as exc:
+        finalize_audit(
+            db,
+            audit_event,
+            success=False,
+            detail=f"mac={display_mac}; broadcasts_sent=; udp_port=9; error={exc}",
+            operational_outcome="packet_not_sent",
+            delivered_count=0,
+        )
+        status_code = 409 if isinstance(exc, ValueError) else 503
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    finalize_audit(
+        db,
+        audit_event,
+        success=True,
+        detail=f"mac={display_mac}; broadcasts={','.join(sent_targets)}; udp_port=9",
+        operational_outcome="packet_sent",
+        delivered_count=len(sent_targets),
+    )
+    return {
+        "status": "packet_sent",
+        "mac_address": display_mac,
+        "broadcast_targets": sent_targets,
+        "message": "Wake-on-LAN packet sent; host power-on is not confirmed.",
+    }
+
+
+@router.post("/hosts/{host_id}/wake")
+def wake_discovered_host(
+    host_id: int,
+    request: Request,
+    identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    host = db.get(NetworkBootDiscoveredHost, host_id)
+    if host is None:
+        raise HTTPException(status_code=404, detail="Discovered host not found.")
+    return _wake_host(
+        db=db,
+        request=request,
+        identity=identity,
+        mac_address=host.boot_mac,
+        resource_type="network_boot_discovered_host",
+        resource_id=str(host.id),
+    )
+
+
 @router.post("/hosts/{host_id}/reboot", status_code=status.HTTP_202_ACCEPTED)
 def reboot_discovered_host(
     host_id: int,
@@ -531,6 +799,28 @@ def get_inventory_command_status(
         ),
         "expires_at": command.expires_at.isoformat(),
     }
+
+
+@router.post(
+    "/esxi-hosts/{host_id}/wake",
+)
+def wake_esxi_host_reference(
+    host_id: int,
+    request: Request,
+    identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    host = db.get(EsxiPxeHost, host_id)
+    if host is None:
+        raise HTTPException(status_code=404, detail="ESXi host reference not found.")
+    return _wake_host(
+        db=db,
+        request=request,
+        identity=identity,
+        mac_address=host.mac_address,
+        resource_type="esxi_pxe_host",
+        resource_id=str(host.id),
+    )
 
 
 @router.post(
@@ -613,7 +903,21 @@ def promote_discovered_host(
             status_code=422,
             detail=f"Promotion requires explicit review of {missing[0]}.",
         )
-    mac_address = str(payload.get("mac_address") or "").strip().lower().replace("-", ":")
+    if not isinstance(payload.get("enabled"), bool):
+        raise HTTPException(status_code=422, detail="Promotion enabled state must be a boolean.")
+    promotion_payload = dict(payload)
+    if promotion_payload.get("kickstart_id") == "":
+        promotion_payload["kickstart_id"] = None
+    try:
+        promotion = EsxiPxeHostCreate.model_validate(promotion_payload)
+    except ValidationError as exc:
+        error = exc.errors(include_url=False)[0]
+        field = ".".join(str(part) for part in error.get("loc", ())) or "request"
+        raise HTTPException(
+            status_code=422,
+            detail=f"Promotion {field} is invalid: {error['msg']}.",
+        ) from exc
+    mac_address = promotion.mac_address.strip().lower().replace("-", ":")
     if mac_address not in set(json.loads(discovered.macs_json or "[]")):
         raise HTTPException(
             status_code=422,
@@ -625,26 +929,23 @@ def promote_discovered_host(
         select(EsxiPxeHost).where(EsxiPxeHost.mac_address == mac_address)
     ).scalar_one_or_none():
         raise HTTPException(status_code=409, detail="An ESXi profile already uses this MAC.")
-    hostname = str(payload.get("hostname") or "").strip()
+    hostname = promotion.hostname.strip()
     if any(
         row.hostname.lower() == hostname.lower()
         for row in db.execute(select(EsxiPxeHost)).scalars().all()
     ):
         raise HTTPException(status_code=409, detail="An ESXi profile already uses this hostname.")
-    if not isinstance(payload.get("enabled"), bool):
-        raise HTTPException(status_code=422, detail="Promotion enabled state must be a boolean.")
-    kickstart_id = payload.get("kickstart_id")
     try:
         host = EsxiPxeHost(
             hostname=hostname,
             mac_address=mac_address,
-            ip_address=str(payload.get("ip_address") or "").strip(),
-            kickstart_id=int(kickstart_id) if kickstart_id not in (None, "") else None,
+            ip_address=promotion.ip_address.strip(),
+            kickstart_id=promotion.kickstart_id,
             installer_iso_path=normalize_installer_iso_path(
-                str(payload.get("installer_iso_path") or "")
+                promotion.installer_iso_path
             ),
-            variables_json=host_variables_json(payload.get("variables")),
-            enabled=payload["enabled"],
+            variables_json=host_variables_json(promotion.variables),
+            enabled=promotion.enabled,
         )
         if not host.hostname:
             raise ValueError("Promotion hostname is required.")

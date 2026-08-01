@@ -22,7 +22,9 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   bounded CPU/DIMM, NIC, disk/controller, PCI/USB, and system identity details;
   its appliance-colored local console provides height-aware paged review, an
   Atlaso boot splash, and a suspendable five-minute post-submission reboot
-  countdown.
+  countdown. Retained reports render as printable semantic hardware summaries
+  with JSON export, while audited Wake-on-LAN is available for discovered hosts
+  and saved ESXi Host References.
 - [Vaults](docs/services/vaults.md) — scope encrypted VCF and ESX passwords to managed scripts and exact Kickstart
   source markers.
 - [OpenID Connect provider](docs/services/oidc-provider.md) — use the dedicated tabbed administration page for

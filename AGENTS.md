@@ -71,6 +71,10 @@ The following cross-cutting boundaries always apply:
   report column, enforce the 256 KiB boundary, and never submit raw command output. Its five-minute local console
   countdown starts only after successful submission; pause/resume must preserve
   the remaining time and audited remote reboot remains authoritative.
+- Render inventory reports as escaped semantic sections with explicit legacy
+  not-reported states. Wake-on-LAN uses the server-owned discovered/reference
+  MAC, deduplicated effective IPv4 Network Boot broadcasts, one audited UDP/9
+  send with no retries, and no claim that the host powered on.
 - Windows Inventory Linux and Photon builds select the dedicated `Atlaso-Build` WSL distribution by default. WSL is a
   pre-existing host prerequisite: ordinary builds must never install or configure WSL, create a missing distribution,
   change the default distribution, elevate, reboot, or remove a distribution. Keep the pinned setup contract, explicit

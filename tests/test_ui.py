@@ -821,9 +821,9 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6" in service_worker.text
-    assert "/static/app.css?v=atlaso-users-brand-20260730-1" in service_worker.text
+    assert "/static/app.css?v=atlaso-network-boot-196-20260731-1" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in service_worker.text
-    assert "/static/app.js?v=atlaso-inventory-release-20260731-42" in service_worker.text
+    assert "/static/app.js?v=atlaso-network-boot-196-20260731-1" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -832,7 +832,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=atlaso-horizontal-brand-20260730-2" in offline.text
+    assert "/static/app.css?v=atlaso-network-boot-196-20260731-1" in offline.text
 
 
 def test_shared_ui_pattern_shell_and_wizard_contracts(client):
@@ -843,8 +843,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=atlaso-inventory-release-20260731-42"),
-        (public_base, "/static/app.js?v=atlaso-inventory-release-20260731-42"),
+        (base, "/static/app.js?v=atlaso-network-boot-196-20260731-1"),
+        (public_base, "/static/app.js?v=atlaso-network-boot-196-20260731-1"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5"
@@ -958,7 +958,7 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     assert "row.getData().key === \"inventory\"" not in network_boot
     network_boot_workspace = function_block("initializeNetworkBootWorkspace")
     assert "networkSlot.append(networkSection)" in network_boot_workspace
-    assert "networkSlot.append(tasksPanel)" in network_boot_workspace
+    assert "networkSlot.append(tasksPanel)" not in network_boot_workspace
     assert "kickstartsSlot.append(kickstartsSection)" in network_boot_workspace
     assert "staticRail.append(bootService)" in network_boot_workspace
 
@@ -1022,7 +1022,8 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     assert "includeNewRow: false" not in custom_variables_block
     assert "addLauncherSelector:" not in custom_variables_block
     assert "data-atlaso-wizard-add" in custom_variables_block
-    assert "+ Add custom variable" in custom_variables_block
+    assert "+ Add custom variable here" in custom_variables_block
+    assert 'rowFormatter: (row) => markNewRecordRow(row, "name")' in custom_variables_block
     assert 'editLabel: "Edit"' in custom_variables_block
     assert 'deleteLabel: "Remove"' in custom_variables_block
     assert 'confirmLabel: "Remove custom variable"' in custom_variables_block
@@ -1331,9 +1332,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=atlaso-users-brand-20260730-1" in page.text
+    assert "/static/app.css?v=atlaso-network-boot-196-20260731-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in page.text
-    assert "/static/app.js?v=atlaso-inventory-release-20260731-42" in page.text
+    assert "/static/app.js?v=atlaso-network-boot-196-20260731-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -3639,8 +3640,20 @@ def test_esxi_pxe_ui_create_apply_and_job_redaction(client):
     assert 'data-task-grid-height="100%"' in page.text
     assert "Downloads and uploads only" in page.text
     assert "Media ready" in page.text
+    assert 'data-tab-target="network-boot-settings-panel"' not in page.text
+    assert 'id="network-boot-settings-panel"' not in page.text
+    assert 'id="network-boot-environments-panel" class="tab-panel network-boot-environments-panel"' in page.text
+    boot_environments_panel = page.text.index('id="network-boot-environments-panel"')
+    boot_media_tasks = page.text.index('data-network-boot-tasks-panel')
+    network_boot_dialog = page.text.index('id="network-boot-host-dialog"')
+    assert boot_environments_panel < boot_media_tasks < network_boot_dialog
     assert "Delete newest inactive media" in Path("atlaso/app/static/app.js").read_text()
     app_css = Path("atlaso/app/static/app.css").read_text()
+    environments_css = app_css.split(".network-boot-overview > .tab-panels > .tab-panel.active {", 1)[1].split("}", 1)[0]
+    assert "height: 100%;" in environments_css
+    assert "overflow-y: auto;" in environments_css
+    task_history_css = app_css.split(".network-boot-environments-panel > .network-boot-task-history-container {", 1)[1].split("}", 1)[0]
+    assert "flex: 0 0 max(420px, calc(100vh - 240px));" in task_history_css
     kickstart_description_css = app_css.split(".kickstart-description-field {", 1)[1].split("}", 1)[0]
     assert "grid-column: 1;" in kickstart_description_css
     host_tab = page.text.index('data-tab-target="esxi-pxe-hosts-panel"')
@@ -4216,6 +4229,94 @@ def test_network_boot_task_widget_contains_only_media_jobs(client):
     assert "job_network_boot_widget" in page.text
     assert "job_unrelated_widget" not in page.text
     assert "The same task grid used by Tasks" in page.text
+
+
+def test_network_boot_host_management_report_and_print_contract(client):
+    login(client)
+    page = client.get("/network-boot")
+    assert page.status_code == 200
+    assert 'class="tab-panel active network-boot-discovered-panel"' in page.text
+    assert 'data-network-boot-report-history' in page.text
+    assert 'data-network-boot-report' in page.text
+    assert "Print / Save as PDF" in page.text
+    assert "Download JSON" in page.text
+    assert "Promote to ESXi" in page.text
+    assert "Wake host" in page.text
+    assert ">Reboot<" in page.text
+    assert "Remove discovered host" in page.text
+    assert 'id="network-boot-discovered-fallback"' in page.text
+
+    app_js = client.get("/static/app.js").text
+    renderer = app_js.split("function renderNetworkBootReport", 1)[1].split(
+        "function initializeNetworkBootPage", 1
+    )[0]
+    assert ".innerHTML" not in renderer
+    assert "textContent" in renderer
+    assert "host?." not in renderer
+    assert 'system.product_name || "Product not reported"' in renderer
+    assert 'system.manufacturer || "Manufacturer not reported"' in renderer
+    assert renderer.count('legacyReport ? "Not reported"') >= 4
+    assert '<input name="hostname" required maxlength="120">' in page.text
+    for section in (
+        "Report and boot identity",
+        "System",
+        "Firmware",
+        "Baseboard",
+        "Chassis",
+        "CPU",
+        "Memory",
+        "DIMMs",
+        "Network interfaces",
+        "Storage controllers",
+        "Disks",
+        "PCI devices",
+        "USB devices",
+    ):
+        assert f'"{section}"' in renderer
+    page_initializer = app_js.split("function initializeNetworkBootPage", 1)[1].split(
+        'document.addEventListener("DOMContentLoaded", initializeDashboard)', 1
+    )[0]
+    for label in (
+        'label: "Promote to ESXi"',
+        'label: "Reboot"',
+        'label: "Wake host"',
+        'label: "Remove discovered host"',
+    ):
+        assert label in page_initializer
+    assert 'height: "300px"' in page_initializer
+    assert 'action: (_event, row) => promoteHost(row, row.getElement())' in page_initializer
+    assert "const hostRow = hostsTable?.getRow(selectedHost.id);" in page_initializer
+    assert "promoteHost(selectedHost, hostRow?.getElement?.() || null);" in page_initializer
+    assert "promoteHost(selectedHost, event.currentTarget);" not in page_initializer
+    assert "kickstart_id: promoteForm.elements.kickstart_id.value || null" in page_initializer
+    assert "renderNetworkBootReport(reportArticle, historyItem);" in page_initializer
+    assert "atlasoNewTaskId = queued.job_id" in page_initializer
+    assert "await refreshTasksPage()" in page_initializer
+    assert "requestConfirmation({" in page_initializer
+    assert "/reports/${historyItem.id}/download" in page_initializer
+    assert 'reportPrintClass = "network-boot-report-printing"' in page_initializer
+    assert 'window.addEventListener("afterprint", clearReportPrintState)' in page_initializer
+    assert 'hostDialog?.addEventListener("close", clearReportPrintState)' in page_initializer
+    assert "document.body.classList.add(reportPrintClass)" in page_initializer
+    assert "window.print()" in page_initializer
+
+    host_reference = app_js.split("function initializeEsxiPxeHostsTable", 1)[1].split(
+        "async function deleteEsxiInstallerIso", 1
+    )[0]
+    assert 'label: "Wake host"' in host_reference
+    assert "esxiHostHasValidWakeMac" in host_reference
+
+    app_css = client.get("/static/app.css").text
+    assert ".network-boot-discovered-panel .tabulator-shell" in app_css
+    assert "min-height: 300px;" in app_css
+    assert "height: 240px !important;" in app_css
+    print_css = app_css.split("@media print", 1)[1]
+    assert "@page atlaso-network-boot-report" in print_css
+    assert "page: atlaso-network-boot-report;" in print_css
+    assert "body.network-boot-report-printing #network-boot-host-dialog .network-boot-report" in print_css
+    assert "body.network-boot-report-printing *" in print_css
+    assert "\n  body * {" not in print_css
+    assert ".network-boot-report-history" in print_css
 
 
 def test_esxi_kickstart_validation_rejects_duplicate_install_directives(client):

@@ -25,10 +25,9 @@
   <div class="tab-buttons tool-tabs" role="tablist" aria-label="Network Boot views" data-tab-storage-key="atlaso:network-boot:active-tab">
     <button class="tab-button active" type="button" role="tab" data-tab-target="network-boot-discovered-panel" aria-controls="network-boot-discovered-panel" aria-selected="true">Discovered Hosts</button>
     <button class="tab-button" type="button" role="tab" data-tab-target="network-boot-environments-panel" aria-controls="network-boot-environments-panel" aria-selected="false">Boot Environments</button>
-    <button class="tab-button" type="button" role="tab" data-tab-target="network-boot-settings-panel" aria-controls="network-boot-settings-panel" aria-selected="false">Settings</button>
   </div>
   <div class="tab-panels">
-    <div id="network-boot-discovered-panel" class="tab-panel active" role="tabpanel">
+    <div id="network-boot-discovered-panel" class="tab-panel active network-boot-discovered-panel" role="tabpanel">
       <div id="network-boot-discovered-table" class="tabulator-shell"
            data-rows='{{ network_boot_discovered_hosts | tojson }}'
            data-can-write="{{ 'true' if network_boot_can_write else 'false' }}"
@@ -43,9 +42,9 @@
           {% endfor %}
         </tbody>
       </table>
-      <p class="muted">Double-click a row, or focus it and press Enter, to inspect its latest bounded report and history. Promotion and reboot actions require Network Boot write access.</p>
+      <p class="muted">Double-click a row, or focus it and press Enter, to inspect its latest bounded report and history. Right-click for permitted host actions. Promotion, Wake-on-LAN, reboot, and removal require Network Boot write access.</p>
     </div>
-    <div id="network-boot-environments-panel" class="tab-panel" role="tabpanel" hidden>
+    <div id="network-boot-environments-panel" class="tab-panel network-boot-environments-panel" role="tabpanel" hidden>
       <div id="network-boot-environments-table" class="tabulator-shell"
            data-rows='{{ network_boot_environments | tojson }}'
            data-can-write="{{ 'true' if network_boot_can_write else 'false' }}"
@@ -59,50 +58,54 @@
         </tbody>
       </table>
       <p class="muted">Right-click a row for Enable/Disable, Download, Upload, and inactive-media cleanup actions. Media ready confirms that at least one verified version is installed; Active version changes only after enablement and global appliance apply. The Source column names and links to the authoritative release page used to resolve the latest stable download; uploads accept the matching upstream asset. Both paths verify the authoritative digest or signature before creating an immutable cache entry.</p>
-    </div>
-    <div id="network-boot-settings-panel" class="tab-panel" role="tabpanel" hidden>
-      <div class="settings-list compact-settings-list">
-        <div><span>PXE/TFTP bootstrap</span><strong>{{ "Enabled" if esxi_pxe_boot.enabled else "Disabled" }}</strong></div>
-        <div><span>Interface binding</span><strong>{{ esxi_pxe_bind_label }}</strong></div>
-        <div><span>HTTP menu</span><strong><code>/pxe/boot.ipxe</code></strong></div>
-        <div><span>Inventory default</span><strong>10 seconds for unknown hosts</strong></div>
-        <div><span>Apply unit</span><strong><code>esxi_pxe</code> (compatibility retained)</strong></div>
+      <div class="network-boot-task-history-container" data-network-boot-tasks-panel>
+        {% set task_grid_class = "network-boot-task-history task-grid-section" %}
+        {% set task_grid_title = "Boot media tasks" %}
+        {% set task_grid_description = "The same task grid used by Tasks, scoped to Network Boot media downloads and uploads." %}
+        {% set task_grid_rows = network_boot_media_tasks %}
+        {% set task_grid_component_options = task_component_filter_options %}
+        {% set task_grid_type = "pxe-media-sync" %}
+        {% set task_grid_lock_component_filter = true %}
+        {% set task_grid_height = "100%" %}
+        {% set task_grid_scope_label = "Downloads and uploads only" %}
+        {% set task_grid_history_url = "/tasks" %}
+        {% set task_grid_empty_message = "No Network Boot media tasks have been recorded yet." %}
+        {% include "partials/task_grid.html" %}
       </div>
-      {% if esxi_pxe_validation_errors %}
-        <div class="alert error"><strong>Validation blocks apply.</strong><p>{{ esxi_pxe_validation_errors | join(" ") }}</p></div>
-      {% elif esxi_pxe_validation_warnings %}
-        <div class="alert warn"><strong>Review pending state.</strong><p>{{ esxi_pxe_validation_warnings | join(" ") }}</p></div>
-      {% endif %}
     </div>
   </div>
 </section>
-<div class="network-boot-task-history-container" data-network-boot-tasks-panel>
-  {% set task_grid_class = "network-boot-task-history task-grid-section" %}
-  {% set task_grid_title = "Boot media tasks" %}
-  {% set task_grid_description = "The same task grid used by Tasks, scoped to Network Boot media downloads and uploads." %}
-  {% set task_grid_rows = network_boot_media_tasks %}
-  {% set task_grid_component_options = task_component_filter_options %}
-  {% set task_grid_type = "pxe-media-sync" %}
-  {% set task_grid_lock_component_filter = true %}
-  {% set task_grid_height = "100%" %}
-  {% set task_grid_scope_label = "Downloads and uploads only" %}
-  {% set task_grid_history_url = "/tasks" %}
-  {% set task_grid_empty_message = "No Network Boot media tasks have been recorded yet." %}
-  {% include "partials/task_grid.html" %}
-</div>
 {% include "partials/task_modals.html" %}
 <dialog id="network-boot-host-dialog" class="confirm-modal wide-modal task-modal" aria-labelledby="network-boot-host-title">
-  <div class="confirm-modal-panel form-stack">
-    <div class="confirm-modal-body">
-      <p class="kicker">Network Boot inventory</p>
-      <h2 id="network-boot-host-title">Discovered Host</h2>
-      <p class="muted">Latest bounded report and retained session history.</p>
-      <div class="terminal-note task-result-preview" data-terminal-note-open="false"><code class="language-json" data-network-boot-host-detail></code></div>
+  <div class="confirm-modal-panel form-stack network-boot-report-dialog-panel">
+    <div class="confirm-modal-body network-boot-report-dialog-body">
+      <header class="network-boot-report-dialog-heading">
+        <div>
+          <p class="kicker">Network Boot inventory</p>
+          <h2 id="network-boot-host-title" data-network-boot-host-title>Discovered Host</h2>
+          <p class="muted" data-network-boot-report-meta>Choose a retained inventory report.</p>
+        </div>
+        <div class="network-boot-report-export-actions">
+          <button class="button secondary" type="button" data-network-boot-report-print>Print / Save as PDF</button>
+          <a class="button secondary" href="#" download data-network-boot-report-download>Download JSON</a>
+        </div>
+      </header>
+      <div class="network-boot-report-workspace">
+        <nav class="network-boot-report-history" aria-label="Inventory report history">
+          <strong>Report history</strong>
+          <div role="listbox" aria-label="Retained inventory reports" data-network-boot-report-history></div>
+        </nav>
+        <article class="network-boot-report" aria-live="polite" data-network-boot-report>
+          <p class="muted">No inventory report is selected.</p>
+        </article>
+      </div>
     </div>
     <div class="confirm-modal-actions">
       {% if network_boot_can_write %}
         <button class="button primary" type="button" data-network-boot-promote-open>Promote to ESXi</button>
-        <button class="button danger" type="button" data-network-boot-reboot>Reboot inventory session</button>
+        <button class="button secondary" type="button" data-network-boot-wake>Wake host</button>
+        <button class="button danger" type="button" data-network-boot-reboot>Reboot</button>
+        <button class="button danger" type="button" data-network-boot-remove>Remove discovered host</button>
       {% endif %}
       <button class="button ghost" type="button" data-network-boot-host-close>Close</button>
     </div>
@@ -149,7 +152,7 @@
         <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 4</p><h3 data-atlaso-wizard-title>Review host identity</h3><p class="muted" data-atlaso-wizard-description>Choose the explicit ESXi hostname, discovered MAC, and address.</p></div>
         <div class="alert error hidden" data-atlaso-wizard-error></div>
         <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity"><div class="form-grid">
-          <label><span>Hostname</span><input name="hostname" required maxlength="255"></label>
+          <label><span>Hostname</span><input name="hostname" required maxlength="120"></label>
           <label><span>Selected MAC</span><select name="mac_address" required></select></label>
           <label><span>IP address</span><input name="ip_address" required></label>
         </div></section>

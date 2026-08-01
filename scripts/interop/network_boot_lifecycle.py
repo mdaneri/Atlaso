@@ -166,6 +166,19 @@ def main() -> int:
         raise RuntimeError("Inventory report is missing CPU or memory evidence.")
     if int(detail.get("disk_count") or 0) < 1 or int(detail.get("interface_count") or 0) < 1:
         raise RuntimeError("Inventory report did not include the lifecycle disk and NIC.")
+    wake = request_json(
+        opener,
+        args.appliance_url,
+        "POST",
+        f"/api/v1/network-boot/hosts/{host['id']}/wake",
+        token=token,
+    )
+    if wake.get("status") != "packet_sent":
+        raise RuntimeError("Atlaso did not confirm the Wake-on-LAN packet send.")
+    if str(wake.get("mac_address") or "").lower() != expected_mac:
+        raise RuntimeError("Wake-on-LAN did not use the discovered host MAC.")
+    if not wake.get("broadcast_targets"):
+        raise RuntimeError("Wake-on-LAN did not report an IPv4 broadcast target.")
     command = request_json(
         opener,
         args.appliance_url,
@@ -197,6 +210,7 @@ def main() -> int:
             "interface_count": detail["interface_count"],
         },
         "firmware_mode": report.get("firmware_mode"),
+        "wake": wake,
         "command": status,
     }
     with open(args.output, "w", encoding="utf-8") as output:
