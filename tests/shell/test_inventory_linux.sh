@@ -292,7 +292,7 @@ printf '%s' "${console}" | grep -F "$(printf '\033]P7eef2f7')" >/dev/null || fai
 printf '%s' "${console}" | grep -F "$(printf '\033[46m')" >/dev/null || fail 'console-native pale-blue header'
 printf '%s' "${console}" | grep -F "$(printf '\033[47m')" >/dev/null || fail 'console-native light content'
 printf '%s' "${console}" | grep -F "$(printf '\033[44m')" >/dev/null || fail 'console-native blue footer'
-printf '%s' "${console}" | grep -F "$(printf '\033[14;1H')" >/dev/null || fail 'network footer follows populated rows'
+printf '%s' "${console}" | grep -F "$(printf '\033[29;1H')" >/dev/null || fail 'footer anchored to terminal bottom'
 if printf '%s' "${console}" | grep -F "$(printf '\033[0m')" >/dev/null; then fail 'content resets to black terminal background'; fi
 footer="$(refresh_inventory_console_footer 2 89 true 7)"
 printf '%s' "${footer}" | grep -F 'Paused at 89s' >/dev/null || fail 'in-place countdown footer refresh'
