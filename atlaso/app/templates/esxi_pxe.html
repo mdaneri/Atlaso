@@ -28,7 +28,7 @@
     <button class="tab-button" type="button" role="tab" data-tab-target="network-boot-settings-panel" aria-controls="network-boot-settings-panel" aria-selected="false">Settings</button>
   </div>
   <div class="tab-panels">
-    <div id="network-boot-discovered-panel" class="tab-panel active" role="tabpanel">
+    <div id="network-boot-discovered-panel" class="tab-panel active network-boot-discovered-panel" role="tabpanel">
       <div id="network-boot-discovered-table" class="tabulator-shell"
            data-rows='{{ network_boot_discovered_hosts | tojson }}'
            data-can-write="{{ 'true' if network_boot_can_write else 'false' }}"
@@ -43,7 +43,7 @@
           {% endfor %}
         </tbody>
       </table>
-      <p class="muted">Double-click a row, or focus it and press Enter, to inspect its latest bounded report and history. Promotion and reboot actions require Network Boot write access.</p>
+      <p class="muted">Double-click a row, or focus it and press Enter, to inspect its latest bounded report and history. Right-click for permitted host actions. Promotion, Wake-on-LAN, reboot, and removal require Network Boot write access.</p>
     </div>
     <div id="network-boot-environments-panel" class="tab-panel" role="tabpanel" hidden>
       <div id="network-boot-environments-table" class="tabulator-shell"
@@ -92,17 +92,35 @@
 </div>
 {% include "partials/task_modals.html" %}
 <dialog id="network-boot-host-dialog" class="confirm-modal wide-modal task-modal" aria-labelledby="network-boot-host-title">
-  <div class="confirm-modal-panel form-stack">
-    <div class="confirm-modal-body">
-      <p class="kicker">Network Boot inventory</p>
-      <h2 id="network-boot-host-title">Discovered Host</h2>
-      <p class="muted">Latest bounded report and retained session history.</p>
-      <div class="terminal-note task-result-preview" data-terminal-note-open="false"><code class="language-json" data-network-boot-host-detail></code></div>
+  <div class="confirm-modal-panel form-stack network-boot-report-dialog-panel">
+    <div class="confirm-modal-body network-boot-report-dialog-body">
+      <header class="network-boot-report-dialog-heading">
+        <div>
+          <p class="kicker">Network Boot inventory</p>
+          <h2 id="network-boot-host-title" data-network-boot-host-title>Discovered Host</h2>
+          <p class="muted" data-network-boot-report-meta>Choose a retained inventory report.</p>
+        </div>
+        <div class="network-boot-report-export-actions">
+          <button class="button secondary" type="button" data-network-boot-report-print>Print / Save as PDF</button>
+          <a class="button secondary" href="#" download data-network-boot-report-download>Download JSON</a>
+        </div>
+      </header>
+      <div class="network-boot-report-workspace">
+        <nav class="network-boot-report-history" aria-label="Inventory report history">
+          <strong>Report history</strong>
+          <div role="listbox" aria-label="Retained inventory reports" data-network-boot-report-history></div>
+        </nav>
+        <article class="network-boot-report" aria-live="polite" data-network-boot-report>
+          <p class="muted">No inventory report is selected.</p>
+        </article>
+      </div>
     </div>
     <div class="confirm-modal-actions">
       {% if network_boot_can_write %}
         <button class="button primary" type="button" data-network-boot-promote-open>Promote to ESXi</button>
-        <button class="button danger" type="button" data-network-boot-reboot>Reboot inventory session</button>
+        <button class="button secondary" type="button" data-network-boot-wake>Wake host</button>
+        <button class="button danger" type="button" data-network-boot-reboot>Reboot</button>
+        <button class="button danger" type="button" data-network-boot-remove>Remove discovered host</button>
       {% endif %}
       <button class="button ghost" type="button" data-network-boot-host-close>Close</button>
     </div>

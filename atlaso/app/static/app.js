@@ -2569,6 +2569,33 @@ async function requestEsxiHostInventoryBoot(row) {
   }
 }
 
+function esxiHostHasValidWakeMac(data) {
+  if (!data || data.is_new || data.is_default) return false;
+  const compact = String(data.mac_address || "").toLowerCase().replace(/[:-]/g, "").replace(/\./g, "");
+  return /^[0-9a-f]{12}$/.test(compact) && !["000000000000", "ffffffffffff"].includes(compact);
+}
+
+async function requestEsxiHostWake(row) {
+  clearEsxiHostError();
+  const data = row.getData();
+  if (!esxiHostHasValidWakeMac(data)) return;
+  const confirmed = await requestConfirmation({
+    title: `Wake ${data.hostname}?`,
+    message: `Atlaso will send one audited Wake-on-LAN packet for ${data.mac_address} to each effective IPv4 Network Boot broadcast. Packet delivery does not confirm that the host powered on.`,
+    label: "Send Wake packet",
+  });
+  if (!confirmed) return;
+  try {
+    const result = await networkBootRequest(
+      `/api/v1/network-boot/esxi-hosts/${data.id}/wake`,
+      { method: "POST" },
+    );
+    showEsxiHostSuccess(result.message || `Wake-on-LAN packet sent for ${data.hostname}; power-on is not confirmed.`);
+  } catch (error) {
+    showEsxiHostError(error instanceof Error ? error.message : "The Wake-on-LAN packet could not be sent.");
+  }
+}
+
 function showCaMessage(elementId, message, type = "error") {
   const element = document.getElementById(elementId);
   if (!element) {
@@ -8802,6 +8829,11 @@ function initializeEsxiPxeHostsTable() {
             return data.is_new || data.is_default || !data.enabled;
           },
           action: (_event, row) => requestEsxiHostInventoryBoot(row),
+        },
+        {
+          label: "Wake host",
+          disabled: (component) => !esxiHostHasValidWakeMac(component.getData()),
+          action: (_event, row) => requestEsxiHostWake(row),
         },
         {
           label: "Delete host reference",
@@ -18346,13 +18378,186 @@ function initializeNetworkBootWorkspace() {
   }
 }
 
+function networkBootReportValue(value, { bytes = false, list = false } = {}) {
+  if (list) {
+    return Array.isArray(value) && value.length ? value.join(", ") : "Not reported";
+  }
+  if (bytes && Number(value) > 0) return formatMonitorBytes(Number(value));
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (value === 0 || value) return String(value);
+  return "Not reported";
+}
+
+function appendNetworkBootReportFacts(parent, facts) {
+  const list = document.createElement("dl");
+  list.className = "network-boot-report-facts";
+  facts.forEach(([label, value, options = {}]) => {
+    const item = document.createElement("div");
+    const term = document.createElement("dt");
+    const description = document.createElement("dd");
+    term.textContent = label;
+    description.textContent = networkBootReportValue(value, options);
+    item.append(term, description);
+    list.append(item);
+  });
+  parent.append(list);
+}
+
+function appendNetworkBootReportSection(article, title, facts) {
+  const section = document.createElement("section");
+  const heading = document.createElement("h3");
+  heading.textContent = title;
+  section.append(heading);
+  appendNetworkBootReportFacts(section, facts);
+  article.append(section);
+}
+
+function appendNetworkBootReportCollection(article, title, rows, fields, emptyMessage) {
+  const section = document.createElement("section");
+  const heading = document.createElement("h3");
+  heading.textContent = title;
+  section.append(heading);
+  if (!Array.isArray(rows) || !rows.length) {
+    const missing = document.createElement("p");
+    missing.className = "network-boot-report-missing";
+    missing.textContent = emptyMessage;
+    section.append(missing);
+    article.append(section);
+    return;
+  }
+  const wrapper = document.createElement("div");
+  wrapper.className = "network-boot-report-table-wrap";
+  const table = document.createElement("table");
+  table.className = "data-table compact network-boot-report-table";
+  const head = document.createElement("thead");
+  const headerRow = document.createElement("tr");
+  fields.forEach(([label]) => {
+    const cell = document.createElement("th");
+    cell.scope = "col";
+    cell.textContent = label;
+    headerRow.append(cell);
+  });
+  head.append(headerRow);
+  const body = document.createElement("tbody");
+  rows.forEach((row) => {
+    const tableRow = document.createElement("tr");
+    fields.forEach(([_label, field, options = {}]) => {
+      const cell = document.createElement("td");
+      const value = typeof field === "function" ? field(row) : row?.[field];
+      cell.textContent = networkBootReportValue(value, options);
+      tableRow.append(cell);
+    });
+    body.append(tableRow);
+  });
+  table.append(head, body);
+  wrapper.append(table);
+  section.append(wrapper);
+  article.append(section);
+}
+
+function renderNetworkBootReport(article, host, historyItem) {
+  if (!(article instanceof HTMLElement)) return;
+  article.replaceChildren();
+  const report = historyItem?.report;
+  if (!report || typeof report !== "object") {
+    const missing = document.createElement("p");
+    missing.className = "network-boot-report-missing";
+    missing.textContent = "This retained report is unavailable.";
+    article.append(missing);
+    return;
+  }
+  const system = report.system || {};
+  const cpu = report.cpu || {};
+  const memory = report.memory || {};
+  const baseboard = system.baseboard || {};
+  const chassis = system.chassis || {};
+  const legacyReport = Number(report.source_schema_version || historyItem.schema_version || 1) < 2;
+  const header = document.createElement("header");
+  const title = document.createElement("h2");
+  title.textContent = system.product_name || host?.product_name || "Discovered host report";
+  const subtitle = document.createElement("p");
+  subtitle.textContent = `${system.manufacturer || host?.manufacturer || "Unknown manufacturer"} · ${system.serial_number || host?.serial_number || "Serial not reported"}`;
+  header.append(title, subtitle);
+  article.append(header);
+  appendNetworkBootReportSection(article, "Report and boot identity", [
+    ["Report received", historyItem.received_at],
+    ["Normalized schema", report.schema_version || historyItem.schema_version],
+    ["Source schema", report.source_schema_version || historyItem.schema_version],
+    ["DMI UUID", system.dmi_uuid],
+    ["Boot interface", report.boot_interface],
+    ["Boot MAC", report.boot_mac],
+    ["Assigned addresses", report.assigned_addresses, { list: true }],
+    ["Firmware mode", report.firmware_mode],
+  ]);
+  appendNetworkBootReportSection(article, "System", [
+    ["Manufacturer", system.manufacturer], ["Product", system.product_name],
+    ["Product version", system.product_version], ["SKU", system.product_sku],
+    ["Product family", system.product_family], ["Serial number", system.serial_number],
+  ]);
+  appendNetworkBootReportSection(article, "Firmware", [
+    ["BIOS vendor", system.bios_vendor], ["BIOS version", system.bios_version],
+    ["BIOS release", system.bios_release], ["BIOS date", system.bios_date],
+  ]);
+  appendNetworkBootReportSection(article, "Baseboard", [
+    ["Manufacturer", baseboard.manufacturer], ["Product", baseboard.product],
+    ["Version", baseboard.version], ["Serial", baseboard.serial], ["Asset tag", baseboard.asset_tag],
+  ]);
+  appendNetworkBootReportSection(article, "Chassis", [
+    ["Manufacturer", chassis.manufacturer], ["Type", chassis.type],
+    ["Version", chassis.version], ["Serial", chassis.serial], ["Asset tag", chassis.asset_tag],
+  ]);
+  appendNetworkBootReportSection(article, "CPU", [
+    ["Architecture", cpu.architecture], ["Vendor", cpu.vendor], ["Model", cpu.model],
+    ["Sockets", cpu.sockets], ["Cores", cpu.cores], ["Threads", cpu.threads],
+    ["Cores per socket", cpu.cores_per_socket || ""], ["Threads per core", cpu.threads_per_core || ""],
+  ]);
+  appendNetworkBootReportSection(article, "Memory", [
+    ["Total", memory.total_human || memory.total_bytes, memory.total_human ? {} : { bytes: true }],
+    ["DIMMs reported", legacyReport && !(memory.dimms || []).length ? "" : (memory.dimms || []).length],
+  ]);
+  appendNetworkBootReportCollection(article, "DIMMs", memory.dimms, [
+    ["Locator", "locator"], ["Bank", "bank"], ["Size", (row) => row?.size_human || (row?.size_bytes ? formatMonitorBytes(row.size_bytes) : "")], ["Type", "type"],
+    ["Speed MT/s", "speed_mts"], ["Manufacturer", "manufacturer"], ["Part number", "part_number"], ["Serial", "serial"],
+  ], legacyReport ? "DIMM details were not reported by the legacy v1 inventory schema." : "No populated DIMMs were reported.");
+  appendNetworkBootReportCollection(article, "Network interfaces", report.interfaces, [
+    ["Name", "name"], ["Permanent MAC", "permanent_mac"], ["Current MAC", "current_mac"],
+    ["Link", "link_state"], ["Speed Mbps", "speed_mbps"], ["Driver", "driver"],
+    ["PCI address", "pci_address"], ["Vendor", "vendor"], ["Device", "device"],
+    ["Vendor ID", "vendor_id"], ["Device ID", "device_id"], ["Addresses", "addresses", { list: true }],
+    ["Boot interface", "boot_interface"],
+  ], "No network interfaces were reported.");
+  appendNetworkBootReportCollection(article, "Storage controllers", report.storage_controllers, [
+    ["PCI address", "pci_address"], ["Type", "type"], ["Vendor", "vendor"], ["Device", "device"],
+    ["Vendor ID", "vendor_id"], ["Device ID", "device_id"], ["Driver", "driver"],
+  ], legacyReport ? "Storage-controller details were not reported by the legacy v1 inventory schema." : "No storage controllers were reported.");
+  appendNetworkBootReportCollection(article, "Disks", report.disks, [
+    ["Device", "device"], ["Model", "model"], ["Serial", "serial"], ["WWN", "wwn"],
+    ["Type", "type"], ["Transport", "transport"], ["Size", (row) => row?.size_human || (row?.size_bytes ? formatMonitorBytes(row.size_bytes) : "")], ["Controller", "controller_pci_address"],
+    ["Flags", (row) => Array.isArray(row?.flags) && row.flags.length ? row.flags.join(", ") : "None"], ["Rotational", "rotational"], ["Removable", "removable"], ["Read only", "read_only"],
+  ], "No disks were reported.");
+  appendNetworkBootReportCollection(article, "PCI devices", report.pci_devices, [
+    ["PCI address", "pci_address"], ["Class", "class"], ["Class ID", "class_id"],
+    ["Vendor", "vendor"], ["Device", "device"], ["Vendor ID", "vendor_id"], ["Device ID", "device_id"],
+    ["Subsystem vendor", "subsystem_vendor_id"], ["Subsystem device", "subsystem_device_id"], ["Driver", "driver"],
+  ], legacyReport ? "PCI device details were not reported by the legacy v1 inventory schema." : "No PCI devices were reported.");
+  appendNetworkBootReportCollection(article, "USB devices", report.usb_devices, [
+    ["Bus", "bus"], ["Device", "device_number"], ["Port", "port"], ["Class", "class"],
+    ["Manufacturer", "manufacturer"], ["Product", "product"], ["Serial", "serial"],
+    ["Vendor ID", "vendor_id"], ["Product ID", "product_id"], ["Driver", "driver"],
+  ], legacyReport ? "USB device details were not reported by the legacy v1 inventory schema." : "No USB devices were reported.");
+}
+
 function initializeNetworkBootPage() {
   const hostsElement = document.getElementById("network-boot-discovered-table");
   const environmentsElement = document.getElementById("network-boot-environments-table");
   if (!(hostsElement instanceof HTMLElement) || !(environmentsElement instanceof HTMLElement)) return;
   const canWrite = hostsElement.dataset.canWrite === "true";
   const hostDialog = document.getElementById("network-boot-host-dialog");
-  const detailElement = hostDialog?.querySelector("[data-network-boot-host-detail]");
+  const reportArticle = hostDialog?.querySelector("[data-network-boot-report]");
+  const reportHistory = hostDialog?.querySelector("[data-network-boot-report-history]");
+  const reportMeta = hostDialog?.querySelector("[data-network-boot-report-meta]");
+  const reportDownload = hostDialog?.querySelector("[data-network-boot-report-download]");
+  const reportTitle = hostDialog?.querySelector("[data-network-boot-host-title]");
   const uploadDialog = document.getElementById("network-boot-upload-dialog");
   const uploadForm = uploadDialog?.querySelector("[data-network-boot-upload-form]");
   const uploadLabel = uploadDialog?.querySelector("[data-network-boot-upload-label]");
@@ -18360,17 +18565,141 @@ function initializeNetworkBootPage() {
   const uploadStatus = uploadDialog?.querySelector("[data-network-boot-upload-status]");
   const uploadSubmit = uploadDialog?.querySelector("[data-network-boot-upload-submit]");
   let selectedHost = null;
+  let selectedReport = null;
+  let promoteWizard = null;
+  let hostsTable = null;
+  const loadHost = async (row) => {
+    const host = await networkBootRequest(`/api/v1/network-boot/hosts/${row.id}`);
+    const history = await networkBootRequest(`/api/v1/network-boot/hosts/${row.id}/history`);
+    return { host, history };
+  };
+  const selectReport = (historyItem) => {
+    if (!selectedHost || !historyItem) return;
+    selectedReport = historyItem;
+    renderNetworkBootReport(reportArticle, selectedHost, historyItem);
+    if (reportMeta instanceof HTMLElement) {
+      const received = new Date(historyItem.received_at);
+      const receivedLabel = Number.isNaN(received.getTime()) ? historyItem.received_at : received.toLocaleString();
+      reportMeta.textContent = `Report ${historyItem.id} · received ${receivedLabel} · source schema v${historyItem.report?.source_schema_version || historyItem.schema_version}`;
+    }
+    if (reportDownload instanceof HTMLAnchorElement) {
+      reportDownload.href = `/api/v1/network-boot/hosts/${selectedHost.id}/reports/${historyItem.id}/download`;
+      reportDownload.download = `atlaso-inventory-host-${selectedHost.id}-report-${historyItem.id}.json`;
+    }
+    reportHistory?.querySelectorAll("button[data-report-id]").forEach((button) => {
+      const active = button.dataset.reportId === String(historyItem.id);
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-selected", active ? "true" : "false");
+    });
+  };
+  const renderReportHistory = (history) => {
+    if (!(reportHistory instanceof HTMLElement)) return;
+    reportHistory.replaceChildren();
+    history.forEach((item, index) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.reportId = String(item.id);
+      button.setAttribute("role", "option");
+      button.setAttribute("aria-selected", index === 0 ? "true" : "false");
+      const received = new Date(item.received_at);
+      const receivedLabel = Number.isNaN(received.getTime()) ? item.received_at : received.toLocaleString();
+      const label = document.createElement("strong");
+      const meta = document.createElement("small");
+      label.textContent = receivedLabel;
+      meta.textContent = `Report ${item.id} · source v${item.report?.source_schema_version || item.schema_version}`;
+      button.append(label, meta);
+      button.addEventListener("click", () => selectReport(item));
+      reportHistory.append(button);
+    });
+  };
+  const updateHostActionState = () => {
+    const wake = hostDialog?.querySelector("[data-network-boot-wake]");
+    const reboot = hostDialog?.querySelector("[data-network-boot-reboot]");
+    if (wake instanceof HTMLButtonElement) wake.disabled = !selectedHost?.boot_mac;
+    if (reboot instanceof HTMLButtonElement) reboot.disabled = selectedHost?.session_state !== "online";
+  };
   const openHost = async (row) => {
     try {
-      selectedHost = await networkBootRequest(`/api/v1/network-boot/hosts/${row.id}`);
-      const history = await networkBootRequest(`/api/v1/network-boot/hosts/${row.id}/history`);
-      if (detailElement) detailElement.textContent = JSON.stringify({ host: selectedHost, history }, null, 2);
+      const loaded = await loadHost(row);
+      selectedHost = loaded.host;
+      selectedReport = loaded.history[0] || null;
+      if (reportTitle instanceof HTMLElement) {
+        reportTitle.textContent = selectedHost.product_name || selectedHost.dmi_uuid || `Discovered host ${selectedHost.id}`;
+      }
+      renderReportHistory(loaded.history);
+      if (selectedReport) selectReport(selectedReport);
+      else renderNetworkBootReport(reportArticle, selectedHost, null);
+      updateHostActionState();
       hostDialog?.showModal();
     } catch (error) {
       showTransientGridStatus(error instanceof Error ? error.message : "The inventory report could not be loaded.");
     }
   };
-  window.AtlasoUiPatterns.createGrid({
+  const wakeHost = async (row) => {
+    const data = row?.getData ? row.getData() : row;
+    if (!data?.id || !data.boot_mac) return;
+    const confirmed = await requestConfirmation({
+      title: `Wake ${data.product_name || data.dmi_uuid || "discovered host"}?`,
+      message: `Atlaso will send one audited Wake-on-LAN packet for ${data.boot_mac} to each effective IPv4 Network Boot broadcast. Packet delivery does not confirm that the host powered on.`,
+      label: "Send Wake packet",
+    });
+    if (!confirmed) return;
+    try {
+      const result = await networkBootRequest(`/api/v1/network-boot/hosts/${data.id}/wake`, { method: "POST" });
+      showTransientGridStatus(result.message || "Wake-on-LAN packet sent; host power-on is not confirmed.");
+    } catch (error) {
+      showTransientGridStatus(error instanceof Error ? error.message : "The Wake-on-LAN packet could not be sent.");
+    }
+  };
+  const rebootHost = async (row) => {
+    const data = row?.getData ? row.getData() : row;
+    if (!data?.id || data.session_state !== "online") return;
+    const confirmed = await requestConfirmation({
+      title: "Reboot inventory session?",
+      message: "Atlaso will deliver one audited reboot command to this host's live Inventory Linux session.",
+      label: "Queue reboot",
+    });
+    if (!confirmed) return;
+    try {
+      await networkBootRequest(`/api/v1/network-boot/hosts/${data.id}/reboot`, { method: "POST" });
+      if (hostDialog?.open && selectedHost?.id === data.id) hostDialog.close();
+      showTransientGridStatus("The audited reboot command was queued for the live inventory session.");
+    } catch (error) {
+      showTransientGridStatus(error instanceof Error ? error.message : "The reboot command could not be queued.");
+    }
+  };
+  const removeHost = async (row) => {
+    const data = row?.getData ? row.getData() : row;
+    if (!data?.id) return;
+    const confirmed = await requestConfirmation({
+      title: `Remove ${data.product_name || data.dmi_uuid || "discovered host"}?`,
+      message: "This removes the discovered host and its inventory reports, sessions, and commands. Any separately promoted ESXi desired-state host reference is retained.",
+      label: "Remove discovered host",
+    });
+    if (!confirmed) return;
+    try {
+      const result = await networkBootRequest(`/api/v1/network-boot/hosts/${data.id}`, { method: "DELETE" });
+      const tableRow = row?.delete ? row : hostsTable?.getRow(data.id);
+      await tableRow?.delete?.();
+      if (hostDialog?.open && selectedHost?.id === data.id) hostDialog.close();
+      showTransientGridStatus(`Removed host with ${result.reports} reports, ${result.sessions} sessions, and ${result.commands} commands.`);
+    } catch (error) {
+      showTransientGridStatus(error instanceof Error ? error.message : "The discovered host could not be removed.");
+    }
+  };
+  const promoteHost = async (row, launcher = null) => {
+    const data = row?.getData ? row.getData() : row;
+    if (!data?.id || !promoteWizard) return;
+    try {
+      const loaded = selectedHost?.id === data.id ? { host: selectedHost } : await loadHost(data);
+      selectedHost = loaded.host;
+      if (hostDialog?.open) hostDialog.close();
+      promoteWizard.open({ launcher, context: selectedHost });
+    } catch (error) {
+      showTransientGridStatus(error instanceof Error ? error.message : "The discovered host could not be loaded for promotion.");
+    }
+  };
+  const hostGrid = window.AtlasoUiPatterns.createGrid({
     element: hostsElement,
     fallback: `#${hostsElement.dataset.fallbackId}`,
     pattern: "read-only",
@@ -18379,7 +18708,13 @@ function initializeNetworkBootPage() {
     options: {
       data: JSON.parse(hostsElement.dataset.rows || "[]"),
       index: "id",
-      maxHeight: "360px",
+      height: "300px",
+      rowContextMenu: canWrite ? [
+        { label: "Promote to ESXi", action: (event, row) => promoteHost(row, event?.currentTarget || row.getElement()) },
+        { label: "Reboot", disabled: (component) => component.getData().session_state !== "online", action: (_event, row) => rebootHost(row) },
+        { label: "Wake host", disabled: (component) => !component.getData().boot_mac, action: (_event, row) => wakeHost(row) },
+        { label: "Remove discovered host", action: (_event, row) => removeHost(row) },
+      ] : false,
       columns: [
         { title: "UUID", field: "dmi_uuid", minWidth: 220, formatter: (cell) => escapeHtml(cell.getValue() || "MAC fallback") },
         { title: "MACs", field: "macs", minWidth: 190, formatter: (cell) => escapeHtml((cell.getValue() || []).join(", ")) },
@@ -18392,18 +18727,12 @@ function initializeNetworkBootPage() {
       ],
     },
   });
+  hostsTable = hostGrid.table;
   hostDialog?.querySelector("[data-network-boot-host-close]")?.addEventListener("click", () => hostDialog.close());
-  hostDialog?.querySelector("[data-network-boot-reboot]")?.addEventListener("click", async () => {
-    if (!selectedHost) return;
-    const confirmed = await requestConfirmation({
-      title: "Reboot inventory session?",
-      message: "Atlaso will deliver one audited reboot command to this host's live Inventory Linux session.",
-      label: "Queue reboot",
-    });
-    if (!confirmed) return;
-    await networkBootRequest(`/api/v1/network-boot/hosts/${selectedHost.id}/reboot`, { method: "POST" });
-    hostDialog.close();
-  });
+  hostDialog?.querySelector("[data-network-boot-report-print]")?.addEventListener("click", () => window.print());
+  hostDialog?.querySelector("[data-network-boot-wake]")?.addEventListener("click", () => wakeHost(selectedHost));
+  hostDialog?.querySelector("[data-network-boot-reboot]")?.addEventListener("click", () => rebootHost(selectedHost));
+  hostDialog?.querySelector("[data-network-boot-remove]")?.addEventListener("click", () => removeHost(selectedHost));
   const persistEnvironmentState = async (row, enabled) => {
     const data = row.getData();
     const updated = await networkBootRequest(`/api/v1/network-boot/environments/${data.key}`, {
@@ -18441,6 +18770,11 @@ function initializeNetworkBootPage() {
     });
     if (!confirmed) return;
     const queued = await networkBootRequest(`/api/v1/network-boot/environments/${data.key}/sync`, { method: "POST" });
+    atlasoNewTaskId = queued.job_id || "";
+    atlasoSelectedTaskId = atlasoNewTaskId;
+    const tasksPage = document.querySelector("[data-network-boot-tasks-panel] [data-tasks-page]");
+    if (tasksPage instanceof HTMLElement) tasksPage.dataset.selectedTaskId = atlasoNewTaskId;
+    await refreshTasksPage();
     showTransientGridStatus(`Queued verified download task ${queued.job_id}.`);
   };
   const openEnvironmentUpload = (data) => {
@@ -18626,7 +18960,7 @@ function initializeNetworkBootPage() {
   const promoteDialog = document.getElementById("network-boot-promote-dialog");
   const promoteForm = promoteDialog?.querySelector("[data-network-boot-promote-form]");
   if (!(promoteDialog instanceof HTMLDialogElement) || !(promoteForm instanceof HTMLFormElement)) return;
-  const promoteWizard = window.AtlasoUiPatterns.createWizard({
+  promoteWizard = window.AtlasoUiPatterns.createWizard({
     form: promoteForm,
     dialog: promoteDialog,
     steps: [
@@ -18672,8 +19006,7 @@ function initializeNetworkBootPage() {
   });
   hostDialog?.querySelector("[data-network-boot-promote-open]")?.addEventListener("click", (event) => {
     if (!selectedHost) return;
-    hostDialog.close();
-    promoteWizard.open({ launcher: event.currentTarget, context: selectedHost });
+    promoteHost(selectedHost, event.currentTarget);
   });
 }
 

@@ -809,7 +809,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v215" in service_worker.text
+    assert "atlaso-pwa-v216" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -821,9 +821,9 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6" in service_worker.text
-    assert "/static/app.css?v=atlaso-users-brand-20260730-1" in service_worker.text
+    assert "/static/app.css?v=atlaso-network-boot-196-20260731-1" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in service_worker.text
-    assert "/static/app.js?v=atlaso-local-users-20260730-41" in service_worker.text
+    assert "/static/app.js?v=atlaso-network-boot-196-20260731-1" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -832,7 +832,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=atlaso-horizontal-brand-20260730-2" in offline.text
+    assert "/static/app.css?v=atlaso-network-boot-196-20260731-1" in offline.text
 
 
 def test_shared_ui_pattern_shell_and_wizard_contracts(client):
@@ -843,8 +843,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=atlaso-local-users-20260730-41"),
-        (public_base, "/static/app.js?v=atlaso-local-users-20260730-41"),
+        (base, "/static/app.js?v=atlaso-network-boot-196-20260731-1"),
+        (public_base, "/static/app.js?v=atlaso-network-boot-196-20260731-1"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5"
@@ -1331,9 +1331,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=atlaso-users-brand-20260730-1" in page.text
+    assert "/static/app.css?v=atlaso-network-boot-196-20260731-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in page.text
-    assert "/static/app.js?v=atlaso-local-users-20260730-41" in page.text
+    assert "/static/app.js?v=atlaso-network-boot-196-20260731-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -4216,6 +4216,76 @@ def test_network_boot_task_widget_contains_only_media_jobs(client):
     assert "job_network_boot_widget" in page.text
     assert "job_unrelated_widget" not in page.text
     assert "The same task grid used by Tasks" in page.text
+
+
+def test_network_boot_host_management_report_and_print_contract(client):
+    login(client)
+    page = client.get("/network-boot")
+    assert page.status_code == 200
+    assert 'class="tab-panel active network-boot-discovered-panel"' in page.text
+    assert 'data-network-boot-report-history' in page.text
+    assert 'data-network-boot-report' in page.text
+    assert "Print / Save as PDF" in page.text
+    assert "Download JSON" in page.text
+    assert "Promote to ESXi" in page.text
+    assert "Wake host" in page.text
+    assert ">Reboot<" in page.text
+    assert "Remove discovered host" in page.text
+    assert 'id="network-boot-discovered-fallback"' in page.text
+
+    app_js = client.get("/static/app.js").text
+    renderer = app_js.split("function renderNetworkBootReport", 1)[1].split(
+        "function initializeNetworkBootPage", 1
+    )[0]
+    assert ".innerHTML" not in renderer
+    assert "textContent" in renderer
+    for section in (
+        "Report and boot identity",
+        "System",
+        "Firmware",
+        "Baseboard",
+        "Chassis",
+        "CPU",
+        "Memory",
+        "DIMMs",
+        "Network interfaces",
+        "Storage controllers",
+        "Disks",
+        "PCI devices",
+        "USB devices",
+    ):
+        assert f'"{section}"' in renderer
+    page_initializer = app_js.split("function initializeNetworkBootPage", 1)[1].split(
+        'document.addEventListener("DOMContentLoaded", initializeDashboard)', 1
+    )[0]
+    for label in (
+        'label: "Promote to ESXi"',
+        'label: "Reboot"',
+        'label: "Wake host"',
+        'label: "Remove discovered host"',
+    ):
+        assert label in page_initializer
+    assert 'height: "300px"' in page_initializer
+    assert "atlasoNewTaskId = queued.job_id" in page_initializer
+    assert "await refreshTasksPage()" in page_initializer
+    assert "requestConfirmation({" in page_initializer
+    assert "/reports/${historyItem.id}/download" in page_initializer
+    assert "window.print()" in page_initializer
+
+    host_reference = app_js.split("function initializeEsxiPxeHostsTable", 1)[1].split(
+        "async function deleteEsxiInstallerIso", 1
+    )[0]
+    assert 'label: "Wake host"' in host_reference
+    assert "esxiHostHasValidWakeMac" in host_reference
+
+    app_css = client.get("/static/app.css").text
+    assert ".network-boot-discovered-panel .tabulator-shell" in app_css
+    assert "min-height: 300px;" in app_css
+    assert "height: 240px !important;" in app_css
+    print_css = app_css.split("@media print", 1)[1]
+    assert "#network-boot-host-dialog .network-boot-report" in print_css
+    assert "body *" in print_css
+    assert ".network-boot-report-history" in print_css
 
 
 def test_esxi_kickstart_validation_rejects_duplicate_install_directives(client):

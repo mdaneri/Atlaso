@@ -68,6 +68,10 @@ The following cross-cutting boundaries always apply:
   report column, enforce the 256 KiB boundary, and never submit raw command output. Its five-minute local console
   countdown starts only after successful submission; pause/resume must preserve
   the remaining time and audited remote reboot remains authoritative.
+- Render inventory reports as escaped semantic sections with explicit legacy
+  not-reported states. Wake-on-LAN uses the server-owned discovered/reference
+  MAC, deduplicated effective IPv4 Network Boot broadcasts, one audited UDP/9
+  send with no retries, and no claim that the host powered on.
 - Validate live appliance readiness through `/openapi.json`, not VMware Tools IP discovery or service color alone.
 - Boot ShredOS only from the verified stable ISO's allowlisted `/boot/bzImage` kernel through iPXE. Do not restore raw
   disk-image SAN boot or add unattended erase arguments.

@@ -480,9 +480,25 @@ function Invoke-NetworkBootInventoryProof {
     param(
         [string]$Name,
         [string]$MacAddress,
+        [string]$CaptureHost,
+        [string]$CaptureHostKey,
         [string]$OutputPath
     )
 
+    if (-not (Get-Command plink -ErrorAction SilentlyContinue) -or -not $SshPassword -or -not $CaptureHost) {
+        throw 'Exact Wake-on-LAN capture requires Plink, the lifecycle client SSH password, and a reachable Client A address.'
+    }
+    $captureCommand = 'timeout 60 nc -u -l -p 9 | head -c 102 | od -An -v -tx1'
+    $captureArgs = @('-batch', '-ssh')
+    if ($CaptureHostKey) {
+        $captureArgs += @('-hostkey', $CaptureHostKey)
+    }
+    $captureArgs += @('-pw', $SshPassword, "$ClientSshUser@$CaptureHost", $captureCommand)
+    $captureJob = Start-Job -ScriptBlock {
+        param([string[]]$PlinkArguments)
+        & plink @PlinkArguments
+    } -ArgumentList (,$captureArgs)
+    Start-Sleep -Seconds 2
     $before = (Get-VM -Name $Name).Uptime
     try {
         $env:ATLASO_LIFECYCLE_ADMIN_PASSWORD = $AdminPassword
@@ -494,9 +510,36 @@ function Invoke-NetworkBootInventoryProof {
         if ($LASTEXITCODE -ne 0) {
             throw "Network Boot inventory proof failed with exit code $LASTEXITCODE."
         }
+    } catch {
+        Stop-Job -Job $captureJob -ErrorAction SilentlyContinue
+        Remove-Job -Job $captureJob -Force -ErrorAction SilentlyContinue
+        throw
     } finally {
         Remove-Item Env:\ATLASO_LIFECYCLE_ADMIN_PASSWORD -ErrorAction SilentlyContinue
     }
+    $captureCompleted = Wait-Job -Job $captureJob -Timeout 75
+    if (-not $captureCompleted) {
+        Stop-Job -Job $captureJob -ErrorAction SilentlyContinue
+        Remove-Job -Job $captureJob -Force -ErrorAction SilentlyContinue
+        throw 'Timed out waiting for the exact Wake-on-LAN packet capture.'
+    }
+    $captureText = (Receive-Job -Job $captureJob | Out-String)
+    Remove-Job -Job $captureJob -Force
+    $capturedHex = ($captureText -replace '[^0-9A-Fa-f]', '').ToLowerInvariant()
+    $compactMac = ($MacAddress -replace '[^0-9A-Fa-f]', '').ToLowerInvariant()
+    $expectedHex = ('ff' * 6) + ($compactMac * 16)
+    if ($capturedHex -ne $expectedHex) {
+        throw "Wake-on-LAN capture did not match the exact 102-byte magic packet for $MacAddress."
+    }
+    $inventoryEvidence = Get-Content -LiteralPath $OutputPath -Raw | ConvertFrom-Json
+    $inventoryEvidence | Add-Member -NotePropertyName wake_packet_capture -NotePropertyValue ([pscustomobject]@{
+        capture_host = $CaptureHost
+        udp_port = 9
+        byte_count = 102
+        packet_hex = $capturedHex
+        exact_match = $true
+    })
+    $inventoryEvidence | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $OutputPath -Encoding UTF8
     $deadline = (Get-Date).AddSeconds(90)
     do {
         Start-Sleep -Seconds 2
@@ -859,7 +902,12 @@ try {
         }
         Invoke-PxeBootSmoke -Name $pxeClientName -MacAddress $pxeClientMac -OutputPath (Join-Path $resultRoot 'pxe-boot-smoke.json')
         if (-not $EsxIsoPath) {
-            Invoke-NetworkBootInventoryProof -Name $pxeClientName -MacAddress $pxeClientMac -OutputPath (Join-Path $resultRoot 'network-boot-inventory.json')
+            Invoke-NetworkBootInventoryProof `
+                -Name $pxeClientName `
+                -MacAddress $pxeClientMac `
+                -CaptureHost $clientAHost `
+                -CaptureHostKey $clientAHostKey `
+                -OutputPath (Join-Path $resultRoot 'network-boot-inventory.json')
         }
         if (-not $SkipBackupRestoreTest) {
             if (-not (Test-Path -LiteralPath $backupArchivePath)) {

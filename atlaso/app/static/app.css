@@ -1340,6 +1340,8 @@ textarea {
   flex: 1;
   min-height: 0;
   margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #dbe4f0;
 }
 
 .network-boot-task-history .panel-head {
@@ -1354,6 +1356,155 @@ textarea {
   min-height: 0;
   border-radius: 7px;
   background: white;
+}
+
+.network-boot-discovered-panel .tabulator-shell {
+  min-height: 300px;
+}
+
+.network-boot-report-dialog-panel {
+  width: min(1180px, calc(100vw - 40px));
+  max-width: 1180px;
+}
+
+.network-boot-report-dialog-body {
+  max-height: min(76vh, 840px);
+  overflow: auto;
+}
+
+.network-boot-report-dialog-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.network-boot-report-export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.network-boot-report-workspace {
+  display: grid;
+  grid-template-columns: minmax(180px, 230px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+  margin-top: 16px;
+}
+
+.network-boot-report-history {
+  position: sticky;
+  top: 0;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #dbe4f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.network-boot-report-history [role="listbox"] {
+  display: grid;
+  gap: 5px;
+  max-height: 56vh;
+  overflow-y: auto;
+}
+
+.network-boot-report-history button {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: #334155;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.network-boot-report-history button:hover,
+.network-boot-report-history button:focus-visible,
+.network-boot-report-history button.active {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  outline: none;
+}
+
+.network-boot-report-history button small {
+  color: #64748b;
+}
+
+.network-boot-report {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.network-boot-report > header,
+.network-boot-report > section {
+  min-width: 0;
+  max-width: 100%;
+  padding: 14px;
+  border: 1px solid #dbe4f0;
+  border-radius: 8px;
+  background: white;
+}
+
+.network-boot-report > header h2,
+.network-boot-report > section h3 {
+  margin: 0;
+}
+
+.network-boot-report > header p {
+  margin: 4px 0 0;
+  color: #64748b;
+}
+
+.network-boot-report-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  margin: 10px 0 0;
+}
+
+.network-boot-report-facts > div {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.8fr) minmax(0, 1.2fr);
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.network-boot-report-facts dt {
+  color: #64748b;
+}
+
+.network-boot-report-facts dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+  white-space: normal;
+}
+
+.network-boot-report-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  margin-top: 10px;
+  overflow-x: auto;
+}
+
+.network-boot-report-table {
+  min-width: max-content;
+}
+
+.network-boot-report-missing {
+  margin: 10px 0 0;
+  color: #64748b;
+  font-style: italic;
 }
 
 .esxi-boot-service-panel .boot-service-form {
@@ -7962,6 +8113,36 @@ dialog.has-expanded-monaco .confirm-modal-panel {
   }
 }
 
+@media (max-width: 760px) {
+  #network-boot-discovered-table.tabulator-shell {
+    height: 240px !important;
+    min-height: 240px;
+  }
+
+  .network-boot-report-dialog-heading,
+  .network-boot-report-workspace {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .network-boot-report-export-actions {
+    justify-content: flex-start;
+  }
+
+  .network-boot-report-history {
+    position: static;
+  }
+
+  .network-boot-report-history [role="listbox"] {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    max-height: 180px;
+  }
+
+  .network-boot-report-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 @media (max-width: 640px) {
   .scope-choice-grid {
     grid-template-columns: 1fr;
@@ -8156,4 +8337,69 @@ dialog.has-expanded-monaco .confirm-modal-panel {
   justify-content: center;
   padding: 0;
   width: 100%;
+}
+
+@media print {
+  @page {
+    margin: 12mm;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  #network-boot-host-dialog,
+  #network-boot-host-dialog .network-boot-report,
+  #network-boot-host-dialog .network-boot-report * {
+    visibility: visible !important;
+  }
+
+  #network-boot-host-dialog {
+    position: absolute;
+    inset: 0;
+    display: block;
+    width: 100%;
+    max-width: none;
+    height: auto;
+    max-height: none;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    overflow: visible;
+    background: white;
+  }
+
+  #network-boot-host-dialog::backdrop,
+  #network-boot-host-dialog .network-boot-report-dialog-heading,
+  #network-boot-host-dialog .network-boot-report-history,
+  #network-boot-host-dialog .confirm-modal-actions {
+    display: none !important;
+  }
+
+  #network-boot-host-dialog .network-boot-report-dialog-panel,
+  #network-boot-host-dialog .network-boot-report-dialog-body,
+  #network-boot-host-dialog .network-boot-report-workspace {
+    display: block;
+    width: 100%;
+    max-width: none;
+    max-height: none;
+    padding: 0;
+    overflow: visible;
+  }
+
+  #network-boot-host-dialog .network-boot-report > header,
+  #network-boot-host-dialog .network-boot-report > section {
+    break-inside: avoid;
+    border-color: #cbd5e1;
+    box-shadow: none;
+  }
+
+  #network-boot-host-dialog .network-boot-report-table-wrap {
+    overflow: visible;
+  }
+
+  #network-boot-host-dialog .network-boot-report-table {
+    min-width: 100%;
+    font-size: 8pt;
+  }
 }

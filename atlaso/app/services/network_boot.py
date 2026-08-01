@@ -6,6 +6,7 @@ import os
 import re
 import secrets
 import shutil
+import socket
 import stat
 import subprocess
 import tempfile
@@ -18,7 +19,7 @@ import uuid
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from ipaddress import ip_address
+from ipaddress import ip_address, ip_network
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterable
 
@@ -39,6 +40,7 @@ from atlaso.app.models import (
     utcnow,
 )
 from atlaso.app.services.esxi_pxe import (
+    esxi_pxe_boot_settings,
     esxi_http_base_url,
     normalize_pxe_mac,
 )
@@ -85,6 +87,7 @@ UUID_PLACEHOLDERS = {
 }
 MAC_PATTERN = re.compile(r"^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$")
 VERSION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,118}[A-Za-z0-9]$")
+WAKE_ON_LAN_PORT = 9
 
 
 @dataclass(frozen=True)
@@ -1363,6 +1366,63 @@ def report_history(
         }
         for row in rows
     ]
+
+
+def wake_on_lan_packet(mac_address: str) -> bytes:
+    """Return the standard magic packet for one server-owned MAC address."""
+    try:
+        normalized = normalize_mac(mac_address, required=True)
+    except ValueError as exc:
+        raise ValueError("Wake-on-LAN requires a valid host MAC address.") from exc
+    hardware_address = bytes.fromhex(normalized.replace(":", ""))
+    return (b"\xff" * 6) + (hardware_address * 16)
+
+
+def wake_on_lan_broadcast_targets(db: Session) -> list[str]:
+    """Return distinct IPv4 broadcasts for the effective Network Boot zones."""
+    targets: set[str] = set()
+    settings = esxi_pxe_boot_settings(db)
+    for scope in settings.get("dhcp_scopes") or []:
+        if not isinstance(scope, dict) or scope.get("address_family") != "ipv4":
+            continue
+        address = str(scope.get("site_address") or "").strip()
+        prefix = scope.get("prefix_length")
+        try:
+            network = ip_network(f"{address}/{prefix}", strict=False)
+        except ValueError:
+            continue
+        if network.version == 4:
+            targets.add(str(network.broadcast_address))
+    return sorted(targets, key=lambda value: int(ip_address(value)))
+
+
+def send_wake_on_lan(
+    mac_address: str,
+    broadcast_targets: Iterable[str],
+    *,
+    socket_factory: Callable[..., Any] = socket.socket,
+) -> list[str]:
+    """Send one magic packet to each distinct validated IPv4 broadcast."""
+    packet = wake_on_lan_packet(mac_address)
+    normalized_targets: set[str] = set()
+    for target in broadcast_targets:
+        try:
+            address = ip_address(str(target).strip())
+        except ValueError as exc:
+            raise ValueError("Wake-on-LAN broadcast target is invalid.") from exc
+        if address.version != 4:
+            raise ValueError("Wake-on-LAN requires an IPv4 broadcast target.")
+        normalized_targets.add(str(address))
+    if not normalized_targets:
+        raise ValueError(
+            "Configure an IPv4 Network Boot DHCP zone before waking hosts."
+        )
+    ordered_targets = sorted(normalized_targets, key=lambda value: int(ip_address(value)))
+    with socket_factory(socket.AF_INET, socket.SOCK_DGRAM) as transport:
+        transport.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        for target in ordered_targets:
+            transport.sendto(packet, (target, WAKE_ON_LAN_PORT))
+    return ordered_targets
 
 
 def _applied_esxi_pxe_manifest(db: Session) -> dict[str, Any]:
