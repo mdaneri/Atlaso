@@ -741,16 +741,17 @@ def test_report_download_is_exact_self_contained_and_rejects_cross_host(client):
         headers={"Authorization": f"Bearer {first_session['access_token']}"},
     )
     assert first.status_code == 201, first.text
-    initial_download = client.get(
+    first_download = client.get(
         f"/api/v1/network-boot/hosts/{first.json()['host_id']}/reports/"
         f"{first.json()['report_id']}/download",
         headers=headers,
     )
-    assert initial_download.status_code == 200, initial_download.text
+    assert first_download.status_code == 200, first_download.text
 
     newer_payload = inventory_report_v2()
+    newer_payload["system"]["manufacturer"] = "Newer Vendor"
     newer_payload["cpu"]["model"] = "Newer CPU"
-    newer_payload["disks"] = []
+    newer_payload["disks"].append(dict(newer_payload["disks"][0], device="/dev/sdb"))
     second_session = client.post("/pxe/inventory/sessions").json()
     newer = client.post(
         "/pxe/inventory/report",
@@ -759,6 +760,38 @@ def test_report_download_is_exact_self_contained_and_rejects_cross_host(client):
     )
     assert newer.status_code == 201, newer.text
     assert newer.json()["host_id"] == first.json()["host_id"]
+
+    download = client.get(
+        f"/api/v1/network-boot/hosts/{first.json()['host_id']}/reports/"
+        f"{first.json()['report_id']}/download",
+        headers=headers,
+    )
+    assert download.status_code == 200, download.text
+    assert download.content == first_download.content
+    exported = download.json()
+    assert exported["host"] == {
+        "id": first.json()["host_id"],
+        "identity_key": (
+            "uuid:4c4c4544-004b-4d10-8052-cac04f4c5132:"
+            "6aa1a7a23e5008c9"
+        ),
+        "dmi_uuid": "4c4c4544-004b-4d10-8052-cac04f4c5132",
+        "boot_mac": "52:54:00:12:34:56",
+        "macs": ["52:54:00:12:34:56"],
+        "manufacturer": "Atlaso Test",
+        "product_name": "Inventory VM",
+        "serial_number": "SERIAL-1",
+        "cpu_model": "Example CPU",
+        "total_memory_bytes": 8 * 1024**3,
+        "disk_count": 1,
+        "interface_count": 1,
+    }
+    assert download.headers["content-type"] == "application/json"
+    assert download.headers["cache-control"] == "no-store"
+    assert download.headers["content-disposition"] == (
+        f'attachment; filename="atlaso-inventory-host-{first.json()["host_id"]}'
+        f'-report-{first.json()["report_id"]}.json"'
+    )
 
     other_payload = inventory_report_v2()
     other_payload["system"]["dmi_uuid"] = "4c4c4544-004b-4d10-8052-cac04f4c5199"
@@ -772,45 +805,6 @@ def test_report_download_is_exact_self_contained_and_rejects_cross_host(client):
         headers={"Authorization": f"Bearer {other_session['access_token']}"},
     )
     assert other.status_code == 201, other.text
-
-    from atlaso.app.database import SessionLocal
-
-    with SessionLocal() as db:
-        report = db.get(NetworkBootInventoryReport, first.json()["report_id"])
-        normalized_payload = json.loads(report.payload_json)
-        expected = {
-            "host": network_boot.report_host_identity(
-                first.json()["host_id"], normalized_payload
-            ),
-            "report_id": report.id,
-            "received_at": report.received_at.isoformat(),
-            "schema_version": report.schema_version,
-            "report": normalized_payload,
-        }
-        expected_bytes = (json.dumps(expected, indent=2, sort_keys=True) + "\n").encode()
-
-    download = client.get(
-        f"/api/v1/network-boot/hosts/{first.json()['host_id']}/reports/"
-        f"{first.json()['report_id']}/download",
-        headers=headers,
-    )
-    assert download.status_code == 200, download.text
-    assert download.content == expected_bytes
-    assert download.content == initial_download.content
-    assert set(download.json()["host"]) == {
-        "id",
-        "identity_key",
-        "dmi_uuid",
-        "boot_mac",
-        "macs",
-    }
-    assert download.headers["content-type"] == "application/json"
-    assert download.headers["cache-control"] == "no-store"
-    assert download.headers["content-disposition"] == (
-        f'attachment; filename="atlaso-inventory-host-{first.json()["host_id"]}'
-        f'-report-{first.json()["report_id"]}.json"'
-    )
-
     cross_host = client.get(
         f"/api/v1/network-boot/hosts/{other.json()['host_id']}/reports/"
         f"{first.json()['report_id']}/download",
