@@ -488,7 +488,7 @@ function Invoke-NetworkBootInventoryProof {
     if (-not (Get-Command plink -ErrorAction SilentlyContinue) -or -not $SshPassword -or -not $CaptureHost) {
         throw 'Exact Wake-on-LAN capture requires Plink, the lifecycle client SSH password, and a reachable Client A address.'
     }
-    $captureCommand = 'timeout 60 nc -u -l -p 9 | head -c 102 | od -An -v -tx1'
+    $captureCommand = 'sudo timeout 60 nc -u -l -p 9 | head -c 102 | od -An -v -tx1'
     $captureArgs = @('-batch', '-ssh')
     if ($CaptureHostKey) {
         $captureArgs += @('-hostkey', $CaptureHostKey)
