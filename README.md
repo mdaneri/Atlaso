@@ -14,10 +14,15 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - [Operations](docs/operate/index.md) — run the appliance and review desired-state changes.
 - [Services](docs/services/index.md) — configure DNS, identity, storage, network boot, and VCF integrations.
 - [Network Boot](docs/services/ipxe.md) — discover unassigned hardware with
-  independently packaged read-only Inventory Linux, download verified package
-  updates, activate interactive maintenance media including verified
+  independently released read-only Inventory Linux, download its latest package
+  through the fixed signed manifest at `/updates/inventory-linux/latest/manifest.json`,
+  activate interactive maintenance media including verified
   single-kernel ShredOS PXE,
-  and retain the ESX scripted-install workflow.
+  and retain the ESX scripted-install workflow. Inventory schema v2 retains
+  bounded CPU/DIMM, NIC, disk/controller, PCI/USB, and system identity details;
+  its appliance-colored local console provides height-aware paged review, an
+  Atlaso boot splash, and a suspendable five-minute post-submission reboot
+  countdown.
 - [Vaults](docs/services/vaults.md) — scope encrypted VCF and ESX passwords to managed scripts and exact Kickstart
   source markers.
 - [OpenID Connect provider](docs/services/oidc-provider.md) — use the dedicated tabbed administration page for

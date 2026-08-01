@@ -1,0 +1,129 @@
+name: Publish Inventory Linux release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact successful main CI commit to publish
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: atlaso-github-pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build, sign, and publish final Inventory Linux release
+    runs-on: ubuntu-latest
+    environment: appliance-release
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Check out the requested commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
+      - name: Validate successful main CI release target
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          if ! printf '%s' "$RELEASE_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::Release SHA must be a full lowercase hexadecimal commit."
+            exit 1
+          fi
+          git fetch origin main --no-tags
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          SUCCESSFUL_RUNS="$(
+            gh api --method GET \
+              "repos/${{ github.repository }}/actions/workflows/ci.yml/runs" \
+              -f head_sha="$RELEASE_SHA" \
+              -f branch=main \
+              -f event=push \
+              -f status=success \
+              -f per_page=100 \
+              --jq '.total_count'
+          )"
+          if test "$SUCCESSFUL_RUNS" -lt 1; then
+            echo "::error::$RELEASE_SHA has no successful main push CI run."
+            exit 1
+          fi
+      - name: Install Buildroot and release prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bison flex cpio rsync bc file wget curl git perl python3 unzip patch gzip bzip2 xz-utils ca-certificates libelf-dev
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+          cache: pip
+      - name: Install locked release tooling
+        env:
+          PIP_CONFIG_FILE: /dev/null
+        run: python -m pip install --require-hashes --requirement requirements-release-tools.lock
+      - name: Build reproducible Inventory Linux package
+        run: |
+          ./image/inventory-linux/build.sh
+          python scripts/build_inventory_linux_package.py
+      - name: Materialize the protected signing key
+        env:
+          RELEASE_SIGNING_PRIVATE_KEY: ${{ secrets.RELEASE_SIGNING_PRIVATE_KEY }}
+        run: |
+          test -n "$RELEASE_SIGNING_PRIVATE_KEY"
+          umask 077
+          printf '%s\n' "$RELEASE_SIGNING_PRIVATE_KEY" > "$RUNNER_TEMP/release-signing-key.pem"
+      - name: Build deterministic signed release metadata
+        env:
+          RELEASE_KEY_ID: atlaso-release-2026-01
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          BUILT_AT="$(git show -s --format=%cI "$RELEASE_SHA")"
+          mapfile -t PACKAGES < <(find dist/inventory-linux -maxdepth 1 -name 'atlaso-inventory-linux-*.zip' -type f -print)
+          if test "${#PACKAGES[@]}" -ne 1; then
+            echo "::error::Inventory Linux build must produce exactly one package."
+            exit 1
+          fi
+          python scripts/build_inventory_linux_release.py \
+            --package "${PACKAGES[0]}" \
+            --signing-key "$RUNNER_TEMP/release-signing-key.pem" \
+            --signing-key-id "$RELEASE_KEY_ID" \
+            --commit "$RELEASE_SHA" \
+            --built-at "$BUILT_AT"
+      - name: Check out the current Pages repository
+        run: |
+          SITE_ROOT="$RUNNER_TEMP/site"
+          git clone --branch gh-pages --single-branch \
+            "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" \
+            "$SITE_ROOT"
+      - name: Publish immutable release and signed Pages pointers
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_KEY_ID: atlaso-release-2026-01
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          SITE_ROOT="$RUNNER_TEMP/site"
+          git fetch origin main --no-tags
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          python scripts/publish_inventory_linux_release.py \
+            --commit "$RELEASE_SHA" \
+            --assets dist/inventory-linux-release \
+            --site-root "$SITE_ROOT" \
+            --trusted-key "image/common/update-trust/${RELEASE_KEY_ID}.pem"
+          git -C "$SITE_ROOT" add --all
+          if git -C "$SITE_ROOT" diff --cached --quiet; then
+            exit 0
+          fi
+          VERSION="$(python -c 'import json; print(json.load(open("dist/inventory-linux-release/inventory-linux-manifest.json", encoding="utf-8"))["version"])')"
+          git -C "$SITE_ROOT" config user.name github-actions[bot]
+          git -C "$SITE_ROOT" config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git -C "$SITE_ROOT" commit -m "Publish Inventory Linux ${VERSION}"
+          git -C "$SITE_ROOT" push origin HEAD:gh-pages

@@ -26,6 +26,9 @@ jobs:
   promote:
     name: Promote existing signed release
     runs-on: ubuntu-latest
+    concurrency:
+      group: atlaso-github-pages
+      cancel-in-progress: false
     environment: appliance-release
     steps:
       - uses: actions/checkout@v7

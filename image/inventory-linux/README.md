@@ -22,13 +22,15 @@ Exact hardware support still depends on the upstream Linux driver and firmware
 available for the device; the ESXi hardware compatibility list is a separate
 vendor certification matrix.
 
-Package revision `2026.05.1+7` pins Buildroot 2026.05.1 by SHA-256. The suffix
+Package revision `2026.05.1+8` pins Buildroot 2026.05.1 by SHA-256. The suffix
 advances independently when Atlaso changes the inventory client without
 changing the upstream Buildroot base. Revision `+5` selects Buildroot's
 util-linux basic binary set so collection uses full `lscpu --json` and
 `lsblk --json` implementations instead of BusyBox's limited `lsblk` applet;
 revision `+7` ignores optional current or permanent interface addresses that
-are not six-octet Ethernet MACs.
+are not six-octet Ethernet MACs. Revision `+8` introduces report schema v2,
+sysfs-first complete device collection, PCI-readable names, and the paged local
+console with its suspendable reboot countdown.
 Run on Linux:
 
 ```bash
@@ -96,10 +98,38 @@ python scripts/build_inventory_linux_package.py
 ```
 
 This creates the deterministic, independently versioned
-`dist/inventory-linux/atlaso-inventory-linux-<version>.zip` release asset. Full
-appliance images preinstall its runtime files; Atlaso releases publish the same
-package so Network Boot can download or upload Inventory Linux updates without
-coupling them to the Python wheel version.
+`dist/inventory-linux/atlaso-inventory-linux-<version>.zip` package. Full
+appliance images preinstall its runtime files, and supported VMware wheel
+deployment synchronizes the package unless explicitly skipped. Ordinary Atlaso
+appliance releases do not contain Inventory Linux.
+
+## Publish a final Inventory Linux release
+
+The protected **Publish Inventory Linux release** GitHub Actions workflow is
+manual-only. Supply the exact full commit SHA of a successful `main` push CI
+run. It rebuilds the pinned Buildroot inputs, derives the `X.Y.Z+revision`
+Inventory version from the package manifest, and immediately publishes a final
+release; there are no development, preview, or staging channels. Independent
+release history begins at `2026.05.1+8`; `+7` is not backfilled.
+
+For version `<version>`, publication creates:
+
+- immutable tag `inventory-linux-v<version>` at the requested commit;
+- final, non-latest GitHub Release with
+  `atlaso-inventory-linux-<version>.zip`,
+  `inventory-linux-manifest.json`, and
+  `inventory-linux-manifest.json.sig`;
+- signed permanent metadata under
+  `/updates/inventory-linux/releases/<version>/`; and
+- the monotonic signed `/updates/inventory-linux/latest/` pointer.
+
+The manifest records the version, source commit, deterministic commit build
+timestamp, signing key ID, `x86_64` architecture, and the package's exact HTTPS
+URL, size, and SHA-256. Publication is idempotent only when an existing tag
+identifies the same commit and every release and Pages asset is byte-identical.
+Conflicts and attempts to move `latest` backward fail closed. The Pages update
+is committed without replacing existing documentation or appliance-update
+content.
 
 The iPXE menu passes the PXE adapter MAC address to Inventory Linux. At startup,
 the utility requests DHCP on that adapter first and falls back across the
@@ -111,10 +141,53 @@ returns a retryable response and the client retries with bounded backoff for up
 to 30 seconds. Other report errors remain terminal and never expose the session
 token or response body.
 
-The kernel fragment enables common server Ethernet, NVMe, SATA, SCSI, RAID, and
-virtio drivers. The userspace collector reads DMI, CPU, memory, block-device,
-and interface metadata only. It never invokes a filesystem mount, partition,
-format, wipe, or block-write command.
+The kernel fragment enables common server Ethernet, NVMe, SATA, SCSI, RAID,
+VMware PVSCSI and legacy LSI Fusion, and virtio drivers. The userspace collector
+uses sysfs as the authoritative device
+source and emits bounded structured JSON for CPU topology, populated DIMMs,
+every NIC and disk, storage controllers, PCI and USB devices, and
+system/BIOS/baseboard/chassis identity. `pciutils` and its `pci.ids` data add
+readable PCI names only; raw command output is never submitted. The collector
+uses the sysfs SCSI peripheral type to identify optical block devices instead
+of misclassifying them from rotational-media flags. Structured `lsblk` data
+enriches a missing SCSI disk serial without deciding which disks exist. PCI
+metadata is attached
+only to devices directly backed by PCI, while non-PCI SCSI hosts such as
+Hyper-V StorVSC are retained from controller sysfs. Large collections flow
+through files into compact JSON so Linux argument limits and formatting
+whitespace do not reduce the 256 KiB report allowance. It never invokes a
+filesystem mount, partition, format, wipe, or block-write
+command.
+
+The accepted report remains at most 256 KiB. Schema v2 bounds reports to 64
+NICs, 128 disks, 64 storage controllers, 256 populated DIMMs, 512 PCI devices,
+and 256 USB devices. Atlaso continues to accept schema v1 and normalizes it to
+the retained v2 JSON shape in the existing report column. Populated DIMM
+existence and size come from kernel-exposed sysfs DMI Type-17 entries;
+`dmidecode` enriches only records whose handle matches the little-endian handle
+in the authoritative sysfs raw entry. The Inventory kernel enables the DMI
+sysfs interface so those records are available on supported firmware.
+
+Inventory startup suppresses kernel branding and uses an Inventory-specific
+Atlaso splash derived from the appliance boot artwork without Photon OS
+attribution. After a report is accepted, the local console opens full-screen
+System/CPU/DIMMs, Network, and Storage pages using the same pale-blue header,
+light content, and blue footer palette as the appliance console. A blank light
+row separates the header from each page. Use `N`/`P` or
+`1`-`3` to move between pages. List capacity is calculated from the framebuffer
+geometry when available, with the TTY size as a fallback, so higher-resolution
+consoles use their additional rows and need fewer `J`/`K` list pages. A normal
+80x30 fallback shows up to 12 DIMMs, eight adapters, or 12 disks/controllers.
+Smaller supported terminals retain bounded windows, and all rows clip to the
+console width. The footer spans the console and follows the populated page
+area, while dense Network and Storage pages expand it toward the terminal
+bottom. Countdown updates repaint only that footer, and silent key reads keep
+navigation from appearing below it, so the hardware pages remain stable
+without full-screen flicker.
+The five-minute reboot countdown starts only after successful submission;
+navigation time still advances the countdown, `S` pauses or resumes the
+remaining time, and `R` reboots immediately. An acknowledged audited remote
+reboot remains authoritative.
 
 ## Included upstream components
 
@@ -132,6 +205,7 @@ the pinned Buildroot release. The principal runtime components are:
 | util-linux | 2.41.5 | GPL-2.0-or-later and LGPL-2.1-or-later | `https://www.kernel.org/pub/linux/utils/util-linux/v2.41/` |
 | dmidecode | 3.7 | GPL-2.0-or-later | `https://download.savannah.gnu.org/releases/dmidecode/` |
 | ethtool | 7.0 | GPL-2.0-only | `https://www.kernel.org/pub/software/network/ethtool/` |
+| pciutils | 3.15.0 | GPL-2.0-or-later | `https://mj.ucw.cz/sw/pciutils/` |
 
 The generated Buildroot `legal-info` output is the authoritative machine-built
 license/source inventory for a release image. Keep it with release build

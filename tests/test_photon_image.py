@@ -3,6 +3,7 @@ from pathlib import Path
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import shutil
 import struct
@@ -68,7 +69,7 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
             {
                 "kind": "atlaso-inventory-linux",
                 "schema_version": 1,
-                "version": "2026.05.1",
+                "version": "2026.05.1+8",
                 "artifacts": {
                     "bzImage": hashlib.sha256(kernel).hexdigest(),
                     "rootfs.cpio.gz": hashlib.sha256(initrd).hexdigest(),
@@ -135,21 +136,39 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     )
     assert "command -v gpg" in deploy
     assert "tdnf -y install gnupg" in deploy
-    assert "Build Inventory Linux package" in release
-    assert "--inventory-package" in release
+    inventory_release = Path(
+        ".github/workflows/inventory-linux-release.yml"
+    ).read_text(encoding="utf-8")
+    assert "Build Inventory Linux package" not in release
+    assert "--inventory-package" not in release
+    assert "Build reproducible Inventory Linux package" in inventory_release
+    assert "build_inventory_linux_release.py" in inventory_release
     build = Path("image/inventory-linux/build.sh").read_text(encoding="utf-8")
     assert 'buildroot_version="2026.05.1"' in build
-    assert 'package_version="2026.05.1+7"' in build
+    assert 'package_version="2026.05.1+8"' in build
+    assert "vga=791" in build
+    assert "video=efifb:1024x768" in build
+    assert "fbcon=font:VGA8x16" in build
+    assert 'git --git-dir="${git_dir}" --work-tree="${repo_root}"' in build
+    assert 'git_dir="/mnt/${git_drive}/${git_tail}"' in build
     assert '"version": "${package_version}"' in build
-    assert '"arguments": "rdinit=/sbin/init console=tty0 atlaso.inventory=1"' in build
+    assert (
+        '"arguments": "rdinit=/sbin/init console=tty0 quiet loglevel=3 logo.nologo '
+        'vt.global_cursor_default=0 vga=791 video=efifb:1024x768 fbcon=font:VGA8x16 '
+        'atlaso.inventory=1"' in build
+    )
     assert '"${source_root}/output/target/usr/bin/lscpu"' in build
     assert '"${source_root}/output/target/bin/lsblk"' in build
+    assert '"${source_root}/output/target/usr/bin/lspci"' in build
+    assert '"${source_root}/output/target/usr/share/pci.ids.gz"' in build
+    assert "Required pci.ids metadata is missing" in build
     assert "Required util-linux tool is missing" in build
     assert "Required util-linux tool resolves to BusyBox" in build
     inventory_defconfig = Path(
         "image/inventory-linux/external/configs/atlaso_inventory_x86_64_defconfig"
     ).read_text(encoding="utf-8")
     assert "BR2_PACKAGE_UTIL_LINUX_BINARIES=y" in inventory_defconfig
+    assert "BR2_PACKAGE_PCIUTILS=y" in inventory_defconfig
     assert (
         'BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_ATLASO_INVENTORY_PATH)'
         '/board/atlaso-inventory/busybox.fragment"' in inventory_defconfig
@@ -160,19 +179,40 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
         "image/inventory-linux/external/board/atlaso-inventory/busybox.fragment"
     ).read_text(encoding="utf-8")
     assert "# CONFIG_LSBLK is not set" in busybox_fragment
+    assert "CONFIG_OD=y" in busybox_fragment
     inventory_client = Path(
         "image/inventory-linux/external/overlay/usr/bin/atlaso-inventory"
     ).read_text(encoding="utf-8")
-    assert "optional_ethernet_mac()" in inventory_client
-    assert "grep -Eq '^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'" in inventory_client
-    assert 'current_mac="$(optional_ethernet_mac ' in inventory_client
-    assert 'permanent_mac="$(optional_ethernet_mac ' in inventory_client
+    inventory_library = Path(
+        "image/inventory-linux/external/overlay/usr/lib/atlaso-inventory-lib.sh"
+    ).read_text(encoding="utf-8")
+    assert "optional_ethernet_mac()" in inventory_library
+    assert "grep -Eq '^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'" in inventory_library
+    assert 'current_mac="$(optional_ethernet_mac ' in inventory_library
+    assert 'permanent_mac="$(optional_ethernet_mac ' in inventory_library
+    assert "schema_version: 2" in inventory_client
+    assert "collect_pci_devices" in inventory_client
+    assert "collect_usb_devices" in inventory_client
+    assert '"${SYSFS_ROOT}"/firmware/dmi/entries/17-*' in inventory_library
+    assert 'tolower($1) == tolower(expected)' in inventory_library
+    assert "remaining=300" in inventory_client
+    assert "read -r -s -n 1 -t 1 key" in inventory_client
+    assert "render_inventory_console" in inventory_client
+    assert "refresh_inventory_console_footer" in inventory_client
+    assert "FRAMEBUFFER_ROOT" in inventory_library
+    assert "| gsub(" not in inventory_library
+    assert "\\033]P6dbeafe" in inventory_library
+    assert "\\033]P7eef2f7" in inventory_library
+    assert "\\033[46m" in inventory_library
+    assert "\\033[47m" in inventory_library
+    assert "\\033[44m" in inventory_library
     kernel_fragment = Path(
         "image/inventory-linux/external/board/atlaso-inventory/linux.fragment"
     ).read_text(encoding="utf-8")
     for driver in (
         "CONFIG_VMXNET3=y",
         "CONFIG_VMWARE_PVSCSI=y",
+        "CONFIG_FUSION_SPI=y",
         "CONFIG_HYPERV_NET=y",
         "CONFIG_HYPERV_STORAGE=y",
         "CONFIG_VIRTIO_NET=y",
@@ -195,8 +235,10 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     ):
         assert driver in kernel_fragment
     assert "CONFIG_DRM_SIMPLEDRM=y" in kernel_fragment
+    assert "CONFIG_DMI_SYSFS=y" in kernel_fragment
     assert "CONFIG_SYSFB_SIMPLEFB=y" in kernel_fragment
     assert "CONFIG_FRAMEBUFFER_CONSOLE=y" in kernel_fragment
+    assert "# CONFIG_LOGO is not set" in kernel_fragment
     inventory_defconfig = Path(
         "image/inventory-linux/external/configs/atlaso_inventory_x86_64_defconfig"
     ).read_text(encoding="utf-8")
@@ -218,6 +260,14 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     assert 'grep -q " dev ${candidate}' in init
     assert "for candidate_path in /sys/class/net/*" in init
     assert init.index("udhcpc -i") < init.index("/usr/bin/atlaso-inventory")
+    assert "fbsplash -c -d /dev/fb0 -s /usr/share/atlaso/inventory-splash.ppm" in init
+    splash = Path(
+        "image/inventory-linux/external/overlay/usr/share/atlaso/inventory-splash.ppm"
+    )
+    assert splash.read_bytes().startswith(b"P6\n640 480\n255\n")
+    assert "CONFIG_FBSPLASH=y" in busybox_fragment
+    assert "CONFIG_FBSET=y" in busybox_fragment
+    assert "CONFIG_DRM_HYPERV=y" in kernel_fragment
     assert 'installed_manifest.get("kind") != "atlaso-network-boot-media"' in deploy
     assert 'installed_manifest.get("environment") != "inventory"' in deploy
 
@@ -358,10 +408,25 @@ def test_inventory_linux_retries_uncertain_reboot_acknowledgments():
 
     assert 'pending_reboot_id=""' in client
     assert 'pending_reboot_id="${command_id}"' in client
-    assert "commands/${pending_reboot_id}/acknowledge" in client
-    assert client.index("commands/${pending_reboot_id}/acknowledge") < client.index(
-        "reboot -f"
+    assert "acknowledge_remote_reboot" in client
+    assert client.index("acknowledge_remote_reboot") < client.index("reboot -f", client.index("acknowledge_remote_reboot"))
+
+
+def test_inventory_linux_shell_hardware_console_and_reboot_fixtures():
+    if os.name == "nt":
+        return
+    completed = subprocess.run(
+        [
+            "sh",
+            "tests/shell/test_inventory_linux.sh",
+            "image/inventory-linux/external/overlay/usr/lib/atlaso-inventory-lib.sh",
+            "image/inventory-linux/external/overlay/usr/bin/atlaso-inventory",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
     )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
 def test_inventory_linux_retries_capacity_responses_with_bounded_backoff():

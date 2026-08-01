@@ -2,6 +2,13 @@
 
 case "$1" in
   start)
+    printf '\033[?25l\033[2J\033[H'
+    if command -v fbsplash >/dev/null 2>&1 && [ -c /dev/fb0 ]; then
+      fbsplash -c -d /dev/fb0 -s /usr/share/atlaso/inventory-splash.ppm >/dev/null 2>&1 || true
+    else
+      printf '\033]P00f172a\033[44m\033[37m\033[2J\033[H\n\n\n\n\n\n\n\n\n\n'
+      printf '                         ATLASO INVENTORY LINUX\n'
+    fi
     route_ready=false
     boot_interface=""
     attempted_boot_interface=""

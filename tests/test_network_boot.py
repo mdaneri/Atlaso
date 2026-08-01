@@ -9,7 +9,7 @@ from datetime import timedelta
 from email.message import Message
 from pathlib import Path
 from subprocess import CompletedProcess
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 import pytest
@@ -48,6 +48,12 @@ from atlaso.app.services.network_boot import (
     checksum_for_filename,
     NetworkBootMediaSyncCancelled,
     NETWORK_BOOT_MAX_DISKS,
+    NETWORK_BOOT_MAX_DIMMS,
+    NETWORK_BOOT_MAX_INTERFACES,
+    NETWORK_BOOT_MAX_PCI_DEVICES,
+    NETWORK_BOOT_MAX_STORAGE_CONTROLLERS,
+    NETWORK_BOOT_MAX_USB_DEVICES,
+    NETWORK_BOOT_REPORT_MAX_BYTES,
     NETWORK_BOOT_REPORTS_PER_HOST,
     ensure_environment_rows,
     issue_inventory_session,
@@ -158,8 +164,8 @@ def test_network_boot_catalog_identifies_authoritative_download_sources(db_sessi
 
     assert sources == {
         "inventory": (
-            "Atlaso GitHub releases",
-            "https://github.com/mdaneri/Atlaso/releases/latest",
+            "Atlaso Inventory Linux releases",
+            "https://github.com/mdaneri/Atlaso/releases?q=inventory-linux-v&expanded=true",
         ),
         "memtest86plus": ("Memtest86+ official site", "https://www.memtest.org/"),
         "shredos": (
@@ -255,6 +261,109 @@ def inventory_report(
             }
         ],
     }
+
+
+def inventory_report_v2():
+    payload = inventory_report()
+    payload["schema_version"] = 2
+    payload["system"].update(
+        {
+            "product_version": "2.0",
+            "product_sku": "SKU-42",
+            "product_family": "Atlaso Lab",
+            "bios_release": "1.2",
+            "baseboard": {
+                "manufacturer": "Board Vendor",
+                "product": "Board Product",
+                "version": "B1",
+                "serial": "BOARD-1",
+                "asset_tag": "BOARD-ASSET",
+            },
+            "chassis": {
+                "manufacturer": "Chassis Vendor",
+                "type": "Rack Mount Chassis",
+                "version": "C1",
+                "serial": "CHASSIS-1",
+                "asset_tag": "CHASSIS-ASSET",
+            },
+        }
+    )
+    payload["cpu"].update({"cores_per_socket": 4, "threads_per_core": 2})
+    payload["memory"].update(
+        {
+            "total_human": "8.00 GiB",
+            "dimms": [
+                {
+                    "locator": "DIMM_A1",
+                    "bank": "BANK 0",
+                    "size_bytes": 8 * 1024**3,
+                    "size_human": "8.00 GiB",
+                    "type": "DDR5",
+                    "speed_mts": 4800,
+                    "manufacturer": "Memory Vendor",
+                    "part_number": "MEM-8G",
+                    "serial": "DIMM-1",
+                }
+            ],
+        }
+    )
+    payload["interfaces"][0].update(
+        {
+            "pci_address": "0000:02:00.0",
+            "vendor_id": "8086",
+            "device_id": "10fb",
+            "vendor": "Intel Corporation",
+            "device": "10-Gigabit Network Connection",
+        }
+    )
+    payload["disks"][0].update(
+        {
+            "size_human": "100 GiB",
+            "type": "SSD",
+            "flags": [],
+            "controller_pci_address": "0000:03:00.0",
+        }
+    )
+    payload["storage_controllers"] = [
+        {
+            "pci_address": "0000:03:00.0",
+            "type": "SATA",
+            "vendor_id": "8086",
+            "device_id": "2922",
+            "vendor": "Intel Corporation",
+            "device": "SATA Controller",
+            "driver": "ahci",
+        }
+    ]
+    payload["pci_devices"] = [
+        {
+            "pci_address": "0000:02:00.0",
+            "class_id": "020000",
+            "class": "Ethernet controller",
+            "vendor_id": "8086",
+            "device_id": "10fb",
+            "vendor": "Intel Corporation",
+            "device": "10-Gigabit Network Connection",
+            "subsystem_vendor_id": "8086",
+            "subsystem_device_id": "0001",
+            "driver": "ixgbe",
+        }
+    ]
+    payload["usb_devices"] = [
+        {
+            "bus": 1,
+            "device_number": 2,
+            "port": "1-1",
+            "vendor_id": "0781",
+            "product_id": "5581",
+            "manufacturer": "USB Vendor",
+            "product": "Flash Drive",
+            "serial": "USB-1",
+            "class": "Mass storage",
+            "driver": "usb-storage",
+        }
+    ]
+    return payload
 
 
 def test_network_boot_api_accepts_scoped_ui_session_and_requires_csrf(client):
@@ -423,6 +532,125 @@ def test_inventory_report_is_bounded_and_uses_mac_for_placeholder_uuid():
     payload["disks"] = [{}] * (NETWORK_BOOT_MAX_DISKS + 1)
     with pytest.raises(ValueError, match="at most 128 disks"):
         normalize_inventory_report(payload)
+
+
+def test_inventory_report_v1_normalizes_to_v2_compatibility_shape():
+    normalized = normalize_inventory_report(inventory_report())
+
+    assert normalized["schema_version"] == 2
+    assert normalized["source_schema_version"] == 1
+    assert normalized["cpu"]["cores_per_socket"] == 0
+    assert normalized["cpu"]["threads_per_core"] == 0
+    assert normalized["memory"]["dimms"] == []
+    assert normalized["storage_controllers"] == []
+    assert normalized["pci_devices"] == []
+    assert normalized["usb_devices"] == []
+    assert normalized["system"]["baseboard"]["serial"] == ""
+    assert normalized["interfaces"][0]["pci_address"] == ""
+    assert normalized["disks"][0]["type"] == ""
+
+
+def test_complete_inventory_report_v2_normalizes_all_structured_hardware():
+    payload = inventory_report_v2()
+
+    normalized = normalize_inventory_report(payload)
+
+    assert normalized["schema_version"] == 2
+    assert normalized["source_schema_version"] == 2
+    assert normalized["system"]["baseboard"]["asset_tag"] == "BOARD-ASSET"
+    assert normalized["system"]["chassis"]["type"] == "Rack Mount Chassis"
+    assert normalized["cpu"]["cores_per_socket"] == 4
+    assert normalized["cpu"]["threads_per_core"] == 2
+    assert normalized["memory"]["dimms"][0]["part_number"] == "MEM-8G"
+    assert normalized["interfaces"][0]["vendor_id"] == "8086"
+    assert normalized["disks"][0]["controller_pci_address"] == "0000:03:00.0"
+    assert normalized["storage_controllers"][0]["driver"] == "ahci"
+    assert normalized["pci_devices"][0]["class_id"] == "020000"
+    assert normalized["usb_devices"][0]["product_id"] == "5581"
+
+
+@pytest.mark.parametrize(
+    ("field", "limit"),
+    (
+        ("interfaces", NETWORK_BOOT_MAX_INTERFACES),
+        ("storage_controllers", NETWORK_BOOT_MAX_STORAGE_CONTROLLERS),
+        ("pci_devices", NETWORK_BOOT_MAX_PCI_DEVICES),
+        ("usb_devices", NETWORK_BOOT_MAX_USB_DEVICES),
+    ),
+)
+def test_inventory_report_rejects_collection_count_limits(field, limit):
+    payload = inventory_report_v2()
+    payload[field] = [{}] * (limit + 1)
+
+    with pytest.raises(ValueError, match=f"at most {limit}"):
+        normalize_inventory_report(payload)
+
+
+def test_inventory_report_rejects_dimm_string_and_report_size_limits():
+    payload = inventory_report_v2()
+    payload["memory"]["dimms"] = [{}] * (NETWORK_BOOT_MAX_DIMMS + 1)
+    with pytest.raises(ValueError, match=f"at most {NETWORK_BOOT_MAX_DIMMS}"):
+        normalize_inventory_report(payload)
+
+    payload = inventory_report_v2()
+    payload["memory"]["dimms"][0]["part_number"] = "x" * 241
+    with pytest.raises(ValueError, match="240 characters or fewer"):
+        normalize_inventory_report(payload)
+
+    payload = inventory_report_v2()
+    payload["ignored_padding"] = "x" * NETWORK_BOOT_REPORT_MAX_BYTES
+    with pytest.raises(ValueError, match="256 KiB"):
+        normalize_inventory_report(payload)
+
+
+def test_inventory_report_rejects_normalized_report_size_limit():
+    payload = inventory_report_v2()
+    payload["interfaces"] = [{}] * NETWORK_BOOT_MAX_INTERFACES
+    payload["disks"] = [{}] * NETWORK_BOOT_MAX_DISKS
+    payload["memory"]["dimms"] = [{}] * NETWORK_BOOT_MAX_DIMMS
+    payload["storage_controllers"] = [{}] * NETWORK_BOOT_MAX_STORAGE_CONTROLLERS
+    payload["pci_devices"] = [
+        {"vendor": "x" * 200, "device": "y" * 200}
+    ] * NETWORK_BOOT_MAX_PCI_DEVICES
+    payload["usb_devices"] = [{}] * NETWORK_BOOT_MAX_USB_DEVICES
+
+    encoded = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    assert len(encoded) < NETWORK_BOOT_REPORT_MAX_BYTES
+    with pytest.raises(ValueError, match="Normalized inventory report exceeds"):
+        normalize_inventory_report(payload)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    (
+        (lambda payload: payload["system"].update({"baseboard": []}), "baseboard"),
+        (
+            lambda payload: payload["interfaces"][0].update({"boot_interface": "false"}),
+            "must be a boolean",
+        ),
+        (lambda payload: payload["pci_devices"][0].update({"class_id": "0200"}), "six hexadecimal"),
+        (lambda payload: payload["usb_devices"][0].update({"vendor_id": "xyz"}), "four hexadecimal"),
+    ),
+)
+def test_inventory_report_rejects_malformed_hardware(mutation, message):
+    payload = inventory_report_v2()
+    mutation(payload)
+
+    with pytest.raises(ValueError, match=message):
+        normalize_inventory_report(payload)
+
+
+def test_inventory_report_retains_complete_normalized_v2_json(db_session):
+    session, _token = issue_inventory_session(db_session)
+    payload = inventory_report_v2()
+
+    _host, stored = store_inventory_report(db_session, session=session, payload=payload)
+    retained = json.loads(stored.payload_json)
+
+    assert stored.schema_version == 2
+    assert retained == normalize_inventory_report(payload)
+    assert retained["memory"]["dimms"][0]["serial"] == "DIMM-1"
+    assert retained["pci_devices"][0]["device"] == "10-Gigabit Network Connection"
 
 
 def test_inventory_report_ignores_optional_placeholder_interface_macs():
@@ -1698,25 +1926,52 @@ def test_shredos_iso_rejects_missing_or_invalid_kernel(tmp_path, mode):
         _extract_shredos_kernel(archive, destination)
 
 
-def test_inventory_linux_resolves_versioned_atlaso_release_package(monkeypatch):
+def test_inventory_linux_resolves_signed_dedicated_release_package(monkeypatch):
     payload = {
-        "draft": False,
-        "prerelease": False,
-        "assets": [
-            {
-                "name": "atlaso-inventory-linux-2026.05.1.zip",
-                "browser_download_url": "https://github.com/mdaneri/Atlaso/releases/download/v0.9.52/atlaso-inventory-linux-2026.05.1.zip",
-                "digest": "sha256:" + ("b" * 64),
-            }
-        ],
+        "version": "2026.05.1+8",
+        "package": {
+            "name": "atlaso-inventory-linux-2026.05.1+8.zip",
+            "url": "https://github.com/mdaneri/Atlaso/releases/download/inventory-linux-v2026.05.1%2B8/atlaso-inventory-linux-2026.05.1%2B8.zip",
+            "size": 123,
+            "sha256": "b" * 64,
+        },
     }
+    requests = []
+
+    def fetch(url, **_kwargs):
+        requests.append(url)
+        return b"signed document" if url.endswith("manifest.json") else b"signature"
+
     monkeypatch.setattr(
-        "atlaso.app.services.network_boot._fetch_https_text",
-        lambda *_args, **_kwargs: json.dumps(payload),
+        "atlaso.app.services.network_boot._fetch_https_bytes",
+        fetch,
+    )
+    monkeypatch.setattr(
+        "atlaso.app.services.network_boot.verify_signed_json",
+        lambda raw, signature, *, document_kind: (
+            payload
+            if raw == b"signed document"
+            and signature == b"signature"
+            and document_kind == "inventory"
+            else pytest.fail("unexpected signed manifest verification")
+        ),
     )
     descriptor = _release_descriptor("inventory")
-    assert descriptor["version"] == "2026.05.1"
+    assert descriptor["version"] == "2026.05.1+8"
     assert descriptor["sha256"] == "b" * 64
+    assert requests == [
+        "https://mdaneri.github.io/Atlaso/updates/inventory-linux/latest/manifest.json",
+        "https://mdaneri.github.io/Atlaso/updates/inventory-linux/latest/manifest.json.sig",
+    ]
+
+
+def test_inventory_linux_missing_release_is_actionable(monkeypatch):
+    def missing(url, **_kwargs):
+        raise HTTPError(url, 404, "Not Found", {}, None)
+
+    monkeypatch.setattr(network_boot, "_fetch_https_bytes", missing)
+    with pytest.raises(ValueError, match="No Atlaso Inventory Linux release has been published"):
+        _release_descriptor("inventory")
 
 
 def test_inventory_linux_package_upload_installs_verified_immutable_media(
@@ -1731,6 +1986,13 @@ def test_inventory_linux_package_upload_installs_verified_immutable_media(
         "schema_version": 1,
         "environment": "inventory",
         "version": "2026.05.1",
+        "boot": {
+            "arguments": (
+                "rdinit=/sbin/init console=tty0 quiet loglevel=3 "
+                "vga=791 video=1024x768 fbcon=font:VGA8x16 "
+                "atlaso.inventory=1"
+            ),
+        },
         "artifacts": {
             "bzImage": hashlib.sha256(kernel).hexdigest(),
             "rootfs.cpio.gz": hashlib.sha256(initrd).hexdigest(),
@@ -1774,9 +2036,62 @@ def test_inventory_linux_package_upload_installs_verified_immutable_media(
     manifest = json.loads(media.manifest_json)
 
     assert manifest["boot"]["kernel"].endswith("/inventory/2026.05.1/bzImage")
+    assert manifest["boot"]["arguments"] == source_manifest["boot"]["arguments"]
+    chain = network_boot._chain_line(media, http_origin="http://192.0.2.10:8080")
+    assert "vga=791" in chain
+    assert "video=1024x768" in chain
+    assert "fbcon=font:VGA8x16" in chain
     assert manifest["acquisition"] == "upload"
     assert (Path(media.installed_path) / "rootfs.cpio.gz").read_bytes() == initrd
     assert replacements
+
+
+def test_inventory_linux_package_rejects_signed_size_mismatch(
+    db_session,
+    monkeypatch,
+    tmp_path,
+):
+    kernel = b"inventory kernel"
+    initrd = b"inventory initramfs"
+    version = "2026.05.1+8"
+    package = tmp_path / f"atlaso-inventory-linux-{version}.zip"
+    with zipfile.ZipFile(package, "w") as archive:
+        archive.writestr(
+            "manifest.json",
+            json.dumps(
+                {
+                    "kind": "atlaso-inventory-linux",
+                    "schema_version": 1,
+                    "environment": "inventory",
+                    "version": version,
+                    "artifacts": {
+                        "bzImage": hashlib.sha256(kernel).hexdigest(),
+                        "rootfs.cpio.gz": hashlib.sha256(initrd).hexdigest(),
+                    },
+                }
+            ),
+        )
+        archive.writestr("bzImage", kernel)
+        archive.writestr("rootfs.cpio.gz", initrd)
+    monkeypatch.setattr(
+        network_boot,
+        "_release_descriptor",
+        lambda _key: {
+            "version": version,
+            "filename": package.name,
+            "asset_url": "https://example.test/" + package.name,
+            "sha256": hashlib.sha256(package.read_bytes()).hexdigest(),
+            "size": str(package.stat().st_size + 1),
+        },
+    )
+    with pytest.raises(ValueError, match="verified size"):
+        sync_network_boot_media(
+            db_session,
+            environment_key="inventory",
+            media_root=tmp_path / "media",
+            uploaded_artifact=package,
+            uploaded_filename=package.name,
+        )
 
 
 def test_boot_media_archive_rejects_traversal(tmp_path):

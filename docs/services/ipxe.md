@@ -54,17 +54,45 @@ is audited and does not change the host's permanent ESXi desired state.
 
 Inventory Linux is a purpose-built Buildroot environment that runs from an
 initramfs in RAM; it is not an Ubuntu, Debian, or Photon OS installation. It
-does not mount filesystems or write target disks. It submits a bounded report
-containing DMI, CPU, memory, block-device, and network-interface metadata,
-displays a local summary, and waits for either the local `R` key or one audited
-remote reboot command. Its startup service first obtains DHCP configuration
-and confirms a default route; the Linux kernel does not inherit iPXE's network
-state. The image includes a broad compatibility profile for physical NIC and
-storage-controller families used by ESXi-capable x86-64 hosts and virtual
-devices from VMware, Hyper-V, KVM/Proxmox/QEMU, and Xen. Exact device support
-still depends on an available upstream Linux driver and redistributable
-firmware; the ESXi hardware compatibility list remains a separate vendor
-certification matrix. Optional interface MAC
+does not mount filesystems or write target disks. Schema v2 submits bounded
+structured CPU topology, populated DIMMs, every NIC and disk, storage
+controllers, PCI/USB devices, and system/BIOS/baseboard/chassis identity. Sysfs
+is authoritative for devices, including populated DIMMs enumerated from
+kernel-exposed DMI Type-17 entries; `dmidecode` only enriches matching handles.
+Pciutils/pci.ids enrich readable PCI names, and raw command output is never
+submitted. Atlaso still accepts schema v1 and
+normalizes it into retained v2 JSON in the existing report column.
+
+Inventory startup suppresses kernel branding and displays the Atlaso appliance
+boot artwork without Photon OS attribution. The local full-screen console uses
+the appliance console's pale-blue header, light content, and adaptive blue
+action footer across **System / CPU / DIMMs**, **Network**, and **Storage**
+pages, with a blank light row below the header. Use `N`/`P` or `1`-`3` to page.
+Only after successful report submission, a five-minute reboot countdown begins.
+Use `J`/`K` to move through bounded list
+windows when a hardware list is larger than the console viewport. Capacity is
+derived from framebuffer geometry when available and otherwise from the TTY;
+higher-resolution consoles therefore use their additional rows, while a normal
+80x30 fallback shows up to 12 DIMMs, eight adapters, or 12 disks/controllers
+before list paging is needed. The action footer spans the console and follows
+the populated rows; dense pages expand it toward the terminal bottom. Silent
+keyboard reads keep navigation input out of the content area. All rows clip to
+the console width. Optical block
+devices are identified from the authoritative sysfs peripheral type.
+PCI identity is attached only to directly PCI-backed devices; controller sysfs
+also retains non-PCI SCSI hosts such as Hyper-V StorVSC. Large inventories are
+assembled from files as compact JSON so the 256 KiB boundary is independent of
+pretty-print whitespace and Linux per-argument limits.
+Page and list navigation still consume countdown time. `S` pauses or resumes
+the remaining time and `R` reboots immediately; an acknowledged audited remote
+reboot remains authoritative. Its startup service first obtains DHCP
+configuration and confirms a default route; the Linux kernel does not inherit
+iPXE's network state. The image includes a broad compatibility profile for
+physical NIC and storage-controller families used by ESXi-capable x86-64 hosts
+and virtual devices from VMware, Hyper-V, KVM/Proxmox/QEMU, and Xen. Exact
+device support still depends on an available upstream Linux driver and
+redistributable firmware; the ESXi hardware compatibility list remains a
+separate vendor certification matrix. Optional interface MAC
 fields reported as all-zero or broadcast placeholders are ignored; malformed
 MACs remain invalid, and host identity still requires a valid DMI UUID or
 usable MAC. Atlaso
@@ -72,6 +100,11 @@ retains the latest report and ten previous reports. A repeated valid DMI UUID
 with disjoint MAC identities is shown as a collision and is not silently
 merged; later reports for that UUID must include a usable MAC so Atlaso does
 not attach DMI-only history to an arbitrary collision record.
+
+Each report is limited to 256 KiB, 64 NICs, 128 disks, 64 storage controllers,
+256 populated DIMMs, 512 PCI devices, and 256 USB devices. Individual strings
+and address/flag lists are also bounded; malformed hardware objects are
+rejected rather than retained partially.
 
 The **Discovered Hosts** grid is read-only. Open a host to review its latest
 report and history, queue a reboot while its Inventory Linux heartbeat is
@@ -83,15 +116,34 @@ review. It creates desired state only.
 
 The fixed catalog contains Atlaso Inventory Linux, Memtest86+, ShredOS, GParted
 Live, and Clonezilla Live. Full appliance images preinstall the independently
-versioned `atlaso-inventory-linux-<version>.zip` package. The same package is a
-GitHub release asset, so an operator can download or upload a newer verified
+versioned `atlaso-inventory-linux-<version>.zip` package. New Inventory builds
+are final independent GitHub Releases under immutable
+`inventory-linux-v<version>` tags; ordinary Atlaso appliance releases no longer
+contain the package. An operator can still download or upload a newer verified
 Inventory Linux build without updating the Atlaso Python wheel. The other
 environments are disabled and uninstalled by default. Full appliance images
 include GnuPG for signed checksum verification; the development VMware wheel
 deployment bridge repairs that dependency on older test appliances before
 installing the new wheel. The **Source** column
-names and links to the authoritative release page from which Atlaso resolves
-each download. **Download latest stable** queues a durable `pxe-media-sync`
+names and links to the authoritative release history from which Atlaso resolves
+each download; Inventory Linux points to its independent release history.
+
+**Download latest** resolves only these fixed signed endpoints:
+
+- `https://mdaneri.github.io/Atlaso/updates/inventory-linux/latest/manifest.json`
+- `https://mdaneri.github.io/Atlaso/updates/inventory-linux/latest/manifest.json.sig`
+
+Atlaso verifies the detached Ed25519 signature with a public key under
+`/etc/atlaso/update-trust.d`, requires `X.Y.Z+revision`, and requires the package
+URL to target the matching `inventory-linux-v<version>` tag in the Atlaso
+repository. It then enforces the signed package size and SHA-256 before applying
+the existing ZIP allowlist, embedded package identity, inner artifact hashes,
+and atomic installation. If no independent release exists, the task tells the
+operator to publish one with the Inventory Linux workflow. Atlaso versions
+before `0.9.65` still search ordinary appliance releases, so they must upgrade
+before downloading `2026.05.1+8`; already installed Inventory media remains
+usable and activation still occurs only through global appliance apply.
+**Download latest** queues a durable `pxe-media-sync`
 task that:
 
 1. resolves one concrete stable release from the fixed upstream;

@@ -2,15 +2,27 @@
 set -euo pipefail
 
 buildroot_version="2026.05.1"
-package_version="2026.05.1+7"
+package_version="2026.05.1+8"
 buildroot_sha256="ae7f706f087b9ae9083a10a587368dfbf53103c28bf81c2d690198dc4090cb58"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "${script_dir}/../.." && pwd)"
 source_root="${ATLASO_INVENTORY_BUILD_ROOT:-${script_dir}/.build}"
 download_dir="${source_root}/downloads"
 build_dir="${source_root}/buildroot-${buildroot_version}"
 output_dir="${script_dir}/output"
 archive="${download_dir}/buildroot-${buildroot_version}.tar.xz"
-source_date_epoch="$(git -C "${script_dir}" log -1 --format=%ct -- . 2>/dev/null || printf '0')"
+git_dir="${repo_root}/.git"
+if [[ -f "${git_dir}" ]]; then
+  git_dir="$(sed -n 's/^gitdir: //p' "${git_dir}")"
+  if [[ "${git_dir}" =~ ^([A-Za-z]):[/\\](.*)$ ]]; then
+    git_drive="$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:upper:]' '[:lower:]')"
+    git_tail="${BASH_REMATCH[2]//\\//}"
+    git_dir="/mnt/${git_drive}/${git_tail}"
+  elif [[ "${git_dir}" != /* ]]; then
+    git_dir="${repo_root}/${git_dir}"
+  fi
+fi
+source_date_epoch="$(git --git-dir="${git_dir}" --work-tree="${repo_root}" log -1 --format=%ct -- image/inventory-linux 2>/dev/null || printf '0')"
 export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-${source_date_epoch}}"
 
 mkdir -p "${download_dir}" "${output_dir}"
@@ -39,7 +51,8 @@ make -C "${build_dir}" \
   O="${source_root}/output"
 for inventory_tool_path in \
   "${source_root}/output/target/usr/bin/lscpu" \
-  "${source_root}/output/target/bin/lsblk"; do
+  "${source_root}/output/target/bin/lsblk" \
+  "${source_root}/output/target/usr/bin/lspci"; do
   inventory_tool="$(basename "${inventory_tool_path}")"
   if [[ ! -x "${inventory_tool_path}" ]]; then
     printf 'Required util-linux tool is missing: %s\n' "${inventory_tool}" >&2
@@ -50,6 +63,12 @@ for inventory_tool_path in \
     exit 1
   fi
 done
+if [[ ! -s "${source_root}/output/target/usr/share/hwdata/pci.ids" && \
+      ! -s "${source_root}/output/target/usr/share/pci.ids" && \
+      ! -s "${source_root}/output/target/usr/share/pci.ids.gz" ]]; then
+  printf 'Required pci.ids metadata is missing.\n' >&2
+  exit 1
+fi
 make -C "${build_dir}" \
   BR2_EXTERNAL="${script_dir}/external" \
   O="${source_root}/output" \
@@ -78,7 +97,7 @@ cat >"${output_dir}/manifest.json" <<EOF
   "boot": {
     "kernel": "/pxe/media/inventory/${package_version}/bzImage",
     "initrd": "/pxe/media/inventory/${package_version}/rootfs.cpio.gz",
-    "arguments": "rdinit=/sbin/init console=tty0 atlaso.inventory=1"
+    "arguments": "rdinit=/sbin/init console=tty0 quiet loglevel=3 logo.nologo vt.global_cursor_default=0 vga=791 video=efifb:1024x768 fbcon=font:VGA8x16 atlaso.inventory=1"
   },
   "artifacts": {
     "bzImage": "${kernel_sha256}",
