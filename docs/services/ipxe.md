@@ -122,7 +122,9 @@ values are inserted as text, not markup.
 
 Use **Print / Save as PDF** to print only the selected report, or **Download
 JSON** to save a no-cache attachment containing the host identity, report
-metadata, and unchanged normalized payload. Operators with Network Boot write
+metadata, and unchanged normalized payload. The exported identity is captured
+from the selected retained report, so later reports and heartbeat changes do
+not alter an older attachment. Operators with Network Boot write
 access can use the row context menu to **Promote to ESXi**, **Reboot**, **Wake
 host**, or **Remove discovered host**. Wake, reboot, and removal share Atlaso's
 confirmation flow. Reboot is available only for an online Inventory Linux

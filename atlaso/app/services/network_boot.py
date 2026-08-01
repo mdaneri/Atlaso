@@ -924,6 +924,18 @@ def report_identity(report: dict[str, Any]) -> tuple[str, str, list[str]]:
     return f"mac:{primary_mac}", "", macs
 
 
+def report_host_identity(host_id: int, report: dict[str, Any]) -> dict[str, Any]:
+    """Return immutable host identity derived from one retained report."""
+    identity_key, dmi_uuid, macs = report_identity(report)
+    return {
+        "id": host_id,
+        "identity_key": identity_key,
+        "dmi_uuid": dmi_uuid,
+        "boot_mac": str(report.get("boot_mac") or ""),
+        "macs": macs,
+    }
+
+
 def _macs(row: NetworkBootDiscoveredHost) -> set[str]:
     try:
         values = json.loads(row.macs_json or "[]")

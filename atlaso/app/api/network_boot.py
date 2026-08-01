@@ -55,6 +55,7 @@ from atlaso.app.services.network_boot import (
     poll_inventory_command,
     queue_reboot_command,
     render_network_boot_menu,
+    report_host_identity,
     report_history,
     request_host_boot_override,
     send_wake_on_lan,
@@ -522,12 +523,13 @@ def download_discovered_host_report(
     report = db.get(NetworkBootInventoryReport, report_id)
     if host is None or report is None or report.host_id != host.id:
         raise HTTPException(status_code=404, detail="Inventory report not found.")
+    normalized_payload = json.loads(report.payload_json)
     exported = {
-        "host": host_to_dict(db, host),
+        "host": report_host_identity(host.id, normalized_payload),
         "report_id": report.id,
         "received_at": report.received_at.isoformat(),
         "schema_version": report.schema_version,
-        "report": json.loads(report.payload_json),
+        "report": normalized_payload,
     }
     filename = f"atlaso-inventory-host-{host.id}-report-{report.id}.json"
     return Response(
