@@ -575,7 +575,7 @@ console_terminal_rows() {
   candidate=$((height / 16))
   if [ "${candidate}" -ge 22 ] && [ "${candidate}" -le 120 ]; then rows="${candidate}"; fi
   if [ -c /dev/tty ]; then
-    tty_rows="$(stty size </dev/tty 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
+    tty_rows="$(stty size 2>/dev/null </dev/tty | awk 'NR == 1 {print $1}' || true)"
     tty_rows="$(unsigned_value "${tty_rows:-0}")"
     [ "${tty_rows}" -le "${rows}" ] || rows="${tty_rows}"
   fi
@@ -590,7 +590,7 @@ console_terminal_columns() {
   candidate=$((width / 8))
   if [ "${candidate}" -ge 80 ] && [ "${candidate}" -le 240 ]; then columns="${candidate}"; fi
   if [ -c /dev/tty ]; then
-    tty_columns="$(stty size </dev/tty 2>/dev/null | awk 'NR == 1 {print $2}' || true)"
+    tty_columns="$(stty size 2>/dev/null </dev/tty | awk 'NR == 1 {print $2}' || true)"
     tty_columns="$(unsigned_value "${tty_columns:-0}")"
     [ "${tty_columns}" -le "${columns}" ] || columns="${tty_columns}"
   fi
