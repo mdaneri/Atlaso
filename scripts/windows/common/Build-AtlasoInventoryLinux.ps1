@@ -38,34 +38,53 @@ $repositoryHash = [System.Security.Cryptography.SHA256]::HashData(
 )
 $repositoryKey = [System.Convert]::ToHexString($repositoryHash).Substring(0, 16).ToLowerInvariant()
 $linuxBuildRoot = "$linuxCacheRoot/$repositoryKey"
-$wsl = Assert-AtlasoWslAvailable
-$wslArguments = @('--distribution', $WslDistribution)
-if (-not [string]::IsNullOrWhiteSpace($environment.User)) {
-    $wslArguments += @('--user', $environment.User)
-}
-$wslArguments += @('--exec', 'env')
-$wslArguments += @(
-    "PATH=$linuxPath",
-    "ATLASO_INVENTORY_BUILD_ROOT=$linuxBuildRoot",
-    'sh',
-    '-c',
-    'mkdir -p "$1"; exec flock --exclusive "$2" bash "$3"',
-    'atlaso-inventory-build',
-    $linuxCacheRoot,
-    "$linuxBuildRoot.lock",
-    $linuxScript
-)
-& $wsl @wslArguments
-if ($LASTEXITCODE -ne 0) {
-    throw "Atlaso Inventory Linux build failed with exit code $LASTEXITCODE."
-}
-
-$outputDirectory = Join-Path $RepositoryRoot 'image\inventory-linux\output'
-foreach ($name in @('bzImage', 'rootfs.cpio.gz', 'manifest.json')) {
-    if (-not (Test-Path -LiteralPath (Join-Path $outputDirectory $name) -PathType Leaf)) {
-        throw "Atlaso Inventory Linux build did not produce $name."
+$checkoutMutexName = "Global\Atlaso.InventoryLinux.$repositoryKey"
+$checkoutMutex = [System.Threading.Mutex]::new($false, $checkoutMutexName)
+$checkoutMutexAcquired = $false
+try {
+    try {
+        $checkoutMutexAcquired = $checkoutMutex.WaitOne()
+    } catch [System.Threading.AbandonedMutexException] {
+        $checkoutMutexAcquired = $true
     }
-}
-if (-not (Test-Path -LiteralPath (Join-Path $outputDirectory 'legal-info') -PathType Container)) {
-    throw 'Atlaso Inventory Linux build did not produce Buildroot legal-info.'
+    if (-not $checkoutMutexAcquired) {
+        throw "Atlaso could not acquire the checkout-wide Inventory Linux build lock: $checkoutMutexName"
+    }
+
+    $wsl = Assert-AtlasoWslAvailable
+    $wslArguments = @('--distribution', $WslDistribution)
+    if (-not [string]::IsNullOrWhiteSpace($environment.User)) {
+        $wslArguments += @('--user', $environment.User)
+    }
+    $wslArguments += @('--exec', 'env')
+    $wslArguments += @(
+        "PATH=$linuxPath",
+        "ATLASO_INVENTORY_BUILD_ROOT=$linuxBuildRoot",
+        'sh',
+        '-c',
+        'mkdir -p "$1"; exec flock --exclusive "$2" bash "$3"',
+        'atlaso-inventory-build',
+        $linuxCacheRoot,
+        "$linuxBuildRoot.lock",
+        $linuxScript
+    )
+    & $wsl @wslArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Atlaso Inventory Linux build failed with exit code $LASTEXITCODE."
+    }
+
+    $outputDirectory = Join-Path $RepositoryRoot 'image\inventory-linux\output'
+    foreach ($name in @('bzImage', 'rootfs.cpio.gz', 'manifest.json')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $outputDirectory $name) -PathType Leaf)) {
+            throw "Atlaso Inventory Linux build did not produce $name."
+        }
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $outputDirectory 'legal-info') -PathType Container)) {
+        throw 'Atlaso Inventory Linux build did not produce Buildroot legal-info.'
+    }
+} finally {
+    if ($checkoutMutexAcquired) {
+        $checkoutMutex.ReleaseMutex()
+    }
+    $checkoutMutex.Dispose()
 }

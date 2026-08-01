@@ -66,8 +66,8 @@ The following cross-cutting boundaries always apply:
 - Windows Inventory Linux and Photon builds select the dedicated `Atlaso-Build` WSL distribution by default. WSL is a
   pre-existing host prerequisite: ordinary builds must never install or configure WSL, create a missing distribution,
   change the default distribution, elevate, reboot, or remove a distribution. Keep the pinned setup contract, explicit
-  distribution selection, native-Linux cache, Linux-only child `PATH`, and per-repository lock described in the
-  canonical contributor guide.
+  distribution selection, native-Linux cache, Linux-only child `PATH`, per-repository `flock`, and checkout-wide output
+  serialization described in the canonical contributor guide.
 - Validate live appliance readiness through `/openapi.json`, not VMware Tools IP discovery or service color alone.
 - Boot ShredOS only from the verified stable ISO's allowlisted `/boot/bzImage` kernel through iPXE. Do not restore raw
   disk-image SAN boot or add unattended erase arguments.

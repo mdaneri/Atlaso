@@ -84,7 +84,9 @@ ${XDG_CACHE_HOME:-$HOME/.cache}/atlaso/inventory-linux/<repository-key>
 
 The repository key is derived from the Windows repository path. Different WSL distributions have separate filesystems,
 and different repository paths receive separate work trees. A `flock` file next to each work tree serializes concurrent
-builds for the same repository and distribution. The Linux-only child `PATH` excludes imported Windows paths.
+builds for the same repository and distribution. A checkout-keyed Windows mutex also serializes the complete build and
+final-output verification across different selected distributions that target the same checkout. The Linux-only child
+`PATH` excludes imported Windows paths.
 
 Final verified `bzImage`, `rootfs.cpio.gz`, `manifest.json`, and `legal-info` output still lands under
 `image/inventory-linux/output` in the selected repository checkout.

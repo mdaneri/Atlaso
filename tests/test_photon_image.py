@@ -241,6 +241,10 @@ def test_windows_inventory_linux_build_selects_one_distribution_and_native_cache
     assert '"ATLASO_INVENTORY_BUILD_ROOT=$linuxBuildRoot"' in wrapper
     assert 'exec flock --exclusive "$2" bash "$3"' in wrapper
     assert '"$linuxBuildRoot.lock"' in wrapper
+    assert '"Global\\Atlaso.InventoryLinux.$repositoryKey"' in wrapper
+    assert "$checkoutMutex.WaitOne()" in wrapper
+    assert wrapper.index("$checkoutMutex.WaitOne()") < wrapper.index("& $wsl @wslArguments")
+    assert wrapper.index("Buildroot legal-info") < wrapper.index("$checkoutMutex.ReleaseMutex()")
     assert 'Buildroot must run as a non-root WSL user.' in module
     assert 'cache storage is not case-sensitive' in module
     assert "wsl.exe --exec bash $linuxScript" not in wrapper
@@ -318,6 +322,11 @@ def test_wsl_build_contract_and_setup_are_pinned_idempotent_and_non_destructive(
     assert "Get-FileHash" in setup
     assert "Get-AtlasoWslDefaultDistribution" in setup
     assert "--set-default $defaultBefore" in setup
+    assert "$importSucceeded" in setup
+    assert "} finally {\n        if ($importSucceeded" in setup
+    assert setup.index("$importSucceeded = $true") < setup.index("$ownershipScript")
+    assert setup.index("$ownershipScript") < setup.index("if ($importSucceeded")
+    assert "Default-distribution restoration also failed" in setup
     assert "no default could be identified" in setup
     assert "/var/lib/atlaso-build/ownership.json" in setup
     assert setup.index("/var/lib/atlaso-build/ownership.json") < setup.index(

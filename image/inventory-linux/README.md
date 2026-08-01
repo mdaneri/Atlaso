@@ -50,7 +50,8 @@ wrappers use the selected distribution for every build subprocess, give
 Buildroot a Linux-only `PATH`, and keep downloads and mutable work beneath the
 WSL user's native Linux cache. Final artifacts still land in the output
 directory documented below, and a per-repository `flock` serializes builds that
-share a work tree. See the canonical
+share a work tree. A checkout-wide Windows mutex also protects the shared final
+output when different distributions target the same checkout. See the canonical
 [Windows image-build WSL environment](../../docs/contribute/windows-image-build-wsl.md)
 guide for setup, selection, storage, updates, export/import, recreation,
 troubleshooting, and removal.

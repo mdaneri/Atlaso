@@ -87,56 +87,72 @@ if (-not $distributionExists) {
     $sourceStream = $null
     $gzipStream = $null
     $targetStream = $null
+    $importSucceeded = $false
+    $postImportFailure = ''
     try {
         try {
-            $sourceStream = [System.IO.File]::OpenRead($BaseImagePath)
-            $gzipStream = [System.IO.Compression.GZipStream]::new(
-                $sourceStream,
-                [System.IO.Compression.CompressionMode]::Decompress
-            )
-            $targetStream = [System.IO.File]::Create($importArchivePath)
-            $gzipStream.CopyTo($targetStream)
+            try {
+                $sourceStream = [System.IO.File]::OpenRead($BaseImagePath)
+                $gzipStream = [System.IO.Compression.GZipStream]::new(
+                    $sourceStream,
+                    [System.IO.Compression.CompressionMode]::Decompress
+                )
+                $targetStream = [System.IO.File]::Create($importArchivePath)
+                $gzipStream.CopyTo($targetStream)
+            } finally {
+                if ($targetStream) {
+                    $targetStream.Dispose()
+                }
+                if ($gzipStream) {
+                    $gzipStream.Dispose()
+                }
+                if ($sourceStream) {
+                    $sourceStream.Dispose()
+                }
+            }
+
+            Write-Host "Importing $distribution under $InstallLocation."
+            & $wsl --import $distribution $InstallLocation $importArchivePath --version 2
+            if ($LASTEXITCODE -ne 0) {
+                throw "WSL could not import $distribution. Atlaso did not enable Windows features, elevate, reboot, or run wsl --install."
+            }
+            $importSucceeded = $true
         } finally {
-            if ($targetStream) {
-                $targetStream.Dispose()
-            }
-            if ($gzipStream) {
-                $gzipStream.Dispose()
-            }
-            if ($sourceStream) {
-                $sourceStream.Dispose()
+            if (Test-Path -LiteralPath $importArchivePath -PathType Leaf) {
+                Remove-Item -LiteralPath $importArchivePath -Force
             }
         }
 
-        Write-Host "Importing $distribution under $InstallLocation."
-        & $wsl --import $distribution $InstallLocation $importArchivePath --version 2
-        if ($LASTEXITCODE -ne 0) {
-            throw "WSL could not import $distribution. Atlaso did not enable Windows features, elevate, reboot, or run wsl --install."
-        }
-    } finally {
-        if (Test-Path -LiteralPath $importArchivePath -PathType Leaf) {
-            Remove-Item -LiteralPath $importArchivePath -Force
-        }
-    }
-
-    $ownershipScript = @'
+        $ownershipScript = @'
 set -eu
 umask 022
 install -d -o root -g root -m 0755 /var/lib/atlaso-build
 printf '{"schema_version":1,"base_sha256":"%s","distribution_name":"%s"}\n' "$1" "$2" > /var/lib/atlaso-build/ownership.json
 '@
-    Invoke-AtlasoWslCapture `
-        -Distribution $distribution `
-        -User 'root' `
-        -Arguments @('sh', '-c', $ownershipScript, 'atlaso-wsl-ownership', [string]$contract.base.sha256, $distribution) `
-        -FailureMessage "Atlaso-Build was imported but its ownership marker could not be written. Inspect '$InstallLocation' before retrying." | Out-Null
-
-    if (-not [string]::IsNullOrWhiteSpace($defaultBefore)) {
-        $defaultAfter = Get-AtlasoWslDefaultDistribution
-        if (-not $defaultAfter.Equals($defaultBefore, [System.StringComparison]::OrdinalIgnoreCase)) {
-            & $wsl --set-default $defaultBefore
-            if ($LASTEXITCODE -ne 0) {
-                throw "Atlaso-Build was imported, but WSL could not restore the previous default distribution '$defaultBefore'. Restore it with: wsl --set-default $defaultBefore"
+        Invoke-AtlasoWslCapture `
+            -Distribution $distribution `
+            -User 'root' `
+            -Arguments @('sh', '-c', $ownershipScript, 'atlaso-wsl-ownership', [string]$contract.base.sha256, $distribution) `
+            -FailureMessage "Atlaso-Build was imported but its ownership marker could not be written. Inspect '$InstallLocation' before retrying." | Out-Null
+    } catch {
+        $postImportFailure = $_.Exception.Message
+        throw
+    } finally {
+        if ($importSucceeded -and -not [string]::IsNullOrWhiteSpace($defaultBefore)) {
+            try {
+                $defaultAfter = Get-AtlasoWslDefaultDistribution
+                if (-not $defaultAfter.Equals($defaultBefore, [System.StringComparison]::OrdinalIgnoreCase)) {
+                    & $wsl --set-default $defaultBefore
+                    if ($LASTEXITCODE -ne 0) {
+                        throw "WSL could not restore the previous default distribution '$defaultBefore'. Restore it with: wsl --set-default $defaultBefore"
+                    }
+                }
+            } catch {
+                $restoreFailure = $_.Exception.Message
+                if (-not [string]::IsNullOrWhiteSpace($postImportFailure)) {
+                    throw "Atlaso-Build setup failed: $postImportFailure`nDefault-distribution restoration also failed: $restoreFailure"
+                }
+                throw "Atlaso-Build was imported, but default-distribution restoration failed: $restoreFailure"
             }
         }
     }
