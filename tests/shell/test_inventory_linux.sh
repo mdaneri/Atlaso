@@ -199,9 +199,20 @@ DMI
 EOF
 cat >"${fixture_root}/bin/lscpu" <<'EOF'
 #!/bin/sh
-printf '%s\n' '{"lscpu":[{"field":"Architecture:","data":"x86_64"},{"field":"Vendor ID:","data":"GenuineIntel"},{"field":"Model name:","data":"Fixture CPU"},{"field":"CPU(s):","data":"32"},{"field":"Socket(s):","data":"2"},{"field":"Core(s) per socket:","data":"8"},{"field":"Thread(s) per core:","data":"2"}]}'
+printf '%s\n' '{"lscpu":[{"field":"Architecture:","data":"x86_64"},{"field":"Vendor ID:","data":"GenuineIntel"},{"field":"Model name:","data":"Fixture CPU"}]}'
 EOF
 chmod +x "${fixture_root}/bin/"*
+
+cpu_index=0
+while [ "${cpu_index}" -lt 32 ]; do
+  package_id=$((cpu_index / 16))
+  core_id=$(((cpu_index % 16) / 2))
+  cpu_path="${ATLASO_SYSFS_ROOT}/devices/system/cpu/cpu${cpu_index}"
+  mkdir -p "${cpu_path}/topology"
+  printf '%s\n' "${package_id}" >"${cpu_path}/topology/physical_package_id"
+  printf '%s\n' "${core_id}" >"${cpu_path}/topology/core_id"
+  cpu_index=$((cpu_index + 1))
+done
 
 pci="$(collect_pci_devices)"
 pci_file="${fixture_root}/pci.json"
@@ -304,6 +315,7 @@ printf '%s' "${dimm_window}" | grep -F 'DIMMs 6-8 of 8' >/dev/null || fail 'DIMM
 printf '%s' "${dimm_window}" | grep -F 'DIMM_5' >/dev/null || fail 'DIMM list subpage first row'
 if printf '%s' "${dimm_window}" | grep -F 'DIMM_0' >/dev/null; then fail 'DIMM list subpage bounds'; fi
 [ "$(printf '%0100d\n' 0 | console_clip_lines 78 | awk '{ print length }')" = "78" ] || fail 'console line clipping'
+[ "$(CONSOLE_CONTENT_WIDTH=78 console_line Product "$(printf '%0200d' 0)" | awk '{ print length }')" = "78" ] || fail 'fixed system field clipping'
 if grep -F '| gsub(' "${library}" >/dev/null; then fail 'Buildroot jq regex dependency'; fi
 grep -F -- '--slurpfile pci_devices' "${client}" >/dev/null || fail 'large inventory file input'
 grep -F 'report="$(jq -cn' "${client}" >/dev/null || fail 'compact report serialization'

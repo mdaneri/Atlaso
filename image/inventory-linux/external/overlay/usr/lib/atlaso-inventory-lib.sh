@@ -454,13 +454,38 @@ collect_cpu() {
   architecture="$(bounded_text 64 "$(cpu_field Architecture)")"
   vendor="$(bounded_text 120 "$(cpu_field "Vendor ID")")"
   model="$(bounded_text 240 "$(cpu_field "Model name")")"
-  sockets="$(unsigned_value "$(cpu_field "Socket(s)")")"
-  cores_per_socket="$(unsigned_value "$(cpu_field "Core(s) per socket")")"
-  threads_per_core="$(unsigned_value "$(cpu_field "Thread(s) per core")")"
-  cores=$((sockets * cores_per_socket))
-  threads=$((cores * threads_per_core))
-  [ "${cores}" -gt 0 ] || cores="$(unsigned_value "$(cpu_field "CPU(s)")")"
-  [ "${threads}" -gt 0 ] || threads="$(unsigned_value "$(cpu_field "CPU(s)")")"
+  topology="$(mktemp "${RUNTIME_ROOT}/atlaso-cpu-topology.XXXXXX")"
+  : >"${topology}"
+  for cpu_path in "${SYSFS_ROOT}"/devices/system/cpu/cpu[0-9]*; do
+    [ -d "${cpu_path}" ] || continue
+    cpu_index="${cpu_path##*cpu}"
+    printf '%s' "${cpu_index}" | grep -Eq '^[0-9]+$' || continue
+    if [ -r "${cpu_path}/online" ] && [ "$(read_value "${cpu_path}/online")" = "0" ]; then
+      continue
+    fi
+    package_id="$(read_value "${cpu_path}/topology/physical_package_id")"
+    core_id="$(read_value "${cpu_path}/topology/core_id")"
+    printf '%s' "${package_id}" | grep -Eq '^[0-9]+$' || package_id=0
+    printf '%s' "${core_id}" | grep -Eq '^[0-9]+$' || core_id="${cpu_index}"
+    printf '%s %s\n' "${package_id}" "${core_id}" >>"${topology}"
+  done
+  threads="$(wc -l <"${topology}" | tr -d ' ')"
+  sockets="$(awk '{print $1}' "${topology}" | sort -u | wc -l | tr -d ' ')"
+  cores="$(sort -u "${topology}" | wc -l | tr -d ' ')"
+  cores_per_socket="$(sort -u "${topology}" | awk '
+    { count[$1] += 1 }
+    END { maximum = 0; for (package in count) if (count[package] > maximum) maximum = count[package]; print maximum }
+  ')"
+  threads_per_core="$(awk '
+    { count[$1 " " $2] += 1 }
+    END { maximum = 0; for (core in count) if (count[core] > maximum) maximum = count[core]; print maximum }
+  ' "${topology}")"
+  rm -f "${topology}"
+  sockets="$(unsigned_value "${sockets}")"
+  cores="$(unsigned_value "${cores}")"
+  threads="$(unsigned_value "${threads}")"
+  cores_per_socket="$(unsigned_value "${cores_per_socket}")"
+  threads_per_core="$(unsigned_value "${threads_per_core}")"
   jq -cn --arg architecture "${architecture}" --arg vendor "${vendor}" --arg model "${model}" \
     --argjson sockets "${sockets}" --argjson cores "${cores}" --argjson threads "${threads}" \
     --argjson cores_per_socket "${cores_per_socket}" --argjson threads_per_core "${threads_per_core}" \
@@ -621,7 +646,7 @@ acknowledge_remote_reboot() {
 }
 
 console_line() {
-  printf '  %-22s %s\n' "$1" "$2"
+  printf '  %-22s %s\n' "$1" "$2" | console_clip_lines "${CONSOLE_CONTENT_WIDTH:-78}"
 }
 
 console_clip_lines() {
@@ -644,6 +669,9 @@ render_inventory_console() {
   network_page_size="$(console_page_size network "${console_rows}")"
   storage_page_size="$(console_page_size storage "${console_rows}")"
   dimm_page_size="$(console_page_size dimm "${console_rows}")"
+  console_columns="$(console_terminal_columns)"
+  CONSOLE_CONTENT_WIDTH=$((console_columns - 2))
+  [ "${CONSOLE_CONTENT_WIDTH}" -gt 0 ] || CONSOLE_CONTENT_WIDTH=78
   console_apply_palette
   printf '\033[?25l\033[47m\033[30m\033[2J\033[H'
   printf '\033[46m\033[30m\033[1m  Atlaso Inventory Linux  \033[22m\033[K\n'
@@ -667,7 +695,7 @@ render_inventory_console() {
       [ "${dimm_end}" -le "${dimm_total}" ] || dimm_end="${dimm_total}"
       if [ "${dimm_total}" -gt 0 ]; then dimm_first=$((dimm_start + 1)); else dimm_first=0; fi
       printf '  DIMMs %s-%s of %s  [J] More  [K] Back\n' "${dimm_first}" "${dimm_end}" "${dimm_total}"
-      printf '%s' "${report}" | jq -r --argjson start "${dimm_start}" --argjson limit "${dimm_page_size}" '.memory.dimms[$start:($start + $limit)][] | "  \(.locator) | \(.bank) | \(.size_human) | \(.type) | \(.speed_mts) MT/s | \(.manufacturer) \(.part_number) | S/N \(.serial)"' | console_clip_lines 78
+      printf '%s' "${report}" | jq -r --argjson start "${dimm_start}" --argjson limit "${dimm_page_size}" '.memory.dimms[$start:($start + $limit)][] | "  \(.locator) | \(.bank) | \(.size_human) | \(.type) | \(.speed_mts) MT/s | \(.manufacturer) \(.part_number) | S/N \(.serial)"' | console_clip_lines "${CONSOLE_CONTENT_WIDTH}"
       ;;
     2)
       printf '\033[1m  Network\033[22m\033[K\n'
@@ -677,7 +705,7 @@ render_inventory_console() {
       [ "${network_end}" -le "${network_total}" ] || network_end="${network_total}"
       if [ "${network_total}" -gt 0 ]; then network_first=$((network_start + 1)); else network_first=0; fi
       printf '  Interfaces %s-%s of %s  [J] More  [K] Back\n' "${network_first}" "${network_end}" "${network_total}"
-      printf '%s' "${report}" | jq -r --argjson start "${network_start}" --argjson limit "${network_page_size}" '.interfaces[$start:($start + $limit)][] | "  " + (if .boot_interface then "* " else "  " end) + .name + "  " + ([.vendor,.device] | map(select(length > 0)) | join(" ")) + "\n      permanent " + .permanent_mac + "  current " + .current_mac + "  " + .link_state + " " + (.speed_mbps|tostring) + " Mb/s\n      " + (.addresses|join(", ")) + "  driver " + .driver + "  PCI " + .pci_address' | console_clip_lines 78
+      printf '%s' "${report}" | jq -r --argjson start "${network_start}" --argjson limit "${network_page_size}" '.interfaces[$start:($start + $limit)][] | "  " + (if .boot_interface then "* " else "  " end) + .name + "  " + ([.vendor,.device] | map(select(length > 0)) | join(" ")) + "\n      permanent " + .permanent_mac + "  current " + .current_mac + "  " + .link_state + " " + (.speed_mbps|tostring) + " Mb/s\n      " + (.addresses|join(", ")) + "  driver " + .driver + "  PCI " + .pci_address' | console_clip_lines "${CONSOLE_CONTENT_WIDTH}"
       ;;
     *)
       printf '\033[1m  Storage\033[22m\033[K\n'
@@ -696,7 +724,7 @@ render_inventory_console() {
         else
           "  [Controller] " + .value.pci_address + "  " + .value.type + "  " +
           ([.value.vendor,.value.device] | map(select(length > 0)) | join(" ")) + "  driver " + .value.driver
-        end' | console_clip_lines 78
+        end' | console_clip_lines "${CONSOLE_CONTENT_WIDTH}"
       ;;
   esac
   printf '\033[%s;1H\033[44m\033[37m' "$((console_rows - 1))"

@@ -147,12 +147,15 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     assert 'buildroot_version="2026.05.1"' in build
     assert 'package_version="2026.05.1+8"' in build
     assert "vga=791" in build
+    assert "video=1024x768" in build
+    assert "fbcon=font:VGA8x16" in build
     assert 'git --git-dir="${git_dir}" --work-tree="${repo_root}"' in build
     assert 'git_dir="/mnt/${git_drive}/${git_tail}"' in build
     assert '"version": "${package_version}"' in build
     assert (
         '"arguments": "rdinit=/sbin/init console=tty0 quiet loglevel=3 logo.nologo '
-        'vt.global_cursor_default=0 atlaso.inventory=1"' in build
+        'vt.global_cursor_default=0 vga=791 video=1024x768 fbcon=font:VGA8x16 '
+        'atlaso.inventory=1"' in build
     )
     assert '"${source_root}/output/target/usr/bin/lscpu"' in build
     assert '"${source_root}/output/target/bin/lsblk"' in build
@@ -264,6 +267,8 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     assert splash.read_bytes().startswith(b"P6\n640 480\n255\n")
     assert "CONFIG_FBSPLASH=y" in busybox_fragment
     assert "CONFIG_FBSET=y" in busybox_fragment
+    assert "CONFIG_DRM_VMWGFX=y" in kernel_fragment
+    assert "CONFIG_DRM_HYPERV=y" in kernel_fragment
     assert 'installed_manifest.get("kind") != "atlaso-network-boot-media"' in deploy
     assert 'installed_manifest.get("environment") != "inventory"' in deploy
 
