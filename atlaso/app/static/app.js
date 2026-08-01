@@ -19012,9 +19012,10 @@ function initializeNetworkBootPage() {
       return { ok: true };
     },
   });
-  hostDialog?.querySelector("[data-network-boot-promote-open]")?.addEventListener("click", (event) => {
+  hostDialog?.querySelector("[data-network-boot-promote-open]")?.addEventListener("click", () => {
     if (!selectedHost) return;
-    promoteHost(selectedHost, event.currentTarget);
+    const hostRow = hostsTable?.getRow(selectedHost.id);
+    promoteHost(selectedHost, hostRow?.getElement?.() || null);
   });
 }
 

@@ -4267,6 +4267,9 @@ def test_network_boot_host_management_report_and_print_contract(client):
         assert label in page_initializer
     assert 'height: "300px"' in page_initializer
     assert 'action: (_event, row) => promoteHost(row, row.getElement())' in page_initializer
+    assert "const hostRow = hostsTable?.getRow(selectedHost.id);" in page_initializer
+    assert "promoteHost(selectedHost, hostRow?.getElement?.() || null);" in page_initializer
+    assert "promoteHost(selectedHost, event.currentTarget);" not in page_initializer
     assert "atlasoNewTaskId = queued.job_id" in page_initializer
     assert "await refreshTasksPage()" in page_initializer
     assert "requestConfirmation({" in page_initializer
