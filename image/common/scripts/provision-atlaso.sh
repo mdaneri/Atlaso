@@ -77,6 +77,35 @@ report_image_footprint() {
   rpm -qa --queryformat '%{SIZE}\t%{NAME}\n' 2>/dev/null | sort -nr | head -n 15 || true
 }
 
+zero_fill_free_space() {
+  mount_path="$1"
+  filesystem_name="$2"
+  reserve_kib=524288
+  available_kib="$(df -Pk "$mount_path" | awk 'NR == 2 { print $4 }')"
+  case "$available_kib" in
+    ''|*[!0-9]*)
+      echo "Could not determine free space for $filesystem_name at $mount_path." >&2
+      exit 2
+      ;;
+  esac
+  if [ "$available_kib" -le "$reserve_kib" ]; then
+    log_step "skipping $filesystem_name zero-fill: no space beyond the 512 MiB reserve"
+    return
+  fi
+
+  zero_count_mib=$(((available_kib - reserve_kib) / 1024))
+  zero_file="$mount_path/.atlaso-image-zero-fill"
+  log_step "zero-filling $zero_count_mib MiB of free space on $filesystem_name"
+  rm -f "$zero_file"
+  if ! dd if=/dev/zero of="$zero_file" bs=1048576 count="$zero_count_mib" conv=fsync status=progress; then
+    rm -f "$zero_file"
+    echo "Zero-fill failed for $filesystem_name at $mount_path." >&2
+    exit 2
+  fi
+  rm -f "$zero_file"
+  sync
+}
+
 prepare_system_content_disk() {
   if [ "$ATLASO_SYSTEM_CONTENT_DISK" != "true" ]; then
     return
@@ -741,6 +770,11 @@ rm -rf "$ATLASO_SRC"
 journalctl --rotate 2>/dev/null || true
 journalctl --vacuum-time=1s 2>/dev/null || true
 sync
+
+zero_fill_free_space / "Photon OS filesystem"
+if [ "$ATLASO_SYSTEM_CONTENT_DISK" = "true" ]; then
+  zero_fill_free_space "$ATLASO_SYSTEM_CONTENT_MOUNT" "Atlaso system-content filesystem"
+fi
 if ! fstrim -av; then
   echo "Warning: filesystem discard is unavailable; Packer disk compaction will still run." >&2
 fi

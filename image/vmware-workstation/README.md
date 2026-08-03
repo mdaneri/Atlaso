@@ -26,6 +26,8 @@ payload.
 - Packer `>= 1.10`.
 - `qemu-img` when preparing the tiny Alpine lifecycle client VMDK.
 - Photon OS 5.0 ISO URL and checksum.
+- At least 70 GiB free on the filesystem holding the Packer output. Final zero-filling temporarily expands both sparse
+  payload VMDKs before compaction reclaims the zeroed blocks.
 
 The template uses the Packer VMware Desktop plugin:
 
@@ -90,7 +92,9 @@ Packer creates a 40 GiB Photon OS disk and a sparse 20 GiB Atlaso system-content
 disk as `ATLASO_SYSTEM`, mounts it by UUID, and places `/opt/atlaso` plus the appliance-wide PowerShell modules there.
 The two 500 GiB application data disks remain empty OVF declarations, so the reusable builder contains no large blank
 data-disk payloads. The build removes `python3-devel` after compatibility validation, clears build caches and staged
-sources, trims both filesystems, and lets Packer compact both payload VMDKs. After a successful build, the wrapper writes
+sources, zero-fills free blocks on both payload filesystems while retaining a 512 MiB safety reserve, deletes the fill
+files, requests TRIM, and lets Packer compact both payload VMDKs. Zero-filling makes compaction deterministic even when
+the VMware virtual disks do not advertise discard. After a successful build, the wrapper writes
 a provenance JSON file beside the VMX containing the exact source commit, tracked-source state, and SHA-256 hashes and
 sizes for the VMX and both VMDKs.
 

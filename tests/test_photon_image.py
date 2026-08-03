@@ -637,6 +637,10 @@ def test_photon_provisioning_prepares_attached_data_disks():
     assert "powershell-modules" in provision
     assert 'run_tdnf "Build-only package removal" remove python3-devel' in provision
     assert "tdnf -y clean all" in provision
+    assert "zero_fill_free_space / \"Photon OS filesystem\"" in provision
+    assert 'zero_fill_free_space "$ATLASO_SYSTEM_CONTENT_MOUNT" "Atlaso system-content filesystem"' in provision
+    assert "reserve_kib=524288" in provision
+    assert 'of="$zero_file" bs=1048576 count="$zero_count_mib" conv=fsync status=progress' in provision
     assert "fstrim -av" in provision
 
     assert "After=network-online.target atlaso-data-disks.service atlaso-bootstrap-https.service" in hyperv_unit

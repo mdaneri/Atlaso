@@ -205,8 +205,9 @@ status: current
   payload files, add only the empty depot and backup definitions, preflight every GitHub asset below 2 GiB, and omit an
   oversized aggregate OVA rather than publishing an unusable release asset.
 - Remove only proven build-only packages after runtime and Photon compatibility checks. Preserve all appliance
-  capabilities, clean package/download caches and staged build sources, trim filesystems, and emit bounded before/after
-  footprint evidence before Packer compaction.
+  capabilities, clean package/download caches and staged build sources, zero-fill both payload filesystems with a
+  bounded free-space reserve, remove the fill files, request TRIM, and emit bounded before/after footprint evidence
+  before Packer compaction.
 - The Hyper-V image is automated with Packer, Photon kickstart JSON, an ISO-embedded GRUB auto-install entry, and
   provisioning scripts. Do not replace it with manual-only install steps unless the automation path is also kept
   current.
