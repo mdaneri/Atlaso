@@ -1625,6 +1625,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#manage-esxi-host-references" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Manage ESXi Host References
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#esx-technical-reference" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3862,6 +3873,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#manage-esxi-host-references" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Manage ESXi Host References
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#esx-technical-reference" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5071,6 +5093,28 @@ most 512 discovered hosts, 2,048 reports across all hosts, 11 reports per host,
 and 4,096 sessions; expired sessions and the oldest inactive inventory are
 pruned as new sessions and reports arrive. Hosts with a recent heartbeat or an
 unacknowledged command are never selected for storage eviction.</p>
+<h2 id="manage-esxi-host-references">Manage ESXi Host References<a class="headerlink" href="#manage-esxi-host-references" title="Permanent link">&para;</a></h2>
+<p>Open <strong>ESXi Kickstarts</strong>, select <strong>Host References</strong>, and use <strong>+ Add host
+reference here</strong> to open the guided Host Reference workflow. When an eligible
+Network Boot inventory host has at least one valid MAC that is not already used
+by a Host Reference, the workflow defaults to <strong>Discovered Network Boot host</strong>.
+Select the discovered host and review the suggested hostname, one of its
+available MAC addresses, and its latest assigned address. Select <strong>Manual host</strong>
+instead to enter a hostname, MAC address, and optional IP address directly.</p>
+<p>The remaining steps select the Kickstart, installer ISO, non-secret variables,
+and desired Enabled state before showing the final review. New references opened
+from the Host References add row default to Enabled. Promotion opened directly
+from a discovered-host action retains its explicit disabled default. Saving
+creates or updates desired state only; use the global <strong>Review appliance
+changes</strong> workflow to enforce it on the appliance.</p>
+<p>Double-click an existing reference or choose <strong>Edit host reference</strong> from its
+row menu to reopen the same workflow. The Enabled value remains directly
+toggleable in the collection. The row menu also retains <strong>Boot Inventory Linux
+once</strong>, <strong>Wake host</strong>, and <strong>Delete host reference</strong> where applicable. The
+<strong>Default / undefined MACs</strong> profile remains a compact inline exception for its
+Kickstart, installer ISO, and Enabled values. Manual add and edit require ESXi
+PXE write access; discovered-host promotion also requires Network Boot write
+access.</p>
 <h2 id="esx-technical-reference">ESX technical reference<a class="headerlink" href="#esx-technical-reference" title="Permanent link">&para;</a></h2>
 <p>The remainder is a cleaned Markdown copy of Broadcom Tech Docs content for ESX
 installation, Kickstart, <code>boot.cfg</code>, PXELINUX, iPXE, and native UEFI HTTP boot.</p>
