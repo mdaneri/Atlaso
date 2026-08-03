@@ -2434,6 +2434,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#network-boot-custom-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Network Boot: Custom Variables
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4682,6 +4693,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#network-boot-custom-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Network Boot: Custom Variables
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4938,7 +4960,9 @@ include GnuPG for signed checksum verification; the development VMware wheel
 deployment bridge repairs that dependency on older test appliances before
 installing the new wheel. The <strong>Source</strong> column
 names and links to the authoritative release history from which Atlaso resolves
-each download; Inventory Linux points to its independent release history.</p>
+each download; Inventory Linux points to its independent release history.
+The Boot Environments components table remains visible above the media-task
+history and reports all five fixed catalog rows even when no optional media is installed.</p>
 <p><strong>Download latest</strong> resolves only these fixed signed endpoints:</p>
 <ul>
 <li><code>https://mdaneri.github.io/Atlaso/updates/inventory-linux/latest/manifest.json</code></li>
@@ -5134,14 +5158,16 @@ operator guidance and does not render raw backend exception text.</p>
 <p>Define non-secret custom values in the <strong>Custom Variables</strong> tab before <strong>Installer ISOs</strong>. The final <strong>+ Add custom
 variable</strong> control in the ESXi PXE tablist opens a two-step Definition and Review wizard; double-clicking an existing
 row or choosing <strong>Edit</strong> from its context menu opens the same wizard, while <strong>Remove</strong> deletes the definition after
-confirmation. Each row records the variable name, operator description, and an optional default. Monaco offers those
+confirmation. Each row records the variable name, an operator description on its own full-width row, and an optional
+default. Monaco offers those
 rows as concrete <code>{{custom.&lt;name&gt;}}</code> completions. A matching value in a Host References variables JSON object overrides
 the default for that host; when no override exists, Atlaso renders the configured default. Removing a referenced
 definition makes the Kickstart invalid until the definition is restored or the marker is removed. Use vault markers
 instead of custom-variable defaults for credentials or other secrets.</p>
 <p>Token-based automation can manage the same non-secret catalog through
 <code>/api/v1/esxi-pxe/custom-variables</code> before creating or updating Kickstarts that use <code>{{custom.*}}</code> markers. Catalog
-definitions and defaults are included in settings archives so restored Kickstarts retain their required definitions.</p>
+definitions and defaults are included in settings archives so restored Kickstarts retain their required definitions.
+New Kickstarts default to Enabled in their State step; editing an existing Kickstart preserves its saved state.</p>
 <blockquote>
 <p>Terminology note: Broadcom documentation uses <strong>ESX</strong> in these 9.x installation pages. Older VMware material often
 used <strong>ESXi</strong>.</p>
@@ -6747,6 +6773,11 @@ default <code>boot.cfg</code>. Host-specific MAC artifacts should still override
 <h3 id="network-boot">Network Boot<a class="headerlink" href="#network-boot" title="Permanent link">&para;</a></h3>
 <p><img alt="Atlaso Network Boot page in the clean-appliance responsive viewport." src="../../assets/screenshots/esxi-pxe-clean-responsive.webp" /></p>
 <p><em>Figure: Network Boot in the verified clean-appliance responsive state.</em></p>
+<h3 id="network-boot-custom-variables">Network Boot: Custom Variables<a class="headerlink" href="#network-boot-custom-variables" title="Permanent link">&para;</a></h3>
+<p><img alt="Atlaso ESXi custom variable wizard showing full-width Description and Default value rows below Name." src="../../assets/screenshots/esxi-custom-variable-description-desktop.webp" /></p>
+<p><em>Figure: ESXi custom variable wizard with Description on its own full-width row.</em></p>
+<p><img alt="Atlaso ESXi custom variable wizard in a narrow viewport with full-width Description and Default value fields." src="../../assets/screenshots/esxi-custom-variable-description-narrow.webp" /></p>
+<p><em>Figure: ESXi custom variable wizard in the verified narrow viewport.</em></p>
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
 
 

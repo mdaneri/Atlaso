@@ -1761,6 +1761,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#ldap-groups" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Ldap: Groups
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#managed-ldap" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3142,6 +3153,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#ldap-groups" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Ldap: Groups
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#managed-ldap" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3327,8 +3349,12 @@ users, and request an unlock; enforcement occurs only through global LDAP apply.
 wizard for its name, operator description, isolated naming context, and enablement. Users and groups use
 wizard-backed Tabulator grids with bottom add rows. Opening a saved row returns to the same reviewed flow, while the
 Enabled column remains a direct edit for quick desired-state changes. Row menus retain password reset, unlock,
-membership, and deletion actions. User creation can stage a password or postpone it; enabling an account without an
+membership, and deletion actions. Group membership presents the selected organization's current users and eligible
+nested groups, and new groups default to Enabled before review. User creation can stage a password or postpone it;
+enabling an account without an
 applied or staged password causes LDAP apply validation to stop before host mutation.</p>
+<p>The one-time VCF bind credential opens with its <strong>Bind password</strong> help collapsed and focus on <strong>Done</strong>, leaving the
+credential text unselected until the operator deliberately copies or saves it.</p>
 <p><strong>Generate test directory</strong> asks for user and group counts, invents complete synthetic identities and memberships, and
 shows generated passwords once; those passwords follow the same in-memory-only staging boundary as manually entered
 passwords. The result changes the primary action to <strong>Done</strong>, which closes the modal and clears the one-time CSV from the
@@ -3383,6 +3409,11 @@ again.</p>
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 <h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>
 <p>These captures show responsive layouts and useful operational states referenced by this page.</p>
+<h3 id="ldap-groups">Ldap: Groups<a class="headerlink" href="#ldap-groups" title="Permanent link">&para;</a></h3>
+<p><img alt="Atlaso Managed LDAP group wizard Members step showing selectable organization users and nested groups." src="../../assets/screenshots/managed-ldap-group-members-desktop.webp" /></p>
+<p><em>Figure: Managed LDAP group wizard populated with selectable users and nested groups.</em></p>
+<p><img alt="Atlaso Managed LDAP group wizard Members step in a narrow viewport with populated membership options." src="../../assets/screenshots/managed-ldap-group-members-narrow.webp" /></p>
+<p><em>Figure: Managed LDAP group Members step in the verified narrow viewport.</em></p>
 <h3 id="managed-ldap">Managed LDAP<a class="headerlink" href="#managed-ldap" title="Permanent link">&para;</a></h3>
 <p><img alt="Atlaso Managed LDAP page in the clean-appliance responsive viewport." src="../../assets/screenshots/ldap-clean-responsive.webp" /></p>
 <p><em>Figure: Managed LDAP in the verified clean-appliance responsive state.</em></p>
