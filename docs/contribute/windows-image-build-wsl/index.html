@@ -3259,7 +3259,10 @@ builds for the same repository and distribution. A checkout-keyed Windows mutex 
 final-output verification across different selected distributions that target the same checkout. The Linux-only child
 <code>PATH</code> excludes imported Windows paths.</p>
 <p>Final verified <code>bzImage</code>, <code>rootfs.cpio.gz</code>, <code>manifest.json</code>, and <code>legal-info</code> output still lands under
-<code>image/inventory-linux/output</code> in the selected repository checkout.</p>
+<code>image/inventory-linux/output</code> in the selected repository checkout. The Inventory Linux build probes that final output
+filesystem before copying artifacts. Native Linux filesystems retain normalized artifact modes and source legal-info
+metadata; Windows DrvFS output uses byte-exact file copies and recursive legal-info synchronization without requesting
+unsupported POSIX modes or timestamps. The wrapper does not change WSL mount configuration to publish those files.</p>
 <h2 id="update-export-restore-or-recreate">Update, export, restore, or recreate<a class="headerlink" href="#update-export-restore-or-recreate" title="Permanent link">&para;</a></h2>
 <p>After pulling a change to <code>wsl-build-contract.json</code>, rerun the setup command. A package-contract change is applied in
 place and its resolved package versions are recorded. A pinned base-image change requires deliberate recreation;
@@ -3298,6 +3301,9 @@ that command.</p>
   pinned base mismatch.</li>
 <li><strong>Invalid build storage:</strong> clear a whitespace-bearing <code>XDG_CACHE_HOME</code> override and use case-sensitive storage inside
   the Linux filesystem, not <code>/mnt/c</code>.</li>
+<li><strong>Final-output permission failure:</strong> pull a revision with DrvFS-aware final artifact copying, remove any output from the
+  failed run, and retry. Do not package a directory left by <code>install: setting permissions ... Operation not permitted</code>;
+  the kernel might be new while the initramfs and manifest are older.</li>
 </ul>
 <p>Distribution selection does not replace output verification. A successful release build must still validate manifest
 digests for <code>bzImage</code> and <code>rootfs.cpio.gz</code> and retain Buildroot legal metadata.</p>
