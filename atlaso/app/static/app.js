@@ -2473,6 +2473,8 @@ function initializeEsxiHostReferenceWizard() {
   const canPromote = discoveredTableElement?.dataset.canWrite === "true";
   const discoveredRows = JSON.parse(discoveredTableElement?.dataset.rows || "[]");
   let activeContext = null;
+  let discoveredSelectionSequence = 0;
+  let pendingDiscoveredSelection = null;
 
   const toggleField = (field, hidden) => {
     if (!(field instanceof HTMLElement)) return;
@@ -2516,17 +2518,41 @@ function initializeEsxiHostReferenceWizard() {
       : await networkBootRequest(`/api/v1/network-boot/hosts/${host.id}`);
     const macs = availableMacs(loaded);
     if (!macs.length) throw new Error("This discovered host no longer has an unused MAC available for promotion.");
-    form.elements.host_id.value = loaded.id;
-    form.elements.hostname.value = esxiSuggestedHostname(loaded);
-    replaceMacOptions(macs);
     const assignedAddress = loaded.latest_report?.assigned_addresses?.[0] || "";
-    form.elements.ip_address.value = String(assignedAddress).split("/")[0];
-    return loaded;
+    return {
+      host: loaded,
+      hostname: esxiSuggestedHostname(loaded),
+      ipAddress: String(assignedAddress).split("/")[0],
+      macs,
+    };
+  };
+  const applyDiscoveredIdentity = (identity) => {
+    form.elements.host_id.value = identity.host.id;
+    form.elements.hostname.value = identity.hostname;
+    replaceMacOptions(identity.macs);
+    form.elements.ip_address.value = identity.ipAddress;
+    return identity.host;
   };
   const selectDiscoveredHost = async () => {
     const host = activeContext?.candidates?.find((candidate) => String(candidate.id) === discoveredHostSelect.value);
     if (!host) return;
-    activeContext.discoveredHost = await loadDiscoveredIdentity(host);
+    const selectedId = String(host.id);
+    const sequence = ++discoveredSelectionSequence;
+    form.elements.host_id.value = "";
+    form.elements.hostname.value = "";
+    form.elements.ip_address.value = "";
+    replaceMacOptions([]);
+    const pending = loadDiscoveredIdentity(host).then((identity) => {
+      if (sequence !== discoveredSelectionSequence || discoveredHostSelect.value !== selectedId) return null;
+      activeContext.discoveredHost = applyDiscoveredIdentity(identity);
+      return activeContext.discoveredHost;
+    });
+    pendingDiscoveredSelection = pending;
+    try {
+      return await pending;
+    } finally {
+      if (pendingDiscoveredSelection === pending) pendingDiscoveredSelection = null;
+    }
   };
   const parseVariables = () => {
     let variables;
@@ -2565,6 +2591,8 @@ function initializeEsxiHostReferenceWizard() {
     discardTitle: "Discard Host Reference changes?",
     discardMessage: "The Host Reference values entered in this wizard will be lost.",
     onOpen: async ({ context }) => {
+      discoveredSelectionSequence += 1;
+      pendingDiscoveredSelection = null;
       activeContext = { ...(context || {}) };
       const mode = activeContext.mode || "create";
       const candidates = eligibleDiscoveredHosts();
@@ -2601,7 +2629,7 @@ function initializeEsxiHostReferenceWizard() {
 
       if (mode === "promote") {
         setSourceMode("discovered", { showSource: false, showDiscoveredHost: false });
-        activeContext.discoveredHost = await loadDiscoveredIdentity(activeContext.discoveredHost);
+        activeContext.discoveredHost = applyDiscoveredIdentity(await loadDiscoveredIdentity(activeContext.discoveredHost));
         if (wizardTitle) wizardTitle.textContent = "Promote discovered host";
         if (submitButton) submitButton.textContent = "Promote host";
         return;
@@ -2613,7 +2641,26 @@ function initializeEsxiHostReferenceWizard() {
       setSourceMode(source);
       if (source === "discovered") await selectDiscoveredHost();
     },
-    validateStep: ({ step }) => {
+    validateStep: async ({ step }) => {
+      if (step.id === "identity" && sourceSelect.value === "discovered" && pendingDiscoveredSelection) {
+        try {
+          await pendingDiscoveredSelection;
+        } catch (error) {
+          return {
+            valid: false,
+            message: error instanceof Error ? error.message : "The discovered host identity could not be loaded.",
+            field: "discovered_host_id",
+          };
+        }
+      }
+      if (step.id === "identity" && sourceSelect.value === "discovered"
+        && form.elements.host_id.value !== discoveredHostSelect.value) {
+        return {
+          valid: false,
+          message: "Wait for the selected discovered host identity to finish loading.",
+          field: "discovered_host_id",
+        };
+      }
       if (step.id === "identity" && !isValidEsxiHostMac(selectedMac())) {
         return {
           valid: false,
@@ -2685,6 +2732,11 @@ function initializeEsxiHostReferenceWizard() {
 
   sourceSelect.addEventListener("change", () => {
     const source = sourceSelect.value === "discovered" ? "discovered" : "manual";
+    if (source === "manual") {
+      discoveredSelectionSequence += 1;
+      pendingDiscoveredSelection = null;
+      form.elements.host_id.value = "";
+    }
     setSourceMode(source);
     if (source === "discovered") {
       selectDiscoveredHost().catch((error) => esxiHostReferenceWizard.setError(error.message, "discovered_host_id"));
