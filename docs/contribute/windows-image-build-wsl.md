@@ -89,7 +89,10 @@ final-output verification across different selected distributions that target th
 `PATH` excludes imported Windows paths.
 
 Final verified `bzImage`, `rootfs.cpio.gz`, `manifest.json`, and `legal-info` output still lands under
-`image/inventory-linux/output` in the selected repository checkout.
+`image/inventory-linux/output` in the selected repository checkout. The Inventory Linux build probes that final output
+filesystem before copying artifacts. Native Linux filesystems retain normalized artifact modes and source legal-info
+metadata; Windows DrvFS output uses byte-exact file copies and recursive legal-info synchronization without requesting
+unsupported POSIX modes or timestamps. The wrapper does not change WSL mount configuration to publish those files.
 
 ## Update, export, restore, or recreate
 
@@ -142,6 +145,9 @@ that command.
   pinned base mismatch.
 - **Invalid build storage:** clear a whitespace-bearing `XDG_CACHE_HOME` override and use case-sensitive storage inside
   the Linux filesystem, not `/mnt/c`.
+- **Final-output permission failure:** pull a revision with DrvFS-aware final artifact copying, remove any output from the
+  failed run, and retry. Do not package a directory left by `install: setting permissions ... Operation not permitted`;
+  the kernel might be new while the initramfs and manifest are older.
 
 Distribution selection does not replace output verification. A successful release build must still validate manifest
 digests for `bzImage` and `rootfs.cpio.gz` and retain Buildroot legal metadata.

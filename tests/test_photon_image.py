@@ -164,6 +164,13 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     assert "Required pci.ids metadata is missing" in build
     assert "Required util-linux tool is missing" in build
     assert "Required util-linux tool resolves to BusyBox" in build
+    assert 'metadata_probe="${output_dir}/.atlaso-metadata-probe.$$"' in build
+    assert 'chmod 0600 "${metadata_probe}" 2>/dev/null' in build
+    assert 'touch -r "${source_root}/output/images/bzImage"' in build
+    assert 'if [[ "${output_supports_posix_metadata}" == "1" ]]' in build
+    assert 'cp "${source_root}/output/images/bzImage"' in build
+    assert 'cp "${source_root}/output/images/rootfs.cpio.gz"' in build
+    assert 'rsync -r --delete "${source_root}/output/legal-info/"' in build
     inventory_defconfig = Path(
         "image/inventory-linux/external/configs/atlaso_inventory_x86_64_defconfig"
     ).read_text(encoding="utf-8")

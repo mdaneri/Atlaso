@@ -74,10 +74,29 @@ make -C "${build_dir}" \
   O="${source_root}/output" \
   legal-info
 
-install -m 0644 "${source_root}/output/images/bzImage" "${output_dir}/bzImage"
-install -m 0644 "${source_root}/output/images/rootfs.cpio.gz" "${output_dir}/rootfs.cpio.gz"
+metadata_probe="${output_dir}/.atlaso-metadata-probe.$$"
+: >"${metadata_probe}"
+if chmod 0600 "${metadata_probe}" 2>/dev/null && \
+    touch -r "${source_root}/output/images/bzImage" "${metadata_probe}" 2>/dev/null; then
+  output_supports_posix_metadata=1
+else
+  output_supports_posix_metadata=0
+fi
+rm -f "${metadata_probe}"
+
+if [[ "${output_supports_posix_metadata}" == "1" ]]; then
+  install -m 0644 "${source_root}/output/images/bzImage" "${output_dir}/bzImage"
+  install -m 0644 "${source_root}/output/images/rootfs.cpio.gz" "${output_dir}/rootfs.cpio.gz"
+else
+  cp "${source_root}/output/images/bzImage" "${output_dir}/bzImage"
+  cp "${source_root}/output/images/rootfs.cpio.gz" "${output_dir}/rootfs.cpio.gz"
+fi
 mkdir -p "${output_dir}/legal-info"
-rsync -a --delete "${source_root}/output/legal-info/" "${output_dir}/legal-info/"
+if [[ "${output_supports_posix_metadata}" == "1" ]]; then
+  rsync -a --delete "${source_root}/output/legal-info/" "${output_dir}/legal-info/"
+else
+  rsync -r --delete "${source_root}/output/legal-info/" "${output_dir}/legal-info/"
+fi
 
 kernel_sha256="$(sha256sum "${output_dir}/bzImage" | awk '{print $1}')"
 initrd_sha256="$(sha256sum "${output_dir}/rootfs.cpio.gz" | awk '{print $1}')"
