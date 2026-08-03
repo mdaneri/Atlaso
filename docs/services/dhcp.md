@@ -27,8 +27,9 @@ This verified appliance view provides visual orientation before you begin.
 2. Select the interface that owns the client network and record the multiline zone description on its own identity row.
 3. Confirm the lease range Atlaso derives from the gateway and prefix, or replace it with another valid,
    non-overlapping range.
-4. Configure the lease as a positive whole-number duration with an explicit **Minutes**, **Hours**, or **Days** unit,
-   then set DNS, NTP, and domain options and choose the zone's desired enablement in its dedicated step.
+4. Configure the visually framed **Lease time** group as a positive whole-number duration with an explicit **Minutes**,
+   **Hours**, or **Days** unit, then set the aligned DNS, NTP, and domain options and choose the zone's desired
+   enablement in its dedicated step.
    Existing lease strings outside those supported units remain unchanged until the operator supplies a supported
    duration and unit.
 5. Add reservations with unique client identity and address values.
@@ -57,5 +58,15 @@ These captures show responsive layouts and useful operational states referenced 
 ![Atlaso DHCP page in the clean-appliance responsive viewport.](../assets/screenshots/dhcp-clean-responsive.webp)
 
 *Figure: DHCP in the verified clean-appliance responsive state.*
+
+### Dhcp: Ip Zone Services
+
+![Atlaso DHCP IP zone wizard Services step showing a framed Lease time group and aligned Domain, DNS server, and NTP server fields.](../assets/screenshots/dhcp-ip-zone-wizard-services-desktop.webp)
+
+*Figure: DHCP IP zone Services step with aligned service fields and a framed Lease time group.*
+
+![Atlaso DHCP IP zone wizard Services step in a narrow viewport without page overflow.](../assets/screenshots/dhcp-ip-zone-wizard-services-narrow.webp)
+
+*Figure: DHCP IP zone Services step in the verified narrow viewport.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->

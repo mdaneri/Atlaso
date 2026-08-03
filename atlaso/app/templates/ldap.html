@@ -329,7 +329,7 @@
     </label>
   </section>
   <section class="hidden" data-atlaso-wizard-step="enablement">
-    <label class="switch-field"><span class="field-label"><span>Group enabled</span><button class="help-icon" type="button" data-help="Includes this group in the next global LDAP apply. Membership remains stored while disabled.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
+    <label class="switch-field"><span class="field-label"><span>Group enabled</span><button class="help-icon" type="button" data-help="Includes this group in the next global LDAP apply. Membership remains stored while disabled.">i</button></span><input class="switch-input" type="checkbox" name="enabled" checked><span class="switch-track" aria-hidden="true"></span></label>
   </section>
   <section class="hidden" data-atlaso-wizard-step="review">
     <div class="settings-list" data-atlaso-resource-review></div>
@@ -363,7 +363,7 @@
         </span>
       </label>
     </div>
-    <div class="confirm-modal-actions"><button class="button primary" type="button" data-ldap-bind-secret-close>Done</button></div>
+    <div class="confirm-modal-actions"><button class="button primary" type="button" data-ldap-bind-secret-close autofocus>Done</button></div>
   </div>
 </dialog>
 {% endif %}

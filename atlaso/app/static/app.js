@@ -4864,7 +4864,7 @@ function newLdapUserRow(organizationId) {
 }
 
 function newLdapGroupRow(organizationId) {
-  return { id: "__new_ldap_group__", organization_id: organizationId, name: "", description: "", enabled: false, members: [], member_count: 0, member_names: "", is_new: true };
+  return { id: "__new_ldap_group__", organization_id: organizationId, name: "", description: "", enabled: true, members: [], member_count: 0, member_names: "", is_new: true };
 }
 
 function updateLdapSettingsStatus(payload = {}) {
@@ -4976,11 +4976,13 @@ function initializeLdapPageState() {
       if (!(nextCurrentPanel instanceof HTMLElement)) throw new Error("LDAP organization response is incomplete.");
       currentPanel.replaceWith(document.importNode(nextCurrentPanel, true));
 
-      const currentMembersDialog = document.getElementById("ldap-group-members-modal");
-      const nextMembersDialog = nextDocument.getElementById("ldap-group-members-modal");
-      if (currentMembersDialog instanceof HTMLDialogElement && nextMembersDialog instanceof HTMLDialogElement) {
-        currentMembersDialog.replaceWith(document.importNode(nextMembersDialog, true));
-      }
+      ["ldap-user-dialog", "ldap-group-dialog", "ldap-group-members-modal"].forEach((dialogId) => {
+        const currentDialog = document.getElementById(dialogId);
+        const nextDialog = nextDocument.getElementById(dialogId);
+        if (currentDialog instanceof HTMLDialogElement && nextDialog instanceof HTMLDialogElement) {
+          currentDialog.replaceWith(document.importNode(nextDialog, true));
+        }
+      });
 
       tabList.querySelectorAll(".tab-button").forEach((item) => {
         const active = item === link;
@@ -9574,7 +9576,8 @@ function initializeKickstartCollection() {
     formSelector: "[data-kickstart-wizard]",
     dialogId: "kickstart-wizard-dialog",
     rows,
-    newRow: { id: "__new__", is_new: true, name: "" },
+    newRow: { id: "__new__", is_new: true, name: "", enabled: true },
+    defaults: { enabled: true },
     resourceName: "kickstart",
     recordField: "record_id",
     createUrl: "/esxi-pxe/kickstarts",
@@ -16501,9 +16504,11 @@ function initializeVcfLdapHelper() {
 function initializeLdapBindSecretModal() {
   const dialog = document.getElementById("ldap-bind-secret-modal");
   if (!(dialog instanceof HTMLDialogElement)) return;
-  dialog.querySelector("[data-ldap-bind-secret-close]")?.addEventListener("click", () => dialog.close());
+  const closeButton = dialog.querySelector("[data-ldap-bind-secret-close]");
+  closeButton?.addEventListener("click", () => dialog.close());
   if (dialog.hasAttribute("data-ldap-bind-secret-auto-open") && !dialog.open) {
     dialog.showModal();
+    if (closeButton instanceof HTMLButtonElement) closeButton.focus({ preventScroll: true });
   }
 }
 

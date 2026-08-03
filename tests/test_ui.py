@@ -821,9 +821,9 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6" in service_worker.text
-    assert "/static/app.css?v=atlaso-network-boot-224-20260803-1" in service_worker.text
+    assert "/static/app.css?v=atlaso-ui-regressions-224-20260803-1" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in service_worker.text
-    assert "/static/app.js?v=atlaso-host-reference-223-20260803-3" in service_worker.text
+    assert "/static/app.js?v=atlaso-ui-regressions-224-20260803-1" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -832,7 +832,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=atlaso-network-boot-224-20260803-1" in offline.text
+    assert "/static/app.css?v=atlaso-ui-regressions-224-20260803-1" in offline.text
 
 
 def test_shared_ui_pattern_shell_and_wizard_contracts(client):
@@ -843,8 +843,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=atlaso-host-reference-223-20260803-3"),
-        (public_base, "/static/app.js?v=atlaso-host-reference-223-20260803-3"),
+        (base, "/static/app.js?v=atlaso-ui-regressions-224-20260803-1"),
+        (public_base, "/static/app.js?v=atlaso-ui-regressions-224-20260803-1"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5"
@@ -1332,9 +1332,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=atlaso-network-boot-224-20260803-1" in page.text
+    assert "/static/app.css?v=atlaso-ui-regressions-224-20260803-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in page.text
-    assert "/static/app.js?v=atlaso-host-reference-223-20260803-3" in page.text
+    assert "/static/app.js?v=atlaso-ui-regressions-224-20260803-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -3634,6 +3634,9 @@ def test_esxi_pxe_ui_create_apply_and_job_redaction(client):
     assert 'data-monaco-language="atlaso-kickstart"' in page.text
     assert '<textarea name="description" rows="3" maxlength="500"></textarea>' in page.text
     assert 'class="kickstart-description-field"' in page.text
+    kickstart_wizard = page.text.split('id="kickstart-wizard-dialog"', 1)[1].split("</dialog>", 1)[0]
+    kickstart_state = kickstart_wizard.split('data-atlaso-wizard-step="state"', 1)[1].split("</section>", 1)[0]
+    assert 'type="checkbox" name="enabled" checked' in kickstart_state
     assert "Boot media tasks" in page.text
     assert 'data-task-type="pxe-media-sync"' in page.text
     assert 'data-task-lock-component-filter="true"' in page.text
@@ -3643,6 +3646,7 @@ def test_esxi_pxe_ui_create_apply_and_job_redaction(client):
     assert 'data-tab-target="network-boot-settings-panel"' not in page.text
     assert 'id="network-boot-settings-panel"' not in page.text
     assert 'id="network-boot-environments-panel" class="tab-panel network-boot-environments-panel"' in page.text
+    assert 'id="network-boot-environments-table" class="tabulator-shell"' in page.text
     boot_environments_panel = page.text.index('id="network-boot-environments-panel"')
     boot_media_tasks = page.text.index('data-network-boot-tasks-panel')
     network_boot_dialog = page.text.index('id="network-boot-host-dialog"')
@@ -3680,6 +3684,16 @@ def test_esxi_pxe_ui_create_apply_and_job_redaction(client):
     assert 'data-atlaso-wizard-step="definition"' in page.text
     assert 'data-atlaso-wizard-step="review"' in page.text
     assert "data-atlaso-resource-review" in page.text
+    custom_variable_definition = page.text.split('data-atlaso-wizard-step="definition"', 1)[1].split("</section>", 1)[0]
+    assert '<label class="full"><span class="field-label"><span>Description</span>' in custom_variable_definition
+    assert ".form-grid > .full {\n  grid-column: 1 / -1;" in app_css
+    kickstart_collection_js = Path("atlaso/app/static/app.js").read_text(encoding="utf-8").split(
+        "function initializeKickstartCollection()", 1
+    )[1].split(
+        "function initializeZoneEditors()", 1
+    )[0]
+    assert 'newRow: { id: "__new__", is_new: true, name: "", enabled: true }' in kickstart_collection_js
+    assert "defaults: { enabled: true }" in kickstart_collection_js
     assert '<button class="tab-button active" type="button" role="tab" data-tab-target="esxi-pxe-hosts-panel"' in page.text
     assert 'id="esxi-pxe-hosts-panel" class="tab-panel active" role="tabpanel">' in page.text
     assert 'id="esxi-pxe-editor-panel" class="tab-panel" role="tabpanel" hidden' in page.text
@@ -5740,6 +5754,8 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     assert 'id="ldap-bind-secret-modal"' in created.text
     assert "data-ldap-bind-secret-auto-open" in created.text
     assert "data-ldap-bind-secret-close" in created.text
+    bind_secret_modal = created.text.split('id="ldap-bind-secret-modal"', 1)[1].split("</dialog>", 1)[0]
+    assert "data-ldap-bind-secret-close autofocus" in bind_secret_modal
     assert "data-copy-value" in created.text
     assert "data-download-value" in created.text
     assert 'data-download-filename="vcf-bind-credential-org-a.txt"' in created.text
@@ -5794,6 +5810,7 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     ldap_page_state_js = app_js.split("function initializeLdapPageState()", 1)[1].split("function attachLdapGridState(", 1)[0]
     assert 'await fetch(link.href' in ldap_page_state_js
     assert 'currentPanel.replaceWith(document.importNode(nextCurrentPanel, true))' in ldap_page_state_js
+    assert '["ldap-user-dialog", "ldap-group-dialog", "ldap-group-members-modal"]' in ldap_page_state_js
     assert 'window.history[historyMethod]' in ldap_page_state_js
     assert 'window.addEventListener("popstate"' in ldap_page_state_js
     assert 'window.location.replace(validStoredLink.href)' not in ldap_page_state_js
@@ -5904,6 +5921,13 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     assert grid_group.status_code == 201
     assert grid_group.json()["enabled"] is False
     group_id = grid_group.json()["id"]
+    refreshed_directory = client.get(f"/ldap?organization_id={organization_id}")
+    group_wizard = refreshed_directory.text.split('id="ldap-group-dialog"', 1)[1].split("</dialog>", 1)[0]
+    membership_step = group_wizard.split('data-atlaso-wizard-step="membership"', 1)[1].split("</section>", 1)[0]
+    enablement_step = group_wizard.split('data-atlaso-wizard-step="enablement"', 1)[1].split("</section>", 1)[0]
+    assert f'<option value="user:{operator_id}">User: operator</option>' in membership_step
+    assert f'<option value="group:{group_id}" data-member-group-id="{group_id}">Group: Operators</option>' in membership_step
+    assert 'type="checkbox" name="enabled" checked' in enablement_step
     group_with_members = client.post(
         f"/ldap/groups/{group_id}/edit",
         data={
@@ -5949,6 +5973,7 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     assert 'label: "Reset password"' in ldap_grid_js
     assert 'deleteLabel: "Delete user"' in ldap_grid_js
     assert 'inlineEnabled: false' in ldap_grid_js
+    assert 'enabled: true, members: []' in app_js
     assert "function ldapGroupMembershipFormatter(cell)" in app_js
     assert "formatter: ldapGroupMembershipFormatter" in ldap_grid_js
     assert '<th>Type</th><th>Member</th>' in app_js
@@ -5958,6 +5983,10 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     assert "if (payload.appliance_apply_status) updatePageApplyNotice(payload.appliance_apply_status);" in app_js
     assert "function updateLdapSettingsStatus(payload = {})" in app_js
     assert "if (!tableElement.isConnected || tableElement.offsetParent === null) return;" in app_js
+    bind_secret_js = app_js.split("function initializeLdapBindSecretModal()", 1)[1].split(
+        "function initializeAutomationTables()", 1
+    )[0]
+    assert "closeButton.focus({ preventScroll: true })" in bind_secret_js
 
 
 def test_managed_ldap_generates_complete_synthetic_directory_once(client):
@@ -6861,6 +6890,8 @@ def test_dns_and_dhcp_pages_render(client):
     assert '<textarea name="description" rows="3" maxlength="1000"' in dns_domain_identity
     assert "data-dns-domain-wizard-add" in dns.text
     assert "data-dns-domain-enabled-form" in dns.text
+    dns_tools_head = dns.text.split('class="dns-zone-tools-head"', 1)[1].split("</form>", 1)[0]
+    assert dns_tools_head.index('class="tab-buttons tool-tabs"') < dns_tools_head.index("data-dns-domain-enabled-form")
     assert "Import Hosts" in dns.text
     assert "Import Zone File" in dns.text
     assert "Reverse Zones" in dns.text
@@ -6905,6 +6936,11 @@ def test_dns_and_dhcp_pages_render(client):
     assert "Review appliance changes" in dns.text
     assert "Save desired state" not in dns.text
     assert "Save DNS" not in dns.text
+    app_css = client.get("/static/app.css").text
+    assert ".dns-zone-tools-head {" in app_css
+    assert ".dns-authority-summary-head > strong {\n  font-size: 12px;" in app_css
+    assert ".dns-authority-records code {" in app_css
+    assert "font-size: 11px;" in app_css
 
     app_js = client.get("/static/app.js")
     assert app_js.status_code == 200
@@ -14138,9 +14174,16 @@ def test_dhcp_scope_edit_form_updates_ip_zone(client):
     )[0]
     assert '<textarea name="description" rows="3" maxlength="1000">' in identity_step
     assert 'name="lease_duration"' in services_step
+    assert 'class="form-grid dhcp-lease-services-grid"' in services_step
+    assert '<fieldset class="dhcp-lease-time-field">' in services_step
+    assert '<legend><span class="field-label"><span>Lease time</span>' in services_step
     assert '<option value="m">Minutes</option>' in services_step
     assert '<option value="h">Hours</option>' in services_step
     assert '<option value="d">Days</option>' in services_step
+    app_css = Path("atlaso/app/static/app.css").read_text(encoding="utf-8")
+    lease_time_css = app_css.split(".dhcp-lease-time-field {", 1)[1].split("}", 1)[0]
+    assert "grid-column: 1 / -1;" in lease_time_css
+    assert "border: 1px solid var(--border);" in lease_time_css
     app_js = Path("atlaso/app/static/app.js").read_text(encoding="utf-8")
     assert "leaseTime.dataset.atlasoOriginalLeaseTime" in app_js
     assert "Replace unsupported value:" in app_js

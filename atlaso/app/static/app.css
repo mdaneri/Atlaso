@@ -2294,6 +2294,26 @@ textarea {
   margin-bottom: 10px;
 }
 
+.dns-zone-tools-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.dns-zone-tools-head .tool-tabs {
+  flex: 1 1 360px;
+  min-width: 0;
+  margin-bottom: 0;
+  overflow-x: auto;
+}
+
+.dns-zone-tools-head [data-dns-domain-enabled-form] {
+  flex: 0 0 auto;
+}
+
 .tab-panels {
   display: grid;
   gap: 12px;
@@ -2629,6 +2649,10 @@ textarea {
   margin-bottom: 8px;
 }
 
+.dns-authority-summary-head > strong {
+  font-size: 12px;
+}
+
 .dns-authority-records {
   display: grid;
   gap: 5px;
@@ -2642,12 +2666,15 @@ textarea {
 }
 
 .dns-authority-term {
+  font-size: 11px;
   font-weight: 700;
 }
 
 .dns-authority-records code {
   min-width: 0;
   overflow-wrap: anywhere;
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .authoritative-dns-fields {
@@ -3564,6 +3591,32 @@ textarea {
   display: grid;
   align-content: start;
   gap: 5px;
+}
+
+.form-grid > .full {
+  grid-column: 1 / -1;
+}
+
+.dhcp-lease-time-field {
+  grid-column: 1 / -1;
+  min-width: 0;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 8px 10px 10px;
+  background: var(--surface-soft);
+}
+
+.dhcp-lease-time-field > legend {
+  padding: 0 5px;
+}
+
+.dhcp-lease-time-field > legend .field-label {
+  margin-bottom: 0;
+}
+
+.dhcp-lease-services-grid > label {
+  align-self: start;
 }
 
 .kickstart-description-field {

@@ -412,14 +412,14 @@
   </section>
   <section class="hidden" data-atlaso-wizard-step="services">
     <input type="hidden" name="lease_time">
-    <div class="form-grid">
-      <div class="form-stack">
-        <span class="field-label"><span>Lease time</span><button class="help-icon" type="button" data-help="Choose a positive duration and an explicit unit. Atlaso stores the dnsmasq-compatible value.">i</button></span>
+    <div class="form-grid dhcp-lease-services-grid">
+      <fieldset class="dhcp-lease-time-field">
+        <legend><span class="field-label"><span>Lease time</span><button class="help-icon" type="button" data-help="Choose a positive duration and an explicit unit. Atlaso stores the dnsmasq-compatible value.">i</button></span></legend>
         <div class="form-grid">
           <label><span class="field-label"><span>Duration</span></span><input type="number" name="lease_duration" min="1" step="1" required></label>
           <label><span class="field-label"><span>Unit</span></span><select name="lease_unit" required><option value="m">Minutes</option><option value="h">Hours</option><option value="d">Days</option></select></label>
         </div>
-      </div>
+      </fieldset>
       <label><span class="field-label"><span>Domain</span><button class="help-icon" type="button" data-help="DNS suffix advertised to clients in this IP zone.">i</button></span><input name="domain_name" list="dhcp-zone-domain-options" required></label>
       <label><span class="field-label"><span>DNS server</span><button class="help-icon" type="button" data-help="Resolver address advertised to clients.">i</button></span><input name="dns_server"></label>
       <label><span class="field-label"><span>NTP server</span><button class="help-icon" type="button" data-help="Optional time-server address advertised to clients.">i</button></span><input name="ntp_server"></label>
