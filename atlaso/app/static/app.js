@@ -2429,6 +2429,277 @@ function clearEsxiHostError() {
   element.classList.add("hidden");
 }
 
+let esxiHostReferenceWizard = null;
+
+function esxiHostMacKey(value) {
+  return String(value || "").toLowerCase().replace(/[:-]/g, "").replace(/\./g, "");
+}
+
+function isValidEsxiHostMac(value) {
+  const compact = esxiHostMacKey(value);
+  return /^[0-9a-f]{12}$/.test(compact) && !["000000000000", "ffffffffffff"].includes(compact);
+}
+
+function esxiDiscoveredHostLabel(host) {
+  const identity = host?.product_name || host?.dmi_uuid || host?.macs?.[0] || `Discovered host ${host?.id || ""}`;
+  const mac = host?.macs?.[0] || host?.boot_mac || "no MAC";
+  return `${identity} · ${mac}`;
+}
+
+function esxiSuggestedHostname(host) {
+  return String(host?.product_name || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function initializeEsxiHostReferenceWizard() {
+  const dialog = document.getElementById("network-boot-promote-dialog");
+  const form = dialog?.querySelector("[data-network-boot-promote-form]");
+  if (!(dialog instanceof HTMLDialogElement) || !(form instanceof HTMLFormElement)) return;
+
+  const hostTableElement = document.getElementById("esxi-pxe-hosts-table");
+  const discoveredTableElement = document.getElementById("network-boot-discovered-table");
+  const sourceField = form.querySelector("[data-esxi-host-source-field]");
+  const discoveredField = form.querySelector("[data-esxi-host-discovered-field]");
+  const discoveredMacField = form.querySelector("[data-esxi-host-discovered-mac-field]");
+  const manualMacField = form.querySelector("[data-esxi-host-manual-mac-field]");
+  const wizardTitle = form.querySelector("[data-esxi-host-wizard-title]");
+  const submitButton = form.querySelector("[data-atlaso-wizard-submit]");
+  const sourceSelect = form.elements.host_source;
+  const discoveredHostSelect = form.elements.discovered_host_id;
+  const discoveredMacSelect = form.elements.discovered_mac_address;
+  const manualMacInput = form.elements.manual_mac_address;
+  const canPromote = discoveredTableElement?.dataset.canWrite === "true";
+  const discoveredRows = JSON.parse(discoveredTableElement?.dataset.rows || "[]");
+  let activeContext = null;
+
+  const toggleField = (field, hidden) => {
+    if (!(field instanceof HTMLElement)) return;
+    field.classList.toggle("hidden", hidden);
+    field.toggleAttribute("hidden", hidden);
+  };
+  const savedHostRows = () => {
+    const tableRows = hostTableElement?.atlasoTabulator?.getData?.();
+    return Array.isArray(tableRows) ? tableRows : JSON.parse(hostTableElement?.dataset.hosts || "[]");
+  };
+  const usedMacs = () => new Set(savedHostRows()
+    .filter((row) => !row.is_new && !row.is_default)
+    .map((row) => esxiHostMacKey(row.mac_address))
+    .filter(Boolean));
+  const availableMacs = (host) => {
+    const used = usedMacs();
+    return [...new Set([...(host?.macs || []), host?.boot_mac].filter(Boolean))]
+      .filter((mac) => isValidEsxiHostMac(mac) && !used.has(esxiHostMacKey(mac)));
+  };
+  const eligibleDiscoveredHosts = () => discoveredRows.filter((host) => availableMacs(host).length > 0);
+  const setSourceMode = (source, { showSource = true, showDiscoveredHost = true } = {}) => {
+    const discovered = source === "discovered";
+    sourceSelect.value = discovered ? "discovered" : "manual";
+    toggleField(sourceField, !showSource);
+    toggleField(discoveredField, !discovered || !showDiscoveredHost);
+    toggleField(discoveredMacField, !discovered);
+    toggleField(manualMacField, discovered);
+    discoveredHostSelect.disabled = !discovered || !showDiscoveredHost;
+    discoveredHostSelect.required = discovered && showDiscoveredHost;
+    discoveredMacSelect.disabled = !discovered;
+    discoveredMacSelect.required = discovered;
+    manualMacInput.disabled = discovered;
+    manualMacInput.required = !discovered;
+  };
+  const replaceMacOptions = (macs) => {
+    discoveredMacSelect.replaceChildren(...macs.map((mac) => new Option(mac, mac)));
+  };
+  const loadDiscoveredIdentity = async (host) => {
+    const loaded = host?.latest_report
+      ? host
+      : await networkBootRequest(`/api/v1/network-boot/hosts/${host.id}`);
+    const macs = availableMacs(loaded);
+    if (!macs.length) throw new Error("This discovered host no longer has an unused MAC available for promotion.");
+    form.elements.host_id.value = loaded.id;
+    form.elements.hostname.value = esxiSuggestedHostname(loaded);
+    replaceMacOptions(macs);
+    const assignedAddress = loaded.latest_report?.assigned_addresses?.[0] || "";
+    form.elements.ip_address.value = String(assignedAddress).split("/")[0];
+    return loaded;
+  };
+  const selectDiscoveredHost = async () => {
+    const host = activeContext?.candidates?.find((candidate) => String(candidate.id) === discoveredHostSelect.value);
+    if (!host) return;
+    activeContext.discoveredHost = await loadDiscoveredIdentity(host);
+  };
+  const parseVariables = () => {
+    let variables;
+    try {
+      variables = JSON.parse(form.elements.variables.value || "{}");
+    } catch (_error) {
+      return { valid: false, message: "Variables must be a JSON object.", field: "variables" };
+    }
+    if (!variables || Array.isArray(variables) || typeof variables !== "object") {
+      return { valid: false, message: "Variables must be a JSON object.", field: "variables" };
+    }
+    return { valid: true, variables };
+  };
+  const selectedMac = () => sourceSelect.value === "discovered"
+    ? discoveredMacSelect.value
+    : manualMacInput.value;
+  const buildHostPayload = (variables) => ({
+    hostname: form.elements.hostname.value.trim(),
+    mac_address: selectedMac().trim(),
+    ip_address: form.elements.ip_address.value.trim(),
+    kickstart_id: form.elements.kickstart_id.value ? Number(form.elements.kickstart_id.value) : null,
+    installer_iso_path: form.elements.installer_iso_path.value,
+    variables,
+    enabled: form.elements.enabled.checked,
+  });
+
+  esxiHostReferenceWizard = window.AtlasoUiPatterns.createWizard({
+    form,
+    dialog,
+    steps: [
+      { id: "identity", title: "Choose host identity", description: "Select a discovered host or enter an explicit ESXi identity." },
+      { id: "installer", title: "Choose installer inputs", description: "Select the Kickstart, installer ISO, and reviewed variables." },
+      { id: "enablement", title: "Choose desired-state enablement", description: "Enabled is reviewed last before the summary." },
+      { id: "review", title: "Review Host Reference", description: "Saving creates desired state only and does not run appliance apply." },
+    ],
+    discardTitle: "Discard Host Reference changes?",
+    discardMessage: "The Host Reference values entered in this wizard will be lost.",
+    onOpen: async ({ context }) => {
+      activeContext = { ...(context || {}) };
+      const mode = activeContext.mode || "create";
+      const candidates = eligibleDiscoveredHosts();
+      activeContext.candidates = candidates;
+      discoveredHostSelect.replaceChildren(...candidates.map((host) => new Option(esxiDiscoveredHostLabel(host), host.id)));
+      const discoveredOption = [...sourceSelect.options].find((option) => option.value === "discovered");
+      if (discoveredOption) discoveredOption.disabled = !canPromote || !candidates.length;
+      form.elements.record_id.value = "";
+      form.elements.host_id.value = "";
+      form.elements.hostname.value = "";
+      form.elements.manual_mac_address.value = "";
+      form.elements.ip_address.value = "";
+      form.elements.kickstart_id.value = "";
+      form.elements.variables.value = "{}";
+      form.elements.enabled.checked = mode === "create";
+      const firstIso = [...form.elements.installer_iso_path.options].find((option) => option.value);
+      form.elements.installer_iso_path.value = mode === "create" ? (firstIso?.value || "") : "";
+
+      if (mode === "edit") {
+        const host = activeContext.host;
+        setSourceMode("manual", { showSource: false, showDiscoveredHost: false });
+        form.elements.record_id.value = host.id;
+        form.elements.hostname.value = host.hostname || "";
+        form.elements.manual_mac_address.value = host.mac_address || "";
+        form.elements.ip_address.value = host.ip_address || "";
+        form.elements.kickstart_id.value = host.kickstart_id || "";
+        form.elements.installer_iso_path.value = host.installer_iso_path || "";
+        form.elements.variables.value = host.variables_json || "{}";
+        form.elements.enabled.checked = Boolean(host.enabled);
+        if (wizardTitle) wizardTitle.textContent = "Edit Host Reference";
+        if (submitButton) submitButton.textContent = "Save host reference";
+        return;
+      }
+
+      if (mode === "promote") {
+        setSourceMode("discovered", { showSource: false, showDiscoveredHost: false });
+        activeContext.discoveredHost = await loadDiscoveredIdentity(activeContext.discoveredHost);
+        if (wizardTitle) wizardTitle.textContent = "Promote discovered host";
+        if (submitButton) submitButton.textContent = "Promote host";
+        return;
+      }
+
+      if (wizardTitle) wizardTitle.textContent = "Add Host Reference";
+      if (submitButton) submitButton.textContent = "Add host reference";
+      const source = canPromote && candidates.length ? "discovered" : "manual";
+      setSourceMode(source);
+      if (source === "discovered") await selectDiscoveredHost();
+    },
+    validateStep: ({ step }) => {
+      if (step.id === "identity" && !isValidEsxiHostMac(selectedMac())) {
+        return {
+          valid: false,
+          message: "Enter or select a valid unicast MAC address.",
+          field: sourceSelect.value === "discovered" ? "discovered_mac_address" : "manual_mac_address",
+        };
+      }
+      if (step.id === "installer") return parseVariables();
+      return { valid: true };
+    },
+    prepareReview: () => {
+      const variables = parseVariables();
+      renderAtlasoWizardReview(form, [
+        { label: "Source", value: () => activeContext.mode === "edit" ? "Existing Host Reference" : sourceSelect.selectedOptions[0]?.textContent || "Manual host" },
+        { label: "Hostname", field: "hostname" },
+        { label: "MAC", value: selectedMac },
+        { label: "Address", field: "ip_address" },
+        { label: "Kickstart", field: "kickstart_id" },
+        { label: "Installer ISO", field: "installer_iso_path" },
+        { label: "Variables", value: () => JSON.stringify(variables.variables || {}) },
+        { label: "Enabled", field: "enabled" },
+        { label: "Runtime", value: () => "Global appliance apply required" },
+      ]);
+    },
+    onSubmit: async () => {
+      const parsed = parseVariables();
+      if (!parsed.valid) return { ok: false, ...parsed, step: "installer" };
+      const payload = buildHostPayload(parsed.variables);
+      const promote = activeContext.mode === "promote"
+        || (activeContext.mode === "create" && sourceSelect.value === "discovered");
+      let resource;
+      if (promote) {
+        const result = await networkBootRequest(`/api/v1/network-boot/hosts/${form.elements.host_id.value}/promote`, {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        resource = {
+          ...payload,
+          ...result,
+          variables_json: JSON.stringify(parsed.variables),
+          kickstart_name: form.elements.kickstart_id.selectedOptions[0]?.textContent || "",
+          installer_iso_name: form.elements.installer_iso_path.selectedOptions[0]?.textContent || "",
+          is_new: false,
+          is_default: false,
+        };
+      } else {
+        const body = new FormData();
+        body.set("csrf", form.elements.csrf.value);
+        body.set("hostname", payload.hostname);
+        body.set("mac_address", payload.mac_address);
+        body.set("ip_address", payload.ip_address);
+        body.set("kickstart_id", payload.kickstart_id || "");
+        body.set("installer_iso_path", payload.installer_iso_path);
+        body.set("variables", JSON.stringify(payload.variables));
+        if (payload.enabled) body.set("enabled", "on");
+        const recordId = form.elements.record_id.value;
+        const result = await atlasoGridWizardRequest(
+          recordId ? `/esxi-pxe/hosts/${recordId}` : "/esxi-pxe/hosts",
+          body,
+        );
+        resource = result.host;
+      }
+      await Promise.resolve(activeContext.onSaved?.(resource));
+      showEsxiHostSuccess(activeContext.mode === "edit" ? "Host Reference updated" : "Host Reference created");
+      if (!activeContext.onSaved) window.location.reload();
+      return { valid: true };
+    },
+  });
+
+  sourceSelect.addEventListener("change", () => {
+    const source = sourceSelect.value === "discovered" ? "discovered" : "manual";
+    setSourceMode(source);
+    if (source === "discovered") {
+      selectDiscoveredHost().catch((error) => esxiHostReferenceWizard.setError(error.message, "discovered_host_id"));
+    }
+  });
+  discoveredHostSelect.addEventListener("change", () => {
+    selectDiscoveredHost().catch((error) => esxiHostReferenceWizard.setError(error.message, "discovered_host_id"));
+  });
+}
+
+function openEsxiHostReferenceWizard(context) {
+  if (!esxiHostReferenceWizard) throw new Error("The Host Reference wizard is unavailable.");
+  return esxiHostReferenceWizard.open({ launcher: context.launcher, context });
+}
+
 async function postEsxiHostAction(url, data, csrf, options = {}) {
   const reload = options.reload ?? true;
   const body = new FormData();
@@ -6157,7 +6428,7 @@ function initializeRoutesWanRoutingTable() {
         {
           title: "Enabled",
           field: "enabled",
-          formatter: atlasoBooleanFormatter,
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell),
           editor: "tickCross",
           editable: (cell) => !cell.getRow().getData().generated,
           hozAlign: "center",
@@ -8811,7 +9082,26 @@ function initializeEsxiPxeHostsTable() {
   const kickstartValues = Object.fromEntries(kickstartOptions.map((item) => [item.id, item.label]));
   const isoValues = Object.fromEntries(isoOptions.map((item) => [item.id, item.label]));
   const defaultIsoPath = isoOptions.find((item) => item.id)?.id || "";
-  const rows = [...JSON.parse(tableElement.dataset.hosts || "[]"), newEsxiHostRow(defaultIsoPath)];
+  const newRow = newEsxiHostRow(defaultIsoPath);
+  const rows = [
+    ...JSON.parse(tableElement.dataset.hosts || "[]"),
+    ...(canWrite ? [newRow] : []),
+  ];
+  let table = null;
+  const openHostWizard = (data, launcher) => {
+    if (!canWrite || data.is_default) return;
+    const creating = Boolean(data.is_new);
+    openEsxiHostReferenceWizard({
+      mode: creating ? "create" : "edit",
+      host: creating ? null : data,
+      launcher,
+      onSaved: async (resource) => {
+        const normalized = { ...resource, is_new: false, is_default: false };
+        if (creating) await table?.addRow(normalized, true, newRow.id);
+        else await (table?.getRow(data.id) || table?.getRow(Number(data.id)))?.update(normalized);
+      },
+    }).catch((error) => showEsxiHostError(error instanceof Error ? error.message : "The Host Reference wizard could not be opened."));
+  };
   try {
     const atlasoGridOptions24 = {
       data: rows,
@@ -8821,7 +9111,108 @@ function initializeEsxiPxeHostsTable() {
       rowHeight: 30,
       placeholder: "No ESXi PXE host references configured.",
       reactiveData: false,
-      rowContextMenu: canWrite ? [
+      columns: [
+        {
+          title: "Host",
+          field: "hostname",
+          formatter: (cell) => {
+            const data = cell.getRow().getData();
+            if (data.is_default) {
+              return "Default / undefined MACs";
+            }
+            if (data.is_new) {
+              return '<button class="add-row-button" type="button" data-esxi-host-wizard-add>+ Add host reference here</button>';
+            }
+            return escapeHtml(cell.getValue() || "");
+          },
+          minWidth: 200,
+        },
+        {
+          title: "MAC address",
+          field: "mac_address",
+          formatter: (cell) => {
+            const data = cell.getRow().getData();
+            if (data.is_default) return "*";
+            return data.is_new ? "" : escapeHtml(cell.getValue() || "");
+          },
+          minWidth: 170,
+        },
+        {
+          title: "IP address",
+          field: "ip_address",
+          formatter: (cell) => {
+            const data = cell.getRow().getData();
+            if (data.is_default) return "DHCP";
+            return data.is_new ? "" : escapeHtml(cell.getValue() || "DHCP");
+          },
+          minWidth: 140,
+        },
+        {
+          title: "Kickstart",
+          field: "kickstart_id",
+          editor: canWrite ? "list" : false,
+          editable: (cell) => canWrite && cell.getRow().getData().is_default,
+          editorParams: { values: kickstartValues },
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : (kickstartValues[cell.getValue()] || "No Kickstart"),
+          minWidth: 180,
+          cellEdited: (cell) => autoSaveEsxiHost(cell, csrf),
+        },
+        {
+          title: "Installer ISO",
+          field: "installer_iso_path",
+          editor: canWrite ? "list" : false,
+          editable: (cell) => canWrite && cell.getRow().getData().is_default,
+          editorParams: { values: isoValues, autocomplete: true },
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : (isoValues[cell.getValue()] || "No ISO selected"),
+          minWidth: 320,
+          cellEdited: (cell) => autoSaveEsxiHost(cell, csrf),
+        },
+        {
+          title: "Variables JSON",
+          field: "variables_json",
+          formatter: (cell) => {
+            const data = cell.getRow().getData();
+            return data.is_default || data.is_new ? "" : `<code>${escapeHtml(cell.getValue() || "{}")}</code>`;
+          },
+          minWidth: 240,
+        },
+        {
+          title: "Enabled",
+          field: "enabled",
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell),
+          editor: canWrite ? "tickCross" : false,
+          editable: (cell) => canWrite && !cell.getRow().getData().is_new,
+          hozAlign: "center",
+          width: 100,
+          headerSort: false,
+          cellEdited: (cell) => autoSaveEsxiHost(cell, csrf),
+        },
+      ],
+      rowFormatter: (row) => {
+        const data = row.getData();
+        markNewRecordRow(row, "hostname");
+        row.getElement().classList.toggle("managed-record-row", Boolean(data.is_default));
+      },
+    };
+    const grid = window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      fallback: `#${tableElement.dataset.fallbackId}`,
+      pattern: "wizard-backed",
+      permission: {
+        allowed: canWrite,
+        message: "You have read-only access to ESXi PXE host references.",
+      },
+      onOpenRow: canWrite ? (data, row, event) => {
+        const target = event?.target;
+        if (target instanceof Element && target.closest('[tabulator-field="enabled"]')) return;
+        openHostWizard(data, event?.currentTarget || row?.getElement?.());
+      } : null,
+      rowActions: canWrite ? [
+        {
+          label: "Edit host reference",
+          disabled: (component) => component.getData().is_new || component.getData().is_default,
+          action: (_event, row) => openHostWizard(row.getData(), row.getElement()),
+        },
         {
           label: "Boot Inventory Linux once",
           disabled: (component) => {
@@ -8838,111 +9229,17 @@ function initializeEsxiPxeHostsTable() {
         {
           label: "Delete host reference",
           disabled: (component) => component.getData().is_new || component.getData().is_default,
-          action: (event, row) => deleteEsxiHost(row, csrf),
+          action: (_event, row) => deleteEsxiHost(row, csrf),
         },
-      ] : false,
-      columns: lockNewRecordColumns([
-        {
-          title: "Host",
-          field: "hostname",
-          editor: canWrite ? "input" : false,
-          editable: (cell) => !cell.getRow().getData().is_default,
-          formatter: (cell) => {
-            const data = cell.getRow().getData();
-            if (data.is_default) {
-              return "Default / undefined MACs";
-            }
-            return dnsAddRowHintFormatter(cell, "+ Add host reference here");
-          },
-          minWidth: 200,
-          cellEdited: (cell) => autoSaveEsxiHost(cell, csrf),
-        },
-        {
-          title: "MAC address",
-          field: "mac_address",
-          editor: canWrite ? "input" : false,
-          editable: (cell) => !cell.getRow().getData().is_default,
-          formatter: (cell) => {
-            if (cell.getRow().getData().is_default) {
-              return "*";
-            }
-            return dnsAddRowHintFormatter(cell, "00:50:56:aa:bb:cc");
-          },
-          minWidth: 170,
-          cellEdited: (cell) => autoSaveEsxiHost(cell, csrf),
-        },
-        {
-          title: "IP address",
-          field: "ip_address",
-          editor: canWrite ? "input" : false,
-          editable: (cell) => !cell.getRow().getData().is_default,
-          formatter: (cell) => {
-            if (cell.getRow().getData().is_default) {
-              return "DHCP";
-            }
-            return dnsAddRowHintFormatter(cell, "DHCP");
-          },
-          minWidth: 140,
-          cellEdited: (cell) => autoSaveEsxiHost(cell, csrf),
-        },
-        {
-          title: "Kickstart",
-          field: "kickstart_id",
-          editor: canWrite ? "list" : false,
-          editorParams: { values: kickstartValues },
-          formatter: (cell) => kickstartValues[cell.getValue()] || "No Kickstart",
-          minWidth: 180,
-          cellEdited: (cell) => autoSaveEsxiHost(cell, csrf),
-        },
-        {
-          title: "Installer ISO",
-          field: "installer_iso_path",
-          editor: canWrite ? "list" : false,
-          editorParams: { values: isoValues, autocomplete: true },
-          formatter: (cell) => isoValues[cell.getValue()] || "No ISO selected",
-          minWidth: 320,
-          cellEdited: (cell) => autoSaveEsxiHost(cell, csrf),
-        },
-        {
-          title: "Variables JSON",
-          field: "variables_json",
-          editor: canWrite ? "input" : false,
-          editable: (cell) => !cell.getRow().getData().is_default,
-          formatter: (cell) => {
-            if (cell.getRow().getData().is_default) {
-              return "";
-            }
-            return dnsAddRowHintFormatter(cell, '{"custom_name":"value"}');
-          },
-          minWidth: 240,
-          cellEdited: (cell) => autoSaveEsxiHost(cell, csrf),
-        },
-        {
-          title: "Enabled",
-          field: "enabled",
-          formatter: atlasoBooleanFormatter,
-          editor: canWrite ? "tickCross" : false,
-          hozAlign: "center",
-          width: 100,
-          headerSort: false,
-          cellEdited: (cell) => autoSaveEsxiHost(cell, csrf),
-        },
-      ], "hostname"),
-      rowFormatter: (row) => {
-        const data = row.getData();
-        markNewRecordRow(row, "hostname");
-        row.getElement().classList.toggle("managed-record-row", Boolean(data.is_default));
-      },
-    };
-    window.AtlasoUiPatterns.createGrid({
-      element: tableElement,
-      pattern: "direct-edit",
-      permission: {
-        allowed: canWrite,
-        message: "You have read-only access to ESXi PXE host references.",
-      },
+      ] : [],
       options: atlasoGridOptions24,
-    }).table;
+    });
+    table = grid.table;
+    tableElement.atlasoTabulator = table;
+    tableElement.addEventListener("click", (event) => {
+      const launcher = event.target.closest("[data-esxi-host-wizard-add]");
+      if (launcher instanceof HTMLButtonElement) openHostWizard(newRow, launcher);
+    });
   } catch (error) {
     showEsxiHostError(error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
   }
@@ -18576,7 +18873,6 @@ function initializeNetworkBootPage() {
   const uploadSubmit = uploadDialog?.querySelector("[data-network-boot-upload-submit]");
   let selectedHost = null;
   let selectedReport = null;
-  let promoteWizard = null;
   let hostsTable = null;
   const loadHost = async (row) => {
     const host = await networkBootRequest(`/api/v1/network-boot/hosts/${row.id}`);
@@ -18699,12 +18995,12 @@ function initializeNetworkBootPage() {
   };
   const promoteHost = async (row, launcher = null) => {
     const data = row?.getData ? row.getData() : row;
-    if (!data?.id || !promoteWizard) return;
+    if (!data?.id) return;
     try {
       const loaded = selectedHost?.id === data.id ? { host: selectedHost } : await loadHost(data);
       selectedHost = loaded.host;
       if (hostDialog?.open) hostDialog.close();
-      promoteWizard.open({ launcher, context: selectedHost });
+      await openEsxiHostReferenceWizard({ mode: "promote", discoveredHost: selectedHost, launcher });
     } catch (error) {
       showTransientGridStatus(error instanceof Error ? error.message : "The discovered host could not be loaded for promotion.");
     }
@@ -18973,53 +19269,6 @@ function initializeNetworkBootPage() {
     });
     request.send(body);
   });
-  const promoteDialog = document.getElementById("network-boot-promote-dialog");
-  const promoteForm = promoteDialog?.querySelector("[data-network-boot-promote-form]");
-  if (!(promoteDialog instanceof HTMLDialogElement) || !(promoteForm instanceof HTMLFormElement)) return;
-  promoteWizard = window.AtlasoUiPatterns.createWizard({
-    form: promoteForm,
-    dialog: promoteDialog,
-    steps: [
-      { id: "identity", title: "Review host identity", description: "Choose the explicit ESXi hostname, discovered MAC, and address." },
-      { id: "installer", title: "Choose installer inputs", description: "Select the Kickstart, installer ISO, and reviewed variables." },
-      { id: "enablement", title: "Choose desired-state enablement", description: "Enabled is reviewed last before the summary." },
-      { id: "review", title: "Review ESXi promotion", description: "Promotion creates desired state only and does not run appliance apply." },
-    ],
-    validateStep: validateAtlasoWizardStep,
-    onOpen: ({ context }) => {
-      if (!context) return;
-      promoteForm.elements.host_id.value = context.id;
-      promoteForm.elements.hostname.value = context.product_name
-        ? context.product_name.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-|-$/g, "")
-        : "";
-      promoteForm.elements.mac_address.replaceChildren(...context.macs.map((mac) => new Option(mac, mac)));
-      const assignedAddress = context.latest_report?.assigned_addresses?.[0] || "";
-      promoteForm.elements.ip_address.value = assignedAddress.split("/")[0];
-    },
-    prepareReview: () => renderAtlasoWizardReview(promoteForm, [
-      { label: "Hostname", field: "hostname" }, { label: "MAC", field: "mac_address" },
-      { label: "Address", field: "ip_address" }, { label: "Kickstart", field: "kickstart_id" },
-      { label: "Installer ISO", field: "installer_iso_path" }, { label: "Enabled", field: "enabled" },
-    ]),
-    onSubmit: async () => {
-      let variables;
-      try { variables = JSON.parse(promoteForm.elements.variables.value || "{}"); } catch { return { ok: false, message: "Variables must be a JSON object." }; }
-      await networkBootRequest(`/api/v1/network-boot/hosts/${promoteForm.elements.host_id.value}/promote`, {
-        method: "POST",
-        body: JSON.stringify({
-          hostname: promoteForm.elements.hostname.value,
-          mac_address: promoteForm.elements.mac_address.value,
-          ip_address: promoteForm.elements.ip_address.value,
-          kickstart_id: promoteForm.elements.kickstart_id.value || null,
-          installer_iso_path: promoteForm.elements.installer_iso_path.value,
-          variables,
-          enabled: promoteForm.elements.enabled.checked,
-        }),
-      });
-      window.location.reload();
-      return { ok: true };
-    },
-  });
   hostDialog?.querySelector("[data-network-boot-promote-open]")?.addEventListener("click", () => {
     if (!selectedHost) return;
     const hostRow = hostsTable?.getRow(selectedHost.id);
@@ -19029,6 +19278,7 @@ function initializeNetworkBootPage() {
 
 document.addEventListener("DOMContentLoaded", initializeDashboard);
 document.addEventListener("DOMContentLoaded", initializeNetworkBootWorkspace);
+document.addEventListener("DOMContentLoaded", initializeEsxiHostReferenceWizard);
 document.addEventListener("DOMContentLoaded", initializeNetworkBootPage);
 document.addEventListener("DOMContentLoaded", initializeVaultsPage);
 document.addEventListener("DOMContentLoaded", initializeVcfVaultCredentialPickers);

@@ -21251,7 +21251,7 @@ def create_esxi_pxe_host_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> RedirectResponse | JSONResponse:
     require_esxi_pxe_write(identity)
     verify_csrf(request, csrf)
     normalized_kickstart_id = parse_optional_esxi_kickstart_id(db, kickstart_id)
@@ -21283,8 +21283,13 @@ def create_esxi_pxe_host_from_ui(
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=f"ESXi PXE host for {mac_address} already exists.") from exc
-    record_audit(db, actor=identity.username, action="update_esxi_pxe_host", resource_type="esxi_pxe_host", resource_id=str(host.id), detail=f"kickstart_id={host.kickstart_id} installer_iso={host.installer_iso_path}", request_id=request.state.request_id)
-    return RedirectResponse("/esxi-pxe#esxi-pxe-hosts", status_code=303)
+    record_audit(db, actor=identity.username, action="create_esxi_pxe_host", resource_type="esxi_pxe_host", resource_id=str(host.id), detail=f"kickstart_id={host.kickstart_id} installer_iso={host.installer_iso_path}", request_id=request.state.request_id)
+    return grid_saved_response(
+        request,
+        redirect_url="/network-boot#esxi-pxe-hosts-panel",
+        resource_name="host",
+        resource=host_to_dict(host),
+    )
 
 
 @router.post("/esxi-pxe/hosts/{host_id}", response_model=None)
@@ -21301,7 +21306,7 @@ def update_esxi_pxe_host_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> RedirectResponse | JSONResponse:
     require_esxi_pxe_write(identity)
     verify_csrf(request, csrf)
     host = db.get(EsxiPxeHost, host_id)
@@ -21336,7 +21341,12 @@ def update_esxi_pxe_host_from_ui(
         db.rollback()
         raise HTTPException(status_code=409, detail=f"ESXi PXE host for {mac_address} already exists.") from exc
     record_audit(db, actor=identity.username, action="update_esxi_pxe_host", resource_type="esxi_pxe_host", resource_id=str(host.id), detail=f"kickstart_id={host.kickstart_id} installer_iso={host.installer_iso_path}", request_id=request.state.request_id)
-    return RedirectResponse("/esxi-pxe#esxi-pxe-hosts", status_code=303)
+    return grid_saved_response(
+        request,
+        redirect_url="/network-boot#esxi-pxe-hosts-panel",
+        resource_name="host",
+        resource=host_to_dict(host),
+    )
 
 
 @router.post("/esxi-pxe/default-host", response_model=None)

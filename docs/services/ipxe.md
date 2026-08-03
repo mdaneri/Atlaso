@@ -316,6 +316,32 @@ and 4,096 sessions; expired sessions and the oldest inactive inventory are
 pruned as new sessions and reports arrive. Hosts with a recent heartbeat or an
 unacknowledged command are never selected for storage eviction.
 
+## Manage ESXi Host References
+
+Open **ESXi Kickstarts**, select **Host References**, and use **+ Add host
+reference here** to open the guided Host Reference workflow. When an eligible
+Network Boot inventory host has at least one valid MAC that is not already used
+by a Host Reference, the workflow defaults to **Discovered Network Boot host**.
+Select the discovered host and review the suggested hostname, one of its
+available MAC addresses, and its latest assigned address. Select **Manual host**
+instead to enter a hostname, MAC address, and optional IP address directly.
+
+The remaining steps select the Kickstart, installer ISO, non-secret variables,
+and desired Enabled state before showing the final review. New references opened
+from the Host References add row default to Enabled. Promotion opened directly
+from a discovered-host action retains its explicit disabled default. Saving
+creates or updates desired state only; use the global **Review appliance
+changes** workflow to enforce it on the appliance.
+
+Double-click an existing reference or choose **Edit host reference** from its
+row menu to reopen the same workflow. The Enabled value remains directly
+toggleable in the collection. The row menu also retains **Boot Inventory Linux
+once**, **Wake host**, and **Delete host reference** where applicable. The
+**Default / undefined MACs** profile remains a compact inline exception for its
+Kickstart, installer ISO, and Enabled values. Manual add and edit require ESXi
+PXE write access; discovered-host promotion also requires Network Boot write
+access.
+
 ## ESX technical reference
 
 The remainder is a cleaned Markdown copy of Broadcom Tech Docs content for ESX

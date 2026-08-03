@@ -135,43 +135,52 @@
     </div>
   </form>
 </dialog>
+{% endif %}
+{% if esxi_can_write or network_boot_can_write %}
 <dialog id="network-boot-promote-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="network-boot-promote-title">
   <form class="confirm-modal-panel vcf-sddc-wizard-panel" data-network-boot-promote-form data-atlaso-wizard novalidate>
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="record_id">
     <input type="hidden" name="host_id">
-    <aside class="vcf-sddc-wizard-rail" aria-label="ESXi promotion steps">
-      <p class="kicker">Network Boot</p><h2 id="network-boot-promote-title">Promote discovered host</h2>
+    <aside class="vcf-sddc-wizard-rail" aria-label="ESXi Host Reference steps">
+      <p class="kicker">Network Boot</p><h2 id="network-boot-promote-title" data-esxi-host-wizard-title>Host Reference</h2>
       <ol class="vcf-sddc-step-list">
         <li><button class="vcf-sddc-step-button active" type="button" data-atlaso-wizard-nav="identity"><span>1</span><strong>Identity</strong><small>Hostname, MAC, and address</small></button></li>
         <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="installer" disabled><span>2</span><strong>Installer</strong><small>Kickstart and ISO</small></button></li>
         <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="enablement" disabled><span>3</span><strong>Enabled</strong><small>Desired-state enablement</small></button></li>
-        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="review" disabled><span>4</span><strong>Review</strong><small>Confirm promotion</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="review" disabled><span>4</span><strong>Review</strong><small>Confirm desired state</small></button></li>
       </ol>
     </aside>
     <div class="vcf-sddc-wizard-main">
       <div class="confirm-modal-body vcf-sddc-wizard-body">
-        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 4</p><h3 data-atlaso-wizard-title>Review host identity</h3><p class="muted" data-atlaso-wizard-description>Choose the explicit ESXi hostname, discovered MAC, and address.</p></div>
+        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 4</p><h3 data-atlaso-wizard-title>Choose host identity</h3><p class="muted" data-atlaso-wizard-description>Select a discovered host or enter an explicit ESXi identity.</p></div>
         <div class="alert error hidden" data-atlaso-wizard-error></div>
-        <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity"><div class="form-grid">
-          <label><span>Hostname</span><input name="hostname" required maxlength="120"></label>
-          <label><span>Selected MAC</span><select name="mac_address" required></select></label>
-          <label><span>IP address</span><input name="ip_address" required></label>
+        <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity"><div class="form-stack">
+          <label data-esxi-host-source-field><span>Identity source</span><select name="host_source"><option value="discovered">Discovered Network Boot host</option><option value="manual">Manual host</option></select></label>
+          <label data-esxi-host-discovered-field><span>Discovered host</span><select name="discovered_host_id"></select></label>
+          <div class="form-grid">
+            <label><span>Hostname</span><input name="hostname" required maxlength="120"></label>
+            <label data-esxi-host-discovered-mac-field><span>Selected MAC</span><select name="discovered_mac_address"></select></label>
+            <label data-esxi-host-manual-mac-field><span>MAC address</span><input name="manual_mac_address" maxlength="32"></label>
+            <label><span>IP address, if any</span><input name="ip_address" maxlength="64" placeholder="DHCP"></label>
+          </div>
         </div></section>
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="installer"><div class="form-stack">
           <label><span>Kickstart</span><select name="kickstart_id">{% for option in esxi_pxe_host_kickstart_options %}<option value="{{ option.id }}">{{ option.label }}</option>{% endfor %}</select></label>
-          <label><span>Installer ISO</span><select name="installer_iso_path" required>{% for option in esxi_pxe_host_iso_options %}<option value="{{ option.id }}">{{ option.label }}</option>{% endfor %}</select></label>
+          <label><span>Installer ISO</span><select name="installer_iso_path">{% for option in esxi_pxe_host_iso_options %}<option value="{{ option.id }}">{{ option.label }}</option>{% endfor %}</select></label>
           <label><span>Variables JSON</span><textarea name="variables" rows="6">{}</textarea></label>
         </div></section>
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="enablement">
           <label class="switch-field"><span>Enabled</span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
-          <p class="muted">Promotion creates desired state only. The global apply workflow remains the sole host-mutation path.</p>
+          <p class="muted">Saving creates desired state only. The global apply workflow remains the sole host-mutation path.</p>
         </section>
-        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review"><div data-atlaso-wizard-review></div></section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review"><div class="settings-list" data-atlaso-resource-review></div></section>
       </div>
       <div class="confirm-modal-actions vcf-sddc-wizard-actions">
         <button class="button secondary" type="button" data-atlaso-wizard-cancel>Cancel</button>
         <button class="button secondary hidden" type="button" data-atlaso-wizard-back>Back</button>
         <button class="button primary" type="button" data-atlaso-wizard-next>Next</button>
-        <button class="button primary hidden" type="submit" data-atlaso-wizard-submit>Promote host</button>
+        <button class="button primary hidden" type="submit" data-atlaso-wizard-submit>Save host reference</button>
       </div>
     </div>
   </form>
@@ -431,8 +440,29 @@
                   </form>
                 </tr>
               {% endfor %}
+              {% if esxi_can_write %}
+                <tr class="new-record-row"><td colspan="8"><a href="#esxi-pxe-host-fallback-create">+ Add host reference</a></td></tr>
+              {% endif %}
             </tbody>
           </table>
+          {% if esxi_can_write %}
+            <noscript>
+              <form id="esxi-pxe-host-fallback-create" class="form-stack" action="/esxi-pxe/hosts" method="post">
+                <h3>Add host reference</h3>
+                <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                <div class="form-grid">
+                  <label>Hostname <input name="hostname" required maxlength="120"></label>
+                  <label>MAC address <input name="mac_address" required maxlength="32"></label>
+                  <label>IP address, if any <input name="ip_address" maxlength="64" placeholder="DHCP"></label>
+                  <label>Kickstart <select name="kickstart_id">{% for option in esxi_pxe_host_kickstart_options %}<option value="{{ option.id }}">{{ option.label }}</option>{% endfor %}</select></label>
+                  <label>Installer ISO <select name="installer_iso_path">{% for option in esxi_pxe_host_iso_options %}<option value="{{ option.id }}">{{ option.label }}</option>{% endfor %}</select></label>
+                  <label>Variables JSON <textarea name="variables" rows="4">{}</textarea></label>
+                </div>
+                <label><input type="checkbox" name="enabled" checked> Enabled</label>
+                <button class="button primary" type="submit">Add host reference</button>
+              </form>
+            </noscript>
+          {% endif %}
         </div>
       </div>
 

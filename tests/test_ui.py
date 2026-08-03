@@ -809,7 +809,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v217" in service_worker.text
+    assert "atlaso-pwa-v220" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -821,9 +821,9 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6" in service_worker.text
-    assert "/static/app.css?v=atlaso-network-boot-196-20260731-1" in service_worker.text
+    assert "/static/app.css?v=atlaso-network-boot-224-20260803-1" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in service_worker.text
-    assert "/static/app.js?v=atlaso-network-boot-219-20260801-1" in service_worker.text
+    assert "/static/app.js?v=atlaso-host-reference-223-20260803-2" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -832,7 +832,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=atlaso-network-boot-196-20260731-1" in offline.text
+    assert "/static/app.css?v=atlaso-network-boot-224-20260803-1" in offline.text
 
 
 def test_shared_ui_pattern_shell_and_wizard_contracts(client):
@@ -843,8 +843,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=atlaso-network-boot-219-20260801-1"),
-        (public_base, "/static/app.js?v=atlaso-network-boot-219-20260801-1"),
+        (base, "/static/app.js?v=atlaso-host-reference-223-20260803-2"),
+        (public_base, "/static/app.js?v=atlaso-host-reference-223-20260803-2"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5"
@@ -899,9 +899,9 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     create_grid = "window.AtlasoUiPatterns.createGrid({"
 
     assert app_js.count(create_grid) == 34
-    assert app_js.count('pattern: "direct-edit"') == 14
+    assert app_js.count('pattern: "direct-edit"') == 13
     assert app_js.count('pattern: "read-only"') == 11
-    assert app_js.count('pattern: "wizard-backed"') == 9
+    assert app_js.count('pattern: "wizard-backed"') == 10
     assert "new Tabulator(" not in app_js
     assert "new window.Tabulator(" not in app_js
     assert "atlaso-legacy-tabulator: #117" not in app_js
@@ -926,7 +926,7 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
         "initializeVlanInterfacesTable": "direct-edit",
         "initializeDnsRecordsTableElement": "direct-edit",
         "initializeDhcpReservationsTable": "direct-edit",
-        "initializeEsxiPxeHostsTable": "direct-edit",
+        "initializeEsxiPxeHostsTable": "wizard-backed",
         "initializeEsxiInstallerIsosTable": "direct-edit",
         "initializeEsxiPxePreviewTable": "read-only",
         "initializeVcfDepotTasksTable": "read-only",
@@ -1332,9 +1332,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=atlaso-network-boot-196-20260731-1" in page.text
+    assert "/static/app.css?v=atlaso-network-boot-224-20260803-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in page.text
-    assert "/static/app.js?v=atlaso-network-boot-219-20260801-1" in page.text
+    assert "/static/app.js?v=atlaso-host-reference-223-20260803-2" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -3652,6 +3652,8 @@ def test_esxi_pxe_ui_create_apply_and_job_redaction(client):
     environments_css = app_css.split(".network-boot-overview > .tab-panels > .tab-panel.active {", 1)[1].split("}", 1)[0]
     assert "height: 100%;" in environments_css
     assert "overflow-y: auto;" in environments_css
+    environment_grid_css = app_css.split(".network-boot-environments-panel > .tabulator-shell {", 1)[1].split("}", 1)[0]
+    assert "flex: 0 0 auto;" in environment_grid_css
     task_history_css = app_css.split(".network-boot-environments-panel > .network-boot-task-history-container {", 1)[1].split("}", 1)[0]
     assert "flex: 0 0 max(420px, calc(100vh - 240px));" in task_history_css
     kickstart_description_css = app_css.split(".kickstart-description-field {", 1)[1].split("}", 1)[0]
@@ -4088,7 +4090,117 @@ def test_esxi_pxe_iso_upload_and_host_selection(client, monkeypatch, tmp_path):
         manifest = payload["units"][0]["config_preview"]
         manifest_payload = json.loads(manifest)
         assert "VMware-VMvisor-Installer-8.0U3.iso" in manifest
-        assert manifest_payload["hosts"][0]["installer_iso_path"] == str(iso_path)
+    assert manifest_payload["hosts"][0]["installer_iso_path"] == str(iso_path)
+
+
+def test_esxi_pxe_host_reference_wizard_and_grid_responses(client):
+    login(client)
+    page = client.get("/network-boot")
+    assert page.status_code == 200
+    assert 'id="network-boot-promote-dialog"' in page.text
+    assert 'data-esxi-host-wizard-title' in page.text
+    assert 'name="host_source"' in page.text
+    assert 'value="discovered">Discovered Network Boot host' in page.text
+    assert 'value="manual">Manual host' in page.text
+    assert 'name="discovered_host_id"' in page.text
+    assert 'name="manual_mac_address"' in page.text
+    assert 'data-atlaso-resource-review' in page.text
+    assert 'id="esxi-pxe-host-fallback-create"' in page.text
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    created = client.post(
+        "/esxi-pxe/hosts",
+        data={
+            "csrf": csrf,
+            "hostname": "esxi-wizard-01",
+            "mac_address": "00:50:56:01:02:03",
+            "ip_address": "",
+            "variables": '{"rack":"r1"}',
+            "enabled": "on",
+        },
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
+    assert created.status_code == 200, created.text
+    created_host = created.json()["host"]
+    assert created_host["hostname"] == "esxi-wizard-01"
+    assert created_host["mac_address"] == "00:50:56:01:02:03"
+    assert created_host["variables"] == {"rack": "r1"}
+    assert created_host["enabled"] is True
+
+    updated = client.post(
+        f"/esxi-pxe/hosts/{created_host['id']}",
+        data={
+            "csrf": csrf,
+            "hostname": "esxi-wizard-02",
+            "mac_address": "00:50:56:01:02:03",
+            "ip_address": "",
+            "variables": "{}",
+        },
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["host"]["hostname"] == "esxi-wizard-02"
+    assert updated.json()["host"]["enabled"] is False
+
+    duplicate = client.post(
+        "/esxi-pxe/hosts",
+        data={
+            "csrf": csrf,
+            "hostname": "esxi-wizard-duplicate",
+            "mac_address": "00:50:56:01:02:03",
+        },
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
+    assert duplicate.status_code == 409
+    assert "already exists" in duplicate.json()["detail"]
+
+    fallback = client.post(
+        f"/esxi-pxe/hosts/{created_host['id']}",
+        data={
+            "csrf": csrf,
+            "hostname": "esxi-wizard-fallback",
+            "mac_address": "00:50:56:01:02:03",
+            "ip_address": "",
+            "variables": "{}",
+            "enabled": "on",
+        },
+        follow_redirects=False,
+    )
+    assert fallback.status_code == 303
+    assert fallback.headers["location"] == "/network-boot#esxi-pxe-hosts-panel"
+
+    app_js = client.get("/static/app.js").text
+    wizard_js = app_js.split("function initializeEsxiHostReferenceWizard()", 1)[1].split(
+        "async function postEsxiHostAction", 1
+    )[0]
+    assert "eligibleDiscoveredHosts" in wizard_js
+    assert "availableMacs" in wizard_js
+    assert 'mode === "edit"' in wizard_js
+    assert 'mode === "promote"' in wizard_js
+    assert "Variables must be a JSON object." in wizard_js
+    assert 'form.elements.enabled.checked = mode === "create"' in wizard_js
+
+
+def test_esxi_pxe_host_reference_wizard_respects_read_only_permissions(client):
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Role, User
+    from atlaso.app.security import roles_to_json
+
+    with SessionLocal() as db:
+        admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
+        admin.role = Role.VIEWER.value
+        admin.roles_json = roles_to_json([Role.VIEWER.value])
+        db.commit()
+
+    login(client)
+    page = client.get("/network-boot")
+    assert page.status_code == 200
+    assert 'id="network-boot-promote-dialog"' not in page.text
+    assert 'id="esxi-pxe-host-fallback-create"' not in page.text
+    assert 'id="esxi-pxe-hosts-table"' in page.text
+    assert 'data-can-write="false"' in page.text
 
 
 def test_esxi_pxe_default_host_settings_update_existing_rows(client, monkeypatch, tmp_path):
@@ -4288,7 +4400,6 @@ def test_network_boot_host_management_report_and_print_contract(client):
     assert "const hostRow = hostsTable?.getRow(selectedHost.id);" in page_initializer
     assert "promoteHost(selectedHost, hostRow?.getElement?.() || null);" in page_initializer
     assert "promoteHost(selectedHost, event.currentTarget);" not in page_initializer
-    assert "kickstart_id: promoteForm.elements.kickstart_id.value || null" in page_initializer
     assert "renderNetworkBootReport(reportArticle, historyItem);" in page_initializer
     assert "atlasoNewTaskId = queued.job_id" in page_initializer
     assert "await refreshTasksPage()" in page_initializer
@@ -4305,6 +4416,11 @@ def test_network_boot_host_management_report_and_print_contract(client):
     )[0]
     assert 'label: "Wake host"' in host_reference
     assert "esxiHostHasValidWakeMac" in host_reference
+    host_wizard = app_js.split("function initializeEsxiHostReferenceWizard", 1)[1].split(
+        "async function postEsxiHostAction", 1
+    )[0]
+    assert "kickstart_id: form.elements.kickstart_id.value ? Number(form.elements.kickstart_id.value) : null" in host_wizard
+    assert 'mode: "promote"' in page_initializer
 
     app_css = client.get("/static/app.css").text
     assert ".network-boot-discovered-panel .tabulator-shell" in app_css
@@ -4761,11 +4877,16 @@ def test_esxi_pxe_multi_zone_host_reservations_and_grid_menu(client):
     host_grid_js = app_js.split("function initializeEsxiPxeHostsTable()", 1)[1].split(
         "function initializeEsxiInstallerIsosTable()", 1
     )[0]
-    assert "rowContextMenu" in host_grid_js
+    assert 'pattern: "wizard-backed"' in host_grid_js
+    assert "rowActions" in host_grid_js
+    assert "Edit host reference" in host_grid_js
+    assert 'target.closest(\'[tabulator-field="enabled"]\')' in host_grid_js
     assert "Delete host reference" in host_grid_js
     assert 'field: "ip_address"' in host_grid_js
     assert 'field: "variables_json"' in host_grid_js
-    assert "<button" not in host_grid_js
+    assert "data-esxi-host-wizard-add" in host_grid_js
+    assert 'editable: (cell) => canWrite && cell.getRow().getData().is_default' in host_grid_js
+    assert 'editable: (cell) => canWrite && !cell.getRow().getData().is_new' in host_grid_js
 
 
 def test_esxi_pxe_boot_settings_migrate_legacy_first_stage_defaults(client):
@@ -7022,7 +7143,6 @@ def test_new_record_rows_lock_defaults_until_required_field(client):
         return app_js.text[start:end]
 
     expected_blocks = [
-        ("initializeEsxiPxeHostsTable", "initializeHostsFileEditor", "hostname"),
         ("initializeRoutesWanRoutesTable", "initializeRoutesWanPoliciesTable", "destination_cidr"),
         ("initializeRoutesWanRoutingTable", "initializeRoutesWanNatTable", "name"),
         ("initializeRoutesWanNatTable", "initializeRoutesWanRoutesTable", "name"),
