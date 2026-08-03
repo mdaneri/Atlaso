@@ -25,8 +25,9 @@ This verified appliance view provides visual orientation before you begin.
 
 Select **+ Domain** to create a forward domain through the guided identity, enablement, and review steps. Each domain
 identity includes a full-width multiline description. The selected domain tab presents that description as its heading
-and keeps the DNS suffix in the supporting line. Each domain tab exposes a direct enablement switch. Disabling a domain
-retains the domain and all scoped records in Atlaso's
+and keeps the DNS suffix in the supporting line. Each domain places its direct enablement switch at the right of the
+**Records**, **Import Hosts**, and **Import Zone File** tab row. Disabling a domain retains the domain and all scoped
+records in Atlaso's
 database while excluding that zone from rendered dnsmasq desired state; at least one domain must remain enabled.
 
 ## Local and authoritative modes
@@ -59,7 +60,8 @@ boundary is why v1 cannot provide authority and recursion on the same address an
 
 ## Generated zone records and serial
 
-Each forward-zone summary and zone-file export shows the generated apex SOA and NS records plus nameserver glue. These
+Each forward-zone summary and zone-file export shows the generated apex SOA and NS records plus nameserver glue. The
+summary uses compact typography so the structural values remain subordinate to the editable records collection. These
 records are structural and read-only; they are not available in the ordinary record-type selector or stored as duplicate
 DNS record rows.
 
@@ -114,5 +116,15 @@ These captures show responsive layouts and useful operational states referenced 
 ![Atlaso DNS page in the clean-appliance responsive viewport.](../assets/screenshots/dns-clean-responsive.webp)
 
 *Figure: DNS in the verified clean-appliance responsive state.*
+
+### Dns: Managed Domain
+
+![Atlaso DNS managed domain showing Records, Import Hosts, and Import Zone File tabs with Domain enabled on the right and compact generated authoritative records above.](../assets/screenshots/dns-domain-tools-desktop.webp)
+
+*Figure: DNS domain tools with the Enabled switch beside the tabs and compact generated authoritative records.*
+
+![Atlaso DNS managed domain in a narrow viewport with Domain enabled aligned to the right of the tool tabs.](../assets/screenshots/dns-domain-tools-narrow.webp)
+
+*Figure: DNS domain tools in the verified narrow viewport.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->

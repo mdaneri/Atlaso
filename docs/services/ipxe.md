@@ -151,6 +151,8 @@ deployment bridge repairs that dependency on older test appliances before
 installing the new wheel. The **Source** column
 names and links to the authoritative release history from which Atlaso resolves
 each download; Inventory Linux points to its independent release history.
+The Boot Environments components table remains visible above the media-task
+history and reports all five fixed catalog rows even when no optional media is installed.
 
 **Download latest** resolves only these fixed signed endpoints:
 
@@ -366,7 +368,8 @@ operator guidance and does not render raw backend exception text.
 Define non-secret custom values in the **Custom Variables** tab before **Installer ISOs**. The final **+ Add custom
 variable** control in the ESXi PXE tablist opens a two-step Definition and Review wizard; double-clicking an existing
 row or choosing **Edit** from its context menu opens the same wizard, while **Remove** deletes the definition after
-confirmation. Each row records the variable name, operator description, and an optional default. Monaco offers those
+confirmation. Each row records the variable name, an operator description on its own full-width row, and an optional
+default. Monaco offers those
 rows as concrete `{{custom.<name>}}` completions. A matching value in a Host References variables JSON object overrides
 the default for that host; when no override exists, Atlaso renders the configured default. Removing a referenced
 definition makes the Kickstart invalid until the definition is restored or the marker is removed. Use vault markers
@@ -375,6 +378,7 @@ instead of custom-variable defaults for credentials or other secrets.
 Token-based automation can manage the same non-secret catalog through
 `/api/v1/esxi-pxe/custom-variables` before creating or updating Kickstarts that use `{{custom.*}}` markers. Catalog
 definitions and defaults are included in settings archives so restored Kickstarts retain their required definitions.
+New Kickstarts default to Enabled in their State step; editing an existing Kickstart preserves its saved state.
 
 > Terminology note: Broadcom documentation uses **ESX** in these 9.x installation pages. Older VMware material often
 > used **ESXi**.
@@ -1498,5 +1502,15 @@ These captures show responsive layouts and useful operational states referenced 
 ![Atlaso Network Boot page in the clean-appliance responsive viewport.](../assets/screenshots/esxi-pxe-clean-responsive.webp)
 
 *Figure: Network Boot in the verified clean-appliance responsive state.*
+
+### Network Boot: Custom Variables
+
+![Atlaso ESXi custom variable wizard showing full-width Description and Default value rows below Name.](../assets/screenshots/esxi-custom-variable-description-desktop.webp)
+
+*Figure: ESXi custom variable wizard with Description on its own full-width row.*
+
+![Atlaso ESXi custom variable wizard in a narrow viewport with full-width Description and Default value fields.](../assets/screenshots/esxi-custom-variable-description-narrow.webp)
+
+*Figure: ESXi custom variable wizard in the verified narrow viewport.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->

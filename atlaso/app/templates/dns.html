@@ -37,14 +37,6 @@
               <span class="muted">{{ group.domain }} · relative hostnames are saved inside this domain</span>
             </div>
             <div class="zone-actions">
-              <form action="/dns/zones/enabled" method="post" data-dns-domain-enabled-form>
-                <input type="hidden" name="csrf" value="{{ csrf_token }}">
-                <input type="hidden" name="domain" value="{{ group.domain }}">
-                <label class="switch-field inline-switch">
-                  <span class="field-label"><span>Domain enabled</span><button class="help-icon" type="button" data-help="Disabled domains and their records remain in Atlaso's database but are excluded from rendered dnsmasq desired state.">i</button></span>
-                  <input class="switch-input" type="checkbox" name="enabled" {{ "checked" if group.enabled else "" }}><span class="switch-track" aria-hidden="true"></span>
-                </label>
-              </form>
               <span class="status-pill muted">{{ group.records | length }} records</span>
               <form
                 action="/dns/zones/delete"
@@ -91,10 +83,20 @@
             </div>
           {% endif %}
 
-          <div class="tab-buttons tool-tabs" role="tablist" aria-label="{{ group.domain }} tools">
-            <button class="tab-button active" type="button" role="tab" data-tab-target="dns-zone-{{ loop.index }}-records" aria-selected="true">Records</button>
-            <button class="tab-button" type="button" role="tab" data-tab-target="dns-zone-{{ loop.index }}-hosts" aria-selected="false">Import Hosts</button>
-            <button class="tab-button" type="button" role="tab" data-tab-target="dns-zone-{{ loop.index }}-file" aria-selected="false">Import Zone File</button>
+          <div class="dns-zone-tools-head">
+            <div class="tab-buttons tool-tabs" role="tablist" aria-label="{{ group.domain }} tools">
+              <button class="tab-button active" type="button" role="tab" data-tab-target="dns-zone-{{ loop.index }}-records" aria-selected="true">Records</button>
+              <button class="tab-button" type="button" role="tab" data-tab-target="dns-zone-{{ loop.index }}-hosts" aria-selected="false">Import Hosts</button>
+              <button class="tab-button" type="button" role="tab" data-tab-target="dns-zone-{{ loop.index }}-file" aria-selected="false">Import Zone File</button>
+            </div>
+            <form action="/dns/zones/enabled" method="post" data-dns-domain-enabled-form>
+              <input type="hidden" name="csrf" value="{{ csrf_token }}">
+              <input type="hidden" name="domain" value="{{ group.domain }}">
+              <label class="switch-field inline-switch">
+                <span class="field-label"><span>Domain enabled</span><button class="help-icon" type="button" data-help="Disabled domains and their records remain in Atlaso's database but are excluded from rendered dnsmasq desired state.">i</button></span>
+                <input class="switch-input" type="checkbox" name="enabled" {{ "checked" if group.enabled else "" }}><span class="switch-track" aria-hidden="true"></span>
+              </label>
+            </form>
           </div>
 
           <div class="tab-panels zone-tool-panels">

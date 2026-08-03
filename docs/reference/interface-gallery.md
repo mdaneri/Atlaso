@@ -51,30 +51,6 @@ Figure: Audit Events in the verified clean-appliance desktop state.
 
 Figure: Audit Events in the verified clean-appliance responsive state.
 
-## Authentication: Oidc Group Mappings
-
-Route: `/openid-connect#oidc-group-mappings`
-
-![Atlaso OpenID Connect page showing the external group mapping grid at the desktop viewport.](../assets/screenshots/authentication-group-mappings-desktop.webp)
-
-Figure: OIDC external group mappings in the desktop direct-edit collection.
-
-![Atlaso OpenID Connect page showing the external group mapping grid at the responsive viewport.](../assets/screenshots/authentication-group-mappings-responsive.webp)
-
-Figure: OIDC external group mappings in the responsive direct-edit collection.
-
-## Authentication: Oidc Provider
-
-Route: `/openid-connect#oidc-provider`
-
-![Atlaso OpenID Connect provider status with right-column service settings.](../assets/screenshots/authentication-clean-desktop.webp)
-
-Figure: OIDC provider status and issuer information with service settings in the right column.
-
-![Atlaso OIDC provider settings stacked above validation and published identity URLs at a narrow viewport.](../assets/screenshots/authentication-clean-responsive.webp)
-
-Figure: OIDC provider settings with validation and published identity URLs stacked at the responsive viewport.
-
 ## Automation
 
 Route: `/automation`
@@ -171,6 +147,18 @@ Figure: DHCP in the verified clean-appliance desktop state.
 
 Figure: DHCP in the verified clean-appliance responsive state.
 
+## Dhcp: Ip Zone Services
+
+Route: `/dhcp#ip-zone-services`
+
+![Atlaso DHCP IP zone wizard Services step showing a framed Lease time group and aligned Domain, DNS server, and NTP server fields.](../assets/screenshots/dhcp-ip-zone-wizard-services-desktop.webp)
+
+Figure: DHCP IP zone Services step with aligned service fields and a framed Lease time group.
+
+![Atlaso DHCP IP zone wizard Services step in a narrow viewport without page overflow.](../assets/screenshots/dhcp-ip-zone-wizard-services-narrow.webp)
+
+Figure: DHCP IP zone Services step in the verified narrow viewport.
+
 ## Dns
 
 Route: `/dns`
@@ -186,6 +174,18 @@ Figure: DNS in the verified clean-appliance desktop state.
 ![Atlaso DNS page in the clean-appliance responsive viewport.](../assets/screenshots/dns-clean-responsive.webp)
 
 Figure: DNS in the verified clean-appliance responsive state.
+
+## Dns: Managed Domain
+
+Route: `/dns#managed-domain`
+
+![Atlaso DNS managed domain showing Records, Import Hosts, and Import Zone File tabs with Domain enabled on the right and compact generated authoritative records above.](../assets/screenshots/dns-domain-tools-desktop.webp)
+
+Figure: DNS domain tools with the Enabled switch beside the tabs and compact generated authoritative records.
+
+![Atlaso DNS managed domain in a narrow viewport with Domain enabled aligned to the right of the tool tabs.](../assets/screenshots/dns-domain-tools-narrow.webp)
+
+Figure: DNS domain tools in the verified narrow viewport.
 
 ## Esx Storage
 
@@ -234,6 +234,18 @@ Figure: Managed LDAP in the verified clean-appliance desktop state.
 ![Atlaso Managed LDAP page in the clean-appliance responsive viewport.](../assets/screenshots/ldap-clean-responsive.webp)
 
 Figure: Managed LDAP in the verified clean-appliance responsive state.
+
+## Ldap: Groups
+
+Route: `/ldap#groups`
+
+![Atlaso Managed LDAP group wizard Members step showing selectable organization users and nested groups.](../assets/screenshots/managed-ldap-group-members-desktop.webp)
+
+Figure: Managed LDAP group wizard populated with selectable users and nested groups.
+
+![Atlaso Managed LDAP group wizard Members step in a narrow viewport with populated membership options.](../assets/screenshots/managed-ldap-group-members-narrow.webp)
+
+Figure: Managed LDAP group Members step in the verified narrow viewport.
 
 ## Login
 
@@ -287,6 +299,18 @@ Figure: Network Boot in the verified clean-appliance desktop state.
 
 Figure: Network Boot in the verified clean-appliance responsive state.
 
+## Network Boot: Custom Variables
+
+Route: `/network-boot#custom-variables`
+
+![Atlaso ESXi custom variable wizard showing full-width Description and Default value rows below Name.](../assets/screenshots/esxi-custom-variable-description-desktop.webp)
+
+Figure: ESXi custom variable wizard with Description on its own full-width row.
+
+![Atlaso ESXi custom variable wizard in a narrow viewport with full-width Description and Default value fields.](../assets/screenshots/esxi-custom-variable-description-narrow.webp)
+
+Figure: ESXi custom variable wizard in the verified narrow viewport.
+
 ## Ntp
 
 Route: `/ntp`
@@ -298,6 +322,30 @@ Figure: NTP and NTS in the verified clean-appliance desktop state.
 ![Atlaso NTP and NTS page in the clean-appliance responsive viewport.](../assets/screenshots/ntp-clean-responsive.webp)
 
 Figure: NTP and NTS in the verified clean-appliance responsive state.
+
+## Openid Connect: Oidc Group Mappings
+
+Route: `/openid-connect#oidc-group-mappings`
+
+![Atlaso OpenID Connect page showing the external group mapping grid at the desktop viewport.](../assets/screenshots/authentication-group-mappings-desktop.webp)
+
+Figure: OIDC external group mappings in the desktop direct-edit collection.
+
+![Atlaso OpenID Connect page showing the external group mapping grid at the responsive viewport.](../assets/screenshots/authentication-group-mappings-responsive.webp)
+
+Figure: OIDC external group mappings in the responsive direct-edit collection.
+
+## Openid Connect: Oidc Provider
+
+Route: `/openid-connect#oidc-provider`
+
+![Atlaso OpenID Connect provider status with right-column service settings.](../assets/screenshots/authentication-clean-desktop.webp)
+
+Figure: OIDC provider status and issuer information with service settings in the right column.
+
+![Atlaso OpenID Connect provider settings stacked with status and issuer information at a narrow viewport.](../assets/screenshots/authentication-clean-responsive.webp)
+
+Figure: OIDC provider settings with status and issuer information stacked at the responsive viewport.
 
 ## Physical Interfaces
 
@@ -399,13 +447,13 @@ Figure: Tasks in the verified clean-appliance responsive state.
 
 Route: `/terminal`
 
-![Atlaso Web terminal page in the clean-appliance desktop viewport.](../assets/screenshots/terminal-clean-desktop.webp)
+![Atlaso Web terminal connected as the admin user in the desktop viewport.](../assets/screenshots/terminal-clean-desktop.webp)
 
-Figure: Web terminal in the verified clean-appliance desktop state.
+Figure: Web terminal connected to the verified Photon appliance in the desktop viewport.
 
-![Atlaso Web terminal page in the clean-appliance responsive viewport.](../assets/screenshots/terminal-clean-responsive.webp)
+![Atlaso Web terminal connected as the admin user in the responsive viewport.](../assets/screenshots/terminal-clean-responsive.webp)
 
-Figure: Web terminal in the verified clean-appliance responsive state.
+Figure: Web terminal connected to the verified Photon appliance in the responsive viewport.
 
 ## Users
 
