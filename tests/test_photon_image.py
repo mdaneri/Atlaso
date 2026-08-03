@@ -685,6 +685,7 @@ def test_packer_templates_stage_shared_appliance_assets():
 def test_vmware_packer_build_uses_two_compacted_payload_disks():
     template = Path("image/vmware-workstation/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
     kickstart = Path("image/hyperv/http/photon-ks.json.pkrtpl").read_text(encoding="utf-8")
+    wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(encoding="utf-8")
 
     assert 'disk_size            = 40960' in template
     assert 'disk_additional_size = [20480]' in template
@@ -692,6 +693,10 @@ def test_vmware_packer_build_uses_two_compacted_payload_disks():
     assert 'skip_compaction      = false' in template
     assert '"ATLASO_SYSTEM_CONTENT_DISK=true"' in template
     assert '"disk": "/dev/sda"' in kickstart
+    assert "Write-AtlasoVmwareBuildProvenance" in wrapper
+    assert "tracked_source_dirty" in wrapper
+    assert "Expected exactly two Packer payload VMDKs" in wrapper
+    assert "Get-FileHash -LiteralPath $vmx.FullName -Algorithm SHA256" in wrapper
 
 
 def test_photon_kickstart_uses_deterministic_build_time_sshd_service():

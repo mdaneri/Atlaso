@@ -39,6 +39,36 @@ def completed(
     return subprocess.CompletedProcess(command, returncode, stdout, stderr)
 
 
+def write_valid_vmware_ovf(path: Path, os_disk: str, tools_disk: str) -> None:
+    path.write_text(
+        f"""<?xml version="1.0" encoding="UTF-8"?>
+<Envelope xmlns="http://schemas.dmtf.org/ovf/envelope/1"
+          xmlns:ovf="http://schemas.dmtf.org/ovf/envelope/1"
+          xmlns:rasd="http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_ResourceAllocationSettingData">
+  <References>
+    <File ovf:id="file1" ovf:href="{os_disk}"/>
+    <File ovf:id="file2" ovf:href="{tools_disk}"/>
+  </References>
+  <DiskSection>
+    <Disk ovf:diskId="os" ovf:fileRef="file1" ovf:format="vmdk"/>
+    <Disk ovf:diskId="tools" ovf:fileRef="file2" ovf:format="vmdk"/>
+    <Disk ovf:diskId="atlaso-depot" ovf:capacity="500" ovf:capacityAllocationUnits="byte * 2^30" ovf:format="vmdk"/>
+    <Disk ovf:diskId="atlaso-backups" ovf:capacity="500" ovf:capacityAllocationUnits="byte * 2^30" ovf:format="vmdk"/>
+  </DiskSection>
+  <VirtualSystem ovf:id="atlaso">
+    <VirtualHardwareSection>
+      <Item><rasd:ResourceType>17</rasd:ResourceType><rasd:AddressOnParent>0</rasd:AddressOnParent><rasd:HostResource>ovf:/disk/os</rasd:HostResource><rasd:ElementName>Hard disk 1 - Photon OS</rasd:ElementName></Item>
+      <Item><rasd:ResourceType>17</rasd:ResourceType><rasd:AddressOnParent>1</rasd:AddressOnParent><rasd:HostResource>ovf:/disk/tools</rasd:HostResource><rasd:ElementName>Hard disk 2 - Atlaso System Content</rasd:ElementName></Item>
+      <Item><rasd:ResourceType>17</rasd:ResourceType><rasd:AddressOnParent>2</rasd:AddressOnParent><rasd:HostResource>ovf:/disk/atlaso-depot</rasd:HostResource><rasd:ElementName>Hard disk 3 - VCF Offline Depot</rasd:ElementName></Item>
+      <Item><rasd:ResourceType>17</rasd:ResourceType><rasd:AddressOnParent>3</rasd:AddressOnParent><rasd:HostResource>ovf:/disk/atlaso-backups</rasd:HostResource><rasd:ElementName>Hard disk 4 - VCF Backups</rasd:ElementName></Item>
+    </VirtualHardwareSection>
+  </VirtualSystem>
+</Envelope>
+""",
+        encoding="utf-8",
+    )
+
+
 def release_fixture(
     tag: str,
     commit: str,
@@ -108,9 +138,9 @@ def test_vmware_release_assets_require_two_manifest_verified_vmdks(tmp_path: Pat
     os_disk = tmp_path / "Atlaso-Photon-disk1.vmdk"
     tools_disk = tmp_path / "Atlaso-Photon-disk2.vmdk"
     manifest = tmp_path / "Atlaso-Photon.mf"
-    ovf.write_text("descriptor\n", encoding="utf-8")
     os_disk.write_bytes(b"os")
     tools_disk.write_bytes(b"tools")
+    write_valid_vmware_ovf(ovf, os_disk.name, tools_disk.name)
     manifest.write_text(
         "\n".join(
             f"SHA256({path.name})= {publish_release.sha256(path)}"
@@ -128,14 +158,28 @@ def test_vmware_release_assets_require_two_manifest_verified_vmdks(tmp_path: Pat
         publish_release.verify_vmware_release_assets(tmp_path, names)
 
 
+def test_vmware_release_assets_reject_invalid_empty_disk_topology(tmp_path: Path):
+    ovf = tmp_path / "Atlaso-Photon.ovf"
+    os_disk = tmp_path / "Atlaso-Photon-disk1.vmdk"
+    tools_disk = tmp_path / "Atlaso-Photon-disk2.vmdk"
+    os_disk.write_bytes(b"os")
+    tools_disk.write_bytes(b"tools")
+    write_valid_vmware_ovf(ovf, os_disk.name, tools_disk.name)
+    ovf.write_text(ovf.read_text(encoding="utf-8").replace('ovf:capacity="500"', 'ovf:capacity="499"', 1), encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="not an empty 500 GiB disk"):
+        publish_release.verify_vmware_ovf_topology(ovf, {ovf.name, os_disk.name, tools_disk.name})
+
+
 def test_vmware_release_assets_accept_byte_equivalent_ova(tmp_path: Path):
     ovf = tmp_path / "Atlaso-Photon.ovf"
     os_disk = tmp_path / "Atlaso-Photon-disk1.vmdk"
     tools_disk = tmp_path / "Atlaso-Photon-disk2.vmdk"
     manifest = tmp_path / "Atlaso-Photon.mf"
     ova = tmp_path / "Atlaso-Photon.ova"
-    for path, content in ((ovf, b"descriptor"), (os_disk, b"os"), (tools_disk, b"tools")):
+    for path, content in ((os_disk, b"os"), (tools_disk, b"tools")):
         path.write_bytes(content)
+    write_valid_vmware_ovf(ovf, os_disk.name, tools_disk.name)
     manifest.write_text(
         "\n".join(
             f"SHA256({path.name})= {publish_release.sha256(path)}"
@@ -169,9 +213,9 @@ def test_release_recovery_accepts_manifest_verified_vmware_assets(
     os_disk = remote / "Atlaso-Photon-disk1.vmdk"
     tools_disk = remote / "Atlaso-Photon-disk2.vmdk"
     manifest = remote / "Atlaso-Photon.mf"
-    ovf.write_bytes(b"descriptor")
     os_disk.write_bytes(b"os")
     tools_disk.write_bytes(b"tools")
+    write_valid_vmware_ovf(ovf, os_disk.name, tools_disk.name)
     manifest.write_text(
         "\n".join(
             f"SHA256({path.name})= {publish_release.sha256(path)}"

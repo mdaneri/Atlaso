@@ -85,7 +85,8 @@ function Resolve-GhPath {
 function Assert-AtlasoReleaseProvenance {
     param(
         [string]$RepoRoot,
-        [string]$Tag
+        [string]$Tag,
+        [string]$SourceVmxPath
     )
 
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
@@ -108,6 +109,43 @@ function Assert-AtlasoReleaseProvenance {
     if ($tagCommit -ne $headCommit) {
         throw "Release tag $Tag identifies $tagCommit, but the exported image checkout is $headCommit."
     }
+
+    $provenancePath = [System.IO.Path]::ChangeExtension($SourceVmxPath, 'provenance.json')
+    if (-not (Test-Path -LiteralPath $provenancePath -PathType Leaf)) {
+        throw "VMware build provenance is missing: $provenancePath"
+    }
+    try {
+        $provenance = Get-Content -LiteralPath $provenancePath -Raw | ConvertFrom-Json
+    }
+    catch {
+        throw "VMware build provenance is invalid: $($_.Exception.Message)"
+    }
+    if ($provenance.schema_version -ne 1 -or
+        $provenance.source_commit -ne $headCommit -or
+        [bool]$provenance.tracked_source_dirty) {
+        throw 'VMware build provenance does not identify this exact clean release commit.'
+    }
+
+    $vmx = Get-Item -LiteralPath $SourceVmxPath
+    if ($provenance.vmx.name -ne $vmx.Name -or
+        [long]$provenance.vmx.bytes -ne $vmx.Length -or
+        $provenance.vmx.sha256 -ne (Get-FileHash -LiteralPath $vmx.FullName -Algorithm SHA256).Hash.ToLowerInvariant()) {
+        throw 'VMware build provenance does not match the source VMX bytes.'
+    }
+    $vmdks = @(Get-ChildItem -LiteralPath $vmx.DirectoryName -Filter '*.vmdk' -File | Sort-Object Name)
+    $recordedVmdks = @($provenance.vmdks)
+    if ($vmdks.Count -ne 2 -or $recordedVmdks.Count -ne 2) {
+        throw 'VMware build provenance must identify exactly two payload VMDKs.'
+    }
+    foreach ($vmdk in $vmdks) {
+        $record = $recordedVmdks | Where-Object { $_.name -eq $vmdk.Name } | Select-Object -First 1
+        if (-not $record -or
+            [long]$record.bytes -ne $vmdk.Length -or
+            $record.sha256 -ne (Get-FileHash -LiteralPath $vmdk.FullName -Algorithm SHA256).Hash.ToLowerInvariant()) {
+            throw "VMware build provenance does not match payload VMDK $($vmdk.Name)."
+        }
+    }
+    return $provenance
 }
 
 function Publish-AtlasoReleaseAssets {
@@ -117,10 +155,27 @@ function Publish-AtlasoReleaseAssets {
         [string]$RepositoryName,
         [string]$OvfDirectory,
         [string]$OvaPath,
+        [string]$ExpectedCommit,
         [long]$MaximumBytes
     )
 
-    $repositoryArguments = if ([string]::IsNullOrWhiteSpace($RepositoryName)) { @() } else { @('--repo', $RepositoryName) }
+    $effectiveRepository = $RepositoryName
+    if ([string]::IsNullOrWhiteSpace($effectiveRepository)) {
+        $effectiveRepository = [string](& $GhPath repo view --json nameWithOwner --jq '.nameWithOwner')
+        $effectiveRepository = $effectiveRepository.Trim()
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($effectiveRepository)) {
+            throw 'Could not resolve the destination GitHub repository.'
+        }
+    }
+    $repositoryArguments = @('--repo', $effectiveRepository)
+    $remoteTagCommit = [string](& $GhPath api "repos/$effectiveRepository/commits/$Tag" --jq '.sha')
+    $remoteTagCommit = $remoteTagCommit.Trim()
+    if ($LASTEXITCODE -ne 0 -or $remoteTagCommit -notmatch '^[0-9a-f]{40}$') {
+        throw "Could not resolve release tag $Tag in destination repository $effectiveRepository."
+    }
+    if ($remoteTagCommit -ne $ExpectedCommit) {
+        throw "Destination release tag $Tag identifies $remoteTagCommit, not exported image commit $ExpectedCommit."
+    }
     $existingAssetNames = @(& $GhPath release view $Tag --json assets --jq '.assets[].name' @repositoryArguments)
     if ($LASTEXITCODE -ne 0) {
         throw "GitHub Release $Tag was not found or is not accessible."
@@ -871,10 +926,11 @@ function Get-OvfDescriptorPath {
 }
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
-if ($ReleaseTag) {
-    Assert-AtlasoReleaseProvenance -RepoRoot $repoRoot -Tag $ReleaseTag
-}
 $resolvedSourceVmx = (Resolve-Path -LiteralPath $SourceVmxPath).Path
+$releaseProvenance = $null
+if ($ReleaseTag) {
+    $releaseProvenance = Assert-AtlasoReleaseProvenance -RepoRoot $repoRoot -Tag $ReleaseTag -SourceVmxPath $resolvedSourceVmx
+}
 if (-not $OutputDirectory) {
     $OutputDirectory = Join-Path $repoRoot "image\vmware-workstation\ovf\$Name"
 }
@@ -923,6 +979,7 @@ if ($ReleaseTag) {
         -RepositoryName $Repository `
         -OvfDirectory $ovfPackageDirectory `
         -OvaPath $ovaPath `
+        -ExpectedCommit $releaseProvenance.source_commit `
         -MaximumBytes $MaximumReleaseAssetBytes
 }
 

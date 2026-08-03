@@ -359,6 +359,10 @@ def test_vmware_ovf_export_and_image_plumbing_are_present():
     assert "Assert-AtlasoReleaseProvenance" in export_script
     assert "Release publication requires a clean tracked worktree" in export_script
     assert 'rev-parse "$Tag^{}"' in export_script
+    assert "VMware build provenance does not match the source VMX bytes" in export_script
+    assert "VMware build provenance must identify exactly two payload VMDKs" in export_script
+    assert 'api "repos/$effectiveRepository/commits/$Tag"' in export_script
+    assert "Destination release tag $Tag identifies" in export_script
     assert "Skipping OVA release asset" in export_script
     assert "--clobber" not in export_script
     assert "release upload $Tag @uploadAssets @repositoryArguments" in export_script

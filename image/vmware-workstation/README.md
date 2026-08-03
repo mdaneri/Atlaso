@@ -90,7 +90,9 @@ Packer creates a 40 GiB Photon OS disk and a sparse 20 GiB Atlaso system-content
 disk as `ATLASO_SYSTEM`, mounts it by UUID, and places `/opt/atlaso` plus the appliance-wide PowerShell modules there.
 The two 500 GiB application data disks remain empty OVF declarations, so the reusable builder contains no large blank
 data-disk payloads. The build removes `python3-devel` after compatibility validation, clears build caches and staged
-sources, trims both filesystems, and lets Packer compact both payload VMDKs.
+sources, trims both filesystems, and lets Packer compact both payload VMDKs. After a successful build, the wrapper writes
+a provenance JSON file beside the VMX containing the exact source commit, tracked-source state, and SHA-256 hashes and
+sizes for the VMX and both VMDKs.
 
 ## Networking
 
@@ -197,8 +199,9 @@ Every OVF asset is checked against GitHub's less-than-2-GiB per-asset boundary b
 and both payload VMDKs are uploaded as one set. A retry verifies every existing asset byte-for-byte and refuses partial
 or different assets instead of overwriting them. The OVA is also uploaded when it fits; an oversized OVA is omitted
 with a warning because it combines both otherwise deployable VMDKs into one archive. Publication also requires a clean
-checkout whose `HEAD` is the locally available annotated release tag, preventing assets built from another commit from
-being attached to the release.
+checkout whose `HEAD` is the locally available annotated release tag, a byte-matching build provenance record, and a
+destination-repository tag resolving to the same commit. Release recovery parses the OVF and revalidates the two
+file-backed payload disks plus the two empty 500 GiB data disks before accepting existing assets.
 
 The OVF properties are intended for vSphere/ESXi import:
 
