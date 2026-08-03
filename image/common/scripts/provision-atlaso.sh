@@ -22,6 +22,8 @@ ATLASO_PIP_GLOBAL_INDEX="${ATLASO_PIP_GLOBAL_INDEX:-}"
 ATLASO_PIP_GLOBAL_INDEX_URL="${ATLASO_PIP_GLOBAL_INDEX_URL:-}"
 ATLASO_POWERCLI_MODULE_SOURCE="${ATLASO_POWERCLI_MODULE_SOURCE:-}"
 ATLASO_POWERCLI_VERSION="${ATLASO_POWERCLI_VERSION:-9.1.0.25380678}"
+ATLASO_SYSTEM_CONTENT_DISK="${ATLASO_SYSTEM_CONTENT_DISK:-false}"
+ATLASO_SYSTEM_CONTENT_MOUNT="${ATLASO_SYSTEM_CONTENT_MOUNT:-/var/lib/atlaso-system}"
 BOOTSTRAP_USERNAME="${ATLASO_BOOTSTRAP_ADMIN_USERNAME:-admin}"
 BOOTSTRAP_PASSWORD="${ATLASO_BOOTSTRAP_ADMIN_PASSWORD:-}"
 BOOTSTRAP_SHELL="${ATLASO_BOOTSTRAP_ADMIN_SHELL:-/usr/bin/pwsh}"
@@ -63,6 +65,79 @@ run_tdnf() {
     tdnf -y "$@"
 }
 
+report_image_footprint() {
+  label="$1"
+  log_step "$label image footprint"
+  for path in / /usr "$ATLASO_HOME" /usr/local/share/powershell /var/cache; do
+    if [ -e "$path" ]; then
+      du -x -sh "$path" 2>/dev/null || true
+    fi
+  done
+  printf 'Largest installed packages (bytes):\n'
+  rpm -qa --queryformat '%{SIZE}\t%{NAME}\n' 2>/dev/null | sort -nr | head -n 15 || true
+}
+
+prepare_system_content_disk() {
+  if [ "$ATLASO_SYSTEM_CONTENT_DISK" != "true" ]; then
+    return
+  fi
+
+  log_step "preparing required Atlaso system-content disk"
+  root_source="$(findmnt -n -o SOURCE /)"
+  root_disk_name="$(lsblk -no PKNAME "$root_source" 2>/dev/null | awk 'NF { print; exit }')"
+  if [ -z "$root_disk_name" ]; then
+    root_disk_name="$(basename "$root_source")"
+  fi
+
+  candidate_count=0
+  system_disk=""
+  for candidate in $(lsblk -dn -o NAME,TYPE | awk '$2 == "disk" { print "/dev/" $1 }'); do
+    if [ "$(basename "$candidate")" = "$root_disk_name" ]; then
+      continue
+    fi
+    if [ "$(lsblk -nr -o TYPE "$candidate" | wc -l)" -ne 1 ]; then
+      continue
+    fi
+    if blkid "$candidate" >/dev/null 2>&1; then
+      continue
+    fi
+    candidate_count=$((candidate_count + 1))
+    system_disk="$candidate"
+  done
+
+  if [ "$candidate_count" -ne 1 ]; then
+    echo "Expected exactly one additional blank disk for Atlaso system content; found $candidate_count." >&2
+    exit 2
+  fi
+
+  mkfs.ext4 -F -L ATLASO_SYSTEM "$system_disk"
+  system_uuid="$(blkid -s UUID -o value "$system_disk")"
+  if [ -z "$system_uuid" ]; then
+    echo "Atlaso system-content disk did not expose a filesystem UUID after formatting." >&2
+    exit 2
+  fi
+
+  install -d -o root -g root -m 0755 "$ATLASO_SYSTEM_CONTENT_MOUNT"
+  printf 'UUID=%s %s ext4 defaults 0 2\n' "$system_uuid" "$ATLASO_SYSTEM_CONTENT_MOUNT" >>/etc/fstab
+  mount "$ATLASO_SYSTEM_CONTENT_MOUNT"
+
+  install -d -o root -g root -m 0755 \
+    "$ATLASO_SYSTEM_CONTENT_MOUNT/opt-atlaso" \
+    "$ATLASO_SYSTEM_CONTENT_MOUNT/powershell-modules" \
+    "$ATLASO_HOME" \
+    /usr/local/share/powershell/Modules
+  printf '%s %s none bind,x-systemd.requires-mounts-for=%s 0 0\n' \
+    "$ATLASO_SYSTEM_CONTENT_MOUNT/opt-atlaso" "$ATLASO_HOME" "$ATLASO_SYSTEM_CONTENT_MOUNT" >>/etc/fstab
+  printf '%s %s none bind,x-systemd.requires-mounts-for=%s 0 0\n' \
+    "$ATLASO_SYSTEM_CONTENT_MOUNT/powershell-modules" /usr/local/share/powershell/Modules "$ATLASO_SYSTEM_CONTENT_MOUNT" >>/etc/fstab
+  mount --bind "$ATLASO_SYSTEM_CONTENT_MOUNT/opt-atlaso" "$ATLASO_HOME"
+  mount --bind "$ATLASO_SYSTEM_CONTENT_MOUNT/powershell-modules" /usr/local/share/powershell/Modules
+
+  findmnt -rn -S "UUID=$system_uuid" -T "$ATLASO_SYSTEM_CONTENT_MOUNT" >/dev/null
+  findmnt -rn -T "$ATLASO_HOME" >/dev/null
+  findmnt -rn -T /usr/local/share/powershell/Modules >/dev/null
+}
+
 if [ -z "$BOOTSTRAP_PASSWORD" ]; then
   echo "ATLASO_BOOTSTRAP_ADMIN_PASSWORD is required for appliance provisioning" >&2
   exit 2
@@ -98,6 +173,8 @@ case "$ATLASO_GUEST_PLATFORM" in
 esac
 run_tdnf "Photon appliance package installation" \
   install python3 python3-pip python3-devel python3-virtualenv python3-curses python3-ntp sudo openssh-server curl rsync tar gzip shadow e2fsprogs sqlite procps-ng gnupg $GUEST_INTEGRATION_PACKAGES nftables dnsmasq ntpsec nfs-utils rpcbind openldap openldap-servers ipxe syslinux nginx powershell
+
+prepare_system_content_disk
 
 log_step "installing VCF PowerCLI $ATLASO_POWERCLI_VERSION"
 export ATLASO_POWERCLI_VERSION
@@ -645,3 +722,27 @@ systemctl disable --now iptables || true
 
 log_step "running Photon compatibility check"
 "$ATLASO_HOME/.venv/bin/python" "$ATLASO_HOME/scripts/check_photon_compatibility.py"
+
+report_image_footprint "pre-cleanup"
+
+log_step "removing build-only packages and caches"
+run_tdnf "Build-only package removal" remove python3-devel
+command -v python3 >/dev/null
+command -v pwsh >/dev/null
+command -v vmtoolsd >/dev/null 2>&1 || [ "$ATLASO_GUEST_PLATFORM" != "vmware" ]
+"$ATLASO_HOME/.venv/bin/python" -c 'import atlaso'
+pwsh -NoLogo -NoProfile -NonInteractive -Command \
+  '$ErrorActionPreference = "Stop"; Import-Module VCF.PowerCLI -RequiredVersion $env:ATLASO_POWERCLI_VERSION -Force'
+
+tdnf -y clean all || true
+rm -rf /var/cache/tdnf/* "$PIP_CACHE_DIR" /root/.cache/pip \
+  /root/.cache/powershell /root/.local/share/powershell/PowerShellGet
+rm -rf "$ATLASO_SRC"
+journalctl --rotate 2>/dev/null || true
+journalctl --vacuum-time=1s 2>/dev/null || true
+sync
+if ! fstrim -av; then
+  echo "Warning: filesystem discard is unavailable; Packer disk compaction will still run." >&2
+fi
+
+report_image_footprint "post-cleanup"

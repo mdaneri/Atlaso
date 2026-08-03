@@ -5,6 +5,10 @@ param(
     [string]$Name = 'Atlaso-Photon',
     [string]$OvfToolPath = '',
     [string]$TarPath = '',
+    [string]$ReleaseTag = '',
+    [string]$Repository = '',
+    [ValidateRange(1, 2147483647)]
+    [long]$MaximumReleaseAssetBytes = 2147483647,
     [switch]$NoOva,
     [switch]$Force
 )
@@ -68,6 +72,120 @@ function Resolve-TarPath {
         return $fallback
     }
     throw 'tar.exe was not found. Pass -NoOva to keep only the OVF folder.'
+}
+
+function Resolve-GhPath {
+    $command = Get-Command gh -ErrorAction SilentlyContinue
+    if (-not $command) {
+        throw 'gh was not found. Install GitHub CLI before using -ReleaseTag.'
+    }
+    return $command.Source
+}
+
+function Assert-AtlasoReleaseProvenance {
+    param(
+        [string]$RepoRoot,
+        [string]$Tag
+    )
+
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        throw 'git was not found. Release publication requires an exact clean tag checkout.'
+    }
+    $dirtyPaths = @(& git -C $RepoRoot status --porcelain --untracked-files=no)
+    if ($LASTEXITCODE -ne 0 -or $dirtyPaths.Count -ne 0) {
+        throw 'Release publication requires a clean tracked worktree.'
+    }
+    $headCommit = [string](& git -C $RepoRoot rev-parse HEAD)
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Could not resolve the current repository commit.'
+    }
+    $headCommit = $headCommit.Trim()
+    $tagCommit = [string](& git -C $RepoRoot rev-parse "$Tag^{}" 2>$null)
+    $tagCommit = $tagCommit.Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($tagCommit)) {
+        throw "Release tag $Tag is not available locally. Fetch the exact tag before publishing."
+    }
+    if ($tagCommit -ne $headCommit) {
+        throw "Release tag $Tag identifies $tagCommit, but the exported image checkout is $headCommit."
+    }
+}
+
+function Publish-AtlasoReleaseAssets {
+    param(
+        [string]$GhPath,
+        [string]$Tag,
+        [string]$RepositoryName,
+        [string]$OvfDirectory,
+        [string]$OvaPath,
+        [long]$MaximumBytes
+    )
+
+    $repositoryArguments = if ([string]::IsNullOrWhiteSpace($RepositoryName)) { @() } else { @('--repo', $RepositoryName) }
+    $existingAssetNames = @(& $GhPath release view $Tag --json assets --jq '.assets[].name' @repositoryArguments)
+    if ($LASTEXITCODE -ne 0) {
+        throw "GitHub Release $Tag was not found or is not accessible."
+    }
+
+    $ovfAssets = @(Get-ChildItem -LiteralPath $OvfDirectory -File | Sort-Object Name)
+    if ($ovfAssets.Count -eq 0) {
+        throw "No OVF release assets were found under $OvfDirectory."
+    }
+    foreach ($asset in $ovfAssets) {
+        if ($asset.Length -gt $MaximumBytes) {
+            throw "OVF release asset $($asset.Name) is $($asset.Length) bytes, exceeding the $MaximumBytes-byte GitHub asset limit."
+        }
+    }
+
+    $uploadAssets = @($ovfAssets.FullName)
+    if (-not [string]::IsNullOrWhiteSpace($OvaPath) -and (Test-Path -LiteralPath $OvaPath -PathType Leaf)) {
+        $ova = Get-Item -LiteralPath $OvaPath
+        if ($ova.Length -le $MaximumBytes) {
+            $uploadAssets += $ova.FullName
+        }
+        else {
+            Write-Warning "Skipping OVA release asset $($ova.Name): $($ova.Length) bytes exceeds the $MaximumBytes-byte GitHub asset limit. The OVF package remains directly deployable."
+        }
+    }
+
+    $uploadAssetNames = @($uploadAssets | ForEach-Object { [System.IO.Path]::GetFileName($_) })
+    $existingUploadAssets = @($uploadAssetNames | Where-Object { $_ -in $existingAssetNames })
+    if ($existingUploadAssets.Count -ne 0) {
+        if ($existingUploadAssets.Count -ne $uploadAssetNames.Count) {
+            throw "GitHub Release $Tag contains only part of the Atlaso OVF asset set; refusing a non-idempotent upload."
+        }
+        $verificationDirectory = Join-Path ([System.IO.Path]::GetTempPath()) "atlaso-ovf-release-$([guid]::NewGuid().ToString('N'))"
+        New-Item -ItemType Directory -Path $verificationDirectory | Out-Null
+        try {
+            foreach ($assetName in $uploadAssetNames) {
+                & $GhPath release download $Tag --pattern $assetName --dir $verificationDirectory @repositoryArguments
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Could not download existing GitHub release asset $assetName for byte verification."
+                }
+            }
+            foreach ($assetPath in $uploadAssets) {
+                $assetName = [System.IO.Path]::GetFileName($assetPath)
+                $existingPath = Join-Path $verificationDirectory $assetName
+                if (-not (Test-Path -LiteralPath $existingPath -PathType Leaf) -or
+                    (Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $existingPath -Algorithm SHA256).Hash) {
+                    throw "GitHub Release $Tag already contains different bytes for $assetName."
+                }
+            }
+        }
+        finally {
+            Remove-Item -LiteralPath $verificationDirectory -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        Write-Host "GitHub Release $Tag already contains the identical Atlaso OVF asset set."
+        return
+    }
+
+    & $GhPath release upload $Tag @uploadAssets @repositoryArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "GitHub release asset upload failed with exit code $LASTEXITCODE."
+    }
+    foreach ($assetPath in $uploadAssets) {
+        $asset = Get-Item -LiteralPath $assetPath
+        Write-Host "Uploaded GitHub release asset: $($asset.Name) ($($asset.Length) bytes)"
+    }
 }
 
 function New-OvfAttribute {
@@ -361,9 +479,22 @@ function Ensure-AtlasoOvfEmptyDataDisks {
         throw 'OVF Photon OS disk definition does not declare the required ovf:format attribute.'
     }
 
+    $systemContentDisk = $hardwareDisks | Where-Object { (Get-RasdValue -Item $_ -LocalName 'AddressOnParent') -eq '1' } | Select-Object -First 1
+    if (-not $systemContentDisk) {
+        throw 'OVF descriptor does not contain the required Atlaso system-content disk at SCSI unit 1.'
+    }
+    $systemContentHostResource = Get-RasdValue -Item $systemContentDisk -LocalName 'HostResource'
+    if ($systemContentHostResource -notmatch '^ovf:/disk/(.+)$') {
+        throw 'OVF Atlaso system-content disk does not reference an OVF disk definition.'
+    }
+    $systemContentDefinition = $Document.SelectSingleNode("/ovf:Envelope/ovf:DiskSection/ovf:Disk[@ovf:diskId='$($Matches[1])']", $NamespaceManager)
+    if (-not $systemContentDefinition -or [string]::IsNullOrWhiteSpace($systemContentDefinition.GetAttribute('fileRef', $ovfNamespace))) {
+        throw 'OVF Atlaso system-content disk must retain its file-backed payload.'
+    }
+
     $dataDisks = @(
-        @{ Id = 'atlaso-depot'; Unit = '1'; Name = 'Hard disk 2 - VCF Offline Depot'; Description = 'Empty 500 GiB Atlaso VCF Offline Depot data disk.' },
-        @{ Id = 'atlaso-backups'; Unit = '2'; Name = 'Hard disk 3 - VCF Backups'; Description = 'Empty 500 GiB Atlaso VCF Backups data disk.' }
+        @{ Id = 'atlaso-depot'; Unit = '2'; Name = 'Hard disk 3 - VCF Offline Depot'; Description = 'Empty 500 GiB Atlaso VCF Offline Depot data disk.' },
+        @{ Id = 'atlaso-backups'; Unit = '3'; Name = 'Hard disk 4 - VCF Backups'; Description = 'Empty 500 GiB Atlaso VCF Backups data disk.' }
     )
 
     foreach ($definition in $dataDisks) {
@@ -441,11 +572,15 @@ function Set-AtlasoOvfHardware {
             Set-RasdDescription -Document $Document -Item $disk -Value 'Atlaso Photon OS disk.'
         }
         elseif ($unit -eq '1') {
-            Set-RasdValue -Document $Document -Item $disk -LocalName 'ElementName' -Value 'Hard disk 2 - VCF Offline Depot'
-            Set-RasdDescription -Document $Document -Item $disk -Value 'Expandable Atlaso VCF Offline Depot data disk.'
+            Set-RasdValue -Document $Document -Item $disk -LocalName 'ElementName' -Value 'Hard disk 2 - Atlaso System Content'
+            Set-RasdDescription -Document $Document -Item $disk -Value 'Required Atlaso application and tools disk.'
         }
         elseif ($unit -eq '2') {
-            Set-RasdValue -Document $Document -Item $disk -LocalName 'ElementName' -Value 'Hard disk 3 - VCF Backups'
+            Set-RasdValue -Document $Document -Item $disk -LocalName 'ElementName' -Value 'Hard disk 3 - VCF Offline Depot'
+            Set-RasdDescription -Document $Document -Item $disk -Value 'Expandable Atlaso VCF Offline Depot data disk.'
+        }
+        elseif ($unit -eq '3') {
+            Set-RasdValue -Document $Document -Item $disk -LocalName 'ElementName' -Value 'Hard disk 4 - VCF Backups'
             Set-RasdDescription -Document $Document -Item $disk -Value 'Expandable Atlaso VCF Backups data disk.'
         }
     }
@@ -474,19 +609,38 @@ function Assert-AtlasoOvfDiskTopology {
 
     $diskFiles = @($document.SelectNodes('/ovf:Envelope/ovf:DiskSection/ovf:Disk', $manager))
     $hardwareDisks = @($document.SelectNodes('//ovf:VirtualSystem/ovf:VirtualHardwareSection/ovf:Item[rasd:ResourceType="17"]', $manager))
-    if ($diskFiles.Count -ne 3 -or $hardwareDisks.Count -ne 3) {
-        throw "Atlaso OVF must contain exactly three disks (Photon OS, VCF Offline Depot, and VCF Backups); descriptor has $($diskFiles.Count) disk definitions and $($hardwareDisks.Count) virtual disks."
+    if ($diskFiles.Count -ne 4 -or $hardwareDisks.Count -ne 4) {
+        throw "Atlaso OVF must contain exactly four disks (Photon OS, Atlaso System Content, VCF Offline Depot, and VCF Backups); descriptor has $($diskFiles.Count) disk definitions and $($hardwareDisks.Count) virtual disks."
     }
 
-    $osDiskHardware = $hardwareDisks | Where-Object { (Get-RasdValue -Item $_ -LocalName 'AddressOnParent') -eq '0' } | Select-Object -First 1
-    $osDiskHostResource = Get-RasdValue -Item $osDiskHardware -LocalName 'HostResource'
-    if ($osDiskHostResource -notmatch '^ovf:/disk/(.+)$') {
-        throw 'Atlaso OVF Photon OS disk does not reference an OVF disk definition.'
-    }
-    $osDiskDefinition = $document.SelectSingleNode("/ovf:Envelope/ovf:DiskSection/ovf:Disk[@ovf:diskId='$($Matches[1])']", $manager)
-    $diskFormat = if ($osDiskDefinition) { $osDiskDefinition.GetAttribute('format', $ovfNamespace) } else { '' }
-    if ([string]::IsNullOrWhiteSpace($diskFormat)) {
-        throw 'Atlaso OVF Photon OS disk does not declare the required ovf:format attribute.'
+    $diskFormat = ''
+    foreach ($payloadDisk in @(
+            @{ Unit = '0'; Name = 'Photon OS' },
+            @{ Unit = '1'; Name = 'Atlaso System Content' }
+        )) {
+        $diskHardware = $hardwareDisks | Where-Object { (Get-RasdValue -Item $_ -LocalName 'AddressOnParent') -eq $payloadDisk.Unit } | Select-Object -First 1
+        if (-not $diskHardware) {
+            throw "Atlaso OVF is missing the $($payloadDisk.Name) disk at SCSI unit $($payloadDisk.Unit)."
+        }
+        $hostResource = Get-RasdValue -Item $diskHardware -LocalName 'HostResource'
+        $hostResourceMatch = [regex]::Match($hostResource, '^ovf:/disk/(.+)$')
+        if (-not $hostResourceMatch.Success) {
+            throw "Atlaso OVF $($payloadDisk.Name) disk does not reference an OVF disk definition."
+        }
+        $diskDefinition = $document.SelectSingleNode("/ovf:Envelope/ovf:DiskSection/ovf:Disk[@ovf:diskId='$($hostResourceMatch.Groups[1].Value)']", $manager)
+        if (-not $diskDefinition -or [string]::IsNullOrWhiteSpace($diskDefinition.GetAttribute('fileRef', $ovfNamespace))) {
+            throw "Atlaso OVF $($payloadDisk.Name) disk must retain a file-backed payload."
+        }
+        $payloadFormat = $diskDefinition.GetAttribute('format', $ovfNamespace)
+        if ([string]::IsNullOrWhiteSpace($payloadFormat)) {
+            throw "Atlaso OVF $($payloadDisk.Name) disk does not declare the required ovf:format attribute."
+        }
+        if ([string]::IsNullOrWhiteSpace($diskFormat)) {
+            $diskFormat = $payloadFormat
+        }
+        elseif ($payloadFormat -ne $diskFormat) {
+            throw 'Atlaso OVF payload disks must use the same disk format.'
+        }
     }
 
     foreach ($diskId in @('atlaso-depot', 'atlaso-backups')) {
@@ -717,6 +871,9 @@ function Get-OvfDescriptorPath {
 }
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
+if ($ReleaseTag) {
+    Assert-AtlasoReleaseProvenance -RepoRoot $repoRoot -Tag $ReleaseTag
+}
 $resolvedSourceVmx = (Resolve-Path -LiteralPath $SourceVmxPath).Path
 if (-not $OutputDirectory) {
     $OutputDirectory = Join-Path $repoRoot "image\vmware-workstation\ovf\$Name"
@@ -748,6 +905,25 @@ $ovaPath = ''
 if (-not $NoOva) {
     $ovaPath = Join-Path (Split-Path -Parent $resolvedOutputDirectory) "$Name.ova"
     New-OvaArchive -OvfDirectory $ovfPackageDirectory -OvaPath $ovaPath -ResolvedTarPath $resolvedTar
+}
+
+foreach ($asset in @(Get-ChildItem -LiteralPath $ovfPackageDirectory -File | Sort-Object Name)) {
+    Write-Host "Atlaso OVF asset: $($asset.Name) ($($asset.Length) bytes)"
+}
+if ($ovaPath) {
+    $ovaAsset = Get-Item -LiteralPath $ovaPath
+    Write-Host "Atlaso OVA archive size: $($ovaAsset.Length) bytes"
+}
+
+if ($ReleaseTag) {
+    $resolvedGh = Resolve-GhPath
+    Publish-AtlasoReleaseAssets `
+        -GhPath $resolvedGh `
+        -Tag $ReleaseTag `
+        -RepositoryName $Repository `
+        -OvfDirectory $ovfPackageDirectory `
+        -OvaPath $ovaPath `
+        -MaximumBytes $MaximumReleaseAssetBytes
 }
 
 Write-Host "Atlaso OVF export root: $resolvedOutputDirectory"

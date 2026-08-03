@@ -86,8 +86,11 @@ pwsh -ExecutionPolicy Bypass `
 
 The built VMX keeps the first adapter on `-VmnetName` as management-only and adds a second `vmxnet3` adapter on
 `-ServiceVmnetName` for service traffic. The service network defaults to Workstation's built-in host-only `VMnet1`. The
-Packer builder VM contains only the 40 GB Photon OS disk. The OVF export step declares the appliance data disks without
-adding large blank VMDK payloads to the reusable builder image.
+Packer creates a 40 GiB Photon OS disk and a sparse 20 GiB Atlaso system-content disk. Provisioning formats the second
+disk as `ATLASO_SYSTEM`, mounts it by UUID, and places `/opt/atlaso` plus the appliance-wide PowerShell modules there.
+The two 500 GiB application data disks remain empty OVF declarations, so the reusable builder contains no large blank
+data-disk payloads. The build removes `python3-devel` after compatibility validation, clears build caches and staged
+sources, trims both filesystems, and lets Packer compact both payload VMDKs.
 
 ## Networking
 
@@ -168,16 +171,36 @@ pwsh -ExecutionPolicy Bypass `
 ```
 
 The export script runs OVF Tool, adds Atlaso vApp properties and appliance network mappings to the OVF descriptor,
-regenerates the manifest, and packages the folder as an OVA unless `-NoOva` is passed. The descriptor declares a 500 GiB
-empty VCF Offline Depot disk and a 500 GiB empty VCF Backups disk; ESXi creates both disks during deployment, while the
-OVA carries only the OS VMDK payload. The exporter refuses to package an image unless the descriptor contains the OS and
-both empty data disks. It identifies the guest as VMware Photon OS, uses VMware Paravirtual SCSI for all three disks,
-and removes the build-time CD-ROM device. On first boot, `atlaso-data-disks.service` formats the two blank disks as
+regenerates the manifest, and packages the folder as an OVA unless `-NoOva` is passed. The descriptor preserves the OS
+and Atlaso system-content VMDKs, then declares a 500 GiB empty VCF Offline Depot disk and a 500 GiB empty VCF Backups
+disk. ESXi creates the latter two disks during deployment without payload files. The exporter requires exactly four
+ordered disks, requires file-backed payloads for the first two, uses VMware Paravirtual SCSI, and removes the build-time
+CD-ROM device. On first boot, `atlaso-data-disks.service` ignores the formatted system-content disk and formats the two
+blank disks as
 ext4, labels them `ATLASO_DEPOT` and `ATLASO_BKUP`, writes their UUIDs to `/etc/fstab`, and mounts them at
 `/mnt/atlaso-vcf-offline-depot` and `/mnt/atlaso-vcf-backups`. The descriptor exposes two network mappings for
 vSphere/ESXi import: `Atlaso Management Network` for the first adapter, which remains management-only as `eth0`, and
 `Atlaso Services Network` for the second adapter used by DNS, DHCP, CA, depot, PXE, KMS, and other Atlaso-managed
-services. The OVF properties are intended for vSphere/ESXi import:
+services.
+
+To upload the deployable OVF package to an existing GitHub Release, authenticate GitHub CLI and pass the release tag:
+
+```powershell
+pwsh -ExecutionPolicy Bypass `
+  -File scripts/windows/vmware/export-ovf.ps1 `
+  -ReleaseTag "v<version>" `
+  -Repository mdaneri/Atlaso `
+  -Force
+```
+
+Every OVF asset is checked against GitHub's less-than-2-GiB per-asset boundary before upload. The descriptor, manifest,
+and both payload VMDKs are uploaded as one set. A retry verifies every existing asset byte-for-byte and refuses partial
+or different assets instead of overwriting them. The OVA is also uploaded when it fits; an oversized OVA is omitted
+with a warning because it combines both otherwise deployable VMDKs into one archive. Publication also requires a clean
+checkout whose `HEAD` is the locally available annotated release tag, preventing assets built from another commit from
+being attached to the release.
+
+The OVF properties are intended for vSphere/ESXi import:
 
 | Category            | Property                  | Required | Description                                                                                                      |
 | ------------------- | ------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------- |

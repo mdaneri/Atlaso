@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
+import shutil
 import subprocess
 import sys
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -98,6 +101,106 @@ def test_publish_release_requests_generated_notes_and_keeps_provenance(
     )
     assert create[create.index("--title") + 1] == "Atlaso v0.9.30"
     assert str(asset.resolve()) in create
+
+
+def test_vmware_release_assets_require_two_manifest_verified_vmdks(tmp_path: Path):
+    ovf = tmp_path / "Atlaso-Photon.ovf"
+    os_disk = tmp_path / "Atlaso-Photon-disk1.vmdk"
+    tools_disk = tmp_path / "Atlaso-Photon-disk2.vmdk"
+    manifest = tmp_path / "Atlaso-Photon.mf"
+    ovf.write_text("descriptor\n", encoding="utf-8")
+    os_disk.write_bytes(b"os")
+    tools_disk.write_bytes(b"tools")
+    manifest.write_text(
+        "\n".join(
+            f"SHA256({path.name})= {publish_release.sha256(path)}"
+            for path in (ovf, os_disk, tools_disk)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    names = {path.name for path in (ovf, os_disk, tools_disk, manifest)}
+
+    publish_release.verify_vmware_release_assets(tmp_path, names)
+
+    tools_disk.write_bytes(b"changed")
+    with pytest.raises(SystemExit, match="failed manifest verification"):
+        publish_release.verify_vmware_release_assets(tmp_path, names)
+
+
+def test_vmware_release_assets_accept_byte_equivalent_ova(tmp_path: Path):
+    ovf = tmp_path / "Atlaso-Photon.ovf"
+    os_disk = tmp_path / "Atlaso-Photon-disk1.vmdk"
+    tools_disk = tmp_path / "Atlaso-Photon-disk2.vmdk"
+    manifest = tmp_path / "Atlaso-Photon.mf"
+    ova = tmp_path / "Atlaso-Photon.ova"
+    for path, content in ((ovf, b"descriptor"), (os_disk, b"os"), (tools_disk, b"tools")):
+        path.write_bytes(content)
+    manifest.write_text(
+        "\n".join(
+            f"SHA256({path.name})= {publish_release.sha256(path)}"
+            for path in (ovf, os_disk, tools_disk)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    with tarfile.open(ova, mode="w") as archive:
+        for path in (ovf, manifest, os_disk, tools_disk):
+            archive.add(path, arcname=path.name)
+
+    publish_release.verify_vmware_release_assets(
+        tmp_path,
+        {path.name for path in (ovf, os_disk, tools_disk, manifest, ova)},
+    )
+
+
+def test_release_recovery_accepts_manifest_verified_vmware_assets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    commit = "a" * 40
+    core = tmp_path / "core"
+    remote = tmp_path / "remote"
+    core.mkdir()
+    remote.mkdir()
+    (core / "release-manifest.json").write_text("{}", encoding="utf-8")
+    shutil.copy2(core / "release-manifest.json", remote / "release-manifest.json")
+    ovf = remote / "Atlaso-Photon.ovf"
+    os_disk = remote / "Atlaso-Photon-disk1.vmdk"
+    tools_disk = remote / "Atlaso-Photon-disk2.vmdk"
+    manifest = remote / "Atlaso-Photon.mf"
+    ovf.write_bytes(b"descriptor")
+    os_disk.write_bytes(b"os")
+    tools_disk.write_bytes(b"tools")
+    manifest.write_text(
+        "\n".join(
+            f"SHA256({path.name})= {publish_release.sha256(path)}"
+            for path in (ovf, os_disk, tools_disk)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def fake_run(command: list[str], *, check: bool = True):
+        if command == ["python", "scripts/version.py", "get"]:
+            return completed(command, stdout="0.9.71\n")
+        if command[-1] == "refs/tags/v0.9.71":
+            return completed(command, stdout=f"{commit}\trefs/tags/v0.9.71\n")
+        if command[-1] == "refs/tags/v0.9.71^{}":
+            return completed(command)
+        if command[:4] == ["gh", "release", "view", "v0.9.71"]:
+            assets = [{"name": path.name} for path in remote.iterdir()]
+            return completed(command, stdout=json.dumps({"tagName": "v0.9.71", "assets": assets}))
+        if command[:4] == ["gh", "release", "download", "v0.9.71"]:
+            destination = Path(command[command.index("--dir") + 1])
+            for path in remote.iterdir():
+                shutil.copy2(path, destination / path.name)
+            return completed(command)
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr(publish_release, "run", fake_run)
+
+    assert publish_release.main(["--commit", commit, "--assets", str(core)]) == 0
 
 
 def test_release_note_categories_keep_dependencies_out_of_enhancements():

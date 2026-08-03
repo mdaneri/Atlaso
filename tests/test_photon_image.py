@@ -628,6 +628,17 @@ def test_photon_provisioning_prepares_attached_data_disks():
     assert "findmnt -n -o SOURCE /" in mount_script
     assert "No blank data disk available" in mount_script
 
+    assert 'ATLASO_SYSTEM_CONTENT_DISK="${ATLASO_SYSTEM_CONTENT_DISK:-false}"' in provision
+    assert 'mkfs.ext4 -F -L ATLASO_SYSTEM "$system_disk"' in provision
+    assert "Expected exactly one additional blank disk for Atlaso system content" in provision
+    assert 'UUID=%s %s ext4 defaults 0 2' in provision
+    assert "x-systemd.requires-mounts-for=%s" in provision
+    assert 'mount --bind "$ATLASO_SYSTEM_CONTENT_MOUNT/opt-atlaso" "$ATLASO_HOME"' in provision
+    assert "powershell-modules" in provision
+    assert 'run_tdnf "Build-only package removal" remove python3-devel' in provision
+    assert "tdnf -y clean all" in provision
+    assert "fstrim -av" in provision
+
     assert "After=network-online.target atlaso-data-disks.service atlaso-bootstrap-https.service" in hyperv_unit
     assert "Wants=network-online.target atlaso-data-disks.service atlaso-bootstrap-https.service" in hyperv_unit
     assert "After=network-online.target atlaso-data-disks.service atlaso-bootstrap-https.service" in vmware_unit
@@ -669,6 +680,18 @@ def test_packer_templates_stage_shared_appliance_assets():
         assert 'destination = "/tmp/atlaso-src/image/common/boot"' in template
         assert 'source      = "../common/powershell"' in template
         assert 'destination = "/tmp/atlaso-src/image/common/powershell"' in template
+
+
+def test_vmware_packer_build_uses_two_compacted_payload_disks():
+    template = Path("image/vmware-workstation/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
+    kickstart = Path("image/hyperv/http/photon-ks.json.pkrtpl").read_text(encoding="utf-8")
+
+    assert 'disk_size            = 40960' in template
+    assert 'disk_additional_size = [20480]' in template
+    assert 'disk_type_id         = 0' in template
+    assert 'skip_compaction      = false' in template
+    assert '"ATLASO_SYSTEM_CONTENT_DISK=true"' in template
+    assert '"disk": "/dev/sda"' in kickstart
 
 
 def test_photon_kickstart_uses_deterministic_build_time_sshd_service():

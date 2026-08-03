@@ -84,8 +84,10 @@ The first real OS appliance target is Photon OS 5.0 on Hyper-V. The image builde
 - `/opt/atlaso/bin/atlaso-helper` and a constrained sudoers template.
 
 Finished Hyper-V appliance VMs and VMware OVF/OVA appliances also attach two durable expandable data disks: one for the
-VCF Offline Depot at `/mnt/atlaso-vcf-offline-depot` and one for VCF Backups at `/mnt/atlaso-vcf-backups`. Keep those
-workloads off the OS disk. On first boot, `atlaso-data-disks.service` labels blank attached data disks as `ATLASO_DEPOT`
+VCF Offline Depot at `/mnt/atlaso-vcf-offline-depot` and one for VCF Backups at `/mnt/atlaso-vcf-backups`. VMware images
+precede those disks with file-backed Photon OS and Atlaso system-content VMDKs; the latter holds `/opt/atlaso` and the
+appliance-wide PowerShell modules through required UUID-backed mounts. Keep depot and backup workloads off both payload
+disks. On first boot, `atlaso-data-disks.service` labels blank attached data disks as `ATLASO_DEPOT`
 and `ATLASO_BKUP`, formats them as ext4, persists them in `/etc/fstab`, and mounts them at those fixed paths before
 `atlaso.service` starts.
 
@@ -1130,6 +1132,12 @@ VMware scripts. The cleanup is scoped to the configured image output directory s
 survive a rebuild. The remastered kickstart disables Photon's socket-activated SSH unit and enables the normal
 `sshd.service`, ensuring Packer receives a deterministic SSH daemon after the first installed-system boot. The temporary
 Photon root/build password remains separate from the Atlaso web bootstrap administrator password.
+
+The Workstation Packer template creates a 40 GiB OS disk and a sparse 20 GiB `ATLASO_SYSTEM` disk. Final provisioning
+removes the build-only `python3-devel` package, clears package/download caches and staged sources, trims the filesystems,
+and leaves Packer compaction enabled. OVF export preserves both payload VMDKs and adds empty 500 GiB depot and backup
+definitions at SCSI units 2 and 3. `export-ovf.ps1 -ReleaseTag <tag>` preflights and uploads the OVF assets with GitHub
+CLI; it uploads the combined OVA only when that archive independently remains below the configured asset limit.
 
 Lifecycle testing uses VMX/VMDK artifacts and `vmrun.exe`:
 
