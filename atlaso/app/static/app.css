@@ -1334,6 +1334,10 @@ textarea {
   flex-direction: column;
 }
 
+.network-boot-environments-panel > .tabulator-shell {
+  flex: 0 0 auto;
+}
+
 .network-boot-environments-panel > .network-boot-task-history-container {
   flex: 0 0 max(420px, calc(100vh - 240px));
 }
