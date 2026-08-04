@@ -9439,6 +9439,12 @@ function initializeEsxiPxeHostsTable() {
     });
     table = grid.table;
     tableElement.atlasoTabulator = table;
+    tableElement.atlasoRefreshIsoOptions = async (path, label) => {
+      isoValues[path] = label;
+      const isoColumn = table?.getColumn?.("installer_iso_path");
+      await isoColumn?.updateDefinition?.({ editorParams: { values: isoValues, autocomplete: true } });
+      table?.getRows?.().forEach((row) => row.reformat());
+    };
     tableElement.addEventListener("click", (event) => {
       const launcher = event.target.closest("[data-esxi-host-wizard-add]");
       if (launcher instanceof HTMLButtonElement) openHostWizard(newRow, launcher);
@@ -13695,14 +13701,16 @@ function initializeEsxiIsoUploadForms() {
     status.dataset.state = state;
   };
   const selectedFile = () => fileInput instanceof HTMLInputElement ? fileInput.files?.[0] : null;
-  const updateIsoConsumers = (uploaded) => {
+  const updateIsoConsumers = async (uploaded) => {
+    const label = `${uploaded.relative_path || uploaded.name} (${uploaded.source_label || "Uploaded by user"})`;
     document.querySelectorAll('select[name="installer_iso_path"]').forEach((select) => {
       if (!(select instanceof HTMLSelectElement)) return;
       const existing = [...select.options].find((option) => option.value === uploaded.path);
-      const label = `${uploaded.relative_path || uploaded.name} (${uploaded.source_label || "Uploaded by user"})`;
       if (existing) existing.textContent = label;
       else select.add(new Option(label, uploaded.path));
     });
+    const hostsElement = document.getElementById("esxi-pxe-hosts-table");
+    await hostsElement?.atlasoRefreshIsoOptions?.(uploaded.path, label);
     const summary = document.querySelector("[data-esxi-pxe-summary]");
     if (summary instanceof HTMLElement) {
       const count = Number(summary.dataset.isoCount || "0") + 1;
@@ -13783,7 +13791,7 @@ function initializeEsxiIsoUploadForms() {
         const existing = esxiInstallerIsosTable?.getRow?.(uploaded.path);
         if (existing) await existing.update(uploaded);
         else await esxiInstallerIsosTable?.addRow?.(uploaded, true, "__new__");
-        updateIsoConsumers(uploaded);
+        await updateIsoConsumers(uploaded);
         setStatus(`${uploaded.name || file.name} uploaded.`, "saved");
         showTransientGridStatus(`${uploaded.name || file.name} added to ESX installer ISOs.`);
         return { valid: true };

@@ -7018,6 +7018,9 @@ def test_dns_and_dhcp_pages_render(client):
     assert 'pattern: "wizard-backed"' in app_js.text
     assert "esxiIsoUploadWizard = window.AtlasoUiPatterns.createWizard" in app_js.text
     assert 'esxiInstallerIsosTable?.addRow?.(uploaded, true, "__new__")' in app_js.text
+    assert "tableElement.atlasoRefreshIsoOptions = async (path, label)" in app_js.text
+    assert 'isoColumn?.updateDefinition?.({ editorParams: { values: isoValues, autocomplete: true } })' in app_js.text
+    assert "await hostsElement?.atlasoRefreshIsoOptions?.(uploaded.path, label)" in app_js.text
     assert "initializeEsxiPxeHostsTable" in app_js.text
     assert 'document.getElementById(hashTargetId)?.closest(".tab-panel")' in app_js.text
     assert 'querySelector(".tag-editor[data-service-bind-interface]")' in app_js.text
