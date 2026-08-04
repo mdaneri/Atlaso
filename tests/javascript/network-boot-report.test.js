@@ -50,6 +50,15 @@ const normalizeEsxiHostMac = loadFunction(
   "esxiDiscoveredHostLabel",
   { String, esxiHostMacKey, isValidEsxiHostMac },
 );
+const esxiDiscoveredHostLabel = loadFunction(
+  "esxiDiscoveredHostLabel",
+  "esxiDiscoveredHostIsRegistered",
+);
+const esxiDiscoveredHostIsRegistered = loadFunction(
+  "esxiDiscoveredHostIsRegistered",
+  "esxiSuggestedHostname",
+  { Boolean, esxiHostMacKey },
+);
 const networkBootChangedRowValues = loadFunction(
   "networkBootChangedRowValues",
   "reconcileNetworkBootDiscoveredHosts",
@@ -98,6 +107,27 @@ test("ESXi Host Reference accepts only concrete unicast MAC addresses", () => {
   assert.equal(isValidEsxiHostMac("00:00:00:00:00:00"), false);
   assert.equal(isValidEsxiHostMac("prefix-00:50:56:aa:bb:cc"), false);
   assert.equal(normalizeEsxiHostMac("0050.56AA.BBCC"), "00:50:56:aa:bb:cc");
+});
+
+test("ESXi discovered host labels show only the reported boot MAC", () => {
+  assert.equal(
+    esxiDiscoveredHostLabel({
+      id: 7,
+      product_name: "VMware20,1",
+      boot_mac: "00:0c:29:be:e2:b6",
+      macs: ["00:0c:29:be:e2:c0", "00:0c:29:be:e2:b6"],
+    }),
+    "VMware20,1 · 00:0c:29:be:e2:b6",
+  );
+});
+
+test("ESXi discovered host selection skips registered hosts", () => {
+  const usedMacs = new Set(["005056aabbcc"]);
+  assert.equal(esxiDiscoveredHostIsRegistered({ boot_mac: "00:50:56:aa:bb:cc" }, usedMacs), true);
+  assert.equal(esxiDiscoveredHostIsRegistered({ boot_mac: "00:50:56:aa:bb:dd", assigned_to_esxi: true }, usedMacs), true);
+  assert.equal(esxiDiscoveredHostIsRegistered({ boot_mac: "00:50:56:aa:bb:dd", esxi_host_id: 9 }, usedMacs), true);
+  assert.equal(esxiDiscoveredHostIsRegistered({ boot_mac: "00:50:56:aa:bb:dd", esxi_assignments: [{ id: 9 }] }, usedMacs), true);
+  assert.equal(esxiDiscoveredHostIsRegistered({ boot_mac: "00:50:56:aa:bb:dd" }, usedMacs), false);
 });
 
 test("Network Boot discovered hosts refresh while visible and immediately on visibility return", async () => {

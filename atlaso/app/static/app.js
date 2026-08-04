@@ -2453,8 +2453,17 @@ function normalizeEsxiHostMac(value) {
 
 function esxiDiscoveredHostLabel(host) {
   const identity = host?.product_name || host?.dmi_uuid || host?.macs?.[0] || `Discovered host ${host?.id || ""}`;
-  const mac = host?.macs?.[0] || host?.boot_mac || "no MAC";
+  const mac = host?.boot_mac || "no boot MAC";
   return `${identity} · ${mac}`;
+}
+
+function esxiDiscoveredHostIsRegistered(host, usedMacs) {
+  return Boolean(
+    host?.assigned_to_esxi
+    || host?.esxi_host_id != null
+    || host?.esxi_assignments?.length
+    || usedMacs.has(esxiHostMacKey(host?.boot_mac)),
+  );
 }
 
 function esxiSuggestedHostname(host) {
@@ -2600,8 +2609,9 @@ function initializeEsxiHostReferenceWizard() {
     .filter(Boolean));
   const availableMacs = (host) => {
     const used = usedMacs();
+    if (esxiDiscoveredHostIsRegistered(host, used)) return [];
     return [host?.boot_mac]
-      .filter((mac) => isValidEsxiHostMac(mac) && !used.has(esxiHostMacKey(mac)));
+      .filter((mac) => isValidEsxiHostMac(mac));
   };
   const eligibleDiscoveredHosts = () => discoveredRows().filter((host) => availableMacs(host).length > 0);
   const setSourceMode = (source, { showSource = true, showDiscoveredHost = true } = {}) => {

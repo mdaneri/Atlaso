@@ -367,6 +367,8 @@ Open **ESXi Kickstarts**, select **Host References**, and use **+ Add host
 reference here** to open the guided Host Reference workflow. When an eligible
 Network Boot inventory host has a valid boot MAC that is not already used by a
 Host Reference, the workflow defaults to **Discovered Network Boot host**.
+Hosts already assigned to an ESXi Host Reference are omitted from this selector,
+and each remaining option displays only the reported boot MAC.
 Select the discovered host and review the suggested hostname, its boot MAC, and
 its latest assigned address. Select **Manual host** instead to enter a hostname
 and a concrete unicast MAC address. The optional IP field is a static

@@ -4280,6 +4280,8 @@ def test_esxi_pxe_host_reference_wizard_and_grid_responses(client):
     assert "eligibleDiscoveredHosts" in wizard_js
     assert "availableMacs" in wizard_js
     assert "return [host?.boot_mac]" in wizard_js
+    assert "esxiDiscoveredHostIsRegistered(host, used)" in wizard_js
+    assert 'const mac = host?.boot_mac || "no boot MAC"' in app_js
     assert "updateManualMacValidity" in wizard_js
     assert "normalizeEsxiHostMac" in wizard_js
     assert "discoveredSelectionSequence" in wizard_js
