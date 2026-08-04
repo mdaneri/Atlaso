@@ -821,9 +821,9 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6" in service_worker.text
-    assert "/static/app.css?v=atlaso-ui-regressions-224-20260803-1" in service_worker.text
+    assert "/static/app.css?v=network-boot-discovered-workspace-20260804-2" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in service_worker.text
-    assert "/static/app.js?v=network-boot-workflows-229-230-233-234-20260803-2" in service_worker.text
+    assert "/static/app.js?v=network-boot-workflows-229-230-233-234-20260804-3" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -832,7 +832,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=atlaso-ui-regressions-224-20260803-1" in offline.text
+    assert "/static/app.css?v=network-boot-discovered-workspace-20260804-2" in offline.text
 
 
 def test_shared_ui_pattern_shell_and_wizard_contracts(client):
@@ -843,8 +843,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=network-boot-workflows-229-230-233-234-20260803-2"),
-        (public_base, "/static/app.js?v=network-boot-workflows-229-230-233-234-20260803-2"),
+        (base, "/static/app.js?v=network-boot-workflows-229-230-233-234-20260804-3"),
+        (public_base, "/static/app.js?v=network-boot-workflows-229-230-233-234-20260804-3"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5"
@@ -952,7 +952,8 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     assert 'title: "Actions"' not in network_boot
     assert "/api/v1/network-boot/environments/${environmentKey}/upload" in network_boot
     assert 'component.getData().enabled ? "Disable" : "Enable"' in network_boot
-    assert 'label: "Download latest"' in network_boot
+    assert '"Download latest (already installed)"' in network_boot
+    assert "networkBootEnvironmentHasLatestInstalled(component.getData())" in network_boot
     assert 'label: "Upload release asset"' in network_boot
     assert 'title: "Source"' in network_boot
     assert 'title: "Latest available"' in network_boot
@@ -962,6 +963,8 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     assert 'new URL(data.release_page)' in network_boot
     assert 'source.protocol !== "https:"' in network_boot
     assert "toggleEnvironmentFromMenu(row)" in network_boot
+    assert 'document.addEventListener("atlaso:tasks-refreshed"' in network_boot
+    assert 'networkBootRequest("/api/v1/network-boot/environments")' in network_boot
     assert "row.getData().key === \"inventory\"" not in network_boot
     network_boot_workspace = function_block("initializeNetworkBootWorkspace")
     assert "networkSlot.append(networkSection)" in network_boot_workspace
@@ -1339,9 +1342,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=atlaso-ui-regressions-224-20260803-1" in page.text
+    assert "/static/app.css?v=network-boot-discovered-workspace-20260804-2" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in page.text
-    assert "/static/app.js?v=network-boot-workflows-229-230-233-234-20260803-2" in page.text
+    assert "/static/app.js?v=network-boot-workflows-229-230-233-234-20260804-3" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -3648,7 +3651,8 @@ def test_esxi_pxe_ui_create_apply_and_job_redaction(client):
     assert 'data-task-type="pxe-media-sync"' in page.text
     assert 'data-task-lock-component-filter="true"' in page.text
     assert 'data-task-grid-height="100%"' in page.text
-    assert "Downloads and uploads only" in page.text
+    assert "Media operations only" in page.text
+    assert "downloads, uploads, and inactive-media deletion" in page.text
     assert "Media ready" in page.text
     assert 'data-tab-target="network-boot-settings-panel"' not in page.text
     assert 'id="network-boot-settings-panel"' not in page.text
@@ -3840,6 +3844,11 @@ def test_esxi_custom_variable_collection_drives_kickstart_completion_and_validat
     refreshed = client.get("/esxi-pxe")
     assert "custom.install_disk" in refreshed.text
     assert "Preferred ESXi installation disk" in refreshed.text
+    host_wizard = refreshed.text.split('id="network-boot-promote-dialog"', 1)[1].split("</dialog>", 1)[0]
+    assert '"name": "install_disk"' in host_wizard
+    assert '"default_value": "firstdisk"' in host_wizard
+    assert "<code>custom.install_disk</code>" in host_wizard
+    assert "<td>firstdisk</td><td>Uses default</td>" in host_wizard
 
     kickstart = client.post(
         "/esxi-pxe/kickstarts",
@@ -4165,9 +4174,14 @@ def test_esxi_pxe_host_reference_wizard_and_grid_responses(client):
     assert 'data-atlaso-resource-review' in page.text
     assert 'id="esxi-pxe-host-fallback-create"' in page.text
     assert 'id="esxi-host-variables-table"' in page.text
+    assert "data-definitions=" in page.text
     assert 'name="variables" value="{}"' in page.text
     host_wizard = page.text.split('id="network-boot-promote-dialog"', 1)[1].split("</dialog>", 1)[0]
     assert "Variables JSON" not in host_wizard
+    assert "Custom Variables definition" in host_wizard
+    assert "Default value" in host_wizard
+    assert "Host override" in host_wizard
+    assert "+ Add variable here" not in host_wizard
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
     created = client.post(
@@ -4422,10 +4436,12 @@ def test_network_boot_host_management_report_and_print_contract(client):
     assert 'data-network-boot-report' in page.text
     assert "Print / Save as PDF" in page.text
     assert "Download JSON" in page.text
-    assert "Promote to ESXi" in page.text
-    assert "Wake host" in page.text
-    assert ">Reboot<" in page.text
-    assert "Remove discovered host" in page.text
+    report_dialog = page.text.split('id="network-boot-host-dialog"', 1)[1].split("</dialog>", 1)[0]
+    assert "Promote to ESXi" not in report_dialog
+    assert "Wake host" not in report_dialog
+    assert ">Reboot<" not in report_dialog
+    assert "Remove discovered host" not in report_dialog
+    assert "View inventory report" in page.text
     assert 'id="network-boot-discovered-fallback"' in page.text
 
     app_js = client.get("/static/app.js").text
@@ -4462,17 +4478,21 @@ def test_network_boot_host_management_report_and_print_contract(client):
         "function initializeNetworkBootPage", 1
     )[0]
     for label in (
-        'label: "Promote to ESXi"',
         'label: "Reboot"',
         'label: "Wake host"',
         'label: "Remove discovered host"',
     ):
         assert label in page_initializer
-    assert 'height: "300px"' in page_initializer
+    assert '"Promote to ESXi (already assigned)"' in page_initializer
+    assert "Boolean(component.getData().assigned_to_esxi)" in page_initializer
+    assert 'height: "100%"' in page_initializer
+    assert 'label: "View inventory report"' in page_initializer
+    assert "onOpenRow: openHost" not in page_initializer
     assert 'action: (_event, row) => promoteHost(row, row.getElement())' in page_initializer
-    assert "const hostRow = hostsTable?.getRow(selectedHost.id);" in page_initializer
-    assert "promoteHost(selectedHost, hostRow?.getElement?.() || null);" in page_initializer
-    assert "promoteHost(selectedHost, event.currentTarget);" not in page_initializer
+    assert 'querySelector("[data-network-boot-promote-open]")' not in page_initializer
+    assert 'querySelector("[data-network-boot-wake]")' not in page_initializer
+    assert 'querySelector("[data-network-boot-reboot]")' not in page_initializer
+    assert 'querySelector("[data-network-boot-remove]")' not in page_initializer
     assert "renderNetworkBootReport(reportArticle, historyItem);" in page_initializer
     assert "atlasoNewTaskId = queued.job_id" in page_initializer
     assert "await refreshTasksPage()" in page_initializer
@@ -4485,6 +4505,7 @@ def test_network_boot_host_management_report_and_print_contract(client):
     assert "window.print()" in page_initializer
     assert 'data-network-boot-discovered-status role="status" aria-live="polite" hidden' in page.text
     assert "New Inventory Linux reports appear automatically while this page is visible." in page.text
+    assert "Open the row menu" in page.text
     assert "initializeNetworkBootDiscoveredHostRefresh(hostsTable, discoveredStatus);" in page_initializer
     assert 'request("/api/v1/network-boot/hosts")' in host_refresh
     assert "await hostsTable.replaceData(hosts);" in host_refresh
@@ -4502,8 +4523,11 @@ def test_network_boot_host_management_report_and_print_contract(client):
     assert 'mode: "promote"' in page_initializer
 
     app_css = client.get("/static/app.css").text
+    assert ".network-boot-discovered-panel.active" in app_css
+    assert "overflow: hidden !important;" in app_css
     assert ".network-boot-discovered-panel .tabulator-shell" in app_css
-    assert "min-height: 300px;" in app_css
+    assert "flex: 1 1 auto;" in app_css
+    assert "min-height: 0;" in app_css
     assert "height: 240px !important;" in app_css
     print_css = app_css.split("@media print", 1)[1]
     assert "@page atlaso-network-boot-report" in print_css

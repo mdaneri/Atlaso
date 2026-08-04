@@ -22,8 +22,13 @@ const networkBootAddressListOptions = loadFunction(
 );
 const esxiHostVariableRows = loadFunction(
   "esxiHostVariableRows",
-  "newEsxiHostVariableRow",
+  "esxiHostVariableDefinitionRows",
   { JSON, Object, Array, String },
+);
+const esxiHostVariableDefinitionRows = loadFunction(
+  "esxiHostVariableDefinitionRows",
+  "parseEsxiHostVariableRows",
+  { Array, Boolean, Map, String, esxiHostVariableRows },
 );
 const parseEsxiHostVariableRows = loadFunction(
   "parseEsxiHostVariableRows",
@@ -85,7 +90,7 @@ test("Network Boot discovered hosts refresh while visible and immediately on vis
   };
   const initializeRefresh = loadFunction(
     "initializeNetworkBootDiscoveredHostRefresh",
-    "initializeNetworkBootPage",
+    "networkBootEnvironmentHasLatestInstalled",
     { document, window, HTMLElement, Error },
   );
   const replacements = [];
@@ -138,7 +143,7 @@ test("Network Boot discovered-host refresh preserves the last list after failure
   };
   const initializeRefresh = loadFunction(
     "initializeNetworkBootDiscoveredHostRefresh",
-    "initializeNetworkBootPage",
+    "networkBootEnvironmentHasLatestInstalled",
     { document, window, HTMLElement, Error },
   );
   let replacementCount = 0;
@@ -156,12 +161,72 @@ test("Network Boot discovered-host refresh preserves the last list after failure
   assert.match(status.textContent, /last received host list/);
 });
 
+test("Network Boot disables latest download when that version is installed", () => {
+  const hasLatestInstalled = loadFunction(
+    "networkBootEnvironmentHasLatestInstalled",
+    "initializeNetworkBootPage",
+    { Array, Boolean, String },
+  );
+
+  assert.equal(hasLatestInstalled({
+    available_version: "8.10",
+    installed_versions: [{ version: "8.10" }],
+  }), true);
+  assert.equal(hasLatestInstalled({
+    available_version: "8.10",
+    installed_versions: [{ version: "8.9" }],
+  }), false);
+  assert.equal(hasLatestInstalled({
+    available_version: "",
+    installed_versions: [{ version: "8.10" }],
+  }), false);
+});
+
 test("ESXi host variables round-trip through key/value rows", () => {
   const rows = esxiHostVariableRows('{"rack":"r1","custom.cluster":2}');
   const parsed = parseEsxiHostVariableRows(rows);
 
   assert.equal(parsed.valid, true);
   assert.equal(JSON.stringify(parsed.variables), '{"cluster":"2","rack":"r1"}');
+});
+
+test("ESXi host variable definitions show defaults and persist overrides only", () => {
+  const rows = esxiHostVariableDefinitionRows([
+    { name: "cluster", description: "Cluster name", default_value: "domain-c8" },
+    { name: "rack", description: "Rack name", default_value: "" },
+  ], '{"rack":"r1"}');
+  const parsed = parseEsxiHostVariableRows(rows);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(rows)), [
+    {
+      id: "variable-cluster",
+      name: "cluster",
+      description: "Cluster name",
+      default_value: "domain-c8",
+      value: "",
+      has_override: false,
+      definition_missing: false,
+    },
+    {
+      id: "variable-rack",
+      name: "rack",
+      description: "Rack name",
+      default_value: "",
+      value: "r1",
+      has_override: true,
+      definition_missing: false,
+    },
+  ]);
+  assert.equal(JSON.stringify(parsed.variables), '{"rack":"r1"}');
+});
+
+test("ESXi host variable definitions preserve unavailable overrides", () => {
+  const rows = esxiHostVariableDefinitionRows([], '{"legacy":"kept"}');
+  const parsed = parseEsxiHostVariableRows(rows);
+
+  assert.equal(rows[0].definition_missing, true);
+  assert.equal(rows[0].has_override, true);
+  assert.equal(JSON.stringify(parsed.variables), '{"legacy":"kept"}');
 });
 
 test("ESXi host variable rows reject duplicates and built-in namespaces", () => {

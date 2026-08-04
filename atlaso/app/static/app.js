@@ -2474,13 +2474,40 @@ function esxiHostVariableRows(value) {
   }));
 }
 
-function newEsxiHostVariableRow() {
-  return { id: "__new__", name: "", value: "", is_new: true };
+function esxiHostVariableDefinitionRows(definitions, value) {
+  const overrides = esxiHostVariableRows(value);
+  const overridesByName = new Map(overrides.map((row) => [row.name, row]));
+  const rows = (Array.isArray(definitions) ? definitions : []).map((definition) => {
+    const name = String(definition?.name || "").trim();
+    const override = overridesByName.get(name);
+    overridesByName.delete(name);
+    return {
+      id: `variable-${name}`,
+      name,
+      description: String(definition?.description || ""),
+      default_value: definition?.default_value == null ? "" : String(definition.default_value),
+      value: override?.value || "",
+      has_override: Boolean(override),
+      definition_missing: false,
+    };
+  });
+  for (const override of overridesByName.values()) {
+    rows.push({
+      ...override,
+      id: `variable-${override.name}`,
+      description: "This host override no longer has a matching Custom Variables definition.",
+      default_value: "",
+      has_override: true,
+      definition_missing: true,
+    });
+  }
+  return rows;
 }
 
 function parseEsxiHostVariableRows(rows) {
   const variables = {};
   for (const row of rows || []) {
+    if (row?.has_override === false) continue;
     let name = String(row?.name || "").trim();
     if (!name && row?.is_new) continue;
     if (name.startsWith("custom.")) name = name.slice("custom.".length);
@@ -2522,6 +2549,7 @@ function initializeEsxiHostReferenceWizard() {
   const discoveredMacSelect = form.elements.discovered_mac_address;
   const manualMacInput = form.elements.manual_mac_address;
   const variablesElement = document.getElementById("esxi-host-variables-table");
+  const customVariablesElement = document.getElementById("esxi-custom-variables-table");
   const variablesStatus = form.querySelector("[data-esxi-host-variables-status]");
   const installerIsoSelect = form.elements.installer_iso_path;
   const enabledInput = form.elements.enabled;
@@ -2535,6 +2563,19 @@ function initializeEsxiHostReferenceWizard() {
   let pendingDiscoveredSelection = null;
   let variablesTable = null;
   let enabledWasEdited = false;
+  let variableDefinitions = [];
+  try {
+    const parsedDefinitions = JSON.parse(variablesElement?.dataset.definitions || "[]");
+    variableDefinitions = Array.isArray(parsedDefinitions) ? parsedDefinitions : [];
+  } catch (_error) {
+    variableDefinitions = [];
+  }
+  const currentVariableDefinitions = () => {
+    const rows = customVariablesElement?.atlasoTabulator?.getData?.();
+    return Array.isArray(rows)
+      ? rows.filter((row) => !row.is_new)
+      : variableDefinitions;
+  };
 
   const toggleField = (field, hidden) => {
     if (!(field instanceof HTMLElement)) return;
@@ -2620,11 +2661,18 @@ function initializeEsxiHostReferenceWizard() {
     variablesStatus.dataset.state = state;
   };
   const syncVariables = () => {
-    const parsed = parseEsxiHostVariableRows(variablesTable?.getData?.() || []);
+    const rows = variablesTable?.getData?.() || [];
+    const parsed = parseEsxiHostVariableRows(rows);
     if (parsed.valid) {
       form.elements.variables.value = JSON.stringify(parsed.variables);
+      const overrideCount = Object.keys(parsed.variables).length;
+      const defaultCount = rows.filter((row) => !row.definition_missing && !row.has_override && row.default_value !== "").length;
+      const unassignedCount = rows.filter((row) => !row.definition_missing && !row.has_override && row.default_value === "").length;
+      const parts = [`${overrideCount} host override${overrideCount === 1 ? "" : "s"}`];
+      if (defaultCount) parts.push(`${defaultCount} using ${defaultCount === 1 ? "its" : "their"} default`);
+      if (unassignedCount) parts.push(`${unassignedCount} not assigned`);
       setVariablesStatus(
-        Object.keys(parsed.variables).length ? `${Object.keys(parsed.variables).length} host variable${Object.keys(parsed.variables).length === 1 ? "" : "s"} configured.` : "Add only non-secret host-specific overrides.",
+        rows.length ? `${parts.join("; ")}.` : "Define custom variables under Custom Variables before assigning host values.",
         "saved",
       );
     } else {
@@ -2634,7 +2682,7 @@ function initializeEsxiHostReferenceWizard() {
   };
   const parseVariables = syncVariables;
   const loadVariables = async (value) => {
-    const rows = [...esxiHostVariableRows(value), newEsxiHostVariableRow()];
+    const rows = esxiHostVariableDefinitionRows(currentVariableDefinitions(), value);
     if (variablesTable?.replaceData) await variablesTable.replaceData(rows);
     return syncVariables();
   };
@@ -2644,50 +2692,64 @@ function initializeEsxiHostReferenceWizard() {
       fallback: `#${variablesElement.dataset.fallbackId}`,
       pattern: "direct-edit",
       options: {
-        data: [newEsxiHostVariableRow()],
+        data: esxiHostVariableDefinitionRows(variableDefinitions, "{}"),
         index: "id",
         layout: "fitColumns",
         height: "220px",
-        placeholder: "No host-specific variables configured.",
+        placeholder: "No custom variables are defined.",
         rowContextMenu: [{
-          label: "Delete variable",
-          disabled: (component) => component.getData().is_new,
+          label: (component) => component.getData().definition_missing ? "Remove unavailable override" : "Use default value",
+          disabled: (component) => !component.getData().has_override,
           action: async (_event, row) => {
-            await row.delete();
+            if (row.getData().definition_missing) await row.delete();
+            else await row.update({ value: "", has_override: false });
             syncVariables();
           },
         }],
         columns: [
           {
-            title: "Key",
+            title: "Variable",
             field: "name",
-            editor: "input",
-            formatter: (cell) => cell.getRow().getData().is_new
-              ? '<span class="add-row-button">+ Add variable here</span>'
-              : escapeHtml(cell.getValue() || ""),
-            cellEdited: async (cell) => {
-              const row = cell.getRow();
-              const data = row.getData();
-              if (data.is_new && String(data.name || "").trim()) {
-                await row.update({ id: `variable-${Date.now()}`, is_new: false });
-                await variablesTable.addRow(newEsxiHostVariableRow(), false);
-              }
-              syncVariables();
+            formatter: (cell) => {
+              const data = cell.getRow().getData();
+              const unavailable = data.definition_missing ? ' <span class="status-pill warn">definition unavailable</span>' : "";
+              return `<code>custom.${escapeHtml(cell.getValue() || "")}</code>${unavailable}`;
+            },
+            tooltip: (cell) => cell.getRow().getData().description || "Custom Kickstart variable",
+            minWidth: 210,
+          },
+          {
+            title: "Default value",
+            field: "default_value",
+            formatter: (cell) => {
+              const data = cell.getRow().getData();
+              if (data.definition_missing) return '<span class="muted">Unavailable</span>';
+              return cell.getValue() === ""
+                ? '<span class="muted">No default</span>'
+                : escapeHtml(cell.getValue());
             },
             minWidth: 190,
           },
           {
-            title: "Value",
+            title: "Host override",
             field: "value",
             editor: "input",
-            editable: (cell) => !cell.getRow().getData().is_new,
-            formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || ""),
-            cellEdited: syncVariables,
-            minWidth: 280,
+            editable: (cell) => !cell.getRow().getData().definition_missing,
+            formatter: (cell) => {
+              const data = cell.getRow().getData();
+              if (!data.has_override) return '<span class="muted">Uses default</span>';
+              return cell.getValue() === ""
+                ? '<span class="muted">Empty host override</span>'
+                : escapeHtml(cell.getValue());
+            },
+            cellEdited: async (cell) => {
+              await cell.getRow().update({ has_override: true });
+              syncVariables();
+            },
+            minWidth: 220,
             widthGrow: 1.4,
           },
         ],
-        rowFormatter: (row) => markNewRecordRow(row, "name"),
       },
     });
     variablesTable = variableGrid.table;
@@ -12399,6 +12461,9 @@ function applyTasksStatusPayload(payload, { reopen = false } = {}) {
   if (atlasoTasks.some((task) => taskStatusActive(task.status))) {
     atlasoTasksRefreshTimer = window.setTimeout(() => refreshTasksPage().catch(() => {}), 2000);
   }
+  document.dispatchEvent(new CustomEvent("atlaso:tasks-refreshed", {
+    detail: { tasks: atlasoTasks },
+  }));
   return atlasoTasks;
 }
 
@@ -19182,6 +19247,12 @@ function initializeNetworkBootDiscoveredHostRefresh(
   };
 }
 
+function networkBootEnvironmentHasLatestInstalled(environment) {
+  const available = String(environment?.available_version || "").trim();
+  return Boolean(available) && (environment?.installed_versions || [])
+    .some((item) => String(item?.version || "").trim() === available);
+}
+
 function initializeNetworkBootPage() {
   const hostsElement = document.getElementById("network-boot-discovered-table");
   const environmentsElement = document.getElementById("network-boot-environments-table");
@@ -19205,6 +19276,8 @@ function initializeNetworkBootPage() {
   let selectedHost = null;
   let selectedReport = null;
   let hostsTable = null;
+  let environmentTable = null;
+  let environmentRefreshPromise = null;
   const loadHost = async (row) => {
     const host = await networkBootRequest(`/api/v1/network-boot/hosts/${row.id}`);
     const history = await networkBootRequest(`/api/v1/network-boot/hosts/${row.id}/history`);
@@ -19249,12 +19322,6 @@ function initializeNetworkBootPage() {
       reportHistory.append(button);
     });
   };
-  const updateHostActionState = () => {
-    const wake = hostDialog?.querySelector("[data-network-boot-wake]");
-    const reboot = hostDialog?.querySelector("[data-network-boot-reboot]");
-    if (wake instanceof HTMLButtonElement) wake.disabled = !selectedHost?.boot_mac;
-    if (reboot instanceof HTMLButtonElement) reboot.disabled = selectedHost?.session_state !== "online";
-  };
   const openHost = async (row) => {
     try {
       const loaded = await loadHost(row);
@@ -19266,7 +19333,6 @@ function initializeNetworkBootPage() {
       renderReportHistory(loaded.history);
       if (selectedReport) selectReport(selectedReport);
       else renderNetworkBootReport(reportArticle, null);
-      updateHostActionState();
       hostDialog?.showModal();
     } catch (error) {
       showTransientGridStatus(error instanceof Error ? error.message : "The inventory report could not be loaded.");
@@ -19326,7 +19392,7 @@ function initializeNetworkBootPage() {
   };
   const promoteHost = async (row, launcher = null) => {
     const data = row?.getData ? row.getData() : row;
-    if (!data?.id) return;
+    if (!data?.id || data.assigned_to_esxi) return;
     try {
       const loaded = selectedHost?.id === data.id ? { host: selectedHost } : await loadHost(data);
       selectedHost = loaded.host;
@@ -19340,18 +19406,24 @@ function initializeNetworkBootPage() {
     element: hostsElement,
     fallback: `#${hostsElement.dataset.fallbackId}`,
     pattern: "read-only",
-    onOpenRow: openHost,
     emptyMessage: "No inventory reports received.",
     options: {
       data: JSON.parse(hostsElement.dataset.rows || "[]"),
       index: "id",
-      height: "300px",
-      rowContextMenu: canWrite ? [
-        { label: "Promote to ESXi", action: (_event, row) => promoteHost(row, row.getElement()) },
+      height: "100%",
+      rowContextMenu: [
+        { label: "View inventory report", action: (_event, row) => openHost(row.getData()) },
+        ...(canWrite ? [
+        {
+          label: (component) => component.getData().assigned_to_esxi ? "Promote to ESXi (already assigned)" : "Promote to ESXi",
+          disabled: (component) => Boolean(component.getData().assigned_to_esxi),
+          action: (_event, row) => promoteHost(row, row.getElement()),
+        },
         { label: "Reboot", disabled: (component) => component.getData().session_state !== "online", action: (_event, row) => rebootHost(row) },
         { label: "Wake host", disabled: (component) => !component.getData().boot_mac, action: (_event, row) => wakeHost(row) },
         { label: "Remove discovered host", action: (_event, row) => removeHost(row) },
-      ] : false,
+        ] : []),
+      ],
       columns: [
         { title: "UUID", field: "dmi_uuid", minWidth: 220, formatter: (cell) => escapeHtml(cell.getValue() || "MAC fallback") },
         { title: "MACs", field: "macs", minWidth: 190, formatter: (cell) => escapeHtml((cell.getValue() || []).join(", ")) },
@@ -19385,9 +19457,6 @@ function initializeNetworkBootPage() {
     document.body.classList.add(reportPrintClass);
     window.print();
   });
-  hostDialog?.querySelector("[data-network-boot-wake]")?.addEventListener("click", () => wakeHost(selectedHost));
-  hostDialog?.querySelector("[data-network-boot-reboot]")?.addEventListener("click", () => rebootHost(selectedHost));
-  hostDialog?.querySelector("[data-network-boot-remove]")?.addEventListener("click", () => removeHost(selectedHost));
   const persistEnvironmentState = async (row, enabled) => {
     const data = row.getData();
     const availability = {
@@ -19437,6 +19506,33 @@ function initializeNetworkBootPage() {
     await refreshTasksPage();
     showTransientGridStatus(`Queued verified download task ${queued.job_id}.`);
   };
+  const refreshEnvironmentRows = () => {
+    if (!environmentTable) return Promise.resolve();
+    if (environmentRefreshPromise) return environmentRefreshPromise;
+    environmentRefreshPromise = networkBootRequest("/api/v1/network-boot/environments")
+      .then(async (rows) => {
+        for (const updated of rows) {
+          const row = environmentTable?.getRow?.(updated.key);
+          if (!row) continue;
+          const current = row.getData();
+          await row.update({
+            ...updated,
+            available_version: current.available_version || "",
+            available_status: current.available_status || "checking",
+            available_checked_at: current.available_checked_at || "",
+          });
+        }
+      })
+      .finally(() => {
+        environmentRefreshPromise = null;
+      });
+    return environmentRefreshPromise;
+  };
+  document.addEventListener("atlaso:tasks-refreshed", (event) => {
+    const tasks = Array.isArray(event.detail?.tasks) ? event.detail.tasks : [];
+    if (!tasks.some((task) => task.type === "pxe-media-sync")) return;
+    refreshEnvironmentRows().catch(() => {});
+  });
   const openEnvironmentUpload = (data) => {
     if (!(uploadDialog instanceof HTMLDialogElement) || !(uploadForm instanceof HTMLFormElement)) return;
     uploadForm.reset();
@@ -19473,7 +19569,10 @@ function initializeNetworkBootPage() {
           },
         },
         {
-          label: "Download latest",
+          label: (component) => networkBootEnvironmentHasLatestInstalled(component.getData())
+            ? "Download latest (already installed)"
+            : "Download latest",
+          disabled: (component) => networkBootEnvironmentHasLatestInstalled(component.getData()),
           action: async (_event, row) => {
             await queueEnvironmentDownload(row.getData());
           },
@@ -19501,8 +19600,13 @@ function initializeNetworkBootPage() {
             });
             if (!confirmed) return;
             try {
-              await networkBootRequest(`/api/v1/network-boot/environments/${data.key}/media/${encodeURIComponent(candidate.version)}`, { method: "DELETE" });
-              window.location.reload();
+              const queued = await networkBootRequest(`/api/v1/network-boot/environments/${data.key}/media/${encodeURIComponent(candidate.version)}`, { method: "DELETE" });
+              atlasoNewTaskId = queued.job_id || "";
+              atlasoSelectedTaskId = atlasoNewTaskId;
+              const tasksPage = document.querySelector("[data-network-boot-tasks-panel] [data-tasks-page]");
+              if (tasksPage instanceof HTMLElement) tasksPage.dataset.selectedTaskId = atlasoNewTaskId;
+              await refreshTasksPage();
+              showTransientGridStatus(`Queued inactive media deletion task ${queued.job_id}.`);
             } catch (error) {
               showTransientGridStatus(error instanceof Error ? error.message : "The inactive boot media could not be deleted.");
             }
@@ -19561,7 +19665,7 @@ function initializeNetworkBootPage() {
       ],
     },
   });
-  const environmentTable = environmentGrid.table;
+  environmentTable = environmentGrid.table;
   networkBootRequest("/api/v1/network-boot/environments/available-versions")
     .then(async (availableVersions) => {
       for (const available of availableVersions) {
@@ -19611,7 +19715,7 @@ function initializeNetworkBootPage() {
       uploadProgress.value = percent;
       if (uploadStatus instanceof HTMLElement) uploadStatus.textContent = `Uploading ${file.name}: ${percent}%`;
     });
-    request.addEventListener("load", () => {
+    request.addEventListener("load", async () => {
       let payload = {};
       try {
         payload = JSON.parse(request.responseText || "{}");
@@ -19619,6 +19723,11 @@ function initializeNetworkBootPage() {
         payload = {};
       }
       if (request.status >= 200 && request.status < 300) {
+        atlasoNewTaskId = payload.job_id || "";
+        atlasoSelectedTaskId = atlasoNewTaskId;
+        const tasksPage = document.querySelector("[data-network-boot-tasks-panel] [data-tasks-page]");
+        if (tasksPage instanceof HTMLElement) tasksPage.dataset.selectedTaskId = atlasoNewTaskId;
+        await refreshTasksPage();
         if (uploadStatus instanceof HTMLElement) {
           uploadStatus.dataset.state = "saved";
           uploadStatus.textContent = `Queued verification task ${payload.job_id}. You can close this dialog and follow it on Tasks.`;
@@ -19640,11 +19749,6 @@ function initializeNetworkBootPage() {
       if (uploadSubmit instanceof HTMLButtonElement) uploadSubmit.disabled = false;
     });
     request.send(body);
-  });
-  hostDialog?.querySelector("[data-network-boot-promote-open]")?.addEventListener("click", () => {
-    if (!selectedHost) return;
-    const hostRow = hostsTable?.getRow(selectedHost.id);
-    promoteHost(selectedHost, hostRow?.getElement?.() || null);
   });
 }
 

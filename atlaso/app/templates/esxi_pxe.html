@@ -43,7 +43,7 @@
         </tbody>
       </table>
       <p class="muted" data-network-boot-discovered-status role="status" aria-live="polite" hidden></p>
-      <p class="muted">New Inventory Linux reports appear automatically while this page is visible. Double-click a row, or focus it and press Enter, to inspect its latest bounded report and history. Right-click for permitted host actions. Promotion, Wake-on-LAN, reboot, and removal require Network Boot write access.</p>
+      <p class="muted">New Inventory Linux reports appear automatically while this page is visible. Open the row menu and choose <strong>View inventory report</strong> to inspect its latest bounded report and history. Promotion, Wake-on-LAN, reboot, and removal in the same menu require Network Boot write access.</p>
     </div>
     <div id="network-boot-environments-panel" class="tab-panel network-boot-environments-panel" role="tabpanel" hidden>
       <div id="network-boot-environments-table" class="tabulator-shell"
@@ -62,13 +62,13 @@
       <div class="network-boot-task-history-container" data-network-boot-tasks-panel>
         {% set task_grid_class = "network-boot-task-history task-grid-section" %}
         {% set task_grid_title = "Boot media tasks" %}
-        {% set task_grid_description = "The same task grid used by Tasks, scoped to Network Boot media downloads and uploads." %}
+        {% set task_grid_description = "The same task grid used by Tasks, scoped to Network Boot media downloads, uploads, and inactive-media deletion." %}
         {% set task_grid_rows = network_boot_media_tasks %}
         {% set task_grid_component_options = task_component_filter_options %}
         {% set task_grid_type = "pxe-media-sync" %}
         {% set task_grid_lock_component_filter = true %}
         {% set task_grid_height = "100%" %}
-        {% set task_grid_scope_label = "Downloads and uploads only" %}
+        {% set task_grid_scope_label = "Media operations only" %}
         {% set task_grid_history_url = "/tasks" %}
         {% set task_grid_empty_message = "No Network Boot media tasks have been recorded yet." %}
         {% include "partials/task_grid.html" %}
@@ -102,12 +102,6 @@
       </div>
     </div>
     <div class="confirm-modal-actions">
-      {% if network_boot_can_write %}
-        <button class="button primary" type="button" data-network-boot-promote-open>Promote to ESXi</button>
-        <button class="button secondary" type="button" data-network-boot-wake>Wake host</button>
-        <button class="button danger" type="button" data-network-boot-reboot>Reboot</button>
-        <button class="button danger" type="button" data-network-boot-remove>Remove discovered host</button>
-      {% endif %}
       <button class="button ghost" type="button" data-network-boot-host-close>Close</button>
     </div>
   </div>
@@ -172,13 +166,19 @@
           <input type="hidden" name="variables" value="{}">
           <div class="form-stack">
             <div>
-              <span class="field-label"><span>Host variables</span><button class="help-icon" type="button" data-help="Defines non-secret custom key/value overrides for this host. Atlaso stores the grid as the existing variables JSON object; built-in host, DHCP, and PXE names cannot be overridden.">i</button></span>
-              <div id="esxi-host-variables-table" class="tabulator-shell" data-fallback-id="esxi-host-variables-fallback"></div>
+              <span class="field-label"><span>Host variables</span><button class="help-icon" type="button" data-help="Lists every non-secret Custom Variables definition. Edit Host override to replace its default for this host; use the row menu to return to the default.">i</button></span>
+              <div id="esxi-host-variables-table" class="tabulator-shell" data-definitions='{{ esxi_custom_variables | tojson }}' data-fallback-id="esxi-host-variables-fallback"></div>
               <table id="esxi-host-variables-fallback" class="data-table compact">
-                <thead><tr><th>Key</th><th>Value</th></tr></thead>
-                <tbody><tr><td colspan="2" class="muted">No host-specific variables configured.</td></tr></tbody>
+                <thead><tr><th>Variable</th><th>Default value</th><th>Host override</th></tr></thead>
+                <tbody>
+                  {% for variable in esxi_custom_variables %}
+                    <tr><td><code>custom.{{ variable.name }}</code></td><td>{{ variable.default_value or "No default" }}</td><td>Uses default</td></tr>
+                  {% else %}
+                    <tr><td colspan="3" class="muted">No custom variables are defined.</td></tr>
+                  {% endfor %}
+                </tbody>
               </table>
-              <p class="autosave-status" data-state="idle" data-esxi-host-variables-status aria-live="polite">Add only non-secret host-specific overrides.</p>
+              <p class="autosave-status" data-state="idle" data-esxi-host-variables-status aria-live="polite">Define custom variables under Custom Variables before assigning host values.</p>
             </div>
           </div>
         </div></section>

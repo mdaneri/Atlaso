@@ -31,6 +31,8 @@ from sqlalchemy.orm import Session
 
 from atlaso.app.models import (
     EsxiPxeHost,
+    Job,
+    JobStatus,
     NetworkBootDiscoveredHost,
     NetworkBootEnvironment,
     NetworkBootHostBootOverride,
@@ -3126,6 +3128,80 @@ def cleanup_network_boot_upload(
         upload_path.parent.rmdir()
     except FileNotFoundError:
         pass
+
+
+def remove_inactive_network_boot_media(
+    db: Session,
+    *,
+    environment_key: str,
+    version: str,
+    ignore_job_id: str = "",
+) -> dict[str, Any]:
+    if environment_key == "inventory":
+        raise ValueError("Bundled Inventory Linux cannot be removed.")
+    state = db.get(NetworkBootEnvironment, environment_key)
+    media = db.execute(
+        select(NetworkBootMedia).where(
+            NetworkBootMedia.environment_key == environment_key,
+            NetworkBootMedia.version == version,
+        )
+    ).scalar_one_or_none()
+    if state is None or media is None:
+        raise ValueError("Installed Network Boot media was not found.")
+    if version in {state.desired_version, state.active_version}:
+        raise ValueError(
+            "Select and apply a different version or disable this environment before removal."
+        )
+    environment_jobs = db.execute(
+        select(Job).where(Job.type == "pxe-media-sync")
+    ).scalars().all()
+    matching_jobs: list[tuple[Job, dict[str, Any]]] = []
+    for job in environment_jobs:
+        try:
+            config = json.loads(job.task_config_json or "{}")
+        except json.JSONDecodeError:
+            config = {}
+        if config.get("environment") == environment_key:
+            matching_jobs.append((job, config))
+    if any(
+        job.id != ignore_job_id
+        and job.status in (JobStatus.PENDING.value, JobStatus.RUNNING.value)
+        for job, _config in matching_jobs
+    ):
+        raise ValueError(
+            "Wait for the active Network Boot media task before cleaning this environment."
+        )
+
+    environment_root = (NETWORK_BOOT_MEDIA_ROOT / environment_key).resolve()
+    target = Path(media.installed_path)
+    try:
+        valid_target = (
+            environment_root.is_dir()
+            and target.is_dir()
+            and not target.is_symlink()
+            and target.resolve().is_relative_to(environment_root)
+            and target.resolve().parent == environment_root
+            and str(target.resolve()) == media.installed_path
+        )
+    except OSError:
+        valid_target = False
+    if not valid_target:
+        raise ValueError("Installed media path failed safety validation.")
+
+    shutil.rmtree(target)
+    db.delete(media)
+    cleaned_uploads = 0
+    for job, config in matching_jobs:
+        if config.get("source") != "upload":
+            continue
+        cleanup_network_boot_upload(job.id)
+        cleaned_uploads += 1
+    return {
+        "environment": environment_key,
+        "version": version,
+        "removed": True,
+        "staged_uploads_cleaned": cleaned_uploads,
+    }
 
 
 def sync_network_boot_media(

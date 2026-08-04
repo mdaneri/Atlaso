@@ -1723,6 +1723,8 @@ def test_deleting_inactive_media_cleans_environment_upload_staging(
     monkeypatch,
     tmp_path,
 ):
+    import atlaso.app.worker as worker
+
     media_root = tmp_path / "media"
     environment_root = media_root / "shredos"
     installed = environment_root / "2025.11"
@@ -1776,12 +1778,35 @@ def test_deleting_inactive_media_cleans_environment_upload_staging(
         headers={"Authorization": f"Bearer {token}"},
     )
 
-    assert response.status_code == 200, response.text
-    assert response.json()["staged_uploads_cleaned"] == 1
+    assert response.status_code == 202, response.text
+    queued = db_session.get(Job, response.json()["job_id"])
+    config = json.loads(queued.task_config_json)
+    assert config == {
+        "environment": "shredos",
+        "request_id": config["request_id"],
+        "source": "delete",
+        "version": "2025.11",
+    }
+    assert installed.exists()
+    assert staged.exists()
+    monkeypatch.setattr(network_boot, "NETWORK_BOOT_MEDIA_ROOT", media_root)
+    monkeypatch.setattr(network_boot, "NETWORK_BOOT_UPLOAD_ROOT", upload_root)
+    queued.status = JobStatus.RUNNING.value
+    db_session.add(queued)
+    db_session.commit()
+    from atlaso.app.ui import _can_cancel_task
+
+    assert _can_cancel_task(queued) is False
+
+    worker._run_pxe_media_sync(db_session, queued)
+
     assert not installed.exists()
     assert not staged.exists()
     db_session.expire_all()
     assert db_session.get(NetworkBootMedia, media_id) is None
+    completed = db_session.get(Job, queued.id)
+    assert completed.status == JobStatus.SUCCEEDED.value
+    assert json.loads(completed.result)["staged_uploads_cleaned"] == 1
 
 
 def test_inventory_session_stores_only_token_hash_and_expires(db_session):

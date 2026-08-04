@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import shutil
 import threading
 import time
 from collections import defaultdict, deque
@@ -49,7 +48,6 @@ from atlaso.app.services.network_boot import (
     NETWORK_BOOT_UPLOAD_MAX_BYTES,
     catalog_rows,
     claim_host_boot_override,
-    cleanup_network_boot_upload,
     esxi_host_assignments_by_mac,
     host_to_dict,
     inventory_session_for_token,
@@ -433,7 +431,10 @@ async def upload_network_boot_environment(
     }
 
 
-@router.delete("/environments/{environment_key}/media/{version}")
+@router.delete(
+    "/environments/{environment_key}/media/{version}",
+    status_code=status.HTTP_202_ACCEPTED,
+)
 def remove_network_boot_media(
     environment_key: str,
     version: str,
@@ -476,32 +477,42 @@ def remove_network_boot_media(
             status_code=409,
             detail="Wait for the active Network Boot media task before cleaning this environment.",
         )
-    target = _installed_media_directory(media)
-    if target is None:
+    if _installed_media_directory(media) is None:
         raise HTTPException(status_code=409, detail="Installed media path failed safety validation.")
-    shutil.rmtree(target)
-    db.delete(media)
-    cleaned_uploads = 0
-    for job, config in matching_jobs:
-        if config.get("source") != "upload":
-            continue
-        cleanup_network_boot_upload(job.id)
-        cleaned_uploads += 1
+    job = Job(
+        id=f"job_{uuid4().hex}",
+        type="pxe-media-sync",
+        status=JobStatus.PENDING.value,
+        created_by=identity.username,
+        progress_percent=0,
+        task_config_json=json.dumps(
+            {
+                "environment": environment_key,
+                "request_id": request.state.request_id,
+                "source": "delete",
+                "version": version,
+            },
+            sort_keys=True,
+        ),
+        network_boot_environment_key=environment_key,
+        network_boot_source="delete",
+    )
+    db.add(job)
     record_audit(
         db,
         actor=identity.username,
-        action="remove_network_boot_media",
-        resource_type="network_boot_media",
-        resource_id=f"{environment_key}:{version}",
-        detail=f"inactive immutable cache version removed; staged_uploads_cleaned={cleaned_uploads}",
+        action="queue_remove_network_boot_media",
+        resource_type="job",
+        resource_id=job.id,
+        detail=f"environment={environment_key}; version={version}",
         request_id=request.state.request_id,
     )
     db.commit()
     return {
+        "job_id": job.id,
+        "status": job.status,
         "environment": environment_key,
         "version": version,
-        "removed": True,
-        "staged_uploads_cleaned": cleaned_uploads,
     }
 
 

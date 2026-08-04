@@ -5979,6 +5979,13 @@ def _task_time_label(value: datetime | None) -> str:
 def _can_cancel_task(job: Job, identity: Identity | None = None) -> bool:
     if job.status not in ACTIVE_JOB_STATUSES:
         return False
+    if job.type == "pxe-media-sync" and job.status == JobStatus.RUNNING.value:
+        try:
+            config = json.loads(job.task_config_json or "{}")
+        except json.JSONDecodeError:
+            config = {}
+        if config.get("source") == "delete":
+            return False
     if job.type == "appliance-apply" and _job_payload(job).get("cancel_requested"):
         return False
     if identity is None:
@@ -20536,6 +20543,16 @@ def cancel_task_from_ui(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Administrator role required for this task type")
     if job.status not in ACTIVE_JOB_STATUSES:
         return JSONResponse({"task": _task_row(job, identity), "message": "Task is already finished."})
+    if job.type == "pxe-media-sync" and job.status == JobStatus.RUNNING.value:
+        try:
+            config = json.loads(job.task_config_json or "{}")
+        except json.JSONDecodeError:
+            config = {}
+        if config.get("source") == "delete":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A running Network Boot media deletion cannot be cancelled.",
+            )
     if job.type == "appliance-apply":
         payload = _job_payload(job)
         if not payload.get("cancel_requested"):
