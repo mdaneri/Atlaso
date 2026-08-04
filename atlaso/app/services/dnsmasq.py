@@ -1255,7 +1255,9 @@ def render_dnsmasq_config(
                     if scope_address
                     else "/pxe/boot.ipxe"
                 )
-                menu_url = f"{menu_url}?mac=${{net0/mac}}"
+                menu_url = (
+                    f"{menu_url}?mac=${{net0/mac}}&firmware=${{platform}}"
+                )
                 lines.extend(
                     [
                         f"dhcp-boot={scope_entry['prefix']}tag:ipxe,{menu_url}",

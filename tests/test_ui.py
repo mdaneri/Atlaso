@@ -4761,6 +4761,7 @@ def test_esxi_pxe_boot_settings_update_dnsmasq_and_apply_manifest(client):
         assert (
             "dhcp-boot=tag:sitea,tag:ipxe,"
             "http://192.168.50.1:8080/pxe/boot.ipxe?mac=${net0/mac}"
+            "&firmware=${platform}"
         ) in dns_preview
         assert "dhcp-boot=tag:sitea,tag:!ipxe,tag:efi-x86_64,snponly.efi,esxi-pxe.atlaso.internal,192.168.50.1" in dns_preview
         assert "dhcp-boot=tag:sitea,tag:!ipxe,tag:!efi-x86_64,undionly.kpxe,esxi-pxe.atlaso.internal,192.168.50.1" in dns_preview
@@ -4784,6 +4785,7 @@ def test_esxi_pxe_boot_settings_update_dnsmasq_and_apply_manifest(client):
     assert (
         "dhcp-boot=tag:sitea,tag:ipxe,"
         "http://192.168.50.1:8080/pxe/boot.ipxe?mac=${net0/mac}"
+        "&firmware=${platform}"
     ) in dhcp_page.text
     assert "dhcp-boot=tag:sitea,tag:!ipxe,tag:efi-x86_64,snponly.efi,esxi-pxe.atlaso.internal,192.168.50.1" in dhcp_page.text
     assert "dhcp-boot=tag:sitea,tag:uefi-http,tag:uefi-http-x64,http://192.168.50.1:8080/pxe/esxi/snponly.efi" in dhcp_page.text

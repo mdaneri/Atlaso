@@ -2468,6 +2468,19 @@ def test_known_enabled_esxi_mac_becomes_timed_default(db_session):
                 "chain tftp://${next-server}/pxelinux.0 || goto menu",
             ],
         ),
+        (
+            "",
+            [
+                "iseq ${platform} efi && goto esxi_assigned_uefi || "
+                "goto esxi_assigned_bios",
+                ":esxi_assigned_uefi",
+                "chain http://192.0.2.10:8080/pxe/esxi/"
+                "01-52-54-00-12-34-56/mboot.efi || goto menu",
+                ":esxi_assigned_bios",
+                "set 209:string pxelinux.cfg/01-52-54-00-12-34-56",
+                "chain tftp://${next-server}/pxelinux.0 || goto menu",
+            ],
+        ),
     ],
 )
 def test_esxi_menu_executes_the_firmware_loader(

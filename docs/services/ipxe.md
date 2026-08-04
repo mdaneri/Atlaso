@@ -53,7 +53,10 @@ staged PXELINUX loader over TFTP with that profile's explicit configuration
 path. The loader then reads the generated `boot.cfg`. If selection returns to
 the Atlaso menu without showing the VMware loader, verify that the applied menu
 chains `mboot.efi` or `pxelinux.0`, and reapply the ESXi PXE unit if it still
-references `boot.cfg` directly.
+references `boot.cfg` directly. Current DHCP configuration includes iPXE's
+`${platform}` value in the menu request; the menu also checks `${platform}` at
+execution time when that query parameter is absent, preserving compatibility
+with an already-applied DHCP configuration.
 
 For an enabled ESXi Host Reference, right-click and choose **Boot Inventory
 Linux once** to override that exact MAC's next menu default for 30 minutes. The

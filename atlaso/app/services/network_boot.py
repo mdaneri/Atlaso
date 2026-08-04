@@ -1744,16 +1744,31 @@ def render_network_boot_menu(
         "menu Atlaso Network Boot",
     ]
 
-    def esxi_loader_lines(artifact: dict[str, Any]) -> list[str]:
+    def esxi_loader_lines(
+        artifact: dict[str, Any],
+        *,
+        label: str,
+    ) -> list[str]:
         mac_key = str(artifact.get("mac_key") or "default")
-        if firmware.strip().lower() == "efi":
-            return [
-                f"chain {esxi_base_url}/{mac_key}/mboot.efi || goto menu",
-            ]
-        return [
+        normalized_firmware = firmware.strip().lower()
+        uefi_lines = [
+            f"chain {esxi_base_url}/{mac_key}/mboot.efi || goto menu",
+        ]
+        bios_lines = [
             f"set 209:string pxelinux.cfg/{mac_key}",
             "set 210:string tftp://${next-server}/",
             "chain tftp://${next-server}/pxelinux.0 || goto menu",
+        ]
+        if normalized_firmware == "efi":
+            return uefi_lines
+        if normalized_firmware in {"bios", "pcbios"}:
+            return bios_lines
+        return [
+            f"iseq ${{platform}} efi && goto {label}_uefi || goto {label}_bios",
+            f":{label}_uefi",
+            *uefi_lines,
+            f":{label}_bios",
+            *bios_lines,
         ]
     if inventory:
         lines.extend(
@@ -1814,7 +1829,7 @@ def render_network_boot_menu(
         lines.extend(
             [
                 ":esxi_assigned",
-                *esxi_loader_lines(assigned),
+                *esxi_loader_lines(assigned, label="esxi_assigned"),
                 "",
             ]
         )
@@ -1822,7 +1837,10 @@ def render_network_boot_menu(
         lines.extend(
             [
                 f":esxi_{artifact['host_id']}",
-                *esxi_loader_lines(artifact),
+                *esxi_loader_lines(
+                    artifact,
+                    label=f"esxi_{artifact['host_id']}",
+                ),
                 "",
             ]
         )
@@ -1830,7 +1848,7 @@ def render_network_boot_menu(
         lines.extend(
             [
                 ":esxi_default",
-                *esxi_loader_lines(undefined),
+                *esxi_loader_lines(undefined, label="esxi_default"),
                 "",
             ]
         )
