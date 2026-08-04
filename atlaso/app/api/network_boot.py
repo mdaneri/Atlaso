@@ -961,14 +961,17 @@ def promote_discovered_host(
             status_code=422,
             detail=f"Promotion {field} is invalid: {error['msg']}.",
         ) from exc
-    mac_address = promotion.mac_address.strip().lower().replace("-", ":")
-    if mac_address not in set(json.loads(discovered.macs_json or "[]")):
+    mac_key = normalize_pxe_mac(promotion.mac_address)
+    if not mac_key:
+        raise HTTPException(status_code=422, detail="Promotion MAC is invalid.")
+    mac_address = ":".join(mac_key.split("-")[1:])
+    boot_mac_key = normalize_pxe_mac(discovered.boot_mac)
+    boot_mac = ":".join(boot_mac_key.split("-")[1:]) if boot_mac_key else ""
+    if mac_address != boot_mac:
         raise HTTPException(
             status_code=422,
-            detail="Promotion MAC must be one of the discovered permanent or boot MACs.",
+            detail="Promotion MAC must match the discovered boot MAC.",
         )
-    if not normalize_pxe_mac(mac_address):
-        raise HTTPException(status_code=422, detail="Promotion MAC is invalid.")
     if db.execute(
         select(EsxiPxeHost).where(EsxiPxeHost.mac_address == mac_address)
     ).scalar_one_or_none():

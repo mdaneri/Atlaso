@@ -2440,7 +2440,15 @@ function esxiHostMacKey(value) {
 
 function isValidEsxiHostMac(value) {
   const compact = esxiHostMacKey(value);
-  return /^[0-9a-f]{12}$/.test(compact) && !["000000000000", "ffffffffffff"].includes(compact);
+  return /^[0-9a-f]{12}$/.test(compact)
+    && !["000000000000", "ffffffffffff"].includes(compact)
+    && (Number.parseInt(compact.slice(0, 2), 16) & 1) === 0;
+}
+
+function normalizeEsxiHostMac(value) {
+  const compact = esxiHostMacKey(value);
+  if (!isValidEsxiHostMac(compact)) return String(value || "").trim();
+  return compact.match(/.{2}/g).join(":");
 }
 
 function esxiDiscoveredHostLabel(host) {
@@ -2592,7 +2600,7 @@ function initializeEsxiHostReferenceWizard() {
     .filter(Boolean));
   const availableMacs = (host) => {
     const used = usedMacs();
-    return [...new Set([...(host?.macs || []), host?.boot_mac].filter(Boolean))]
+    return [host?.boot_mac]
       .filter((mac) => isValidEsxiHostMac(mac) && !used.has(esxiHostMacKey(mac)));
   };
   const eligibleDiscoveredHosts = () => discoveredRows().filter((host) => availableMacs(host).length > 0);
@@ -2609,6 +2617,13 @@ function initializeEsxiHostReferenceWizard() {
     discoveredMacSelect.required = discovered;
     manualMacInput.disabled = discovered;
     manualMacInput.required = !discovered;
+    updateManualMacValidity();
+  };
+  const updateManualMacValidity = () => {
+    const valid = manualMacInput.disabled || isValidEsxiHostMac(manualMacInput.value);
+    manualMacInput.setCustomValidity(valid ? "" : "Enter a valid unicast MAC address with six hexadecimal octets.");
+    manualMacInput.setAttribute("aria-invalid", String(!valid));
+    return valid;
   };
   const replaceMacOptions = (macs) => {
     discoveredMacSelect.replaceChildren(...macs.map((mac) => new Option(mac, mac)));
@@ -2931,6 +2946,13 @@ function initializeEsxiHostReferenceWizard() {
       showEsxiHostSuccess(activeContext.mode === "edit" ? "Host Reference updated" : "Host Reference created");
       return { valid: true };
     },
+  });
+  manualMacInput.addEventListener("input", updateManualMacValidity);
+  manualMacInput.addEventListener("blur", () => {
+    if (isValidEsxiHostMac(manualMacInput.value)) {
+      manualMacInput.value = normalizeEsxiHostMac(manualMacInput.value);
+    }
+    updateManualMacValidity();
   });
 
   sourceSelect.addEventListener("change", () => {
@@ -19195,12 +19217,40 @@ function renderNetworkBootReport(article, historyItem) {
   ], legacyReport ? "USB device details were not reported by the legacy v1 inventory schema." : "No USB devices were reported.");
 }
 
+function networkBootChangedRowValues(current, incoming) {
+  return Object.fromEntries(Object.entries(incoming || {}).filter(([key, value]) => {
+    const existing = current?.[key];
+    if (Array.isArray(existing) || Array.isArray(value) || (existing && typeof existing === "object") || (value && typeof value === "object")) {
+      return JSON.stringify(existing) !== JSON.stringify(value);
+    }
+    return existing !== value;
+  }));
+}
+
+function reconcileNetworkBootDiscoveredHosts(hostsTable, hosts) {
+  return (async () => {
+    const incoming = new Map((hosts || []).map((host) => [String(host.id), host]));
+    for (const row of hostsTable.getRows()) {
+      const current = row.getData();
+      const updated = incoming.get(String(current.id));
+      if (!updated) {
+        await row.delete();
+        continue;
+      }
+      incoming.delete(String(current.id));
+      const changed = networkBootChangedRowValues(current, updated);
+      if (Object.keys(changed).length) await row.update(changed);
+    }
+    for (const host of incoming.values()) await hostsTable.addRow(host);
+  })();
+}
+
 function initializeNetworkBootDiscoveredHostRefresh(
   hostsTable,
   statusElement,
   { request = networkBootRequest, refreshMilliseconds = 5000 } = {},
 ) {
-  if (!hostsTable || typeof hostsTable.replaceData !== "function") return null;
+  if (!hostsTable || typeof hostsTable.getRows !== "function" || typeof hostsTable.addRow !== "function") return null;
   let timer = 0;
   let refreshing = false;
   const setStatus = (message = "") => {
@@ -19220,7 +19270,7 @@ function initializeNetworkBootDiscoveredHostRefresh(
     refreshing = true;
     try {
       const hosts = await request("/api/v1/network-boot/hosts");
-      await hostsTable.replaceData(hosts);
+      await reconcileNetworkBootDiscoveredHosts(hostsTable, hosts);
       setStatus();
     } catch (error) {
       setStatus(error instanceof Error

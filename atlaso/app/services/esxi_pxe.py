@@ -945,14 +945,23 @@ def _normalize_ipxe_script(value: str) -> str:
 
 def normalize_pxe_mac(value: str) -> str:
     raw = (value or "").strip().lower().replace("-", ":")
-    if "." in raw and ":" not in raw:
-        raw = raw.replace(".", "")
-    octets = re.findall(r"[0-9a-f]{2}", raw)
-    if len(octets) == 7 and octets[0] == "01":
-        return "01-" + "-".join(octets[1:])
-    if len(octets) != 6:
+    if re.fullmatch(r"01:(?:[0-9a-f]{2}:){5}[0-9a-f]{2}", raw):
+        raw = raw[3:]
+    if re.fullmatch(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}", raw):
+        compact = raw.replace(":", "")
+    elif re.fullmatch(r"[0-9a-f]{12}", raw):
+        compact = raw
+    elif re.fullmatch(r"[0-9a-f]{4}(?:\.[0-9a-f]{4}){2}", raw):
+        compact = raw.replace(".", "")
+    else:
         return ""
-    return "01-" + "-".join(octets)
+    if compact in {"000000000000", "ffffffffffff"}:
+        return ""
+    if int(compact[:2], 16) & 1:
+        return ""
+    return "01-" + "-".join(
+        compact[index:index + 2] for index in range(0, 12, 2)
+    )
 
 
 def normalize_host_mac(value: str) -> str:

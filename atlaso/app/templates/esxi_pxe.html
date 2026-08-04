@@ -155,9 +155,9 @@
           <label data-esxi-host-discovered-field><span>Discovered host</span><select name="discovered_host_id"></select></label>
           <div class="form-grid">
             <label><span>Hostname</span><input name="hostname" required maxlength="120"></label>
-            <label data-esxi-host-discovered-mac-field><span>Selected MAC</span><select name="discovered_mac_address"></select></label>
-            <label data-esxi-host-manual-mac-field><span>MAC address</span><input name="manual_mac_address" maxlength="32"></label>
-            <label><span>IP address, if any</span><input name="ip_address" maxlength="64" placeholder="DHCP"></label>
+            <label data-esxi-host-discovered-mac-field><span>Boot MAC</span><select name="discovered_mac_address"></select></label>
+            <label data-esxi-host-manual-mac-field><span>MAC address</span><input name="manual_mac_address" maxlength="32" inputmode="text" autocomplete="off" spellcheck="false" placeholder="00:50:56:aa:bb:cc" aria-describedby="esxi-host-mac-help"><small id="esxi-host-mac-help" class="field-help">Six hexadecimal octets; unicast addresses only.</small></label>
+            <label><span>IP address (optional — leave blank for DHCP)</span><input name="ip_address" maxlength="64" placeholder="DHCP"></label>
           </div>
         </div></section>
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="installer"><div class="form-stack">
@@ -182,7 +182,7 @@
             </div>
           </div>
         </div></section>
-        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="enablement">
+        <section class="vcf-sddc-step-page host-reference-enable-step hidden" data-atlaso-wizard-step="enablement">
           <label class="switch-field"><span>Enabled</span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
           <p class="muted">Saving creates desired state only. The global apply workflow remains the sole host-mutation path.</p>
         </section>

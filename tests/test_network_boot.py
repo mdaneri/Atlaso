@@ -428,9 +428,21 @@ def test_network_boot_mutation_endpoints_persist_jobs_commands_profiles_and_audi
     assert sync.status_code == 202, sync.text
 
     inventory_session = client.post("/pxe/inventory/sessions").json()
+    report_payload = inventory_report()
+    report_payload["interfaces"].append(
+        {
+            "name": "eth1",
+            "permanent_mac": "52:54:00:12:34:57",
+            "current_mac": "52:54:00:12:34:57",
+            "driver": "virtio_net",
+            "link_state": "down",
+            "addresses": [],
+            "boot_interface": False,
+        }
+    )
     report = client.post(
         "/pxe/inventory/report",
-        json=inventory_report(),
+        json=report_payload,
         headers={"Authorization": f"Bearer {inventory_session['access_token']}"},
     )
     assert report.status_code == 201, report.text
@@ -470,6 +482,24 @@ def test_network_boot_mutation_endpoints_persist_jobs_commands_profiles_and_audi
     )
     assert overlong_promotion.status_code == 422
     assert "Promotion hostname is invalid" in overlong_promotion.json()["detail"]
+
+    non_boot_mac_promotion = client.post(
+        f"/api/v1/network-boot/hosts/{host_id}/promote",
+        headers=api_headers,
+        json={
+            "hostname": "esxi-inventory-nonboot",
+            "mac_address": "52:54:00:12:34:57",
+            "ip_address": "",
+            "kickstart_id": "",
+            "installer_iso_path": "",
+            "variables": {},
+            "enabled": False,
+        },
+    )
+    assert non_boot_mac_promotion.status_code == 422
+    assert non_boot_mac_promotion.json()["detail"] == (
+        "Promotion MAC must match the discovered boot MAC."
+    )
 
     promotion = client.post(
         f"/api/v1/network-boot/hosts/{host_id}/promote",

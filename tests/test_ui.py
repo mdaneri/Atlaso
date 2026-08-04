@@ -821,9 +821,9 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6" in service_worker.text
-    assert "/static/app.css?v=network-boot-discovered-workspace-20260804-2" in service_worker.text
+    assert "/static/app.css?v=network-boot-discovered-workspace-20260804-3" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in service_worker.text
-    assert "/static/app.js?v=network-boot-workflows-229-230-233-234-20260804-4" in service_worker.text
+    assert "/static/app.js?v=network-boot-workflows-229-230-233-234-20260804-5" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -832,7 +832,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=network-boot-discovered-workspace-20260804-2" in offline.text
+    assert "/static/app.css?v=network-boot-discovered-workspace-20260804-3" in offline.text
 
 
 def test_shared_ui_pattern_shell_and_wizard_contracts(client):
@@ -843,8 +843,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=network-boot-workflows-229-230-233-234-20260804-4"),
-        (public_base, "/static/app.js?v=network-boot-workflows-229-230-233-234-20260804-4"),
+        (base, "/static/app.js?v=network-boot-workflows-229-230-233-234-20260804-5"),
+        (public_base, "/static/app.js?v=network-boot-workflows-229-230-233-234-20260804-5"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5"
@@ -1342,9 +1342,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=network-boot-discovered-workspace-20260804-2" in page.text
+    assert "/static/app.css?v=network-boot-discovered-workspace-20260804-3" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in page.text
-    assert "/static/app.js?v=network-boot-workflows-229-230-233-234-20260804-4" in page.text
+    assert "/static/app.js?v=network-boot-workflows-229-230-233-234-20260804-5" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -3722,6 +3722,30 @@ def test_esxi_pxe_ui_create_apply_and_job_redaction(client):
     assert "stampFile.write(time.asctime())" in page.text
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
+    invalid_mac = client.post(
+        "/esxi-pxe/hosts",
+        data={
+            "csrf": csrf,
+            "hostname": "esxi-invalid-mac",
+            "mac_address": "prefix-00:50:56:01:02:03",
+        },
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
+    assert invalid_mac.status_code == 400
+    assert invalid_mac.json()["detail"] == "ESXi PXE host MAC address is invalid."
+
+    multicast_mac = client.post(
+        "/esxi-pxe/hosts",
+        data={
+            "csrf": csrf,
+            "hostname": "esxi-multicast-mac",
+            "mac_address": "01:50:56:01:02:03",
+        },
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
+    assert multicast_mac.status_code == 400
+    assert multicast_mac.json()["detail"] == "ESXi PXE host MAC address is invalid."
+
     created = client.post(
         "/esxi-pxe/kickstarts",
         data={
@@ -4177,6 +4201,10 @@ def test_esxi_pxe_host_reference_wizard_and_grid_responses(client):
     assert "data-definitions=" in page.text
     assert 'name="variables" value="{}"' in page.text
     host_wizard = page.text.split('id="network-boot-promote-dialog"', 1)[1].split("</dialog>", 1)[0]
+    assert "Six hexadecimal octets; unicast addresses only." in host_wizard
+    assert "IP address (optional — leave blank for DHCP)" in host_wizard
+    assert "Boot MAC" in host_wizard
+    assert "host-reference-enable-step" in host_wizard
     assert "Variables JSON" not in host_wizard
     assert "Custom Variables definition" in host_wizard
     assert "Default value" in host_wizard
@@ -4251,6 +4279,9 @@ def test_esxi_pxe_host_reference_wizard_and_grid_responses(client):
     )[0]
     assert "eligibleDiscoveredHosts" in wizard_js
     assert "availableMacs" in wizard_js
+    assert "return [host?.boot_mac]" in wizard_js
+    assert "updateManualMacValidity" in wizard_js
+    assert "normalizeEsxiHostMac" in wizard_js
     assert "discoveredSelectionSequence" in wizard_js
     assert "pendingDiscoveredSelection" in wizard_js
     assert "await pendingDiscoveredSelection" in wizard_js
@@ -4508,7 +4539,9 @@ def test_network_boot_host_management_report_and_print_contract(client):
     assert "Open the row menu" in page.text
     assert "initializeNetworkBootDiscoveredHostRefresh(hostsTable, discoveredStatus);" in page_initializer
     assert 'request("/api/v1/network-boot/hosts")' in host_refresh
-    assert "await hostsTable.replaceData(hosts);" in host_refresh
+    assert "await reconcileNetworkBootDiscoveredHosts(hostsTable, hosts);" in host_refresh
+    assert "networkBootChangedRowValues(current, updated)" in app_js
+    assert "if (Object.keys(changed).length) await row.update(changed);" in app_js
     assert 'document.addEventListener("visibilitychange", handleVisibilityChange);' in host_refresh
 
     host_reference = app_js.split("function initializeEsxiPxeHostsTable", 1)[1].split(
@@ -4529,6 +4562,8 @@ def test_network_boot_host_management_report_and_print_contract(client):
     assert "flex: 1 1 auto;" in app_css
     assert "min-height: 0;" in app_css
     assert "height: 240px !important;" in app_css
+    assert ".host-reference-enable-step" in app_css
+    assert "justify-items: center;" in app_css
     print_css = app_css.split("@media print", 1)[1]
     assert "@page atlaso-network-boot-report" in print_css
     assert "page: atlaso-network-boot-report;" in print_css

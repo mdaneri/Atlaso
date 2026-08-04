@@ -6517,6 +6517,17 @@ textarea {
   gap: 16px;
 }
 
+.host-reference-enable-step {
+  align-content: center;
+  justify-items: center;
+  min-height: 240px;
+}
+
+.host-reference-enable-step > .switch-field,
+.host-reference-enable-step > p {
+  width: min(100%, 460px);
+}
+
 .vcf-vault-credential-picker {
   display: grid;
   gap: 8px;

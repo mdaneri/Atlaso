@@ -35,6 +35,31 @@ const parseEsxiHostVariableRows = loadFunction(
   "initializeEsxiHostReferenceWizard",
   { Object, String },
 );
+const esxiHostMacKey = loadFunction(
+  "esxiHostMacKey",
+  "isValidEsxiHostMac",
+  { String },
+);
+const isValidEsxiHostMac = loadFunction(
+  "isValidEsxiHostMac",
+  "normalizeEsxiHostMac",
+  { Number, esxiHostMacKey },
+);
+const normalizeEsxiHostMac = loadFunction(
+  "normalizeEsxiHostMac",
+  "esxiDiscoveredHostLabel",
+  { String, esxiHostMacKey, isValidEsxiHostMac },
+);
+const networkBootChangedRowValues = loadFunction(
+  "networkBootChangedRowValues",
+  "reconcileNetworkBootDiscoveredHosts",
+  { Array, JSON, Object },
+);
+const reconcileNetworkBootDiscoveredHosts = loadFunction(
+  "reconcileNetworkBootDiscoveredHosts",
+  "initializeNetworkBootDiscoveredHostRefresh",
+  { Map, Object, String, networkBootChangedRowValues },
+);
 
 test("Network Boot report distinguishes empty v2 addresses from missing legacy data", () => {
   assert.equal(
@@ -66,6 +91,15 @@ test("Network Boot report applies schema-aware address options to both address s
   );
 });
 
+test("ESXi Host Reference accepts only concrete unicast MAC addresses", () => {
+  assert.equal(isValidEsxiHostMac("00:50:56:aa:bb:cc"), true);
+  assert.equal(isValidEsxiHostMac("0050.56aa.bbcc"), true);
+  assert.equal(isValidEsxiHostMac("01:50:56:aa:bb:cc"), false);
+  assert.equal(isValidEsxiHostMac("00:00:00:00:00:00"), false);
+  assert.equal(isValidEsxiHostMac("prefix-00:50:56:aa:bb:cc"), false);
+  assert.equal(normalizeEsxiHostMac("0050.56AA.BBCC"), "00:50:56:aa:bb:cc");
+});
+
 test("Network Boot discovered hosts refresh while visible and immediately on visibility return", async () => {
   class HTMLElement {}
   const status = new HTMLElement();
@@ -91,11 +125,12 @@ test("Network Boot discovered hosts refresh while visible and immediately on vis
   const initializeRefresh = loadFunction(
     "initializeNetworkBootDiscoveredHostRefresh",
     "networkBootEnvironmentHasLatestInstalled",
-    { document, window, HTMLElement, Error },
+    { document, window, HTMLElement, Error, reconcileNetworkBootDiscoveredHosts },
   );
-  const replacements = [];
+  const additions = [];
   const hostsTable = {
-    replaceData: async (rows) => replacements.push(rows),
+    getRows: () => [],
+    addRow: async (row) => additions.push(row),
   };
   const requests = [];
   const request = async (url) => {
@@ -111,7 +146,7 @@ test("Network Boot discovered hosts refresh while visible and immediately on vis
   assert.equal(scheduled[0].milliseconds, 5000);
   await scheduled[0].callback();
   assert.deepEqual(requests, ["/api/v1/network-boot/hosts"]);
-  assert.deepEqual(replacements, [[{ id: 1 }]]);
+  assert.deepEqual(additions, [{ id: 1 }]);
   assert.equal(status.hidden, true);
 
   document.visibilityState = "hidden";
@@ -120,10 +155,39 @@ test("Network Boot discovered hosts refresh while visible and immediately on vis
   document.visibilityState = "visible";
   await listeners.get("visibilitychange")();
   assert.equal(requests.length, 2);
-  assert.deepEqual(replacements.at(-1), [{ id: 2 }]);
+  assert.deepEqual(additions.at(-1), { id: 2 });
 
   controller.stop();
   assert.equal(listeners.has("visibilitychange"), false);
+});
+
+test("Network Boot discovered-host refresh changes rows in place", async () => {
+  const updates = [];
+  const deletions = [];
+  const additions = [];
+  const rows = [
+    {
+      getData: () => ({ id: 1, macs: ["00:50:56:aa:bb:cc"], last_seen_at: "old" }),
+      update: async (values) => updates.push(values),
+      delete: async () => deletions.push(1),
+    },
+    {
+      getData: () => ({ id: 2, last_seen_at: "removed" }),
+      update: async (values) => updates.push(values),
+      delete: async () => deletions.push(2),
+    },
+  ];
+  await reconcileNetworkBootDiscoveredHosts({
+    getRows: () => rows,
+    addRow: async (row) => additions.push(row),
+  }, [
+    { id: 1, macs: ["00:50:56:aa:bb:cc"], last_seen_at: "new" },
+    { id: 3, last_seen_at: "added" },
+  ]);
+
+  assert.deepEqual(updates, [{ last_seen_at: "new" }]);
+  assert.deepEqual(deletions, [2]);
+  assert.deepEqual(additions, [{ id: 3, last_seen_at: "added" }]);
 });
 
 test("Network Boot discovered-host refresh preserves the last list after failure", async () => {
@@ -144,18 +208,18 @@ test("Network Boot discovered-host refresh preserves the last list after failure
   const initializeRefresh = loadFunction(
     "initializeNetworkBootDiscoveredHostRefresh",
     "networkBootEnvironmentHasLatestInstalled",
-    { document, window, HTMLElement, Error },
+    { document, window, HTMLElement, Error, reconcileNetworkBootDiscoveredHosts },
   );
-  let replacementCount = 0;
+  let additionCount = 0;
   const controller = initializeRefresh(
-    { replaceData: async () => { replacementCount += 1; } },
+    { getRows: () => [], addRow: async () => { additionCount += 1; } },
     status,
     { request: async () => { throw new Error("temporary failure"); } },
   );
 
   await controller.refresh();
 
-  assert.equal(replacementCount, 0);
+  assert.equal(additionCount, 0);
   assert.equal(status.hidden, false);
   assert.match(status.textContent, /temporary failure/);
   assert.match(status.textContent, /last received host list/);

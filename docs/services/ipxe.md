@@ -365,11 +365,12 @@ unacknowledged command are never selected for storage eviction.
 
 Open **ESXi Kickstarts**, select **Host References**, and use **+ Add host
 reference here** to open the guided Host Reference workflow. When an eligible
-Network Boot inventory host has at least one valid MAC that is not already used
-by a Host Reference, the workflow defaults to **Discovered Network Boot host**.
-Select the discovered host and review the suggested hostname, one of its
-available MAC addresses, and its latest assigned address. Select **Manual host**
-instead to enter a hostname, MAC address, and optional IP address directly.
+Network Boot inventory host has a valid boot MAC that is not already used by a
+Host Reference, the workflow defaults to **Discovered Network Boot host**.
+Select the discovered host and review the suggested hostname, its boot MAC, and
+its latest assigned address. Select **Manual host** instead to enter a hostname
+and a concrete unicast MAC address. The optional IP field is a static
+reservation; leave it blank to use DHCP.
 
 The remaining steps select the Kickstart, installer ISO, non-secret variables,
 and desired Enabled state before showing the final review. The direct-edit Host
