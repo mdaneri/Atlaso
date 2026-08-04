@@ -99,9 +99,11 @@ python scripts/build_inventory_linux_package.py
 
 This creates the deterministic, independently versioned
 `dist/inventory-linux/atlaso-inventory-linux-<version>.zip` package. Full
-appliance images preinstall its runtime files, and supported VMware wheel
-deployment synchronizes the package unless explicitly skipped. Ordinary Atlaso
-appliance releases do not contain Inventory Linux.
+appliance images leave Inventory Linux uninstalled; an administrator uses
+**Download latest** to retrieve and verify the signed release when needed.
+Supported VMware wheel deployment synchronizes a locally built package unless
+explicitly skipped. Ordinary Atlaso appliance releases do not contain Inventory
+Linux.
 
 ## Publish a final Inventory Linux release
 

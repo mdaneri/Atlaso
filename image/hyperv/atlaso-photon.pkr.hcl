@@ -229,11 +229,6 @@ build {
   }
 
   provisioner "file" {
-    source      = "../inventory-linux/output"
-    destination = "/tmp/atlaso-src/image/inventory-linux/output"
-  }
-
-  provisioner "file" {
     source      = "../inventory-linux/README.md"
     destination = "/tmp/atlaso-src/image/inventory-linux/README.md"
   }

@@ -25,7 +25,6 @@ param(
     [string]$PipGlobalIndexUrl = '',
     [string]$PackerDirectory = '',
     [string]$PreparedIsoPath = '',
-    [string]$WslDistribution = 'Atlaso-Build',
     [ValidateSet('cleanup', 'abort', 'ask', 'run-cleanup-provisioner')]
     [string]$PackerOnError = 'cleanup',
     [switch]$KeepExistingOutput,
@@ -41,10 +40,6 @@ Import-Module (Join-Path $PSScriptRoot '..\common\Atlaso.PhotonImage.psm1') -For
 
 if ([string]::IsNullOrWhiteSpace($PackerDirectory)) {
     $PackerDirectory = Join-Path $PSScriptRoot '..\..\..\image\hyperv'
-}
-
-if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
-    & (Join-Path $PSScriptRoot '..\common\Build-AtlasoInventoryLinux.ps1') -WslDistribution $WslDistribution
 }
 
 $packerVariables = @{

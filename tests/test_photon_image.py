@@ -125,15 +125,8 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     provision = Path("image/common/scripts/provision-atlaso.sh").read_text(
         encoding="utf-8"
     )
-    assert (
-        'install -d -o atlaso -g atlaso -m 0755 '
-        '"$INVENTORY_MEDIA_DIR" "$INVENTORY_TARGET_DIR"'
-        in provision
-    )
-    assert (
-        'install -o atlaso -g atlaso -m 0644 "$INVENTORY_SOURCE_DIR/$artifact"'
-        in provision
-    )
+    assert "INVENTORY_SOURCE_DIR" not in provision
+    assert "staging bundled Atlaso Inventory Linux" not in provision
     assert "command -v gpg" in deploy
     assert "tdnf -y install gnupg" in deploy
     inventory_release = Path(
@@ -398,14 +391,14 @@ def test_wsl_build_contract_and_setup_are_pinned_idempotent_and_non_destructive(
     assert "/var/lib/atlaso-build/contract.json" in provision
 
 
-def test_photon_wrappers_forward_explicit_wsl_distribution():
+def test_photon_wrappers_do_not_build_inventory_linux():
     for path in (
         "scripts/windows/hyperv/build-photon-image.ps1",
         "scripts/windows/vmware/build-photon-image.ps1",
     ):
         wrapper = Path(path).read_text(encoding="utf-8")
-        assert "[string]$WslDistribution = 'Atlaso-Build'" in wrapper
-        assert "Build-AtlasoInventoryLinux.ps1') -WslDistribution $WslDistribution" in wrapper
+        assert "WslDistribution" not in wrapper
+        assert "Build-AtlasoInventoryLinux.ps1" not in wrapper
 
 
 def test_inventory_linux_retries_uncertain_reboot_acknowledgments():
@@ -628,6 +621,21 @@ def test_photon_provisioning_prepares_attached_data_disks():
     assert "findmnt -n -o SOURCE /" in mount_script
     assert "No blank data disk available" in mount_script
 
+    assert 'ATLASO_SYSTEM_CONTENT_DISK="${ATLASO_SYSTEM_CONTENT_DISK:-false}"' in provision
+    assert 'mkfs.ext4 -F -L ATLASO_SYSTEM "$system_disk"' in provision
+    assert "Expected exactly one additional blank disk for Atlaso system content" in provision
+    assert 'UUID=%s %s ext4 defaults 0 2' in provision
+    assert "x-systemd.requires-mounts-for=%s" in provision
+    assert 'mount --bind "$ATLASO_SYSTEM_CONTENT_MOUNT/opt-atlaso" "$ATLASO_HOME"' in provision
+    assert "powershell-modules" in provision
+    assert 'run_tdnf "Build-only package removal" remove python3-devel' in provision
+    assert "tdnf -y clean all" in provision
+    assert "zero_fill_free_space / \"Photon OS filesystem\"" in provision
+    assert 'zero_fill_free_space "$ATLASO_SYSTEM_CONTENT_MOUNT" "Atlaso system-content filesystem"' in provision
+    assert "reserve_kib=524288" in provision
+    assert 'of="$zero_file" bs=1048576 count="$zero_count_mib" conv=fsync status=progress' in provision
+    assert "fstrim -av" in provision
+
     assert "After=network-online.target atlaso-data-disks.service atlaso-bootstrap-https.service" in hyperv_unit
     assert "Wants=network-online.target atlaso-data-disks.service atlaso-bootstrap-https.service" in hyperv_unit
     assert "After=network-online.target atlaso-data-disks.service atlaso-bootstrap-https.service" in vmware_unit
@@ -669,6 +677,23 @@ def test_packer_templates_stage_shared_appliance_assets():
         assert 'destination = "/tmp/atlaso-src/image/common/boot"' in template
         assert 'source      = "../common/powershell"' in template
         assert 'destination = "/tmp/atlaso-src/image/common/powershell"' in template
+
+
+def test_vmware_packer_build_uses_two_compacted_payload_disks():
+    template = Path("image/vmware-workstation/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
+    kickstart = Path("image/hyperv/http/photon-ks.json.pkrtpl").read_text(encoding="utf-8")
+    wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(encoding="utf-8")
+
+    assert 'disk_size            = 40960' in template
+    assert 'disk_additional_size = [20480]' in template
+    assert 'disk_type_id         = 0' in template
+    assert 'skip_compaction      = false' in template
+    assert '"ATLASO_SYSTEM_CONTENT_DISK=true"' in template
+    assert '"disk": "/dev/sda"' in kickstart
+    assert "Write-AtlasoVmwareBuildProvenance" in wrapper
+    assert "tracked_source_dirty" in wrapper
+    assert "Expected exactly two Packer payload VMDKs" in wrapper
+    assert "Get-FileHash -LiteralPath $vmx.FullName -Algorithm SHA256" in wrapper
 
 
 def test_photon_kickstart_uses_deterministic_build_time_sshd_service():
@@ -1097,6 +1122,11 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "$effectiveSkipLabNetworkAdapters = -not $IncludeLabNetworkAdapters" in script
     assert "Atlaso-Depot.vmdk" in script
     assert "Atlaso-Backups.vmdk" in script
+    assert "Assert-ClonedPayloadDisks -VmxPath $targetVmx" in vm_script
+    assert "VMware clone did not retain the $($payloadDisk.Name) disk" in vm_script
+    assert "Set-VmxScsiDisk -Path $targetVmx -Unit 2 -DiskPath $resolvedDepotVmdkPath" in vm_script
+    assert "Set-VmxScsiDisk -Path $targetVmx -Unit 3 -DiskPath $resolvedBackupVmdkPath" in vm_script
+    assert "Set-VmxScsiDisk -Path $targetVmx -Unit 1 -DiskPath $resolvedDepotVmdkPath" not in vm_script
     assert '"disk.EnableUUID"          = "TRUE"' in packer_template
     assert "Refusing to reset VMware data disk outside the VM output directory" in script
     assert "vmrun.exe was not found" in vm_script

@@ -29,7 +29,6 @@ param(
     [string]$PipGlobalIndexUrl = '',
     [string]$PackerDirectory = '',
     [string]$PreparedIsoPath = '',
-    [string]$WslDistribution = 'Atlaso-Build',
     [ValidateSet('cleanup', 'abort', 'ask', 'run-cleanup-provisioner')]
     [string]$PackerOnError = 'cleanup',
     [switch]$AllowExistingManagementSubnet,
@@ -176,6 +175,49 @@ function Resolve-WorkstationOutputDirectory {
     return $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($effectiveOutput)
 }
 
+function Write-AtlasoVmwareBuildProvenance {
+    param(
+        [Parameter(Mandatory = $true)][string]$OutputDirectory,
+        [Parameter(Mandatory = $true)][string]$VmName,
+        [Parameter(Mandatory = $true)][string]$RepoRoot
+    )
+
+    $vmx = Get-Item -LiteralPath (Join-Path $OutputDirectory "$VmName.vmx") -ErrorAction Stop
+    $vmdks = @(Get-ChildItem -LiteralPath $OutputDirectory -Filter '*.vmdk' -File | Sort-Object Name)
+    if ($vmdks.Count -ne 2) {
+        throw "Expected exactly two Packer payload VMDKs before recording provenance; found $($vmdks.Count)."
+    }
+    $sourceCommit = [string](& git -C $RepoRoot rev-parse HEAD)
+    if ($LASTEXITCODE -ne 0 -or $sourceCommit.Trim() -notmatch '^[0-9a-f]{40}$') {
+        throw 'Could not resolve the exact source commit for the VMware image build.'
+    }
+    $trackedChanges = @(& git -C $RepoRoot status --porcelain --untracked-files=no)
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Could not inspect tracked source changes for VMware image provenance.'
+    }
+    $provenance = [ordered]@{
+        schema_version       = 1
+        source_commit        = $sourceCommit.Trim()
+        tracked_source_dirty = $trackedChanges.Count -ne 0
+        vmx                  = [ordered]@{
+            name   = $vmx.Name
+            bytes  = $vmx.Length
+            sha256 = (Get-FileHash -LiteralPath $vmx.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+        vmdks                = @($vmdks | ForEach-Object {
+                [ordered]@{
+                    name   = $_.Name
+                    bytes  = $_.Length
+                    sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+                }
+            })
+    }
+    $provenancePath = [System.IO.Path]::ChangeExtension($vmx.FullName, 'provenance.json')
+    $json = $provenance | ConvertTo-Json -Depth 5
+    [System.IO.File]::WriteAllText($provenancePath, "$json`n", [System.Text.UTF8Encoding]::new($false))
+    Write-Host "VMware build provenance: $provenancePath ($($provenance.source_commit))"
+}
+
 function Invoke-WorkstationVmrunBestEffort {
     param(
         [Parameter(Mandatory = $true)][string]$ResolvedVmrunPath,
@@ -274,6 +316,8 @@ function Get-WorkstationManagementNetwork {
 if ([string]::IsNullOrWhiteSpace($PackerDirectory)) {
     $PackerDirectory = Join-Path $PSScriptRoot '..\..\..\image\vmware-workstation'
 }
+$workstationOutputDirectory = Resolve-WorkstationOutputDirectory -PackerDirectory $PackerDirectory -OutputDirectory $OutputDirectory
+$repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
 
 $VmnetName = ConvertTo-WorkstationVmnetName -Name $VmnetName -ParameterName 'VmnetName'
 $ServiceVmnetName = ConvertTo-WorkstationVmnetName -Name $ServiceVmnetName -ParameterName 'ServiceVmnetName'
@@ -349,12 +393,7 @@ $packerVariables = @{
 
 if (-not $ValidateOnly -and -not $PrepareIsoOnly -and -not $KeepExistingOutput) {
     $resolvedVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
-    $workstationOutputDirectory = Resolve-WorkstationOutputDirectory -PackerDirectory $PackerDirectory -OutputDirectory $OutputDirectory
     Unregister-ExistingWorkstationTemplate -ResolvedVmrunPath $resolvedVmrunPath -OutputDirectory $workstationOutputDirectory -VmName $VmName
-}
-
-if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
-    & (Join-Path $PSScriptRoot '..\common\Build-AtlasoInventoryLinux.ps1') -WslDistribution $WslDistribution
 }
 
 Invoke-AtlasoPhotonImageBuild `
@@ -385,3 +424,10 @@ Invoke-AtlasoPhotonImageBuild `
     -EnableRealSystemAdapters:$EnableRealSystemAdapters `
     -ValidateOnly:$ValidateOnly `
     -PrepareIsoOnly:$PrepareIsoOnly
+
+if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
+    Write-AtlasoVmwareBuildProvenance `
+        -OutputDirectory $workstationOutputDirectory `
+        -VmName $VmName `
+        -RepoRoot $repoRoot
+}

@@ -158,8 +158,10 @@ source "vmware-iso" "photon" {
   cpus                 = 4
   memory               = 4096
   disk_size            = 40960
+  disk_additional_size = [20480]
   disk_adapter_type    = "pvscsi"
   disk_type_id         = 0
+  skip_compaction      = false
   cdrom_adapter_type   = "sata"
   network              = var.vmnet_name
   network_adapter_type = "vmxnet3"
@@ -256,11 +258,6 @@ build {
   }
 
   provisioner "file" {
-    source      = "../inventory-linux/output"
-    destination = "/tmp/atlaso-src/image/inventory-linux/output"
-  }
-
-  provisioner "file" {
     source      = "../inventory-linux/README.md"
     destination = "/tmp/atlaso-src/image/inventory-linux/README.md"
   }
@@ -298,6 +295,7 @@ build {
   provisioner "shell" {
     environment_vars = [
       "ATLASO_GUEST_PLATFORM=vmware",
+      "ATLASO_SYSTEM_CONTENT_DISK=true",
       "ATLASO_IMAGE_ASSET_DIR=image/vmware-workstation",
       "ATLASO_BOOTSTRAP_ADMIN_PASSWORD=${local.bootstrap_admin_password}",
       "ATLASO_DRY_RUN_SYSTEM_ADAPTERS=${local.dry_run_system_adapters_text}",

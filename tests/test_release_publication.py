@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
+import shutil
 import subprocess
 import sys
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -34,6 +37,36 @@ def completed(
     stderr: str = "",
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(command, returncode, stdout, stderr)
+
+
+def write_valid_vmware_ovf(path: Path, os_disk: str, tools_disk: str) -> None:
+    path.write_text(
+        f"""<?xml version="1.0" encoding="UTF-8"?>
+<Envelope xmlns="http://schemas.dmtf.org/ovf/envelope/1"
+          xmlns:ovf="http://schemas.dmtf.org/ovf/envelope/1"
+          xmlns:rasd="http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_ResourceAllocationSettingData">
+  <References>
+    <File ovf:id="file1" ovf:href="{os_disk}"/>
+    <File ovf:id="file2" ovf:href="{tools_disk}"/>
+  </References>
+  <DiskSection>
+    <Disk ovf:diskId="os" ovf:fileRef="file1" ovf:format="vmdk"/>
+    <Disk ovf:diskId="tools" ovf:fileRef="file2" ovf:format="vmdk"/>
+    <Disk ovf:diskId="atlaso-depot" ovf:capacity="500" ovf:capacityAllocationUnits="byte * 2^30" ovf:format="vmdk"/>
+    <Disk ovf:diskId="atlaso-backups" ovf:capacity="500" ovf:capacityAllocationUnits="byte * 2^30" ovf:format="vmdk"/>
+  </DiskSection>
+  <VirtualSystem ovf:id="atlaso">
+    <VirtualHardwareSection>
+      <Item><rasd:ResourceType>17</rasd:ResourceType><rasd:AddressOnParent>0</rasd:AddressOnParent><rasd:HostResource>ovf:/disk/os</rasd:HostResource><rasd:ElementName>Hard disk 1 - Photon OS</rasd:ElementName></Item>
+      <Item><rasd:ResourceType>17</rasd:ResourceType><rasd:AddressOnParent>1</rasd:AddressOnParent><rasd:HostResource>ovf:/disk/tools</rasd:HostResource><rasd:ElementName>Hard disk 2 - Atlaso System Content</rasd:ElementName></Item>
+      <Item><rasd:ResourceType>17</rasd:ResourceType><rasd:AddressOnParent>2</rasd:AddressOnParent><rasd:HostResource>ovf:/disk/atlaso-depot</rasd:HostResource><rasd:ElementName>Hard disk 3 - VCF Offline Depot</rasd:ElementName></Item>
+      <Item><rasd:ResourceType>17</rasd:ResourceType><rasd:AddressOnParent>3</rasd:AddressOnParent><rasd:HostResource>ovf:/disk/atlaso-backups</rasd:HostResource><rasd:ElementName>Hard disk 4 - VCF Backups</rasd:ElementName></Item>
+    </VirtualHardwareSection>
+  </VirtualSystem>
+</Envelope>
+""",
+        encoding="utf-8",
+    )
 
 
 def release_fixture(
@@ -98,6 +131,120 @@ def test_publish_release_requests_generated_notes_and_keeps_provenance(
     )
     assert create[create.index("--title") + 1] == "Atlaso v0.9.30"
     assert str(asset.resolve()) in create
+
+
+def test_vmware_release_assets_require_two_manifest_verified_vmdks(tmp_path: Path):
+    ovf = tmp_path / "Atlaso-Photon.ovf"
+    os_disk = tmp_path / "Atlaso-Photon-disk1.vmdk"
+    tools_disk = tmp_path / "Atlaso-Photon-disk2.vmdk"
+    manifest = tmp_path / "Atlaso-Photon.mf"
+    os_disk.write_bytes(b"os")
+    tools_disk.write_bytes(b"tools")
+    write_valid_vmware_ovf(ovf, os_disk.name, tools_disk.name)
+    manifest.write_text(
+        "\n".join(
+            f"SHA256({path.name})= {publish_release.sha256(path)}"
+            for path in (ovf, os_disk, tools_disk)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    names = {path.name for path in (ovf, os_disk, tools_disk, manifest)}
+
+    publish_release.verify_vmware_release_assets(tmp_path, names)
+
+    tools_disk.write_bytes(b"changed")
+    with pytest.raises(SystemExit, match="failed manifest verification"):
+        publish_release.verify_vmware_release_assets(tmp_path, names)
+
+
+def test_vmware_release_assets_reject_invalid_empty_disk_topology(tmp_path: Path):
+    ovf = tmp_path / "Atlaso-Photon.ovf"
+    os_disk = tmp_path / "Atlaso-Photon-disk1.vmdk"
+    tools_disk = tmp_path / "Atlaso-Photon-disk2.vmdk"
+    os_disk.write_bytes(b"os")
+    tools_disk.write_bytes(b"tools")
+    write_valid_vmware_ovf(ovf, os_disk.name, tools_disk.name)
+    ovf.write_text(ovf.read_text(encoding="utf-8").replace('ovf:capacity="500"', 'ovf:capacity="499"', 1), encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="not an empty 500 GiB disk"):
+        publish_release.verify_vmware_ovf_topology(ovf, {ovf.name, os_disk.name, tools_disk.name})
+
+
+def test_vmware_release_assets_accept_byte_equivalent_ova(tmp_path: Path):
+    ovf = tmp_path / "Atlaso-Photon.ovf"
+    os_disk = tmp_path / "Atlaso-Photon-disk1.vmdk"
+    tools_disk = tmp_path / "Atlaso-Photon-disk2.vmdk"
+    manifest = tmp_path / "Atlaso-Photon.mf"
+    ova = tmp_path / "Atlaso-Photon.ova"
+    for path, content in ((os_disk, b"os"), (tools_disk, b"tools")):
+        path.write_bytes(content)
+    write_valid_vmware_ovf(ovf, os_disk.name, tools_disk.name)
+    manifest.write_text(
+        "\n".join(
+            f"SHA256({path.name})= {publish_release.sha256(path)}"
+            for path in (ovf, os_disk, tools_disk)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    with tarfile.open(ova, mode="w") as archive:
+        for path in (ovf, manifest, os_disk, tools_disk):
+            archive.add(path, arcname=path.name)
+
+    publish_release.verify_vmware_release_assets(
+        tmp_path,
+        {path.name for path in (ovf, os_disk, tools_disk, manifest, ova)},
+    )
+
+
+def test_release_recovery_accepts_manifest_verified_vmware_assets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    commit = "a" * 40
+    core = tmp_path / "core"
+    remote = tmp_path / "remote"
+    core.mkdir()
+    remote.mkdir()
+    (core / "release-manifest.json").write_text("{}", encoding="utf-8")
+    shutil.copy2(core / "release-manifest.json", remote / "release-manifest.json")
+    ovf = remote / "Atlaso-Photon.ovf"
+    os_disk = remote / "Atlaso-Photon-disk1.vmdk"
+    tools_disk = remote / "Atlaso-Photon-disk2.vmdk"
+    manifest = remote / "Atlaso-Photon.mf"
+    os_disk.write_bytes(b"os")
+    tools_disk.write_bytes(b"tools")
+    write_valid_vmware_ovf(ovf, os_disk.name, tools_disk.name)
+    manifest.write_text(
+        "\n".join(
+            f"SHA256({path.name})= {publish_release.sha256(path)}"
+            for path in (ovf, os_disk, tools_disk)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def fake_run(command: list[str], *, check: bool = True):
+        if command == ["python", "scripts/version.py", "get"]:
+            return completed(command, stdout="0.9.71\n")
+        if command[-1] == "refs/tags/v0.9.71":
+            return completed(command, stdout=f"{commit}\trefs/tags/v0.9.71\n")
+        if command[-1] == "refs/tags/v0.9.71^{}":
+            return completed(command)
+        if command[:4] == ["gh", "release", "view", "v0.9.71"]:
+            assets = [{"name": path.name} for path in remote.iterdir()]
+            return completed(command, stdout=json.dumps({"tagName": "v0.9.71", "assets": assets}))
+        if command[:4] == ["gh", "release", "download", "v0.9.71"]:
+            destination = Path(command[command.index("--dir") + 1])
+            for path in remote.iterdir():
+                shutil.copy2(path, destination / path.name)
+            return completed(command)
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr(publish_release, "run", fake_run)
+
+    assert publish_release.main(["--commit", commit, "--assets", str(core)]) == 0
 
 
 def test_release_note_categories_keep_dependencies_out_of_enhancements():

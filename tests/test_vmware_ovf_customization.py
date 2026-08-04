@@ -344,14 +344,36 @@ def test_vmware_ovf_export_and_image_plumbing_are_present():
     assert "Set-AtlasoOvfHardware" in export_script
     assert "Ensure-AtlasoOvfEmptyDataDisks" in export_script
     assert "Assert-AtlasoOvfDiskTopology" in export_script
-    assert "exactly three disks (Photon OS, VCF Offline Depot, and VCF Backups)" in export_script
-    assert "Hard disk 2 - VCF Offline Depot" in export_script
-    assert "Hard disk 3 - VCF Backups" in export_script
+    assert "exactly four disks (Photon OS, Atlaso System Content, VCF Offline Depot, and VCF Backups)" in export_script
+    assert "Hard disk 2 - Atlaso System Content" in export_script
+    assert "Hard disk 3 - VCF Offline Depot" in export_script
+    assert "Hard disk 4 - VCF Backups" in export_script
+    assert "Atlaso system-content disk must retain its file-backed payload" in export_script
     assert "atlaso-depot" in export_script
     assert "atlaso-backups" in export_script
     assert "RemoveAttribute('fileRef', $ovfNamespace)" in export_script
     assert "Set-OvfAttribute -Document $Document -Element $disk -Name 'format' -Value $diskFormat" in export_script
     assert "@('fileRef', 'parentRef', 'populatedSize')" in export_script
+    assert "MaximumReleaseAssetBytes = 2147483647" in export_script
+    assert "Publish-AtlasoReleaseAssets" in export_script
+    assert "Assert-AtlasoReleaseProvenance" in export_script
+    assert "[switch]$Release" in export_script
+    assert "[string]$ReleaseTag" not in export_script
+    assert "[string]$Repository" not in export_script
+    assert "[string]$RepositoryName" not in export_script
+    assert "Resolve-AtlasoReleaseTag" in export_script
+    assert 'python.Source $versionScript get --root $RepoRoot' in export_script
+    assert 'repo view --json nameWithOwner' in export_script
+    assert "Release publication requires a clean tracked worktree" in export_script
+    assert 'rev-parse "$Tag^{}"' in export_script
+    assert "VMware build provenance does not match the source VMX bytes" in export_script
+    assert "VMware build provenance must identify exactly two payload VMDKs" in export_script
+    assert 'api "repos/$effectiveRepository/commits/$Tag"' in export_script
+    assert "Destination release tag $Tag identifies" in export_script
+    assert "Skipping OVA release asset" in export_script
+    assert "--clobber" not in export_script
+    assert "release upload $Tag @uploadAssets @repositoryArguments" in export_script
+    assert "already contains different bytes" in export_script
     assert "'osType' -Value 'vmwarePhoton64Guest'" in export_script
     assert "'id' -Value '36'" in export_script
     assert "'ResourceSubType' -Value 'VirtualSCSI'" in export_script

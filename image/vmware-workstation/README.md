@@ -26,6 +26,8 @@ payload.
 - Packer `>= 1.10`.
 - `qemu-img` when preparing the tiny Alpine lifecycle client VMDK.
 - Photon OS 5.0 ISO URL and checksum.
+- At least 70 GiB free on the filesystem holding the Packer output. Final zero-filling temporarily expands both sparse
+  payload VMDKs before compaction reclaims the zeroed blocks.
 
 The template uses the Packer VMware Desktop plugin:
 
@@ -65,9 +67,9 @@ pwsh -ExecutionPolicy Bypass `
   -IsoChecksum "sha512:<checksum>"
 ```
 
-The wrapper builds Inventory Linux in `Atlaso-Build` by default. Pass `-WslDistribution <name>` to validate and use an
-existing compatible WSL distribution instead; the wrapper forwards that selection to every Inventory Linux build
-subprocess.
+The wrapper does not build or embed Inventory Linux. New templates leave it uninstalled so an administrator can use
+**Download latest** to retrieve the signed independent release when needed. Contributors building Inventory Linux
+itself use `scripts/windows/common/Build-AtlasoInventoryLinux.ps1` and its `-WslDistribution <name>` option.
 
 Before `packer build -force` replaces the Workstation output directory, the wrapper checks for an existing output VMX
 and unregisters it with `vmrun -T ws unregister`. The `vmrun.exe` path is resolved through the same Workstation
@@ -86,8 +88,15 @@ pwsh -ExecutionPolicy Bypass `
 
 The built VMX keeps the first adapter on `-VmnetName` as management-only and adds a second `vmxnet3` adapter on
 `-ServiceVmnetName` for service traffic. The service network defaults to Workstation's built-in host-only `VMnet1`. The
-Packer builder VM contains only the 40 GB Photon OS disk. The OVF export step declares the appliance data disks without
-adding large blank VMDK payloads to the reusable builder image.
+Packer creates a 40 GiB Photon OS disk and a sparse 20 GiB Atlaso system-content disk. Provisioning formats the second
+disk as `ATLASO_SYSTEM`, mounts it by UUID, and places `/opt/atlaso` plus the appliance-wide PowerShell modules there.
+The two 500 GiB application data disks remain empty OVF declarations, so the reusable builder contains no large blank
+data-disk payloads. The build removes `python3-devel` after compatibility validation, clears build caches and staged
+sources, zero-fills free blocks on both payload filesystems while retaining a 512 MiB safety reserve, deletes the fill
+files, requests TRIM, and lets Packer compact both payload VMDKs. Zero-filling makes compaction deterministic even when
+the VMware virtual disks do not advertise discard. After a successful build, the wrapper writes
+a provenance JSON file beside the VMX containing the exact source commit, tracked-source state, and SHA-256 hashes and
+sizes for the VMX and both VMDKs.
 
 ## Networking
 
@@ -168,16 +177,39 @@ pwsh -ExecutionPolicy Bypass `
 ```
 
 The export script runs OVF Tool, adds Atlaso vApp properties and appliance network mappings to the OVF descriptor,
-regenerates the manifest, and packages the folder as an OVA unless `-NoOva` is passed. The descriptor declares a 500 GiB
-empty VCF Offline Depot disk and a 500 GiB empty VCF Backups disk; ESXi creates both disks during deployment, while the
-OVA carries only the OS VMDK payload. The exporter refuses to package an image unless the descriptor contains the OS and
-both empty data disks. It identifies the guest as VMware Photon OS, uses VMware Paravirtual SCSI for all three disks,
-and removes the build-time CD-ROM device. On first boot, `atlaso-data-disks.service` formats the two blank disks as
+regenerates the manifest, and packages the folder as an OVA unless `-NoOva` is passed. The descriptor preserves the OS
+and Atlaso system-content VMDKs, then declares a 500 GiB empty VCF Offline Depot disk and a 500 GiB empty VCF Backups
+disk. ESXi creates the latter two disks during deployment without payload files. The exporter requires exactly four
+ordered disks, requires file-backed payloads for the first two, uses VMware Paravirtual SCSI, and removes the build-time
+CD-ROM device. On first boot, `atlaso-data-disks.service` ignores the formatted system-content disk and formats the two
+blank disks as
 ext4, labels them `ATLASO_DEPOT` and `ATLASO_BKUP`, writes their UUIDs to `/etc/fstab`, and mounts them at
 `/mnt/atlaso-vcf-offline-depot` and `/mnt/atlaso-vcf-backups`. The descriptor exposes two network mappings for
 vSphere/ESXi import: `Atlaso Management Network` for the first adapter, which remains management-only as `eth0`, and
 `Atlaso Services Network` for the second adapter used by DNS, DHCP, CA, depot, PXE, KMS, and other Atlaso-managed
-services. The OVF properties are intended for vSphere/ESXi import:
+services.
+
+To upload the deployable OVF package to an existing GitHub Release, authenticate GitHub CLI and pass the release tag:
+
+```powershell
+pwsh -ExecutionPolicy Bypass `
+  -File scripts/windows/vmware/export-ovf.ps1 `
+  -Release
+```
+
+Release mode derives `v<version>` from the synchronized repository metadata, requires that tag to identify the clean
+checked-out commit, resolves the destination GitHub repository from the current checkout, and replaces the generated
+local OVF output before publishing.
+
+Every OVF asset is checked against GitHub's less-than-2-GiB per-asset boundary before upload. The descriptor, manifest,
+and both payload VMDKs are uploaded as one set. A retry verifies every existing asset byte-for-byte and refuses partial
+or different assets instead of overwriting them. The OVA is also uploaded when it fits; an oversized OVA is omitted
+with a warning because it combines both otherwise deployable VMDKs into one archive. Publication also requires a clean
+checkout whose `HEAD` is the locally available annotated release tag, a byte-matching build provenance record, and a
+destination-repository tag resolving to the same commit. Release recovery parses the OVF and revalidates the two
+file-backed payload disks plus the two empty 500 GiB data disks before accepting existing assets.
+
+The OVF properties are intended for vSphere/ESXi import:
 
 | Category            | Property                  | Required | Description                                                                                                      |
 | ------------------- | ------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------- |
@@ -230,8 +262,9 @@ pwsh -ExecutionPolicy Bypass `
   -TrustRootCa
 ```
 
-The wrapper creates fresh Depot and Backups data VMDKs when needed, and `-ResetDataDisks` removes those data VMDKs
-before recreating them. Pass `-IncludeLabNetworkAdapters` only after `VMnet2`, `VMnet3`, and `VMnet4` exist for the
+The wrapper requires the cloned Photon OS and Atlaso system-content VMDKs at SCSI units 0 and 1, then creates fresh
+Depot and Backups data VMDKs at units 2 and 3 when needed. `-ResetDataDisks` removes those data VMDKs before recreating
+them. Pass `-IncludeLabNetworkAdapters` only after `VMnet2`, `VMnet3`, and `VMnet4` exist for the
 SiteA, WAN/SiteB, and trunk-like lifecycle networks. `-TrustRootCa` downloads the freshly deployed appliance root CA,
 removes stale Atlaso root CAs from the current-user Trusted Root store, and trusts the new root so Edge and the Codex
 integrated browser accept the first-boot HTTPS cert. The root CA is generated by `atlaso-bootstrap-https.service` on

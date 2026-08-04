@@ -61,8 +61,13 @@ The following cross-cutting boundaries always apply:
 - Privileged appliance operations go through `atlaso-helper` and constrained sudoers rules.
 - Keep development system adapters in dry-run mode unless a reviewed apply unit explicitly promotes real mutation.
 - VMware Workstation is the default live appliance target; use Hyper-V lifecycle coverage for exact VLAN behavior.
-- Inventory Linux is an independently versioned Atlaso release package; full images preinstall it and supported VMware
-  wheel deployment synchronizes it unless explicitly skipped. Publish it only through the protected manual Inventory
+- VMware release images use separate compacted Photon OS and required Atlaso system-content payload VMDKs, followed by
+  empty 500 GiB depot and backup disks. Preserve `/opt/atlaso` and appliance-wide PowerShell modules on the UUID-mounted
+  system-content disk, size-gate individual OVF release assets below 2 GiB, and publish the aggregate OVA only when it
+  independently fits that limit.
+- Inventory Linux is an independently versioned Atlaso release package; full images leave it uninstalled so an
+  administrator downloads a signed release on demand. Supported VMware wheel deployment synchronizes it unless
+  explicitly skipped. Publish it only through the protected manual Inventory
   Linux release workflow for an exact successful `main` CI SHA. Every workflow build is a final immutable
   `inventory-linux-v<version>` release and signed Pages pointer; never attach it to an appliance release or introduce
   development, preview, or staging channels.

@@ -54,9 +54,9 @@ instead of replacing an existing output directory. By default, failed builds sti
 To keep the temporary builder VM for debugging, add `-PackerOnError abort`; to choose at failure time, use
 `-PackerOnError ask`.
 
-The wrapper builds Inventory Linux in `Atlaso-Build` by default. Pass `-WslDistribution <name>` to validate and use an
-existing compatible WSL distribution instead; the wrapper forwards that selection to every Inventory Linux build
-subprocess.
+The wrapper does not build or embed Inventory Linux. New templates leave it uninstalled so an administrator can use
+**Download latest** to retrieve the signed independent release when needed. Contributors building Inventory Linux
+itself use `scripts/windows/common/Build-AtlasoInventoryLinux.ps1` and its `-WslDistribution <name>` option.
 
 The wrapper leaves pip's index configuration untouched by default. When the builder can reach Python packages only
 through an internal mirror, add `-PipGlobalIndex` or `-PipGlobalIndexUrl`; each option is optional and only sets the

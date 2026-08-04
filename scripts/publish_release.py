@@ -8,13 +8,19 @@ import hashlib
 import json
 import re
 import subprocess
+import tarfile
 import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 GIT_RELEASE_USER_NAME = "github-actions[bot]"
 GIT_RELEASE_USER_EMAIL = "41898282+github-actions[bot]@users.noreply.github.com"
+MAXIMUM_GITHUB_ASSET_BYTES = 2_147_483_647
+VMWARE_MANIFEST_PATTERN = re.compile(r"^SHA256\(([^/\\]+)\)= ([0-9a-f]{64})$")
+OVF_NAMESPACE = "http://schemas.dmtf.org/ovf/envelope/1"
+RASD_NAMESPACE = "http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_ResourceAllocationSettingData"
 
 
 def run(command: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -35,6 +41,123 @@ def sha256(path: Path) -> str:
 def version() -> str:
     result = run(["python", "scripts/version.py", "get"])
     return result.stdout.strip()
+
+
+def verify_vmware_ovf_topology(path: Path, asset_names: set[str]) -> None:
+    namespaces = {"ovf": OVF_NAMESPACE, "rasd": RASD_NAMESPACE}
+    try:
+        root = ET.parse(path).getroot()
+    except ET.ParseError as exc:
+        raise SystemExit(f"VMware OVF descriptor is not valid XML: {exc}") from exc
+
+    files = {
+        element.get(f"{{{OVF_NAMESPACE}}}id"): element.get(f"{{{OVF_NAMESPACE}}}href")
+        for element in root.findall("./ovf:References/ovf:File", namespaces)
+    }
+    definitions = {
+        element.get(f"{{{OVF_NAMESPACE}}}diskId"): element
+        for element in root.findall("./ovf:DiskSection/ovf:Disk", namespaces)
+    }
+    hardware_disks: dict[str, ET.Element] = {}
+    for item in root.findall(".//ovf:VirtualHardwareSection/ovf:Item", namespaces):
+        resource_type = item.findtext("rasd:ResourceType", default="", namespaces=namespaces)
+        if resource_type != "17":
+            continue
+        unit = item.findtext("rasd:AddressOnParent", default="", namespaces=namespaces)
+        if unit in hardware_disks:
+            raise SystemExit(f"VMware OVF contains duplicate disk hardware at SCSI unit {unit}")
+        hardware_disks[unit] = item
+    if len(definitions) != 4 or set(hardware_disks) != {"0", "1", "2", "3"}:
+        raise SystemExit("VMware OVF must contain exactly four disks at SCSI units 0 through 3")
+
+    disk_assets = {name for name in asset_names if name.lower().endswith(".vmdk")}
+    payload_assets: set[str] = set()
+    disk_format = ""
+    for unit, expected_name in (("0", "Hard disk 1 - Photon OS"), ("1", "Hard disk 2 - Atlaso System Content")):
+        item = hardware_disks[unit]
+        if item.findtext("rasd:ElementName", default="", namespaces=namespaces) != expected_name:
+            raise SystemExit(f"VMware OVF payload disk at SCSI unit {unit} has the wrong identity")
+        host_resource = item.findtext("rasd:HostResource", default="", namespaces=namespaces)
+        if not host_resource.startswith("ovf:/disk/"):
+            raise SystemExit(f"VMware OVF payload disk at SCSI unit {unit} has no disk definition")
+        definition = definitions.get(host_resource.removeprefix("ovf:/disk/"))
+        file_ref = definition.get(f"{{{OVF_NAMESPACE}}}fileRef") if definition is not None else None
+        href = files.get(file_ref)
+        if not href or href not in disk_assets:
+            raise SystemExit(f"VMware OVF payload disk at SCSI unit {unit} has no release VMDK")
+        payload_assets.add(href)
+        payload_format = definition.get(f"{{{OVF_NAMESPACE}}}format", "")
+        if not payload_format or (disk_format and payload_format != disk_format):
+            raise SystemExit("VMware OVF payload disks must declare one consistent disk format")
+        disk_format = payload_format
+    if payload_assets != disk_assets:
+        raise SystemExit("VMware OVF payload references do not match the two release VMDKs")
+
+    for unit, disk_id, expected_name in (
+        ("2", "atlaso-depot", "Hard disk 3 - VCF Offline Depot"),
+        ("3", "atlaso-backups", "Hard disk 4 - VCF Backups"),
+    ):
+        item = hardware_disks[unit]
+        if item.findtext("rasd:ElementName", default="", namespaces=namespaces) != expected_name:
+            raise SystemExit(f"VMware OVF empty disk at SCSI unit {unit} has the wrong identity")
+        if item.findtext("rasd:HostResource", default="", namespaces=namespaces) != f"ovf:/disk/{disk_id}":
+            raise SystemExit(f"VMware OVF empty disk at SCSI unit {unit} has the wrong disk definition")
+        definition = definitions.get(disk_id)
+        if (
+            definition is None
+            or definition.get(f"{{{OVF_NAMESPACE}}}fileRef") is not None
+            or definition.get(f"{{{OVF_NAMESPACE}}}capacity") != "500"
+            or definition.get(f"{{{OVF_NAMESPACE}}}capacityAllocationUnits") != "byte * 2^30"
+            or definition.get(f"{{{OVF_NAMESPACE}}}format") != disk_format
+        ):
+            raise SystemExit(f"VMware OVF empty disk {disk_id} is not an empty 500 GiB disk")
+
+
+def verify_vmware_release_assets(directory: Path, names: set[str]) -> None:
+    manifests = sorted(name for name in names if name.lower().endswith(".mf"))
+    descriptors = sorted(name for name in names if name.lower().endswith(".ovf"))
+    disks = sorted(name for name in names if name.lower().endswith(".vmdk"))
+    archives = sorted(name for name in names if name.lower().endswith(".ova"))
+    allowed = set(manifests + descriptors + disks + archives)
+    if names != allowed or len(manifests) != 1 or len(descriptors) != 1 or len(disks) != 2 or len(archives) > 1:
+        raise SystemExit(f"release contains an invalid VMware appliance asset set: {sorted(names)}")
+
+    for name in names:
+        path = directory / name
+        if not path.is_file() or path.stat().st_size > MAXIMUM_GITHUB_ASSET_BYTES:
+            raise SystemExit(f"VMware release asset is missing or too large: {name}")
+
+    expected_hashes: dict[str, str] = {}
+    for line in (directory / manifests[0]).read_text(encoding="utf-8").splitlines():
+        match = VMWARE_MANIFEST_PATTERN.fullmatch(line)
+        if match is None or match.group(1) in expected_hashes:
+            raise SystemExit(f"VMware release manifest contains an invalid entry: {line}")
+        expected_hashes[match.group(1)] = match.group(2)
+    payload_names = set(descriptors + disks)
+    if set(expected_hashes) != payload_names:
+        raise SystemExit("VMware release manifest does not cover the OVF descriptor and both payload VMDKs")
+    mismatches = [name for name, expected in expected_hashes.items() if sha256(directory / name) != expected]
+    if mismatches:
+        raise SystemExit(f"VMware release assets failed manifest verification: {', '.join(sorted(mismatches))}")
+    verify_vmware_ovf_topology(directory / descriptors[0], names)
+    if archives:
+        expected_members = set(manifests + descriptors + disks)
+        try:
+            with tarfile.open(directory / archives[0], mode="r:") as archive:
+                members = [member for member in archive.getmembers() if member.isfile()]
+                member_names = {member.name for member in members}
+                if member_names != expected_members or len(members) != len(expected_members):
+                    raise SystemExit("VMware OVA does not contain exactly the OVF package assets")
+                for member in members:
+                    stream = archive.extractfile(member)
+                    digest = hashlib.sha256()
+                    if stream is not None:
+                        for block in iter(lambda: stream.read(1024 * 1024), b""):
+                            digest.update(block)
+                    if stream is None or digest.hexdigest() != sha256(directory / member.name):
+                        raise SystemExit(f"VMware OVA contains different bytes for {member.name}")
+        except tarfile.TarError as exc:
+            raise SystemExit(f"VMware OVA is not a valid tar archive: {exc}") from exc
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -82,9 +205,11 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(f"GitHub Release lookup returned the wrong tag for {tag}")
         expected_names = {path.name for path in assets}
         actual_names = {item["name"] for item in release.get("assets", [])}
-        if actual_names != expected_names:
+        missing_names = expected_names - actual_names
+        extra_names = actual_names - expected_names
+        if missing_names:
             raise SystemExit(
-                f"{tag} already has different assets: expected {sorted(expected_names)}, found {sorted(actual_names)}"
+                f"{tag} is missing expected assets: {sorted(missing_names)}; found {sorted(actual_names)}"
             )
         with tempfile.TemporaryDirectory(prefix="atlaso-release-verify-") as temp_value:
             temp = Path(temp_value)
@@ -94,8 +219,10 @@ def main(argv: list[str] | None = None) -> int:
                 for path in assets
                 if not (temp / path.name).is_file() or sha256(path) != sha256(temp / path.name)
             ]
-        if mismatches:
-            raise SystemExit(f"{tag} already contains mismatched assets: {', '.join(mismatches)}")
+            if mismatches:
+                raise SystemExit(f"{tag} already contains mismatched assets: {', '.join(mismatches)}")
+            if extra_names:
+                verify_vmware_release_assets(temp, extra_names)
         print(json.dumps({"tag": tag, "commit": args.commit, "result": "already-published"}, sort_keys=True))
         return 0
 
