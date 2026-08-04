@@ -1122,6 +1122,11 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "$effectiveSkipLabNetworkAdapters = -not $IncludeLabNetworkAdapters" in script
     assert "Atlaso-Depot.vmdk" in script
     assert "Atlaso-Backups.vmdk" in script
+    assert "Assert-ClonedPayloadDisks -VmxPath $targetVmx" in vm_script
+    assert "VMware clone did not retain the $($payloadDisk.Name) disk" in vm_script
+    assert "Set-VmxScsiDisk -Path $targetVmx -Unit 2 -DiskPath $resolvedDepotVmdkPath" in vm_script
+    assert "Set-VmxScsiDisk -Path $targetVmx -Unit 3 -DiskPath $resolvedBackupVmdkPath" in vm_script
+    assert "Set-VmxScsiDisk -Path $targetVmx -Unit 1 -DiskPath $resolvedDepotVmdkPath" not in vm_script
     assert '"disk.EnableUUID"          = "TRUE"' in packer_template
     assert "Refusing to reset VMware data disk outside the VM output directory" in script
     assert "vmrun.exe was not found" in vm_script

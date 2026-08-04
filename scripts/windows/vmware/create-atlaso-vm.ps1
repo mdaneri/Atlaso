@@ -109,6 +109,48 @@ function Set-VmxValue {
     [System.IO.File]::WriteAllLines($Path, [string[]]$content, [System.Text.UTF8Encoding]::new($false))
 }
 
+function Get-VmxValue {
+    param(
+        [string]$Path,
+        [string]$Key
+    )
+
+    $pattern = '^\s*' + [regex]::Escape($Key) + '\s*=\s*"(?<value>.*)"\s*$'
+    foreach ($line in Get-Content -LiteralPath $Path) {
+        if ($line -match $pattern) {
+            return $Matches.value
+        }
+    }
+    return ''
+}
+
+function Assert-ClonedPayloadDisks {
+    param([string]$VmxPath)
+
+    $vmDirectory = Split-Path -Parent $VmxPath
+    foreach ($payloadDisk in @(
+            @{ Unit = 0; Name = 'Photon OS' },
+            @{ Unit = 1; Name = 'Atlaso system content' }
+        )) {
+        $prefix = "scsi0:$($payloadDisk.Unit)"
+        if ((Get-VmxValue -Path $VmxPath -Key "$prefix.present") -ne 'TRUE') {
+            throw "VMware clone did not retain the $($payloadDisk.Name) disk at SCSI unit $($payloadDisk.Unit)."
+        }
+        $fileName = Get-VmxValue -Path $VmxPath -Key "$prefix.fileName"
+        if ([string]::IsNullOrWhiteSpace($fileName)) {
+            throw "VMware clone did not identify the $($payloadDisk.Name) VMDK at SCSI unit $($payloadDisk.Unit)."
+        }
+        $diskPath = if ([System.IO.Path]::IsPathRooted($fileName)) {
+            $fileName
+        } else {
+            Join-Path $vmDirectory $fileName
+        }
+        if (-not (Test-Path -LiteralPath $diskPath -PathType Leaf)) {
+            throw "VMware clone $($payloadDisk.Name) VMDK is missing: $diskPath"
+        }
+    }
+}
+
 function New-DataVmdk {
     param(
         [string]$Path,
@@ -192,12 +234,13 @@ if (-not (Test-Path -LiteralPath $targetVmx)) {
     throw "VMware clone completed but target VMX was not found: $targetVmx"
 }
 
+Assert-ClonedPayloadDisks -VmxPath $targetVmx
 Set-VmxValue -Path $targetVmx -Key 'displayName' -Value $Name
 Set-VmxValue -Path $targetVmx -Key 'disk.EnableUUID' -Value 'TRUE'
 New-DataVmdk -Path $resolvedDepotVmdkPath -Size $DepotDiskSize -Label 'VCF Offline Depot'
 New-DataVmdk -Path $resolvedBackupVmdkPath -Size $BackupDiskSize -Label 'VCF Backups'
-Set-VmxScsiDisk -Path $targetVmx -Unit 1 -DiskPath $resolvedDepotVmdkPath
-Set-VmxScsiDisk -Path $targetVmx -Unit 2 -DiskPath $resolvedBackupVmdkPath
+Set-VmxScsiDisk -Path $targetVmx -Unit 2 -DiskPath $resolvedDepotVmdkPath
+Set-VmxScsiDisk -Path $targetVmx -Unit 3 -DiskPath $resolvedBackupVmdkPath
 & (Join-Path $PSScriptRoot 'set-test-nics.ps1') `
     -VmxPath $targetVmx `
     -ManagementNetwork $ManagementNetwork `
