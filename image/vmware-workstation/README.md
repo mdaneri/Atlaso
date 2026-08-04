@@ -194,10 +194,12 @@ To upload the deployable OVF package to an existing GitHub Release, authenticate
 ```powershell
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/export-ovf.ps1 `
-  -ReleaseTag "v<version>" `
-  -Repository mdaneri/Atlaso `
-  -Force
+  -Release
 ```
+
+Release mode derives `v<version>` from the synchronized repository metadata, requires that tag to identify the clean
+checked-out commit, resolves the destination GitHub repository from the current checkout, and replaces the generated
+local OVF output before publishing.
 
 Every OVF asset is checked against GitHub's less-than-2-GiB per-asset boundary before upload. The descriptor, manifest,
 and both payload VMDKs are uploaded as one set. A retry verifies every existing asset byte-for-byte and refuses partial

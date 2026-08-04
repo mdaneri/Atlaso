@@ -357,6 +357,13 @@ def test_vmware_ovf_export_and_image_plumbing_are_present():
     assert "MaximumReleaseAssetBytes = 2147483647" in export_script
     assert "Publish-AtlasoReleaseAssets" in export_script
     assert "Assert-AtlasoReleaseProvenance" in export_script
+    assert "[switch]$Release" in export_script
+    assert "[string]$ReleaseTag" not in export_script
+    assert "[string]$Repository" not in export_script
+    assert "[string]$RepositoryName" not in export_script
+    assert "Resolve-AtlasoReleaseTag" in export_script
+    assert 'python.Source $versionScript get --root $RepoRoot' in export_script
+    assert 'repo view --json nameWithOwner' in export_script
     assert "Release publication requires a clean tracked worktree" in export_script
     assert 'rev-parse "$Tag^{}"' in export_script
     assert "VMware build provenance does not match the source VMX bytes" in export_script

@@ -5,8 +5,7 @@ param(
     [string]$Name = 'Atlaso-Photon',
     [string]$OvfToolPath = '',
     [string]$TarPath = '',
-    [string]$ReleaseTag = '',
-    [string]$Repository = '',
+    [switch]$Release,
     [ValidateRange(1, 2147483647)]
     [long]$MaximumReleaseAssetBytes = 2147483647,
     [switch]$NoOva,
@@ -77,9 +76,37 @@ function Resolve-TarPath {
 function Resolve-GhPath {
     $command = Get-Command gh -ErrorAction SilentlyContinue
     if (-not $command) {
-        throw 'gh was not found. Install GitHub CLI before using -ReleaseTag.'
+        throw 'gh was not found. Install GitHub CLI before using -Release.'
     }
     return $command.Source
+}
+
+function Resolve-AtlasoReleaseTag {
+    param([string]$RepoRoot)
+
+    $python = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $python) {
+        throw 'python was not found. Release publication requires the checked-out Atlaso version metadata.'
+    }
+    $versionScript = Join-Path $RepoRoot 'scripts\version.py'
+    $version = [string](& $python.Source $versionScript get --root $RepoRoot)
+    $version = $version.Trim()
+    if ($LASTEXITCODE -ne 0 -or $version -notmatch '^\d+\.\d+\.\d+$') {
+        throw 'Could not resolve the synchronized Atlaso release version from the checked-out repository metadata.'
+    }
+
+    $tag = "v$version"
+    $headCommit = [string](& git -C $RepoRoot rev-parse HEAD)
+    $headCommit = $headCommit.Trim()
+    $tagCommit = [string](& git -C $RepoRoot rev-parse "$tag^{}" 2>$null)
+    $tagCommit = $tagCommit.Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($tagCommit)) {
+        throw "Release publication requires the local release tag $tag derived from repository metadata."
+    }
+    if ($tagCommit -ne $headCommit) {
+        throw "Release tag $tag identifies $tagCommit, but the checked-out commit is $headCommit."
+    }
+    return $tag
 }
 
 function Assert-AtlasoReleaseProvenance {
@@ -152,20 +179,16 @@ function Publish-AtlasoReleaseAssets {
     param(
         [string]$GhPath,
         [string]$Tag,
-        [string]$RepositoryName,
         [string]$OvfDirectory,
         [string]$OvaPath,
         [string]$ExpectedCommit,
         [long]$MaximumBytes
     )
 
-    $effectiveRepository = $RepositoryName
-    if ([string]::IsNullOrWhiteSpace($effectiveRepository)) {
-        $effectiveRepository = [string](& $GhPath repo view --json nameWithOwner --jq '.nameWithOwner')
-        $effectiveRepository = $effectiveRepository.Trim()
-        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($effectiveRepository)) {
-            throw 'Could not resolve the destination GitHub repository.'
-        }
+    $effectiveRepository = [string](& $GhPath repo view --json nameWithOwner --jq '.nameWithOwner')
+    $effectiveRepository = $effectiveRepository.Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($effectiveRepository)) {
+        throw 'Could not resolve the destination GitHub repository from the current checkout.'
     }
     $repositoryArguments = @('--repo', $effectiveRepository)
     $remoteTagCommit = [string](& $GhPath api "repos/$effectiveRepository/commits/$Tag" --jq '.sha')
@@ -927,9 +950,11 @@ function Get-OvfDescriptorPath {
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
 $resolvedSourceVmx = (Resolve-Path -LiteralPath $SourceVmxPath).Path
+$releaseTag = ''
 $releaseProvenance = $null
-if ($ReleaseTag) {
-    $releaseProvenance = Assert-AtlasoReleaseProvenance -RepoRoot $repoRoot -Tag $ReleaseTag -SourceVmxPath $resolvedSourceVmx
+if ($Release) {
+    $releaseTag = Resolve-AtlasoReleaseTag -RepoRoot $repoRoot
+    $releaseProvenance = Assert-AtlasoReleaseProvenance -RepoRoot $repoRoot -Tag $releaseTag -SourceVmxPath $resolvedSourceVmx
 }
 if (-not $OutputDirectory) {
     $OutputDirectory = Join-Path $repoRoot "image\vmware-workstation\ovf\$Name"
@@ -939,7 +964,7 @@ $resolvedOvfTool = Resolve-OvfToolPath -Path $OvfToolPath
 $resolvedTar = if ($NoOva) { '' } else { Resolve-TarPath -Path $TarPath }
 
 if (Test-Path -LiteralPath $resolvedOutputDirectory) {
-    if (-not $Force) {
+    if (-not $Force -and -not $Release) {
         throw "OVF output directory already exists: $resolvedOutputDirectory. Pass -Force to replace it."
     }
     Remove-Item -LiteralPath $resolvedOutputDirectory -Recurse -Force
@@ -971,12 +996,11 @@ if ($ovaPath) {
     Write-Host "Atlaso OVA archive size: $($ovaAsset.Length) bytes"
 }
 
-if ($ReleaseTag) {
+if ($Release) {
     $resolvedGh = Resolve-GhPath
     Publish-AtlasoReleaseAssets `
         -GhPath $resolvedGh `
-        -Tag $ReleaseTag `
-        -RepositoryName $Repository `
+        -Tag $releaseTag `
         -OvfDirectory $ovfPackageDirectory `
         -OvaPath $ovaPath `
         -ExpectedCommit $releaseProvenance.source_commit `

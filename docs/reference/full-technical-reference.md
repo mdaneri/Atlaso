@@ -1137,8 +1137,9 @@ Photon root/build password remains separate from the Atlaso web bootstrap admini
 The Workstation Packer template creates a 40 GiB OS disk and a sparse 20 GiB `ATLASO_SYSTEM` disk. Final provisioning
 removes the build-only `python3-devel` package, clears package/download caches and staged sources, trims the filesystems,
 and leaves Packer compaction enabled. OVF export preserves both payload VMDKs and adds empty 500 GiB depot and backup
-definitions at SCSI units 2 and 3. `export-ovf.ps1 -ReleaseTag <tag>` preflights and uploads the OVF assets with GitHub
-CLI; it uploads the combined OVA only when that archive independently remains below the configured asset limit.
+definitions at SCSI units 2 and 3. `export-ovf.ps1 -Release` derives the exact tag and destination repository from the
+clean tagged checkout, then preflights and uploads the OVF assets with GitHub CLI. It uploads the combined OVA only when
+that archive independently remains below the configured asset limit.
 
 Lifecycle testing uses VMX/VMDK artifacts and `vmrun.exe`:
 
