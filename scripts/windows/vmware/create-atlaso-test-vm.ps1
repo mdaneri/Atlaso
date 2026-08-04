@@ -35,8 +35,8 @@ function Find-LatestApplianceVmx {
     }
 
     $selected = Get-ChildItem -LiteralPath $outputRoot -Recurse -Filter '*.vmx' -File |
-        Sort-Object -Property LastWriteTime -Descending |
-        Select-Object -First 1
+    Sort-Object -Property LastWriteTime -Descending |
+    Select-Object -First 1
     if (-not $selected) {
         throw "No appliance VMX found under $outputRoot. Build the Workstation image first or pass -ApplianceVmxPath."
     }
@@ -69,9 +69,12 @@ function Install-ApplianceRootCa {
                 -OutFile $rootPemPath
             $downloaded = $true
             break
-        } catch {
+        }
+        catch {
             $lastError = $_.Exception.Message
-            Remove-Item -LiteralPath $rootPemPath -Force -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $rootPemPath) {
+                Remove-Item -LiteralPath $rootPemPath -Force -ErrorAction SilentlyContinue
+            }
             if ((Get-Date) -lt $deadline) {
                 Write-Host "Atlaso root CA is not ready; retrying in $PollSeconds seconds." -ForegroundColor DarkGray
                 Start-Sleep -Seconds $PollSeconds
@@ -94,8 +97,8 @@ function Install-ApplianceRootCa {
         $certificate.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)
     )
     $staleRoots = @(Get-ChildItem Cert:\CurrentUser\Root | Where-Object {
-        $_.Subject -like '*CN=Atlaso Internal Root CA*' -and $_.Thumbprint -ne $certificate.Thumbprint
-    })
+            $_.Subject -like '*CN=Atlaso Internal Root CA*' -and $_.Thumbprint -ne $certificate.Thumbprint
+        })
     foreach ($staleRoot in $staleRoots) {
         Write-Host "Removing stale Atlaso root CA from current user: $($staleRoot.Thumbprint)"
         certutil.exe -user -delstore Root $staleRoot.Thumbprint | Out-Host
@@ -139,7 +142,8 @@ function Write-ConnectionSummary {
     Write-SummaryRow -Label "SSH:" -Value "ssh admin@$IpAddress"
     if ($RootCaTrusted) {
         Write-SummaryRow -Label "HTTPS trust:" -Value "Atlaso root CA imported for current user" -ValueColor Green
-    } else {
+    }
+    else {
         Write-SummaryRow -Label "HTTPS trust:" -Value "pass -TrustRootCa to trust this appliance root CA" -ValueColor Yellow
     }
     Write-SummaryRow -Label "Lab DNS:" -Value "see image\vmware-workstation\README.md > Windows DNS for lab FQDNs" -ValueColor Yellow
@@ -172,12 +176,14 @@ $resolvedOutputDirectory = $ExecutionContext.SessionState.Path.GetUnresolvedProv
 $targetVmx = Join-Path $resolvedOutputDirectory "$Name.vmx"
 $resolvedDepotVmdkPath = if ($DepotVmdkPath) {
     $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($DepotVmdkPath)
-} else {
+}
+else {
     Join-Path $resolvedOutputDirectory 'Atlaso-Depot.vmdk'
 }
 $resolvedBackupVmdkPath = if ($BackupVmdkPath) {
     $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($BackupVmdkPath)
-} else {
+}
+else {
     Join-Path $resolvedOutputDirectory 'Atlaso-Backups.vmdk'
 }
 
@@ -204,7 +210,8 @@ if ((Test-Path -LiteralPath $resolvedOutputDirectory) -and $Redeploy) {
             & (Join-Path $PSScriptRoot 'remove-atlaso-vm.ps1') `
                 -VmxPath $targetVmx `
                 -VmrunPath $VmrunPath
-        } else {
+        }
+        else {
             Remove-Item -LiteralPath $resolvedOutputDirectory -Recurse -Force
         }
     }
@@ -272,6 +279,7 @@ if (($WaitForIp -or $TrustRootCa) -and -not $NoStart -and -not $WhatIfPreference
         Install-ApplianceRootCa -IpAddress $ip -Name $Name -TimeoutSeconds $TimeoutSeconds
     }
     Write-ConnectionSummary -IpAddress $ip -Name $Name -VmxPath $targetVmx -RootCaTrusted ([bool]$TrustRootCa)
-} elseif (-not $NoStart -and -not $WhatIfPreference) {
+}
+elseif (-not $NoStart -and -not $WhatIfPreference) {
     Write-Host "Pass -WaitForIp to print the HTTPS console, Swagger, root certificate, and SSH connection summary." -ForegroundColor DarkGray
 }
