@@ -440,9 +440,11 @@ the helper extraction tree and `/var/lib/atlaso/vcfDownloadTool/active-tool/conf
 `vcf-download-tool configuration generate --software-depot-id`, syncs intent, and then applies HTTPS. Upload Broadcom
 credentials through the unified Broadcom credentials modal as either a download token or activation code, by file or
 pasted text; existing storage keys remain separate, and credential bodies are never returned in responses, previews,
-logs, or job output. Metadata and binaries profiles prefer the runtime download-token file used by
-`--depot-download-token-file` when present, otherwise they use the runtime activation-code file used by
-`--depot-download-activation-code-file`. Global appliance apply records show only sanitized filenames, presence flags,
+logs, or job output. Metadata and binaries profiles use the most recently staged runtime credential: the download-token
+file used by `--depot-download-token-file` or the activation-code file used by
+`--depot-download-activation-code-file`. Existing state with indistinguishable credential timestamps retains the
+download-token fallback, while ESX profiles always use the activation-code file. Global appliance apply records show
+only sanitized filenames, presence flags,
 generated software depot ID metadata, generated tool version metadata, and generated command intent. The generated VCFDT
 script uses `/var/lib/atlaso/vcfDownloadTool/active-tool` runtime credential paths, writes the telemetry flag, supports
 install, upgrade, upgrade-only, patch-only, Day-N component, and ESX activation-code workflows, and writes ESX
