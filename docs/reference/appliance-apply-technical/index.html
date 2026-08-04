@@ -4318,11 +4318,13 @@ user-uploaded images separately from VCFDT-discovered images with dates, allows 
 allows deleting either source. Deleting an ISO clears host/default PXE references to that image; generated runtime files
 are reconciled on the next global <code>esxi_pxe</code> apply.</p>
 <h4 id="host-profiles">Host profiles<a class="headerlink" href="#host-profiles" title="Permanent link">&para;</a></h4>
-<p>Host references are edited in a Tabulator grid. Each host can select a database Kickstart and installer ISO and can
-define custom Kickstart variables as JSON. Built-in variables include host identity, selected DHCP scope values such as
+<p>Host references are edited in a Tabulator grid. Each host can select a database Kickstart and installer ISO. Its
+Host Reference wizard lists every Custom Variables definition with the read-only default and an editable host override;
+only explicit overrides are stored in the host variables JSON. Built-in variables include host identity and selected
+DHCP scope values such as
 <code>{{dhcp.gateway}}</code>, <code>{{dhcp.dns_servers}}</code>, and <code>{{dhcp.ntp_servers}}</code>, and the PXE HTTP base URL; custom values are
 referenced as <code>{{custom.&lt;name&gt;}}</code>. The Custom Variables collection defines the available names and optional non-secret
-defaults; a host-specific Variables JSON value overrides its matching default. The grid also has a default profile for
+defaults; an unassigned host row uses its matching default. The grid also has a default profile for
 undefined MAC addresses; when enabled with an
 installer ISO, Atlaso generates the top-level default <code>boot.cfg</code>, HTTP <code>boot.cfg</code>, and <code>pxelinux.cfg/default</code> artifacts
 from that profile instead of falling back to the first host reference. The default profile cannot use a Kickstart

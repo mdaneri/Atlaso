@@ -4863,6 +4863,17 @@ through the primary zone. Both legacy BIOS and UEFI use the bundled
 Atlaso binds dnsmasq TFTP explicitly to every selected IPv4 DHCP IP-zone
 interface so VMware Workstation firmware can retrieve that first stage over
 UDP/69 before iPXE switches to HTTP.</p>
+<p>After an ESXi entry is selected, Atlaso executes the installer loader rather
+than the adjacent <code>boot.cfg</code> data file. UEFI clients chain the selected
+profile's host-specific <code>mboot.efi</code> over HTTP; legacy BIOS clients chain the
+staged PXELINUX loader over TFTP with that profile's explicit configuration
+path. The loader then reads the generated <code>boot.cfg</code>. If selection returns to
+the Atlaso menu without showing the VMware loader, verify that the applied menu
+chains <code>mboot.efi</code> or <code>pxelinux.0</code>, and reapply the ESXi PXE unit if it still
+references <code>boot.cfg</code> directly. Current DHCP configuration includes iPXE's
+<code>${platform}</code> value in the menu request; the menu also checks <code>${platform}</code> at
+execution time when that query parameter is absent, preserving compatibility
+with an already-applied DHCP configuration.</p>
 <p>For an enabled ESXi Host Reference, right-click and choose <strong>Boot Inventory
 Linux once</strong> to override that exact MAC's next menu default for 30 minutes. The
 first claim retains a five-minute retry window so firmware retries remain on
@@ -4926,6 +4937,12 @@ and address/flag lists are also bounded; malformed hardware objects are
 rejected rather than retained partially.</p>
 <p>The <strong>Discovered Hosts</strong> grid is read-only and keeps a 300 px desktop or 240 px
 narrow-viewport working area above the separately framed media task history.
+While the Network Boot page is visible, Atlaso refreshes the grid every five
+seconds and refreshes it immediately when the browser tab becomes visible
+again. A newly submitted Inventory Linux report therefore appears without a
+page reload. Refreshes retain the current grid sort, filter, and scroll context;
+if a background request fails, Atlaso keeps the last received host list and
+shows a recoverable refresh message.
 Double-click a row or focus it and press Enter to open its semantic hardware
 report. A compact history selector switches among retained reports without
 reloading the page. The selected report covers all available system, firmware,
@@ -4938,13 +4955,19 @@ legacy field.</p>
 JSON</strong> to save a no-cache attachment containing the host identity, report
 metadata, and unchanged normalized payload. The exported identity is captured
 from the selected retained report, so later reports and heartbeat changes do
-not alter an older attachment. Operators with Network Boot write
-access can use the row context menu to <strong>Promote to ESXi</strong>, <strong>Reboot</strong>, <strong>Wake
+not alter an older attachment. The Discovered Hosts grid fills the available
+workspace and keeps its usage note below the collection. Open the row menu and
+choose <strong>View inventory report</strong> to inspect a host; the report dialog contains
+report navigation and export controls only. Operators with Network Boot write
+access can use the same row menu to <strong>Promote to ESXi</strong>, <strong>Reboot</strong>, <strong>Wake
 host</strong>, or <strong>Remove discovered host</strong>. Wake, reboot, and removal share Atlaso's
 confirmation flow. Reboot is available only for an online Inventory Linux
 session. Removal transactionally deletes that discovered host's commands,
 sessions, and reports, but retains any separately promoted ESXi desired-state
-reference. Promotion requires explicit hostname, a discovered MAC, address,
+reference. The grid marks a discovered host as <strong>Assigned</strong> when one of its
+reported MACs matches an ESXi Host Reference and shows the assigned ESXi
+hostname and IP address. <strong>Promote to ESXi</strong> is disabled for an assigned host,
+preventing a duplicate Host Reference workflow. Promotion requires explicit hostname, a discovered MAC, address,
 Kickstart, installer ISO, variables, and enabled-state review. It creates
 desired state only.</p>
 <h2 id="boot-media-packages-and-activation">Boot media packages and activation<a class="headerlink" href="#boot-media-packages-and-activation" title="Permanent link">&para;</a></h2>
@@ -4962,6 +4985,12 @@ deployment bridge repairs that dependency on older test appliances before
 installing the new wheel. The <strong>Source</strong> column
 names and links to the authoritative release history from which Atlaso resolves
 each download; Inventory Linux points to its independent release history.
+The <strong>Latest available</strong> column resolves the current stable version from those
+same authoritative metadata endpoints after the grid loads. Atlaso caches a
+successful lookup for 15 minutes, labels a retained value as cached when a
+later refresh fails, and retries unavailable sources after one minute. This
+metadata-only lookup neither downloads media nor changes desired or applied
+state.
 The Boot Environments components table remains visible above the media-task
 history and reports all five fixed catalog rows even when no optional media is installed.</p>
 <p><strong>Download latest</strong> resolves only these fixed signed endpoints:</p>
@@ -5033,19 +5062,31 @@ directories even when interruption happened before journal publication. Worker
 startup retains the recovery check as an idempotent fallback.</p>
 <p>Each catalog row exposes <strong>Download</strong>, <strong>Upload</strong>, and <strong>Delete newest inactive
 media</strong> through its row context menu.
+<strong>Download latest</strong> is disabled when that exact available version is already
+installed; uploading remains available for an intentional verified repair.
 Upload is limited to 2 GiB and stages the file only for the durable verification
 task. Atlaso still resolves the authoritative stable release metadata and
 checks the uploaded bytes against the same upstream digest or signed checksum;
 the operator cannot substitute an unverified checksum. Cancelling a pending
 upload removes its staged artifact immediately, and worker-startup recovery
 removes staged uploads left by an interrupted running task.
-Deleting an inactive media version also removes terminal staged-upload
-artifacts for that environment. Cleanup is blocked while an environment media
-task is pending or running, and active, desired, and bundled Inventory Linux
-versions cannot be removed.
+Deleting an inactive media version queues a durable Network Boot media task,
+which removes the validated physical version directory, its database record,
+and terminal staged-upload artifacts for that environment.
+Cleanup is blocked while an environment media
+task is pending or running. Active media, desired media for an enabled
+environment, and bundled Inventory Linux cannot be removed. When an environment
+is disabled and its desired media is no longer active, deletion clears the
+saved desired version in the same worker transaction. A queued deletion can be
+cancelled before the worker claims it; once filesystem removal starts, the task
+is no longer cancellable.
 The <strong>Boot media tasks</strong> panel reuses the Tasks grid and detail dialogs while
 scoping live refresh, filtering, logs, and cancellation to Network Boot media
-downloads and uploads. The Network Boot and ESXi Kickstarts workspaces scroll
+downloads, uploads, and inactive-media deletion. The task is inserted and
+selected immediately after any of those actions is queued. While the task is
+active, its two-second refresh also updates the Boot Environments grid, so the
+installed and media-ready fields reflect completion without a page reload. The
+Network Boot and ESXi Kickstarts workspaces scroll
 inside the main panel so the Boot Service rail remains fixed on the right.
 Distinct download requests may queue while another media sync is active; the
 single worker preserves FIFO execution. Atlaso rejects only an active duplicate
@@ -5121,17 +5162,29 @@ unacknowledged command are never selected for storage eviction.</p>
 <h2 id="manage-esxi-host-references">Manage ESXi Host References<a class="headerlink" href="#manage-esxi-host-references" title="Permanent link">&para;</a></h2>
 <p>Open <strong>ESXi Kickstarts</strong>, select <strong>Host References</strong>, and use <strong>+ Add host
 reference here</strong> to open the guided Host Reference workflow. When an eligible
-Network Boot inventory host has at least one valid MAC that is not already used
-by a Host Reference, the workflow defaults to <strong>Discovered Network Boot host</strong>.
-Select the discovered host and review the suggested hostname, one of its
-available MAC addresses, and its latest assigned address. Select <strong>Manual host</strong>
-instead to enter a hostname, MAC address, and optional IP address directly.</p>
+Network Boot inventory host has a valid boot MAC that is not already used by a
+Host Reference, the workflow defaults to <strong>Discovered Network Boot host</strong>.
+Hosts already assigned to an ESXi Host Reference are omitted from this selector,
+and each remaining option displays only the reported boot MAC.
+Select the discovered host and review the suggested hostname, its boot MAC, and
+its latest assigned address. Select <strong>Manual host</strong> instead to enter a hostname
+and a concrete unicast MAC address. The optional IP field is a static
+reservation; leave it blank to use DHCP.</p>
 <p>The remaining steps select the Kickstart, installer ISO, non-secret variables,
-and desired Enabled state before showing the final review. New references opened
-from the Host References add row default to Enabled. Promotion opened directly
-from a discovered-host action retains its explicit disabled default. Saving
-creates or updates desired state only; use the global <strong>Review appliance
-changes</strong> workflow to enforce it on the appliance.</p>
+and desired Enabled state before showing the final review. The direct-edit Host
+variables grid lists every definition from <strong>Custom Variables</strong>, shows its
+read-only default, and lets the administrator set a host override. An
+unassigned row uses the displayed default; the row menu clears an override to
+return to that default. Overrides whose definition was removed remain visible
+as unavailable until cleared, preventing an edit from silently discarding
+saved data. The grid validates the same 64-entry, name, namespace, and
+value-length contract as the server while keeping its overrides-only JSON
+storage as an implementation detail. When an installer ISO is selected, a new reference
+or promotion defaults to Enabled. An administrator can still turn Enabled off
+explicitly, and editing preserves the saved state. Saving creates or updates
+the Host References grid immediately without a page reload and refreshes the
+matching discovered-host assignment. Use the global <strong>Review appliance
+changes</strong> workflow to enforce desired state on the appliance.</p>
 <p>Double-click an existing reference or choose <strong>Edit host reference</strong> from its
 row menu to reopen the same workflow. The Enabled value remains directly
 toggleable in the collection. The row menu also retains <strong>Boot Inventory Linux
@@ -5140,6 +5193,22 @@ once</strong>, <strong>Wake host</strong>, and <strong>Delete host reference</st
 Kickstart, installer ISO, and Enabled values. Manual add and edit require ESXi
 PXE write access; discovered-host promotion also requires Network Boot write
 access.</p>
+<p>Select <strong>Installer ISOs</strong> and use <strong>+ Add ESX ISO</strong> to open the standard
+two-step upload wizard. The wizard validates the selected <code>.iso</code>, shows its
+name, size, destination, and global-apply boundary for review, then reports
+upload progress. A successful upload inserts the new media into the
+wizard-backed Installer ISOs grid and all Host Reference ISO selectors without
+reloading the page. Existing ISO removal remains a confirmed row action and
+clears desired-state references to the removed path; generated PXE artifacts
+change only after global appliance apply.
+The Boot Service status list shows the shared Installer ISO folder immediately
+below the PXE bind target, keeping storage context available without consuming
+space above the Installer ISOs grid.
+The grid derives the displayed ESX version and optional build from standard
+VMware installer names such as
+<code>VMware-VMvisor-Installer-9.1.0.0100.25433460.x86_64.iso</code>. Media with a renamed
+or nonstandard filename remains usable but displays <strong>Not reported</strong> rather
+than guessing its version.</p>
 <h2 id="esx-technical-reference">ESX technical reference<a class="headerlink" href="#esx-technical-reference" title="Permanent link">&para;</a></h2>
 <p>The remainder is a cleaned Markdown copy of Broadcom Tech Docs content for ESX
 installation, Kickstart, <code>boot.cfg</code>, PXELINUX, iPXE, and native UEFI HTTP boot.</p>
@@ -5161,7 +5230,7 @@ variable</strong> control in the ESXi PXE tablist opens a two-step Definition an
 row or choosing <strong>Edit</strong> from its context menu opens the same wizard, while <strong>Remove</strong> deletes the definition after
 confirmation. Each row records the variable name, an operator description on its own full-width row, and an optional
 default. Monaco offers those
-rows as concrete <code>{{custom.&lt;name&gt;}}</code> completions. A matching value in a Host References variables JSON object overrides
+rows as concrete <code>{{custom.&lt;name&gt;}}</code> completions. A matching value in a Host Reference variable override grid supersedes
 the default for that host; when no override exists, Atlaso renders the configured default. Removing a referenced
 definition makes the Kickstart invalid until the definition is restored or the marker is removed. Use vault markers
 instead of custom-variable defaults for credentials or other secrets.</p>
