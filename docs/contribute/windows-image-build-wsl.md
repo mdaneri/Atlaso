@@ -53,12 +53,10 @@ Use `-BaseImagePath <path>` to supply the exact pinned archive from an approved 
 
 ## Build with the selected distribution
 
-The Inventory Linux wrapper and both Photon wrappers select `Atlaso-Build` by default:
+The Inventory Linux wrapper selects `Atlaso-Build` by default. Photon wrappers do not build or embed Inventory Linux:
 
 ```powershell
 pwsh -File scripts/windows/common/Build-AtlasoInventoryLinux.ps1
-pwsh -File scripts/windows/vmware/build-photon-image.ps1
-pwsh -File scripts/windows/hyperv/build-photon-image.ps1
 ```
 
 To use an existing compatible distribution without provisioning `Atlaso-Build`, pass its registered WSL name to the
@@ -69,8 +67,8 @@ pwsh -File scripts/windows/common/Build-AtlasoInventoryLinux.ps1 `
   -WslDistribution Ubuntu-24.04
 ```
 
-The Photon wrappers accept and forward the same `-WslDistribution <name>` option. Atlaso uses that one distribution for
-path conversion, prerequisite checks, cache discovery, locking, and build execution. A user-selected distribution must
+Atlaso uses that one distribution for path conversion, prerequisite checks, cache discovery, locking, and build
+execution. A user-selected distribution must
 provide the commands listed in `wsl-build-contract.json`, run builds as a non-root default user, and provide
 case-sensitive native Linux storage. Atlaso validates it but does not install packages into it.
 

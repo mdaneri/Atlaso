@@ -373,40 +373,6 @@ else
   exit 2
 fi
 
-INVENTORY_SOURCE_DIR="$ATLASO_HOME/image/inventory-linux/output"
-INVENTORY_MANIFEST="$INVENTORY_SOURCE_DIR/manifest.json"
-if [ ! -r "$INVENTORY_MANIFEST" ]; then
-  echo "Bundled Atlaso Inventory Linux manifest is missing: $INVENTORY_MANIFEST" >&2
-  exit 2
-fi
-INVENTORY_VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["version"])' "$INVENTORY_MANIFEST")"
-INVENTORY_MEDIA_DIR="$ATLASO_STATE/pxe/media/inventory"
-INVENTORY_TARGET_DIR="$INVENTORY_MEDIA_DIR/$INVENTORY_VERSION"
-log_step "staging bundled Atlaso Inventory Linux $INVENTORY_VERSION"
-install -d -o atlaso -g atlaso -m 0755 "$INVENTORY_MEDIA_DIR" "$INVENTORY_TARGET_DIR"
-for artifact in bzImage rootfs.cpio.gz manifest.json; do
-  install -o atlaso -g atlaso -m 0644 "$INVENTORY_SOURCE_DIR/$artifact" "$INVENTORY_TARGET_DIR/$artifact"
-done
-if [ ! -d "$INVENTORY_SOURCE_DIR/legal-info" ]; then
-  echo "Bundled Atlaso Inventory Linux legal-info is missing." >&2
-  exit 2
-fi
-install -d -o root -g root -m 0755 /usr/share/doc/atlaso/inventory-linux
-rsync -a --delete "$INVENTORY_SOURCE_DIR/legal-info/" /usr/share/doc/atlaso/inventory-linux/
-python3 - "$INVENTORY_TARGET_DIR" <<'PY'
-import hashlib
-import json
-import pathlib
-import sys
-
-root = pathlib.Path(sys.argv[1])
-manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
-for name, expected in manifest["artifacts"].items():
-    actual = hashlib.sha256((root / name).read_bytes()).hexdigest()
-    if actual != expected:
-        raise SystemExit(f"Atlaso Inventory Linux artifact digest mismatch: {name}")
-PY
-
 log_step "installing Atlaso Python environment"
 install -d -o root -g root -m 0755 "$PIP_CACHE_DIR"
 install -d -o root -g root -m 0755 "$ATLASO_HOME/releases"

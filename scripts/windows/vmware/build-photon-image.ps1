@@ -29,7 +29,6 @@ param(
     [string]$PipGlobalIndexUrl = '',
     [string]$PackerDirectory = '',
     [string]$PreparedIsoPath = '',
-    [string]$WslDistribution = 'Atlaso-Build',
     [ValidateSet('cleanup', 'abort', 'ask', 'run-cleanup-provisioner')]
     [string]$PackerOnError = 'cleanup',
     [switch]$AllowExistingManagementSubnet,
@@ -395,10 +394,6 @@ $packerVariables = @{
 if (-not $ValidateOnly -and -not $PrepareIsoOnly -and -not $KeepExistingOutput) {
     $resolvedVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
     Unregister-ExistingWorkstationTemplate -ResolvedVmrunPath $resolvedVmrunPath -OutputDirectory $workstationOutputDirectory -VmName $VmName
-}
-
-if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
-    & (Join-Path $PSScriptRoot '..\common\Build-AtlasoInventoryLinux.ps1') -WslDistribution $WslDistribution
 }
 
 Invoke-AtlasoPhotonImageBuild `

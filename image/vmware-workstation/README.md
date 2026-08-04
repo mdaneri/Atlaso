@@ -67,9 +67,9 @@ pwsh -ExecutionPolicy Bypass `
   -IsoChecksum "sha512:<checksum>"
 ```
 
-The wrapper builds Inventory Linux in `Atlaso-Build` by default. Pass `-WslDistribution <name>` to validate and use an
-existing compatible WSL distribution instead; the wrapper forwards that selection to every Inventory Linux build
-subprocess.
+The wrapper does not build or embed Inventory Linux. New templates leave it uninstalled so an administrator can use
+**Download latest** to retrieve the signed independent release when needed. Contributors building Inventory Linux
+itself use `scripts/windows/common/Build-AtlasoInventoryLinux.ps1` and its `-WslDistribution <name>` option.
 
 Before `packer build -force` replaces the Workstation output directory, the wrapper checks for an existing output VMX
 and unregisters it with `vmrun -T ws unregister`. The `vmrun.exe` path is resolved through the same Workstation

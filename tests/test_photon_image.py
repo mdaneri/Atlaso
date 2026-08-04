@@ -125,15 +125,8 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     provision = Path("image/common/scripts/provision-atlaso.sh").read_text(
         encoding="utf-8"
     )
-    assert (
-        'install -d -o atlaso -g atlaso -m 0755 '
-        '"$INVENTORY_MEDIA_DIR" "$INVENTORY_TARGET_DIR"'
-        in provision
-    )
-    assert (
-        'install -o atlaso -g atlaso -m 0644 "$INVENTORY_SOURCE_DIR/$artifact"'
-        in provision
-    )
+    assert "INVENTORY_SOURCE_DIR" not in provision
+    assert "staging bundled Atlaso Inventory Linux" not in provision
     assert "command -v gpg" in deploy
     assert "tdnf -y install gnupg" in deploy
     inventory_release = Path(
@@ -398,14 +391,14 @@ def test_wsl_build_contract_and_setup_are_pinned_idempotent_and_non_destructive(
     assert "/var/lib/atlaso-build/contract.json" in provision
 
 
-def test_photon_wrappers_forward_explicit_wsl_distribution():
+def test_photon_wrappers_do_not_build_inventory_linux():
     for path in (
         "scripts/windows/hyperv/build-photon-image.ps1",
         "scripts/windows/vmware/build-photon-image.ps1",
     ):
         wrapper = Path(path).read_text(encoding="utf-8")
-        assert "[string]$WslDistribution = 'Atlaso-Build'" in wrapper
-        assert "Build-AtlasoInventoryLinux.ps1') -WslDistribution $WslDistribution" in wrapper
+        assert "WslDistribution" not in wrapper
+        assert "Build-AtlasoInventoryLinux.ps1" not in wrapper
 
 
 def test_inventory_linux_retries_uncertain_reboot_acknowledgments():

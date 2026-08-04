@@ -139,13 +139,14 @@ desired state only.
 ## Boot media packages and activation
 
 The fixed catalog contains Atlaso Inventory Linux, Memtest86+, ShredOS, GParted
-Live, and Clonezilla Live. Full appliance images preinstall the independently
-versioned `atlaso-inventory-linux-<version>.zip` package. New Inventory builds
-are final independent GitHub Releases under immutable
+Live, and Clonezilla Live. All environments are disabled and uninstalled in a
+new full appliance image. An administrator installs Inventory Linux with
+**Download latest**, which retrieves its independently versioned
+`atlaso-inventory-linux-<version>.zip` package. New Inventory builds are final
+independent GitHub Releases under immutable
 `inventory-linux-v<version>` tags; ordinary Atlaso appliance releases no longer
-contain the package. An operator can still download or upload a newer verified
-Inventory Linux build without updating the Atlaso Python wheel. The other
-environments are disabled and uninstalled by default. Full appliance images
+contain the package. An operator can download or upload a newer verified
+Inventory Linux build without updating the Atlaso Python wheel. Full appliance images
 include GnuPG for signed checksum verification; the development VMware wheel
 deployment bridge repairs that dependency on older test appliances before
 installing the new wheel. The **Source** column
