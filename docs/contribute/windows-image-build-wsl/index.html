@@ -3235,18 +3235,16 @@ distribution so the command can be rerun after the reported package or network p
 <p>Use <code>-BaseImagePath &lt;path&gt;</code> to supply the exact pinned archive from an approved mirror or offline transfer. Use
 <code>-InstallLocation &lt;path&gt;</code> only when the default user-local WSL storage location is unsuitable.</p>
 <h2 id="build-with-the-selected-distribution">Build with the selected distribution<a class="headerlink" href="#build-with-the-selected-distribution" title="Permanent link">&para;</a></h2>
-<p>The Inventory Linux wrapper and both Photon wrappers select <code>Atlaso-Build</code> by default:</p>
+<p>The Inventory Linux wrapper selects <code>Atlaso-Build</code> by default. Photon wrappers do not build or embed Inventory Linux:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">pwsh</span> <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">common</span><span class="p">/</span><span class="n">Build-AtlasoInventoryLinux</span><span class="p">.</span><span class="n">ps1</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">pwsh</span> <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">build-photon-image</span><span class="p">.</span><span class="n">ps1</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">pwsh</span> <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="n">build-photon-image</span><span class="p">.</span><span class="n">ps1</span>
 </span></code></pre></div>
 <p>To use an existing compatible distribution without provisioning <code>Atlaso-Build</code>, pass its registered WSL name to the
 same entry point:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">pwsh</span> <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">common</span><span class="p">/</span><span class="n">Build-AtlasoInventoryLinux</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>  <span class="n">-WslDistribution</span> <span class="n">Ubuntu</span><span class="p">-</span><span class="n">24</span><span class="p">.</span><span class="n">04</span>
 </span></code></pre></div>
-<p>The Photon wrappers accept and forward the same <code>-WslDistribution &lt;name&gt;</code> option. Atlaso uses that one distribution for
-path conversion, prerequisite checks, cache discovery, locking, and build execution. A user-selected distribution must
+<p>Atlaso uses that one distribution for path conversion, prerequisite checks, cache discovery, locking, and build
+execution. A user-selected distribution must
 provide the commands listed in <code>wsl-build-contract.json</code>, run builds as a non-root default user, and provide
 case-sensitive native Linux storage. Atlaso validates it but does not install packages into it.</p>
 <h2 id="storage-and-concurrency">Storage and concurrency<a class="headerlink" href="#storage-and-concurrency" title="Permanent link">&para;</a></h2>

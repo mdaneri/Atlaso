@@ -3733,8 +3733,10 @@ KMS changes by default.</p>
 <li><code>/opt/atlaso/bin/atlaso-helper</code> and a constrained sudoers template.</li>
 </ul>
 <p>Finished Hyper-V appliance VMs and VMware OVF/OVA appliances also attach two durable expandable data disks: one for the
-VCF Offline Depot at <code>/mnt/atlaso-vcf-offline-depot</code> and one for VCF Backups at <code>/mnt/atlaso-vcf-backups</code>. Keep those
-workloads off the OS disk. On first boot, <code>atlaso-data-disks.service</code> labels blank attached data disks as <code>ATLASO_DEPOT</code>
+VCF Offline Depot at <code>/mnt/atlaso-vcf-offline-depot</code> and one for VCF Backups at <code>/mnt/atlaso-vcf-backups</code>. VMware images
+precede those disks with file-backed Photon OS and Atlaso system-content VMDKs; the latter holds <code>/opt/atlaso</code> and the
+appliance-wide PowerShell modules through required UUID-backed mounts. Keep depot and backup workloads off both payload
+disks. On first boot, <code>atlaso-data-disks.service</code> labels blank attached data disks as <code>ATLASO_DEPOT</code>
 and <code>ATLASO_BKUP</code>, formats them as ext4, persists them in <code>/etc/fstab</code>, and mounts them at those fixed paths before
 <code>atlaso.service</code> starts.</p>
 <p>Atlaso writes operational events to <code>/var/log/atlaso/atlaso.log</code>. Audit events, desired-state edits, and appliance apply
@@ -3778,10 +3780,11 @@ June 21, 2026, live repository metadata showed <code>python3</code> as <code>3.1
 </span></code></pre></div>
 <p>Atlaso Windows automation supports only PowerShell 7.x (<code>pwsh</code>). Windows PowerShell 5.1 (<code>powershell.exe</code>) is not
 supported. Run every documented Windows command from <code>pwsh</code>, including elevated Hyper-V operations.</p>
-<p>Windows image wrappers require an already functional WSL 2 installation and use the explicitly provisioned
-<code>Atlaso-Build</code> distribution for Inventory Linux by default. They do not install WSL or silently create a missing
-distribution. <code>-WslDistribution &lt;name&gt;</code> selects an existing compatible alternative and is forwarded through the Photon
-entry points. Buildroot's Linux-only <code>PATH</code>, native-filesystem cache, repository-specific work tree, and <code>flock</code> remain
+<p>The Windows Inventory Linux wrapper requires an already functional WSL 2 installation and uses the explicitly
+provisioned <code>Atlaso-Build</code> distribution by default. It does not install WSL or silently create a missing
+distribution. <code>-WslDistribution &lt;name&gt;</code> selects an existing compatible alternative. Photon image wrappers do not build
+or embed Inventory Linux. Buildroot's Linux-only <code>PATH</code>, native-filesystem cache, repository-specific work tree, and
+<code>flock</code> remain
 in force for every distribution. A checkout-wide Windows mutex protects shared final output across distributions. See
 <a href="../../contribute/windows-image-build-wsl/">Windows image-build WSL environment</a> for the pinned setup, safety boundary,
 storage, recovery, and removal procedures.</p>
@@ -4598,6 +4601,12 @@ VMware scripts. The cleanup is scoped to the configured image output directory s
 survive a rebuild. The remastered kickstart disables Photon's socket-activated SSH unit and enables the normal
 <code>sshd.service</code>, ensuring Packer receives a deterministic SSH daemon after the first installed-system boot. The temporary
 Photon root/build password remains separate from the Atlaso web bootstrap administrator password.</p>
+<p>The Workstation Packer template creates a 40 GiB OS disk and a sparse 20 GiB <code>ATLASO_SYSTEM</code> disk. Final provisioning
+removes the build-only <code>python3-devel</code> package, clears package/download caches and staged sources, trims the filesystems,
+and leaves Packer compaction enabled. OVF export preserves both payload VMDKs and adds empty 500 GiB depot and backup
+definitions at SCSI units 2 and 3. <code>export-ovf.ps1 -Release</code> derives the exact tag and destination repository from the
+clean tagged checkout, then preflights and uploads the OVF assets with GitHub CLI. It uploads the combined OVA only when
+that archive independently remains below the configured asset limit.</p>
 <p>Lifecycle testing uses VMX/VMDK artifacts and <code>vmrun.exe</code>:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-32-1"><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-32-2"><a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span>
