@@ -79,7 +79,10 @@ The following cross-cutting boundaries always apply:
 - Render inventory reports as escaped semantic sections with explicit legacy
   not-reported states. Wake-on-LAN uses the server-owned discovered/reference
   MAC, deduplicated effective IPv4 Network Boot broadcasts, one audited UDP/9
-  send with no retries, and no claim that the host powered on.
+  send with no retries, and no claim that the host powered on. Keep discovered
+  hosts live-refreshed while visible, expose ESXi assignment details by
+  normalized reported MAC, and use the shared grid/wizard foundations for Host
+  Reference variables and ESX installer ISO intake.
 - Windows Inventory Linux and Photon builds select the dedicated `Atlaso-Build` WSL distribution by default. WSL is a
   pre-existing host prerequisite: ordinary builds must never install or configure WSL, create a missing distribution,
   change the default distribution, elevate, reboot, or remove a distribution. Keep the pinned setup contract, explicit

@@ -759,6 +759,7 @@ def test_dnsmasq_renderer_adds_esxi_pxe_boot_options():
     assert (
         "dhcp-boot=tag:pxe,tag:ipxe,"
         "http://192.168.50.1:8080/pxe/boot.ipxe?mac=${net0/mac}"
+        "&firmware=${platform}"
     ) in config
     assert "dhcp-boot=tag:pxe,tag:!ipxe,tag:efi-x86_64,snponly.efi,esxi-pxe.atlaso.internal,192.168.50.1" in config
     assert "dhcp-boot=tag:pxe,tag:!ipxe,tag:!efi-x86_64,undionly.kpxe,esxi-pxe.atlaso.internal,192.168.50.1" in config

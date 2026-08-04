@@ -36,6 +36,7 @@ from atlaso.app.models import (
     FirewallRule,
     FirewallSettings,
     Job,
+    JobStatus,
     KmsSettings,
     LdapGroup,
     LdapGroupMembership,
@@ -2413,6 +2414,16 @@ def cancel_job(job_id: str, identity: Annotated[Identity, Depends(require_scope(
     job = db.get(Job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+    if job.type == "pxe-media-sync" and job.status == JobStatus.RUNNING.value:
+        try:
+            config = json.loads(job.task_config_json or "{}")
+        except json.JSONDecodeError:
+            config = {}
+        if config.get("source") == "delete":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A running Network Boot media deletion cannot be cancelled.",
+            )
     if job.type == "pxe-media-sync" and job.status == "pending":
         try:
             config = json.loads(job.task_config_json or "{}")

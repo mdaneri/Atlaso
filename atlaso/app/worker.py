@@ -473,6 +473,7 @@ def _run_pxe_media_sync(db: Session, job: Job) -> None:
         NetworkBootMediaSyncCancelled,
         media_to_dict,
         network_boot_upload_path,
+        remove_inactive_network_boot_media,
         sync_network_boot_media,
     )
 
@@ -480,6 +481,60 @@ def _run_pxe_media_sync(db: Session, job: Job) -> None:
     environment = str(config.get("environment") or "")
     source = str(config.get("source") or "download")
     upload_path = network_boot_upload_path(job.id) if source == "upload" else None
+
+    if source == "delete":
+        version = str(config.get("version") or "")
+        try:
+            removed = remove_inactive_network_boot_media(
+                db,
+                environment_key=environment,
+                version=version,
+                ignore_job_id=job.id,
+            )
+            payload = {
+                "status": JobStatus.SUCCEEDED.value,
+                "success": True,
+                "environment": environment,
+                "source": source,
+                **removed,
+            }
+            completed = db.execute(
+                update(Job)
+                .where(
+                    Job.id == job.id,
+                    Job.status == JobStatus.RUNNING.value,
+                )
+                .values(
+                    status=JobStatus.SUCCEEDED.value,
+                    finished_at=utcnow(),
+                    progress_percent=100,
+                    error=None,
+                    result=json.dumps(payload, indent=2, sort_keys=True),
+                )
+            )
+            if completed.rowcount != 1:
+                raise NetworkBootMediaSyncCancelled(
+                    "Network Boot media deletion was cancelled before completion."
+                )
+            db.add(
+                AuditEvent(
+                    actor=job.created_by,
+                    action="remove_network_boot_media",
+                    resource_type="network_boot_media",
+                    resource_id=f"{environment}:{version}",
+                    success=True,
+                    detail=(
+                        "inactive immutable cache version removed; "
+                        f"desired_version_cleared={removed['desired_version_cleared']}; "
+                        f"staged_uploads_cleaned={removed['staged_uploads_cleaned']}"
+                    ),
+                )
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        return
 
     def cancelled() -> bool:
         status = db.execute(

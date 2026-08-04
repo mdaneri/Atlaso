@@ -1392,8 +1392,19 @@ textarea {
   background: white;
 }
 
+.network-boot-discovered-panel.active {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden !important;
+}
+
 .network-boot-discovered-panel .tabulator-shell {
-  min-height: 300px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.network-boot-discovered-panel > p {
+  flex: 0 0 auto;
 }
 
 .network-boot-report-dialog-panel {
@@ -6504,6 +6515,17 @@ textarea {
 .vcf-sddc-wizard-body [data-atlaso-wizard-step] > .form-grid,
 .vcf-sddc-wizard-body [data-atlaso-wizard-step] .form-stack > .form-grid {
   gap: 16px;
+}
+
+.host-reference-enable-step {
+  align-content: center;
+  justify-items: center;
+  min-height: 240px;
+}
+
+.host-reference-enable-step > .switch-field,
+.host-reference-enable-step > p {
+  width: min(100%, 460px);
 }
 
 .vcf-vault-credential-picker {

@@ -17,6 +17,7 @@ import urllib.parse
 import urllib.request
 import uuid
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from ipaddress import ip_address, ip_network
@@ -29,6 +30,9 @@ from sqlalchemy import delete, desc, func, select
 from sqlalchemy.orm import Session
 
 from atlaso.app.models import (
+    EsxiPxeHost,
+    Job,
+    JobStatus,
     NetworkBootDiscoveredHost,
     NetworkBootEnvironment,
     NetworkBootHostBootOverride,
@@ -80,6 +84,10 @@ APPLIANCE_APPLY_BASELINES_KEY = "appliance_apply.baselines.v1"
 _MEDIA_SWAP_THREAD_LOCK = threading.Lock()
 _MEDIA_STAGING_THREAD_LOCK = threading.Lock()
 _ACTIVE_MEDIA_STAGING_DIRECTORIES: set[str] = set()
+_AVAILABLE_VERSION_CACHE_LOCK = threading.Lock()
+_AVAILABLE_VERSION_CACHE: dict[str, dict[str, Any]] = {}
+AVAILABLE_VERSION_CACHE_SECONDS = 15 * 60
+AVAILABLE_VERSION_ERROR_CACHE_SECONDS = 60
 
 UUID_PLACEHOLDERS = {
     "00000000-0000-0000-0000-000000000000",
@@ -278,6 +286,9 @@ def catalog_rows(db: Session) -> list[dict[str, Any]]:
                 "enabled": bool(state.enabled),
                 "desired_version": state.desired_version,
                 "active_version": state.active_version,
+                "available_version": "",
+                "available_status": "checking",
+                "available_checked_at": "",
                 "ready": bool(state.enabled and active),
                 "media_ready": bool(versions),
                 "installed_versions": [media_to_dict(row) for row in versions],
@@ -1320,8 +1331,23 @@ def host_to_dict(
     host: NetworkBootDiscoveredHost,
     *,
     include_report: bool = False,
+    assignments_by_mac: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     session = latest_live_session(db, host.id)
+    if assignments_by_mac is None:
+        assignments_by_mac = esxi_host_assignments_by_mac(db)
+    assignments: list[dict[str, Any]] = []
+    assigned_ids: set[int] = set()
+    for mac_address in sorted({*_macs(host), host.boot_mac} - {""}):
+        try:
+            normalized_mac = normalize_mac(mac_address)
+        except ValueError:
+            continue
+        assignment = assignments_by_mac.get(normalized_mac)
+        if assignment is not None and assignment["id"] not in assigned_ids:
+            assignments.append(assignment)
+            assigned_ids.add(assignment["id"])
+    assignment = assignments[0] if assignments else None
     payload: dict[str, Any] = {
         "id": host.id,
         "identity_key": host.identity_key,
@@ -1339,6 +1365,11 @@ def host_to_dict(
         "first_seen_at": host.first_seen_at.isoformat() if host.first_seen_at else "",
         "last_seen_at": host.last_seen_at.isoformat() if host.last_seen_at else "",
         "session_state": "online" if session else "offline",
+        "assigned_to_esxi": bool(assignment),
+        "esxi_host_id": assignment["id"] if assignment else None,
+        "esxi_hostname": assignment["hostname"] if assignment else "",
+        "esxi_ip_address": assignment["ip_address"] if assignment else "",
+        "esxi_assignments": assignments,
     }
     if include_report and host.latest_report_id:
         report = db.get(NetworkBootInventoryReport, host.latest_report_id)
@@ -1346,6 +1377,24 @@ def host_to_dict(
             json.loads(report.payload_json) if report is not None else None
         )
     return payload
+
+
+def esxi_host_assignments_by_mac(db: Session) -> dict[str, dict[str, Any]]:
+    assignments: dict[str, dict[str, Any]] = {}
+    rows = db.execute(select(EsxiPxeHost).order_by(EsxiPxeHost.hostname, EsxiPxeHost.id)).scalars().all()
+    for host in rows:
+        try:
+            mac_address = normalize_mac(host.mac_address)
+        except ValueError:
+            continue
+        assignments[mac_address] = {
+            "id": host.id,
+            "hostname": host.hostname,
+            "ip_address": host.ip_address or "",
+            "mac_address": mac_address,
+            "enabled": bool(host.enabled),
+        }
+    return assignments
 
 
 def report_history(
@@ -1704,6 +1753,33 @@ def render_network_boot_menu(
         ":menu",
         "menu Atlaso Network Boot",
     ]
+
+    def esxi_loader_lines(
+        artifact: dict[str, Any],
+        *,
+        label: str,
+    ) -> list[str]:
+        mac_key = str(artifact.get("mac_key") or "default")
+        normalized_firmware = firmware.strip().lower()
+        uefi_lines = [
+            f"chain {esxi_base_url}/{mac_key}/mboot.efi || goto menu",
+        ]
+        bios_lines = [
+            f"set 209:string pxelinux.cfg/{mac_key}",
+            "set 210:string tftp://${next-server}/",
+            "chain tftp://${next-server}/pxelinux.0 || goto menu",
+        ]
+        if normalized_firmware == "efi":
+            return uefi_lines
+        if normalized_firmware in {"bios", "pcbios"}:
+            return bios_lines
+        return [
+            f"iseq ${{platform}} efi && goto {label}_uefi || goto {label}_bios",
+            f":{label}_uefi",
+            *uefi_lines,
+            f":{label}_bios",
+            *bios_lines,
+        ]
     if inventory:
         lines.extend(
             [
@@ -1763,7 +1839,7 @@ def render_network_boot_menu(
         lines.extend(
             [
                 ":esxi_assigned",
-                f"chain {esxi_base_url}/{assigned['mac_key']}/boot.cfg || goto menu",
+                *esxi_loader_lines(assigned, label="esxi_assigned"),
                 "",
             ]
         )
@@ -1771,7 +1847,10 @@ def render_network_boot_menu(
         lines.extend(
             [
                 f":esxi_{artifact['host_id']}",
-                f"chain {esxi_base_url}/{artifact['mac_key']}/boot.cfg || goto menu",
+                *esxi_loader_lines(
+                    artifact,
+                    label=f"esxi_{artifact['host_id']}",
+                ),
                 "",
             ]
         )
@@ -1779,7 +1858,7 @@ def render_network_boot_menu(
         lines.extend(
             [
                 ":esxi_default",
-                f"chain {esxi_base_url}/boot.cfg || goto menu",
+                *esxi_loader_lines(undefined, label="esxi_default"),
                 "",
             ]
         )
@@ -2230,6 +2309,73 @@ def _release_descriptor(environment_key: str) -> dict[str, str]:
             "sha256": digest.removeprefix("sha256:").lower(),
         }
     raise ValueError("Unsupported Network Boot environment.")
+
+
+def available_network_boot_versions(*, force_refresh: bool = False) -> list[dict[str, str]]:
+    """Resolve current upstream versions without downloading media artifacts."""
+    now = time.monotonic()
+    with _AVAILABLE_VERSION_CACHE_LOCK:
+        missing = [
+            entry
+            for entry in ENVIRONMENT_CATALOG
+            if force_refresh
+            or entry.key not in _AVAILABLE_VERSION_CACHE
+            or float(_AVAILABLE_VERSION_CACHE[entry.key].get("expires_at") or 0) <= now
+        ]
+        if missing:
+            resolved: dict[str, str] = {}
+            failures: set[str] = set()
+            with ThreadPoolExecutor(max_workers=len(missing)) as executor:
+                futures = {
+                    executor.submit(_release_descriptor, entry.key): entry.key
+                    for entry in missing
+                }
+                for future in as_completed(futures):
+                    key = futures[future]
+                    try:
+                        resolved[key] = str(future.result()["version"])
+                    except (KeyError, OSError, ValueError, json.JSONDecodeError):
+                        failures.add(key)
+            checked_at = datetime.now(timezone.utc).isoformat()
+            for entry in missing:
+                previous = _AVAILABLE_VERSION_CACHE.get(entry.key, {})
+                if entry.key in resolved:
+                    _AVAILABLE_VERSION_CACHE[entry.key] = {
+                        "available_version": resolved[entry.key],
+                        "available_status": "current",
+                        "available_checked_at": checked_at,
+                        "expires_at": now + AVAILABLE_VERSION_CACHE_SECONDS,
+                    }
+                elif entry.key in failures and previous.get("available_version"):
+                    _AVAILABLE_VERSION_CACHE[entry.key] = {
+                        "available_version": str(previous["available_version"]),
+                        "available_status": "stale",
+                        "available_checked_at": str(previous.get("available_checked_at") or ""),
+                        "expires_at": now + AVAILABLE_VERSION_ERROR_CACHE_SECONDS,
+                    }
+                else:
+                    _AVAILABLE_VERSION_CACHE[entry.key] = {
+                        "available_version": "",
+                        "available_status": "unavailable",
+                        "available_checked_at": checked_at,
+                        "expires_at": now + AVAILABLE_VERSION_ERROR_CACHE_SECONDS,
+                    }
+        return [
+            {
+                "key": entry.key,
+                "available_version": str(
+                    _AVAILABLE_VERSION_CACHE.get(entry.key, {}).get("available_version") or ""
+                ),
+                "available_status": str(
+                    _AVAILABLE_VERSION_CACHE.get(entry.key, {}).get("available_status")
+                    or "unavailable"
+                ),
+                "available_checked_at": str(
+                    _AVAILABLE_VERSION_CACHE.get(entry.key, {}).get("available_checked_at") or ""
+                ),
+            }
+            for entry in ENVIRONMENT_CATALOG
+        ]
 
 
 def _extract_zip_allowlist(
@@ -2982,6 +3128,90 @@ def cleanup_network_boot_upload(
         upload_path.parent.rmdir()
     except FileNotFoundError:
         pass
+
+
+def remove_inactive_network_boot_media(
+    db: Session,
+    *,
+    environment_key: str,
+    version: str,
+    ignore_job_id: str = "",
+) -> dict[str, Any]:
+    if environment_key == "inventory":
+        raise ValueError("Bundled Inventory Linux cannot be removed.")
+    state = db.get(NetworkBootEnvironment, environment_key)
+    media = db.execute(
+        select(NetworkBootMedia).where(
+            NetworkBootMedia.environment_key == environment_key,
+            NetworkBootMedia.version == version,
+        )
+    ).scalar_one_or_none()
+    if state is None or media is None:
+        raise ValueError("Installed Network Boot media was not found.")
+    if version == state.active_version:
+        raise ValueError(
+            "Apply a different active version or disable and apply this environment before removal."
+        )
+    if state.enabled and version == state.desired_version:
+        raise ValueError(
+            "Disable this environment before removing its desired media."
+        )
+    environment_jobs = db.execute(
+        select(Job).where(Job.type == "pxe-media-sync")
+    ).scalars().all()
+    matching_jobs: list[tuple[Job, dict[str, Any]]] = []
+    for job in environment_jobs:
+        try:
+            config = json.loads(job.task_config_json or "{}")
+        except json.JSONDecodeError:
+            config = {}
+        if config.get("environment") == environment_key:
+            matching_jobs.append((job, config))
+    if any(
+        job.id != ignore_job_id
+        and job.status in (JobStatus.PENDING.value, JobStatus.RUNNING.value)
+        for job, _config in matching_jobs
+    ):
+        raise ValueError(
+            "Wait for the active Network Boot media task before cleaning this environment."
+        )
+
+    environment_root = (NETWORK_BOOT_MEDIA_ROOT / environment_key).resolve()
+    target = Path(media.installed_path)
+    try:
+        valid_target = (
+            environment_root.is_dir()
+            and target.is_dir()
+            and not target.is_symlink()
+            and target.resolve().is_relative_to(environment_root)
+            and target.resolve().parent == environment_root
+            and str(target.resolve()) == media.installed_path
+        )
+    except OSError:
+        valid_target = False
+    if not valid_target:
+        raise ValueError("Installed media path failed safety validation.")
+
+    clears_desired_version = media.version == state.desired_version
+    shutil.rmtree(target)
+    if clears_desired_version:
+        state.desired_version = ""
+        state.updated_at = utcnow()
+        db.add(state)
+    db.delete(media)
+    cleaned_uploads = 0
+    for job, config in matching_jobs:
+        if config.get("source") != "upload":
+            continue
+        cleanup_network_boot_upload(job.id)
+        cleaned_uploads += 1
+    return {
+        "environment": environment_key,
+        "version": version,
+        "removed": True,
+        "desired_version_cleared": clears_desired_version,
+        "staged_uploads_cleaned": cleaned_uploads,
+    }
 
 
 def sync_network_boot_media(

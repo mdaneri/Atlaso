@@ -653,7 +653,9 @@ needed, marks VCFDT-discovered images separately from user-uploaded images with 
 delete `.iso` files from the Installer ISOs tab. Deleting an ISO clears host/default PXE references to that image;
 generated runtime files are reconciled on the next global apply. Host PXE definitions are edited in the Host References
 grid, can reference both a database Kickstart and a selected installer ISO path, may include an optional IP address that
-creates an ESXi-managed DHCP reservation plus DNS A/AAAA record, and include custom Kickstart variables as JSON. The
+creates an ESXi-managed DHCP reservation plus DNS A/AAAA record, and list every Custom Variables definition in the
+Host Reference wizard. The grid shows each read-only default beside its editable host override, uses the default when
+no override is assigned, and stores only explicit overrides as JSON. The
 default/undefined-MAC profile can boot installer media but cannot use a Kickstart because dynamic Kickstart rendering
 requires a defined host MAC. Global appliance apply stages schema-v2
 `/var/lib/atlaso/apply/esxi-pxe/atlaso-esxi-pxe.json`, validates selected ISO paths stay under the ESX_HOST folder,

@@ -49,6 +49,7 @@ from atlaso.app.services.network_boot import (
     _extract_zip_allowlist,
     _BoundedHttpsRedirectHandler,
     _release_descriptor,
+    available_network_boot_versions,
     BoundedHttpsDownloader,
     checksum_for_filename,
     NetworkBootMediaSyncCancelled,
@@ -398,6 +399,24 @@ def test_network_boot_api_accepts_scoped_ui_session_and_requires_csrf(client):
     assert persisted["memtest86plus"]["enabled"] is False
 
 
+def test_network_boot_available_versions_endpoint_uses_read_scope(client, monkeypatch):
+    login_session(client)
+    expected = [
+        {
+            "key": "inventory",
+            "available_version": "2026.05.1+8",
+            "available_status": "current",
+            "available_checked_at": "2026-08-04T01:00:00+00:00",
+        }
+    ]
+    monkeypatch.setattr(network_boot_api, "available_network_boot_versions", lambda: expected)
+
+    response = client.get("/api/v1/network-boot/environments/available-versions")
+
+    assert response.status_code == 200
+    assert response.json() == expected
+
+
 def test_network_boot_mutation_endpoints_persist_jobs_commands_profiles_and_audits(client):
     raw_token = create_api_token(client, ["read:pxe", "write:pxe"])
     api_headers = {"Authorization": f"Bearer {raw_token}"}
@@ -409,9 +428,21 @@ def test_network_boot_mutation_endpoints_persist_jobs_commands_profiles_and_audi
     assert sync.status_code == 202, sync.text
 
     inventory_session = client.post("/pxe/inventory/sessions").json()
+    report_payload = inventory_report()
+    report_payload["interfaces"].append(
+        {
+            "name": "eth1",
+            "permanent_mac": "52:54:00:12:34:57",
+            "current_mac": "52:54:00:12:34:57",
+            "driver": "virtio_net",
+            "link_state": "down",
+            "addresses": [],
+            "boot_interface": False,
+        }
+    )
     report = client.post(
         "/pxe/inventory/report",
-        json=inventory_report(),
+        json=report_payload,
         headers={"Authorization": f"Bearer {inventory_session['access_token']}"},
     )
     assert report.status_code == 201, report.text
@@ -452,6 +483,24 @@ def test_network_boot_mutation_endpoints_persist_jobs_commands_profiles_and_audi
     assert overlong_promotion.status_code == 422
     assert "Promotion hostname is invalid" in overlong_promotion.json()["detail"]
 
+    non_boot_mac_promotion = client.post(
+        f"/api/v1/network-boot/hosts/{host_id}/promote",
+        headers=api_headers,
+        json={
+            "hostname": "esxi-inventory-nonboot",
+            "mac_address": "52:54:00:12:34:57",
+            "ip_address": "",
+            "kickstart_id": "",
+            "installer_iso_path": "",
+            "variables": {},
+            "enabled": False,
+        },
+    )
+    assert non_boot_mac_promotion.status_code == 422
+    assert non_boot_mac_promotion.json()["detail"] == (
+        "Promotion MAC must match the discovered boot MAC."
+    )
+
     promotion = client.post(
         f"/api/v1/network-boot/hosts/{host_id}/promote",
         headers=api_headers,
@@ -466,6 +515,23 @@ def test_network_boot_mutation_endpoints_persist_jobs_commands_profiles_and_audi
         },
     )
     assert promotion.status_code == 201, promotion.text
+
+    discovered_hosts = client.get("/api/v1/network-boot/hosts", headers=api_headers)
+    assert discovered_hosts.status_code == 200, discovered_hosts.text
+    assigned = next(row for row in discovered_hosts.json() if row["id"] == host_id)
+    assert assigned["assigned_to_esxi"] is True
+    assert assigned["esxi_host_id"] == promotion.json()["id"]
+    assert assigned["esxi_hostname"] == "esxi-inventory-01"
+    assert assigned["esxi_ip_address"] == "192.0.2.10"
+    assert assigned["esxi_assignments"] == [
+        {
+            "id": promotion.json()["id"],
+            "hostname": "esxi-inventory-01",
+            "ip_address": "192.0.2.10",
+            "mac_address": "52:54:00:12:34:56",
+            "enabled": False,
+        }
+    ]
 
     from atlaso.app.database import SessionLocal
 
@@ -1687,6 +1753,8 @@ def test_deleting_inactive_media_cleans_environment_upload_staging(
     monkeypatch,
     tmp_path,
 ):
+    import atlaso.app.worker as worker
+
     media_root = tmp_path / "media"
     environment_root = media_root / "shredos"
     installed = environment_root / "2025.11"
@@ -1714,6 +1782,12 @@ def test_deleting_inactive_media_cleans_environment_upload_staging(
         installed_path=str(installed.resolve()),
         manifest={"schema_version": 1},
     )
+    state = {row.key: row for row in ensure_environment_rows(db_session)}[
+        "shredos"
+    ]
+    state.enabled = False
+    state.desired_version = media.version
+    state.active_version = ""
     media_id = media.id
     db_session.add(job)
     db_session.commit()
@@ -1740,12 +1814,84 @@ def test_deleting_inactive_media_cleans_environment_upload_staging(
         headers={"Authorization": f"Bearer {token}"},
     )
 
-    assert response.status_code == 200, response.text
-    assert response.json()["staged_uploads_cleaned"] == 1
+    assert response.status_code == 202, response.text
+    queued = db_session.get(Job, response.json()["job_id"])
+    config = json.loads(queued.task_config_json)
+    assert config == {
+        "environment": "shredos",
+        "request_id": config["request_id"],
+        "source": "delete",
+        "version": "2025.11",
+    }
+    assert installed.exists()
+    assert staged.exists()
+    monkeypatch.setattr(network_boot, "NETWORK_BOOT_MEDIA_ROOT", media_root)
+    monkeypatch.setattr(network_boot, "NETWORK_BOOT_UPLOAD_ROOT", upload_root)
+    queued.status = JobStatus.RUNNING.value
+    db_session.add(queued)
+    db_session.commit()
+    from atlaso.app.ui import _can_cancel_task
+
+    assert _can_cancel_task(queued) is False
+
+    worker._run_pxe_media_sync(db_session, queued)
+
     assert not installed.exists()
     assert not staged.exists()
     db_session.expire_all()
     assert db_session.get(NetworkBootMedia, media_id) is None
+    refreshed_state = db_session.get(NetworkBootEnvironment, "shredos")
+    assert refreshed_state.desired_version == ""
+    completed = db_session.get(Job, queued.id)
+    assert completed.status == JobStatus.SUCCEEDED.value
+    assert json.loads(completed.result)["desired_version_cleared"] is True
+    assert json.loads(completed.result)["staged_uploads_cleaned"] == 1
+
+
+def test_deleting_enabled_desired_or_active_media_is_blocked(
+    client,
+    db_session,
+):
+    media = record_verified_media(
+        db_session,
+        environment_key="memtest86plus",
+        version="8.10",
+        source_url="https://www.memtest.org/download/v8.10/example.zip",
+        artifact_sha256="a" * 64,
+        installed_path="/var/lib/atlaso/pxe/media/memtest86plus/8.10",
+        manifest={"schema_version": 1},
+    )
+    state = {row.key: row for row in ensure_environment_rows(db_session)}[
+        "memtest86plus"
+    ]
+    state.enabled = True
+    state.desired_version = media.version
+    state.active_version = ""
+    db_session.commit()
+    token = create_api_token(client, ["write:pxe"])
+    headers = {"Authorization": f"Bearer {token}"}
+
+    enabled_desired = client.delete(
+        "/api/v1/network-boot/environments/memtest86plus/media/8.10",
+        headers=headers,
+    )
+    assert enabled_desired.status_code == 409
+    assert enabled_desired.json()["detail"] == (
+        "Disable this environment before removing its desired media."
+    )
+
+    state.enabled = False
+    state.desired_version = ""
+    state.active_version = media.version
+    db_session.commit()
+    active = client.delete(
+        "/api/v1/network-boot/environments/memtest86plus/media/8.10",
+        headers=headers,
+    )
+    assert active.status_code == 409
+    assert active.json()["detail"] == (
+        "Apply a different active version or disable and apply this environment before removal."
+    )
 
 
 def test_inventory_session_stores_only_token_hash_and_expires(db_session):
@@ -2433,6 +2579,76 @@ def test_known_enabled_esxi_mac_becomes_timed_default(db_session):
     assert "choose --timeout 10000 --default esxi_assigned" in menu
 
 
+@pytest.mark.parametrize(
+    ("firmware", "expected_lines"),
+    [
+        (
+            "efi",
+            [
+                "chain http://192.0.2.10:8080/pxe/esxi/"
+                "01-52-54-00-12-34-56/mboot.efi || goto menu",
+            ],
+        ),
+        (
+            "pcbios",
+            [
+                "set 209:string pxelinux.cfg/01-52-54-00-12-34-56",
+                "set 210:string tftp://${next-server}/",
+                "chain tftp://${next-server}/pxelinux.0 || goto menu",
+            ],
+        ),
+        (
+            "",
+            [
+                "iseq ${platform} efi && goto esxi_assigned_uefi || "
+                "goto esxi_assigned_bios",
+                ":esxi_assigned_uefi",
+                "chain http://192.0.2.10:8080/pxe/esxi/"
+                "01-52-54-00-12-34-56/mboot.efi || goto menu",
+                ":esxi_assigned_bios",
+                "set 209:string pxelinux.cfg/01-52-54-00-12-34-56",
+                "chain tftp://${next-server}/pxelinux.0 || goto menu",
+            ],
+        ),
+    ],
+)
+def test_esxi_menu_executes_the_firmware_loader(
+    db_session,
+    firmware,
+    expected_lines,
+):
+    host = EsxiPxeHost(
+        hostname="esx01.atlaso.internal",
+        mac_address="52:54:00:12:34:56",
+        installer_iso_path=(
+            "/mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST/esxi.iso"
+        ),
+        enabled=True,
+    )
+    db_session.add(host)
+    db_session.flush()
+    boot = esxi_pxe_boot_settings(db_session)
+    boot["listen_address"] = "192.0.2.10"
+    boot["http_port"] = 8080
+    artifacts = esxi_pxe_host_artifacts(
+        [host],
+        boot,
+        esxi_pxe_default_host_settings(db_session),
+    )
+    set_applied_pxe_runtime(db_session, boot=boot, artifacts=artifacts)
+
+    menu = render_network_boot_menu(
+        db_session,
+        mac_address=host.mac_address,
+        firmware=firmware,
+        request_origin="http://192.0.2.10:8080",
+    )
+
+    for expected in expected_lines:
+        assert expected in menu
+    assert "/boot.cfg || goto menu" not in menu
+
+
 def test_known_esxi_host_can_claim_one_time_inventory_boot(db_session):
     states = {row.key: row for row in ensure_environment_rows(db_session)}
     inventory = record_verified_media(
@@ -2528,6 +2744,43 @@ def test_fixed_catalog_resolves_expected_stable_branch(
         lambda *_args, **_kwargs: source,
     )
     assert _release_descriptor(environment)["version"] == expected_version
+
+
+def test_available_network_boot_versions_cache_and_stale_fallback(monkeypatch):
+    versions = {entry.key: f"version-{entry.key}" for entry in network_boot.ENVIRONMENT_CATALOG}
+
+    def resolve(key):
+        if key == "shredos":
+            raise ValueError("source unavailable")
+        return {"version": versions[key]}
+
+    network_boot._AVAILABLE_VERSION_CACHE.clear()
+    monkeypatch.setattr(network_boot, "_release_descriptor", resolve)
+    try:
+        first = {
+            row["key"]: row
+            for row in available_network_boot_versions(force_refresh=True)
+        }
+        assert first["inventory"]["available_version"] == "version-inventory"
+        assert first["inventory"]["available_status"] == "current"
+        assert first["shredos"]["available_version"] == ""
+        assert first["shredos"]["available_status"] == "unavailable"
+
+        monkeypatch.setattr(
+            network_boot,
+            "_release_descriptor",
+            lambda _key: (_ for _ in ()).throw(OSError("offline")),
+        )
+        second = {
+            row["key"]: row
+            for row in available_network_boot_versions(force_refresh=True)
+        }
+        assert second["inventory"]["available_version"] == "version-inventory"
+        assert second["inventory"]["available_status"] == "stale"
+        assert second["inventory"]["available_checked_at"] == first["inventory"]["available_checked_at"]
+        assert second["shredos"]["available_status"] == "unavailable"
+    finally:
+        network_boot._AVAILABLE_VERSION_CACHE.clear()
 
 
 def test_shredos_requires_published_full_iso_digest(monkeypatch):

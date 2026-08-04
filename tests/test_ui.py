@@ -809,7 +809,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v221" in service_worker.text
+    assert "atlaso-pwa-v222" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -821,9 +821,9 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6" in service_worker.text
-    assert "/static/app.css?v=atlaso-ui-regressions-224-20260803-1" in service_worker.text
+    assert "/static/app.css?v=network-boot-discovered-workspace-20260804-3" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in service_worker.text
-    assert "/static/app.js?v=atlaso-ui-regressions-224-20260803-1" in service_worker.text
+    assert "/static/app.js?v=network-boot-workflows-229-230-233-234-20260804-6" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -832,7 +832,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=atlaso-ui-regressions-224-20260803-1" in offline.text
+    assert "/static/app.css?v=network-boot-discovered-workspace-20260804-3" in offline.text
 
 
 def test_shared_ui_pattern_shell_and_wizard_contracts(client):
@@ -843,8 +843,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=atlaso-ui-regressions-224-20260803-1"),
-        (public_base, "/static/app.js?v=atlaso-ui-regressions-224-20260803-1"),
+        (base, "/static/app.js?v=network-boot-workflows-229-230-233-234-20260804-6"),
+        (public_base, "/static/app.js?v=network-boot-workflows-229-230-233-234-20260804-6"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5"
@@ -898,10 +898,10 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     app_js = client.get("/static/app.js").text
     create_grid = "window.AtlasoUiPatterns.createGrid({"
 
-    assert app_js.count(create_grid) == 34
+    assert app_js.count(create_grid) == 35
     assert app_js.count('pattern: "direct-edit"') == 13
     assert app_js.count('pattern: "read-only"') == 11
-    assert app_js.count('pattern: "wizard-backed"') == 10
+    assert app_js.count('pattern: "wizard-backed"') == 11
     assert "new Tabulator(" not in app_js
     assert "new window.Tabulator(" not in app_js
     assert "atlaso-legacy-tabulator: #117" not in app_js
@@ -927,7 +927,7 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
         "initializeDnsRecordsTableElement": "direct-edit",
         "initializeDhcpReservationsTable": "direct-edit",
         "initializeEsxiPxeHostsTable": "wizard-backed",
-        "initializeEsxiInstallerIsosTable": "direct-edit",
+        "initializeEsxiInstallerIsosTable": "wizard-backed",
         "initializeEsxiPxePreviewTable": "read-only",
         "initializeVcfDepotTasksTable": "read-only",
         "initializeTasksPage": "read-only",
@@ -939,6 +939,10 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
         assert block.count(create_grid) == 1, name
         assert block.count(f'pattern: "{pattern}"') == 1, name
 
+    host_wizard = function_block("initializeEsxiHostReferenceWizard")
+    assert host_wizard.count(create_grid) == 1
+    assert host_wizard.count('pattern: "direct-edit"') == 1
+
     network_boot = function_block("initializeNetworkBootPage")
     assert network_boot.count(create_grid) == 2
     assert network_boot.count('pattern: "direct-edit"') == 1
@@ -948,13 +952,19 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     assert 'title: "Actions"' not in network_boot
     assert "/api/v1/network-boot/environments/${environmentKey}/upload" in network_boot
     assert 'component.getData().enabled ? "Disable" : "Enable"' in network_boot
-    assert 'label: "Download latest"' in network_boot
+    assert '"Download latest (already installed)"' in network_boot
+    assert "networkBootEnvironmentHasLatestInstalled(component.getData())" in network_boot
     assert 'label: "Upload release asset"' in network_boot
     assert 'title: "Source"' in network_boot
+    assert 'title: "Latest available"' in network_boot
+    assert 'field: "available_version"' in network_boot
+    assert "/api/v1/network-boot/environments/available-versions" in network_boot
     assert 'field: "source_label"' in network_boot
     assert 'new URL(data.release_page)' in network_boot
     assert 'source.protocol !== "https:"' in network_boot
     assert "toggleEnvironmentFromMenu(row)" in network_boot
+    assert 'document.addEventListener("atlaso:tasks-refreshed"' in network_boot
+    assert 'networkBootRequest("/api/v1/network-boot/environments")' in network_boot
     assert "row.getData().key === \"inventory\"" not in network_boot
     network_boot_workspace = function_block("initializeNetworkBootWorkspace")
     assert "networkSlot.append(networkSection)" in network_boot_workspace
@@ -1332,9 +1342,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=atlaso-ui-regressions-224-20260803-1" in page.text
+    assert "/static/app.css?v=network-boot-discovered-workspace-20260804-3" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in page.text
-    assert "/static/app.js?v=atlaso-ui-regressions-224-20260803-1" in page.text
+    assert "/static/app.js?v=network-boot-workflows-229-230-233-234-20260804-6" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -3641,7 +3651,8 @@ def test_esxi_pxe_ui_create_apply_and_job_redaction(client):
     assert 'data-task-type="pxe-media-sync"' in page.text
     assert 'data-task-lock-component-filter="true"' in page.text
     assert 'data-task-grid-height="100%"' in page.text
-    assert "Downloads and uploads only" in page.text
+    assert "Media operations only" in page.text
+    assert "downloads, uploads, and inactive-media deletion" in page.text
     assert "Media ready" in page.text
     assert 'data-tab-target="network-boot-settings-panel"' not in page.text
     assert 'id="network-boot-settings-panel"' not in page.text
@@ -3710,6 +3721,30 @@ def test_esxi_pxe_ui_create_apply_and_job_redaction(client):
     assert "%post --interpreter=python --ignorefailure=true" in page.text
     assert "stampFile.write(time.asctime())" in page.text
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    invalid_mac = client.post(
+        "/esxi-pxe/hosts",
+        data={
+            "csrf": csrf,
+            "hostname": "esxi-invalid-mac",
+            "mac_address": "prefix-00:50:56:01:02:03",
+        },
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
+    assert invalid_mac.status_code == 400
+    assert invalid_mac.json()["detail"] == "ESXi PXE host MAC address is invalid."
+
+    multicast_mac = client.post(
+        "/esxi-pxe/hosts",
+        data={
+            "csrf": csrf,
+            "hostname": "esxi-multicast-mac",
+            "mac_address": "01:50:56:01:02:03",
+        },
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
+    assert multicast_mac.status_code == 400
+    assert multicast_mac.json()["detail"] == "ESXi PXE host MAC address is invalid."
 
     created = client.post(
         "/esxi-pxe/kickstarts",
@@ -3833,6 +3868,11 @@ def test_esxi_custom_variable_collection_drives_kickstart_completion_and_validat
     refreshed = client.get("/esxi-pxe")
     assert "custom.install_disk" in refreshed.text
     assert "Preferred ESXi installation disk" in refreshed.text
+    host_wizard = refreshed.text.split('id="network-boot-promote-dialog"', 1)[1].split("</dialog>", 1)[0]
+    assert '"name": "install_disk"' in host_wizard
+    assert '"default_value": "firstdisk"' in host_wizard
+    assert "<code>custom.install_disk</code>" in host_wizard
+    assert "<td>firstdisk</td><td>Uses default</td>" in host_wizard
 
     kickstart = client.post(
         "/esxi-pxe/kickstarts",
@@ -3966,6 +4006,21 @@ def test_esxi_kickstart_upload_does_not_expose_exception_details(client, monkeyp
     assert "backend upload details" not in response.text
 
 
+@pytest.mark.parametrize(
+    ("filename", "expected"),
+    [
+        ("VMware-VMvisor-Installer-9.1.0.0100.25433460.x86_64.iso", ("9.1.0.0100", "25433460")),
+        ("VMware-VMvisor-Installer-8.0U3-24022510.x86_64.iso", ("8.0U3", "24022510")),
+        ("VMware-VMvisor-Installer-8.0U3.iso", ("8.0U3", "")),
+        ("Nested-ESXi.iso", ("", "")),
+    ],
+)
+def test_esx_installer_identity_from_filename(filename, expected):
+    from atlaso.app.services.esxi_pxe import esx_installer_identity_from_filename
+
+    assert esx_installer_identity_from_filename(filename) == expected
+
+
 def test_esxi_pxe_iso_upload_and_host_selection(client, monkeypatch, tmp_path):
     import json
     from types import SimpleNamespace
@@ -3984,10 +4039,21 @@ def test_esxi_pxe_iso_upload_and_host_selection(client, monkeypatch, tmp_path):
     page = client.get("/esxi-pxe")
     assert page.status_code == 200
     assert str(iso_root) in page.text
+    boot_service = page.text.split('<h2>Boot Service</h2>', 1)[1].split(
+        '<div class="panel wide-panel" data-esxi-kickstarts-panel>', 1
+    )[0]
+    assert boot_service.index("Bind target") < boot_service.index("Installer ISO folder")
+    iso_panel = page.text.split('id="esxi-pxe-isos-panel"', 1)[1].split(
+        'id="esxi-pxe-preview-panel"', 1
+    )[0]
+    assert "Installer ISO folder" not in iso_panel
     assert iso_root.is_dir()
     assert 'data-esxi-iso-upload' in page.text
     assert 'data-esxi-iso-upload-progress' in page.text
-    assert "Choose an ISO to upload." in page.text
+    assert 'id="esxi-iso-upload-dialog"' in page.text
+    assert "Add ESX ISO" in page.text
+    assert 'data-atlaso-wizard-step="file"' in page.text
+    assert 'data-atlaso-wizard-step="review"' in page.text
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
     uploaded = client.post(
@@ -4010,6 +4076,11 @@ def test_esxi_pxe_iso_upload_and_host_selection(client, monkeypatch, tmp_path):
     assert ajax_upload.status_code == 200
     assert ajax_upload.json()["status"] == "uploaded"
     assert ajax_upload.json()["relative_path"] == "Nested-ESXi.iso"
+    assert ajax_upload.json()["source"] == "uploaded"
+    assert ajax_upload.json()["source_label"] == "Uploaded by user"
+    assert ajax_upload.json()["source_at"]
+    assert ajax_upload.json()["esx_version"] == ""
+    assert ajax_upload.json()["esx_build"] == ""
 
     original_get_settings = ui_module.get_settings
     monkeypatch.setattr(ui_module, "get_settings", lambda: SimpleNamespace(esxi_installer_iso_max_bytes=3))
@@ -4028,6 +4099,8 @@ def test_esxi_pxe_iso_upload_and_host_selection(client, monkeypatch, tmp_path):
     vcfdt_iso_path.write_bytes(b"vcfdt iso bytes")
     refreshed = client.get("/esxi-pxe")
     assert "VMware-VMvisor-Installer-8.0U3.iso" in refreshed.text
+    assert "ESX version" in refreshed.text
+    assert "8.0U3" in refreshed.text
     assert "VCFDT-Downloaded.iso" in refreshed.text
     assert "Installer ISOs" in refreshed.text
     assert "Uploaded by user" in refreshed.text
@@ -4093,6 +4166,10 @@ def test_esxi_pxe_iso_upload_and_host_selection(client, monkeypatch, tmp_path):
     api_isos = client.get("/api/v1/esxi-pxe/isos", headers={"Authorization": f"Bearer {api_token}"})
     assert api_isos.status_code == 200
     assert {row["relative_path"] for row in api_isos.json()} >= {"VMware-VMvisor-Installer-8.0U3.iso", "Nested-ESXi.iso"}
+    api_isos_by_name = {row["name"]: row for row in api_isos.json()}
+    assert api_isos_by_name["VMware-VMvisor-Installer-8.0U3.iso"]["esx_version"] == "8.0U3"
+    assert api_isos_by_name["VMware-VMvisor-Installer-8.0U3.iso"]["esx_build"] == ""
+    assert api_isos_by_name["Nested-ESXi.iso"]["esx_version"] == ""
 
     apply_page = client.get("/appliance-apply")
     apply_csrf = apply_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -4120,6 +4197,19 @@ def test_esxi_pxe_host_reference_wizard_and_grid_responses(client):
     assert 'name="manual_mac_address"' in page.text
     assert 'data-atlaso-resource-review' in page.text
     assert 'id="esxi-pxe-host-fallback-create"' in page.text
+    assert 'id="esxi-host-variables-table"' in page.text
+    assert "data-definitions=" in page.text
+    assert 'name="variables" value="{}"' in page.text
+    host_wizard = page.text.split('id="network-boot-promote-dialog"', 1)[1].split("</dialog>", 1)[0]
+    assert "Six hexadecimal octets; unicast addresses only." in host_wizard
+    assert "IP address (optional — leave blank for DHCP)" in host_wizard
+    assert "Boot MAC" in host_wizard
+    assert "host-reference-enable-step" in host_wizard
+    assert "Variables JSON" not in host_wizard
+    assert "Custom Variables definition" in host_wizard
+    assert "Default value" in host_wizard
+    assert "Host override" in host_wizard
+    assert "+ Add variable here" not in host_wizard
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
     created = client.post(
@@ -4189,14 +4279,23 @@ def test_esxi_pxe_host_reference_wizard_and_grid_responses(client):
     )[0]
     assert "eligibleDiscoveredHosts" in wizard_js
     assert "availableMacs" in wizard_js
+    assert "return [host?.boot_mac]" in wizard_js
+    assert "esxiDiscoveredHostIsRegistered(host, used)" in wizard_js
+    assert 'const mac = host?.boot_mac || "no boot MAC"' in app_js
+    assert "updateManualMacValidity" in wizard_js
+    assert "normalizeEsxiHostMac" in wizard_js
     assert "discoveredSelectionSequence" in wizard_js
     assert "pendingDiscoveredSelection" in wizard_js
     assert "await pendingDiscoveredSelection" in wizard_js
     assert "form.elements.host_id.value !== discoveredHostSelect.value" in wizard_js
     assert 'mode === "edit"' in wizard_js
     assert 'mode === "promote"' in wizard_js
-    assert "Variables must be a JSON object." in wizard_js
-    assert 'form.elements.enabled.checked = mode === "create"' in wizard_js
+    assert 'pattern: "direct-edit"' in wizard_js
+    assert "parseEsxiHostVariableRows" in wizard_js
+    assert "enabledWasEdited" in wizard_js
+    assert "installerIsoSelect.addEventListener" in wizard_js
+    assert "window.location.reload()" not in wizard_js
+    assert "networkBootDiscoveredHostRefresh?.refresh?.()" in wizard_js
 
 
 def test_esxi_pxe_host_reference_wizard_respects_read_only_permissions(client):
@@ -4370,10 +4469,12 @@ def test_network_boot_host_management_report_and_print_contract(client):
     assert 'data-network-boot-report' in page.text
     assert "Print / Save as PDF" in page.text
     assert "Download JSON" in page.text
-    assert "Promote to ESXi" in page.text
-    assert "Wake host" in page.text
-    assert ">Reboot<" in page.text
-    assert "Remove discovered host" in page.text
+    report_dialog = page.text.split('id="network-boot-host-dialog"', 1)[1].split("</dialog>", 1)[0]
+    assert "Promote to ESXi" not in report_dialog
+    assert "Wake host" not in report_dialog
+    assert ">Reboot<" not in report_dialog
+    assert "Remove discovered host" not in report_dialog
+    assert "View inventory report" in page.text
     assert 'id="network-boot-discovered-fallback"' in page.text
 
     app_js = client.get("/static/app.js").text
@@ -4406,18 +4507,25 @@ def test_network_boot_host_management_report_and_print_contract(client):
     page_initializer = app_js.split("function initializeNetworkBootPage", 1)[1].split(
         'document.addEventListener("DOMContentLoaded", initializeDashboard)', 1
     )[0]
+    host_refresh = app_js.split("function initializeNetworkBootDiscoveredHostRefresh", 1)[1].split(
+        "function initializeNetworkBootPage", 1
+    )[0]
     for label in (
-        'label: "Promote to ESXi"',
         'label: "Reboot"',
         'label: "Wake host"',
         'label: "Remove discovered host"',
     ):
         assert label in page_initializer
-    assert 'height: "300px"' in page_initializer
+    assert '"Promote to ESXi (already assigned)"' in page_initializer
+    assert "Boolean(component.getData().assigned_to_esxi)" in page_initializer
+    assert 'height: "100%"' in page_initializer
+    assert 'label: "View inventory report"' in page_initializer
+    assert "onOpenRow: openHost" not in page_initializer
     assert 'action: (_event, row) => promoteHost(row, row.getElement())' in page_initializer
-    assert "const hostRow = hostsTable?.getRow(selectedHost.id);" in page_initializer
-    assert "promoteHost(selectedHost, hostRow?.getElement?.() || null);" in page_initializer
-    assert "promoteHost(selectedHost, event.currentTarget);" not in page_initializer
+    assert 'querySelector("[data-network-boot-promote-open]")' not in page_initializer
+    assert 'querySelector("[data-network-boot-wake]")' not in page_initializer
+    assert 'querySelector("[data-network-boot-reboot]")' not in page_initializer
+    assert 'querySelector("[data-network-boot-remove]")' not in page_initializer
     assert "renderNetworkBootReport(reportArticle, historyItem);" in page_initializer
     assert "atlasoNewTaskId = queued.job_id" in page_initializer
     assert "await refreshTasksPage()" in page_initializer
@@ -4428,6 +4536,15 @@ def test_network_boot_host_management_report_and_print_contract(client):
     assert 'hostDialog?.addEventListener("close", clearReportPrintState)' in page_initializer
     assert "document.body.classList.add(reportPrintClass)" in page_initializer
     assert "window.print()" in page_initializer
+    assert 'data-network-boot-discovered-status role="status" aria-live="polite" hidden' in page.text
+    assert "New Inventory Linux reports appear automatically while this page is visible." in page.text
+    assert "Open the row menu" in page.text
+    assert "initializeNetworkBootDiscoveredHostRefresh(hostsTable, discoveredStatus);" in page_initializer
+    assert 'request("/api/v1/network-boot/hosts")' in host_refresh
+    assert "await reconcileNetworkBootDiscoveredHosts(hostsTable, hosts);" in host_refresh
+    assert "networkBootChangedRowValues(current, updated)" in app_js
+    assert "if (Object.keys(changed).length) await row.update(changed);" in app_js
+    assert 'document.addEventListener("visibilitychange", handleVisibilityChange);' in host_refresh
 
     host_reference = app_js.split("function initializeEsxiPxeHostsTable", 1)[1].split(
         "async function deleteEsxiInstallerIso", 1
@@ -4441,9 +4558,14 @@ def test_network_boot_host_management_report_and_print_contract(client):
     assert 'mode: "promote"' in page_initializer
 
     app_css = client.get("/static/app.css").text
+    assert ".network-boot-discovered-panel.active" in app_css
+    assert "overflow: hidden !important;" in app_css
     assert ".network-boot-discovered-panel .tabulator-shell" in app_css
-    assert "min-height: 300px;" in app_css
+    assert "flex: 1 1 auto;" in app_css
+    assert "min-height: 0;" in app_css
     assert "height: 240px !important;" in app_css
+    assert ".host-reference-enable-step" in app_css
+    assert "justify-items: center;" in app_css
     print_css = app_css.split("@media print", 1)[1]
     assert "@page atlaso-network-boot-report" in print_css
     assert "page: atlaso-network-boot-report;" in print_css
@@ -4734,6 +4856,7 @@ def test_esxi_pxe_boot_settings_update_dnsmasq_and_apply_manifest(client):
         assert (
             "dhcp-boot=tag:sitea,tag:ipxe,"
             "http://192.168.50.1:8080/pxe/boot.ipxe?mac=${net0/mac}"
+            "&firmware=${platform}"
         ) in dns_preview
         assert "dhcp-boot=tag:sitea,tag:!ipxe,tag:efi-x86_64,snponly.efi,esxi-pxe.atlaso.internal,192.168.50.1" in dns_preview
         assert "dhcp-boot=tag:sitea,tag:!ipxe,tag:!efi-x86_64,undionly.kpxe,esxi-pxe.atlaso.internal,192.168.50.1" in dns_preview
@@ -4757,6 +4880,7 @@ def test_esxi_pxe_boot_settings_update_dnsmasq_and_apply_manifest(client):
     assert (
         "dhcp-boot=tag:sitea,tag:ipxe,"
         "http://192.168.50.1:8080/pxe/boot.ipxe?mac=${net0/mac}"
+        "&amp;firmware=${platform}"
     ) in dhcp_page.text
     assert "dhcp-boot=tag:sitea,tag:!ipxe,tag:efi-x86_64,snponly.efi,esxi-pxe.atlaso.internal,192.168.50.1" in dhcp_page.text
     assert "dhcp-boot=tag:sitea,tag:uefi-http,tag:uefi-http-x64,http://192.168.50.1:8080/pxe/esxi/snponly.efi" in dhcp_page.text
@@ -6988,8 +7112,12 @@ def test_dns_and_dhcp_pages_render(client):
     assert "initializeEsxiIsoUploadForms" in app_js.text
     assert "XMLHttpRequest" in app_js.text
     assert "X-Atlaso-Upload" in app_js.text
-    assert 'rememberActiveTab("atlaso:esxi-pxe:active-tab", "esxi-pxe-isos-panel")' in app_js.text
-    assert 'window.location.hash = "esxi-pxe-isos-panel"' in app_js.text
+    assert 'pattern: "wizard-backed"' in app_js.text
+    assert "esxiIsoUploadWizard = window.AtlasoUiPatterns.createWizard" in app_js.text
+    assert 'esxiInstallerIsosTable?.addRow?.(uploaded, true, "__new__")' in app_js.text
+    assert "tableElement.atlasoRefreshIsoOptions = async (path, label)" in app_js.text
+    assert 'isoColumn?.updateDefinition?.({ editorParams: { values: isoValues, autocomplete: true } })' in app_js.text
+    assert "await hostsElement?.atlasoRefreshIsoOptions?.(uploaded.path, label)" in app_js.text
     assert "initializeEsxiPxeHostsTable" in app_js.text
     assert 'document.getElementById(hashTargetId)?.closest(".tab-panel")' in app_js.text
     assert 'querySelector(".tag-editor[data-service-bind-interface]")' in app_js.text

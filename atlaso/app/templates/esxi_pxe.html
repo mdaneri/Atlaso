@@ -33,16 +33,17 @@
            data-can-write="{{ 'true' if network_boot_can_write else 'false' }}"
            data-fallback-id="network-boot-discovered-fallback"></div>
       <table id="network-boot-discovered-fallback" class="data-table compact">
-        <thead><tr><th>UUID</th><th>MACs</th><th>CPU</th><th>Memory</th><th>Disks</th><th>NICs</th><th>Last seen</th><th>Session</th></tr></thead>
+        <thead><tr><th>UUID</th><th>MACs</th><th>CPU</th><th>Memory</th><th>Disks</th><th>NICs</th><th>Last seen</th><th>Session</th><th>Assignment</th><th>ESXi host</th><th>ESXi IP</th></tr></thead>
         <tbody>
           {% for row in network_boot_discovered_hosts %}
-            <tr><td><code>{{ row.dmi_uuid or "MAC fallback" }}</code></td><td>{{ row.macs | join(", ") }}</td><td>{{ row.cpu_model }}</td><td>{{ row.total_memory_bytes }}</td><td>{{ row.disk_count }}</td><td>{{ row.interface_count }}</td><td>{{ row.last_seen_at }}</td><td>{{ row.session_state }}</td></tr>
+            <tr><td><code>{{ row.dmi_uuid or "MAC fallback" }}</code></td><td>{{ row.macs | join(", ") }}</td><td>{{ row.cpu_model }}</td><td>{{ row.total_memory_bytes }}</td><td>{{ row.disk_count }}</td><td>{{ row.interface_count }}</td><td>{{ row.last_seen_at }}</td><td>{{ row.session_state }}</td><td>{{ "Assigned" if row.assigned_to_esxi else "Unassigned" }}</td><td>{{ row.esxi_hostname or "Not assigned" }}</td><td>{{ row.esxi_ip_address or "Not assigned" }}</td></tr>
           {% else %}
-            <tr><td colspan="8">No inventory reports received.</td></tr>
+            <tr><td colspan="11">No inventory reports received.</td></tr>
           {% endfor %}
         </tbody>
       </table>
-      <p class="muted">Double-click a row, or focus it and press Enter, to inspect its latest bounded report and history. Right-click for permitted host actions. Promotion, Wake-on-LAN, reboot, and removal require Network Boot write access.</p>
+      <p class="muted" data-network-boot-discovered-status role="status" aria-live="polite" hidden></p>
+      <p class="muted">New Inventory Linux reports appear automatically while this page is visible. Open the row menu and choose <strong>View inventory report</strong> to inspect its latest bounded report and history. Promotion, Wake-on-LAN, reboot, and removal in the same menu require Network Boot write access.</p>
     </div>
     <div id="network-boot-environments-panel" class="tab-panel network-boot-environments-panel" role="tabpanel" hidden>
       <div id="network-boot-environments-table" class="tabulator-shell"
@@ -50,24 +51,24 @@
            data-can-write="{{ 'true' if network_boot_can_write else 'false' }}"
            data-fallback-id="network-boot-environments-fallback"></div>
       <table id="network-boot-environments-fallback" class="data-table compact">
-        <thead><tr><th>Environment</th><th>Enabled</th><th>Desired</th><th>Newest installed</th><th>Active</th><th>Media ready</th><th>Source</th><th>Verification</th><th>Risk</th></tr></thead>
+        <thead><tr><th>Environment</th><th>Enabled</th><th>Desired</th><th>Newest installed</th><th>Latest available</th><th>Active</th><th>Media ready</th><th>Source</th><th>Verification</th><th>Risk</th></tr></thead>
         <tbody>
           {% for row in network_boot_environments %}
-            <tr><td>{{ row.label }}</td><td>{{ "Yes" if row.enabled else "No" }}</td><td>{{ row.desired_version or "Not selected" }}</td><td>{{ row.installed_versions[0].version if row.installed_versions else "Not installed" }}</td><td>{{ row.active_version or "Not active" }}</td><td>{{ "Ready" if row.media_ready else "Not installed" }}</td><td><a href="{{ row.release_page }}" target="_blank" rel="noopener noreferrer" title="{{ row.release_page }}">{{ row.source_label }}</a></td><td>{{ row.verification_method }}</td><td>{{ row.risk }}</td></tr>
+            <tr><td>{{ row.label }}</td><td>{{ "Yes" if row.enabled else "No" }}</td><td>{{ row.desired_version or "Not selected" }}</td><td>{{ row.installed_versions[0].version if row.installed_versions else "Not installed" }}</td><td>Checking...</td><td>{{ row.active_version or "Not active" }}</td><td>{{ "Ready" if row.media_ready else "Not installed" }}</td><td><a href="{{ row.release_page }}" target="_blank" rel="noopener noreferrer" title="{{ row.release_page }}">{{ row.source_label }}</a></td><td>{{ row.verification_method }}</td><td>{{ row.risk }}</td></tr>
           {% endfor %}
         </tbody>
       </table>
-      <p class="muted">Right-click a row for Enable/Disable, Download, Upload, and inactive-media cleanup actions. Media ready confirms that at least one verified version is installed; Active version changes only after enablement and global appliance apply. The Source column names and links to the authoritative release page used to resolve the latest stable download; uploads accept the matching upstream asset. Both paths verify the authoritative digest or signature before creating an immutable cache entry.</p>
+      <p class="muted">Right-click a row for Enable/Disable, Download, Upload, and inactive-media cleanup actions. Media ready confirms that at least one verified version is installed; Active version changes only after enablement and global appliance apply. Latest available is resolved in the background from the authoritative source and does not start a download. The Source column links to that release page; uploads accept the matching upstream asset. Both acquisition paths verify the authoritative digest or signature before creating an immutable cache entry.</p>
       <div class="network-boot-task-history-container" data-network-boot-tasks-panel>
         {% set task_grid_class = "network-boot-task-history task-grid-section" %}
         {% set task_grid_title = "Boot media tasks" %}
-        {% set task_grid_description = "The same task grid used by Tasks, scoped to Network Boot media downloads and uploads." %}
+        {% set task_grid_description = "The same task grid used by Tasks, scoped to Network Boot media downloads, uploads, and inactive-media deletion." %}
         {% set task_grid_rows = network_boot_media_tasks %}
         {% set task_grid_component_options = task_component_filter_options %}
         {% set task_grid_type = "pxe-media-sync" %}
         {% set task_grid_lock_component_filter = true %}
         {% set task_grid_height = "100%" %}
-        {% set task_grid_scope_label = "Downloads and uploads only" %}
+        {% set task_grid_scope_label = "Media operations only" %}
         {% set task_grid_history_url = "/tasks" %}
         {% set task_grid_empty_message = "No Network Boot media tasks have been recorded yet." %}
         {% include "partials/task_grid.html" %}
@@ -101,12 +102,6 @@
       </div>
     </div>
     <div class="confirm-modal-actions">
-      {% if network_boot_can_write %}
-        <button class="button primary" type="button" data-network-boot-promote-open>Promote to ESXi</button>
-        <button class="button secondary" type="button" data-network-boot-wake>Wake host</button>
-        <button class="button danger" type="button" data-network-boot-reboot>Reboot</button>
-        <button class="button danger" type="button" data-network-boot-remove>Remove discovered host</button>
-      {% endif %}
       <button class="button ghost" type="button" data-network-boot-host-close>Close</button>
     </div>
   </div>
@@ -160,17 +155,34 @@
           <label data-esxi-host-discovered-field><span>Discovered host</span><select name="discovered_host_id"></select></label>
           <div class="form-grid">
             <label><span>Hostname</span><input name="hostname" required maxlength="120"></label>
-            <label data-esxi-host-discovered-mac-field><span>Selected MAC</span><select name="discovered_mac_address"></select></label>
-            <label data-esxi-host-manual-mac-field><span>MAC address</span><input name="manual_mac_address" maxlength="32"></label>
-            <label><span>IP address, if any</span><input name="ip_address" maxlength="64" placeholder="DHCP"></label>
+            <label data-esxi-host-discovered-mac-field><span>Boot MAC</span><select name="discovered_mac_address"></select></label>
+            <label data-esxi-host-manual-mac-field><span>MAC address</span><input name="manual_mac_address" maxlength="32" inputmode="text" autocomplete="off" spellcheck="false" placeholder="00:50:56:aa:bb:cc" aria-describedby="esxi-host-mac-help"><small id="esxi-host-mac-help" class="field-help">Six hexadecimal octets; unicast addresses only.</small></label>
+            <label><span>IP address (optional — leave blank for DHCP)</span><input name="ip_address" maxlength="64" placeholder="DHCP"></label>
           </div>
         </div></section>
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="installer"><div class="form-stack">
           <label><span>Kickstart</span><select name="kickstart_id">{% for option in esxi_pxe_host_kickstart_options %}<option value="{{ option.id }}">{{ option.label }}</option>{% endfor %}</select></label>
           <label><span>Installer ISO</span><select name="installer_iso_path">{% for option in esxi_pxe_host_iso_options %}<option value="{{ option.id }}">{{ option.label }}</option>{% endfor %}</select></label>
-          <label><span>Variables JSON</span><textarea name="variables" rows="6">{}</textarea></label>
+          <input type="hidden" name="variables" value="{}">
+          <div class="form-stack">
+            <div>
+              <span class="field-label"><span>Host variables</span><button class="help-icon" type="button" data-help="Lists every non-secret Custom Variables definition. Edit Host override to replace its default for this host; use the row menu to return to the default.">i</button></span>
+              <div id="esxi-host-variables-table" class="tabulator-shell" data-definitions='{{ esxi_custom_variables | tojson }}' data-fallback-id="esxi-host-variables-fallback"></div>
+              <table id="esxi-host-variables-fallback" class="data-table compact">
+                <thead><tr><th>Variable</th><th>Default value</th><th>Host override</th></tr></thead>
+                <tbody>
+                  {% for variable in esxi_custom_variables %}
+                    <tr><td><code>custom.{{ variable.name }}</code></td><td>{{ variable.default_value or "No default" }}</td><td>Uses default</td></tr>
+                  {% else %}
+                    <tr><td colspan="3" class="muted">No custom variables are defined.</td></tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+              <p class="autosave-status" data-state="idle" data-esxi-host-variables-status aria-live="polite">Define custom variables under Custom Variables before assigning host values.</p>
+            </div>
+          </div>
         </div></section>
-        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="enablement">
+        <section class="vcf-sddc-step-page host-reference-enable-step hidden" data-atlaso-wizard-step="enablement">
           <label class="switch-field"><span>Enabled</span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
           <p class="muted">Saving creates desired state only. The global apply workflow remains the sole host-mutation path.</p>
         </section>
@@ -181,6 +193,51 @@
         <button class="button secondary hidden" type="button" data-atlaso-wizard-back>Back</button>
         <button class="button primary" type="button" data-atlaso-wizard-next>Next</button>
         <button class="button primary hidden" type="submit" data-atlaso-wizard-submit>Save host reference</button>
+      </div>
+    </div>
+  </form>
+</dialog>
+{% endif %}
+{% if esxi_can_write %}
+<dialog id="esxi-iso-upload-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="esxi-iso-upload-title">
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="/esxi-pxe/isos/upload" method="post" enctype="multipart/form-data" data-esxi-iso-upload data-atlaso-wizard novalidate>
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <aside class="vcf-sddc-wizard-rail" aria-label="Add ESX ISO steps">
+      <p class="kicker">Network Boot</p><h2 id="esxi-iso-upload-title">Add ESX ISO</h2>
+      <ol class="vcf-sddc-step-list">
+        <li><button class="vcf-sddc-step-button active" type="button" data-atlaso-wizard-nav="file"><span>1</span><strong>ISO file</strong><small>Choose installer media</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="review" disabled><span>2</span><strong>Review</strong><small>Confirm upload destination</small></button></li>
+      </ol>
+    </aside>
+    <div class="vcf-sddc-wizard-main">
+      <div class="confirm-modal-body vcf-sddc-wizard-body">
+        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 2</p><h3 data-atlaso-wizard-title>Choose an ESX installer ISO</h3><p class="muted" data-atlaso-wizard-description>Select one ISO to add to the shared ESX_HOST media folder.</p></div>
+        <div class="alert error hidden" data-atlaso-wizard-error></div>
+        <section class="vcf-sddc-step-page" data-atlaso-wizard-step="file">
+          <label>
+            <span class="field-label"><span>ESX installer ISO</span><button class="help-icon" type="button" data-help="Uploads an additional ESX installer ISO into the VCF Offline Depot ESX_HOST folder used for PXE planning. Runtime PXE files change only after global appliance apply.">i</button></span>
+            <span class="file-upload-control">
+              <input class="file-upload-input" type="file" name="iso_file" accept=".iso,application/x-iso9660-image" data-file-upload-input required>
+              <span class="file-upload-surface"><span class="file-upload-copy"><strong>Choose ISO file</strong><small data-file-upload-name>VMware-VMvisor-Installer.iso</small></span></span>
+            </span>
+          </label>
+        </section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review">
+          <div class="settings-list">
+            <div><span>ISO file</span><strong data-esxi-iso-review-name>Not selected</strong></div>
+            <div><span>Size</span><strong data-esxi-iso-review-size>Not available</strong></div>
+            <div><span>Destination</span><strong>{{ esxi_installer_iso_root }}</strong></div>
+            <div><span>Runtime</span><strong>Global appliance apply required</strong></div>
+          </div>
+          <progress class="upload-progress" value="0" max="100" data-esxi-iso-upload-progress hidden></progress>
+          <p class="autosave-status" data-state="idle" data-esxi-iso-upload-status aria-live="polite">Ready to upload the reviewed ISO.</p>
+        </section>
+      </div>
+      <div class="confirm-modal-actions vcf-sddc-wizard-actions">
+        <button class="button secondary" type="button" data-atlaso-wizard-cancel>Cancel</button>
+        <button class="button secondary hidden" type="button" data-atlaso-wizard-back>Back</button>
+        <button class="button primary" type="button" data-atlaso-wizard-next>Next</button>
+        <button class="button primary hidden" type="submit" data-atlaso-wizard-submit data-esxi-iso-upload-button>Upload ESX ISO</button>
       </div>
     </div>
   </form>
@@ -272,6 +329,7 @@
         <div><span>UEFI second stage</span><strong>{{ esxi_pxe_boot.uefi_second_stage_bootfile }}</strong></div>
         <div><span>DHCP zones</span><strong>{{ esxi_pxe_boot.dhcp_scope_names | join(", ") if esxi_pxe_boot.dhcp_scope_names else "not selected" }}</strong></div>
         <div><span>Bind target</span><strong>{{ esxi_pxe_bind_label }}</strong></div>
+        <div><span>Installer ISO folder</span><strong>{{ esxi_installer_iso_root }}</strong></div>
       </div>
       {% if esxi_can_write %}
         <p id="esxi-pxe-boot-settings-status" class="autosave-status" data-state="idle">Changes save automatically.</p>
@@ -285,7 +343,7 @@
         <h2>ESXi Kickstarts</h2>
         <p class="muted">Database-owned Kickstart source files for generated PXE HTTP boot copies.</p>
       </div>
-      <span class="status-pill {{ 'warn' if esxi_pxe_validation_errors else 'good' }}" data-esxi-pxe-summary data-iso-count="{{ esxi_installer_isos|length }}">{{ esxi_kickstarts|length }} Kickstarts / {{ esxi_installer_isos|length }} ISOs</span>
+      <span class="status-pill {{ 'warn' if esxi_pxe_validation_errors else 'good' }}" data-esxi-pxe-summary data-kickstart-count="{{ esxi_kickstarts|length }}" data-iso-count="{{ esxi_installer_isos|length }}">{{ esxi_kickstarts|length }} Kickstarts / {{ esxi_installer_isos|length }} ISOs</span>
     </div>
 
     {% if esxi_pxe_error %}
@@ -377,7 +435,7 @@
             data-fallback-id="esxi-pxe-hosts-fallback"
           ></div>
           <table id="esxi-pxe-hosts-fallback" class="data-table compact dns-fallback-table">
-            <thead><tr><th>Host</th><th>MAC</th><th>IP address</th><th>Kickstart</th><th>Installer ISO</th><th>Variables JSON</th><th>Enabled</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Host</th><th>MAC</th><th>IP address</th><th>Kickstart</th><th>Installer ISO</th><th>Variables</th><th>Enabled</th><th>Actions</th></tr></thead>
             <tbody>
               <tr>
                 <form action="/esxi-pxe/default-host" method="post">
@@ -506,28 +564,17 @@
       </div>
 
       <div id="esxi-pxe-isos-panel" class="tab-panel" role="tabpanel" hidden>
-        <div class="panel-subsection">
-          <div class="settings-list compact-settings-list">
-            <div><span>Installer ISO folder</span><strong>{{ esxi_installer_iso_root }}</strong></div>
-          </div>
-        </div>
         {% if esxi_can_write %}
-          <details class="create-kickstart-panel">
-            <summary>Upload installer ISO</summary>
-            <form class="form-stack" action="/esxi-pxe/isos/upload" method="post" enctype="multipart/form-data" data-esxi-iso-upload>
-              <input type="hidden" name="csrf" value="{{ csrf_token }}">
-              <label>
-                <span class="field-label"><span>ESXi installer ISO</span><button class="help-icon" type="button" data-help="Uploads an additional ESXi installer ISO into the VCF Offline Depot ESX_HOST folder used for PXE planning.">i</button></span>
-                <span class="file-upload-control">
-                  <input class="file-upload-input" type="file" name="iso_file" accept=".iso,application/x-iso9660-image" data-file-upload-input>
-                  <span class="file-upload-surface"><span class="file-upload-copy"><strong>Choose ISO file</strong><small data-file-upload-name>VMware-VMvisor-Installer.iso</small></span></span>
-                </span>
-              </label>
-              <button class="button secondary" type="submit" data-esxi-iso-upload-button>Upload installer ISO</button>
-              <progress class="upload-progress" value="0" max="100" data-esxi-iso-upload-progress hidden></progress>
-              <p class="autosave-status" data-state="idle" data-esxi-iso-upload-status aria-live="polite">Choose an ISO to upload.</p>
-            </form>
-          </details>
+          <noscript>
+            <details class="create-kickstart-panel">
+              <summary>Upload ESX ISO</summary>
+              <form class="form-stack" action="/esxi-pxe/isos/upload" method="post" enctype="multipart/form-data">
+                <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                <label><span>ESX installer ISO</span><input type="file" name="iso_file" accept=".iso,application/x-iso9660-image" required></label>
+                <button class="button secondary" type="submit">Upload ESX ISO</button>
+              </form>
+            </details>
+          </noscript>
         {% endif %}
         <div
           id="esxi-installer-isos-table"
@@ -538,22 +585,23 @@
           data-fallback-id="esxi-installer-isos-fallback"
         ></div>
         <table id="esxi-installer-isos-fallback" class="data-table compact">
-          <thead><tr><th>Name</th><th>Relative path</th><th>Source</th><th>Source date</th><th>Size</th></tr></thead>
+          <thead><tr><th>Name</th><th>ESX version</th><th>Relative path</th><th>Source</th><th>Source date</th><th>Size</th></tr></thead>
           <tbody>
             {% for iso in esxi_installer_isos %}
               <tr>
                 <td>{{ iso.name }}</td>
+                <td>{{ iso.esx_version ~ (" (build " ~ iso.esx_build ~ ")" if iso.esx_build else "") if iso.esx_version else "Not reported" }}</td>
                 <td><code>{{ iso.relative_path }}</code></td>
                 <td><span class="status-pill {{ 'good' if iso.source == 'uploaded' else 'muted' }}">{{ iso.source_label }}</span></td>
                 <td>{{ iso.source_at }}</td>
                 <td>{{ iso.size_bytes }}</td>
               </tr>
             {% else %}
-              <tr><td colspan="5" class="muted">No installer ISOs found.</td></tr>
+              <tr><td colspan="6" class="muted">No installer ISOs found.</td></tr>
             {% endfor %}
           </tbody>
         </table>
-        <p class="muted">Right-click an installer ISO row to delete it.</p>
+        <p class="muted">Use <strong>+ Add ESX ISO</strong> to upload reviewed installer media. Atlaso derives the ESX version and build from standard VMware installer filenames; renamed media is shown as Not reported. Right-click an existing row to delete it.</p>
       </div>
 
       <div id="esxi-pxe-preview-panel" class="tab-panel" role="tabpanel" hidden>

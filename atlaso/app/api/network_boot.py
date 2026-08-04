@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import shutil
 import threading
 import time
 from collections import defaultdict, deque
@@ -44,11 +43,12 @@ from atlaso.app.services.esxi_pxe import (
 from atlaso.app.services.network_boot import (
     acknowledge_inventory_command,
     active_network_boot_media,
+    available_network_boot_versions,
     NETWORK_BOOT_MEDIA_ROOT,
     NETWORK_BOOT_UPLOAD_MAX_BYTES,
     catalog_rows,
     claim_host_boot_override,
-    cleanup_network_boot_upload,
+    esxi_host_assignments_by_mac,
     host_to_dict,
     inventory_session_for_token,
     issue_inventory_session,
@@ -221,6 +221,13 @@ def list_network_boot_environments(
     db: Session = Depends(get_db),
 ) -> list[dict[str, Any]]:
     return catalog_rows(db)
+
+
+@router.get("/environments/available-versions")
+def list_available_network_boot_versions(
+    _identity: Annotated[Identity, Depends(require_api_or_session_scope("read:pxe"))],
+) -> list[dict[str, str]]:
+    return available_network_boot_versions()
 
 
 @router.patch("/environments/{environment_key}")
@@ -424,7 +431,10 @@ async def upload_network_boot_environment(
     }
 
 
-@router.delete("/environments/{environment_key}/media/{version}")
+@router.delete(
+    "/environments/{environment_key}/media/{version}",
+    status_code=status.HTTP_202_ACCEPTED,
+)
 def remove_network_boot_media(
     environment_key: str,
     version: str,
@@ -443,10 +453,15 @@ def remove_network_boot_media(
     ).scalar_one_or_none()
     if state is None or media is None:
         raise HTTPException(status_code=404, detail="Installed Network Boot media not found.")
-    if version in {state.desired_version, state.active_version}:
+    if version == state.active_version:
         raise HTTPException(
             status_code=409,
-            detail="Select and apply a different version or disable this environment before removal.",
+            detail="Apply a different active version or disable and apply this environment before removal.",
+        )
+    if state.enabled and version == state.desired_version:
+        raise HTTPException(
+            status_code=409,
+            detail="Disable this environment before removing its desired media.",
         )
     environment_jobs = db.execute(
         select(Job).where(Job.type == "pxe-media-sync")
@@ -467,32 +482,42 @@ def remove_network_boot_media(
             status_code=409,
             detail="Wait for the active Network Boot media task before cleaning this environment.",
         )
-    target = _installed_media_directory(media)
-    if target is None:
+    if _installed_media_directory(media) is None:
         raise HTTPException(status_code=409, detail="Installed media path failed safety validation.")
-    shutil.rmtree(target)
-    db.delete(media)
-    cleaned_uploads = 0
-    for job, config in matching_jobs:
-        if config.get("source") != "upload":
-            continue
-        cleanup_network_boot_upload(job.id)
-        cleaned_uploads += 1
+    job = Job(
+        id=f"job_{uuid4().hex}",
+        type="pxe-media-sync",
+        status=JobStatus.PENDING.value,
+        created_by=identity.username,
+        progress_percent=0,
+        task_config_json=json.dumps(
+            {
+                "environment": environment_key,
+                "request_id": request.state.request_id,
+                "source": "delete",
+                "version": version,
+            },
+            sort_keys=True,
+        ),
+        network_boot_environment_key=environment_key,
+        network_boot_source="delete",
+    )
+    db.add(job)
     record_audit(
         db,
         actor=identity.username,
-        action="remove_network_boot_media",
-        resource_type="network_boot_media",
-        resource_id=f"{environment_key}:{version}",
-        detail=f"inactive immutable cache version removed; staged_uploads_cleaned={cleaned_uploads}",
+        action="queue_remove_network_boot_media",
+        resource_type="job",
+        resource_id=job.id,
+        detail=f"environment={environment_key}; version={version}",
         request_id=request.state.request_id,
     )
     db.commit()
     return {
+        "job_id": job.id,
+        "status": job.status,
         "environment": environment_key,
         "version": version,
-        "removed": True,
-        "staged_uploads_cleaned": cleaned_uploads,
     }
 
 
@@ -507,7 +532,8 @@ def list_discovered_hosts(
             NetworkBootDiscoveredHost.id,
         )
     ).scalars().all()
-    return [host_to_dict(db, row) for row in rows]
+    assignments_by_mac = esxi_host_assignments_by_mac(db)
+    return [host_to_dict(db, row, assignments_by_mac=assignments_by_mac) for row in rows]
 
 
 @router.get("/hosts/{host_id}")
@@ -935,14 +961,17 @@ def promote_discovered_host(
             status_code=422,
             detail=f"Promotion {field} is invalid: {error['msg']}.",
         ) from exc
-    mac_address = promotion.mac_address.strip().lower().replace("-", ":")
-    if mac_address not in set(json.loads(discovered.macs_json or "[]")):
+    mac_key = normalize_pxe_mac(promotion.mac_address)
+    if not mac_key:
+        raise HTTPException(status_code=422, detail="Promotion MAC is invalid.")
+    mac_address = ":".join(mac_key.split("-")[1:])
+    boot_mac_key = normalize_pxe_mac(discovered.boot_mac)
+    boot_mac = ":".join(boot_mac_key.split("-")[1:]) if boot_mac_key else ""
+    if mac_address != boot_mac:
         raise HTTPException(
             status_code=422,
-            detail="Promotion MAC must be one of the discovered permanent or boot MACs.",
+            detail="Promotion MAC must match the discovered boot MAC.",
         )
-    if not normalize_pxe_mac(mac_address):
-        raise HTTPException(status_code=422, detail="Promotion MAC is invalid.")
     if db.execute(
         select(EsxiPxeHost).where(EsxiPxeHost.mac_address == mac_address)
     ).scalar_one_or_none():
