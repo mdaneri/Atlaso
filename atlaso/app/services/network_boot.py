@@ -17,6 +17,7 @@ import urllib.parse
 import urllib.request
 import uuid
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from ipaddress import ip_address, ip_network
@@ -81,6 +82,10 @@ APPLIANCE_APPLY_BASELINES_KEY = "appliance_apply.baselines.v1"
 _MEDIA_SWAP_THREAD_LOCK = threading.Lock()
 _MEDIA_STAGING_THREAD_LOCK = threading.Lock()
 _ACTIVE_MEDIA_STAGING_DIRECTORIES: set[str] = set()
+_AVAILABLE_VERSION_CACHE_LOCK = threading.Lock()
+_AVAILABLE_VERSION_CACHE: dict[str, dict[str, Any]] = {}
+AVAILABLE_VERSION_CACHE_SECONDS = 15 * 60
+AVAILABLE_VERSION_ERROR_CACHE_SECONDS = 60
 
 UUID_PLACEHOLDERS = {
     "00000000-0000-0000-0000-000000000000",
@@ -279,6 +284,9 @@ def catalog_rows(db: Session) -> list[dict[str, Any]]:
                 "enabled": bool(state.enabled),
                 "desired_version": state.desired_version,
                 "active_version": state.active_version,
+                "available_version": "",
+                "available_status": "checking",
+                "available_checked_at": "",
                 "ready": bool(state.enabled and active),
                 "media_ready": bool(versions),
                 "installed_versions": [media_to_dict(row) for row in versions],
@@ -2299,6 +2307,73 @@ def _release_descriptor(environment_key: str) -> dict[str, str]:
             "sha256": digest.removeprefix("sha256:").lower(),
         }
     raise ValueError("Unsupported Network Boot environment.")
+
+
+def available_network_boot_versions(*, force_refresh: bool = False) -> list[dict[str, str]]:
+    """Resolve current upstream versions without downloading media artifacts."""
+    now = time.monotonic()
+    with _AVAILABLE_VERSION_CACHE_LOCK:
+        missing = [
+            entry
+            for entry in ENVIRONMENT_CATALOG
+            if force_refresh
+            or entry.key not in _AVAILABLE_VERSION_CACHE
+            or float(_AVAILABLE_VERSION_CACHE[entry.key].get("expires_at") or 0) <= now
+        ]
+        if missing:
+            resolved: dict[str, str] = {}
+            failures: set[str] = set()
+            with ThreadPoolExecutor(max_workers=len(missing)) as executor:
+                futures = {
+                    executor.submit(_release_descriptor, entry.key): entry.key
+                    for entry in missing
+                }
+                for future in as_completed(futures):
+                    key = futures[future]
+                    try:
+                        resolved[key] = str(future.result()["version"])
+                    except (KeyError, OSError, ValueError, json.JSONDecodeError):
+                        failures.add(key)
+            checked_at = datetime.now(timezone.utc).isoformat()
+            for entry in missing:
+                previous = _AVAILABLE_VERSION_CACHE.get(entry.key, {})
+                if entry.key in resolved:
+                    _AVAILABLE_VERSION_CACHE[entry.key] = {
+                        "available_version": resolved[entry.key],
+                        "available_status": "current",
+                        "available_checked_at": checked_at,
+                        "expires_at": now + AVAILABLE_VERSION_CACHE_SECONDS,
+                    }
+                elif entry.key in failures and previous.get("available_version"):
+                    _AVAILABLE_VERSION_CACHE[entry.key] = {
+                        "available_version": str(previous["available_version"]),
+                        "available_status": "stale",
+                        "available_checked_at": str(previous.get("available_checked_at") or ""),
+                        "expires_at": now + AVAILABLE_VERSION_ERROR_CACHE_SECONDS,
+                    }
+                else:
+                    _AVAILABLE_VERSION_CACHE[entry.key] = {
+                        "available_version": "",
+                        "available_status": "unavailable",
+                        "available_checked_at": checked_at,
+                        "expires_at": now + AVAILABLE_VERSION_ERROR_CACHE_SECONDS,
+                    }
+        return [
+            {
+                "key": entry.key,
+                "available_version": str(
+                    _AVAILABLE_VERSION_CACHE.get(entry.key, {}).get("available_version") or ""
+                ),
+                "available_status": str(
+                    _AVAILABLE_VERSION_CACHE.get(entry.key, {}).get("available_status")
+                    or "unavailable"
+                ),
+                "available_checked_at": str(
+                    _AVAILABLE_VERSION_CACHE.get(entry.key, {}).get("available_checked_at") or ""
+                ),
+            }
+            for entry in ENVIRONMENT_CATALOG
+        ]
 
 
 def _extract_zip_allowlist(

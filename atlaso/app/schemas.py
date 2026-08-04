@@ -555,6 +555,8 @@ class EsxiInstallerIsoResponse(BaseModel):
     name: str
     path: str
     relative_path: str
+    esx_version: str = ""
+    esx_build: str = ""
     size_bytes: int
     updated_at: str
 

@@ -984,22 +984,40 @@ def safe_installer_iso_name(filename: str) -> str:
     return name
 
 
+def esx_installer_identity_from_filename(filename: str) -> tuple[str, str]:
+    """Return the ESX version and build encoded in a VMware installer filename."""
+    match = re.fullmatch(
+        r"VMware-VMvisor-Installer-(?P<version>[0-9]+\.[0-9]+(?:\.[0-9]+)?(?:U[0-9]+)?(?:\.[0-9]+)?)"
+        r"(?:[-.](?P<build>[0-9]{6,}))?(?:\.x86_64)?\.iso",
+        Path(filename or "").name,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return "", ""
+    return match.group("version"), match.group("build") or ""
+
+
+def _installer_iso_inventory_row(path: Path, root: Path) -> dict[str, Any]:
+    stat = path.stat()
+    esx_version, esx_build = esx_installer_identity_from_filename(path.name)
+    return {
+        "name": path.name,
+        "path": str(path),
+        "relative_path": path.relative_to(root).as_posix(),
+        "esx_version": esx_version,
+        "esx_build": esx_build,
+        "size_bytes": stat.st_size,
+        "updated_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+    }
+
+
 def installer_iso_inventory() -> list[dict[str, Any]]:
     root = ensure_installer_iso_root()
     rows: list[dict[str, Any]] = []
     for path in sorted(root.rglob("*.iso"), key=lambda item: str(item).lower()):
         if not path.is_file():
             continue
-        stat = path.stat()
-        rows.append(
-            {
-                "name": path.name,
-                "path": str(path),
-                "relative_path": path.relative_to(root).as_posix(),
-                "size_bytes": stat.st_size,
-                "updated_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
-            }
-        )
+        rows.append(_installer_iso_inventory_row(path, root))
     return rows
 
 
@@ -1044,14 +1062,7 @@ async def store_installer_iso_upload(upload_file: Any, *, max_bytes: int) -> dic
     except Exception:
         temp_path.unlink(missing_ok=True)
         raise
-    stat = destination.stat()
-    return {
-        "name": destination.name,
-        "path": str(destination),
-        "relative_path": destination.relative_to(root).as_posix(),
-        "size_bytes": stat.st_size,
-        "updated_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
-    }
+    return _installer_iso_inventory_row(destination, root)
 
 
 def assign_kickstart_content(kickstart: EsxiKickstart, content: str, *, max_bytes: int) -> None:

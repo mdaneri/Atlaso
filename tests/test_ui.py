@@ -809,7 +809,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v221" in service_worker.text
+    assert "atlaso-pwa-v222" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -823,7 +823,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6" in service_worker.text
     assert "/static/app.css?v=atlaso-ui-regressions-224-20260803-1" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in service_worker.text
-    assert "/static/app.js?v=network-boot-workflows-229-230-20260803-1" in service_worker.text
+    assert "/static/app.js?v=network-boot-workflows-229-230-233-234-20260803-2" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -843,8 +843,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=network-boot-workflows-229-230-20260803-1"),
-        (public_base, "/static/app.js?v=network-boot-workflows-229-230-20260803-1"),
+        (base, "/static/app.js?v=network-boot-workflows-229-230-233-234-20260803-2"),
+        (public_base, "/static/app.js?v=network-boot-workflows-229-230-233-234-20260803-2"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5"
@@ -955,6 +955,9 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     assert 'label: "Download latest"' in network_boot
     assert 'label: "Upload release asset"' in network_boot
     assert 'title: "Source"' in network_boot
+    assert 'title: "Latest available"' in network_boot
+    assert 'field: "available_version"' in network_boot
+    assert "/api/v1/network-boot/environments/available-versions" in network_boot
     assert 'field: "source_label"' in network_boot
     assert 'new URL(data.release_page)' in network_boot
     assert 'source.protocol !== "https:"' in network_boot
@@ -1338,7 +1341,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=atlaso-ui-regressions-224-20260803-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in page.text
-    assert "/static/app.js?v=network-boot-workflows-229-230-20260803-1" in page.text
+    assert "/static/app.js?v=network-boot-workflows-229-230-233-234-20260803-2" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -3970,6 +3973,21 @@ def test_esxi_kickstart_upload_does_not_expose_exception_details(client, monkeyp
     assert "backend upload details" not in response.text
 
 
+@pytest.mark.parametrize(
+    ("filename", "expected"),
+    [
+        ("VMware-VMvisor-Installer-9.1.0.0100.25433460.x86_64.iso", ("9.1.0.0100", "25433460")),
+        ("VMware-VMvisor-Installer-8.0U3-24022510.x86_64.iso", ("8.0U3", "24022510")),
+        ("VMware-VMvisor-Installer-8.0U3.iso", ("8.0U3", "")),
+        ("Nested-ESXi.iso", ("", "")),
+    ],
+)
+def test_esx_installer_identity_from_filename(filename, expected):
+    from atlaso.app.services.esxi_pxe import esx_installer_identity_from_filename
+
+    assert esx_installer_identity_from_filename(filename) == expected
+
+
 def test_esxi_pxe_iso_upload_and_host_selection(client, monkeypatch, tmp_path):
     import json
     from types import SimpleNamespace
@@ -4020,6 +4038,8 @@ def test_esxi_pxe_iso_upload_and_host_selection(client, monkeypatch, tmp_path):
     assert ajax_upload.json()["source"] == "uploaded"
     assert ajax_upload.json()["source_label"] == "Uploaded by user"
     assert ajax_upload.json()["source_at"]
+    assert ajax_upload.json()["esx_version"] == ""
+    assert ajax_upload.json()["esx_build"] == ""
 
     original_get_settings = ui_module.get_settings
     monkeypatch.setattr(ui_module, "get_settings", lambda: SimpleNamespace(esxi_installer_iso_max_bytes=3))
@@ -4038,6 +4058,8 @@ def test_esxi_pxe_iso_upload_and_host_selection(client, monkeypatch, tmp_path):
     vcfdt_iso_path.write_bytes(b"vcfdt iso bytes")
     refreshed = client.get("/esxi-pxe")
     assert "VMware-VMvisor-Installer-8.0U3.iso" in refreshed.text
+    assert "ESX version" in refreshed.text
+    assert "8.0U3" in refreshed.text
     assert "VCFDT-Downloaded.iso" in refreshed.text
     assert "Installer ISOs" in refreshed.text
     assert "Uploaded by user" in refreshed.text
@@ -4103,6 +4125,10 @@ def test_esxi_pxe_iso_upload_and_host_selection(client, monkeypatch, tmp_path):
     api_isos = client.get("/api/v1/esxi-pxe/isos", headers={"Authorization": f"Bearer {api_token}"})
     assert api_isos.status_code == 200
     assert {row["relative_path"] for row in api_isos.json()} >= {"VMware-VMvisor-Installer-8.0U3.iso", "Nested-ESXi.iso"}
+    api_isos_by_name = {row["name"]: row for row in api_isos.json()}
+    assert api_isos_by_name["VMware-VMvisor-Installer-8.0U3.iso"]["esx_version"] == "8.0U3"
+    assert api_isos_by_name["VMware-VMvisor-Installer-8.0U3.iso"]["esx_build"] == ""
+    assert api_isos_by_name["Nested-ESXi.iso"]["esx_version"] == ""
 
     apply_page = client.get("/appliance-apply")
     apply_csrf = apply_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -4785,7 +4811,7 @@ def test_esxi_pxe_boot_settings_update_dnsmasq_and_apply_manifest(client):
     assert (
         "dhcp-boot=tag:sitea,tag:ipxe,"
         "http://192.168.50.1:8080/pxe/boot.ipxe?mac=${net0/mac}"
-        "&firmware=${platform}"
+        "&amp;firmware=${platform}"
     ) in dhcp_page.text
     assert "dhcp-boot=tag:sitea,tag:!ipxe,tag:efi-x86_64,snponly.efi,esxi-pxe.atlaso.internal,192.168.50.1" in dhcp_page.text
     assert "dhcp-boot=tag:sitea,tag:uefi-http,tag:uefi-http-x64,http://192.168.50.1:8080/pxe/esxi/snponly.efi" in dhcp_page.text

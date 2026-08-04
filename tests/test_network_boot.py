@@ -49,6 +49,7 @@ from atlaso.app.services.network_boot import (
     _extract_zip_allowlist,
     _BoundedHttpsRedirectHandler,
     _release_descriptor,
+    available_network_boot_versions,
     BoundedHttpsDownloader,
     checksum_for_filename,
     NetworkBootMediaSyncCancelled,
@@ -396,6 +397,24 @@ def test_network_boot_api_accepts_scoped_ui_session_and_requires_csrf(client):
         for row in client.get("/api/v1/network-boot/environments").json()
     }
     assert persisted["memtest86plus"]["enabled"] is False
+
+
+def test_network_boot_available_versions_endpoint_uses_read_scope(client, monkeypatch):
+    login_session(client)
+    expected = [
+        {
+            "key": "inventory",
+            "available_version": "2026.05.1+8",
+            "available_status": "current",
+            "available_checked_at": "2026-08-04T01:00:00+00:00",
+        }
+    ]
+    monkeypatch.setattr(network_boot_api, "available_network_boot_versions", lambda: expected)
+
+    response = client.get("/api/v1/network-boot/environments/available-versions")
+
+    assert response.status_code == 200
+    assert response.json() == expected
 
 
 def test_network_boot_mutation_endpoints_persist_jobs_commands_profiles_and_audits(client):
@@ -2615,6 +2634,43 @@ def test_fixed_catalog_resolves_expected_stable_branch(
         lambda *_args, **_kwargs: source,
     )
     assert _release_descriptor(environment)["version"] == expected_version
+
+
+def test_available_network_boot_versions_cache_and_stale_fallback(monkeypatch):
+    versions = {entry.key: f"version-{entry.key}" for entry in network_boot.ENVIRONMENT_CATALOG}
+
+    def resolve(key):
+        if key == "shredos":
+            raise ValueError("source unavailable")
+        return {"version": versions[key]}
+
+    network_boot._AVAILABLE_VERSION_CACHE.clear()
+    monkeypatch.setattr(network_boot, "_release_descriptor", resolve)
+    try:
+        first = {
+            row["key"]: row
+            for row in available_network_boot_versions(force_refresh=True)
+        }
+        assert first["inventory"]["available_version"] == "version-inventory"
+        assert first["inventory"]["available_status"] == "current"
+        assert first["shredos"]["available_version"] == ""
+        assert first["shredos"]["available_status"] == "unavailable"
+
+        monkeypatch.setattr(
+            network_boot,
+            "_release_descriptor",
+            lambda _key: (_ for _ in ()).throw(OSError("offline")),
+        )
+        second = {
+            row["key"]: row
+            for row in available_network_boot_versions(force_refresh=True)
+        }
+        assert second["inventory"]["available_version"] == "version-inventory"
+        assert second["inventory"]["available_status"] == "stale"
+        assert second["inventory"]["available_checked_at"] == first["inventory"]["available_checked_at"]
+        assert second["shredos"]["available_status"] == "unavailable"
+    finally:
+        network_boot._AVAILABLE_VERSION_CACHE.clear()
 
 
 def test_shredos_requires_published_full_iso_digest(monkeypatch):

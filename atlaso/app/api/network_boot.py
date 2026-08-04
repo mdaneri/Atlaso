@@ -44,6 +44,7 @@ from atlaso.app.services.esxi_pxe import (
 from atlaso.app.services.network_boot import (
     acknowledge_inventory_command,
     active_network_boot_media,
+    available_network_boot_versions,
     NETWORK_BOOT_MEDIA_ROOT,
     NETWORK_BOOT_UPLOAD_MAX_BYTES,
     catalog_rows,
@@ -222,6 +223,13 @@ def list_network_boot_environments(
     db: Session = Depends(get_db),
 ) -> list[dict[str, Any]]:
     return catalog_rows(db)
+
+
+@router.get("/environments/available-versions")
+def list_available_network_boot_versions(
+    _identity: Annotated[Identity, Depends(require_api_or_session_scope("read:pxe"))],
+) -> list[dict[str, str]]:
+    return available_network_boot_versions()
 
 
 @router.patch("/environments/{environment_key}")

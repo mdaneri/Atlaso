@@ -9481,7 +9481,7 @@ function initializeEsxiInstallerIsosTable() {
   const element = document.getElementById("esxi-installer-isos-table");
   if (!(element instanceof HTMLElement)) return;
   const canWrite = element.dataset.canWrite === "true";
-  const addRow = { path: "__new__", name: "", relative_path: "", source_label: "", source_at: "", size_bytes: 0, is_new: true };
+  const addRow = { path: "__new__", name: "", relative_path: "", esx_version: "", esx_build: "", source_label: "", source_at: "", size_bytes: 0, is_new: true };
   const openUpload = (launcher) => {
     if (!canWrite || !esxiIsoUploadWizard) return;
     esxiIsoUploadWizard.open({ launcher, context: {} }).catch((error) => {
@@ -9527,6 +9527,17 @@ function initializeEsxiInstallerIsosTable() {
           formatter: (cell) => cell.getRow().getData().is_new
             ? '<button class="add-row-button" type="button" data-esxi-iso-wizard-add>+ Add ESX ISO</button>'
             : escapeHtml(cell.getValue() || ""),
+        },
+        {
+          title: "ESX version",
+          field: "esx_version",
+          minWidth: 160,
+          formatter: (cell) => {
+            const data = cell.getRow().getData();
+            if (data.is_new) return "";
+            if (!data.esx_version) return "Not reported";
+            return escapeHtml(data.esx_build ? `${data.esx_version} (build ${data.esx_build})` : data.esx_version);
+          },
         },
         { title: "Relative path", field: "relative_path", minWidth: 260, formatter: (cell) => cell.getRow().getData().is_new ? "" : `<code>${escapeHtml(cell.getValue())}</code>`, widthGrow: 1.2 },
         { title: "Source", field: "source_label", minWidth: 150, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || "") },
@@ -19379,11 +19390,16 @@ function initializeNetworkBootPage() {
   hostDialog?.querySelector("[data-network-boot-remove]")?.addEventListener("click", () => removeHost(selectedHost));
   const persistEnvironmentState = async (row, enabled) => {
     const data = row.getData();
+    const availability = {
+      available_version: data.available_version || "",
+      available_status: data.available_status || "checking",
+      available_checked_at: data.available_checked_at || "",
+    };
     const updated = await networkBootRequest(`/api/v1/network-boot/environments/${data.key}`, {
       method: "PATCH",
       body: JSON.stringify({ enabled, desired_version: data.desired_version || "" }),
     });
-    await row.update(updated);
+    await row.update({ ...updated, ...availability });
     return updated;
   };
   const updateEnvironment = async (cell) => {
@@ -19436,7 +19452,7 @@ function initializeNetworkBootPage() {
     }
     uploadDialog.showModal();
   };
-  window.AtlasoUiPatterns.createGrid({
+  const environmentGrid = window.AtlasoUiPatterns.createGrid({
     element: environmentsElement,
     fallback: `#${environmentsElement.dataset.fallbackId}`,
     pattern: "direct-edit",
@@ -19510,6 +19526,17 @@ function initializeNetworkBootPage() {
           minWidth: 150,
           formatter: (cell) => escapeHtml(cell.getValue()?.[0]?.version || "Not installed"),
         },
+        {
+          title: "Latest available",
+          field: "available_version",
+          minWidth: 160,
+          formatter: (cell) => {
+            const data = cell.getRow().getData();
+            if (data.available_status === "checking") return "Checking...";
+            if (!data.available_version) return "Unavailable";
+            return escapeHtml(data.available_status === "stale" ? `${data.available_version} (cached)` : data.available_version);
+          },
+        },
         { title: "Active version", field: "active_version", minWidth: 140 },
         { title: "Media ready", field: "media_ready", width: 110, formatter: (cell) => atlasoBooleanFormatter(cell) },
         {
@@ -19534,6 +19561,19 @@ function initializeNetworkBootPage() {
       ],
     },
   });
+  const environmentTable = environmentGrid.table;
+  networkBootRequest("/api/v1/network-boot/environments/available-versions")
+    .then(async (availableVersions) => {
+      for (const available of availableVersions) {
+        const target = environmentTable?.getRow(available.key);
+        if (target) await target.update(available);
+      }
+    })
+    .catch(async () => {
+      for (const row of environmentTable?.getRows?.() || []) {
+        await row.update({ available_version: "", available_status: "unavailable" });
+      }
+    });
   uploadDialog?.querySelector("[data-network-boot-upload-close]")?.addEventListener("click", () => uploadDialog.close());
   uploadForm?.addEventListener("submit", (event) => {
     event.preventDefault();

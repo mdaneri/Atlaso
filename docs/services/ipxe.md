@@ -172,6 +172,12 @@ deployment bridge repairs that dependency on older test appliances before
 installing the new wheel. The **Source** column
 names and links to the authoritative release history from which Atlaso resolves
 each download; Inventory Linux points to its independent release history.
+The **Latest available** column resolves the current stable version from those
+same authoritative metadata endpoints after the grid loads. Atlaso caches a
+successful lookup for 15 minutes, labels a retained value as cached when a
+later refresh fails, and retries unavailable sources after one minute. This
+metadata-only lookup neither downloads media nor changes desired or applied
+state.
 The Boot Environments components table remains visible above the media-task
 history and reports all five fixed catalog rows even when no optional media is installed.
 
@@ -377,6 +383,11 @@ wizard-backed Installer ISOs grid and all Host Reference ISO selectors without
 reloading the page. Existing ISO removal remains a confirmed row action and
 clears desired-state references to the removed path; generated PXE artifacts
 change only after global appliance apply.
+The grid derives the displayed ESX version and optional build from standard
+VMware installer names such as
+`VMware-VMvisor-Installer-9.1.0.0100.25433460.x86_64.iso`. Media with a renamed
+or nonstandard filename remains usable but displays **Not reported** rather
+than guessing its version.
 
 ## ESX technical reference
 
