@@ -20231,7 +20231,11 @@ def esxi_pxe_page_context(
     error: str | None = None,
 ) -> dict[str, Any]:
     from atlaso.app.models import NetworkBootDiscoveredHost
-    from atlaso.app.services.network_boot import catalog_rows, host_to_dict as inventory_host_to_dict
+    from atlaso.app.services.network_boot import (
+        catalog_rows,
+        esxi_host_assignments_by_mac,
+        host_to_dict as inventory_host_to_dict,
+    )
 
     context = esxi_pxe_context(db)
     kickstarts = context["esxi_kickstarts"]
@@ -20249,6 +20253,7 @@ def esxi_pxe_page_context(
             NetworkBootDiscoveredHost.id,
         )
     ).scalars().all()
+    inventory_assignments_by_mac = esxi_host_assignments_by_mac(db)
     media_jobs = db.execute(
         select(Job)
         .options(selectinload(Job.steps))
@@ -20265,7 +20270,8 @@ def esxi_pxe_page_context(
         "network_boot_can_write": identity.can("write:pxe"),
         "network_boot_environments": catalog_rows(db),
         "network_boot_discovered_hosts": [
-            inventory_host_to_dict(db, row) for row in discovered_hosts
+            inventory_host_to_dict(db, row, assignments_by_mac=inventory_assignments_by_mac)
+            for row in discovered_hosts
         ],
         "network_boot_media_tasks": [_task_row(job, identity) for job in media_jobs],
         "task_component_filter_options": _task_component_filter_options(db),
@@ -21163,9 +21169,17 @@ async def upload_esxi_installer_iso_from_ui(
             },
             status_code=status_code,
         )
-    record_audit(db, actor=identity.username, action="upload_esxi_installer_iso", resource_type="esxi_installer_iso", resource_id=iso["relative_path"], detail=f"path={iso['path']} size={iso['size_bytes']}", request_id=request.state.request_id)
+    upload_event = record_audit(db, actor=identity.username, action="upload_esxi_installer_iso", resource_type="esxi_installer_iso", resource_id=iso["relative_path"], detail=f"path={iso['path']} size={iso['size_bytes']}", request_id=request.state.request_id)
     if wants_json:
-        return JSONResponse({"status": "uploaded", **iso})
+        return JSONResponse(
+            {
+                "status": "uploaded",
+                **iso,
+                "source": "uploaded",
+                "source_label": "Uploaded by user",
+                "source_at": upload_event.created_at.isoformat(),
+            }
+        )
     return RedirectResponse("/esxi-pxe#esxi-pxe-isos-panel", status_code=303)
 
 

@@ -2430,6 +2430,9 @@ function clearEsxiHostError() {
 }
 
 let esxiHostReferenceWizard = null;
+let esxiInstallerIsosTable = null;
+let esxiIsoUploadWizard = null;
+let networkBootDiscoveredHostRefresh = null;
 
 function esxiHostMacKey(value) {
   return String(value || "").toLowerCase().replace(/[:-]/g, "").replace(/\./g, "");
@@ -2453,6 +2456,54 @@ function esxiSuggestedHostname(host) {
     .replace(/^-|-$/g, "");
 }
 
+function esxiHostVariableRows(value) {
+  let variables = value;
+  if (typeof variables === "string") {
+    try {
+      variables = JSON.parse(variables || "{}");
+    } catch (_error) {
+      variables = {};
+    }
+  }
+  if (!variables || Array.isArray(variables) || typeof variables !== "object") variables = {};
+  return Object.entries(variables).map(([name, variableValue], index) => ({
+    id: `variable-${index}`,
+    name: String(name || "").replace(/^custom\./, ""),
+    value: variableValue == null ? "" : String(variableValue),
+    is_new: false,
+  }));
+}
+
+function newEsxiHostVariableRow() {
+  return { id: "__new__", name: "", value: "", is_new: true };
+}
+
+function parseEsxiHostVariableRows(rows) {
+  const variables = {};
+  for (const row of rows || []) {
+    let name = String(row?.name || "").trim();
+    if (!name && row?.is_new) continue;
+    if (name.startsWith("custom.")) name = name.slice("custom.".length);
+    if (name.startsWith("host.") || name.startsWith("dhcp.") || name.startsWith("pxe.")) {
+      return { valid: false, message: `Host variable ${name} cannot override built-in variables.` };
+    }
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+      return { valid: false, message: `Host variable ${name || "name"} must use letters, numbers, and underscores.` };
+    }
+    if (name.length > 80) return { valid: false, message: `Host variable ${name} is too long.` };
+    if (Object.prototype.hasOwnProperty.call(variables, name)) {
+      return { valid: false, message: `Host variable ${name} is duplicated.` };
+    }
+    const value = String(row?.value ?? "");
+    if (value.length > 2048) return { valid: false, message: `Host variable ${name} value is too long.` };
+    variables[name] = value;
+  }
+  if (Object.keys(variables).length > 64) {
+    return { valid: false, message: "Host variables are limited to 64 entries." };
+  }
+  return { valid: true, variables: Object.fromEntries(Object.entries(variables).sort(([left], [right]) => left.localeCompare(right))) };
+}
+
 function initializeEsxiHostReferenceWizard() {
   const dialog = document.getElementById("network-boot-promote-dialog");
   const form = dialog?.querySelector("[data-network-boot-promote-form]");
@@ -2470,11 +2521,20 @@ function initializeEsxiHostReferenceWizard() {
   const discoveredHostSelect = form.elements.discovered_host_id;
   const discoveredMacSelect = form.elements.discovered_mac_address;
   const manualMacInput = form.elements.manual_mac_address;
+  const variablesElement = document.getElementById("esxi-host-variables-table");
+  const variablesStatus = form.querySelector("[data-esxi-host-variables-status]");
+  const installerIsoSelect = form.elements.installer_iso_path;
+  const enabledInput = form.elements.enabled;
   const canPromote = discoveredTableElement?.dataset.canWrite === "true";
-  const discoveredRows = JSON.parse(discoveredTableElement?.dataset.rows || "[]");
+  const discoveredRows = () => {
+    const tableRows = discoveredTableElement?.atlasoTabulator?.getData?.();
+    return Array.isArray(tableRows) ? tableRows : JSON.parse(discoveredTableElement?.dataset.rows || "[]");
+  };
   let activeContext = null;
   let discoveredSelectionSequence = 0;
   let pendingDiscoveredSelection = null;
+  let variablesTable = null;
+  let enabledWasEdited = false;
 
   const toggleField = (field, hidden) => {
     if (!(field instanceof HTMLElement)) return;
@@ -2494,7 +2554,7 @@ function initializeEsxiHostReferenceWizard() {
     return [...new Set([...(host?.macs || []), host?.boot_mac].filter(Boolean))]
       .filter((mac) => isValidEsxiHostMac(mac) && !used.has(esxiHostMacKey(mac)));
   };
-  const eligibleDiscoveredHosts = () => discoveredRows.filter((host) => availableMacs(host).length > 0);
+  const eligibleDiscoveredHosts = () => discoveredRows().filter((host) => availableMacs(host).length > 0);
   const setSourceMode = (source, { showSource = true, showDiscoveredHost = true } = {}) => {
     const discovered = source === "discovered";
     sourceSelect.value = discovered ? "discovered" : "manual";
@@ -2554,18 +2614,85 @@ function initializeEsxiHostReferenceWizard() {
       if (pendingDiscoveredSelection === pending) pendingDiscoveredSelection = null;
     }
   };
-  const parseVariables = () => {
-    let variables;
-    try {
-      variables = JSON.parse(form.elements.variables.value || "{}");
-    } catch (_error) {
-      return { valid: false, message: "Variables must be a JSON object.", field: "variables" };
-    }
-    if (!variables || Array.isArray(variables) || typeof variables !== "object") {
-      return { valid: false, message: "Variables must be a JSON object.", field: "variables" };
-    }
-    return { valid: true, variables };
+  const setVariablesStatus = (message, state = "idle") => {
+    if (!(variablesStatus instanceof HTMLElement)) return;
+    variablesStatus.textContent = message;
+    variablesStatus.dataset.state = state;
   };
+  const syncVariables = () => {
+    const parsed = parseEsxiHostVariableRows(variablesTable?.getData?.() || []);
+    if (parsed.valid) {
+      form.elements.variables.value = JSON.stringify(parsed.variables);
+      setVariablesStatus(
+        Object.keys(parsed.variables).length ? `${Object.keys(parsed.variables).length} host variable${Object.keys(parsed.variables).length === 1 ? "" : "s"} configured.` : "Add only non-secret host-specific overrides.",
+        "saved",
+      );
+    } else {
+      setVariablesStatus(parsed.message, "error");
+    }
+    return parsed;
+  };
+  const parseVariables = syncVariables;
+  const loadVariables = async (value) => {
+    const rows = [...esxiHostVariableRows(value), newEsxiHostVariableRow()];
+    if (variablesTable?.replaceData) await variablesTable.replaceData(rows);
+    return syncVariables();
+  };
+  if (variablesElement instanceof HTMLElement) {
+    const variableGrid = window.AtlasoUiPatterns.createGrid({
+      element: variablesElement,
+      fallback: `#${variablesElement.dataset.fallbackId}`,
+      pattern: "direct-edit",
+      options: {
+        data: [newEsxiHostVariableRow()],
+        index: "id",
+        layout: "fitColumns",
+        height: "220px",
+        placeholder: "No host-specific variables configured.",
+        rowContextMenu: [{
+          label: "Delete variable",
+          disabled: (component) => component.getData().is_new,
+          action: async (_event, row) => {
+            await row.delete();
+            syncVariables();
+          },
+        }],
+        columns: [
+          {
+            title: "Key",
+            field: "name",
+            editor: "input",
+            formatter: (cell) => cell.getRow().getData().is_new
+              ? '<span class="add-row-button">+ Add variable here</span>'
+              : escapeHtml(cell.getValue() || ""),
+            cellEdited: async (cell) => {
+              const row = cell.getRow();
+              const data = row.getData();
+              if (data.is_new && String(data.name || "").trim()) {
+                await row.update({ id: `variable-${Date.now()}`, is_new: false });
+                await variablesTable.addRow(newEsxiHostVariableRow(), false);
+              }
+              syncVariables();
+            },
+            minWidth: 190,
+          },
+          {
+            title: "Value",
+            field: "value",
+            editor: "input",
+            editable: (cell) => !cell.getRow().getData().is_new,
+            formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || ""),
+            cellEdited: syncVariables,
+            minWidth: 280,
+            widthGrow: 1.4,
+          },
+        ],
+        rowFormatter: (row) => markNewRecordRow(row, "name"),
+      },
+    });
+    variablesTable = variableGrid.table;
+    variablesElement.atlasoTabulator = variablesTable;
+  }
   const selectedMac = () => sourceSelect.value === "discovered"
     ? discoveredMacSelect.value
     : manualMacInput.value;
@@ -2607,9 +2734,11 @@ function initializeEsxiHostReferenceWizard() {
       form.elements.ip_address.value = "";
       form.elements.kickstart_id.value = "";
       form.elements.variables.value = "{}";
-      form.elements.enabled.checked = mode === "create";
+      enabledWasEdited = mode === "edit";
       const firstIso = [...form.elements.installer_iso_path.options].find((option) => option.value);
-      form.elements.installer_iso_path.value = mode === "create" ? (firstIso?.value || "") : "";
+      form.elements.installer_iso_path.value = mode === "edit" ? "" : (firstIso?.value || "");
+      form.elements.enabled.checked = Boolean(form.elements.installer_iso_path.value);
+      await loadVariables("{}");
 
       if (mode === "edit") {
         const host = activeContext.host;
@@ -2622,6 +2751,7 @@ function initializeEsxiHostReferenceWizard() {
         form.elements.installer_iso_path.value = host.installer_iso_path || "";
         form.elements.variables.value = host.variables_json || "{}";
         form.elements.enabled.checked = Boolean(host.enabled);
+        await loadVariables(host.variables_json || "{}");
         if (wizardTitle) wizardTitle.textContent = "Edit Host Reference";
         if (submitButton) submitButton.textContent = "Save host reference";
         return;
@@ -2630,6 +2760,7 @@ function initializeEsxiHostReferenceWizard() {
       if (mode === "promote") {
         setSourceMode("discovered", { showSource: false, showDiscoveredHost: false });
         activeContext.discoveredHost = applyDiscoveredIdentity(await loadDiscoveredIdentity(activeContext.discoveredHost));
+        form.elements.enabled.checked = Boolean(form.elements.installer_iso_path.value);
         if (wizardTitle) wizardTitle.textContent = "Promote discovered host";
         if (submitButton) submitButton.textContent = "Promote host";
         return;
@@ -2723,9 +2854,19 @@ function initializeEsxiHostReferenceWizard() {
         );
         resource = result.host;
       }
-      await Promise.resolve(activeContext.onSaved?.(resource));
+      if (activeContext.onSaved) await Promise.resolve(activeContext.onSaved(resource));
+      else {
+        const table = hostTableElement?.atlasoTabulator;
+        const normalized = { ...resource, is_new: false, is_default: false };
+        const existing = table?.getRow?.(resource.id) || table?.getRow?.(Number(resource.id));
+        if (existing) await existing.update(normalized);
+        else await table?.addRow?.(normalized, true, "new");
+        document.querySelector('[data-tab-target="network-boot-kickstarts-panel"]')?.click();
+        document.querySelector('[data-tab-target="esxi-pxe-hosts-panel"]')?.click();
+        window.history.replaceState(null, "", "#esxi-pxe-hosts-panel");
+      }
+      await networkBootDiscoveredHostRefresh?.refresh?.();
       showEsxiHostSuccess(activeContext.mode === "edit" ? "Host Reference updated" : "Host Reference created");
-      if (!activeContext.onSaved) window.location.reload();
       return { valid: true };
     },
   });
@@ -2744,6 +2885,12 @@ function initializeEsxiHostReferenceWizard() {
   });
   discoveredHostSelect.addEventListener("change", () => {
     selectDiscoveredHost().catch((error) => esxiHostReferenceWizard.setError(error.message, "discovered_host_id"));
+  });
+  enabledInput.addEventListener("change", () => {
+    enabledWasEdited = true;
+  });
+  installerIsoSelect.addEventListener("change", () => {
+    if (!enabledWasEdited && installerIsoSelect.value) enabledInput.checked = true;
   });
 }
 
@@ -9222,11 +9369,13 @@ function initializeEsxiPxeHostsTable() {
           cellEdited: (cell) => autoSaveEsxiHost(cell, csrf),
         },
         {
-          title: "Variables JSON",
+          title: "Variables",
           field: "variables_json",
           formatter: (cell) => {
             const data = cell.getRow().getData();
-            return data.is_default || data.is_new ? "" : `<code>${escapeHtml(cell.getValue() || "{}")}</code>`;
+            if (data.is_default || data.is_new) return "";
+            const count = esxiHostVariableRows(cell.getValue() || "{}").length;
+            return `${count} override${count === 1 ? "" : "s"}`;
           },
           minWidth: 240,
         },
@@ -9326,40 +9475,66 @@ function initializeEsxiInstallerIsosTable() {
   const element = document.getElementById("esxi-installer-isos-table");
   if (!(element instanceof HTMLElement)) return;
   const canWrite = element.dataset.canWrite === "true";
-  window.AtlasoUiPatterns.createGrid({
+  const addRow = { path: "__new__", name: "", relative_path: "", source_label: "", source_at: "", size_bytes: 0, is_new: true };
+  const openUpload = (launcher) => {
+    if (!canWrite || !esxiIsoUploadWizard) return;
+    esxiIsoUploadWizard.open({ launcher, context: {} }).catch((error) => {
+      showTransientGridStatus(error instanceof Error ? error.message : "The Add ESX ISO wizard could not be opened.");
+    });
+  };
+  const grid = window.AtlasoUiPatterns.createGrid({
     element,
     fallback: `#${element.dataset.fallbackId}`,
-    pattern: "direct-edit",
+    pattern: "wizard-backed",
     permission: {
       allowed: canWrite,
       message: "You have read-only access to ESXi installer ISOs.",
     },
+    onOpenRow: canWrite ? (data, row, event) => {
+      if (data.is_new) openUpload(event?.currentTarget || row?.getElement?.());
+    } : null,
+    rowActions: canWrite ? [
+      {
+        label: "Delete installer ISO",
+        disabled: (component) => component.getData().is_new,
+        action: async (_event, row) => {
+          try {
+            await deleteEsxiInstallerIso(row, element.dataset.csrf || "");
+          } catch (error) {
+            showTransientGridStatus(error instanceof Error ? error.message : "The installer ISO could not be deleted.");
+          }
+        },
+      },
+    ] : [],
     options: {
-      data: JSON.parse(element.dataset.rows || "[]"),
+      data: [...JSON.parse(element.dataset.rows || "[]"), ...(canWrite ? [addRow] : [])],
       index: "path",
       layout: "fitColumns",
       height: "calc(100vh - 300px)",
       placeholder: "No installer ISOs found.",
-      rowContextMenu: canWrite ? [
-        {
-          label: "Delete installer ISO",
-          action: async (_event, row) => {
-            try {
-              await deleteEsxiInstallerIso(row, element.dataset.csrf || "");
-            } catch (error) {
-              showTransientGridStatus(error instanceof Error ? error.message : "The installer ISO could not be deleted.");
-            }
-          },
-        },
-      ] : false,
       columns: [
-        { title: "Name", field: "name", minWidth: 260, widthGrow: 1.4 },
-        { title: "Relative path", field: "relative_path", minWidth: 260, formatter: (cell) => `<code>${escapeHtml(cell.getValue())}</code>`, widthGrow: 1.2 },
-        { title: "Source", field: "source_label", minWidth: 150 },
-        { title: "Source date", field: "source_at", minWidth: 190 },
-        { title: "Size", field: "size_bytes", minWidth: 120, formatter: (cell) => formatMonitorBytes(cell.getValue()) },
+        {
+          title: "Name",
+          field: "name",
+          minWidth: 260,
+          widthGrow: 1.4,
+          formatter: (cell) => cell.getRow().getData().is_new
+            ? '<button class="add-row-button" type="button" data-esxi-iso-wizard-add>+ Add ESX ISO</button>'
+            : escapeHtml(cell.getValue() || ""),
+        },
+        { title: "Relative path", field: "relative_path", minWidth: 260, formatter: (cell) => cell.getRow().getData().is_new ? "" : `<code>${escapeHtml(cell.getValue())}</code>`, widthGrow: 1.2 },
+        { title: "Source", field: "source_label", minWidth: 150, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || "") },
+        { title: "Source date", field: "source_at", minWidth: 190, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || "") },
+        { title: "Size", field: "size_bytes", minWidth: 120, formatter: (cell) => cell.getRow().getData().is_new ? "" : formatMonitorBytes(cell.getValue()) },
       ],
+      rowFormatter: (row) => markNewRecordRow(row, "name"),
     },
+  });
+  esxiInstallerIsosTable = grid.table;
+  element.atlasoTabulator = esxiInstallerIsosTable;
+  element.addEventListener("click", (event) => {
+    const launcher = event.target.closest("[data-esxi-iso-wizard-add]");
+    if (launcher instanceof HTMLButtonElement) openUpload(launcher);
   });
 }
 
@@ -13506,91 +13681,118 @@ function initializeFileUploadControls() {
 }
 
 function initializeEsxiIsoUploadForms() {
-  document.querySelectorAll("[data-esxi-iso-upload]").forEach((form) => {
-    if (!(form instanceof HTMLFormElement) || form.dataset.esxiIsoUploadInitialized === "1") {
-      return;
-    }
-    form.dataset.esxiIsoUploadInitialized = "1";
-    const fileInput = form.querySelector('input[type="file"][name="iso_file"]');
-    const button = form.querySelector("[data-esxi-iso-upload-button]");
-    const progress = form.querySelector("[data-esxi-iso-upload-progress]");
-    const status = form.querySelector("[data-esxi-iso-upload-status]");
-    const setStatus = (message, state = "idle") => {
-      if (status instanceof HTMLElement) {
-        status.textContent = message;
-        status.dataset.state = state;
-      }
-    };
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      if (!(fileInput instanceof HTMLInputElement) || !fileInput.files || fileInput.files.length < 1) {
-        setStatus("Choose an ESXi installer ISO before uploading.", "error");
-        return;
-      }
-      const file = fileInput.files[0];
-      if (!file.name.toLowerCase().endsWith(".iso")) {
-        setStatus("Choose a .iso installer file.", "error");
-        return;
-      }
-      const xhr = new XMLHttpRequest();
-      xhr.open("POST", form.action);
-      xhr.setRequestHeader("X-Atlaso-Upload", "1");
-      xhr.upload.addEventListener("loadstart", () => {
-        if (progress instanceof HTMLProgressElement) {
-          progress.hidden = false;
-          progress.value = 0;
-        }
-        if (button instanceof HTMLButtonElement) {
-          button.disabled = true;
-        }
-        setStatus(`Uploading ${file.name}...`, "saving");
-      });
-      xhr.upload.addEventListener("progress", (progressEvent) => {
-        if (progress instanceof HTMLProgressElement && progressEvent.lengthComputable) {
-          const percent = Math.max(0, Math.min(100, Math.round((progressEvent.loaded / progressEvent.total) * 100)));
-          progress.value = percent;
-          setStatus(`Uploading ${file.name}: ${percent}%`, "saving");
-        }
-      });
-      xhr.addEventListener("load", () => {
-        let payload = {};
-        try {
-          payload = xhr.responseText ? JSON.parse(xhr.responseText) : {};
-        } catch (_error) {
-          payload = {};
-        }
-        if (xhr.status >= 200 && xhr.status < 300) {
-          const uploadedName = payload.name || file.name;
-          setStatus(`${uploadedName} uploaded. Refreshing ISO choices...`, "saved");
-          rememberActiveTab("atlaso:esxi-pxe:active-tab", "esxi-pxe-isos-panel");
-          if (window.location.pathname === "/esxi-pxe") {
-            window.location.hash = "esxi-pxe-isos-panel";
-            window.location.reload();
-          } else {
-            window.location.href = "/esxi-pxe#esxi-pxe-isos-panel";
-          }
-          return;
-        }
-        const message =
-          payload.detail ||
-          (xhr.status === 413
-            ? "Upload is too large. ESXi installer ISO uploads are limited to 1 GB."
-            : `Upload failed with HTTP ${xhr.status}.`);
-        setStatus(message, "error");
-      });
-      xhr.addEventListener("error", () => {
-        setStatus("Upload failed before Atlaso received the file. Check appliance connectivity and upload size.", "error");
-      });
-      xhr.addEventListener("abort", () => {
-        setStatus("Upload canceled.", "error");
-      });
-      xhr.addEventListener("loadend", () => {
-        if (button instanceof HTMLButtonElement) {
-          button.disabled = false;
-        }
-      });
-      xhr.send(new FormData(form));
+  const form = document.querySelector("[data-esxi-iso-upload]");
+  const dialog = document.getElementById("esxi-iso-upload-dialog");
+  if (!(form instanceof HTMLFormElement) || !(dialog instanceof HTMLDialogElement)) return;
+  const fileInput = form.elements.iso_file;
+  const progress = form.querySelector("[data-esxi-iso-upload-progress]");
+  const status = form.querySelector("[data-esxi-iso-upload-status]");
+  const reviewName = form.querySelector("[data-esxi-iso-review-name]");
+  const reviewSize = form.querySelector("[data-esxi-iso-review-size]");
+  const setStatus = (message, state = "idle") => {
+    if (!(status instanceof HTMLElement)) return;
+    status.textContent = message;
+    status.dataset.state = state;
+  };
+  const selectedFile = () => fileInput instanceof HTMLInputElement ? fileInput.files?.[0] : null;
+  const updateIsoConsumers = (uploaded) => {
+    document.querySelectorAll('select[name="installer_iso_path"]').forEach((select) => {
+      if (!(select instanceof HTMLSelectElement)) return;
+      const existing = [...select.options].find((option) => option.value === uploaded.path);
+      const label = `${uploaded.relative_path || uploaded.name} (${uploaded.source_label || "Uploaded by user"})`;
+      if (existing) existing.textContent = label;
+      else select.add(new Option(label, uploaded.path));
     });
+    const summary = document.querySelector("[data-esxi-pxe-summary]");
+    if (summary instanceof HTMLElement) {
+      const count = Number(summary.dataset.isoCount || "0") + 1;
+      summary.dataset.isoCount = String(count);
+      summary.textContent = `${summary.dataset.kickstartCount || "0"} Kickstarts / ${count} ISOs`;
+    }
+  };
+  const upload = (file) => new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", form.action);
+    xhr.setRequestHeader("X-Atlaso-Upload", "1");
+    xhr.upload.addEventListener("loadstart", () => {
+      if (progress instanceof HTMLProgressElement) {
+        progress.hidden = false;
+        progress.value = 0;
+      }
+      setStatus(`Uploading ${file.name}...`, "saving");
+    });
+    xhr.upload.addEventListener("progress", (event) => {
+      if (!(progress instanceof HTMLProgressElement) || !event.lengthComputable) return;
+      const percent = Math.max(0, Math.min(100, Math.round((event.loaded / event.total) * 100)));
+      progress.value = percent;
+      setStatus(`Uploading ${file.name}: ${percent}%`, "saving");
+    });
+    xhr.addEventListener("load", () => {
+      let payload = {};
+      try {
+        payload = xhr.responseText ? JSON.parse(xhr.responseText) : {};
+      } catch (_error) {
+        payload = {};
+      }
+      if (xhr.status >= 200 && xhr.status < 300 && payload.path) {
+        resolve(payload);
+        return;
+      }
+      reject(new Error(payload.detail || (xhr.status === 413
+        ? "Upload is too large. ESX installer ISO uploads are limited to 1 GB."
+        : `Upload failed with HTTP ${xhr.status}.`)));
+    });
+    xhr.addEventListener("error", () => reject(new Error("Upload failed before Atlaso received the file. Check appliance connectivity and upload size.")));
+    xhr.addEventListener("abort", () => reject(new Error("Upload canceled.")));
+    xhr.send(new FormData(form));
+  });
+  esxiIsoUploadWizard = window.AtlasoUiPatterns.createWizard({
+    form,
+    dialog,
+    steps: [
+      { id: "file", title: "Choose an ESX installer ISO", description: "Select one ISO to add to the shared ESX_HOST media folder." },
+      { id: "review", title: "Review the ESX installer ISO", description: "Confirm the file and desired-state boundary before upload." },
+    ],
+    discardTitle: "Discard ESX ISO upload?",
+    discardMessage: "The selected installer ISO will not be uploaded.",
+    onOpen: () => {
+      form.reset();
+      if (progress instanceof HTMLProgressElement) {
+        progress.hidden = true;
+        progress.value = 0;
+      }
+      setStatus("Ready to upload the reviewed ISO.");
+    },
+    validateStep: ({ step }) => {
+      if (step.id !== "file") return { valid: true };
+      const file = selectedFile();
+      if (!file) return { valid: false, message: "Choose an ESX installer ISO before continuing.", field: "iso_file" };
+      if (!file.name.toLowerCase().endsWith(".iso")) return { valid: false, message: "Choose a .iso installer file.", field: "iso_file" };
+      return { valid: true };
+    },
+    prepareReview: () => {
+      const file = selectedFile();
+      if (reviewName instanceof HTMLElement) reviewName.textContent = file?.name || "Not selected";
+      if (reviewSize instanceof HTMLElement) reviewSize.textContent = file ? formatMonitorBytes(file.size) : "Not available";
+    },
+    onSubmit: async () => {
+      const file = selectedFile();
+      if (!file) return { valid: false, message: "Choose an ESX installer ISO.", step: "file", field: "iso_file" };
+      try {
+        const uploaded = { ...(await upload(file)), is_new: false };
+        const existing = esxiInstallerIsosTable?.getRow?.(uploaded.path);
+        if (existing) await existing.update(uploaded);
+        else await esxiInstallerIsosTable?.addRow?.(uploaded, true, "__new__");
+        updateIsoConsumers(uploaded);
+        setStatus(`${uploaded.name || file.name} uploaded.`, "saved");
+        showTransientGridStatus(`${uploaded.name || file.name} added to ESX installer ISOs.`);
+        return { valid: true };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "The ESX installer ISO could not be uploaded.";
+        setStatus(message, "error");
+        return { valid: false, message, step: "review" };
+      }
+    },
   });
 }
 
@@ -18909,6 +19111,58 @@ function renderNetworkBootReport(article, historyItem) {
   ], legacyReport ? "USB device details were not reported by the legacy v1 inventory schema." : "No USB devices were reported.");
 }
 
+function initializeNetworkBootDiscoveredHostRefresh(
+  hostsTable,
+  statusElement,
+  { request = networkBootRequest, refreshMilliseconds = 5000 } = {},
+) {
+  if (!hostsTable || typeof hostsTable.replaceData !== "function") return null;
+  let timer = 0;
+  let refreshing = false;
+  const setStatus = (message = "") => {
+    if (!(statusElement instanceof HTMLElement)) return;
+    statusElement.textContent = message;
+    statusElement.dataset.state = message ? "error" : "ready";
+    statusElement.hidden = !message;
+  };
+  const schedule = () => {
+    window.clearTimeout(timer);
+    if (document.visibilityState !== "hidden") {
+      timer = window.setTimeout(refresh, refreshMilliseconds);
+    }
+  };
+  const refresh = async () => {
+    if (refreshing || document.visibilityState === "hidden") return;
+    refreshing = true;
+    try {
+      const hosts = await request("/api/v1/network-boot/hosts");
+      await hostsTable.replaceData(hosts);
+      setStatus();
+    } catch (error) {
+      setStatus(error instanceof Error
+        ? `Automatic refresh unavailable: ${error.message} Showing the last received host list.`
+        : "Automatic refresh unavailable. Showing the last received host list.");
+    } finally {
+      refreshing = false;
+      schedule();
+    }
+  };
+  const handleVisibilityChange = () => {
+    window.clearTimeout(timer);
+    if (document.visibilityState !== "hidden") return refresh();
+    return undefined;
+  };
+  document.addEventListener("visibilitychange", handleVisibilityChange);
+  schedule();
+  return {
+    refresh,
+    stop() {
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    },
+  };
+}
+
 function initializeNetworkBootPage() {
   const hostsElement = document.getElementById("network-boot-discovered-table");
   const environmentsElement = document.getElementById("network-boot-environments-table");
@@ -18928,6 +19182,7 @@ function initializeNetworkBootPage() {
   const uploadProgress = uploadDialog?.querySelector("[data-network-boot-upload-progress]");
   const uploadStatus = uploadDialog?.querySelector("[data-network-boot-upload-status]");
   const uploadSubmit = uploadDialog?.querySelector("[data-network-boot-upload-submit]");
+  const discoveredStatus = document.querySelector("[data-network-boot-discovered-status]");
   let selectedHost = null;
   let selectedReport = null;
   let hostsTable = null;
@@ -19087,10 +19342,22 @@ function initializeNetworkBootPage() {
         { title: "NICs", field: "interface_count", width: 75, hozAlign: "right" },
         { title: "Last seen", field: "last_seen_at", minWidth: 170 },
         { title: "Session", field: "session_state", width: 100 },
+        {
+          title: "Assignment",
+          field: "assigned_to_esxi",
+          width: 125,
+          formatter: (cell) => cell.getValue()
+            ? '<span class="status-pill good">Assigned</span>'
+            : '<span class="status-pill neutral">Unassigned</span>',
+        },
+        { title: "ESXi host", field: "esxi_hostname", minWidth: 170, formatter: (cell) => escapeHtml(cell.getValue() || "Not assigned") },
+        { title: "ESXi IP", field: "esxi_ip_address", minWidth: 140, formatter: (cell) => escapeHtml(cell.getValue() || "Not assigned") },
       ],
     },
   });
   hostsTable = hostGrid.table;
+  networkBootDiscoveredHostRefresh?.stop?.();
+  networkBootDiscoveredHostRefresh = initializeNetworkBootDiscoveredHostRefresh(hostsTable, discoveredStatus);
   hostDialog?.querySelector("[data-network-boot-host-close]")?.addEventListener("click", () => hostDialog.close());
   window.addEventListener("afterprint", clearReportPrintState);
   hostDialog?.addEventListener("close", clearReportPrintState);

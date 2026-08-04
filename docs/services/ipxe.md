@@ -113,6 +113,12 @@ rejected rather than retained partially.
 
 The **Discovered Hosts** grid is read-only and keeps a 300 px desktop or 240 px
 narrow-viewport working area above the separately framed media task history.
+While the Network Boot page is visible, Atlaso refreshes the grid every five
+seconds and refreshes it immediately when the browser tab becomes visible
+again. A newly submitted Inventory Linux report therefore appears without a
+page reload. Refreshes retain the current grid sort, filter, and scroll context;
+if a background request fails, Atlaso keeps the last received host list and
+shows a recoverable refresh message.
 Double-click a row or focus it and press Enter to open its semantic hardware
 report. A compact history selector switches among retained reports without
 reloading the page. The selected report covers all available system, firmware,
@@ -132,7 +138,9 @@ host**, or **Remove discovered host**. Wake, reboot, and removal share Atlaso's
 confirmation flow. Reboot is available only for an online Inventory Linux
 session. Removal transactionally deletes that discovered host's commands,
 sessions, and reports, but retains any separately promoted ESXi desired-state
-reference. Promotion requires explicit hostname, a discovered MAC, address,
+reference. The grid marks a discovered host as **Assigned** when one of its
+reported MACs matches an ESXi Host Reference and shows the assigned ESXi
+hostname and IP address. Promotion requires explicit hostname, a discovered MAC, address,
 Kickstart, installer ISO, variables, and enabled-state review. It creates
 desired state only.
 
@@ -330,11 +338,15 @@ available MAC addresses, and its latest assigned address. Select **Manual host**
 instead to enter a hostname, MAC address, and optional IP address directly.
 
 The remaining steps select the Kickstart, installer ISO, non-secret variables,
-and desired Enabled state before showing the final review. New references opened
-from the Host References add row default to Enabled. Promotion opened directly
-from a discovered-host action retains its explicit disabled default. Saving
-creates or updates desired state only; use the global **Review appliance
-changes** workflow to enforce it on the appliance.
+and desired Enabled state before showing the final review. Host-specific
+variables use a direct-edit key/value grid that validates the same 64-entry,
+name, namespace, and value-length contract as the server; its JSON storage is
+an implementation detail. When an installer ISO is selected, a new reference
+or promotion defaults to Enabled. An administrator can still turn Enabled off
+explicitly, and editing preserves the saved state. Saving creates or updates
+the Host References grid immediately without a page reload and refreshes the
+matching discovered-host assignment. Use the global **Review appliance
+changes** workflow to enforce desired state on the appliance.
 
 Double-click an existing reference or choose **Edit host reference** from its
 row menu to reopen the same workflow. The Enabled value remains directly
@@ -344,6 +356,15 @@ once**, **Wake host**, and **Delete host reference** where applicable. The
 Kickstart, installer ISO, and Enabled values. Manual add and edit require ESXi
 PXE write access; discovered-host promotion also requires Network Boot write
 access.
+
+Select **Installer ISOs** and use **+ Add ESX ISO** to open the standard
+two-step upload wizard. The wizard validates the selected `.iso`, shows its
+name, size, destination, and global-apply boundary for review, then reports
+upload progress. A successful upload inserts the new media into the
+wizard-backed Installer ISOs grid and all Host Reference ISO selectors without
+reloading the page. Existing ISO removal remains a confirmed row action and
+clears desired-state references to the removed path; generated PXE artifacts
+change only after global appliance apply.
 
 ## ESX technical reference
 
@@ -371,7 +392,7 @@ variable** control in the ESXi PXE tablist opens a two-step Definition and Revie
 row or choosing **Edit** from its context menu opens the same wizard, while **Remove** deletes the definition after
 confirmation. Each row records the variable name, an operator description on its own full-width row, and an optional
 default. Monaco offers those
-rows as concrete `{{custom.<name>}}` completions. A matching value in a Host References variables JSON object overrides
+rows as concrete `{{custom.<name>}}` completions. A matching value in a Host Reference variable override grid supersedes
 the default for that host; when no override exists, Atlaso renders the configured default. Removing a referenced
 definition makes the Kickstart invalid until the definition is restored or the marker is removed. Use vault markers
 instead of custom-variable defaults for credentials or other secrets.

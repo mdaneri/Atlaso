@@ -29,6 +29,7 @@ from sqlalchemy import delete, desc, func, select
 from sqlalchemy.orm import Session
 
 from atlaso.app.models import (
+    EsxiPxeHost,
     NetworkBootDiscoveredHost,
     NetworkBootEnvironment,
     NetworkBootHostBootOverride,
@@ -1320,8 +1321,23 @@ def host_to_dict(
     host: NetworkBootDiscoveredHost,
     *,
     include_report: bool = False,
+    assignments_by_mac: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     session = latest_live_session(db, host.id)
+    if assignments_by_mac is None:
+        assignments_by_mac = esxi_host_assignments_by_mac(db)
+    assignments: list[dict[str, Any]] = []
+    assigned_ids: set[int] = set()
+    for mac_address in sorted({*_macs(host), host.boot_mac} - {""}):
+        try:
+            normalized_mac = normalize_mac(mac_address)
+        except ValueError:
+            continue
+        assignment = assignments_by_mac.get(normalized_mac)
+        if assignment is not None and assignment["id"] not in assigned_ids:
+            assignments.append(assignment)
+            assigned_ids.add(assignment["id"])
+    assignment = assignments[0] if assignments else None
     payload: dict[str, Any] = {
         "id": host.id,
         "identity_key": host.identity_key,
@@ -1339,6 +1355,11 @@ def host_to_dict(
         "first_seen_at": host.first_seen_at.isoformat() if host.first_seen_at else "",
         "last_seen_at": host.last_seen_at.isoformat() if host.last_seen_at else "",
         "session_state": "online" if session else "offline",
+        "assigned_to_esxi": bool(assignment),
+        "esxi_host_id": assignment["id"] if assignment else None,
+        "esxi_hostname": assignment["hostname"] if assignment else "",
+        "esxi_ip_address": assignment["ip_address"] if assignment else "",
+        "esxi_assignments": assignments,
     }
     if include_report and host.latest_report_id:
         report = db.get(NetworkBootInventoryReport, host.latest_report_id)
@@ -1346,6 +1367,24 @@ def host_to_dict(
             json.loads(report.payload_json) if report is not None else None
         )
     return payload
+
+
+def esxi_host_assignments_by_mac(db: Session) -> dict[str, dict[str, Any]]:
+    assignments: dict[str, dict[str, Any]] = {}
+    rows = db.execute(select(EsxiPxeHost).order_by(EsxiPxeHost.hostname, EsxiPxeHost.id)).scalars().all()
+    for host in rows:
+        try:
+            mac_address = normalize_mac(host.mac_address)
+        except ValueError:
+            continue
+        assignments[mac_address] = {
+            "id": host.id,
+            "hostname": host.hostname,
+            "ip_address": host.ip_address or "",
+            "mac_address": mac_address,
+            "enabled": bool(host.enabled),
+        }
+    return assignments
 
 
 def report_history(

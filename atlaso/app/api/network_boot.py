@@ -49,6 +49,7 @@ from atlaso.app.services.network_boot import (
     catalog_rows,
     claim_host_boot_override,
     cleanup_network_boot_upload,
+    esxi_host_assignments_by_mac,
     host_to_dict,
     inventory_session_for_token,
     issue_inventory_session,
@@ -507,7 +508,8 @@ def list_discovered_hosts(
             NetworkBootDiscoveredHost.id,
         )
     ).scalars().all()
-    return [host_to_dict(db, row) for row in rows]
+    assignments_by_mac = esxi_host_assignments_by_mac(db)
+    return [host_to_dict(db, row, assignments_by_mac=assignments_by_mac) for row in rows]
 
 
 @router.get("/hosts/{host_id}")

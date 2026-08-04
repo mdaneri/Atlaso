@@ -467,6 +467,23 @@ def test_network_boot_mutation_endpoints_persist_jobs_commands_profiles_and_audi
     )
     assert promotion.status_code == 201, promotion.text
 
+    discovered_hosts = client.get("/api/v1/network-boot/hosts", headers=api_headers)
+    assert discovered_hosts.status_code == 200, discovered_hosts.text
+    assigned = next(row for row in discovered_hosts.json() if row["id"] == host_id)
+    assert assigned["assigned_to_esxi"] is True
+    assert assigned["esxi_host_id"] == promotion.json()["id"]
+    assert assigned["esxi_hostname"] == "esxi-inventory-01"
+    assert assigned["esxi_ip_address"] == "192.0.2.10"
+    assert assigned["esxi_assignments"] == [
+        {
+            "id": promotion.json()["id"],
+            "hostname": "esxi-inventory-01",
+            "ip_address": "192.0.2.10",
+            "mac_address": "52:54:00:12:34:56",
+            "enabled": False,
+        }
+    ]
+
     from atlaso.app.database import SessionLocal
 
     with SessionLocal() as db:

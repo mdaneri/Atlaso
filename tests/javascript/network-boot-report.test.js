@@ -5,11 +5,11 @@ const vm = require("node:vm");
 
 const source = fs.readFileSync("atlaso/app/static/app.js", "utf8");
 
-function loadFunction(name, nextName) {
+function loadFunction(name, nextName, context = {}) {
   const functionSource = source
     .split(`function ${name}`, 2)[1]
     .split(`function ${nextName}`, 1)[0];
-  return vm.runInNewContext(`(function ${name}${functionSource})`);
+  return vm.runInNewContext(`(function ${name}${functionSource})`, context);
 }
 
 const networkBootReportValue = loadFunction(
@@ -19,6 +19,16 @@ const networkBootReportValue = loadFunction(
 const networkBootAddressListOptions = loadFunction(
   "networkBootAddressListOptions",
   "appendNetworkBootReportFacts",
+);
+const esxiHostVariableRows = loadFunction(
+  "esxiHostVariableRows",
+  "newEsxiHostVariableRow",
+  { JSON, Object, Array, String },
+);
+const parseEsxiHostVariableRows = loadFunction(
+  "parseEsxiHostVariableRows",
+  "initializeEsxiHostReferenceWizard",
+  { Object, String },
 );
 
 test("Network Boot report distinguishes empty v2 addresses from missing legacy data", () => {
@@ -49,4 +59,120 @@ test("Network Boot report applies schema-aware address options to both address s
     source,
     /\["Addresses", "addresses", networkBootAddressListOptions\(legacyReport\)\]/,
   );
+});
+
+test("Network Boot discovered hosts refresh while visible and immediately on visibility return", async () => {
+  class HTMLElement {}
+  const status = new HTMLElement();
+  status.dataset = {};
+  status.hidden = true;
+  status.textContent = "";
+  const listeners = new Map();
+  const scheduled = [];
+  const document = {
+    visibilityState: "visible",
+    addEventListener: (name, callback) => listeners.set(name, callback),
+    removeEventListener: (name, callback) => {
+      if (listeners.get(name) === callback) listeners.delete(name);
+    },
+  };
+  const window = {
+    clearTimeout: () => {},
+    setTimeout: (callback, milliseconds) => {
+      scheduled.push({ callback, milliseconds });
+      return scheduled.length;
+    },
+  };
+  const initializeRefresh = loadFunction(
+    "initializeNetworkBootDiscoveredHostRefresh",
+    "initializeNetworkBootPage",
+    { document, window, HTMLElement, Error },
+  );
+  const replacements = [];
+  const hostsTable = {
+    replaceData: async (rows) => replacements.push(rows),
+  };
+  const requests = [];
+  const request = async (url) => {
+    requests.push(url);
+    return [{ id: requests.length }];
+  };
+
+  const controller = initializeRefresh(hostsTable, status, {
+    request,
+    refreshMilliseconds: 5000,
+  });
+
+  assert.equal(scheduled[0].milliseconds, 5000);
+  await scheduled[0].callback();
+  assert.deepEqual(requests, ["/api/v1/network-boot/hosts"]);
+  assert.deepEqual(replacements, [[{ id: 1 }]]);
+  assert.equal(status.hidden, true);
+
+  document.visibilityState = "hidden";
+  await listeners.get("visibilitychange")();
+  assert.equal(requests.length, 1);
+  document.visibilityState = "visible";
+  await listeners.get("visibilitychange")();
+  assert.equal(requests.length, 2);
+  assert.deepEqual(replacements.at(-1), [{ id: 2 }]);
+
+  controller.stop();
+  assert.equal(listeners.has("visibilitychange"), false);
+});
+
+test("Network Boot discovered-host refresh preserves the last list after failure", async () => {
+  class HTMLElement {}
+  const status = new HTMLElement();
+  status.dataset = {};
+  status.hidden = true;
+  status.textContent = "";
+  const document = {
+    visibilityState: "visible",
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+  const window = {
+    clearTimeout: () => {},
+    setTimeout: () => 1,
+  };
+  const initializeRefresh = loadFunction(
+    "initializeNetworkBootDiscoveredHostRefresh",
+    "initializeNetworkBootPage",
+    { document, window, HTMLElement, Error },
+  );
+  let replacementCount = 0;
+  const controller = initializeRefresh(
+    { replaceData: async () => { replacementCount += 1; } },
+    status,
+    { request: async () => { throw new Error("temporary failure"); } },
+  );
+
+  await controller.refresh();
+
+  assert.equal(replacementCount, 0);
+  assert.equal(status.hidden, false);
+  assert.match(status.textContent, /temporary failure/);
+  assert.match(status.textContent, /last received host list/);
+});
+
+test("ESXi host variables round-trip through key/value rows", () => {
+  const rows = esxiHostVariableRows('{"rack":"r1","custom.cluster":2}');
+  const parsed = parseEsxiHostVariableRows(rows);
+
+  assert.equal(parsed.valid, true);
+  assert.equal(JSON.stringify(parsed.variables), '{"cluster":"2","rack":"r1"}');
+});
+
+test("ESXi host variable rows reject duplicates and built-in namespaces", () => {
+  const duplicate = parseEsxiHostVariableRows([
+    { name: "rack", value: "r1" },
+    { name: "rack", value: "r2" },
+  ]);
+  const builtIn = parseEsxiHostVariableRows([{ name: "host.hostname", value: "override" }]);
+
+  assert.equal(duplicate.valid, false);
+  assert.match(duplicate.message, /duplicated/);
+  assert.equal(builtIn.valid, false);
+  assert.match(builtIn.message, /cannot override built-in variables/);
 });

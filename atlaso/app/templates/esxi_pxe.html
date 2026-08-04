@@ -33,16 +33,17 @@
            data-can-write="{{ 'true' if network_boot_can_write else 'false' }}"
            data-fallback-id="network-boot-discovered-fallback"></div>
       <table id="network-boot-discovered-fallback" class="data-table compact">
-        <thead><tr><th>UUID</th><th>MACs</th><th>CPU</th><th>Memory</th><th>Disks</th><th>NICs</th><th>Last seen</th><th>Session</th></tr></thead>
+        <thead><tr><th>UUID</th><th>MACs</th><th>CPU</th><th>Memory</th><th>Disks</th><th>NICs</th><th>Last seen</th><th>Session</th><th>Assignment</th><th>ESXi host</th><th>ESXi IP</th></tr></thead>
         <tbody>
           {% for row in network_boot_discovered_hosts %}
-            <tr><td><code>{{ row.dmi_uuid or "MAC fallback" }}</code></td><td>{{ row.macs | join(", ") }}</td><td>{{ row.cpu_model }}</td><td>{{ row.total_memory_bytes }}</td><td>{{ row.disk_count }}</td><td>{{ row.interface_count }}</td><td>{{ row.last_seen_at }}</td><td>{{ row.session_state }}</td></tr>
+            <tr><td><code>{{ row.dmi_uuid or "MAC fallback" }}</code></td><td>{{ row.macs | join(", ") }}</td><td>{{ row.cpu_model }}</td><td>{{ row.total_memory_bytes }}</td><td>{{ row.disk_count }}</td><td>{{ row.interface_count }}</td><td>{{ row.last_seen_at }}</td><td>{{ row.session_state }}</td><td>{{ "Assigned" if row.assigned_to_esxi else "Unassigned" }}</td><td>{{ row.esxi_hostname or "Not assigned" }}</td><td>{{ row.esxi_ip_address or "Not assigned" }}</td></tr>
           {% else %}
-            <tr><td colspan="8">No inventory reports received.</td></tr>
+            <tr><td colspan="11">No inventory reports received.</td></tr>
           {% endfor %}
         </tbody>
       </table>
-      <p class="muted">Double-click a row, or focus it and press Enter, to inspect its latest bounded report and history. Right-click for permitted host actions. Promotion, Wake-on-LAN, reboot, and removal require Network Boot write access.</p>
+      <p class="muted" data-network-boot-discovered-status role="status" aria-live="polite" hidden></p>
+      <p class="muted">New Inventory Linux reports appear automatically while this page is visible. Double-click a row, or focus it and press Enter, to inspect its latest bounded report and history. Right-click for permitted host actions. Promotion, Wake-on-LAN, reboot, and removal require Network Boot write access.</p>
     </div>
     <div id="network-boot-environments-panel" class="tab-panel network-boot-environments-panel" role="tabpanel" hidden>
       <div id="network-boot-environments-table" class="tabulator-shell"
@@ -168,7 +169,18 @@
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="installer"><div class="form-stack">
           <label><span>Kickstart</span><select name="kickstart_id">{% for option in esxi_pxe_host_kickstart_options %}<option value="{{ option.id }}">{{ option.label }}</option>{% endfor %}</select></label>
           <label><span>Installer ISO</span><select name="installer_iso_path">{% for option in esxi_pxe_host_iso_options %}<option value="{{ option.id }}">{{ option.label }}</option>{% endfor %}</select></label>
-          <label><span>Variables JSON</span><textarea name="variables" rows="6">{}</textarea></label>
+          <input type="hidden" name="variables" value="{}">
+          <div class="form-stack">
+            <div>
+              <span class="field-label"><span>Host variables</span><button class="help-icon" type="button" data-help="Defines non-secret custom key/value overrides for this host. Atlaso stores the grid as the existing variables JSON object; built-in host, DHCP, and PXE names cannot be overridden.">i</button></span>
+              <div id="esxi-host-variables-table" class="tabulator-shell" data-fallback-id="esxi-host-variables-fallback"></div>
+              <table id="esxi-host-variables-fallback" class="data-table compact">
+                <thead><tr><th>Key</th><th>Value</th></tr></thead>
+                <tbody><tr><td colspan="2" class="muted">No host-specific variables configured.</td></tr></tbody>
+              </table>
+              <p class="autosave-status" data-state="idle" data-esxi-host-variables-status aria-live="polite">Add only non-secret host-specific overrides.</p>
+            </div>
+          </div>
         </div></section>
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="enablement">
           <label class="switch-field"><span>Enabled</span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
@@ -181,6 +193,51 @@
         <button class="button secondary hidden" type="button" data-atlaso-wizard-back>Back</button>
         <button class="button primary" type="button" data-atlaso-wizard-next>Next</button>
         <button class="button primary hidden" type="submit" data-atlaso-wizard-submit>Save host reference</button>
+      </div>
+    </div>
+  </form>
+</dialog>
+{% endif %}
+{% if esxi_can_write %}
+<dialog id="esxi-iso-upload-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="esxi-iso-upload-title">
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="/esxi-pxe/isos/upload" method="post" enctype="multipart/form-data" data-esxi-iso-upload data-atlaso-wizard novalidate>
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <aside class="vcf-sddc-wizard-rail" aria-label="Add ESX ISO steps">
+      <p class="kicker">Network Boot</p><h2 id="esxi-iso-upload-title">Add ESX ISO</h2>
+      <ol class="vcf-sddc-step-list">
+        <li><button class="vcf-sddc-step-button active" type="button" data-atlaso-wizard-nav="file"><span>1</span><strong>ISO file</strong><small>Choose installer media</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="review" disabled><span>2</span><strong>Review</strong><small>Confirm upload destination</small></button></li>
+      </ol>
+    </aside>
+    <div class="vcf-sddc-wizard-main">
+      <div class="confirm-modal-body vcf-sddc-wizard-body">
+        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 2</p><h3 data-atlaso-wizard-title>Choose an ESX installer ISO</h3><p class="muted" data-atlaso-wizard-description>Select one ISO to add to the shared ESX_HOST media folder.</p></div>
+        <div class="alert error hidden" data-atlaso-wizard-error></div>
+        <section class="vcf-sddc-step-page" data-atlaso-wizard-step="file">
+          <label>
+            <span class="field-label"><span>ESX installer ISO</span><button class="help-icon" type="button" data-help="Uploads an additional ESX installer ISO into the VCF Offline Depot ESX_HOST folder used for PXE planning. Runtime PXE files change only after global appliance apply.">i</button></span>
+            <span class="file-upload-control">
+              <input class="file-upload-input" type="file" name="iso_file" accept=".iso,application/x-iso9660-image" data-file-upload-input required>
+              <span class="file-upload-surface"><span class="file-upload-copy"><strong>Choose ISO file</strong><small data-file-upload-name>VMware-VMvisor-Installer.iso</small></span></span>
+            </span>
+          </label>
+        </section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review">
+          <div class="settings-list">
+            <div><span>ISO file</span><strong data-esxi-iso-review-name>Not selected</strong></div>
+            <div><span>Size</span><strong data-esxi-iso-review-size>Not available</strong></div>
+            <div><span>Destination</span><strong>{{ esxi_installer_iso_root }}</strong></div>
+            <div><span>Runtime</span><strong>Global appliance apply required</strong></div>
+          </div>
+          <progress class="upload-progress" value="0" max="100" data-esxi-iso-upload-progress hidden></progress>
+          <p class="autosave-status" data-state="idle" data-esxi-iso-upload-status aria-live="polite">Ready to upload the reviewed ISO.</p>
+        </section>
+      </div>
+      <div class="confirm-modal-actions vcf-sddc-wizard-actions">
+        <button class="button secondary" type="button" data-atlaso-wizard-cancel>Cancel</button>
+        <button class="button secondary hidden" type="button" data-atlaso-wizard-back>Back</button>
+        <button class="button primary" type="button" data-atlaso-wizard-next>Next</button>
+        <button class="button primary hidden" type="submit" data-atlaso-wizard-submit data-esxi-iso-upload-button>Upload ESX ISO</button>
       </div>
     </div>
   </form>
@@ -285,7 +342,7 @@
         <h2>ESXi Kickstarts</h2>
         <p class="muted">Database-owned Kickstart source files for generated PXE HTTP boot copies.</p>
       </div>
-      <span class="status-pill {{ 'warn' if esxi_pxe_validation_errors else 'good' }}" data-esxi-pxe-summary data-iso-count="{{ esxi_installer_isos|length }}">{{ esxi_kickstarts|length }} Kickstarts / {{ esxi_installer_isos|length }} ISOs</span>
+      <span class="status-pill {{ 'warn' if esxi_pxe_validation_errors else 'good' }}" data-esxi-pxe-summary data-kickstart-count="{{ esxi_kickstarts|length }}" data-iso-count="{{ esxi_installer_isos|length }}">{{ esxi_kickstarts|length }} Kickstarts / {{ esxi_installer_isos|length }} ISOs</span>
     </div>
 
     {% if esxi_pxe_error %}
@@ -377,7 +434,7 @@
             data-fallback-id="esxi-pxe-hosts-fallback"
           ></div>
           <table id="esxi-pxe-hosts-fallback" class="data-table compact dns-fallback-table">
-            <thead><tr><th>Host</th><th>MAC</th><th>IP address</th><th>Kickstart</th><th>Installer ISO</th><th>Variables JSON</th><th>Enabled</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Host</th><th>MAC</th><th>IP address</th><th>Kickstart</th><th>Installer ISO</th><th>Variables</th><th>Enabled</th><th>Actions</th></tr></thead>
             <tbody>
               <tr>
                 <form action="/esxi-pxe/default-host" method="post">
@@ -512,22 +569,16 @@
           </div>
         </div>
         {% if esxi_can_write %}
-          <details class="create-kickstart-panel">
-            <summary>Upload installer ISO</summary>
-            <form class="form-stack" action="/esxi-pxe/isos/upload" method="post" enctype="multipart/form-data" data-esxi-iso-upload>
-              <input type="hidden" name="csrf" value="{{ csrf_token }}">
-              <label>
-                <span class="field-label"><span>ESXi installer ISO</span><button class="help-icon" type="button" data-help="Uploads an additional ESXi installer ISO into the VCF Offline Depot ESX_HOST folder used for PXE planning.">i</button></span>
-                <span class="file-upload-control">
-                  <input class="file-upload-input" type="file" name="iso_file" accept=".iso,application/x-iso9660-image" data-file-upload-input>
-                  <span class="file-upload-surface"><span class="file-upload-copy"><strong>Choose ISO file</strong><small data-file-upload-name>VMware-VMvisor-Installer.iso</small></span></span>
-                </span>
-              </label>
-              <button class="button secondary" type="submit" data-esxi-iso-upload-button>Upload installer ISO</button>
-              <progress class="upload-progress" value="0" max="100" data-esxi-iso-upload-progress hidden></progress>
-              <p class="autosave-status" data-state="idle" data-esxi-iso-upload-status aria-live="polite">Choose an ISO to upload.</p>
-            </form>
-          </details>
+          <noscript>
+            <details class="create-kickstart-panel">
+              <summary>Upload ESX ISO</summary>
+              <form class="form-stack" action="/esxi-pxe/isos/upload" method="post" enctype="multipart/form-data">
+                <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                <label><span>ESX installer ISO</span><input type="file" name="iso_file" accept=".iso,application/x-iso9660-image" required></label>
+                <button class="button secondary" type="submit">Upload ESX ISO</button>
+              </form>
+            </details>
+          </noscript>
         {% endif %}
         <div
           id="esxi-installer-isos-table"
@@ -553,7 +604,7 @@
             {% endfor %}
           </tbody>
         </table>
-        <p class="muted">Right-click an installer ISO row to delete it.</p>
+        <p class="muted">Use <strong>+ Add ESX ISO</strong> to upload reviewed installer media. Right-click an existing row to delete it.</p>
       </div>
 
       <div id="esxi-pxe-preview-panel" class="tab-panel" role="tabpanel" hidden>
