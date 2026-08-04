@@ -1743,6 +1743,18 @@ def render_network_boot_menu(
         ":menu",
         "menu Atlaso Network Boot",
     ]
+
+    def esxi_loader_lines(artifact: dict[str, Any]) -> list[str]:
+        mac_key = str(artifact.get("mac_key") or "default")
+        if firmware.strip().lower() == "efi":
+            return [
+                f"chain {esxi_base_url}/{mac_key}/mboot.efi || goto menu",
+            ]
+        return [
+            f"set 209:string pxelinux.cfg/{mac_key}",
+            "set 210:string tftp://${next-server}/",
+            "chain tftp://${next-server}/pxelinux.0 || goto menu",
+        ]
     if inventory:
         lines.extend(
             [
@@ -1802,7 +1814,7 @@ def render_network_boot_menu(
         lines.extend(
             [
                 ":esxi_assigned",
-                f"chain {esxi_base_url}/{assigned['mac_key']}/boot.cfg || goto menu",
+                *esxi_loader_lines(assigned),
                 "",
             ]
         )
@@ -1810,7 +1822,7 @@ def render_network_boot_menu(
         lines.extend(
             [
                 f":esxi_{artifact['host_id']}",
-                f"chain {esxi_base_url}/{artifact['mac_key']}/boot.cfg || goto menu",
+                *esxi_loader_lines(artifact),
                 "",
             ]
         )
@@ -1818,7 +1830,7 @@ def render_network_boot_menu(
         lines.extend(
             [
                 ":esxi_default",
-                f"chain {esxi_base_url}/boot.cfg || goto menu",
+                *esxi_loader_lines(undefined),
                 "",
             ]
         )

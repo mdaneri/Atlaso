@@ -2450,6 +2450,63 @@ def test_known_enabled_esxi_mac_becomes_timed_default(db_session):
     assert "choose --timeout 10000 --default esxi_assigned" in menu
 
 
+@pytest.mark.parametrize(
+    ("firmware", "expected_lines"),
+    [
+        (
+            "efi",
+            [
+                "chain http://192.0.2.10:8080/pxe/esxi/"
+                "01-52-54-00-12-34-56/mboot.efi || goto menu",
+            ],
+        ),
+        (
+            "pcbios",
+            [
+                "set 209:string pxelinux.cfg/01-52-54-00-12-34-56",
+                "set 210:string tftp://${next-server}/",
+                "chain tftp://${next-server}/pxelinux.0 || goto menu",
+            ],
+        ),
+    ],
+)
+def test_esxi_menu_executes_the_firmware_loader(
+    db_session,
+    firmware,
+    expected_lines,
+):
+    host = EsxiPxeHost(
+        hostname="esx01.atlaso.internal",
+        mac_address="52:54:00:12:34:56",
+        installer_iso_path=(
+            "/mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST/esxi.iso"
+        ),
+        enabled=True,
+    )
+    db_session.add(host)
+    db_session.flush()
+    boot = esxi_pxe_boot_settings(db_session)
+    boot["listen_address"] = "192.0.2.10"
+    boot["http_port"] = 8080
+    artifacts = esxi_pxe_host_artifacts(
+        [host],
+        boot,
+        esxi_pxe_default_host_settings(db_session),
+    )
+    set_applied_pxe_runtime(db_session, boot=boot, artifacts=artifacts)
+
+    menu = render_network_boot_menu(
+        db_session,
+        mac_address=host.mac_address,
+        firmware=firmware,
+        request_origin="http://192.0.2.10:8080",
+    )
+
+    for expected in expected_lines:
+        assert expected in menu
+    assert "/boot.cfg || goto menu" not in menu
+
+
 def test_known_esxi_host_can_claim_one_time_inventory_boot(db_session):
     states = {row.key: row for row in ensure_environment_rows(db_session)}
     inventory = record_verified_media(

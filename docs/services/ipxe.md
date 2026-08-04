@@ -46,6 +46,15 @@ Atlaso binds dnsmasq TFTP explicitly to every selected IPv4 DHCP IP-zone
 interface so VMware Workstation firmware can retrieve that first stage over
 UDP/69 before iPXE switches to HTTP.
 
+After an ESXi entry is selected, Atlaso executes the installer loader rather
+than the adjacent `boot.cfg` data file. UEFI clients chain the selected
+profile's host-specific `mboot.efi` over HTTP; legacy BIOS clients chain the
+staged PXELINUX loader over TFTP with that profile's explicit configuration
+path. The loader then reads the generated `boot.cfg`. If selection returns to
+the Atlaso menu without showing the VMware loader, verify that the applied menu
+chains `mboot.efi` or `pxelinux.0`, and reapply the ESXi PXE unit if it still
+references `boot.cfg` directly.
+
 For an enabled ESXi Host Reference, right-click and choose **Boot Inventory
 Linux once** to override that exact MAC's next menu default for 30 minutes. The
 first claim retains a five-minute retry window so firmware retries remain on
