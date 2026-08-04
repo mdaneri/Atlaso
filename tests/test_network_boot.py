@@ -1752,6 +1752,12 @@ def test_deleting_inactive_media_cleans_environment_upload_staging(
         installed_path=str(installed.resolve()),
         manifest={"schema_version": 1},
     )
+    state = {row.key: row for row in ensure_environment_rows(db_session)}[
+        "shredos"
+    ]
+    state.enabled = False
+    state.desired_version = media.version
+    state.active_version = ""
     media_id = media.id
     db_session.add(job)
     db_session.commit()
@@ -1804,9 +1810,58 @@ def test_deleting_inactive_media_cleans_environment_upload_staging(
     assert not staged.exists()
     db_session.expire_all()
     assert db_session.get(NetworkBootMedia, media_id) is None
+    refreshed_state = db_session.get(NetworkBootEnvironment, "shredos")
+    assert refreshed_state.desired_version == ""
     completed = db_session.get(Job, queued.id)
     assert completed.status == JobStatus.SUCCEEDED.value
+    assert json.loads(completed.result)["desired_version_cleared"] is True
     assert json.loads(completed.result)["staged_uploads_cleaned"] == 1
+
+
+def test_deleting_enabled_desired_or_active_media_is_blocked(
+    client,
+    db_session,
+):
+    media = record_verified_media(
+        db_session,
+        environment_key="memtest86plus",
+        version="8.10",
+        source_url="https://www.memtest.org/download/v8.10/example.zip",
+        artifact_sha256="a" * 64,
+        installed_path="/var/lib/atlaso/pxe/media/memtest86plus/8.10",
+        manifest={"schema_version": 1},
+    )
+    state = {row.key: row for row in ensure_environment_rows(db_session)}[
+        "memtest86plus"
+    ]
+    state.enabled = True
+    state.desired_version = media.version
+    state.active_version = ""
+    db_session.commit()
+    token = create_api_token(client, ["write:pxe"])
+    headers = {"Authorization": f"Bearer {token}"}
+
+    enabled_desired = client.delete(
+        "/api/v1/network-boot/environments/memtest86plus/media/8.10",
+        headers=headers,
+    )
+    assert enabled_desired.status_code == 409
+    assert enabled_desired.json()["detail"] == (
+        "Disable this environment before removing its desired media."
+    )
+
+    state.enabled = False
+    state.desired_version = ""
+    state.active_version = media.version
+    db_session.commit()
+    active = client.delete(
+        "/api/v1/network-boot/environments/memtest86plus/media/8.10",
+        headers=headers,
+    )
+    assert active.status_code == 409
+    assert active.json()["detail"] == (
+        "Apply a different active version or disable and apply this environment before removal."
+    )
 
 
 def test_inventory_session_stores_only_token_hash_and_expires(db_session):

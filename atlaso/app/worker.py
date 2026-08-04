@@ -525,6 +525,7 @@ def _run_pxe_media_sync(db: Session, job: Job) -> None:
                     success=True,
                     detail=(
                         "inactive immutable cache version removed; "
+                        f"desired_version_cleared={removed['desired_version_cleared']}; "
                         f"staged_uploads_cleaned={removed['staged_uploads_cleaned']}"
                     ),
                 )

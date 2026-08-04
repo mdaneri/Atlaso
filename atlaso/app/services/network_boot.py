@@ -3148,9 +3148,13 @@ def remove_inactive_network_boot_media(
     ).scalar_one_or_none()
     if state is None or media is None:
         raise ValueError("Installed Network Boot media was not found.")
-    if version in {state.desired_version, state.active_version}:
+    if version == state.active_version:
         raise ValueError(
-            "Select and apply a different version or disable this environment before removal."
+            "Apply a different active version or disable and apply this environment before removal."
+        )
+    if state.enabled and version == state.desired_version:
+        raise ValueError(
+            "Disable this environment before removing its desired media."
         )
     environment_jobs = db.execute(
         select(Job).where(Job.type == "pxe-media-sync")
@@ -3188,7 +3192,12 @@ def remove_inactive_network_boot_media(
     if not valid_target:
         raise ValueError("Installed media path failed safety validation.")
 
+    clears_desired_version = media.version == state.desired_version
     shutil.rmtree(target)
+    if clears_desired_version:
+        state.desired_version = ""
+        state.updated_at = utcnow()
+        db.add(state)
     db.delete(media)
     cleaned_uploads = 0
     for job, config in matching_jobs:
@@ -3200,6 +3209,7 @@ def remove_inactive_network_boot_media(
         "environment": environment_key,
         "version": version,
         "removed": True,
+        "desired_version_cleared": clears_desired_version,
         "staged_uploads_cleaned": cleaned_uploads,
     }
 

@@ -19253,6 +19253,18 @@ function networkBootEnvironmentHasLatestInstalled(environment) {
     .some((item) => String(item?.version || "").trim() === available);
 }
 
+function networkBootRemovableMedia(environment) {
+  const active = String(environment?.active_version || "").trim();
+  const desired = String(environment?.desired_version || "").trim();
+  const enabled = Boolean(environment?.enabled);
+  return (environment?.installed_versions || []).find((item) => {
+    const version = String(item?.version || "").trim();
+    return Boolean(version)
+      && version !== active
+      && (!enabled || version !== desired);
+  }) || null;
+}
+
 function initializeNetworkBootPage() {
   const hostsElement = document.getElementById("network-boot-discovered-table");
   const environmentsElement = document.getElementById("network-boot-environments-table");
@@ -19587,15 +19599,18 @@ function initializeNetworkBootPage() {
           label: "Delete newest inactive media",
           disabled: (component) => {
             const data = component.getData();
-            return data.key === "inventory" || !(data.installed_versions || []).some((item) => item.version !== data.active_version && item.version !== data.desired_version);
+            return data.key === "inventory" || !networkBootRemovableMedia(data);
           },
           action: async (_event, row) => {
             const data = row.getData();
-            const candidate = (data.installed_versions || []).find((item) => item.version !== data.active_version && item.version !== data.desired_version);
+            const candidate = networkBootRemovableMedia(data);
             if (!candidate) return;
+            const clearsDesiredVersion = candidate.version === data.desired_version;
             const confirmed = await requestConfirmation({
               title: `Delete ${data.label} ${candidate.version}?`,
-              message: "This permanently removes the selected inactive immutable cache version and any staged uploads for this environment. Active and desired versions cannot be removed.",
+              message: clearsDesiredVersion
+                ? "This permanently removes the disabled environment's physical media directory and database record, clears that desired version, and removes any staged uploads. Active media cannot be removed."
+                : "This permanently removes the selected inactive physical media directory, database record, and any staged uploads for this environment. Active media and desired media for an enabled environment cannot be removed.",
               label: "Delete media",
             });
             if (!confirmed) return;

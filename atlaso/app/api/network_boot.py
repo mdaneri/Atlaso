@@ -453,10 +453,15 @@ def remove_network_boot_media(
     ).scalar_one_or_none()
     if state is None or media is None:
         raise HTTPException(status_code=404, detail="Installed Network Boot media not found.")
-    if version in {state.desired_version, state.active_version}:
+    if version == state.active_version:
         raise HTTPException(
             status_code=409,
-            detail="Select and apply a different version or disable this environment before removal.",
+            detail="Apply a different active version or disable and apply this environment before removal.",
+        )
+    if state.enabled and version == state.desired_version:
+        raise HTTPException(
+            status_code=409,
+            detail="Disable this environment before removing its desired media.",
         )
     environment_jobs = db.execute(
         select(Job).where(Job.type == "pxe-media-sync")

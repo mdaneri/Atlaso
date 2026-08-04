@@ -164,7 +164,7 @@ test("Network Boot discovered-host refresh preserves the last list after failure
 test("Network Boot disables latest download when that version is installed", () => {
   const hasLatestInstalled = loadFunction(
     "networkBootEnvironmentHasLatestInstalled",
-    "initializeNetworkBootPage",
+    "networkBootRemovableMedia",
     { Array, Boolean, String },
   );
 
@@ -180,6 +180,34 @@ test("Network Boot disables latest download when that version is installed", () 
     available_version: "",
     installed_versions: [{ version: "8.10" }],
   }), false);
+});
+
+test("Network Boot allows disabled desired media removal but protects active media", () => {
+  const removableMedia = loadFunction(
+    "networkBootRemovableMedia",
+    "initializeNetworkBootPage",
+    { Array, Boolean, String },
+  );
+  const installedVersions = [{ version: "8.10" }];
+
+  assert.equal(removableMedia({
+    enabled: false,
+    desired_version: "8.10",
+    active_version: "",
+    installed_versions: installedVersions,
+  }).version, "8.10");
+  assert.equal(removableMedia({
+    enabled: true,
+    desired_version: "8.10",
+    active_version: "",
+    installed_versions: installedVersions,
+  }), null);
+  assert.equal(removableMedia({
+    enabled: false,
+    desired_version: "8.10",
+    active_version: "8.10",
+    installed_versions: installedVersions,
+  }), null);
 });
 
 test("ESXi host variables round-trip through key/value rows", () => {

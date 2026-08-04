@@ -265,12 +265,15 @@ the operator cannot substitute an unverified checksum. Cancelling a pending
 upload removes its staged artifact immediately, and worker-startup recovery
 removes staged uploads left by an interrupted running task.
 Deleting an inactive media version queues a durable Network Boot media task,
-which also removes terminal staged-upload artifacts for that environment.
+which removes the validated physical version directory, its database record,
+and terminal staged-upload artifacts for that environment.
 Cleanup is blocked while an environment media
-task is pending or running, and active, desired, and bundled Inventory Linux
-versions cannot be removed. A queued deletion can be cancelled before the
-worker claims it; once filesystem removal starts, the task is no longer
-cancellable.
+task is pending or running. Active media, desired media for an enabled
+environment, and bundled Inventory Linux cannot be removed. When an environment
+is disabled and its desired media is no longer active, deletion clears the
+saved desired version in the same worker transaction. A queued deletion can be
+cancelled before the worker claims it; once filesystem removal starts, the task
+is no longer cancellable.
 The **Boot media tasks** panel reuses the Tasks grid and detail dialogs while
 scoping live refresh, filtering, logs, and cancellation to Network Boot media
 downloads, uploads, and inactive-media deletion. The task is inserted and
