@@ -329,6 +329,7 @@
         <div><span>UEFI second stage</span><strong>{{ esxi_pxe_boot.uefi_second_stage_bootfile }}</strong></div>
         <div><span>DHCP zones</span><strong>{{ esxi_pxe_boot.dhcp_scope_names | join(", ") if esxi_pxe_boot.dhcp_scope_names else "not selected" }}</strong></div>
         <div><span>Bind target</span><strong>{{ esxi_pxe_bind_label }}</strong></div>
+        <div><span>Installer ISO folder</span><strong>{{ esxi_installer_iso_root }}</strong></div>
       </div>
       {% if esxi_can_write %}
         <p id="esxi-pxe-boot-settings-status" class="autosave-status" data-state="idle">Changes save automatically.</p>
@@ -563,11 +564,6 @@
       </div>
 
       <div id="esxi-pxe-isos-panel" class="tab-panel" role="tabpanel" hidden>
-        <div class="panel-subsection">
-          <div class="settings-list compact-settings-list">
-            <div><span>Installer ISO folder</span><strong>{{ esxi_installer_iso_root }}</strong></div>
-          </div>
-        </div>
         {% if esxi_can_write %}
           <noscript>
             <details class="create-kickstart-panel">

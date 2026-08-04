@@ -383,6 +383,9 @@ wizard-backed Installer ISOs grid and all Host Reference ISO selectors without
 reloading the page. Existing ISO removal remains a confirmed row action and
 clears desired-state references to the removed path; generated PXE artifacts
 change only after global appliance apply.
+The Boot Service status list shows the shared Installer ISO folder immediately
+below the PXE bind target, keeping storage context available without consuming
+space above the Installer ISOs grid.
 The grid derives the displayed ESX version and optional build from standard
 VMware installer names such as
 `VMware-VMvisor-Installer-9.1.0.0100.25433460.x86_64.iso`. Media with a renamed

@@ -4006,6 +4006,14 @@ def test_esxi_pxe_iso_upload_and_host_selection(client, monkeypatch, tmp_path):
     page = client.get("/esxi-pxe")
     assert page.status_code == 200
     assert str(iso_root) in page.text
+    boot_service = page.text.split('<h2>Boot Service</h2>', 1)[1].split(
+        '<div class="panel wide-panel" data-esxi-kickstarts-panel>', 1
+    )[0]
+    assert boot_service.index("Bind target") < boot_service.index("Installer ISO folder")
+    iso_panel = page.text.split('id="esxi-pxe-isos-panel"', 1)[1].split(
+        'id="esxi-pxe-preview-panel"', 1
+    )[0]
+    assert "Installer ISO folder" not in iso_panel
     assert iso_root.is_dir()
     assert 'data-esxi-iso-upload' in page.text
     assert 'data-esxi-iso-upload-progress' in page.text
