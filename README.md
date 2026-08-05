@@ -59,6 +59,11 @@ removed after every terminal outcome and during application startup recovery. Th
 pre-authentication VCF Automation and vSphere certificate probes require TLS 1.2 or newer; the probes retain explicit
 certificate-fingerprint confirmation as their trust decision.
 
+The integrated CA can maintain trust and deploy managed service certificates without publishing its public portal on
+an access interface. Selecting a CA listen interface is the explicit portal-publication boundary. When NTS server
+changes are selected, global appliance apply automatically runs Certificate Authority before NTP/NTS so missing or
+stale runtime certificate files are repaired even when the CA desired-state baseline appears current.
+
 ## Project
 
 - [Brand guide](docs/assets/brand/BRAND_GUIDE.md)

@@ -586,9 +586,12 @@ status: current
 - Real CA apply stages JSON under `/var/lib/atlaso/apply/ca/atlaso-ca.json` as the `atlaso` service user before invoking
   the root helper. The helper validates the staged CA/certificate payload, writes public CA bundles and service
   certificate/key files under `/etc/atlaso`, and must not print private keys in stdout, stderr, previews, jobs, docs, or
-  final responses. The public CA portal defaults to `ca.atlaso.internal`: `/` shows public trust material and
-  `/requests` is the authenticated certificate request/revocation workflow. Do not put Certificate Requests in the
-  primary Atlaso sidebar; link it from CA-associated surfaces instead.
+  final responses. CA custody and managed certificate deployment do not require a public listen interface. Selecting a
+  CA interface is the explicit publication boundary for the portal, DNS, firewall, and public-service configuration.
+  The public CA portal defaults to `ca.atlaso.internal`: `/` shows public trust material and `/requests` is the
+  authenticated certificate request/revocation workflow. Do not put Certificate Requests in the primary Atlaso
+  sidebar; link it from CA-associated surfaces instead. Every selected NTS server apply automatically includes the CA
+  material unit and preserves CA-before-NTP execution order, even when the CA baseline appears current.
 - Real KMS apply stages strict JSON under `/var/lib/atlaso/apply/kms/server.json` as the `atlaso` service user before
   invoking the root helper. KMS can be activated only when CA desired state is enabled and healthy; the page derives
   IPv4 and IPv6 listen addresses from the selected access interface or enabled VLAN, creates app-owned DNS records for

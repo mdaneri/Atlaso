@@ -59,6 +59,19 @@ def test_public_service_entries_scope_services_to_matching_address():
     assert "allow_unauthenticated_access" not in open_services_by_id["esxi_pxe"]
 
 
+def test_enabled_ca_without_listen_address_is_not_publicly_exposed():
+    entries = public_service_entries(
+        interfaces=[PhysicalInterface(name="eth2", role="access", mode="access", ip_cidr="192.168.87.32/24")],
+        vlans=[],
+        ca_settings=CaSettings(enabled=True, listen_interface="", listen_address="", root_certificate_pem="root"),
+        esxi_pxe_boot=None,
+        vcf_depot_settings=VcfOfflineDepotSettings(enabled=False),
+        vcf_registry_settings=VcfPrivateRegistrySettings(enabled=False),
+    )
+
+    assert all(service["id"] != "ca" for entry in entries for service in entry["services"])
+
+
 def test_public_services_nginx_config_contains_per_ip_scoped_locations():
     config = render_public_services_nginx_config(
         [

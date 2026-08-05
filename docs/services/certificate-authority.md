@@ -26,11 +26,16 @@ This verified appliance view provides visual orientation before you begin.
 
 1. Confirm the appliance FQDN and management HTTPS settings are correct.
 2. Review root and leaf validity, subject, and key settings.
-3. Resolve validation errors and inspect the rendered certificate preview.
-4. Submit the Certificate Authority unit through [Appliance Apply](../operate/appliance-apply.md).
+3. Leave **Listen interfaces** empty when the CA is needed only for appliance trust and managed service certificates.
+   Select one or more interfaces only when the public CA portal should be published on those networks.
+4. Resolve validation errors and inspect the rendered certificate preview.
+5. Submit the Certificate Authority unit through [Appliance Apply](../operate/appliance-apply.md).
 
 Atlaso encrypts CA root and leaf private keys with the appliance secrets key. Preserve that key with recovery material,
 and never expose private keys in documentation, screenshots, tasks, or logs.
+
+An enabled CA with no listen interface still writes its root bundle and managed service certificates through global
+appliance apply. It does not add the CA portal to access-interface DNS, firewall, or public-service configuration.
 
 ## Review requests
 

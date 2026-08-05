@@ -12531,6 +12531,77 @@ def test_depot_submission_includes_only_relevant_local_user_dependency(
     assert started_jobs == [job.id]
 
 
+@pytest.mark.parametrize(
+    ("nts_server_enabled", "ca_changed", "expected_units"),
+    [
+        (True, True, ["ca", "ntpd"]),
+        (True, False, ["ca", "ntpd"]),
+        (False, True, ["ntpd"]),
+    ],
+)
+def test_nts_submission_includes_ca_material_dependency(
+    client,
+    monkeypatch,
+    nts_server_enabled,
+    ca_changed,
+    expected_units,
+):
+    import json
+    from types import SimpleNamespace
+
+    from sqlalchemy import select
+
+    import atlaso.app.ui as ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStep
+
+    def unit(unit_id, label, *, changed, context=None):
+        return {
+            "id": unit_id,
+            "label": label,
+            "changed": changed,
+            "context": context or {},
+            "summary": [f"{label} desired state"],
+            "validation_errors": [],
+            "validation_warnings": [],
+            "config_path": f"/var/lib/atlaso/apply/{unit_id}.conf",
+            "config_preview": f"{unit_id}=configured",
+            "raw_config_preview": f"{unit_id}=configured",
+            "config_diff": f"+{unit_id}=configured" if changed else "",
+            "snapshot_hash": f"{unit_id}-snapshot",
+        }
+
+    units = [
+        unit("ca", "Certificate Authority", changed=ca_changed),
+        unit(
+            "ntpd",
+            "NTP / NTS",
+            changed=True,
+            context={"ntp_settings": SimpleNamespace(nts_server_enabled=nts_server_enabled)},
+        ),
+    ]
+    started_jobs = []
+    login(client)
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    monkeypatch.setattr(ui, "appliance_apply_units", lambda _db, **_kwargs: units)
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda job_id: started_jobs.append(job_id))
+
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "ntpd"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    with SessionLocal() as db:
+        job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()
+        assert json.loads(job.result or "{}")["selected_units"] == expected_units
+        steps = db.scalars(select(JobStep).where(JobStep.job_id == job.id).order_by(JobStep.position)).all()
+        assert [step.component_key for step in steps] == expected_units
+    assert started_jobs == [job.id]
+
+
 def test_appliance_apply_connection_warnings_detect_management_address_and_certificate_changes():
     import json
 
@@ -14041,6 +14112,30 @@ def test_ca_settings_autosave_returns_json(client):
         assert ca_settings.storage_path == "/etc/atlaso/ca"
         assert ca_settings.listen_interface == "eth2"
         assert ca_settings.listen_address == "192.168.50.1"
+
+
+def test_ca_internal_material_apply_does_not_require_public_listen_interface(client):
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaSettings
+
+    with SessionLocal() as db:
+        settings = db.execute(select(CaSettings)).scalar_one()
+        settings.enabled = True
+        settings.listen_interface = ""
+        settings.listen_address = ""
+        db.commit()
+
+    login(client)
+    page = client.get("/certificate-authority")
+
+    assert page.status_code == 200
+    assert "CA service requires at least one listen interface." not in page.text
+    assert "No interface address selected" in page.text
+    review = client.get("/appliance-apply/review")
+    ca_unit = next(unit for unit in review.json()["units"] if unit["id"] == "ca")
+    assert ca_unit["validation_errors"] == []
 
 
 def test_ca_apply_task_captures_current_desired_state(client):

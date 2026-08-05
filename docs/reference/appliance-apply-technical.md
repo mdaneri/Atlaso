@@ -413,6 +413,10 @@ without granting the daemon access to other service keys. Root CA material is no
 edits after it exists; root
 replacement is an explicit rotation workflow so service certificates and client trust can be redeployed deliberately.
 
+CA custody and managed certificate deployment remain valid with no CA listen interface. Listen interfaces control only
+public portal DNS, firewall, and nginx publication; an empty selection leaves those public-service entries absent while
+the CA helper can still write root and managed service material.
+
 The secret-bearing CA staging file uses mode `0600` only for the helper execution window. The control plane removes it
 after validation or apply succeeds, fails, or raises; the helper performs the same deletion after validating the
 allowlisted path, and startup removes an input left by interruption.
@@ -461,6 +465,10 @@ path, and persistent `/var/lib/ntp/nts-keys` cookie storage. The read-only statu
 mode `0640`, stops/disables competing time daemons, and enables/restarts `ntpd.service`. When disabled, it
 stops/disables `ntpd.service`. Firewall apply owns UDP/123 access and, when enabled, TCP/4460 NTS-KE access to the
 selected interfaces.
+
+When an operator selects NTP/NTS server changes, submission always adds the CA unit, including when its desired-state
+baseline appears current. The global unit order executes CA first so the helper materializes or repairs the NTS chain
+and private key before `ntpd` validation checks those paths.
 
 The read-only `atlaso-helper ntpd capabilities` action requires Photon’s `ntpsec` package and verifies the `ntpd` binary
 identifies itself as NTPsec without starting a daemon. If those checks fail, Atlaso disables the NTS server switch and
