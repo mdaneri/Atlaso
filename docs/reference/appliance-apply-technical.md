@@ -586,11 +586,16 @@ service interface. Uploading a VCFDT archive is desired-state only: it validates
 metadata, but it does not extract, create runtime folders, invoke `vcf-download-tool`, or generate a software depot ID.
 Global apply `stage-tool` extracts the uploaded archive under `/opt/atlaso/vcf-download-tool/extracted`, writes a stable
 `/opt/atlaso/vcf-download-tool/vcf-download-tool` wrapper for helper-owned apply work, records the tool version from
-`--version`, applies `application-prodv2.properties` to both the helper extraction tree and
-`/var/lib/atlaso/vcfDownloadTool/active-tool/conf/`, and then
-`vcf-download-tool configuration generate --software-depot-id` captures the Broadcom software depot ID. The refresh icon
-in the UI confirms and submits the same global `/appliance-apply` workflow for `vcf_offline_depot`; it is not a
-service-specific helper call. Download tokens and activation codes share one Broadcom credentials modal with a
+`--version`, and applies `application-prodv2.properties` to both the helper extraction tree and
+`/var/lib/atlaso/vcfDownloadTool/active-tool/conf/`. Atlaso preserves the current software depot ID during ordinary
+settings and download-profile applies. It runs `vcf-download-tool configuration generate --software-depot-id` only
+when no ID has been recorded or the operator explicitly confirms **Refresh software depot ID**. The helper then runs
+`vcf-download-tool configuration get --software-depot-id` and records only the unambiguous persisted readback value;
+it does not trust the first UUID printed during first-run initialization. A generation failure leaves the previous ID
+recorded. Successful generation followed by failed or ambiguous readback clears the displayed ID because VCFDT may
+already have replaced its runtime identity. The refresh icon submits explicit refresh intent through the same global
+`/appliance-apply` workflow for `vcf_offline_depot`; it is not a service-specific helper call.
+Download tokens and activation codes share one Broadcom credentials modal with a
 credential-type selector and can be uploaded as files or pasted text; storage keys remain separate for compatibility.
 Metadata and binaries profiles use whichever credential was staged most recently: the runtime download-token file used
 by `--depot-download-token-file` or the runtime activation-code file used by

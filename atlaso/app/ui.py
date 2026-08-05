@@ -2454,6 +2454,12 @@ def persist_vcf_depot_metadata_from_apply(db: Session, unit_results: list[dict[s
                 set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_GENERATED_AT_KEY, generated_at)
                 set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_ERROR_KEY, "")
             else:
+                invalidated = helper_json_payload_with_key(stdout, "software_depot_id_invalidated")
+                if invalidated.get("software_depot_id_invalidated") is True:
+                    for key in [VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY, VCF_DEPOT_SOFTWARE_DEPOT_ID_GENERATED_AT_KEY]:
+                        stale_setting = db.execute(select(Setting).where(Setting.key == key)).scalar_one_or_none()
+                        if stale_setting is not None:
+                            db.delete(stale_setting)
                 error = (stderr or stdout or "VCFDT software depot ID generation failed.").strip()
                 set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_ERROR_KEY, error)
         return
@@ -9529,6 +9535,8 @@ def execute_appliance_apply_unit(unit: dict[str, Any], *, adapter: SystemAdapter
         )
     elif unit_id == "vcf_offline_depot":
         settings = context["vcf_depot_settings"]
+        software_depot_id = str(context["vcf_depot_software_depot_id"].get("id") or "").strip()
+        refresh_software_depot_id = bool(unit.get("refresh_vcf_depot_software_depot_id"))
         config_path = settings.config_path
         properties_path = VCF_DEPOT_STAGED_APPLICATION_PROPERTIES_PATH
         if not adapter.dry_run:
@@ -9544,9 +9552,10 @@ def execute_appliance_apply_unit(unit: dict[str, Any], *, adapter: SystemAdapter
                     lambda: adapter.stage_vcf_offline_depot_tool(settings.tool_archive_path),
                     lambda: adapter.apply_vcf_offline_depot_application_properties(properties_path),
                     lambda: adapter.apply_vcf_offline_depot_ceip(bool(context["vmware_ceip_enabled"])),
-                    lambda: adapter.generate_vcf_offline_depot_software_depot_id(),
                 ]
             )
+            if not software_depot_id or refresh_software_depot_id:
+                steps.append(lambda: adapter.generate_vcf_offline_depot_software_depot_id())
         elif not settings.tool_archive_path:
             steps.append(lambda: adapter.reset_vcf_offline_depot_tool())
         steps.extend(
@@ -11407,6 +11416,13 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                     manifest = json.loads(unit["raw_config_preview"])
                     manifest["format_authorizations"] = list(job_result.get("format_authorizations") or [])
                     execution_unit = {**unit, "raw_config_preview": esx_storage_manifest_json(manifest)}
+                elif unit["id"] == "vcf_offline_depot":
+                    execution_unit = {
+                        **unit,
+                        "refresh_vcf_depot_software_depot_id": bool(
+                            job_result.get("refresh_vcf_depot_software_depot_id")
+                        ),
+                    }
                 result = execute_appliance_apply_unit(
                     execution_unit,
                     adapter=SystemAdapter(dry_run=False) if force_real else None,
@@ -11599,6 +11615,7 @@ def submit_appliance_apply(
     background_tasks: BackgroundTasks,
     selected_units: list[str] = Form(default=[]),
     format_confirmations: list[str] = Form(default=[]),
+    refresh_vcf_depot_software_depot_id: bool = Form(False),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
@@ -11608,6 +11625,9 @@ def submit_appliance_apply(
     units = appliance_apply_units(db)
     unit_map = {unit["id"]: unit for unit in units}
     selected_ids = {unit_id for unit_id in selected_units if unit_id in APPLIANCE_APPLY_UNIT_IDS}
+    refresh_vcf_depot_software_depot_id = bool(
+        refresh_vcf_depot_software_depot_id and "vcf_offline_depot" in selected_ids
+    )
     ntp_settings_for_apply = unit_map.get("ntpd", {}).get("context", {}).get("ntp_settings")
     ca_required_for_nts = bool(
         "ntpd" in selected_ids
@@ -11714,6 +11734,7 @@ def submit_appliance_apply(
         "units": [],
         "dry_run": bool(get_settings().dry_run_system_adapters),
         "format_authorizations": [],
+        "refresh_vcf_depot_software_depot_id": refresh_vcf_depot_software_depot_id,
     }
     with APPLIANCE_APPLY_SUBMIT_LOCK:
         db.expire_all()

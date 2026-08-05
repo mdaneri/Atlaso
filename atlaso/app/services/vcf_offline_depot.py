@@ -246,22 +246,39 @@ def _find_vcf_download_tool_binary(extraction_dir: Path) -> Path:
 
 
 def parse_software_depot_id(output: str) -> str:
-    uuid_match = re.search(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b", output)
-    if uuid_match:
-        return uuid_match.group(0)
+    uuid_pattern = r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+
+    def unique_candidate(candidates: list[str]) -> str:
+        unique = list(dict.fromkeys(candidate.strip() for candidate in candidates if candidate.strip()))
+        return unique[0] if len(unique) == 1 else ""
+
+    labeled_candidates: list[str] = []
     for line in output.splitlines():
-        if "vcf-download-tool" in line:
+        stripped = line.strip()
+        if "vcf-download-tool" in stripped:
             continue
-        if "software" not in line.lower() or "depot" not in line.lower() or "id" not in line.lower():
+        if "software" not in stripped.lower() or "depot" not in stripped.lower() or "id" not in stripped.lower():
             continue
-        match = re.search(r"([A-Za-z0-9][A-Za-z0-9._:-]{7,})\s*$", line.strip())
+        line_uuids = re.findall(uuid_pattern, stripped)
+        if line_uuids:
+            labeled_candidates.extend(line_uuids)
+            continue
+        match = re.search(r"([A-Za-z0-9][A-Za-z0-9._:-]{7,})\s*$", stripped)
         if match:
-            return match.group(1)
+            labeled_candidates.append(match.group(1))
+    if labeled_candidates:
+        return unique_candidate(labeled_candidates)
+
+    uuid_candidates = re.findall(uuid_pattern, output)
+    if uuid_candidates:
+        return unique_candidate(uuid_candidates)
+
+    standalone_candidates: list[str] = []
     for line in output.splitlines():
         stripped = line.strip()
         if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{7,}", stripped) and "vcf-download-tool" not in stripped:
-            return stripped
-    return ""
+            standalone_candidates.append(stripped)
+    return unique_candidate(standalone_candidates)
 
 
 def generate_vcf_software_depot_id(
@@ -277,7 +294,7 @@ def generate_vcf_software_depot_id(
     try:
         _safe_extract_tar_gz(archive, extraction_dir)
         tool = _find_vcf_download_tool_binary(extraction_dir)
-        completed = subprocess.run(
+        generated = subprocess.run(
             [str(tool), "configuration", "generate", "--software-depot-id"],
             cwd=str(tool.parent),
             capture_output=True,
@@ -286,14 +303,24 @@ def generate_vcf_software_depot_id(
             text=True,
             timeout=timeout_seconds,
         )
+        if generated.returncode != 0:
+            return SoftwareDepotIdResult(False, "", command, f"VCFDT exited with code {generated.returncode}.")
+        readback = subprocess.run(
+            [str(tool), "configuration", "get", "--software-depot-id"],
+            cwd=str(tool.parent),
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=timeout_seconds,
+        )
     except (OSError, tarfile.TarError, ValueError, subprocess.SubprocessError) as exc:
         return SoftwareDepotIdResult(False, "", command, str(exc))
-    output = "\n".join(part for part in [completed.stdout, completed.stderr] if part)
+    if readback.returncode != 0:
+        return SoftwareDepotIdResult(False, "", command, f"VCFDT software depot ID readback exited with code {readback.returncode}.")
+    output = "\n".join(part for part in [readback.stdout, readback.stderr] if part)
     software_depot_id = parse_software_depot_id(output)
-    if completed.returncode != 0:
-        return SoftwareDepotIdResult(False, software_depot_id, command, f"VCFDT exited with code {completed.returncode}.")
     if not software_depot_id:
-        return SoftwareDepotIdResult(False, "", command, "VCFDT did not print a software depot ID.")
+        return SoftwareDepotIdResult(False, "", command, "VCFDT did not return one unambiguous persisted software depot ID.")
     return SoftwareDepotIdResult(True, software_depot_id, command)
 
 

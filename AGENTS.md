@@ -59,6 +59,10 @@ The following cross-cutting boundaries always apply:
 
 - `/appliance-apply` is the only desired-state host-mutation workflow.
 - Privileged appliance operations go through `atlaso-helper` and constrained sudoers rules.
+- VCF Offline Depot settings and download-profile applies preserve the registered VCFDT software depot ID. Generate an
+  ID only when none exists or an administrator explicitly confirms **Refresh software depot ID** through global apply;
+  preserve the old ID when generation itself fails, but invalidate it if generation succeeds and canonical readback
+  fails because VCFDT may already have replaced its runtime identity.
 - Keep development system adapters in dry-run mode unless a reviewed apply unit explicitly promotes real mutation.
 - VMware Workstation is the default live appliance target; use Hyper-V lifecycle coverage for exact VLAN behavior.
 - VMware release images use separate compacted Photon OS and required Atlaso system-content payload VMDKs, followed by
