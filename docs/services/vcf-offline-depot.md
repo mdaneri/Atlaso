@@ -28,7 +28,9 @@ This verified appliance view provides visual orientation before you begin.
 3. Review certificate readiness and the generated software depot identity.
 4. Validate the desired state and submit the VCF Offline Depot unit through
    [Appliance Apply](../operate/appliance-apply.md).
-5. Run downloads as tasks and follow their terminal result on [Tasks](../operate/tasks.md).
+5. When the apply task succeeds, the page refreshes automatically so the applied VCF Download Tool version and
+   generated Software Depot ID replace the previously staged values.
+6. Run downloads as tasks and follow their terminal result on [Tasks](../operate/tasks.md).
 
 Download-profile creation uses a reviewed wizard. Notes stay with profile identity, task execution owns lifecycle
 status, and profile enablement has its own step so availability is an explicit decision before review.

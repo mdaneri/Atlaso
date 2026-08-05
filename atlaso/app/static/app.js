@@ -14838,7 +14838,8 @@ function renderApplianceApplyTask(task) {
 }
 
 function refreshCurrentWorkflowAfterApplianceApply(task) {
-  if (task?.status !== "succeeded" || window.location.pathname !== "/esx-storage") return;
+  const refreshableWorkflows = new Set(["/esx-storage", "/vcf-offline-depot"]);
+  if (task?.status !== "succeeded" || !refreshableWorkflows.has(window.location.pathname)) return;
   window.setTimeout(() => window.location.reload(), 300);
 }
 
