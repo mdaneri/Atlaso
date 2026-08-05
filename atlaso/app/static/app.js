@@ -1251,7 +1251,7 @@ function initializeAtlasoResourceWizard(config) {
     && (typeof config.canDelete !== "function" || config.canDelete(data));
   const supportsInlineEnabled = config.inlineEnabled !== false
     && form.elements.namedItem("enabled") instanceof HTMLInputElement;
-  const saveInlineEnabled = async (cell) => {
+  const saveInlineEnabled = async (cell, previousValue) => {
     const data = cell.getRow().getData();
     if (!canEdit(data)) {
       cell.restoreOldValue?.();
@@ -1277,7 +1277,7 @@ function initializeAtlasoResourceWizard(config) {
       await refreshNetworkSideStack();
       showTransientGridStatus(resource.enabled ? "Enabled" : "Disabled");
     } catch (error) {
-      cell.restoreOldValue?.();
+      cell.setValue(previousValue);
       reportActionError(error);
     }
   };
@@ -1331,8 +1331,9 @@ function initializeAtlasoResourceWizard(config) {
         toggle.innerHTML = content;
         toggle.addEventListener("click", (event) => {
           event.stopPropagation();
-          cell.setValue(!Boolean(cell.getValue()));
-          void saveInlineEnabled(cell);
+          const previousValue = Boolean(cell.getValue());
+          cell.setValue(!previousValue);
+          void saveInlineEnabled(cell, previousValue);
         });
         return toggle;
       },
@@ -4387,8 +4388,6 @@ function userRolesFormatter(cell) {
 function initializeUsersTable() {
   const element = document.getElementById("users-table");
   if (!(element instanceof HTMLElement)) return;
-  const accountForm = document.querySelector("[data-user-account-form]");
-  initializePasswordToggles(accountForm);
   const csrf = element.dataset.csrf || "";
   const existingRows = JSON.parse(element.dataset.users || "[]");
   initializeAtlasoResourceWizard({
@@ -4413,9 +4412,7 @@ function initializeUsersTable() {
     steps: [
       { id: "identity", title: "Define the local identity", description: "Choose the username and Atlaso authorization roles." },
       { id: "access", title: "Choose Photon access", description: "Set the desired login shell and optional Web SSH access." },
-      { id: "password", title: "Set or postpone the Photon password", description: "Stage a policy-compliant password now or leave both fields blank to postpone." },
-      { id: "enablement", title: "Choose user enablement", description: "Choose whether the account enters enabled Atlaso and Photon desired state." },
-      { id: "review", title: "Review local-user desired state", description: "Confirm the account and global appliance-apply boundary." },
+      { id: "review", title: "Review the local user", description: "Confirm the identity, access, and global appliance-apply boundary." },
     ],
     reviewItems: [
       { label: "Username", field: "username" },
@@ -4426,18 +4423,7 @@ function initializeUsersTable() {
       },
       { label: "Photon shell", field: "shell" },
       { label: "Web SSH", field: "web_terminal_access" },
-      { label: "Photon password", value: (form) => form.elements.password.value ? "Staged securely" : "Postponed" },
-      { label: "Enabled", field: "enabled" },
     ],
-    onOpen: ({ form }) => {
-      resetPasswordVisibility(form);
-      form.elements.password.value = "";
-      form.elements.confirm_password.value = "";
-      form.dataset.osPasswordAvailable = form.elements.record_id.value
-        && existingRows.find((row) => String(row.id) === String(form.elements.record_id.value))?.os_password_available
-        ? "true"
-        : "false";
-    },
     validateStep: ({ form, step }) => {
       if (step.id === "identity" && !form.querySelector('input[name="roles"]:checked')) {
         return {
@@ -4452,25 +4438,6 @@ function initializeUsersTable() {
         && form.elements.shell.value === "/sbin/nologin"
       ) {
         return { valid: false, message: "Web SSH access requires an interactive Photon shell.", field: "shell" };
-      }
-      if (
-        step.id === "password"
-        && (form.elements.password.value || form.elements.confirm_password.value)
-        && form.elements.password.value !== form.elements.confirm_password.value
-      ) {
-        return { valid: false, message: "Password confirmation does not match.", field: "confirm_password" };
-      }
-      if (
-        step.id === "enablement"
-        && form.elements.enabled.checked
-        && !form.elements.password.value
-        && form.dataset.osPasswordAvailable !== "true"
-      ) {
-        return {
-          valid: false,
-          message: "Set a Photon password in the Password step before enabling this user.",
-          field: "enabled",
-        };
       }
       return { valid: true };
     },

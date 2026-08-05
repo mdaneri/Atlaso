@@ -987,8 +987,10 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     assert "await Promise.resolve(config.onDeleted?.({ data, table }))" in adapter_block
     assert 'toggle.className = "inline-boolean-toggle"' in adapter_block
     assert 'toggle.addEventListener("click", (event) =>' in adapter_block
-    assert 'cell.setValue(!Boolean(cell.getValue()))' in adapter_block
-    assert "void saveInlineEnabled(cell)" in adapter_block
+    assert "const previousValue = Boolean(cell.getValue())" in adapter_block
+    assert "cell.setValue(!previousValue)" in adapter_block
+    assert "void saveInlineEnabled(cell, previousValue)" in adapter_block
+    assert "cell.setValue(previousValue)" in adapter_block
     assert adapter_block.count("await refreshNetworkSideStack();") == 3
     for name in (
         "initializeApiTokensTable",
@@ -1243,6 +1245,7 @@ def test_reported_template_accessibility_contracts():
     from pathlib import Path
 
     templates = Path("atlaso/app/templates")
+    app_js = Path("atlaso/app/static/app.js").read_text(encoding="utf-8")
     appliance_update = (templates / "appliance_update.html").read_text(encoding="utf-8")
     logs = (templates / "logs.html").read_text(encoding="utf-8")
     ldap = (templates / "ldap.html").read_text(encoding="utf-8")
@@ -1294,8 +1297,12 @@ def test_reported_template_accessibility_contracts():
     assert 'data-atlaso-wizard-step="enablement"' in (templates / "dhcp.html").read_text(encoding="utf-8")
     assert 'name="scope_choices"' in authentication
     assert "<textarea name=\"scopes\"" not in authentication
-    assert 'data-atlaso-wizard-step="password"' in (templates / "users.html").read_text(encoding="utf-8")
-    assert 'data-atlaso-wizard-step="enablement"' in (templates / "users.html").read_text(encoding="utf-8")
+    users_template = (templates / "users.html").read_text(encoding="utf-8")
+    assert 'data-atlaso-wizard-step="password"' not in users_template
+    assert 'data-atlaso-wizard-step="enablement"' not in users_template
+    assert '<input type="checkbox" name="enabled" hidden>' in users_template
+    assert "Set/reset Photon OS password" in app_js
+    assert "cell.setValue(previousValue);" in app_js
     for template_name, form_marker in {
         "authentication.html": '"api-token-form"',
         "certificate_authority.html": '"ca-certificate-form"',
@@ -5810,16 +5817,19 @@ def test_local_users_page_separates_ldap_authentication(client):
     users_table_js = app_js.text.split("function initializeUsersTable()", 1)[1].split("function initializeUserPasswordForm()", 1)[0]
     assert "initializeAtlasoResourceWizard({" in users_table_js
     assert 'height: "100%"' in users_table_js
-    assert "initializePasswordToggles(accountForm)" in users_table_js
-    assert "resetPasswordVisibility(form)" in users_table_js
-    assert "form.dataset.osPasswordAvailable" in users_table_js
+    assert "initializePasswordToggles(accountForm)" not in users_table_js
+    password_form_js = app_js.text.split("function initializeUserPasswordForm()", 1)[1].split("async function autoSaveKmsClient", 1)[0]
+    assert "initializePasswordToggles(form)" in password_form_js
+    assert "resetPasswordVisibility(form)" not in users_table_js
+    assert "form.dataset.osPasswordAvailable" not in users_table_js
     assert 'dialogId: "user-account-dialog"' in users_table_js
     assert 'resourceName: "user"' in users_table_js
     assert 'editor:' not in users_table_js
     assert "cellEdited:" not in users_table_js
     assert "Select at least one Atlaso role." in users_table_js
     assert "Web SSH access requires an interactive Photon shell." in users_table_js
-    assert "Set a Photon password in the Password step before enabling this user." in users_table_js
+    assert '{ id: "password"' not in users_table_js
+    assert '{ id: "enablement"' not in users_table_js
     enabled_column_js = users_table_js.split('title: "Enabled"', 1)[1].split('title: "OS account"', 1)[0]
     assert "editor:" not in enabled_column_js
     assert "validatePasswordMatch" in app_js.text
@@ -6293,7 +6303,7 @@ def test_local_user_reset_modal_endpoint_and_remove(client):
     assert "remove-me" not in refreshed.text
 
 
-def test_local_user_wizard_can_stage_password_and_enable_account(client):
+def test_local_user_wizard_creates_disabled_account_then_password_flow_enables_it(client):
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -6306,42 +6316,39 @@ def test_local_user_wizard_can_stage_password_and_enable_account(client):
     created = client.post(
         "/users",
         data={
-            "username": "wizard-enabled",
+            "username": "wizard-disabled",
             "roles": ["viewer"],
             "shell": "/bin/bash",
-            "password": "Strong-wizard1!",
-            "confirm_password": "Strong-wizard1!",
-            "enabled": "on",
             "enabled_present": "1",
             "csrf": csrf,
         },
         headers={"X-Atlaso-Grid": "1"},
     )
     assert created.status_code == 200, created.text
-    assert created.json()["user"]["enabled"] is True
-    assert created.json()["user"]["os_password_available"] is True
+    assert created.json()["user"]["enabled"] is False
+    assert created.json()["user"]["os_password_available"] is False
+    user_id = created.json()["user"]["id"]
     with SessionLocal() as db:
-        user = db.execute(select(User).where(User.username == "wizard-enabled")).scalar_one()
+        user = db.execute(select(User).where(User.username == "wizard-disabled")).scalar_one()
+        assert user.enabled is False
+        assert not has_pending_os_password(user)
+
+    staged = client.post(
+        f"/users/{user_id}/password",
+        data={"password": "Strong-wizard1!", "confirm_password": "Strong-wizard1!", "csrf": csrf},
+        follow_redirects=False,
+    )
+    assert staged.status_code == 303
+    with SessionLocal() as db:
+        user = db.get(User, user_id)
+        assert user is not None
         assert user.enabled is True
         assert has_pending_os_password(user)
 
-    rejected = client.post(
-        "/users",
-        data={
-            "username": "wizard-no-password",
-            "roles": ["viewer"],
-            "shell": "/sbin/nologin",
-            "enabled": "on",
-            "enabled_present": "1",
-            "csrf": csrf,
-        },
-        headers={"X-Atlaso-Grid": "1"},
-    )
-    assert rejected.status_code == 400
-    assert "Set a Photon password" in rejected.text
 
+def test_existing_local_user_can_be_enabled_inline_after_password_apply(client):
+    from datetime import UTC, datetime
 
-def test_existing_local_user_can_be_enabled_inline_after_password_staging(client):
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -6358,12 +6365,12 @@ def test_existing_local_user_can_be_enabled_inline_after_password_staging(client
     )
     assert created.status_code == 200
     user_id = created.json()["user"]["id"]
-    staged = client.post(
-        f"/users/{user_id}/password",
-        data={"password": "Inline-Bridge1!", "confirm_password": "Inline-Bridge1!", "csrf": csrf},
-        follow_redirects=False,
-    )
-    assert staged.status_code == 303
+    with SessionLocal() as db:
+        user = db.get(User, user_id)
+        assert user is not None
+        user.os_password_applied_at = datetime.now(UTC)
+        db.add(user)
+        db.commit()
 
     enabled = client.post(
         f"/users/{user_id}/edit",
@@ -6386,7 +6393,7 @@ def test_existing_local_user_can_be_enabled_inline_after_password_staging(client
         user = db.get(User, user_id)
         assert user is not None
         assert user.enabled is True
-        assert has_pending_os_password(user)
+        assert not has_pending_os_password(user)
 
 
 def test_real_local_users_apply_preserves_pending_password_for_disabled_user():
@@ -7304,7 +7311,8 @@ def test_new_record_rows_lock_defaults_until_required_field(client):
     ]
     assert 'editor: "tickCross"' not in configured_columns_block
     assert 'toggle.className = "inline-boolean-toggle"' in configured_columns_block
-    assert "void saveInlineEnabled(cell)" in configured_columns_block
+    assert "void saveInlineEnabled(cell, previousValue)" in configured_columns_block
+    assert "cell.setValue(previousValue)" in app_js.text
     assert firewall_block.index('{ id: "state"') < firewall_block.index('{ id: "enablement"')
     assert firewall_block.index('{ id: "enablement"') < firewall_block.index('{ id: "review"')
     assert 'title: "Choose rule enablement"' in firewall_block
