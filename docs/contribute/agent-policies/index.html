@@ -4145,13 +4145,19 @@
   from the upload route. Global <code>vcf_offline_depot</code> apply must validate the staged nginx site, run <code>stage-tool</code> to
   extract the archive under <code>/opt/atlaso/vcf-download-tool/extracted</code>, expose
   <code>/opt/atlaso/vcf-download-tool/vcf-download-tool</code> as the stable executable wrapper, record the tool version using
-  <code>--version</code>, run <code>vcf-download-tool configuration generate --software-depot-id</code>, apply
-  <code>application-prodv2.properties</code>, sync intent, then apply HTTPS. The helper validates CA-managed
+  <code>--version</code>, and apply <code>application-prodv2.properties</code>. It must preserve an existing software depot ID during ordinary
+  settings and download-profile applies. Generate an ID only when none is recorded or the operator explicitly submits
+  the software depot ID refresh action; then read the persisted identity back with
+  <code>vcf-download-tool configuration get --software-depot-id</code>, store only one unambiguous canonical readback value, sync
+  intent, and apply HTTPS. Preserve the old ID when generation itself fails. If generation succeeds but canonical
+  readback fails, invalidate the stored ID because VCFDT may already have replaced its runtime identity. The helper
+  validates CA-managed
   <code>vcf_offline_depot:https</code> cert/key paths, server name/listener uniqueness, document root, auth mode, selected local
   HTTP user, and static-file directives, then installs or removes <code>/etc/atlaso/nginx/sites.d/vcf-offline-depot.conf</code>,
   writes <code>/etc/atlaso/nginx/htpasswd/vcf-offline-depot.htpasswd</code> from the applied Photon password hash when
-  authentication is required, and reloads nginx. The refresh icon for software depot ID must submit the global
-  <code>/appliance-apply</code> workflow for <code>vcf_offline_depot</code>, not call the helper directly. Manual VCFDT command generation
+  authentication is required, and reloads nginx. The refresh icon for software depot ID must submit explicit refresh
+  intent through the global <code>/appliance-apply</code> workflow for <code>vcf_offline_depot</code>, not call the helper directly. Manual
+  VCFDT command generation
   should use <code>/var/lib/atlaso/vcfDownloadTool/active-tool</code> token and activation-code file paths, write telemetry and ESX
   disabled-platform config without exposing secret contents, and model patch-only separately from upgrade-only. Download
   tokens and activation codes share one Broadcom credentials modal with a credential-type selector; files or pasted text

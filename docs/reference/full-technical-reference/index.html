@@ -4000,9 +4000,14 @@ metadata, and records that a package is ready for apply; upload does not extract
 run the tool, or generate a software depot ID. Global appliance apply for <code>vcf_offline_depot</code> validates the rendered
 nginx site, runs helper-owned <code>stage-tool</code>, extracts the uploaded archive under
 <code>/opt/atlaso/vcf-download-tool/extracted</code>, exposes <code>/opt/atlaso/vcf-download-tool/vcf-download-tool</code> as the stable
-wrapper, records the tool version from <code>vcf-download-tool --version</code>, applies <code>application-prodv2.properties</code> to both
-the helper extraction tree and <code>/var/lib/atlaso/vcfDownloadTool/active-tool/conf/</code>, runs
-<code>vcf-download-tool configuration generate --software-depot-id</code>, syncs intent, and then applies HTTPS. Upload Broadcom
+wrapper, records the tool version from <code>vcf-download-tool --version</code>, and applies <code>application-prodv2.properties</code> to
+both the helper extraction tree and <code>/var/lib/atlaso/vcfDownloadTool/active-tool/conf/</code>. Ordinary settings and profile
+applies preserve the recorded software depot ID. When no ID exists, or the operator explicitly confirms its refresh,
+Atlaso runs <code>vcf-download-tool configuration generate --software-depot-id</code>, reads the persisted identity back with
+<code>vcf-download-tool configuration get --software-depot-id</code>, and records only one unambiguous canonical readback value;
+a generation failure preserves the previous ID, while successful generation followed by failed or ambiguous readback
+invalidates it because VCFDT may already have replaced its runtime identity. Apply then syncs intent and applies HTTPS.
+Upload Broadcom
 credentials through the unified Broadcom credentials modal as either a download token or activation code, by file or
 pasted text; existing storage keys remain separate, and credential bodies are never returned in responses, previews,
 logs, or job output. Metadata and binaries profiles use the most recently staged runtime credential: the download-token
