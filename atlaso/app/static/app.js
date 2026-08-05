@@ -13368,14 +13368,23 @@ function initializeVcfDepotSoftwareDepotIdGenerator() {
   });
   const form = modal?.querySelector("form");
   if (form instanceof HTMLFormElement) {
-    form.addEventListener("submit", () => {
-      if (modal instanceof HTMLDialogElement) {
-        modal.close("submit");
-      }
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
       const submitButton = form.querySelector('button[type="submit"]');
       if (submitButton instanceof HTMLButtonElement) {
         submitButton.disabled = true;
         submitButton.textContent = "Creating task…";
+      }
+      try {
+        const submitted = await submitApplianceApplyForm(form);
+        if (submitted && modal instanceof HTMLDialogElement) {
+          modal.close("submit");
+        }
+      } finally {
+        if (submitButton instanceof HTMLButtonElement) {
+          submitButton.disabled = false;
+          submitButton.textContent = "Submit appliance changes";
+        }
       }
     });
   }
@@ -14845,8 +14854,17 @@ function refreshCurrentWorkflowAfterApplianceApply(task) {
 
 async function submitApplianceApplyForm(form) {
   const elements = applianceApplyModalElements();
-  if (!(form instanceof HTMLFormElement) || !(elements.modal instanceof HTMLDialogElement)) return;
-  setApplianceApplyModalError("");
+  if (!(form instanceof HTMLFormElement) || !(elements.modal instanceof HTMLDialogElement)) return false;
+  const localError = form.querySelector("[data-appliance-apply-submit-error]");
+  const setSubmitError = (message) => {
+    if (localError instanceof HTMLElement) {
+      localError.textContent = message;
+      localError.classList.toggle("hidden", !message);
+      return;
+    }
+    setApplianceApplyModalError(message);
+  };
+  setSubmitError("");
   if (elements.submit instanceof HTMLButtonElement) {
     elements.submit.disabled = true;
     elements.submit.textContent = "Creating task…";
@@ -14863,8 +14881,10 @@ async function submitApplianceApplyForm(form) {
     applianceApplyActiveJobId = payload.job_id || payload.task?.id || "";
     renderApplianceApplyTask(payload.task);
     refreshApplianceApplySidebar().catch(() => {});
+    return true;
   } catch (error) {
-    setApplianceApplyModalError(error instanceof Error ? error.message : "Appliance changes could not be submitted.");
+    setSubmitError(error instanceof Error ? error.message : "Appliance changes could not be submitted.");
+    return false;
   } finally {
     if (elements.submit instanceof HTMLButtonElement) {
       elements.submit.disabled = false;

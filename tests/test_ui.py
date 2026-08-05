@@ -9613,8 +9613,12 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "initializeVcfDepotSettings" in app_js.text
     assert "formatNginxListen(listenAddress, port)" in app_js.text
     software_depot_modal_js = app_js.text.split("function initializeVcfDepotSoftwareDepotIdGenerator", 1)[1].split("function ", 1)[0]
+    assert "event.preventDefault()" in software_depot_modal_js
+    assert "await submitApplianceApplyForm(form)" in software_depot_modal_js
     assert 'modal.close("submit")' in software_depot_modal_js
     assert 'submitButton.textContent = "Creating task…"' in software_depot_modal_js
+    assert 'submitButton.textContent = "Submit appliance changes"' in software_depot_modal_js
+    assert "data-appliance-apply-submit-error" in page.text
     assert "initializeVcfDepotProfilesTable" in app_js.text
     assert "initializeVcfDepotTasksTable" in app_js.text
     assert "refreshVcfDepotTasksTable" in app_js.text
@@ -9622,6 +9626,10 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert 'new Set(["/esx-storage", "/vcf-offline-depot"])' in apply_refresh_js
     assert 'task?.status !== "succeeded"' in apply_refresh_js
     assert "window.location.reload()" in apply_refresh_js
+    submit_apply_js = app_js.text.split("async function submitApplianceApplyForm", 1)[1].split("async function pollGlobalApplianceApply", 1)[0]
+    assert 'form.querySelector("[data-appliance-apply-submit-error]")' in submit_apply_js
+    assert "return true" in submit_apply_js
+    assert "return false" in submit_apply_js
     assert 'ajaxURL: "/vcf-offline-depot/tasks/status"' in app_js.text
     assert 'paginationMode: "remote"' in app_js.text
     assert "paginationSize: 10" in app_js.text
