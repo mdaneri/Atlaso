@@ -10346,7 +10346,7 @@ def test_vcf_offline_depot_accepts_pasted_download_token_and_activation_code(cli
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import Setting
+    from atlaso.app.models import Setting, VcfDepotDownloadProfile
     from atlaso.app.services.vcf_offline_depot import (
         VCF_DEPOT_ACTIVATION_NAME_KEY,
         VCF_DEPOT_ACTIVATION_VALUE_KEY,
@@ -10366,6 +10366,12 @@ def test_vcf_offline_depot_accepts_pasted_download_token_and_activation_code(cli
     login(client)
     page = client.get("/vcf-offline-depot")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    with SessionLocal() as db:
+        db.add(VcfDepotDownloadProfile(name="metadata", profile_type="metadata", enabled=True))
+        db.commit()
+
+    def metadata_command(preview: str) -> str:
+        return next(line for line in preview.splitlines() if line.startswith("vcf-download-tool metadata download"))
 
     response = client.post(
         "/vcf-offline-depot/credentials",
@@ -10423,6 +10429,9 @@ def test_vcf_offline_depot_accepts_pasted_download_token_and_activation_code(cli
     activation_payload = activation_response.json()
     assert activation_payload["activation_code_present"] is True
     assert activation_payload["activation_code_name"] == "pasted activation code"
+    activation_command = metadata_command(activation_payload["command_preview"])
+    assert "--depot-download-activation-code-file=${ACTIVATION_CODE_FILE}" in activation_command
+    assert "--depot-download-token-file=${TOKEN_FILE}" not in activation_command
     assert "pasted-secret-activation-code" not in activation_payload["command_preview"]
     assert "pasted-secret-activation-code" not in activation_response.text
     assert runtime_activation.read_text(encoding="utf-8") == "pasted-secret-activation-code"
@@ -10443,6 +10452,9 @@ def test_vcf_offline_depot_accepts_pasted_download_token_and_activation_code(cli
     activation_upload_payload = activation_upload_response.json()
     assert activation_upload_payload["activation_code_present"] is True
     assert activation_upload_payload["activation_code_name"] == "activation-code.txt"
+    activation_upload_command = metadata_command(activation_upload_payload["command_preview"])
+    assert "--depot-download-activation-code-file=${ACTIVATION_CODE_FILE}" in activation_upload_command
+    assert "--depot-download-token-file=${TOKEN_FILE}" not in activation_upload_command
     assert "uploaded-secret-activation-code" not in activation_upload_response.text
     assert runtime_activation.read_text(encoding="utf-8") == "uploaded-secret-activation-code"
 
@@ -10460,6 +10472,18 @@ def test_vcf_offline_depot_accepts_pasted_download_token_and_activation_code(cli
         assert "uploaded-secret-token" not in snapshot
         assert "pasted-secret-activation-code" not in snapshot
         assert "uploaded-secret-activation-code" not in snapshot
+
+    token_replacement_response = client.post(
+        "/vcf-offline-depot/credentials",
+        data={"credential_type": "download_token", "credential_text": "replacement-secret-token", "csrf": csrf},
+        headers={"X-Atlaso-Autosave": "1"},
+    )
+    assert token_replacement_response.status_code == 200
+    replacement_payload = token_replacement_response.json()
+    replacement_command = metadata_command(replacement_payload["command_preview"])
+    assert "--depot-download-token-file=${TOKEN_FILE}" in replacement_command
+    assert "--depot-download-activation-code-file=${ACTIVATION_CODE_FILE}" not in replacement_command
+    assert "replacement-secret-token" not in token_replacement_response.text
 
 
 def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path):

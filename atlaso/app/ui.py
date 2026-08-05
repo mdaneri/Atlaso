@@ -2466,11 +2466,17 @@ def vcf_depot_secret_context(db: Session) -> dict[str, object]:
     activation_value = db.execute(select(Setting).where(Setting.key == VCF_DEPOT_ACTIVATION_VALUE_KEY)).scalar_one_or_none()
     token_state = setting_secret_state(token_name, token_value)
     activation_state = setting_secret_state(activation_name, activation_value)
+    download_credential_type = "download_token"
+    if activation_state.present and (
+        not token_state.present or activation_state.updated_at > token_state.updated_at
+    ):
+        download_credential_type = "activation_code"
     return {
         "download_token": token_state,
         "activation_code": activation_state,
         "download_token_present": token_state.present,
         "activation_code_present": activation_state.present,
+        "download_credential_type": download_credential_type,
     }
 
 
@@ -2768,6 +2774,7 @@ def vcf_offline_depot_context(db: Session, *, reconcile: bool = True) -> dict:
         vmware_ceip_enabled=bool(appliance_settings.vmware_ceip_enabled),
         download_token_present=bool(secrets["download_token_present"]),
         activation_code_present=bool(secrets["activation_code_present"]),
+        preferred_credential_type=str(secrets["download_credential_type"]),
     )
     profile_rows = [
         vcf_depot_profile_to_dict(
@@ -3057,6 +3064,7 @@ def run_vcf_depot_download_job(job_id: str, profile_id: int) -> None:
                 profile,
                 download_token_present=bool(secrets["download_token_present"]),
                 activation_code_present=bool(secrets["activation_code_present"]),
+                preferred_credential_type=str(secrets["download_credential_type"]),
             )
             generated_script = render_vcfdt_command_preview(
                 settings,
@@ -3064,6 +3072,7 @@ def run_vcf_depot_download_job(job_id: str, profile_id: int) -> None:
                 vmware_ceip_enabled=bool(appliance_settings.vmware_ceip_enabled),
                 download_token_present=bool(secrets["download_token_present"]),
                 activation_code_present=bool(secrets["activation_code_present"]),
+                preferred_credential_type=str(secrets["download_credential_type"]),
                 include_disabled_profiles=True,
             )
             tool_path = prepare_vcf_depot_runtime(settings, db)
@@ -18053,6 +18062,7 @@ def preview_vcf_depot_profile_from_ui(
         vmware_ceip_enabled=bool(appliance_settings.vmware_ceip_enabled),
         download_token_present=bool(secrets["download_token_present"]),
         activation_code_present=bool(secrets["activation_code_present"]),
+        preferred_credential_type=str(secrets["download_credential_type"]),
         include_disabled_profiles=True,
     )
     return JSONResponse({"profile_id": profile.id, "profile_name": profile.name, "script": script})
@@ -18241,6 +18251,7 @@ def start_vcf_depot_profile_download_from_ui(
             profile,
             download_token_present=bool(secrets["download_token_present"]),
             activation_code_present=bool(secrets["activation_code_present"]),
+            preferred_credential_type=str(secrets["download_credential_type"]),
         )
     ]
     if not commands:

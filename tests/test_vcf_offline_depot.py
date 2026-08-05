@@ -436,6 +436,40 @@ def test_vcf_depot_download_profiles_use_activation_code_when_no_token_is_staged
     assert "--depot-download-token-file=/var/lib/atlaso/vcfDownloadTool/active-tool/secrets/download-token.txt" not in commands[0]
 
 
+def test_vcf_depot_download_profiles_use_the_preferred_staged_credential():
+    settings = VcfOfflineDepotSettings(
+        hostname="depot.atlaso.internal",
+        depot_store_path="/mnt/atlaso-vcf-offline-depot",
+        tool_archive_path="vcfDownloadTool/vcf-download-tool-9.1.0.test.tar.gz",
+        tool_version="9.1.0",
+    )
+    profile = VcfDepotDownloadProfile(
+        name="both-credentials",
+        profile_type="metadata",
+        enabled=True,
+    )
+
+    activation_commands = vcfdt_commands_for_profile(
+        settings,
+        profile,
+        download_token_present=True,
+        activation_code_present=True,
+        preferred_credential_type="activation_code",
+    )
+    token_commands = vcfdt_commands_for_profile(
+        settings,
+        profile,
+        download_token_present=True,
+        activation_code_present=True,
+        preferred_credential_type="download_token",
+    )
+
+    assert "--depot-download-activation-code-file=/var/lib/atlaso/vcfDownloadTool/active-tool/secrets/activation-code.txt" in activation_commands[0]
+    assert "--depot-download-token-file=/var/lib/atlaso/vcfDownloadTool/active-tool/secrets/download-token.txt" not in activation_commands[0]
+    assert "--depot-download-token-file=/var/lib/atlaso/vcfDownloadTool/active-tool/secrets/download-token.txt" in token_commands[0]
+    assert "--depot-download-activation-code-file=/var/lib/atlaso/vcfDownloadTool/active-tool/secrets/activation-code.txt" not in token_commands[0]
+
+
 def test_vcf_depot_command_preview_supports_patch_only_profiles():
     settings = VcfOfflineDepotSettings(
         hostname="depot.atlaso.internal",

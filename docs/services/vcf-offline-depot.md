@@ -36,6 +36,10 @@ This verified appliance view provides visual orientation before you begin.
 Download-profile creation uses a reviewed wizard. Notes stay with profile identity, task execution owns lifecycle
 status, and profile enablement has its own step so availability is an explicit decision before review.
 
+Metadata and binaries profiles use the download token or activation code staged most recently. Staging one credential
+does not remove the other because ESX profiles always require the activation code. Review the generated command preview
+after changing credentials to confirm that it references the intended runtime credential file.
+
 Do not place depot credentials or authenticated URLs in task notes, manifests, logs, or screenshots.
 
 ## Verify
