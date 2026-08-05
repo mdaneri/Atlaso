@@ -7,7 +7,8 @@
   data-task-type="{{ task_grid_type|default('') }}"
   data-task-initial-component-filter="{{ task_grid_initial_component_filter|default('') }}"
   data-task-lock-component-filter="{{ 'true' if task_grid_lock_component_filter|default(false) else 'false' }}"
-  data-task-grid-height="{{ task_grid_height|default('100%') }}">
+  data-task-grid-height="{{ task_grid_height|default('100%') }}"
+  data-task-empty-message="{{ task_grid_empty_message|default('No tasks have been recorded yet.') }}">
   <div class="panel-head">
     <div>
       <h2{% if task_grid_title_id|default("") %} id="{{ task_grid_title_id }}"{% endif %}>{{ task_grid_title }}</h2>

@@ -714,6 +714,13 @@ def test_tasks_page_lists_redacts_logs_and_cancels(client):
     assert scoped_payload["filtered_count"] == 1
     assert scoped_payload["total_count"] == 1
 
+    scoped_selected = client.get(
+        "/tasks/status",
+        params={"task_type": "appliance-update", "job_id": "job_taskgrid001"},
+    )
+    assert scoped_selected.status_code == 200
+    assert scoped_selected.json()["selected_task"] is None
+
     invalid_task_type = client.get("/tasks/status", params={"task_type": "x" * 101})
     assert invalid_task_type.status_code == 400
 
@@ -821,9 +828,9 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6" in service_worker.text
-    assert "/static/app.css?v=network-boot-discovered-workspace-20260804-3" in service_worker.text
+    assert "/static/app.css?v=vcf-depot-tasks-239-20260804-1" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in service_worker.text
-    assert "/static/app.js?v=local-users-wizard-237-20260804-1" in service_worker.text
+    assert "/static/app.js?v=vcf-depot-tasks-239-20260804-1" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -832,7 +839,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=network-boot-discovered-workspace-20260804-3" in offline.text
+    assert "/static/app.css?v=vcf-depot-tasks-239-20260804-1" in offline.text
 
 
 def test_shared_ui_pattern_shell_and_wizard_contracts(client):
@@ -843,8 +850,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=local-users-wizard-237-20260804-1"),
-        (public_base, "/static/app.js?v=local-users-wizard-237-20260804-1"),
+        (base, "/static/app.js?v=vcf-depot-tasks-239-20260804-1"),
+        (public_base, "/static/app.js?v=vcf-depot-tasks-239-20260804-1"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5"
@@ -898,9 +905,9 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     app_js = client.get("/static/app.js").text
     create_grid = "window.AtlasoUiPatterns.createGrid({"
 
-    assert app_js.count(create_grid) == 35
+    assert app_js.count(create_grid) == 34
     assert app_js.count('pattern: "direct-edit"') == 13
-    assert app_js.count('pattern: "read-only"') == 11
+    assert app_js.count('pattern: "read-only"') == 10
     assert app_js.count('pattern: "wizard-backed"') == 11
     assert "new Tabulator(" not in app_js
     assert "new window.Tabulator(" not in app_js
@@ -929,7 +936,6 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
         "initializeEsxiPxeHostsTable": "wizard-backed",
         "initializeEsxiInstallerIsosTable": "wizard-backed",
         "initializeEsxiPxePreviewTable": "read-only",
-        "initializeVcfDepotTasksTable": "read-only",
         "initializeTasksPage": "read-only",
         "initializeAuditEventsTable": "read-only",
         "renderApplianceApplyTask": "read-only",
@@ -1349,9 +1355,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=network-boot-discovered-workspace-20260804-3" in page.text
+    assert "/static/app.css?v=vcf-depot-tasks-239-20260804-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in page.text
-    assert "/static/app.js?v=local-users-wizard-237-20260804-1" in page.text
+    assert "/static/app.js?v=vcf-depot-tasks-239-20260804-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -9501,17 +9507,23 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "VCF Offline Depot" in page.text
     assert "HTTPS Repository" not in page.text
     assert "Download profiles" in page.text
-    assert "VCFDT tasks" in page.text
+    assert "Profile download tasks" in page.text
     depot_profile_wizard = page.text.split('id="vcf-depot-profile-dialog"', 1)[1].split("</dialog>", 1)[0]
     assert 'data-atlaso-wizard-step="state"' not in depot_profile_wizard
     assert 'name="status"' not in depot_profile_wizard
     assert depot_profile_wizard.index('name="notes"') < depot_profile_wizard.index('data-atlaso-wizard-step="release"')
     assert 'data-atlaso-wizard-step="enablement"' in depot_profile_wizard
-    assert 'id="vcf-depot-tasks-table" class="tabulator-shell"' in page.text
-    assert 'id="vcf-depot-task-log-modal"' in page.text
-    assert 'class="terminal-note vcfdt-task-log-preview"' in page.text
-    assert 'data-terminal-note-open="false"' in page.text
-    assert "No VCFDT tasks have been executed." in page.text
+    assert 'class="vcf-depot-task-history task-grid-section"' in page.text
+    assert "data-tasks-page" in page.text
+    assert 'data-task-type="vcf-depot-download"' in page.text
+    assert 'data-task-lock-component-filter="true"' in page.text
+    assert 'data-task-grid-height="100%"' in page.text
+    assert 'id="tasks-table" class="tabulator-shell"' in page.text
+    assert 'id="task-detail-modal"' in page.text
+    assert 'id="task-log-modal"' in page.text
+    assert "Profile downloads only" in page.text
+    assert "Open full task history" in page.text
+    assert "No VCF profile download tasks have been recorded yet." in page.text
     with SessionLocal() as db:
         default_profiles = db.execute(select(VcfDepotDownloadProfile).order_by(VcfDepotDownloadProfile.name)).scalars().all()
         assert [(profile.name, profile.profile_type, profile.enabled) for profile in default_profiles] == [
@@ -9624,21 +9636,19 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert 'modal.close("submit")' in software_depot_modal_js
     assert 'submitButton.textContent = "Creating task…"' in software_depot_modal_js
     assert "initializeVcfDepotProfilesTable" in app_js.text
-    assert "initializeVcfDepotTasksTable" in app_js.text
-    assert "refreshVcfDepotTasksTable" in app_js.text
-    assert 'ajaxURL: "/vcf-offline-depot/tasks/status"' in app_js.text
+    assert "initializeVcfDepotTasksTable" not in app_js.text
+    assert "initializeTasksPage" in app_js.text
+    assert 'query.set("task_type", page.dataset.taskType)' in app_js.text
     assert 'paginationMode: "remote"' in app_js.text
-    assert "paginationSize: 10" in app_js.text
-    tasks_table_js = app_js.text.split("function initializeVcfDepotTasksTable", 1)[1].split("function ", 1)[0]
-    assert 'height: "380px"' in tasks_table_js
-    assert "paginationSizeSelector" not in tasks_table_js
-    assert "await vcfDepotTasksTable.replaceData()" in app_js.text
-    assert "reloadData" not in app_js.text
-    assert "window.setInterval(refreshVcfDepotTasksTable, 2000)" in app_js.text
-    assert "vcfDepotTasksRefreshPending" in app_js.text
-    assert "openVcfDepotTaskLog" in app_js.text
+    assert "paginationSize: 25" in app_js.text
+    assert 'placeholder: page.dataset.taskEmptyMessage' in app_js.text
+    assert "openTaskDetail" in app_js.text
+    assert "openTaskLog" in app_js.text
+    open_task_log_js = app_js.text.split("async function openTaskLog", 1)[1].split("async function cancelTask", 1)[0]
+    assert "task?.log_url" in open_task_log_js
+    assert 'headers: { "X-Atlaso-Task-Log": "1" }' in open_task_log_js
+    assert "payload.profile_name" in open_task_log_js
     assert 'window.Prism.languages["atlaso-log"]' in app_js.text
-    assert "window.Prism.highlightElement(content)" in app_js.text
     new_profile_js = app_js.text.split("function newVcfDepotProfileRow", 1)[1].split("function ", 1)[0]
     assert "enabled: false" in new_profile_js
     profiles_columns = app_js.text.split("function initializeVcfDepotProfilesTable", 1)[1].split("function ", 1)[0]
@@ -9688,8 +9698,8 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     start_download_js = app_js.text.split("async function startVcfDepotProfileDownload", 1)[1].split("async function ", 1)[0]
     assert "window.location.reload()" not in start_download_js
     assert "setVcfDepotDownloadActive(true, payload.job_id)" in start_download_js
-    assert "await vcfDepotTasksTable.setPage(1)" in start_download_js
-    assert "await refreshVcfDepotTasksTable()" in start_download_js
+    assert "await atlasoTasksTable.setPage(1)" in start_download_js
+    assert "await refreshTasksPage()" in start_download_js
     assert 'title: "Download mode"' in app_js.text
     assert 'field: "download_mode"' in app_js.text
     assert 'standard: "Standard"' not in app_js.text
@@ -9726,9 +9736,9 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert ".code-editor-textarea" in app_css.text
     assert ".code-editor-textarea + .atlaso-monaco-shell .atlaso-monaco-editor" in app_css.text
     assert "#vcf-depot-properties-modal .confirm-modal-panel" in app_css.text
-    assert "#vcf-depot-task-log-modal .confirm-modal-panel" in app_css.text
-    assert ".vcfdt-task-log-preview code" in app_css.text
     assert ".vcf-offline-depot-workspace > .side-stack .detail-panel" in app_css.text
+    assert ".vcf-offline-depot-main-panel" in app_css.text
+    assert ".vcf-depot-task-history .task-grid-shell" in app_css.text
     assert ".vcfdt-tool-manager" in app_css.text
     assert ".compact-file-upload" in app_css.text
     assert 'software-depot-id-value' in page.text
@@ -10632,6 +10642,14 @@ def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path):
     task_row = next(task for task in task_status_payload.json()["tasks"] if task["id"] == payload["job_id"])
     assert task_row["status"] == "pending"
     assert task_row["progress_percent"] == "0"
+    shared_task_payload = client.get(
+        "/tasks/status",
+        params={"task_type": "vcf-depot-download", "job_id": payload["job_id"]},
+    )
+    assert shared_task_payload.status_code == 200
+    assert shared_task_payload.json()["selected_task"]["id"] == payload["job_id"]
+    assert shared_task_payload.json()["selected_task"]["log_url"] == f"/vcf-offline-depot/tasks/{payload['job_id']}/log"
+    assert all(task["type"] == "vcf-depot-download" for task in shared_task_payload.json()["tasks"])
 
 
 def test_vcf_offline_depot_startup_recovers_interrupted_download(client):
