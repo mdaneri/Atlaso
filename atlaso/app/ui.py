@@ -6052,6 +6052,8 @@ def _task_row(job: Job, identity: Identity | None = None) -> dict[str, Any]:
         "error_messages": error_messages,
         "can_cancel": _can_cancel_task(job, identity),
     }
+    if job.type == "vcf-depot-download":
+        row["log_url"] = f"/vcf-offline-depot/tasks/{job.id}/log"
     if steps:
         row["_children"] = [_job_step_row(step) for step in steps]
     return row

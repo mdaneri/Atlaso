@@ -12412,7 +12412,10 @@ async function requestTasksTableData(_url, _config, params = {}) {
   return payload;
 }
 
-async function openTaskLog(taskId) {
+async function openTaskLog(taskOrId) {
+  const task = typeof taskOrId === "object" && taskOrId !== null ? taskOrId : taskById(taskOrId);
+  const taskId = task?.id || String(taskOrId || "");
+  const logUrl = task?.log_url || `/tasks/${encodeURIComponent(taskId)}/log`;
   const modal = document.getElementById("task-log-modal");
   const title = document.querySelector("[data-task-log-title]");
   const meta = document.querySelector("[data-task-log-meta]");
@@ -12432,13 +12435,16 @@ async function openTaskLog(taskId) {
     modal.showModal();
   }
   try {
-    const response = await fetch(`/tasks/${encodeURIComponent(taskId)}/log`, { credentials: "same-origin" });
+    const response = await fetch(logUrl, {
+      credentials: "same-origin",
+      headers: { "X-Atlaso-Task-Log": "1" },
+    });
     const payload = await response.json();
     if (!response.ok) {
       throw new Error(payload.detail || "Unable to load task log.");
     }
     if (title instanceof HTMLElement) {
-      title.textContent = payload.title || "Task log";
+      title.textContent = payload.title || (payload.profile_name ? `${payload.profile_name} task log` : "Task log");
     }
     if (meta instanceof HTMLElement) {
       meta.textContent = `${payload.job_id || taskId} · ${payload.status || "unknown"}`;
@@ -12534,7 +12540,7 @@ function initializeTasksPage() {
         {
           label: "Log",
           disabled: (component) => Boolean(component.getData().is_step),
-          action: (_event, row) => openTaskLog(row.getData().id),
+          action: (_event, row) => openTaskLog(row.getData()),
         },
         {
           label: "Cancel task",
@@ -12629,7 +12635,7 @@ function initializeTasksPage() {
   document.querySelector("[data-task-log-close]")?.addEventListener("click", () => document.getElementById("task-log-modal")?.close());
   document.querySelector("[data-task-detail-log]")?.addEventListener("click", () => {
     if (atlasoSelectedTaskId) {
-      openTaskLog(atlasoSelectedTaskId);
+      openTaskLog(taskById(atlasoSelectedTaskId) || atlasoSelectedTaskId);
     }
   });
   document.querySelector("[data-task-detail-cancel]")?.addEventListener("click", () => {

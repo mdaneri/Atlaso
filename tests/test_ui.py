@@ -9636,6 +9636,10 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert 'placeholder: page.dataset.taskEmptyMessage' in app_js.text
     assert "openTaskDetail" in app_js.text
     assert "openTaskLog" in app_js.text
+    open_task_log_js = app_js.text.split("async function openTaskLog", 1)[1].split("async function cancelTask", 1)[0]
+    assert "task?.log_url" in open_task_log_js
+    assert 'headers: { "X-Atlaso-Task-Log": "1" }' in open_task_log_js
+    assert "payload.profile_name" in open_task_log_js
     assert 'window.Prism.languages["atlaso-log"]' in app_js.text
     new_profile_js = app_js.text.split("function newVcfDepotProfileRow", 1)[1].split("function ", 1)[0]
     assert "enabled: false" in new_profile_js
@@ -10636,6 +10640,7 @@ def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path):
     )
     assert shared_task_payload.status_code == 200
     assert shared_task_payload.json()["selected_task"]["id"] == payload["job_id"]
+    assert shared_task_payload.json()["selected_task"]["log_url"] == f"/vcf-offline-depot/tasks/{payload['job_id']}/log"
     assert all(task["type"] == "vcf-depot-download" for task in shared_task_payload.json()["tasks"])
 
 
