@@ -468,7 +468,9 @@ selected interfaces.
 
 When an operator selects NTP/NTS server changes, submission always adds the CA unit, including when its desired-state
 baseline appears current. The global unit order executes CA first so the helper materializes or repairs the NTS chain
-and private key before `ntpd` validation checks those paths.
+and private key before `ntpd` validation checks those paths. Adding CA through this NTS dependency also preserves the
+managed LDAP closure: any changed CA, DNS/DHCP, Firewall, and Managed LDAP units are submitted together when managed
+LDAP desired state is active.
 
 The read-only `atlaso-helper ntpd capabilities` action requires Photon’s `ntpsec` package and verifies the `ntpd` binary
 identifies itself as NTPsec without starting a daemon. If those checks fail, Atlaso disables the NTS server switch and
