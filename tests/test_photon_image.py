@@ -1585,7 +1585,7 @@ def test_lifecycle_runner_summarizes_apply_validation_html():
             <div class="alert error">Resolve validation errors before submitting appliance changes.</div>
             <article>
               <strong>Certificate Authority</strong>
-              <div class="alert error"><div>CA service requires at least one listen interface.</div></div>
+              <div class="alert error"><div>CA listen interfaces must use configured access targets.</div></div>
             </article>
           </body>
         </html>
@@ -1593,7 +1593,7 @@ def test_lifecycle_runner_summarizes_apply_validation_html():
     )
 
     assert summary.startswith("Resolve validation errors before submitting appliance changes.")
-    assert "CA service requires at least one listen interface." in summary
+    assert "CA listen interfaces must use configured access targets." in summary
     assert "doctype" not in summary.lower()
 
 

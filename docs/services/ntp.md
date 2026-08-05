@@ -32,7 +32,9 @@ This verified appliance view provides visual orientation before you begin.
    Rename or remove an existing row before reusing its source name.
 3. Review warnings about source reachability or incomplete security settings.
 4. Inspect the rendered NTPsec preview.
-5. Submit the NTPsec unit through [Appliance Apply](../operate/appliance-apply.md).
+5. Submit the NTPsec unit through [Appliance Apply](../operate/appliance-apply.md). In NTS server mode, Atlaso always
+   includes Certificate Authority first so missing or stale runtime certificate files are repaired; the CA does not
+   need a public portal interface for this internal certificate deployment.
 
 Appliance Settings does not own time enforcement. DNS/DHCP also does not apply NTP configuration.
 

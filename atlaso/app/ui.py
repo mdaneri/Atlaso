@@ -3310,8 +3310,6 @@ def ca_context(db: Session, *, reconcile: bool = True) -> dict:
     validation_errors = [*state_errors, *validate_ca_state(settings=settings, profiles=profiles, certificates=certificates)]
     selected_interfaces = split_interfaces(settings.listen_interface)
     invalid_interfaces = [interface for interface in selected_interfaces if interface not in available_names]
-    if settings.enabled and not selected_interfaces:
-        validation_errors.append("CA service requires at least one listen interface.")
     if settings.enabled and invalid_interfaces:
         validation_errors.append("CA listen interfaces must be access physical interfaces or enabled VLANs with IP addresses.")
     issued_count = len([certificate for certificate in certificates if certificate.status == "issued"])
@@ -11623,6 +11621,14 @@ def submit_appliance_apply(
             for unit_id in ldap_related_units
             if unit_id in unit_map and unit_map[unit_id]["changed"]
         )
+    ntp_settings_for_apply = unit_map.get("ntpd", {}).get("context", {}).get("ntp_settings")
+    ca_required_for_nts = bool(
+        "ntpd" in selected_ids
+        and getattr(ntp_settings_for_apply, "nts_server_enabled", False)
+        and "ca" in unit_map
+    )
+    if ca_required_for_nts:
+        selected_ids.add("ca")
     depot_context_for_apply = unit_map.get("vcf_offline_depot", {}).get("context", {})
     depot_settings_for_apply = depot_context_for_apply.get("vcf_depot_settings")
     depot_publishing_units = {"vcf_offline_depot", "public_services"}
