@@ -25,7 +25,8 @@ This verified appliance view provides visual orientation before you begin.
 
 1. Confirm the fixed depot mount is present and has sufficient working space.
 2. Configure the service listener and the HTTP user used by approved VCF targets.
-3. Review certificate readiness and the generated software depot identity.
+3. Review certificate readiness and the generated software depot identity. Atlaso reads the persisted identity back
+   from VCFDT after generation and displays only that canonical value.
 4. Validate the desired state and submit the VCF Offline Depot unit through
    [Appliance Apply](../operate/appliance-apply.md).
 5. When the apply task succeeds, the page refreshes automatically so the applied VCF Download Tool version and
@@ -43,6 +44,11 @@ does not remove the other because ESX profiles always require the activation cod
 after changing credentials to confirm that it references the intended runtime credential file.
 
 Do not place depot credentials or authenticated URLs in task notes, manifests, logs, or screenshots.
+
+Register the displayed software depot ID in the VCF Business Services console, then stage the activation code returned
+for that exact registration. If a software depot ID is refreshed, its earlier activation code no longer matches the
+active VCFDT identity; register the current displayed ID and replace the staged activation code before retrying a
+download.
 
 ## Verify
 

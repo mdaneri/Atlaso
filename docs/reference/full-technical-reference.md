@@ -437,7 +437,9 @@ nginx site, runs helper-owned `stage-tool`, extracts the uploaded archive under
 `/opt/atlaso/vcf-download-tool/extracted`, exposes `/opt/atlaso/vcf-download-tool/vcf-download-tool` as the stable
 wrapper, records the tool version from `vcf-download-tool --version`, applies `application-prodv2.properties` to both
 the helper extraction tree and `/var/lib/atlaso/vcfDownloadTool/active-tool/conf/`, runs
-`vcf-download-tool configuration generate --software-depot-id`, syncs intent, and then applies HTTPS. Upload Broadcom
+`vcf-download-tool configuration generate --software-depot-id`, reads the persisted identity back with
+`vcf-download-tool configuration get --software-depot-id`, records only one unambiguous canonical readback value,
+syncs intent, and then applies HTTPS. Upload Broadcom
 credentials through the unified Broadcom credentials modal as either a download token or activation code, by file or
 pasted text; existing storage keys remain separate, and credential bodies are never returned in responses, previews,
 logs, or job output. Metadata and binaries profiles use the most recently staged runtime credential: the download-token

@@ -622,8 +622,10 @@ status: current
   from the upload route. Global `vcf_offline_depot` apply must validate the staged nginx site, run `stage-tool` to
   extract the archive under `/opt/atlaso/vcf-download-tool/extracted`, expose
   `/opt/atlaso/vcf-download-tool/vcf-download-tool` as the stable executable wrapper, record the tool version using
-  `--version`, run `vcf-download-tool configuration generate --software-depot-id`, apply
-  `application-prodv2.properties`, sync intent, then apply HTTPS. The helper validates CA-managed
+  `--version`, apply `application-prodv2.properties`, run
+  `vcf-download-tool configuration generate --software-depot-id`, read the persisted identity back with
+  `vcf-download-tool configuration get --software-depot-id`, store only one unambiguous canonical readback value, sync
+  intent, then apply HTTPS. The helper validates CA-managed
   `vcf_offline_depot:https` cert/key paths, server name/listener uniqueness, document root, auth mode, selected local
   HTTP user, and static-file directives, then installs or removes `/etc/atlaso/nginx/sites.d/vcf-offline-depot.conf`,
   writes `/etc/atlaso/nginx/htpasswd/vcf-offline-depot.htpasswd` from the applied Photon password hash when

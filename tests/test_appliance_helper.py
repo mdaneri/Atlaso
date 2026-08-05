@@ -4304,7 +4304,15 @@ def test_vcf_offline_depot_helper_generates_software_depot_id(monkeypatch, tmp_p
 
     def fake_run_vcfdt(command: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
         commands.append((command, input_text or ""))
-        return subprocess.CompletedProcess(command, 0, "Software Depot ID: 8c9506c6-7bdf-44d5-b2e9-50d829d66b99\n", "")
+        if "generate" in command:
+            return subprocess.CompletedProcess(command, 0, "Initialized request 11111111-1111-1111-1111-111111111111\n", "")
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            "Session 22222222-2222-2222-2222-222222222222\n"
+            "Software Depot ID: 8c9506c6-7bdf-44d5-b2e9-50d829d66b99\n",
+            "",
+        )
 
     monkeypatch.setattr(helper, "VCF_DEPOT_RUNTIME_TOOL_DIR", runtime_tool_dir)
     monkeypatch.setattr(helper, "_run_vcfdt_user_command", fake_run_vcfdt)
@@ -4312,9 +4320,24 @@ def test_vcf_offline_depot_helper_generates_software_depot_id(monkeypatch, tmp_p
     assert helper._handle_vcf_offline_depot("generate-software-depot-id", []) == 0
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
-    assert commands == [([str(wrapper), "configuration", "generate", "--software-depot-id"], "Y\n")]
+    assert commands == [
+        ([str(wrapper), "configuration", "generate", "--software-depot-id"], "Y\n"),
+        ([str(wrapper), "configuration", "get", "--software-depot-id"], ""),
+    ]
     assert payload["software_depot_id"] == "8c9506c6-7bdf-44d5-b2e9-50d829d66b99"
     assert payload["command"] == "vcf-download-tool configuration generate --software-depot-id"
+    assert payload["readback_command"] == "vcf-download-tool configuration get --software-depot-id"
+
+
+def test_vcf_offline_depot_helper_rejects_ambiguous_uuid_only_output():
+    helper = load_helper_module()
+
+    assert (
+        helper._parse_software_depot_id(
+            "11111111-1111-1111-1111-111111111111\n22222222-2222-2222-2222-222222222222\n"
+        )
+        == ""
+    )
 
 
 def test_vcf_offline_depot_generate_software_depot_id_main_allows_no_path(monkeypatch):

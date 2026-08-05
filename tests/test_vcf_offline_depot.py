@@ -332,6 +332,14 @@ def test_vcf_depot_validation_rejects_management_role_interfaces():
 def test_vcf_depot_parses_generated_software_depot_id():
     assert parse_software_depot_id("Software Depot ID: 8c9506c6-7bdf-44d5-b2e9-50d829d66b99\n") == "8c9506c6-7bdf-44d5-b2e9-50d829d66b99"
     assert parse_software_depot_id("Use activation code for software depot id LF-DEPOT-9-1-001\n") == "LF-DEPOT-9-1-001"
+    assert (
+        parse_software_depot_id(
+            "Session 11111111-1111-1111-1111-111111111111\n"
+            "Software Depot ID: 8c9506c6-7bdf-44d5-b2e9-50d829d66b99\n"
+        )
+        == "8c9506c6-7bdf-44d5-b2e9-50d829d66b99"
+    )
+    assert parse_software_depot_id("11111111-1111-1111-1111-111111111111\n22222222-2222-2222-2222-222222222222\n") == ""
     assert parse_software_depot_id("vcf-download-tool configuration generate --software-depot-id\n") == ""
 
 
@@ -344,11 +352,32 @@ def test_vcf_depot_generates_software_depot_id_from_extracted_tool(tmp_path, mon
         info.size = len(payload)
         archive.addfile(info, io.BytesIO(payload))
 
+    commands = []
+
     def fake_run(command, **kwargs):
+        commands.append(command)
         assert command[0] == str((tmp_path / "active-tool" / "bin" / "vcf-download-tool").resolve())
         assert kwargs["cwd"] == str((tmp_path / "active-tool" / "bin").resolve())
-        assert kwargs["input"] == "Y\n"
-        return type("Completed", (), {"returncode": 0, "stdout": "Software Depot ID: 8c9506c6-7bdf-44d5-b2e9-50d829d66b99\n", "stderr": ""})()
+        if "generate" in command:
+            assert kwargs["input"] == "Y\n"
+            return type(
+                "Completed",
+                (),
+                {"returncode": 0, "stdout": "Initialized request 11111111-1111-1111-1111-111111111111\n", "stderr": ""},
+            )()
+        assert "input" not in kwargs
+        return type(
+            "Completed",
+            (),
+            {
+                "returncode": 0,
+                "stdout": (
+                    "Session 22222222-2222-2222-2222-222222222222\n"
+                    "Software Depot ID: 8c9506c6-7bdf-44d5-b2e9-50d829d66b99\n"
+                ),
+                "stderr": "",
+            },
+        )()
 
     monkeypatch.setattr("atlaso.app.services.vcf_offline_depot.subprocess.run", fake_run)
     result = generate_vcf_software_depot_id(archive_path, extraction_dir=tmp_path / "active-tool")
@@ -356,6 +385,7 @@ def test_vcf_depot_generates_software_depot_id_from_extracted_tool(tmp_path, mon
     assert result.success is True
     assert result.software_depot_id == "8c9506c6-7bdf-44d5-b2e9-50d829d66b99"
     assert result.error == ""
+    assert [command[2] for command in commands] == ["generate", "get"]
 
 
 def test_vcf_depot_software_depot_id_generation_handles_truncated_archive(tmp_path):
