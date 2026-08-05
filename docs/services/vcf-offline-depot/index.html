@@ -3235,6 +3235,9 @@
 </ol>
 <p>Download-profile creation uses a reviewed wizard. Notes stay with profile identity, task execution owns lifecycle
 status, and profile enablement has its own step so availability is an explicit decision before review.</p>
+<p>Metadata and binaries profiles use the download token or activation code staged most recently. Staging one credential
+does not remove the other because ESX profiles always require the activation code. Review the generated command preview
+after changing credentials to confirm that it references the intended runtime credential file.</p>
 <p>Do not place depot credentials or authenticated URLs in task notes, manifests, logs, or screenshots.</p>
 <h2 id="verify">Verify<a class="headerlink" href="#verify" title="Permanent link">&para;</a></h2>
 <p>Confirm the service is healthy, an approved target trusts the Atlaso CA, and required metadata or content is reachable
