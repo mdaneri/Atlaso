@@ -46,9 +46,9 @@ after changing credentials to confirm that it references the intended runtime cr
 Do not place depot credentials or authenticated URLs in task notes, manifests, logs, or screenshots.
 
 Register the displayed software depot ID in the VCF Business Services console, then stage the activation code returned
-for that exact registration. If a software depot ID is refreshed, its earlier activation code no longer matches the
-active VCFDT identity; register the current displayed ID and replace the staged activation code before retrying a
-download.
+for that exact registration. Atlaso preserves this ID when settings or download profiles are changed and applied.
+**Refresh software depot ID** intentionally replaces it; its earlier activation code no longer matches the active
+VCFDT identity, so register the current displayed ID and replace the staged activation code before retrying a download.
 
 ## Verify
 

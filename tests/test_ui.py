@@ -9569,6 +9569,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "Refresh software depot ID" in page.text
     assert 'data-vcf-depot-generate-id-modal-open data-vcf-depot-requires-tool disabled' in page.text
     assert 'name="selected_units" value="vcf_offline_depot"' in page.text
+    assert 'name="refresh_vcf_depot_software_depot_id" value="true"' in page.text
     assert "Software depot ID" in page.text
     assert "VCFDT staging" in page.text
     assert "Staged VCFDT inputs" not in page.text
@@ -10073,6 +10074,62 @@ def test_vcf_offline_depot_generation_timestamp_does_not_reopen_apply_unit(clien
         refreshed = next(unit for unit in appliance_apply_units(db) if unit["id"] == "vcf_offline_depot")
         assert refreshed["changed"] is False
         assert refreshed["config_diff"] == ""
+
+
+def test_vcf_offline_depot_apply_preserves_existing_software_depot_id_unless_refresh_is_explicit(tmp_path):
+    import json
+    from types import SimpleNamespace
+
+    from atlaso.app.adapters.system import SystemAdapter
+    from atlaso.app.ui import execute_appliance_apply_unit
+
+    archive_path = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
+    archive_path.write_bytes(b"placeholder")
+    context = {
+        "vcf_depot_settings": SimpleNamespace(
+            enabled=True,
+            tool_archive_path=str(archive_path),
+            config_path="/etc/atlaso/nginx/sites.d/vcf-offline-depot.conf",
+        ),
+        "vcf_depot_software_depot_id": {
+            "id": "8c9506c6-7bdf-44d5-b2e9-50d829d66b99",
+            "generated_at": "2026-08-05T19:19:20+00:00",
+            "error": "",
+        },
+        "vcf_depot_https_config_preview": "server { listen 443 ssl; }",
+        "vcf_depot_application_properties": {"content": "spring.profiles.active=depot\n"},
+        "vmware_ceip_enabled": False,
+    }
+    unit = {
+        "id": "vcf_offline_depot",
+        "label": "VCF Offline Depot",
+        "context": context,
+        "raw_config_preview": "server { listen 443 ssl; }",
+        "summary": ["service enabled", "1 enabled profile"],
+        "validation_errors": [],
+        "validation_warnings": [],
+        "config_path": context["vcf_depot_settings"].config_path,
+        "config_preview": "server { listen 443 ssl; }",
+        "config_diff": "",
+    }
+
+    ordinary_apply = execute_appliance_apply_unit(unit, adapter=SystemAdapter(dry_run=True))
+    ordinary_commands = json.dumps(ordinary_apply["commands"])
+    assert "stage-tool" in ordinary_commands
+    assert "generate-software-depot-id" not in ordinary_commands
+
+    explicit_refresh = execute_appliance_apply_unit(
+        {**unit, "refresh_vcf_depot_software_depot_id": True},
+        adapter=SystemAdapter(dry_run=True),
+    )
+    assert "generate-software-depot-id" in json.dumps(explicit_refresh["commands"])
+
+    missing_id_context = {**context, "vcf_depot_software_depot_id": {"id": "", "generated_at": "", "error": ""}}
+    first_apply = execute_appliance_apply_unit(
+        {**unit, "context": missing_id_context},
+        adapter=SystemAdapter(dry_run=True),
+    )
+    assert "generate-software-depot-id" in json.dumps(first_apply["commands"])
 
 
 def test_vcf_offline_depot_apply_stages_tool_without_download_profiles(client, tmp_path, monkeypatch):
@@ -12734,6 +12791,63 @@ def test_appliance_apply_json_submission_returns_master_with_live_child_status(c
     task = status_response.json()["task"]
     assert task["status"] == "succeeded"
     assert [(step["component_key"], step["status"]) for step in task["_children"]] == [("firewall", "succeeded")]
+
+
+def test_appliance_apply_carries_explicit_vcf_depot_id_refresh_intent_to_execution(client, monkeypatch):
+    import json
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    login(client)
+    page = client.get("/vcf-offline-depot")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    run_appliance_apply_job = ui.run_appliance_apply_job
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+
+    response = client.post(
+        "/appliance-apply",
+        data={
+            "csrf": csrf,
+            "selected_units": "vcf_offline_depot",
+            "refresh_vcf_depot_software_depot_id": "true",
+        },
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202
+    job_id = response.json()["job_id"]
+    with SessionLocal() as db:
+        submitted_job = db.get(Job, job_id)
+        assert json.loads(submitted_job.result)["refresh_vcf_depot_software_depot_id"] is True
+
+    received_refresh_intent: list[bool] = []
+
+    def execute(unit, *, adapter=None):
+        received_refresh_intent.append(bool(unit.get("refresh_vcf_depot_software_depot_id")))
+        return {
+            "unit_id": unit["id"],
+            "label": unit["label"],
+            "success": True,
+            "status": "valid",
+            "dry_run": True,
+            "commands": [],
+            "summary": unit["summary"],
+            "validation_errors": [],
+            "validation_warnings": [],
+            "config_path": unit["config_path"],
+            "config_preview": unit["config_preview"],
+            "config_diff": unit["config_diff"],
+        }
+
+    monkeypatch.setattr(ui, "execute_appliance_apply_unit", execute)
+    run_appliance_apply_job(job_id)
+
+    assert received_refresh_intent == [True]
+    with SessionLocal() as db:
+        completed_job = db.get(Job, job_id)
+        assert completed_job.status == "succeeded"
 
 
 def test_appliance_apply_rejects_submission_while_another_task_is_active(client):

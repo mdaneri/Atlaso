@@ -371,10 +371,11 @@
   <form class="confirm-modal-panel form-stack" action="/appliance-apply" method="post">
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <input type="hidden" name="selected_units" value="vcf_offline_depot">
+    <input type="hidden" name="refresh_vcf_depot_software_depot_id" value="true">
     <div class="confirm-modal-body">
       <p class="kicker">VCF Offline Depot</p>
       <h2 id="vcf-depot-generate-id-modal-title">Refresh software depot ID</h2>
-      <p class="muted">This submits the VCF Offline Depot apply unit. Atlaso validates the desired state, stages the VCF Download Tool, runs <code>vcf-download-tool configuration generate --software-depot-id</code>, and records the result in the apply job.</p>
+      <p class="muted">This submits the VCF Offline Depot apply unit and explicitly replaces the current software depot ID. Register the new ID and replace its activation code before the next download.</p>
       <div class="alert error hidden" data-appliance-apply-submit-error role="alert"></div>
     </div>
     <div class="confirm-modal-actions">

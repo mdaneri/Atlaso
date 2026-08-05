@@ -622,15 +622,18 @@ status: current
   from the upload route. Global `vcf_offline_depot` apply must validate the staged nginx site, run `stage-tool` to
   extract the archive under `/opt/atlaso/vcf-download-tool/extracted`, expose
   `/opt/atlaso/vcf-download-tool/vcf-download-tool` as the stable executable wrapper, record the tool version using
-  `--version`, apply `application-prodv2.properties`, run
-  `vcf-download-tool configuration generate --software-depot-id`, read the persisted identity back with
+  `--version`, and apply `application-prodv2.properties`. It must preserve an existing software depot ID during ordinary
+  settings and download-profile applies. Generate an ID only when none is recorded or the operator explicitly submits
+  the software depot ID refresh action; then read the persisted identity back with
   `vcf-download-tool configuration get --software-depot-id`, store only one unambiguous canonical readback value, sync
-  intent, then apply HTTPS. The helper validates CA-managed
+  intent, and apply HTTPS. A failed explicit refresh must not erase the previously recorded ID. The helper validates
+  CA-managed
   `vcf_offline_depot:https` cert/key paths, server name/listener uniqueness, document root, auth mode, selected local
   HTTP user, and static-file directives, then installs or removes `/etc/atlaso/nginx/sites.d/vcf-offline-depot.conf`,
   writes `/etc/atlaso/nginx/htpasswd/vcf-offline-depot.htpasswd` from the applied Photon password hash when
-  authentication is required, and reloads nginx. The refresh icon for software depot ID must submit the global
-  `/appliance-apply` workflow for `vcf_offline_depot`, not call the helper directly. Manual VCFDT command generation
+  authentication is required, and reloads nginx. The refresh icon for software depot ID must submit explicit refresh
+  intent through the global `/appliance-apply` workflow for `vcf_offline_depot`, not call the helper directly. Manual
+  VCFDT command generation
   should use `/var/lib/atlaso/vcfDownloadTool/active-tool` token and activation-code file paths, write telemetry and ESX
   disabled-platform config without exposing secret contents, and model patch-only separately from upgrade-only. Download
   tokens and activation codes share one Broadcom credentials modal with a credential-type selector; files or pasted text
