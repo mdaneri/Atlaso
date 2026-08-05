@@ -3237,7 +3237,8 @@ NTPsec.</p>
 <li>Inspect the rendered NTPsec preview.</li>
 <li>Submit the NTPsec unit through <a href="../../operate/appliance-apply/">Appliance Apply</a>. In NTS server mode, Atlaso always
    includes Certificate Authority first so missing or stale runtime certificate files are repaired; the CA does not
-   need a public portal interface for this internal certificate deployment.</li>
+   need a public portal interface for this internal certificate deployment. If managed LDAP is active, Atlaso also
+   includes any changed CA, DNS/DHCP, Firewall, and Managed LDAP dependency units in the same task.</li>
 </ol>
 <p>Appliance Settings does not own time enforcement. DNS/DHCP also does not apply NTP configuration.</p>
 <p>Atlaso disables NTS controls when the installed NTPsec binary explicitly reports that NTS is unsupported. If the

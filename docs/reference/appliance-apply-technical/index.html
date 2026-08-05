@@ -4469,7 +4469,9 @@ stops/disables <code>ntpd.service</code>. Firewall apply owns UDP/123 access and
 selected interfaces.</p>
 <p>When an operator selects NTP/NTS server changes, submission always adds the CA unit, including when its desired-state
 baseline appears current. The global unit order executes CA first so the helper materializes or repairs the NTS chain
-and private key before <code>ntpd</code> validation checks those paths.</p>
+and private key before <code>ntpd</code> validation checks those paths. Adding CA through this NTS dependency also preserves the
+managed LDAP closure: any changed CA, DNS/DHCP, Firewall, and Managed LDAP units are submitted together when managed
+LDAP desired state is active.</p>
 <p>The read-only <code>atlaso-helper ntpd capabilities</code> action requires Photon’s <code>ntpsec</code> package and verifies the <code>ntpd</code> binary
 identifies itself as NTPsec without starting a daemon. If those checks fail, Atlaso disables the NTS server switch and
 per-upstream NTS editors, marks NTS cells unavailable, and rejects attempts to persist or apply NTS state. The normal
