@@ -3295,11 +3295,15 @@ and the public certificate portal to provide approved unauthenticated CA and req
 <ol>
 <li>Confirm the appliance FQDN and management HTTPS settings are correct.</li>
 <li>Review root and leaf validity, subject, and key settings.</li>
+<li>Leave <strong>Listen interfaces</strong> empty when the CA is needed only for appliance trust and managed service certificates.
+   Select one or more interfaces only when the public CA portal should be published on those networks.</li>
 <li>Resolve validation errors and inspect the rendered certificate preview.</li>
 <li>Submit the Certificate Authority unit through <a href="../../operate/appliance-apply/">Appliance Apply</a>.</li>
 </ol>
 <p>Atlaso encrypts CA root and leaf private keys with the appliance secrets key. Preserve that key with recovery material,
 and never expose private keys in documentation, screenshots, tasks, or logs.</p>
+<p>An enabled CA with no listen interface still writes its root bundle and managed service certificates through global
+appliance apply. It does not add the CA portal to access-interface DNS, firewall, or public-service configuration.</p>
 <h2 id="review-requests">Review requests<a class="headerlink" href="#review-requests" title="Permanent link">&para;</a></h2>
 <p>Use <strong>Certificate Requests</strong> to identify the requester, requested names, intended use, and current status before
 approving or rejecting enrollment. Confirm that every requested name belongs to the intended lab boundary.
