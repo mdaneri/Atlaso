@@ -582,8 +582,10 @@ Global apply `stage-tool` extracts the uploaded archive under `/opt/atlaso/vcf-d
 in the UI confirms and submits the same global `/appliance-apply` workflow for `vcf_offline_depot`; it is not a
 service-specific helper call. Download tokens and activation codes share one Broadcom credentials modal with a
 credential-type selector and can be uploaded as files or pasted text; storage keys remain separate for compatibility.
-Metadata and binaries profiles prefer the runtime download-token file used by `--depot-download-token-file` when
-present, otherwise they use the runtime activation-code file used by `--depot-download-activation-code-file`. The VCFDT
+Metadata and binaries profiles use whichever credential was staged most recently: the runtime download-token file used
+by `--depot-download-token-file` or the runtime activation-code file used by
+`--depot-download-activation-code-file`. Existing state with indistinguishable credential timestamps retains the
+download-token fallback. ESX profiles always use the activation-code file. The VCFDT
 preview is generated as a bash script with `/var/lib/atlaso/vcfDownloadTool/active-tool` runtime token and
 activation-code file paths, telemetry flag setup, `conf/esxUserConfig.json` for disabled ESX platforms, and command
 intent for install, upgrade, upgrade-only, patch-only, Day-N component, metadata, and ESX downloads. Operators can

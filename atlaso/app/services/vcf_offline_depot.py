@@ -623,7 +623,15 @@ def split_vcf_depot_lines(value: str | None) -> list[str]:
     return [item.strip() for item in (value or "").splitlines() if item.strip()]
 
 
-def vcf_depot_download_credential_flag(download_token_present: bool = True, activation_code_present: bool = False) -> str:
+def vcf_depot_download_credential_flag(
+    download_token_present: bool = True,
+    activation_code_present: bool = False,
+    preferred_credential_type: str = "",
+) -> str:
+    if preferred_credential_type == "activation_code" and activation_code_present:
+        return f"--depot-download-activation-code-file={VCF_DEPOT_STAGED_ACTIVATION_FILE}"
+    if preferred_credential_type == "download_token" and download_token_present:
+        return f"--depot-download-token-file={VCF_DEPOT_STAGED_TOKEN_FILE}"
     if download_token_present or not activation_code_present:
         return f"--depot-download-token-file={VCF_DEPOT_STAGED_TOKEN_FILE}"
     return f"--depot-download-activation-code-file={VCF_DEPOT_STAGED_ACTIVATION_FILE}"
@@ -635,11 +643,16 @@ def vcfdt_commands_for_profile(
     *,
     download_token_present: bool = True,
     activation_code_present: bool = False,
+    preferred_credential_type: str = "",
 ) -> list[list[str]]:
     if not profile.enabled:
         return []
     profile_type = (profile.profile_type or "binaries").strip() or "binaries"
-    download_credential_flag = vcf_depot_download_credential_flag(download_token_present, activation_code_present)
+    download_credential_flag = vcf_depot_download_credential_flag(
+        download_token_present,
+        activation_code_present,
+        preferred_credential_type,
+    )
     if profile_type == "metadata":
         return [
             [
@@ -721,6 +734,7 @@ def render_vcfdt_command_preview(
     vmware_ceip_enabled: bool = False,
     download_token_present: bool = True,
     activation_code_present: bool = False,
+    preferred_credential_type: str = "",
     include_disabled_profiles: bool = False,
 ) -> str:
     enabled_profiles = profiles if include_disabled_profiles else [profile for profile in profiles if profile.enabled]
@@ -798,6 +812,7 @@ def render_vcfdt_command_preview(
             command_profile,
             download_token_present=download_token_present,
             activation_code_present=activation_code_present,
+            preferred_credential_type=preferred_credential_type,
         ):
             if command[:3] == ["vcf-download-tool", "esx", "configuration"]:
                 lines.append("# Equivalent ESX exclusion command if you prefer not to write conf/esxUserConfig.json:")
