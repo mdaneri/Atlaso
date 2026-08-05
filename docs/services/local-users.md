@@ -28,13 +28,15 @@ This verified appliance view provides visual orientation before you begin.
 1. Select **Add user here**, create a unique username, record the account purpose in the multiline description row,
    and choose the least-privileged suitable roles.
 2. Choose Photon shell and Web SSH access as separate decisions.
-3. Set a policy-compliant Photon password in the guided workflow, or leave both password fields blank to postpone and
-   keep the new account disabled. Use the eye beside either password field to show only that field temporarily; opening
-   the workflow again always masks both fields.
-4. Choose account enablement explicitly. Existing accounts can also be enabled or disabled directly from the grid;
-   enabling still requires a staged or previously applied Photon password. When editing an account without either,
-   return to the Password step and enter the intended Photon password before enabling it.
-5. Use the shared confirmation dialog before permanent deletion.
+3. Review and create the account. New accounts start disabled; the identity and access wizard does not collect
+   credentials or change account availability.
+4. Open the row menu and choose **Set/reset Photon OS password**. Enter and confirm a policy-compliant password. This
+   dedicated guarded workflow stages the password and enables the account in desired state. Use the eye beside either
+   password field to show only that field temporarily; reopening the workflow always masks both fields.
+5. Change an existing account's ordinary desired availability directly from the grid's **Enabled** column. Enabling
+   requires a staged or previously applied Photon password; Atlaso restores the prior grid value and explains the
+   requirement when the save is rejected.
+6. Use the shared confirmation dialog before permanent deletion.
 
 Passwords are never displayed again or stored in audit details. Do not reuse the Photon build password or publish test
 credentials in screenshots.
