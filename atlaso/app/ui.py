@@ -17502,7 +17502,24 @@ def vcf_offline_depot_page(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
-    return render(request, "vcf_offline_depot.html", {"identity": identity, **vcf_offline_depot_context(db), "appliance_apply_status": appliance_apply_status(db, "vcf_offline_depot")})
+    jobs = db.execute(
+        select(Job)
+        .options(selectinload(Job.steps))
+        .where(Job.type == "vcf-depot-download")
+        .order_by(desc(Job.created_at))
+        .limit(500)
+    ).scalars().all()
+    return render(
+        request,
+        "vcf_offline_depot.html",
+        {
+            "identity": identity,
+            **vcf_offline_depot_context(db),
+            "vcf_depot_task_rows": [_task_row(job, identity) for job in jobs],
+            "vcf_depot_task_component_options": ["VCF Depot Download"],
+            "appliance_apply_status": appliance_apply_status(db, "vcf_offline_depot"),
+        },
+    )
 
 
 @router.get("/vcf-offline-depot/tasks/{job_id}/log", response_class=HTMLResponse, response_model=None)
@@ -20476,7 +20493,11 @@ def tasks_status(
         .limit(size)
     ).scalars().all()
     rows = [_task_row(job, identity) for job in jobs]
-    selected_job = db.scalar(select(Job).options(selectinload(Job.steps)).where(Job.id == job_id)) if job_id else None
+    selected_job = (
+        db.scalar(select(Job).options(selectinload(Job.steps)).where(Job.id == job_id, *scope_clauses))
+        if job_id
+        else None
+    )
     selected = _task_row(selected_job, identity) if selected_job is not None else None
     return JSONResponse(
         {

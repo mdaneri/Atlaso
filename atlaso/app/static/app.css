@@ -1226,6 +1226,58 @@ textarea {
   position: static;
 }
 
+.vcf-offline-depot-main-panel {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 144px);
+  min-height: 780px;
+  margin-bottom: 0;
+  overflow: hidden;
+}
+
+.vcf-offline-depot-main-panel > .panel-head,
+.vcf-offline-depot-main-panel > .service-summary-grid {
+  flex: 0 0 auto;
+}
+
+#vcf-depot-profiles-panel {
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+#vcf-depot-profiles-panel > #vcf-depot-profiles-table,
+#vcf-depot-profiles-panel > #vcf-depot-profiles-fallback {
+  flex: 0 0 auto;
+}
+
+.vcf-depot-task-history {
+  display: grid;
+  flex: 1 1 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 14px;
+  min-height: 230px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #dbe4f0;
+  overflow: hidden;
+}
+
+.vcf-depot-task-history .panel-head {
+  margin: 0;
+}
+
+.vcf-depot-task-history .panel-head p {
+  margin: 4px 0 0;
+}
+
+.vcf-depot-task-history .task-grid-shell {
+  min-height: 0;
+  border-radius: 7px;
+  background: white;
+}
+
 .left-stack {
   display: grid;
   gap: 14px;
@@ -6845,35 +6897,6 @@ textarea {
   overflow: hidden;
 }
 
-#vcf-depot-task-log-modal {
-  width: min(1120px, calc(100vw - 48px));
-  max-width: none;
-}
-
-#vcf-depot-task-log-modal .confirm-modal-panel {
-  max-height: calc(100vh - 48px);
-  overflow: hidden;
-}
-
-#vcf-depot-task-log-modal .confirm-modal-body {
-  min-height: 0;
-  overflow: hidden;
-}
-
-.vcfdt-task-log-preview {
-  min-height: 0;
-  max-height: 65vh;
-  margin-top: 0;
-  overflow: auto;
-}
-
-.vcfdt-task-log-preview pre,
-.vcfdt-task-log-preview code {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
 .tasks-panel {
   display: grid;
   gap: 14px;
@@ -8207,6 +8230,17 @@ dialog.has-expanded-monaco .confirm-modal-panel {
   .users-main-panel {
     height: min(620px, calc(100vh - 100px));
     min-height: 320px;
+  }
+
+  .vcf-offline-depot-main-panel {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .vcf-depot-task-history {
+    flex-basis: 520px;
+    min-height: 520px;
   }
 
   .firewall-managed-section,

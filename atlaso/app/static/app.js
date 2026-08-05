@@ -11989,10 +11989,16 @@ async function startVcfDepotProfileDownload(row, csrf) {
       active_task_blocker: blocker,
     });
     setVcfDepotDownloadActive(true, payload.job_id);
-    if (vcfDepotTasksTable) {
-      await vcfDepotTasksTable.setPage(1);
-      await refreshVcfDepotTasksTable();
+    atlasoNewTaskId = payload.job_id || "";
+    atlasoSelectedTaskId = atlasoNewTaskId;
+    const tasksPage = document.querySelector("[data-tasks-page]");
+    if (tasksPage instanceof HTMLElement) {
+      tasksPage.dataset.selectedTaskId = atlasoNewTaskId;
     }
+    if (atlasoTasksTable) {
+      await atlasoTasksTable.setPage(1);
+    }
+    await refreshTasksPage();
     showVcfDepotMessage(`VCFDT task ${payload.job_id} started for ${payload.profile_name}.`, "success");
   } catch (error) {
     showVcfDepotMessage(error instanceof Error ? error.message : "The VCFDT download job could not be started.");
@@ -12172,150 +12178,16 @@ function initializeVcfDepotProfilesTable() {
     },
   });
   vcfDepotProfilesTable = adapter?.table || null;
-}
-
-let vcfDepotTasksTable = null;
-let vcfDepotTasksRefreshInterval = null;
-let vcfDepotTasksRefreshPending = false;
-
-async function refreshVcfDepotTasksTable() {
-  if (!vcfDepotTasksTable || vcfDepotTasksRefreshPending) {
-    return;
-  }
-  vcfDepotTasksRefreshPending = true;
-  try {
-    await vcfDepotTasksTable.replaceData();
-  } catch (error) {
-    showVcfDepotMessage(error instanceof Error ? error.message : "Unable to refresh VCFDT tasks.");
-  } finally {
-    vcfDepotTasksRefreshPending = false;
-  }
-}
-
-function initializeVcfDepotTasksTable() {
-  const tableElement = document.getElementById("vcf-depot-tasks-table");
-  if (!(tableElement instanceof HTMLElement) || typeof window.Tabulator !== "function") {
-    return;
-  }
-  const fallback = document.getElementById(tableElement.dataset.fallbackId || "");
-  try {
-    const tasks = JSON.parse(tableElement.dataset.tasks || "[]");
-    const atlasoGridOptions27 = {
-      data: tasks,
-      ajaxURL: "/vcf-offline-depot/tasks/status",
-      pagination: true,
-      paginationMode: "remote",
-      paginationSize: 10,
-      paginationCounter: "rows",
-      dataSendParams: { page: "page", size: "size" },
-      ajaxResponse: (_url, _params, response) => {
-        setVcfDepotDownloadActive(Boolean(response.download_active), response.active_job_id || "");
-        return response;
-      },
-      layout: "fitColumns",
-      height: "380px",
-      placeholder: "No VCFDT tasks have been executed.",
-      rowContextMenu: [
-        {
-          label: "View log",
-          action: (_event, row) => {
-            const logUrl = row.getData().log_url;
-            if (logUrl) {
-              openVcfDepotTaskLog(logUrl);
-            }
-          },
-        },
-      ],
-      columns: [
-        { title: "Task", field: "id", minWidth: 190, formatter: (cell) => `<code>${escapeHtml(cell.getValue())}</code>` },
-        { title: "Profile", field: "profile_name", minWidth: 130, formatter: (cell) => escapeHtml(cell.getValue() || "Unknown profile") },
-        {
-          title: "State",
-          field: "status",
-          width: 105,
-          headerSort: false,
-          formatter: (cell) => {
-            const value = String(cell.getValue() || "unknown");
-            const pill = value === "succeeded" ? "success" : value === "failed" ? "error" : "warn";
-            return `<span class="status-pill ${pill}">${escapeHtml(value)}</span>`;
-          },
-        },
-        { title: "Mode", field: "dry_run", width: 90, formatter: (cell) => cell.getValue() === "yes" ? "dry-run" : "real" },
-        { title: "Created", field: "created_at", minWidth: 210 },
-        { title: "Started", field: "started_at", minWidth: 210, formatter: (cell) => escapeHtml(cell.getValue() || "—") },
-        { title: "Finished", field: "finished_at", minWidth: 210, formatter: (cell) => escapeHtml(cell.getValue() || "—") },
-      ],
-    };
-    vcfDepotTasksTable = window.AtlasoUiPatterns.createGrid({
-      element: tableElement,
-      pattern: "read-only",
-      options: atlasoGridOptions27,
-    }).table;
-    if (vcfDepotTasksRefreshInterval) {
-      window.clearInterval(vcfDepotTasksRefreshInterval);
+  document.addEventListener("atlaso:tasks-refreshed", (event) => {
+    const tasksPage = document.querySelector("[data-tasks-page]");
+    if (tasksPage?.dataset.taskType !== "vcf-depot-download") {
+      return;
     }
-    vcfDepotTasksRefreshInterval = window.setInterval(refreshVcfDepotTasksTable, 2000);
-  } catch (error) {
-    showVcfDepotMessage(error instanceof Error ? error.message : "VCFDT tasks could not render. Showing the fallback table.");
-  }
-}
-
-let vcfDepotTaskLogRefreshTimer = null;
-
-async function openVcfDepotTaskLog(logUrl) {
-  const modal = document.getElementById("vcf-depot-task-log-modal");
-  const content = document.querySelector("[data-vcf-depot-task-log-content]");
-  const title = document.querySelector("[data-vcf-depot-task-log-title]");
-  const meta = document.querySelector("[data-vcf-depot-task-log-meta]");
-  if (!(modal instanceof HTMLDialogElement) || !(content instanceof HTMLElement)) {
-    return;
-  }
-  content.textContent = "Loading task log…";
-  if (vcfDepotTaskLogRefreshTimer) {
-    window.clearTimeout(vcfDepotTaskLogRefreshTimer);
-    vcfDepotTaskLogRefreshTimer = null;
-  }
-  modal.showModal();
-  const loadLog = async () => {
-    try {
-      const response = await fetch(logUrl, { headers: { "X-Atlaso-Task-Log": "1" } });
-      const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(payload.detail || "Unable to load the VCFDT task log.");
-      }
-      if (title instanceof HTMLElement) {
-        title.textContent = `${payload.profile_name || "Unknown profile"} task log`;
-      }
-      if (meta instanceof HTMLElement) {
-        meta.textContent = `${payload.job_id} · ${payload.status} · ${payload.updated_at || "not written"}`;
-      }
-      content.textContent = payload.text || "No task log is available.";
-      registerAtlasoPrismLanguages();
-      if (window.Prism && typeof window.Prism.highlightElement === "function") {
-        window.Prism.highlightElement(content);
-      }
-      if (modal.open && ["pending", "running"].includes(payload.status)) {
-        vcfDepotTaskLogRefreshTimer = window.setTimeout(loadLog, 2000);
-      }
-    } catch (error) {
-      content.textContent = error instanceof Error ? error.message : "Unable to load the VCFDT task log.";
-    }
-  };
-  await loadLog();
-}
-
-function initializeVcfDepotTaskLogModal() {
-  const modal = document.getElementById("vcf-depot-task-log-modal");
-  const closeButton = document.querySelector("[data-vcf-depot-task-log-close]");
-  if (modal instanceof HTMLDialogElement && closeButton instanceof HTMLButtonElement) {
-    closeButton.addEventListener("click", () => {
-      if (vcfDepotTaskLogRefreshTimer) {
-        window.clearTimeout(vcfDepotTaskLogRefreshTimer);
-        vcfDepotTaskLogRefreshTimer = null;
-      }
-      modal.close();
-    });
-  }
+    const tasks = Array.isArray(event.detail?.tasks) ? event.detail.tasks : [];
+    const activeTask = tasks.find((task) => !task.is_step && taskStatusActive(task.status));
+    const active = Number(event.detail?.activeCount || 0) > 0;
+    setVcfDepotDownloadActive(active, activeTask?.id || "");
+  });
 }
 
 let atlasoTasksTable = null;
@@ -12494,7 +12366,7 @@ function applyTasksStatusPayload(payload, { reopen = false } = {}) {
     atlasoTasksRefreshTimer = window.setTimeout(() => refreshTasksPage().catch(() => {}), 2000);
   }
   document.dispatchEvent(new CustomEvent("atlaso:tasks-refreshed", {
-    detail: { tasks: atlasoTasks },
+    detail: { tasks: atlasoTasks, activeCount: Number(payload.active_count || 0) },
   }));
   return atlasoTasks;
 }
@@ -12510,7 +12382,11 @@ async function refreshTasksPage({ reopen = false } = {}) {
     return;
   }
   const queryId = atlasoSelectedTaskId || page.dataset.selectedTaskId || "";
-  const response = await fetch(`/tasks/status?job_id=${encodeURIComponent(queryId)}`, { credentials: "same-origin" });
+  const query = new URLSearchParams({ job_id: queryId });
+  if (page.dataset.taskType) {
+    query.set("task_type", page.dataset.taskType);
+  }
+  const response = await fetch(`/tasks/status?${query.toString()}`, { credentials: "same-origin" });
   const payload = await response.json();
   if (!response.ok) {
     throw new Error(payload.detail || "Unable to refresh tasks.");
@@ -12648,7 +12524,7 @@ function initializeTasksPage() {
       filterMode: "remote",
       initialHeaderFilter: initialComponentFilter && !componentFilterLocked ? [{ field: "id", value: initialComponentFilter }] : [],
       headerFilterLiveFilterDelay: 500,
-      placeholder: "No tasks have been recorded yet.",
+      placeholder: page.dataset.taskEmptyMessage || "No tasks have been recorded yet.",
       selectableRows: 1,
       rowContextMenu: [
         {
@@ -19870,8 +19746,6 @@ document.addEventListener("DOMContentLoaded", initializeNTPsecUpstreamsTable);
 document.addEventListener("DOMContentLoaded", initializeNTPsecSourceHealthModal);
 document.addEventListener("DOMContentLoaded", initializeVcfRegistryBundlesTable);
 document.addEventListener("DOMContentLoaded", initializeVcfDepotProfilesTable);
-document.addEventListener("DOMContentLoaded", initializeVcfDepotTasksTable);
-document.addEventListener("DOMContentLoaded", initializeVcfDepotTaskLogModal);
 document.addEventListener("DOMContentLoaded", initializeTasksPage);
 document.addEventListener("DOMContentLoaded", initializeApplianceUpdateSubmission);
 document.addEventListener("DOMContentLoaded", initializeServerTime);

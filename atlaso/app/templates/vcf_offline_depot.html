@@ -3,7 +3,7 @@
 {% block page_title %}VCF Offline Depot{% endblock %}
 {% block content %}
 <section class="split-workspace vcf-offline-depot-workspace">
-  <div class="panel wide-panel">
+  <div class="panel wide-panel vcf-offline-depot-main-panel">
     <div class="panel-head">
       <div>
         <h2>VCF Offline Depot</h2>
@@ -113,33 +113,19 @@
             {% endfor %}
           </tbody>
         </table>
-        <div class="panel-head table-head subsection-head">
-          <div>
-            <h2>VCFDT tasks</h2>
-            <p class="muted">Execution history for manual VCF Download Tool profile tasks.</p>
-          </div>
-        </div>
-        <div id="vcf-depot-tasks-table" class="tabulator-shell" data-tasks='{{ vcf_depot_download_jobs | tojson }}' data-fallback-id="vcf-depot-tasks-fallback"></div>
-        <table id="vcf-depot-tasks-fallback" class="data-table compact">
-          <thead>
-            <tr><th>Task</th><th>Profile</th><th>State</th><th>Mode</th><th>Created</th><th>Started</th><th>Finished</th></tr>
-          </thead>
-          <tbody>
-            {% for job in vcf_depot_download_jobs %}
-              <tr>
-                <td><code>{{ job.id }}</code></td>
-                <td>{{ job.profile_name or "Unknown profile" }}</td>
-                <td><span class="status-pill {{ 'success' if job.status == 'succeeded' else 'error' if job.status == 'failed' else 'warn' }}">{{ job.status }}</span></td>
-                <td>{{ "dry-run" if job.dry_run == "yes" else "real" }}</td>
-                <td>{{ job.created_at or "—" }}</td>
-                <td>{{ job.started_at or "—" }}</td>
-                <td>{{ job.finished_at or "—" }}</td>
-              </tr>
-            {% else %}
-              <tr><td colspan="7" class="muted">No VCFDT tasks have been executed.</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
+        {% set task_grid_class = "vcf-depot-task-history task-grid-section" %}
+        {% set task_grid_title = "Profile download tasks" %}
+        {% set task_grid_title_id = "vcf-depot-task-history-title" %}
+        {% set task_grid_description = "The same task grid used by Tasks, scoped to VCF Download Tool profile downloads." %}
+        {% set task_grid_rows = vcf_depot_task_rows %}
+        {% set task_grid_component_options = vcf_depot_task_component_options %}
+        {% set task_grid_type = "vcf-depot-download" %}
+        {% set task_grid_lock_component_filter = true %}
+        {% set task_grid_height = "100%" %}
+        {% set task_grid_scope_label = "Profile downloads only" %}
+        {% set task_grid_history_url = "/tasks" %}
+        {% set task_grid_empty_message = "No VCF profile download tasks have been recorded yet." %}
+        {% include "partials/task_grid.html" %}
     </div>
   </div>
 
@@ -362,19 +348,7 @@
   <section class="hidden" data-atlaso-wizard-step="enablement"><label class="switch-field"><span class="field-label"><span>Profile enabled</span><button class="help-icon" type="button" data-help="Requires a staged VCFDT package and valid credential before a task can start.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label></section>
   <section class="hidden" data-atlaso-wizard-step="review"><div class="settings-list" data-atlaso-resource-review></div><div class="alert warning">Saving stages the VCFDT profile only. Downloads are explicit row actions and appliance mutation remains separately controlled.</div></section>
 {% endcall %}
-<dialog id="vcf-depot-task-log-modal" class="confirm-modal" aria-labelledby="vcf-depot-task-log-modal-title">
-  <div class="confirm-modal-panel form-stack">
-    <div class="confirm-modal-body">
-      <p class="kicker">VCF Offline Depot</p>
-      <h2 id="vcf-depot-task-log-modal-title" data-vcf-depot-task-log-title>VCFDT task log</h2>
-      <p class="muted" data-vcf-depot-task-log-meta></p>
-      <div class="terminal-note vcfdt-task-log-preview" data-terminal-note-open="false"><pre><code class="language-atlaso-log" data-vcf-depot-task-log-content>Loading task log…</code></pre></div>
-    </div>
-    <div class="confirm-modal-actions">
-      <button class="button secondary" type="button" data-vcf-depot-task-log-close>Close</button>
-    </div>
-  </div>
-</dialog>
+{% include "partials/task_modals.html" %}
 <dialog id="vcf-depot-tool-reset-modal" class="confirm-modal" aria-labelledby="vcf-depot-tool-reset-modal-title">
   <form class="confirm-modal-panel form-stack" action="/vcf-offline-depot/tool/reset" method="post">
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
