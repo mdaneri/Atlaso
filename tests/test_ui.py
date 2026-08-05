@@ -12532,11 +12532,12 @@ def test_depot_submission_includes_only_relevant_local_user_dependency(
 
 
 @pytest.mark.parametrize(
-    ("nts_server_enabled", "ca_changed", "expected_units"),
+    ("nts_server_enabled", "ca_changed", "ldap_changes_pending", "expected_units"),
     [
-        (True, True, ["ca", "ntpd"]),
-        (True, False, ["ca", "ntpd"]),
-        (False, True, ["ntpd"]),
+        (True, True, False, ["ca", "ntpd"]),
+        (True, False, False, ["ca", "ntpd"]),
+        (False, True, False, ["ntpd"]),
+        (True, True, True, ["ca", "dnsmasq", "firewall", "ldap", "ntpd"]),
     ],
 )
 def test_nts_submission_includes_ca_material_dependency(
@@ -12544,6 +12545,7 @@ def test_nts_submission_includes_ca_material_dependency(
     monkeypatch,
     nts_server_enabled,
     ca_changed,
+    ldap_changes_pending,
     expected_units,
 ):
     import json
@@ -12573,6 +12575,14 @@ def test_nts_submission_includes_ca_material_dependency(
 
     units = [
         unit("ca", "Certificate Authority", changed=ca_changed),
+        unit("dnsmasq", "DNS / DHCP", changed=ldap_changes_pending),
+        unit("firewall", "Firewall", changed=ldap_changes_pending),
+        unit(
+            "ldap",
+            "Managed LDAP",
+            changed=ldap_changes_pending,
+            context={"ldap_settings": SimpleNamespace(enabled=ldap_changes_pending)},
+        ),
         unit(
             "ntpd",
             "NTP / NTS",

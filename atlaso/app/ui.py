@@ -11608,6 +11608,14 @@ def submit_appliance_apply(
     units = appliance_apply_units(db)
     unit_map = {unit["id"]: unit for unit in units}
     selected_ids = {unit_id for unit_id in selected_units if unit_id in APPLIANCE_APPLY_UNIT_IDS}
+    ntp_settings_for_apply = unit_map.get("ntpd", {}).get("context", {}).get("ntp_settings")
+    ca_required_for_nts = bool(
+        "ntpd" in selected_ids
+        and getattr(ntp_settings_for_apply, "nts_server_enabled", False)
+        and "ca" in unit_map
+    )
+    if ca_required_for_nts:
+        selected_ids.add("ca")
     ldap_related_units = {"ca", "dnsmasq", "firewall", "ldap"}
     ldap_context_for_apply = unit_map.get("ldap", {}).get("context", {})
     ldap_dependency_active = bool(
@@ -11621,14 +11629,6 @@ def submit_appliance_apply(
             for unit_id in ldap_related_units
             if unit_id in unit_map and unit_map[unit_id]["changed"]
         )
-    ntp_settings_for_apply = unit_map.get("ntpd", {}).get("context", {}).get("ntp_settings")
-    ca_required_for_nts = bool(
-        "ntpd" in selected_ids
-        and getattr(ntp_settings_for_apply, "nts_server_enabled", False)
-        and "ca" in unit_map
-    )
-    if ca_required_for_nts:
-        selected_ids.add("ca")
     depot_context_for_apply = unit_map.get("vcf_offline_depot", {}).get("context", {})
     depot_settings_for_apply = depot_context_for_apply.get("vcf_depot_settings")
     depot_publishing_units = {"vcf_offline_depot", "public_services"}
