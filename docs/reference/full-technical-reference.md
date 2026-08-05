@@ -440,7 +440,9 @@ both the helper extraction tree and `/var/lib/atlaso/vcfDownloadTool/active-tool
 applies preserve the recorded software depot ID. When no ID exists, or the operator explicitly confirms its refresh,
 Atlaso runs `vcf-download-tool configuration generate --software-depot-id`, reads the persisted identity back with
 `vcf-download-tool configuration get --software-depot-id`, and records only one unambiguous canonical readback value;
-a failed refresh leaves the previous ID recorded. Apply then syncs intent and applies HTTPS. Upload Broadcom
+a generation failure preserves the previous ID, while successful generation followed by failed or ambiguous readback
+invalidates it because VCFDT may already have replaced its runtime identity. Apply then syncs intent and applies HTTPS.
+Upload Broadcom
 credentials through the unified Broadcom credentials modal as either a download token or activation code, by file or
 pasted text; existing storage keys remain separate, and credential bodies are never returned in responses, previews,
 logs, or job output. Metadata and binaries profiles use the most recently staged runtime credential: the download-token

@@ -2454,6 +2454,12 @@ def persist_vcf_depot_metadata_from_apply(db: Session, unit_results: list[dict[s
                 set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_GENERATED_AT_KEY, generated_at)
                 set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_ERROR_KEY, "")
             else:
+                invalidated = helper_json_payload_with_key(stdout, "software_depot_id_invalidated")
+                if invalidated.get("software_depot_id_invalidated") is True:
+                    for key in [VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY, VCF_DEPOT_SOFTWARE_DEPOT_ID_GENERATED_AT_KEY]:
+                        stale_setting = db.execute(select(Setting).where(Setting.key == key)).scalar_one_or_none()
+                        if stale_setting is not None:
+                            db.delete(stale_setting)
                 error = (stderr or stdout or "VCFDT software depot ID generation failed.").strip()
                 set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_ERROR_KEY, error)
         return

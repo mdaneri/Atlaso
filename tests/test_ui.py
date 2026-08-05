@@ -11026,6 +11026,55 @@ def test_vcf_offline_depot_generates_software_depot_id(client, tmp_path, monkeyp
         assert generated_at.value
 
 
+def test_vcf_offline_depot_invalidates_stale_id_only_after_successful_generation_with_failed_readback(client):
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Setting
+    from atlaso.app.services.vcf_offline_depot import (
+        VCF_DEPOT_SOFTWARE_DEPOT_ID_ERROR_KEY,
+        VCF_DEPOT_SOFTWARE_DEPOT_ID_GENERATED_AT_KEY,
+        VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY,
+    )
+    from atlaso.app.ui import persist_vcf_depot_metadata_from_apply, set_setting_value
+
+    def persist_failure(*, stdout: str, stderr: str) -> None:
+        with SessionLocal() as db:
+            persist_vcf_depot_metadata_from_apply(
+                db,
+                [
+                    {
+                        "unit_id": "vcf_offline_depot",
+                        "commands": [
+                            {
+                                "command": ["atlaso-helper", "vcf-offline-depot", "generate-software-depot-id"],
+                                "returncode": 2,
+                                "stdout": stdout,
+                                "stderr": stderr,
+                            }
+                        ],
+                    }
+                ],
+            )
+            db.commit()
+
+    with SessionLocal() as db:
+        set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY, "previous-registered-id")
+        set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_GENERATED_AT_KEY, "2026-08-05T19:19:20+00:00")
+        db.commit()
+
+    persist_failure(stdout="", stderr="VCFDT generation failed before changing the ID.")
+    with SessionLocal() as db:
+        assert db.scalar(select(Setting).where(Setting.key == VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY)).value == "previous-registered-id"
+
+    persist_failure(stdout='{"software_depot_id_invalidated": true}\n', stderr="VCFDT readback failed.")
+    with SessionLocal() as db:
+        assert db.scalar(select(Setting).where(Setting.key == VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY)) is None
+        assert db.scalar(select(Setting).where(Setting.key == VCF_DEPOT_SOFTWARE_DEPOT_ID_GENERATED_AT_KEY)) is None
+        error = db.scalar(select(Setting).where(Setting.key == VCF_DEPOT_SOFTWARE_DEPOT_ID_ERROR_KEY))
+        assert error.value == "VCFDT readback failed."
+
+
 def test_vcf_offline_depot_migrates_legacy_store_path(client):
     from sqlalchemy import select
 

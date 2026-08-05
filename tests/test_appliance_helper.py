@@ -4340,6 +4340,28 @@ def test_vcf_offline_depot_helper_rejects_ambiguous_uuid_only_output():
     )
 
 
+def test_vcf_offline_depot_helper_invalidates_stored_id_when_readback_fails(monkeypatch, tmp_path, capsys):
+    helper = load_helper_module()
+    runtime_tool_dir = tmp_path / "var" / "lib" / "atlaso" / "vcfDownloadTool" / "active-tool"
+    wrapper = runtime_tool_dir / "vcf-download-tool"
+    wrapper.parent.mkdir(parents=True)
+    wrapper.write_text("#!/bin/sh\n", encoding="utf-8")
+    wrapper.chmod(0o755)
+
+    def fake_run_vcfdt(command: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+        if "generate" in command:
+            return subprocess.CompletedProcess(command, 0, "Software depot ID generated.\n", "")
+        return subprocess.CompletedProcess(command, 5, "", "readback failed")
+
+    monkeypatch.setattr(helper, "VCF_DEPOT_RUNTIME_TOOL_DIR", runtime_tool_dir)
+    monkeypatch.setattr(helper, "_run_vcfdt_user_command", fake_run_vcfdt)
+
+    assert helper._handle_vcf_offline_depot("generate-software-depot-id", []) == 5
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["software_depot_id_invalidated"] is True
+    assert "readback exited with code 5" in captured.err
+
+
 def test_vcf_offline_depot_generate_software_depot_id_main_allows_no_path(monkeypatch):
     helper = load_helper_module()
     calls: list[tuple[str, list[str]]] = []

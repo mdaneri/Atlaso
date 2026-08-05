@@ -626,8 +626,9 @@ status: current
   settings and download-profile applies. Generate an ID only when none is recorded or the operator explicitly submits
   the software depot ID refresh action; then read the persisted identity back with
   `vcf-download-tool configuration get --software-depot-id`, store only one unambiguous canonical readback value, sync
-  intent, and apply HTTPS. A failed explicit refresh must not erase the previously recorded ID. The helper validates
-  CA-managed
+  intent, and apply HTTPS. Preserve the old ID when generation itself fails. If generation succeeds but canonical
+  readback fails, invalidate the stored ID because VCFDT may already have replaced its runtime identity. The helper
+  validates CA-managed
   `vcf_offline_depot:https` cert/key paths, server name/listener uniqueness, document root, auth mode, selected local
   HTTP user, and static-file directives, then installs or removes `/etc/atlaso/nginx/sites.d/vcf-offline-depot.conf`,
   writes `/etc/atlaso/nginx/htpasswd/vcf-offline-depot.htpasswd` from the applied Photon password hash when

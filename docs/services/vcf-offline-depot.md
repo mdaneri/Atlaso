@@ -49,6 +49,8 @@ Register the displayed software depot ID in the VCF Business Services console, t
 for that exact registration. Atlaso preserves this ID when settings or download profiles are changed and applied.
 **Refresh software depot ID** intentionally replaces it; its earlier activation code no longer matches the active
 VCFDT identity, so register the current displayed ID and replace the staged activation code before retrying a download.
+If VCFDT generates a replacement but Atlaso cannot read it back unambiguously, Atlaso clears the displayed ID instead
+of presenting the previous registration as current. Retry the refresh before registering or downloading.
 
 ## Verify
 
