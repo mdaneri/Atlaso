@@ -830,7 +830,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6" in service_worker.text
     assert "/static/app.css?v=vcf-depot-tasks-239-20260804-1" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in service_worker.text
-    assert "/static/app.js?v=vcf-depot-tasks-239-20260804-1" in service_worker.text
+    assert "/static/app.js?v=vcf-depot-status-238-20260804-1" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -850,8 +850,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=vcf-depot-tasks-239-20260804-1"),
-        (public_base, "/static/app.js?v=vcf-depot-tasks-239-20260804-1"),
+        (base, "/static/app.js?v=vcf-depot-status-238-20260804-1"),
+        (public_base, "/static/app.js?v=vcf-depot-status-238-20260804-1"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5"
@@ -1357,7 +1357,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vcf-depot-tasks-239-20260804-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in page.text
-    assert "/static/app.js?v=vcf-depot-tasks-239-20260804-1" in page.text
+    assert "/static/app.js?v=vcf-depot-status-238-20260804-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -9633,12 +9633,24 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "initializeVcfDepotSettings" in app_js.text
     assert "formatNginxListen(listenAddress, port)" in app_js.text
     software_depot_modal_js = app_js.text.split("function initializeVcfDepotSoftwareDepotIdGenerator", 1)[1].split("function ", 1)[0]
+    assert "event.preventDefault()" in software_depot_modal_js
+    assert "await submitApplianceApplyForm(form)" in software_depot_modal_js
     assert 'modal.close("submit")' in software_depot_modal_js
     assert 'submitButton.textContent = "Creating task…"' in software_depot_modal_js
+    assert 'submitButton.textContent = "Submit appliance changes"' in software_depot_modal_js
+    assert "data-appliance-apply-submit-error" in page.text
     assert "initializeVcfDepotProfilesTable" in app_js.text
     assert "initializeVcfDepotTasksTable" not in app_js.text
     assert "initializeTasksPage" in app_js.text
     assert 'query.set("task_type", page.dataset.taskType)' in app_js.text
+    apply_refresh_js = app_js.text.split("function refreshCurrentWorkflowAfterApplianceApply", 1)[1].split("async function submitApplianceApplyForm", 1)[0]
+    assert 'new Set(["/esx-storage", "/vcf-offline-depot"])' in apply_refresh_js
+    assert 'task?.status !== "succeeded"' in apply_refresh_js
+    assert "window.location.reload()" in apply_refresh_js
+    submit_apply_js = app_js.text.split("async function submitApplianceApplyForm", 1)[1].split("async function pollGlobalApplianceApply", 1)[0]
+    assert 'form.querySelector("[data-appliance-apply-submit-error]")' in submit_apply_js
+    assert "return true" in submit_apply_js
+    assert "return false" in submit_apply_js
     assert 'paginationMode: "remote"' in app_js.text
     assert "paginationSize: 25" in app_js.text
     assert 'placeholder: page.dataset.taskEmptyMessage' in app_js.text

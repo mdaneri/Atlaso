@@ -423,7 +423,11 @@ def test_esx_storage_page_and_dual_stack_api_contract(client):
     assert "await fetch(form.action" in client.get("/static/app.js").text
     assert 'window.history.replaceState(null, "", target)' in client.get("/static/app.js").text
     assert '`${window.location.pathname}${window.location.search}#${targetId}`' in client.get("/static/app.js").text
-    assert 'window.location.pathname !== "/esx-storage"' in client.get("/static/app.js").text
+    apply_refresh_js = client.get("/static/app.js").text.split("function refreshCurrentWorkflowAfterApplianceApply", 1)[1].split(
+        "async function submitApplianceApplyForm", 1
+    )[0]
+    assert 'new Set(["/esx-storage", "/vcf-offline-depot"])' in apply_refresh_js
+    assert "refreshableWorkflows.has(window.location.pathname)" in apply_refresh_js
     assert 'label: "Edit datastore"' in client.get("/static/app.js").text
     assert "rowDblClick: (_event, row) => editRow(row)" in client.get("/static/app.js").text
     assert 'editor: "tickCross"' in client.get("/static/app.js").text
