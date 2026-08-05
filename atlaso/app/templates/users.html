@@ -141,9 +141,7 @@
 {% set local_user_steps = [
   {"id": "identity", "label": "Identity", "summary": "Username and Atlaso roles"},
   {"id": "access", "label": "Access", "summary": "Photon shell and Web SSH"},
-  {"id": "password", "label": "Password", "summary": "Set now or postpone"},
-  {"id": "enablement", "label": "Enablement", "summary": "Desired account state"},
-  {"id": "review", "label": "Review", "summary": "Confirm desired account state"}
+  {"id": "review", "label": "Review", "summary": "Confirm account details"}
 ] %}
 {% call resource_wizard(
   "user-account-dialog",
@@ -157,6 +155,7 @@
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
   <input type="hidden" name="record_id" value="">
   <input type="hidden" name="enabled_present" value="1">
+  <input type="checkbox" name="enabled" hidden>
   <section data-atlaso-wizard-step="identity">
     <div class="form-stack">
       <label>
@@ -194,32 +193,9 @@
     </div>
     <div class="alert warning">Web SSH requires an interactive Photon shell. Host enforcement still waits for the Local Users appliance-apply unit.</div>
   </section>
-  <section class="hidden" data-atlaso-wizard-step="password">
-    <p class="muted">Set a Photon password now, or leave both fields blank to postpone and keep the account disabled.</p>
-    <div class="form-grid">
-      <label>
-        <span class="field-label"><span>Photon password</span><button class="help-icon" type="button" data-help="Optional during creation. Atlaso validates and stages it only until global Local Users apply.">i</button></span>
-        <span class="password-input-wrap">
-          <input type="password" name="password" autocomplete="new-password" minlength="{{ password_policy.min_length }}">
-          <button class="password-toggle" type="button" data-password-toggle aria-label="Show Photon password" aria-pressed="false"><svg aria-hidden="true" viewBox="0 0 24 24" focusable="false"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
-        </span>
-      </label>
-      <label>
-        <span class="field-label"><span>Confirm password</span><button class="help-icon" type="button" data-help="Must match the Photon password. Leave both fields blank to postpone.">i</button></span>
-        <span class="password-input-wrap">
-          <input type="password" name="confirm_password" autocomplete="new-password" minlength="{{ password_policy.min_length }}">
-          <button class="password-toggle" type="button" data-password-toggle aria-label="Show password confirmation" aria-pressed="false"><svg aria-hidden="true" viewBox="0 0 24 24" focusable="false"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
-        </span>
-      </label>
-    </div>
-  </section>
-  <section class="hidden" data-atlaso-wizard-step="enablement">
-    <label class="switch-field"><span class="field-label"><span>User enabled</span><button class="help-icon" type="button" data-help="Enabled users enter Atlaso and Photon desired state. A new account requires a staged password before it can be enabled.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
-    <div class="alert warning">A disabled user remains in Atlaso's database but is removed from Photon OS on global Local Users apply.</div>
-  </section>
   <section class="hidden" data-atlaso-wizard-step="review">
     <div class="settings-list" data-atlaso-resource-review></div>
-    <div class="alert warning">Saving changes local-user desired state only. Photon OS enforcement remains part of global Appliance Apply.</div>
+    <div class="alert warning">New users start disabled. Set the Photon password from the row menu, then manage availability from the grid's Enabled column. Photon OS enforcement remains part of global Appliance Apply.</div>
   </section>
 {% endcall %}
 
