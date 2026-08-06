@@ -573,6 +573,7 @@ from atlaso.app.services.vcf_offline_depot import (
     render_vcfdt_command_preview,
     safe_archive_upload_name,
     setting_secret_state,
+    staged_vcf_download_tool_version,
     vcf_depot_application_properties_from_tool,
     validate_vcf_depot_state,
     validate_vcf_download_tool_upload_envelope,
@@ -2793,6 +2794,7 @@ def vcf_offline_depot_context(db: Session, *, reconcile: bool = True) -> dict:
     }
     secrets = vcf_depot_secret_context(db)
     software_depot_id = vcf_depot_software_depot_id_context(db)
+    tool_display_version = settings.tool_version or staged_vcf_download_tool_version(settings.tool_archive_path)
     application_properties = vcf_depot_application_properties_context(db, settings)
     validation_errors, validation_warnings = validate_vcf_depot_state(
         settings,
@@ -2833,8 +2835,10 @@ def vcf_offline_depot_context(db: Session, *, reconcile: bool = True) -> dict:
         "vcf_depot_settings": settings,
         "vcf_depot_settings_json": {
             **vcf_depot_settings_to_dict(settings),
+            "tool_display_version": tool_display_version,
             "vmware_ceip_enabled": bool(appliance_settings.vmware_ceip_enabled),
         },
+        "vcf_depot_tool_display_version": tool_display_version,
         "vmware_ceip_enabled": bool(appliance_settings.vmware_ceip_enabled),
         "vcf_depot_users": users,
         "vcf_depot_profiles": profiles,
@@ -17771,7 +17775,7 @@ def update_vcf_offline_depot_settings_from_ui(
                 "depot_store_path": saved_settings.depot_store_path,
                 "tool_archive_name": uploaded_archive_name or Path(saved_settings.tool_archive_path).name if saved_settings.tool_archive_path else "",
                 "tool_archive_uploaded": bool(uploaded_archive_name),
-                "tool_version": saved_settings.tool_version,
+                "tool_version": context["vcf_depot_tool_display_version"],
                 "software_depot_id": software_depot_id["id"],
                 "software_depot_id_generated_at": software_depot_id["generated_at"],
                 "software_depot_id_error": software_depot_id["error"],
@@ -17936,6 +17940,7 @@ def _vcf_depot_tool_configuration_response(db: Session) -> dict[str, Any]:
         "software_depot_id": software_depot_id["id"],
         "software_depot_id_generated_at": software_depot_id["generated_at"],
         "software_depot_id_error": software_depot_id["error"],
+        "tool_version": context["vcf_depot_tool_display_version"],
         "valid": not validation_errors,
         "validation_errors": validation_errors,
         "validation_warnings": context["vcf_depot_validation_warnings"],
@@ -18112,6 +18117,8 @@ def save_vcf_depot_tool_configuration_from_ui(
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
     verify_csrf(request, csrf)
+    if replace_download_token == "on" and replace_activation_code == "on":
+        raise HTTPException(status_code=400, detail="Replace only one Broadcom credential per VCFDT configuration save.")
     pending_audits: list[AuditEvent] = []
     try:
         _save_vcf_depot_application_properties(

@@ -9551,19 +9551,20 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "Configure VCF Download Tool" in page.text
     assert ">Configure</button>" in page.text
     assert 'data-vcf-depot-configuration-open data-vcf-depot-requires-tool disabled' in page.text
-    assert "Keep existing secret inputs or replace either one" in page.text
+    assert "Choose whether to queue a Software Depot ID refresh" in page.text
     assert "No Broadcom credentials staged." in page.text
     assert 'action="/vcf-offline-depot/tool-configuration"' in page.text
     assert 'id="vcf-depot-configuration-dialog"' in page.text
     assert 'data-vcf-depot-configuration-form' in page.text
     assert 'data-atlaso-wizard-step="credentials"' in page.text
+    assert 'data-atlaso-wizard-step="credential-input"' in page.text
     assert 'data-atlaso-wizard-step="properties"' in page.text
     assert 'data-atlaso-wizard-step="software-depot-id"' in page.text
     assert 'data-atlaso-wizard-step="review"' in page.text
-    assert 'name="replace_download_token"' in page.text
+    assert 'name="credential_replacement_choice" value="download_token"' in page.text
     assert 'name="download_token_file"' in page.text
     assert 'name="download_token_text"' in page.text
-    assert 'name="replace_activation_code"' in page.text
+    assert 'name="credential_replacement_choice" value="activation_code"' in page.text
     assert 'name="activation_code_file"' in page.text
     assert 'name="activation_code_text"' in page.text
     assert "application-prodv2.properties" in page.text
@@ -9574,7 +9575,9 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "Start" in page.text
     assert page.text.index("<th>Name</th>") < page.text.index("<th>Start</th>") < page.text.index("<th>Type</th>")
     assert 'href="/logs"' in page.text
-    assert "Refresh software depot ID" in page.text
+    assert "Generate software depot ID" in page.text
+    assert 'name="refresh_software_depot_id"' in page.text
+    assert page.text.index('data-atlaso-wizard-step="software-depot-id"') < page.text.index('data-atlaso-wizard-step="credentials"')
     assert 'name="selected_units" value="vcf_offline_depot"' in page.text
     assert 'name="refresh_vcf_depot_software_depot_id" value="true"' in page.text
     assert "Software depot ID" in page.text
@@ -9643,6 +9646,10 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert 'body.set("application_properties", content)' in app_js.text
     assert "new TextEncoder().encode(content).length > 512 * 1024" in app_js.text
     assert "confirmation.showModal()" in app_js.text
+    assert 'step.id === "software-depot-id"' in app_js.text
+    assert 'return "review"' in app_js.text
+    assert 'selectedCredential() === "preserve"' in app_js.text
+    assert "Continue to apply confirmation" in app_js.text
     assert "formatNginxListen(listenAddress, port)" in app_js.text
     software_depot_modal_js = app_js.text.split("function initializeVcfDepotSoftwareDepotIdGenerator", 1)[1].split("function ", 1)[0]
     assert "event.preventDefault()" in software_depot_modal_js
@@ -9808,7 +9815,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert payload["vmware_ceip_enabled"] is False
     assert payload["tool_archive_name"] == "vcf-download-tool-9.1.0.test.tar.gz"
     assert payload["tool_archive_uploaded"] is True
-    assert payload["tool_version"] == ""
+    assert payload["tool_version"] == "9.1.0"
     assert payload["software_depot_id"] == ""
     assert payload["software_depot_id_error"] == ""
     assert payload["download_token_present"] is True
@@ -10274,6 +10281,7 @@ def test_vcf_offline_depot_tool_reset_can_preserve_or_clear_configuration(client
 
     refreshed = client.get("/vcf-offline-depot")
     assert ">Update</strong>" in refreshed.text
+    assert refreshed.text.count("<strong data-vcf-depot-tool-version>9.1.0</strong>") == 2
     assert 'data-vcf-depot-tool-reset-action>Reset</button>' in refreshed.text
     assert 'button danger compact-button hidden' not in refreshed.text
 
@@ -10613,8 +10621,6 @@ def test_vcf_offline_depot_tool_configuration_is_atomic_and_presence_only(client
             "csrf": csrf,
             "replace_download_token": "on",
             "download_token_text": "ignored-token-text",
-            "replace_activation_code": "on",
-            "activation_code_text": "fixture-activation-text",
             "application_properties": properties,
         },
         files={"download_token_file": ("fixture-token.txt", "fixture-token-file", "text/plain")},
@@ -10625,7 +10631,7 @@ def test_vcf_offline_depot_tool_configuration_is_atomic_and_presence_only(client
     payload = response.json()
     assert payload["status"] == "saved"
     assert payload["download_token_present"] is True
-    assert payload["activation_code_present"] is True
+    assert payload["activation_code_present"] is False
     assert payload["application_properties_present"] is True
     assert payload["application_properties_name"] == "application-prodv2.properties"
     assert payload["software_depot_id"] == "existing-depot-id"
@@ -10633,6 +10639,21 @@ def test_vcf_offline_depot_tool_configuration_is_atomic_and_presence_only(client
     assert "fixture-token-file" not in response.text
     assert "fixture-activation-text" not in response.text
     assert "fixture.setting" not in response.text
+
+    activation_response = client.post(
+        "/vcf-offline-depot/tool-configuration",
+        data={
+            "csrf": csrf,
+            "replace_activation_code": "on",
+            "activation_code_text": "fixture-activation-text",
+            "application_properties": properties,
+        },
+        headers={"X-Atlaso-Autosave": "1"},
+    )
+    assert activation_response.status_code == 200
+    assert activation_response.json()["download_token_present"] is True
+    assert activation_response.json()["activation_code_present"] is True
+    assert "fixture-activation-text" not in activation_response.text
 
     with SessionLocal() as db:
         values = {
@@ -10663,12 +10684,25 @@ def test_vcf_offline_depot_tool_configuration_is_atomic_and_presence_only(client
         assert "fixture-activation-text" not in audit_text
         assert "fixture.setting" not in audit_text
 
-    failed = client.post(
+    exclusive = client.post(
         "/vcf-offline-depot/tool-configuration",
         data={
             "csrf": csrf,
             "replace_download_token": "on",
-            "download_token_text": "replacement-that-must-roll-back",
+            "download_token_text": "must-not-save",
+            "replace_activation_code": "on",
+            "activation_code_text": "must-not-save",
+            "application_properties": "fixture.setting=must-not-save\n",
+        },
+        headers={"X-Atlaso-Autosave": "1"},
+    )
+    assert exclusive.status_code == 400
+    assert "only one Broadcom credential" in exclusive.text
+
+    failed = client.post(
+        "/vcf-offline-depot/tool-configuration",
+        data={
+            "csrf": csrf,
             "replace_activation_code": "on",
             "activation_code_text": "   ",
             "application_properties": "fixture.setting=must-not-save\n",

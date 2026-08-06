@@ -13281,26 +13281,31 @@ function initializeVcfDepotConfigurationWizard() {
   }
   const properties = form.querySelector("[data-vcf-depot-properties-textarea]");
   const refreshId = form.querySelector("[data-vcf-depot-refresh-id]");
+  const submitButton = form.querySelector("[data-atlaso-wizard-submit]");
   let refreshAfterSave = false;
 
+  const selectedCredential = () => {
+    const choice = form.querySelector('input[name="credential_replacement_choice"]:checked');
+    return choice instanceof HTMLInputElement ? choice.value : "preserve";
+  };
   const replacementControls = (credentialType) => {
-    const checkbox = form.querySelector(`[data-vcf-depot-replace-credential="${credentialType}"]`);
     const panel = form.querySelector(`[data-vcf-depot-credential-replacement="${credentialType}"]`);
-    return { checkbox, panel };
+    return { panel };
   };
   const syncReplacementPanel = (credentialType) => {
-    const { checkbox, panel } = replacementControls(credentialType);
-    if (!(checkbox instanceof HTMLInputElement) || !(panel instanceof HTMLElement)) return;
-    const enabled = checkbox.checked;
+    const { panel } = replacementControls(credentialType);
+    if (!(panel instanceof HTMLElement)) return;
+    const enabled = selectedCredential() === credentialType;
     panel.classList.toggle("hidden", !enabled);
     panel.toggleAttribute("hidden", !enabled);
     panel.querySelectorAll("input, textarea").forEach((control) => {
       if (control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement) control.disabled = !enabled;
     });
   };
-  ["download_token", "activation_code"].forEach((credentialType) => {
-    const { checkbox } = replacementControls(credentialType);
-    checkbox?.addEventListener("change", () => syncReplacementPanel(credentialType));
+  form.querySelectorAll("[data-vcf-depot-credential-choice]").forEach((choice) => {
+    choice.addEventListener("change", () => {
+      ["download_token", "activation_code"].forEach(syncReplacementPanel);
+    });
   });
 
   const syncProperties = () => {
@@ -13311,8 +13316,8 @@ function initializeVcfDepotConfigurationWizard() {
     return properties.value.replace(/\r\n?/g, "\n");
   };
   const credentialReplacementSummary = (credentialType, label) => {
-    const { checkbox, panel } = replacementControls(credentialType);
-    if (!(checkbox instanceof HTMLInputElement) || !checkbox.checked || !(panel instanceof HTMLElement)) {
+    const { panel } = replacementControls(credentialType);
+    if (selectedCredential() !== credentialType || !(panel instanceof HTMLElement)) {
       const status = form.querySelector(`[data-vcf-depot-${credentialType === "download_token" ? "token" : "activation"}-status]`);
       return `${label}: keep ${status instanceof HTMLElement && status.dataset.present === "1" ? "staged input" : "not staged"}`;
     }
@@ -13324,13 +13329,13 @@ function initializeVcfDepotConfigurationWizard() {
     if (!(review instanceof HTMLElement)) return;
     const content = syncProperties();
     const softwareDepotId = form.querySelector("[data-vcf-depot-software-depot-id]")?.textContent?.trim() || "";
+    const refreshRequested = refreshId instanceof HTMLInputElement && refreshId.checked;
     const rows = [
       ["Download token", credentialReplacementSummary("download_token", "Download token").replace(/^Download token: /, "")],
       ["Activation code", credentialReplacementSummary("activation_code", "Activation code").replace(/^Activation code: /, "")],
-      ["Application properties", `${new TextEncoder().encode(content).length.toLocaleString()} UTF-8 bytes to save`],
-      ["Software Depot ID", softwareDepotId ? "preserve current ID" : "generate on first Appliance Apply"],
-      ["ID refresh", refreshId instanceof HTMLInputElement && refreshId.checked ? "request second confirmation" : "not requested"],
-      ["Appliance Apply", "still required"],
+      ["Application properties", refreshRequested ? "unchanged by the ID-only path" : `${new TextEncoder().encode(content).length.toLocaleString()} UTF-8 bytes to save`],
+      ["Software Depot ID", refreshRequested ? (softwareDepotId ? "queue replacement" : "queue generation") : (softwareDepotId ? "preserve current ID" : "generate on first Appliance Apply")],
+      ["Apply handoff", refreshRequested ? "second confirmation queues the scoped activity" : "global Appliance Apply still required"],
     ];
     review.innerHTML = rows.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("");
   };
@@ -13350,9 +13355,10 @@ function initializeVcfDepotConfigurationWizard() {
     form,
     dialog,
     steps: [
-      { id: "credentials", title: "Broadcom credentials", description: "Keep or independently replace the download token and activation code without revealing stored values." },
-      { id: "properties", title: "Application properties", description: "Review the bundled INI editor content saved with any selected credential replacements." },
-      { id: "software-depot-id", title: "Software Depot ID", description: "Preserve the current ID or request the explicit refresh handoff after this save." },
+      { id: "software-depot-id", title: "Software Depot ID", description: "Preserve the current ID or select the explicit generation or refresh handoff." },
+      { id: "credentials", title: "Broadcom credential", description: "Keep both stored inputs or choose exactly one credential to replace." },
+      { id: "credential-input", title: "Credential input", description: "Upload or paste the selected credential without revealing any stored value." },
+      { id: "properties", title: "Application properties", description: "Review the bundled INI editor content saved with the selected credential replacement." },
       { id: "review", title: "Review VCFDT configuration", description: "Confirm the presence-only changes and remaining Appliance Apply boundary." },
     ],
     discardTitle: "Discard VCFDT configuration changes?",
@@ -13366,15 +13372,21 @@ function initializeVcfDepotConfigurationWizard() {
       controller.markClean();
     },
     onStepChange: ({ step }) => {
+      if (step.id === "credential-input") ["download_token", "activation_code"].forEach(syncReplacementPanel);
+      if (step.id === "review" && submitButton instanceof HTMLButtonElement) {
+        submitButton.textContent = refreshId instanceof HTMLInputElement && refreshId.checked
+          ? "Continue to apply confirmation"
+          : "Save VCFDT configuration";
+      }
       if (step.id === "properties" && properties instanceof HTMLTextAreaElement && window.AtlasoMonaco && typeof window.AtlasoMonaco.focus === "function") {
         window.requestAnimationFrame(() => window.AtlasoMonaco.focus(properties));
       }
     },
     validateStep: ({ step }) => {
-      if (step.id === "credentials") {
-        for (const credentialType of ["download_token", "activation_code"]) {
-          const { checkbox, panel } = replacementControls(credentialType);
-          if (!(checkbox instanceof HTMLInputElement) || !checkbox.checked || !(panel instanceof HTMLElement)) continue;
+      if (step.id === "credential-input") {
+        for (const credentialType of [selectedCredential()]) {
+          const { panel } = replacementControls(credentialType);
+          if (!(panel instanceof HTMLElement)) continue;
           const file = panel.querySelector('input[type="file"]');
           const text = panel.querySelector("textarea");
           const selectedFile = file instanceof HTMLInputElement ? file.files?.[0] : null;
@@ -13403,10 +13415,30 @@ function initializeVcfDepotConfigurationWizard() {
       }
       return { valid: true };
     },
+    onNext: ({ step }) => {
+      if (step.id === "software-depot-id" && refreshId instanceof HTMLInputElement && refreshId.checked) return "review";
+      if (step.id === "credentials" && selectedCredential() === "preserve") return "properties";
+      return true;
+    },
+    onBack: ({ step }) => {
+      if (step.id === "review" && refreshId instanceof HTMLInputElement && refreshId.checked) return "software-depot-id";
+      if (step.id === "properties" && selectedCredential() === "preserve") return "credentials";
+      return true;
+    },
     prepareReview: renderReview,
     onSubmit: async () => {
+      if (refreshId instanceof HTMLInputElement && refreshId.checked) {
+        refreshAfterSave = true;
+        return { valid: true };
+      }
       const content = syncProperties();
       const body = new FormData(form);
+      body.delete("credential_replacement_choice");
+      body.delete("refresh_software_depot_id");
+      body.delete("replace_download_token");
+      body.delete("replace_activation_code");
+      if (selectedCredential() === "download_token") body.set("replace_download_token", "on");
+      if (selectedCredential() === "activation_code") body.set("replace_activation_code", "on");
       body.set("application_properties", content);
       const response = await fetch(form.action, {
         method: "POST",

@@ -442,6 +442,31 @@ test("createWizard locks future steps and supports async validation and review",
   assert.equal(reviewPrepared, true);
 });
 
+test("createWizard supports conditional next and back routing", async () => {
+  installBrowserGlobals();
+  const fixture = wizardFixture(["choice", "details", "review"]);
+  let skipDetails = true;
+  const controller = createWizard({
+    form: fixture.form,
+    dialog: fixture.dialog,
+    steps: [
+      { id: "choice", title: "Choice" },
+      { id: "details", title: "Details" },
+      { id: "review", title: "Review" },
+    ],
+    onNext: ({ step }) => step.id === "choice" && skipDetails ? "review" : true,
+    onBack: ({ step }) => step.id === "review" && skipDetails ? "choice" : true,
+  });
+
+  assert.equal(await controller.next(), true);
+  assert.equal(controller.currentStepId, "review");
+  assert.equal(await controller.back(), true);
+  assert.equal(controller.currentStepId, "choice");
+  skipDetails = false;
+  assert.equal(await controller.next(), true);
+  assert.equal(controller.currentStepId, "details");
+});
+
 test("createWizard confirms dirty cancellation and restores launcher focus", async () => {
   installBrowserGlobals();
   const fixture = wizardFixture(["identity", "review"]);

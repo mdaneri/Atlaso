@@ -145,6 +145,14 @@ def parse_vcf_download_tool_version(output: str) -> str:
     return match.group(0) if match else ""
 
 
+def staged_vcf_download_tool_version(archive_path: str | Path) -> str:
+    """Return the non-secret version encoded in a validated VCFDT archive name."""
+    archive_name = Path(archive_path or "").name
+    if not re.fullmatch(r"vcf-download-tool-[A-Za-z0-9._-]+\.tar\.gz", archive_name):
+        return ""
+    return parse_vcf_download_tool_version(archive_name)
+
+
 def _read_properties_from_archive(archive_path: str | Path) -> str:
     path = Path(archive_path)
     if not path.exists():

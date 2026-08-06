@@ -511,9 +511,9 @@ Figure: VCF Offline Depot with metadata first and the compact VCFDT configuratio
 
 Figure: VCF Offline Depot profile ordering and staging state in the responsive viewport.
 
-![Atlaso VCFDT configuration wizard review step without credential contents.](../assets/screenshots/vcf-offline-depot-configuration-wizard.webp)
+![Atlaso VCFDT configuration wizard Software Depot ID step without credential contents.](../assets/screenshots/vcf-offline-depot-configuration-wizard.webp)
 
-Figure: VCFDT configuration review shows presence-only changes and the remaining Appliance Apply boundary.
+Figure: VCFDT configuration starts with the Software Depot ID generation or refresh handoff.
 
 ## Vcf Private Registry
 

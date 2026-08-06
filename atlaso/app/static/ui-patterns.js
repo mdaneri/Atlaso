@@ -380,7 +380,23 @@
       return showStep(target, { unlock: true, previous: currentIndex });
     };
 
-    const back = () => showStep(currentIndex - 1, { previous: currentIndex });
+    const back = async () => {
+      let target = currentIndex - 1;
+      if (typeof config.onBack === "function") {
+        const result = await config.onBack({
+          controller,
+          form,
+          dialog,
+          step: steps[currentIndex],
+          index: currentIndex,
+          previousStep: steps[Math.max(target, 0)],
+        });
+        if (result === false || result?.stay) return false;
+        if (typeof result === "string" || typeof result === "number") target = indexFor(result);
+        else if (result?.target !== undefined) target = indexFor(result.target);
+      }
+      return showStep(target, { previous: currentIndex });
+    };
     const confirmDiscard = async () => {
       if (!dirty) return true;
       if (typeof config.confirmDiscard === "function") return Boolean(await config.confirmDiscard({ controller, form, dialog }));
@@ -479,7 +495,9 @@
     nextButton?.addEventListener?.("click", () => {
       next().catch((error) => setError(error?.message || "The next step could not be opened."));
     });
-    backButton?.addEventListener?.("click", back);
+    backButton?.addEventListener?.("click", () => {
+      back().catch((error) => setError(error?.message || "The previous step could not be opened."));
+    });
     navButtons.forEach((button, buttonIndex) => {
       button.addEventListener?.("click", async () => {
         const target = navIndex(button, buttonIndex);

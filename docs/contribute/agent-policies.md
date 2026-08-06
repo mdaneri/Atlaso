@@ -633,19 +633,21 @@ status: current
   HTTP user, and static-file directives, then installs or removes `/etc/atlaso/nginx/sites.d/vcf-offline-depot.conf`,
   writes `/etc/atlaso/nginx/htpasswd/vcf-offline-depot.htpasswd` from the applied Photon password hash when
   authentication is required, and reloads nginx. The non-grid settings rail exposes one VCFDT configuration summary;
-  its four-step shared `createWizard(...)` flow covers presence-only Broadcom credential replacement,
-  `application-prodv2.properties`, the current Software Depot ID and refresh intent, and review. Credential and
+  its five-step shared `createWizard(...)` flow starts with the current Software Depot ID and refresh intent, then
+  covers an exclusive presence-only Broadcom credential choice, a dedicated upload-or-paste step,
+  `application-prodv2.properties`, and review. Credential and
   application-properties changes must use one transactional desired-state save. The wizard must never preload stored
   credential values, must prefer an uploaded credential file over pasted text, and must return only presence flags,
-  safe display names, properties metadata, validation/previews, and Software Depot ID metadata. If refresh is selected,
-  a second confirmation after the save must submit explicit refresh intent through the global `/appliance-apply`
+  safe display names, the version parsed from the validated staged archive name, properties metadata,
+  validation/previews, and Software Depot ID metadata. If refresh is selected, the wizard skips to Review without
+  resaving unchanged configuration; a second confirmation must submit explicit refresh intent through the global `/appliance-apply`
   workflow for `vcf_offline_depot`, not call the helper directly. Ordinary wizard saves must preserve an existing ID.
   Manual
   VCFDT command generation
   should use `/var/lib/atlaso/vcfDownloadTool/active-tool` token and activation-code file paths, write telemetry and ESX
   disabled-platform config without exposing secret contents, and model patch-only separately from upgrade-only. Download
-  tokens and activation codes can be preserved or replaced independently in the VCFDT configuration wizard; files or
-  pasted text still become the runtime credential files used by VCFDT and existing storage keys remain as compatibility
+  tokens and activation codes can be preserved together or replaced one at a time in the VCFDT configuration wizard;
+  files or pasted text still become the runtime credential files used by VCFDT and existing storage keys remain as compatibility
   aliases. Metadata profiles appear first by default, followed by binaries and ESX with deterministic name/ID
   tie-breaking; user sorting may reorder them while the shared add row remains pinned last.
   Manual profile starts create `vcf-depot-download` background jobs that write runtime credential files under

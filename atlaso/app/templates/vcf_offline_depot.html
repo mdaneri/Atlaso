@@ -30,7 +30,7 @@
       </div>
       <div class="metric">
         <span>VCF Download Tool</span>
-        <strong data-vcf-depot-tool-version>{{ vcf_depot_settings.tool_version or "not uploaded" }}</strong>
+        <strong data-vcf-depot-tool-version>{{ vcf_depot_tool_display_version or "not uploaded" }}</strong>
         <small data-vcf-depot-tool-status>{{ "tool staged" if vcf_depot_settings_json.tool_archive_name else "upload required" }}</small>
       </div>
       <div class="metric">
@@ -228,7 +228,7 @@
         <p id="vcf-depot-settings-status" class="autosave-status" data-state="idle">Changes save automatically.</p>
       </form>
       <div class="settings-list">
-          <div><span>Version</span><strong data-vcf-depot-tool-version>{{ vcf_depot_settings.tool_version or "unknown" }}</strong></div>
+          <div><span>Version</span><strong data-vcf-depot-tool-version>{{ vcf_depot_tool_display_version or "unknown" }}</strong></div>
           <div class="settings-action-row">
             <span class="field-label"><span>VCFDT configuration</span><button class="help-icon" type="button" data-help="Guides Broadcom credential staging, application properties, and the Software Depot ID apply boundary in one desired-state workflow.">i</button></span>
             <span class="setting-inline-actions">
@@ -323,9 +323,10 @@
   <section class="hidden" data-atlaso-wizard-step="review"><div class="settings-list" data-atlaso-resource-review></div><div class="alert warning">Saving stages the VCFDT profile only. Downloads are explicit row actions and appliance mutation remains separately controlled.</div></section>
 {% endcall %}
 {% set vcf_depot_configuration_steps = [
-  {"id": "credentials", "label": "Broadcom credentials", "summary": "Keep or replace either input"},
+  {"id": "software-depot-id", "label": "Software depot ID", "summary": "Preserve or queue refresh"},
+  {"id": "credentials", "label": "Broadcom credential", "summary": "Choose one replacement"},
+  {"id": "credential-input", "label": "Credential input", "summary": "Upload or paste the selected input"},
   {"id": "properties", "label": "Application properties", "summary": "Edit VCFDT INI content"},
-  {"id": "software-depot-id", "label": "Software depot ID", "summary": "Review generation and refresh"},
   {"id": "review", "label": "Review", "summary": "Confirm desired-state changes"}
 ] %}
 {% call resource_wizard(
@@ -334,12 +335,29 @@
   "/vcf-offline-depot/tool-configuration",
   vcf_depot_configuration_steps,
   "Configure VCF Download Tool",
-  "Keep existing secret inputs or replace either one, edit application properties, and review the Software Depot ID apply boundary.",
+  "Choose whether to queue a Software Depot ID refresh, replace one Broadcom credential, edit application properties, and review the apply boundary.",
   "Save VCFDT configuration",
   "multipart/form-data"
 ) %}
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
-  <section data-atlaso-wizard-step="credentials">
+  <section data-atlaso-wizard-step="software-depot-id">
+    <div class="settings-list">
+      <div class="settings-action-row software-depot-id-row">
+        <span>Current Software Depot ID</span>
+        <span class="setting-inline-actions" data-vcf-depot-software-depot-cell>
+          <strong class="{{ 'hidden' if vcf_depot_software_depot_id.id else '' }}" data-vcf-depot-software-depot-id>{{ vcf_depot_software_depot_id.id }}</strong>
+          <button class="button secondary icon-button {{ 'hidden' if not vcf_depot_software_depot_id.id else '' }}" type="button" data-copy-value="{{ vcf_depot_software_depot_id.id }}" data-vcf-depot-software-depot-copy aria-label="Copy software depot ID" title="Copy software depot ID"><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2 2v1"/></svg></button>
+        </span>
+      </div>
+    </div>
+    <small class="muted" data-vcf-depot-software-depot-message>{% if vcf_depot_software_depot_id.error %}{{ vcf_depot_software_depot_id.error }}{% elif vcf_depot_software_depot_id.generated_at %}Generated {{ vcf_depot_software_depot_id.generated_at }}{% else %}No ID exists. You can queue its generation now or leave it for the first VCF Offline Depot Appliance Apply.{% endif %}</small>
+    <label class="checkbox-row">
+      <input type="checkbox" name="refresh_software_depot_id" data-vcf-depot-refresh-id>
+      <span>{{ "Refresh the Software Depot ID" if vcf_depot_software_depot_id.id else "Generate the Software Depot ID" }}</span>
+    </label>
+    <div class="alert warning">{% if vcf_depot_software_depot_id.id %}Refreshing replaces the current ID. Register the new ID with Broadcom and stage its matching activation code before the next download.{% else %}Generation runs through the VCF Offline Depot Appliance Apply unit.{% endif %} Selecting this option skips directly to Review; a second confirmation queues the scoped apply activity.</div>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="credentials">
     <div class="settings-list">
       <div class="settings-action-row">
         <span>Download token</span>
@@ -350,11 +368,21 @@
         <strong data-vcf-depot-activation-status data-present="{{ '1' if vcf_depot_activation_code.present else '0' }}">{{ "staged" if vcf_depot_activation_code.present else "not staged" }}</strong>
       </div>
     </div>
-    <p class="muted">Stored values are never loaded into the browser. Leave a replacement off to preserve that credential unchanged.</p>
+    <p class="muted">Stored values are never loaded into the browser. Choose at most one credential to replace in this save.</p>
     <label class="checkbox-row">
-      <input type="checkbox" name="replace_download_token" data-vcf-depot-replace-credential="download_token">
+      <input type="radio" name="credential_replacement_choice" value="preserve" data-vcf-depot-credential-choice checked>
+      <span>Keep both credentials unchanged</span>
+    </label>
+    <label class="checkbox-row">
+      <input type="radio" name="credential_replacement_choice" value="download_token" data-vcf-depot-credential-choice>
       <span>Replace download token</span>
     </label>
+    <label class="checkbox-row">
+      <input type="radio" name="credential_replacement_choice" value="activation_code" data-vcf-depot-credential-choice>
+      <span>Replace activation code</span>
+    </label>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="credential-input">
     <div class="form-grid hidden" data-vcf-depot-credential-replacement="download_token">
       <label>
         <span class="field-label"><span>Download token file</span><button class="help-icon" type="button" data-help="A non-empty UTF-8 text file up to 128 KiB. When a file and pasted text are both supplied, the file is used.">i</button></span>
@@ -365,10 +393,6 @@
         <textarea name="download_token_text" rows="4" autocomplete="off" spellcheck="false" placeholder="Paste replacement token" disabled></textarea>
       </label>
     </div>
-    <label class="checkbox-row">
-      <input type="checkbox" name="replace_activation_code" data-vcf-depot-replace-credential="activation_code">
-      <span>Replace activation code</span>
-    </label>
     <div class="form-grid hidden" data-vcf-depot-credential-replacement="activation_code">
       <label>
         <span class="field-label"><span>Activation-code file</span><button class="help-icon" type="button" data-help="A non-empty UTF-8 text file up to 128 KiB. When a file and pasted text are both supplied, the file is used.">i</button></span>
@@ -388,30 +412,9 @@
     </label>
     <small class="muted" data-vcf-depot-properties-status>Source: {{ vcf_depot_application_properties.source }}{% if vcf_depot_application_properties.updated_at %} · saved {{ vcf_depot_application_properties.updated_at }}{% endif %}</small>
   </section>
-  <section class="hidden" data-atlaso-wizard-step="software-depot-id">
-    <div class="settings-list">
-      <div class="settings-action-row software-depot-id-row">
-        <span>Current Software Depot ID</span>
-        <span class="setting-inline-actions" data-vcf-depot-software-depot-cell>
-          <strong class="{{ 'hidden' if vcf_depot_software_depot_id.id else '' }}" data-vcf-depot-software-depot-id>{{ vcf_depot_software_depot_id.id }}</strong>
-          <button class="button secondary icon-button {{ 'hidden' if not vcf_depot_software_depot_id.id else '' }}" type="button" data-copy-value="{{ vcf_depot_software_depot_id.id }}" data-vcf-depot-software-depot-copy aria-label="Copy software depot ID" title="Copy software depot ID"><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2 2v1"/></svg></button>
-        </span>
-      </div>
-    </div>
-    <small class="muted" data-vcf-depot-software-depot-message>{% if vcf_depot_software_depot_id.error %}{{ vcf_depot_software_depot_id.error }}{% elif vcf_depot_software_depot_id.generated_at %}Generated {{ vcf_depot_software_depot_id.generated_at }}{% else %}No ID exists. The first VCF Offline Depot Appliance Apply generates it automatically.{% endif %}</small>
-    {% if vcf_depot_software_depot_id.id %}
-    <label class="checkbox-row">
-      <input type="checkbox" name="refresh_software_depot_id" data-vcf-depot-refresh-id>
-      <span>Refresh the Software Depot ID after saving</span>
-    </label>
-    <div class="alert warning">Refreshing replaces the current ID. Register the new ID with Broadcom and stage its matching activation code before the next download. A second confirmation will submit the VCF Offline Depot Appliance Apply unit.</div>
-    {% else %}
-    <div class="alert info">Saving this wizard does not run Appliance Apply. Submit VCF Offline Depot through the global apply workflow to generate the first ID.</div>
-    {% endif %}
-  </section>
   <section class="hidden" data-atlaso-wizard-step="review">
     <div class="settings-list" data-atlaso-resource-review></div>
-    <div class="alert warning">This save updates Atlaso desired state only. Global Appliance Apply is still required. If ID refresh is selected, a separate explicit confirmation opens after this save.</div>
+    <div class="alert warning">Ordinary configuration saves update Atlaso desired state only. ID generation or refresh continues to a separate confirmation and is queued only after explicit submission.</div>
   </section>
 {% endcall %}
 {% include "partials/task_modals.html" %}
@@ -440,8 +443,8 @@
     <input type="hidden" name="refresh_vcf_depot_software_depot_id" value="true">
     <div class="confirm-modal-body">
       <p class="kicker">VCF Offline Depot</p>
-      <h2 id="vcf-depot-generate-id-modal-title">Refresh software depot ID</h2>
-      <p class="muted">This submits the VCF Offline Depot apply unit and explicitly replaces the current software depot ID. Register the new ID and replace its activation code before the next download.</p>
+      <h2 id="vcf-depot-generate-id-modal-title">{{ "Refresh" if vcf_depot_software_depot_id.id else "Generate" }} software depot ID</h2>
+      <p class="muted">This queues the VCF Offline Depot apply unit and explicitly {{ "replaces the current" if vcf_depot_software_depot_id.id else "generates the first" }} software depot ID.{% if vcf_depot_software_depot_id.id %} Register the new ID and replace its activation code before the next download.{% endif %}</p>
       <div class="alert error hidden" data-appliance-apply-submit-error role="alert"></div>
     </div>
     <div class="confirm-modal-actions">

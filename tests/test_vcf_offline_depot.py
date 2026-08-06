@@ -9,11 +9,17 @@ from atlaso.app.services.vcf_offline_depot import (
     parse_software_depot_id,
     render_nginx_depot_config,
     render_vcfdt_command_preview,
+    staged_vcf_download_tool_version,
     validate_vcf_depot_state,
     vcf_depot_application_properties_from_tool,
     vcf_depot_profile_start_blocker,
     vcfdt_commands_for_profile,
 )
+
+
+def test_staged_vcf_download_tool_version_uses_validated_archive_name():
+    assert staged_vcf_download_tool_version("/var/lib/atlaso/vcf-download-tool-9.1.0.0100.25429019.tar.gz") == "9.1.0.0100.25429019"
+    assert staged_vcf_download_tool_version("/var/lib/atlaso/not-vcfdt-9.1.0.tar.gz") == ""
 
 
 def depot_http_user(*, enabled: bool = True) -> User:
