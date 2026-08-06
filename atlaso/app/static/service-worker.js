@@ -3,7 +3,7 @@ const ATLASO_ASSETS = [
   "/manifest.webmanifest",
   "/favicon.ico",
   "/static/offline.html",
-  "/static/app.css?v=vcfdt-configuration-248-20260806-2",
+  "/static/app.css?v=vcfdt-configuration-248-20260806-3",
   "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-7",
   "/static/app.js?v=vcfdt-configuration-248-20260806-4",
   "/static/terminal.js?v=web-terminal-review-20260716-3",

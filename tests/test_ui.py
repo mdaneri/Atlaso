@@ -828,7 +828,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6" in service_worker.text
-    assert "/static/app.css?v=vcfdt-configuration-248-20260806-2" in service_worker.text
+    assert "/static/app.css?v=vcfdt-configuration-248-20260806-3" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-7" in service_worker.text
     assert "/static/app.js?v=vcfdt-configuration-248-20260806-4" in service_worker.text
 
@@ -839,7 +839,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=vcfdt-configuration-248-20260806-2" in offline.text
+    assert "/static/app.css?v=vcfdt-configuration-248-20260806-3" in offline.text
 
 
 def test_shared_ui_pattern_shell_and_wizard_contracts(client):
@@ -1355,7 +1355,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=vcfdt-configuration-248-20260806-2" in page.text
+    assert "/static/app.css?v=vcfdt-configuration-248-20260806-3" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-7" in page.text
     assert "/static/app.js?v=vcfdt-configuration-248-20260806-4" in page.text
     app_css = client.get("/static/app.css")
