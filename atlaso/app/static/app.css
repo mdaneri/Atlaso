@@ -6562,6 +6562,10 @@ textarea {
   gap: 5px;
 }
 
+.vcf-sddc-wizard-body [data-atlaso-wizard-step] > label.checkbox-row {
+  display: flex;
+}
+
 .vcf-sddc-step-page > .form-grid,
 .vcf-sddc-step-page .form-stack > .form-grid,
 .vcf-sddc-wizard-body [data-atlaso-wizard-step] > .form-grid,

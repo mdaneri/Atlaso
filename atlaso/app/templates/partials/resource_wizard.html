@@ -1,9 +1,10 @@
-{% macro resource_wizard(dialog_id, form_data_name, action, steps, title, description, submit_label) -%}
+{% macro resource_wizard(dialog_id, form_data_name, action, steps, title, description, submit_label, enctype=None) -%}
 <dialog id="{{ dialog_id }}" class="confirm-modal wide-modal vcf-sddc-wizard-modal resource-wizard-dialog" aria-labelledby="{{ dialog_id }}-title" aria-describedby="{{ dialog_id }}-description">
   <form
     class="confirm-modal-panel vcf-sddc-wizard-panel"
     action="{{ action }}"
     method="post"
+    {% if enctype %}enctype="{{ enctype }}"{% endif %}
     data-{{ form_data_name }}
     data-atlaso-wizard
   >

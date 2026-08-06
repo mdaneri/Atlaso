@@ -828,9 +828,9 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6" in service_worker.text
-    assert "/static/app.css?v=vcf-depot-tasks-239-20260804-1" in service_worker.text
+    assert "/static/app.css?v=vcfdt-configuration-248-20260806-1" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in service_worker.text
-    assert "/static/app.js?v=vcf-depot-status-238-20260804-1" in service_worker.text
+    assert "/static/app.js?v=vcfdt-configuration-248-20260806-2" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -839,7 +839,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=vcf-depot-tasks-239-20260804-1" in offline.text
+    assert "/static/app.css?v=vcfdt-configuration-248-20260806-1" in offline.text
 
 
 def test_shared_ui_pattern_shell_and_wizard_contracts(client):
@@ -850,8 +850,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=vcf-depot-status-238-20260804-1"),
-        (public_base, "/static/app.js?v=vcf-depot-status-238-20260804-1"),
+        (base, "/static/app.js?v=vcfdt-configuration-248-20260806-2"),
+        (public_base, "/static/app.js?v=vcfdt-configuration-248-20260806-2"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5"
@@ -1355,9 +1355,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=vcf-depot-tasks-239-20260804-1" in page.text
+    assert "/static/app.css?v=vcfdt-configuration-248-20260806-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in page.text
-    assert "/static/app.js?v=vcf-depot-status-238-20260804-1" in page.text
+    assert "/static/app.js?v=vcfdt-configuration-248-20260806-2" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -9483,6 +9483,8 @@ def make_vcfdt_archive(path, version="9.1.0.0100.25429019"):
 
 
 def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_path, monkeypatch):
+    import html
+    import json
     import re
 
     from sqlalchemy import select
@@ -9524,6 +9526,8 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "Profile downloads only" in page.text
     assert "Open full task history" in page.text
     assert "No VCF profile download tasks have been recorded yet." in page.text
+    profile_rows = json.loads(html.unescape(page.text.split("data-profiles='", 1)[1].split("'", 1)[0]))
+    assert [row["name"] for row in profile_rows] == ["Metadata", "Binaries", "Esx"]
     with SessionLocal() as db:
         default_profiles = db.execute(select(VcfDepotDownloadProfile).order_by(VcfDepotDownloadProfile.name)).scalars().all()
         assert [(profile.name, profile.profile_type, profile.enabled) for profile in default_profiles] == [
@@ -9544,30 +9548,33 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "Also reset saved application-prodv2.properties configuration" in page.text
     assert 'data-vcf-depot-tool-reset-action>Reset</button>' in page.text
     assert 'button danger compact-button hidden' in page.text
-    assert "Stage Broadcom credential" in page.text
-    assert ">Stage</button>" in page.text
-    assert 'data-vcf-depot-credentials-modal-open data-vcf-depot-requires-tool disabled' in page.text
-    assert "Choose a credential file or paste credential text." in page.text
+    assert "Configure VCF Download Tool" in page.text
+    assert ">Configure</button>" in page.text
+    assert 'data-vcf-depot-configuration-open data-vcf-depot-requires-tool disabled' in page.text
+    assert "Keep existing secret inputs or replace either one" in page.text
     assert "No Broadcom credentials staged." in page.text
-    assert 'action="/vcf-offline-depot/credentials"' in page.text
-    assert "vcf-depot-credentials-modal" in page.text
-    assert 'data-vcf-depot-credentials-modal-open' in page.text
-    assert 'name="credential_type"' in page.text
-    assert 'name="credential_file"' in page.text
-    assert 'name="credential_text"' in page.text
-    assert "Edit application-prodv2.properties" in page.text
-    assert ">Edit</button>" in page.text
-    assert 'data-vcf-depot-properties-modal-open data-vcf-depot-requires-tool disabled' in page.text
-    assert 'action="/vcf-offline-depot/application-properties"' in page.text
+    assert 'action="/vcf-offline-depot/tool-configuration"' in page.text
+    assert 'id="vcf-depot-configuration-dialog"' in page.text
+    assert 'data-vcf-depot-configuration-form' in page.text
+    assert 'data-atlaso-wizard-step="credentials"' in page.text
+    assert 'data-atlaso-wizard-step="properties"' in page.text
+    assert 'data-atlaso-wizard-step="software-depot-id"' in page.text
+    assert 'data-atlaso-wizard-step="review"' in page.text
+    assert 'name="replace_download_token"' in page.text
+    assert 'name="download_token_file"' in page.text
+    assert 'name="download_token_text"' in page.text
+    assert 'name="replace_activation_code"' in page.text
+    assert 'name="activation_code_file"' in page.text
+    assert 'name="activation_code_text"' in page.text
+    assert "application-prodv2.properties" in page.text
     assert 'name="application_properties"' in page.text
-    assert "Save configuration" in page.text
+    assert "Save VCFDT configuration" in page.text
     assert "lcm.depot.adapter.host=dl.broadcom.com" in page.text
     assert "/vcf-offline-depot/profiles/" in page.text
     assert "Start" in page.text
     assert page.text.index("<th>Name</th>") < page.text.index("<th>Start</th>") < page.text.index("<th>Type</th>")
     assert 'href="/logs"' in page.text
     assert "Refresh software depot ID" in page.text
-    assert 'data-vcf-depot-generate-id-modal-open data-vcf-depot-requires-tool disabled' in page.text
     assert 'name="selected_units" value="vcf_offline_depot"' in page.text
     assert 'name="refresh_vcf_depot_software_depot_id" value="true"' in page.text
     assert "Software depot ID" in page.text
@@ -9575,10 +9582,10 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "Staged VCFDT inputs" not in page.text
     depot_settings_index = page.text.index("<h2>Depot Settings</h2>")
     vcfdt_staging_index = page.text.index("VCFDT staging")
-    assert depot_settings_index < vcfdt_staging_index < page.text.index("VCF Download Tool", vcfdt_staging_index) < page.text.index("Software depot ID")
+    assert depot_settings_index < vcfdt_staging_index < page.text.index("VCF Download Tool", vcfdt_staging_index) < page.text.index("VCFDT configuration")
     assert '<span class="status-pill warn">dry-run</span>' not in page.text
     assert "Activation code" in page.text
-    assert "Choose credential file" in page.text
+    assert "Choose token file" in page.text
     assert "no file selected" in page.text
     assert "Choose VCFDT archive" not in page.text
     assert "DNS alias follows the first selected service listener." in page.text
@@ -9619,7 +9626,6 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "service-bind-editor" in page.text
     assert 'data-service-bind-address="192.168.50.1"' in page.text
     assert '<div class="settings-action-row software-depot-id-row">' in page.text
-    assert '<input class="readonly-inline-value software-depot-id-value hidden" type="text" value="" readonly data-vcf-depot-software-depot-id aria-label="Software depot ID">' in page.text
     assert 'action="/vcf-offline-depot/settings"' in page.text
     assert 'data-autosave-status-id="vcf-depot-settings-status"' in page.text
     assert 'data-components=' in page.text
@@ -9632,6 +9638,11 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     app_js = client.get("/static/app.js")
     assert app_js.status_code == 200
     assert "initializeVcfDepotSettings" in app_js.text
+    assert "initializeVcfDepotConfigurationWizard" in app_js.text
+    assert "window.AtlasoUiPatterns.createWizard" in app_js.text
+    assert 'body.set("application_properties", content)' in app_js.text
+    assert "new TextEncoder().encode(content).length > 512 * 1024" in app_js.text
+    assert "confirmation.showModal()" in app_js.text
     assert "formatNginxListen(listenAddress, port)" in app_js.text
     software_depot_modal_js = app_js.text.split("function initializeVcfDepotSoftwareDepotIdGenerator", 1)[1].split("function ", 1)[0]
     assert "event.preventDefault()" in software_depot_modal_js
@@ -9696,7 +9707,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "updateVcfDepotCredentialStatus" in app_js.text
     assert "previewVcfDepotProfileScript" in app_js.text
     assert 'label: "Preview script"' in app_js.text
-    assert "Runtime files refresh during Appliance Apply or profile download." in app_js.text
+    assert "Global Appliance Apply is still required." in app_js.text
     assert "initializeVcfDepotPropertiesEditor" in app_js.text
     assert "initializeCopyValueButtons" in app_js.text
     assert "clearSelectedFileInputs" in app_js.text
@@ -9754,7 +9765,6 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert ".vcf-depot-task-history .task-grid-shell" in app_css.text
     assert ".vcfdt-tool-manager" in app_css.text
     assert ".compact-file-upload" in app_css.text
-    assert 'software-depot-id-value' in page.text
     assert 'data-monaco-editor data-monaco-language="ini" data-vcf-depot-properties-textarea' in page.text
 
     archive_path = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
@@ -10303,7 +10313,7 @@ def test_vcf_offline_depot_tool_reset_can_preserve_or_clear_configuration(client
     reset_page = client.get("/vcf-offline-depot")
     assert "no package staged" in reset_page.text
     assert "operator saved · saved" in reset_page.text
-    assert 'data-vcf-depot-properties-modal-open data-vcf-depot-requires-tool disabled' in reset_page.text
+    assert 'data-vcf-depot-configuration-open data-vcf-depot-requires-tool disabled' in reset_page.text
 
     apply_reset = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "vcf_offline_depot"})
     assert apply_reset.status_code == 200
@@ -10491,7 +10501,7 @@ def test_vcf_offline_depot_accepts_pasted_download_token_and_activation_code(cli
 
     staged_page = client.get("/vcf-offline-depot")
     assert staged_page.status_code == 200
-    assert "download-token.txt" in staged_page.text
+    assert "download-token.txt" not in staged_page.text
     assert "download token staged" in staged_page.text
     assert "uploaded-secret-token" not in staged_page.text
 
@@ -10565,6 +10575,140 @@ def test_vcf_offline_depot_accepts_pasted_download_token_and_activation_code(cli
     assert "--depot-download-token-file=${TOKEN_FILE}" in replacement_command
     assert "--depot-download-activation-code-file=${ACTIVATION_CODE_FILE}" not in replacement_command
     assert "replacement-secret-token" not in token_replacement_response.text
+
+
+def test_vcf_offline_depot_tool_configuration_is_atomic_and_presence_only(client, tmp_path, monkeypatch):
+    from pathlib import PurePosixPath
+
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, Setting
+    from atlaso.app.services.vcf_offline_depot import (
+        VCF_DEPOT_ACTIVATION_NAME_KEY,
+        VCF_DEPOT_ACTIVATION_VALUE_KEY,
+        VCF_DEPOT_APPLICATION_PROPERTIES_CONTENT_KEY,
+        VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY,
+        VCF_DEPOT_TOKEN_NAME_KEY,
+        VCF_DEPOT_TOKEN_VALUE_KEY,
+    )
+
+    runtime_log = tmp_path / "active-tool" / "log" / "vdt.log"
+    tool_archive = tmp_path / "vcf-download-tool-9.1.0.tar.gz"
+    tool_archive.write_bytes(b"test archive")
+    monkeypatch.setattr("atlaso.app.ui.VCF_DEPOT_VDT_LOG_PATH", PurePosixPath(runtime_log.as_posix()))
+    monkeypatch.setattr("atlaso.app.ui.find_local_vcf_download_tool_archive", lambda: tool_archive)
+
+    with SessionLocal() as db:
+        db.add(Setting(key=VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY, value="existing-depot-id"))
+        db.commit()
+
+    login(client)
+    page = client.get("/vcf-offline-depot")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    properties = "spring.profiles.active=depot\nfixture.setting=combined-save\n"
+    response = client.post(
+        "/vcf-offline-depot/tool-configuration",
+        data={
+            "csrf": csrf,
+            "replace_download_token": "on",
+            "download_token_text": "ignored-token-text",
+            "replace_activation_code": "on",
+            "activation_code_text": "fixture-activation-text",
+            "application_properties": properties,
+        },
+        files={"download_token_file": ("fixture-token.txt", "fixture-token-file", "text/plain")},
+        headers={"X-Atlaso-Autosave": "1"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "saved"
+    assert payload["download_token_present"] is True
+    assert payload["activation_code_present"] is True
+    assert payload["application_properties_present"] is True
+    assert payload["application_properties_name"] == "application-prodv2.properties"
+    assert payload["software_depot_id"] == "existing-depot-id"
+    assert "ignored-token-text" not in response.text
+    assert "fixture-token-file" not in response.text
+    assert "fixture-activation-text" not in response.text
+    assert "fixture.setting" not in response.text
+
+    with SessionLocal() as db:
+        values = {
+            setting.key: setting.value
+            for setting in db.execute(
+                select(Setting).where(
+                    Setting.key.in_(
+                        [
+                            VCF_DEPOT_TOKEN_NAME_KEY,
+                            VCF_DEPOT_TOKEN_VALUE_KEY,
+                            VCF_DEPOT_ACTIVATION_NAME_KEY,
+                            VCF_DEPOT_ACTIVATION_VALUE_KEY,
+                            VCF_DEPOT_APPLICATION_PROPERTIES_CONTENT_KEY,
+                            VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY,
+                        ]
+                    )
+                )
+            ).scalars()
+        }
+        assert values[VCF_DEPOT_TOKEN_NAME_KEY] == "fixture-token.txt"
+        assert values[VCF_DEPOT_TOKEN_VALUE_KEY] == "fixture-token-file"
+        assert values[VCF_DEPOT_ACTIVATION_NAME_KEY] == "pasted activation code"
+        assert values[VCF_DEPOT_ACTIVATION_VALUE_KEY] == "fixture-activation-text"
+        assert values[VCF_DEPOT_APPLICATION_PROPERTIES_CONTENT_KEY] == properties
+        assert values[VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY] == "existing-depot-id"
+        audit_text = "\n".join(str(event.detail or "") for event in db.execute(select(AuditEvent)).scalars())
+        assert "fixture-token-file" not in audit_text
+        assert "fixture-activation-text" not in audit_text
+        assert "fixture.setting" not in audit_text
+
+    failed = client.post(
+        "/vcf-offline-depot/tool-configuration",
+        data={
+            "csrf": csrf,
+            "replace_download_token": "on",
+            "download_token_text": "replacement-that-must-roll-back",
+            "replace_activation_code": "on",
+            "activation_code_text": "   ",
+            "application_properties": "fixture.setting=must-not-save\n",
+        },
+        headers={"X-Atlaso-Autosave": "1"},
+    )
+    assert failed.status_code == 400
+    assert "cannot be empty" in failed.text
+    with SessionLocal() as db:
+        assert db.execute(select(Setting).where(Setting.key == VCF_DEPOT_TOKEN_VALUE_KEY)).scalar_one().value == "fixture-token-file"
+        assert db.execute(select(Setting).where(Setting.key == VCF_DEPOT_ACTIVATION_VALUE_KEY)).scalar_one().value == "fixture-activation-text"
+        assert db.execute(select(Setting).where(Setting.key == VCF_DEPOT_APPLICATION_PROPERTIES_CONTENT_KEY)).scalar_one().value == properties
+        assert db.execute(select(Setting).where(Setting.key == VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY)).scalar_one().value == "existing-depot-id"
+
+    blank_file = client.post(
+        "/vcf-offline-depot/tool-configuration",
+        data={
+            "csrf": csrf,
+            "replace_download_token": "on",
+            "download_token_text": "pasted-text-must-not-win",
+            "application_properties": properties,
+        },
+        files={"download_token_file": ("blank-token.txt", b"", "text/plain")},
+        headers={"X-Atlaso-Autosave": "1"},
+    )
+    assert blank_file.status_code == 400
+    assert "uploads cannot be empty" in blank_file.text
+    with SessionLocal() as db:
+        assert db.execute(select(Setting).where(Setting.key == VCF_DEPOT_TOKEN_VALUE_KEY)).scalar_one().value == "fixture-token-file"
+
+    preserved = client.post(
+        "/vcf-offline-depot/tool-configuration",
+        data={"csrf": csrf, "application_properties": properties.replace("combined-save", "preserved-credentials")},
+        headers={"X-Atlaso-Autosave": "1"},
+    )
+    assert preserved.status_code == 200
+    with SessionLocal() as db:
+        assert db.execute(select(Setting).where(Setting.key == VCF_DEPOT_TOKEN_VALUE_KEY)).scalar_one().value == "fixture-token-file"
+        assert db.execute(select(Setting).where(Setting.key == VCF_DEPOT_ACTIVATION_VALUE_KEY)).scalar_one().value == "fixture-activation-text"
+        assert db.execute(select(Setting).where(Setting.key == VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY)).scalar_one().value == "existing-depot-id"
 
 
 def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path):
@@ -10866,8 +11010,8 @@ def test_vcf_offline_depot_manual_profile_download_accepts_activation_code_witho
 
     login(client)
     page = client.get("/vcf-offline-depot")
-    assert "activation-code.txt" in page.text
-    assert "token not uploaded" not in page.text
+    assert "activation-code.txt" not in page.text
+    assert "Download token</span>" in page.text
     assert "activation code staged" in page.text
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(

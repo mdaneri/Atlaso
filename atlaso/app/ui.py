@@ -112,6 +112,7 @@ from atlaso.app.services.vaults import (
 )
 from atlaso.app.operational_logging import (
     configure_operational_logging,
+    log_audit_event,
     logging_preferences_from_db,
     logging_preferences_to_dict,
     save_logging_preferences,
@@ -2243,12 +2244,13 @@ def store_uploaded_vcf_depot_secret(
     value_key: str,
     actor: str,
     action: str,
+    pending_audits: list[AuditEvent] | None = None,
 ) -> str | None:
     if upload is None or not upload.filename:
         return None
     content = upload.file.read()
     if not content:
-        return None
+        raise HTTPException(status_code=400, detail="VCFDT credential uploads cannot be empty.")
     if len(content) > 128 * 1024:
         raise HTTPException(status_code=400, detail="VCFDT credential uploads must be 128 KB or smaller.")
     try:
@@ -2259,14 +2261,25 @@ def store_uploaded_vcf_depot_secret(
         raise HTTPException(status_code=400, detail="VCFDT credential uploads cannot be empty.")
     name_setting = set_setting_value(db, name_key, Path(upload.filename).name)
     set_setting_value(db, value_key, text)
-    record_audit(
-        db,
-        actor=actor,
-        action=action,
-        resource_type="setting",
-        resource_id=str(name_setting.id),
-        detail=Path(upload.filename).name,
-    )
+    if pending_audits is None:
+        record_audit(
+            db,
+            actor=actor,
+            action=action,
+            resource_type="setting",
+            resource_id=str(name_setting.id),
+            detail=Path(upload.filename).name,
+        )
+    else:
+        audit = AuditEvent(
+            actor=actor,
+            action=action,
+            resource_type="setting",
+            resource_id=str(name_setting.id),
+            detail=Path(upload.filename).name,
+        )
+        db.add(audit)
+        pending_audits.append(audit)
     return Path(upload.filename).name
 
 
@@ -2279,6 +2292,7 @@ def store_pasted_vcf_depot_secret(
     display_name: str,
     actor: str,
     action: str,
+    pending_audits: list[AuditEvent] | None = None,
 ) -> str:
     if len(value.encode("utf-8")) > 128 * 1024:
         raise HTTPException(status_code=400, detail="VCFDT credential text must be 128 KB or smaller.")
@@ -2286,14 +2300,25 @@ def store_pasted_vcf_depot_secret(
         raise HTTPException(status_code=400, detail="VCFDT credential text cannot be empty.")
     name_setting = set_setting_value(db, name_key, display_name)
     set_setting_value(db, value_key, value)
-    record_audit(
-        db,
-        actor=actor,
-        action=action,
-        resource_type="setting",
-        resource_id=str(name_setting.id),
-        detail=display_name,
-    )
+    if pending_audits is None:
+        record_audit(
+            db,
+            actor=actor,
+            action=action,
+            resource_type="setting",
+            resource_id=str(name_setting.id),
+            detail=display_name,
+        )
+    else:
+        audit = AuditEvent(
+            actor=actor,
+            action=action,
+            resource_type="setting",
+            resource_id=str(name_setting.id),
+            detail=display_name,
+        )
+        db.add(audit)
+        pending_audits.append(audit)
     return display_name
 
 
@@ -2742,7 +2767,15 @@ def vcf_offline_depot_context(db: Session, *, reconcile: bool = True) -> dict:
     if reconcile and normalize_service_bind_settings(db, settings):
         db.commit()
         db.refresh(settings)
-    profiles = db.execute(select(VcfDepotDownloadProfile).order_by(VcfDepotDownloadProfile.name)).scalars().all()
+    profile_type_order = {"metadata": 0, "binaries": 1, "esx": 2}
+    profiles = sorted(
+        db.execute(select(VcfDepotDownloadProfile)).scalars().all(),
+        key=lambda profile: (
+            profile_type_order.get(str(profile.profile_type or "").strip().lower(), 99),
+            str(profile.name or "").casefold(),
+            int(profile.id or 0),
+        ),
+    )
     if reconcile and not vcf_depot_tool_installed(settings):
         changed_profiles = [profile for profile in profiles if profile.enabled]
         for profile in changed_profiles:
@@ -17795,6 +17828,7 @@ def _store_vcf_depot_credential_from_ui(
     credential_text: str,
     credential_file: UploadFile | None,
     actor: str,
+    pending_audits: list[AuditEvent] | None = None,
 ) -> str:
     if credential_type == "activation_code":
         display_name = store_uploaded_vcf_depot_secret(
@@ -17804,6 +17838,7 @@ def _store_vcf_depot_credential_from_ui(
             value_key=VCF_DEPOT_ACTIVATION_VALUE_KEY,
             actor=actor,
             action="upload_vcf_depot_activation_code",
+            pending_audits=pending_audits,
         )
         if not display_name:
             display_name = store_pasted_vcf_depot_secret(
@@ -17814,6 +17849,7 @@ def _store_vcf_depot_credential_from_ui(
                 display_name="pasted activation code",
                 actor=actor,
                 action="paste_vcf_depot_activation_code",
+                pending_audits=pending_audits,
             )
         return display_name
     if credential_type != "download_token":
@@ -17825,6 +17861,7 @@ def _store_vcf_depot_credential_from_ui(
         value_key=VCF_DEPOT_TOKEN_VALUE_KEY,
         actor=actor,
         action="upload_vcf_depot_download_token",
+        pending_audits=pending_audits,
     )
     if not display_name:
         display_name = store_pasted_vcf_depot_secret(
@@ -17835,8 +17872,77 @@ def _store_vcf_depot_credential_from_ui(
             display_name="pasted token",
             actor=actor,
             action="paste_vcf_depot_download_token",
+            pending_audits=pending_audits,
         )
     return display_name
+
+
+def _save_vcf_depot_application_properties(
+    db: Session,
+    *,
+    application_properties: str,
+    actor: str,
+    pending_audits: list[AuditEvent] | None = None,
+) -> None:
+    content = application_properties.replace("\r\n", "\n").replace("\r", "\n")
+    if len(content.encode("utf-8")) > 512 * 1024:
+        raise HTTPException(status_code=400, detail="application-prodv2.properties must be 512 KB or smaller.")
+    if not content.strip():
+        raise HTTPException(status_code=400, detail="application-prodv2.properties cannot be empty.")
+    updated_at = utcnow().isoformat()
+    content_setting = set_setting_value(db, VCF_DEPOT_APPLICATION_PROPERTIES_CONTENT_KEY, content)
+    set_setting_value(db, VCF_DEPOT_APPLICATION_PROPERTIES_SOURCE_KEY, "operator saved")
+    set_setting_value(db, VCF_DEPOT_APPLICATION_PROPERTIES_UPDATED_AT_KEY, updated_at)
+    if pending_audits is None:
+        record_audit(
+            db,
+            actor=actor,
+            action="update_vcf_depot_application_properties",
+            resource_type="setting",
+            resource_id=str(content_setting.id),
+            detail=VCF_DEPOT_APPLICATION_PROPERTIES_NAME,
+        )
+    else:
+        audit = AuditEvent(
+            actor=actor,
+            action="update_vcf_depot_application_properties",
+            resource_type="setting",
+            resource_id=str(content_setting.id),
+            detail=VCF_DEPOT_APPLICATION_PROPERTIES_NAME,
+        )
+        db.add(audit)
+        pending_audits.append(audit)
+
+
+def _vcf_depot_tool_configuration_response(db: Session) -> dict[str, Any]:
+    context = vcf_offline_depot_context(db)
+    token_state = context["vcf_depot_download_token"]
+    activation_state = context["vcf_depot_activation_code"]
+    properties = context["vcf_depot_application_properties"]
+    software_depot_id = context["vcf_depot_software_depot_id"]
+    validation_errors = context["vcf_depot_validation_errors"]
+    return {
+        "status": "saved",
+        "download_token_present": token_state.present,
+        "download_token_name": token_state.filename,
+        "download_token_updated_at": token_state.updated_at,
+        "activation_code_present": activation_state.present,
+        "activation_code_name": activation_state.filename,
+        "activation_code_updated_at": activation_state.updated_at,
+        "application_properties_present": properties["present"],
+        "application_properties_name": properties["filename"],
+        "application_properties_source": properties["source"],
+        "application_properties_updated_at": properties["updated_at"],
+        "software_depot_id": software_depot_id["id"],
+        "software_depot_id_generated_at": software_depot_id["generated_at"],
+        "software_depot_id_error": software_depot_id["error"],
+        "valid": not validation_errors,
+        "validation_errors": validation_errors,
+        "validation_warnings": context["vcf_depot_validation_warnings"],
+        "config_path": context["vcf_depot_settings"].config_path,
+        "https_config_preview": context["vcf_depot_https_config_preview"],
+        "command_preview": context["vcf_depot_command_preview"],
+    }
 
 
 @router.post("/vcf-offline-depot/credentials", response_model=None)
@@ -17991,6 +18097,63 @@ def paste_vcf_depot_activation_code_from_ui(
     return RedirectResponse("/vcf-offline-depot", status_code=303)
 
 
+@router.post("/vcf-offline-depot/tool-configuration", response_model=None)
+def save_vcf_depot_tool_configuration_from_ui(
+    request: Request,
+    application_properties: str = Form(...),
+    replace_download_token: str | None = Form(None),
+    download_token_text: str = Form(""),
+    download_token_file: UploadFile | None = File(None),
+    replace_activation_code: str | None = Form(None),
+    activation_code_text: str = Form(""),
+    activation_code_file: UploadFile | None = File(None),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> RedirectResponse | JSONResponse:
+    verify_csrf(request, csrf)
+    pending_audits: list[AuditEvent] = []
+    try:
+        _save_vcf_depot_application_properties(
+            db,
+            application_properties=application_properties,
+            actor=identity.username,
+            pending_audits=pending_audits,
+        )
+        credentials_changed = False
+        if replace_download_token == "on":
+            _store_vcf_depot_credential_from_ui(
+                db,
+                credential_type="download_token",
+                credential_text=download_token_text,
+                credential_file=download_token_file,
+                actor=identity.username,
+                pending_audits=pending_audits,
+            )
+            credentials_changed = True
+        if replace_activation_code == "on":
+            _store_vcf_depot_credential_from_ui(
+                db,
+                credential_type="activation_code",
+                credential_text=activation_code_text,
+                credential_file=activation_code_file,
+                actor=identity.username,
+                pending_audits=pending_audits,
+            )
+            credentials_changed = True
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    for audit in pending_audits:
+        log_audit_event(audit)
+    if credentials_changed:
+        stage_vcf_depot_runtime_secrets_after_upload(db)
+    if request.headers.get("X-Atlaso-Autosave") == "1":
+        return JSONResponse(_vcf_depot_tool_configuration_response(db))
+    return RedirectResponse("/vcf-offline-depot", status_code=303)
+
+
 @router.post("/vcf-offline-depot/application-properties", response_model=None)
 def save_vcf_depot_application_properties_from_ui(
     request: Request,
@@ -18000,22 +18163,10 @@ def save_vcf_depot_application_properties_from_ui(
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
     verify_csrf(request, csrf)
-    content = application_properties.replace("\r\n", "\n").replace("\r", "\n")
-    if len(content.encode("utf-8")) > 512 * 1024:
-        raise HTTPException(status_code=400, detail="application-prodv2.properties must be 512 KB or smaller.")
-    if not content.strip():
-        raise HTTPException(status_code=400, detail="application-prodv2.properties cannot be empty.")
-    updated_at = utcnow().isoformat()
-    content_setting = set_setting_value(db, VCF_DEPOT_APPLICATION_PROPERTIES_CONTENT_KEY, content)
-    set_setting_value(db, VCF_DEPOT_APPLICATION_PROPERTIES_SOURCE_KEY, "operator saved")
-    set_setting_value(db, VCF_DEPOT_APPLICATION_PROPERTIES_UPDATED_AT_KEY, updated_at)
-    record_audit(
+    _save_vcf_depot_application_properties(
         db,
+        application_properties=application_properties,
         actor=identity.username,
-        action="update_vcf_depot_application_properties",
-        resource_type="setting",
-        resource_id=str(content_setting.id),
-        detail=VCF_DEPOT_APPLICATION_PROPERTIES_NAME,
     )
     db.commit()
     if request.headers.get("X-Atlaso-Autosave") == "1":

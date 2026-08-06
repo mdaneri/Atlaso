@@ -632,22 +632,31 @@ status: current
   `vcf_offline_depot:https` cert/key paths, server name/listener uniqueness, document root, auth mode, selected local
   HTTP user, and static-file directives, then installs or removes `/etc/atlaso/nginx/sites.d/vcf-offline-depot.conf`,
   writes `/etc/atlaso/nginx/htpasswd/vcf-offline-depot.htpasswd` from the applied Photon password hash when
-  authentication is required, and reloads nginx. The refresh icon for software depot ID must submit explicit refresh
-  intent through the global `/appliance-apply` workflow for `vcf_offline_depot`, not call the helper directly. Manual
+  authentication is required, and reloads nginx. The non-grid settings rail exposes one VCFDT configuration summary;
+  its four-step shared `createWizard(...)` flow covers presence-only Broadcom credential replacement,
+  `application-prodv2.properties`, the current Software Depot ID and refresh intent, and review. Credential and
+  application-properties changes must use one transactional desired-state save. The wizard must never preload stored
+  credential values, must prefer an uploaded credential file over pasted text, and must return only presence flags,
+  safe display names, properties metadata, validation/previews, and Software Depot ID metadata. If refresh is selected,
+  a second confirmation after the save must submit explicit refresh intent through the global `/appliance-apply`
+  workflow for `vcf_offline_depot`, not call the helper directly. Ordinary wizard saves must preserve an existing ID.
+  Manual
   VCFDT command generation
   should use `/var/lib/atlaso/vcfDownloadTool/active-tool` token and activation-code file paths, write telemetry and ESX
   disabled-platform config without exposing secret contents, and model patch-only separately from upgrade-only. Download
-  tokens and activation codes share one Broadcom credentials modal with a credential-type selector; files or pasted text
-  still become the runtime credential files used by VCFDT and existing storage keys remain as compatibility aliases.
+  tokens and activation codes can be preserved or replaced independently in the VCFDT configuration wizard; files or
+  pasted text still become the runtime credential files used by VCFDT and existing storage keys remain as compatibility
+  aliases. Metadata profiles appear first by default, followed by binaries and ESX with deterministic name/ID
+  tie-breaking; user sorting may reorder them while the shared add row remains pinned last.
   Manual profile starts create `vcf-depot-download` background jobs that write runtime credential files under
   `/var/lib/atlaso/vcfDownloadTool/active-tool/secrets`, run VCFDT as the `atlaso` service user, and update job/profile
   status from the process exit code; missing profile credentials should disable only the profile Start button and must
   not block applying or disabling the depot service. Enabled VCF Offline Depot profiles are selectable in the real
-  Automation scheduler and execute as the same durable `vcf-depot-download` jobs as manual starts. The application
-  properties editor saves desired-state text and syncs Monaco Editor before submit; global apply writes the runtime
-  properties used by the active tool. Depot private keys, HTTP user passwords/hashes, and VCFDT credential contents must
-  remain path references or presence flags only; never print key contents, token values, activation-code values, private
-  keys, passwords, or password hashes in previews, jobs, logs, docs, or final responses.
+  Automation scheduler and execute as the same durable `vcf-depot-download` jobs as manual starts. The wizard's
+  application-properties step saves desired-state text and syncs Monaco Editor before submit; global apply writes the
+  runtime properties used by the active tool. Depot private keys, HTTP user passwords/hashes, and VCFDT credential
+  contents must remain path references or presence flags only; never print key contents, token values, activation-code
+  values, private keys, passwords, or password hashes in previews, jobs, logs, docs, or final responses.
 - When testing real apply from the UI, select only the intended apply unit. Existing appliances that predate factory
   baseline initialization may still list units without a last-applied baseline as changed; unselect unrelated units
   before submitting.
