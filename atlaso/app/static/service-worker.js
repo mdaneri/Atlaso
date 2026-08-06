@@ -4,7 +4,7 @@ const ATLASO_ASSETS = [
   "/favicon.ico",
   "/static/offline.html",
   "/static/app.css?v=vcfdt-configuration-248-20260806-1",
-  "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5",
+  "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-6",
   "/static/app.js?v=vcfdt-configuration-248-20260806-3",
   "/static/terminal.js?v=web-terminal-review-20260716-3",
   "/static/vendor/xterm/xterm.css?v=5.5.0",
