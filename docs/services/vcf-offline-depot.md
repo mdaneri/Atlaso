@@ -89,8 +89,8 @@ These captures show responsive layouts and useful operational states referenced 
 
 *Figure: VCF Offline Depot profile ordering and staging state in the responsive viewport.*
 
-![Atlaso VCFDT configuration wizard Software Depot ID step without credential contents.](../assets/screenshots/vcf-offline-depot-configuration-wizard.webp)
+![Atlaso VCFDT configuration wizard showing only Software Depot ID and Review after generation is selected.](../assets/screenshots/vcf-offline-depot-configuration-wizard.webp)
 
-*Figure: VCFDT configuration starts with the Software Depot ID generation or refresh handoff.*
+*Figure: VCFDT configuration hides credential and properties steps when Software Depot ID generation is selected.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
