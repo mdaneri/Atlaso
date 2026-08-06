@@ -352,7 +352,7 @@
       <div class="settings-action-row software-depot-id-row">
         <span>Current Software Depot ID</span>
         <span class="setting-inline-actions" data-vcf-depot-software-depot-cell>
-          <strong data-vcf-depot-software-depot-id>{{ vcf_depot_software_depot_id.id or "Not generated" }}</strong>
+          <strong data-vcf-depot-software-depot-id data-present="{{ '1' if vcf_depot_software_depot_id.id else '0' }}">{{ vcf_depot_software_depot_id.id or "Not generated" }}</strong>
           <button class="button secondary icon-button {{ 'hidden' if not vcf_depot_software_depot_id.id else '' }}" type="button" data-copy-value="{{ vcf_depot_software_depot_id.id }}" data-vcf-depot-software-depot-copy aria-label="Copy software depot ID" title="Copy software depot ID"><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2 2v1"/></svg></button>
         </span>
       </div>

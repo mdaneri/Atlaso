@@ -830,7 +830,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6" in service_worker.text
     assert "/static/app.css?v=vcfdt-configuration-248-20260806-3" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-7" in service_worker.text
-    assert "/static/app.js?v=vcfdt-configuration-248-20260806-5" in service_worker.text
+    assert "/static/app.js?v=vcfdt-configuration-248-20260806-6" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -850,8 +850,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=vcfdt-configuration-248-20260806-5"),
-        (public_base, "/static/app.js?v=vcfdt-configuration-248-20260806-5"),
+        (base, "/static/app.js?v=vcfdt-configuration-248-20260806-6"),
+        (public_base, "/static/app.js?v=vcfdt-configuration-248-20260806-6"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-7"
@@ -1357,7 +1357,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vcfdt-configuration-248-20260806-3" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-7" in page.text
-    assert "/static/app.js?v=vcfdt-configuration-248-20260806-5" in page.text
+    assert "/static/app.js?v=vcfdt-configuration-248-20260806-6" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -9610,6 +9610,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "depot-port-telemetry-row" not in page.text
     assert 'data-vcf-depot-software-depot-cell' in page.text
     assert 'data-vcf-depot-software-depot-id' in page.text
+    assert 'data-vcf-depot-software-depot-id data-present="0"' in page.text
     assert 'data-vcf-depot-software-depot-copy' in page.text
     assert 'Copy software depot ID' in page.text
     assert 'data-autosave-upload-progress' in page.text
@@ -9649,6 +9650,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "new TextEncoder().encode(content).length > 512 * 1024" in app_js.text
     assert 'body.set("selected_units", "vcf_offline_depot")' in app_js.text
     assert 'body.set("refresh_vcf_depot_software_depot_id", "true")' in app_js.text
+    assert 'softwareDepotIdElement.dataset.present === "1"' in app_js.text
     assert 'fetch("/appliance-apply"' in app_js.text
     assert 'step.id === "software-depot-id"' in app_js.text
     assert 'return "review"' in app_js.text

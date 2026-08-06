@@ -12878,6 +12878,7 @@ function updateVcfDepotSoftwareDepotId(payload = {}) {
     } else {
       softwareDepotId.textContent = depotId || "Not generated";
     }
+    softwareDepotId.dataset.present = depotId ? "1" : "0";
     if (softwareDepotCopy instanceof HTMLButtonElement) {
       softwareDepotCopy.dataset.copyValue = depotId;
       softwareDepotCopy.classList.toggle("hidden", !depotId);
@@ -13282,7 +13283,10 @@ function initializeVcfDepotConfigurationWizard() {
     const review = form.querySelector("[data-atlaso-resource-review]");
     if (!(review instanceof HTMLElement)) return;
     const content = syncProperties();
-    const softwareDepotId = form.querySelector("[data-vcf-depot-software-depot-id]")?.textContent?.trim() || "";
+    const softwareDepotIdElement = form.querySelector("[data-vcf-depot-software-depot-id]");
+    const softwareDepotId = softwareDepotIdElement instanceof HTMLElement && softwareDepotIdElement.dataset.present === "1"
+      ? softwareDepotIdElement.textContent?.trim() || ""
+      : "";
     const refreshRequested = refreshId instanceof HTMLInputElement && refreshId.checked;
     const rows = [
       ["Download token", credentialReplacementSummary("download_token", "Download token").replace(/^Download token: /, "")],
