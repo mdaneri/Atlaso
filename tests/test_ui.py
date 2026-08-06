@@ -828,9 +828,9 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6" in service_worker.text
-    assert "/static/app.css?v=vcfdt-configuration-248-20260806-1" in service_worker.text
-    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-6" in service_worker.text
-    assert "/static/app.js?v=vcfdt-configuration-248-20260806-3" in service_worker.text
+    assert "/static/app.css?v=vcfdt-configuration-248-20260806-2" in service_worker.text
+    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-7" in service_worker.text
+    assert "/static/app.js?v=vcfdt-configuration-248-20260806-4" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -839,7 +839,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=vcfdt-configuration-248-20260806-1" in offline.text
+    assert "/static/app.css?v=vcfdt-configuration-248-20260806-2" in offline.text
 
 
 def test_shared_ui_pattern_shell_and_wizard_contracts(client):
@@ -850,14 +850,14 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=vcfdt-configuration-248-20260806-3"),
-        (public_base, "/static/app.js?v=vcfdt-configuration-248-20260806-3"),
+        (base, "/static/app.js?v=vcfdt-configuration-248-20260806-4"),
+        (public_base, "/static/app.js?v=vcfdt-configuration-248-20260806-4"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
-            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-6"
+            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-7"
         )
         assert shell.index(
-            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-6"
+            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-7"
         ) < shell.index(app_asset)
 
     wizard_templates = [
@@ -1355,9 +1355,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=vcfdt-configuration-248-20260806-1" in page.text
-    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-6" in page.text
-    assert "/static/app.js?v=vcfdt-configuration-248-20260806-3" in page.text
+    assert "/static/app.css?v=vcfdt-configuration-248-20260806-2" in page.text
+    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-7" in page.text
+    assert "/static/app.js?v=vcfdt-configuration-248-20260806-4" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -9565,6 +9565,9 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert 'name="download_token_file"' in page.text
     assert 'name="download_token_text"' in page.text
     assert 'name="credential_replacement_choice" value="activation_code"' in page.text
+    assert 'name="credential_replacement_choice" value="preserve"' not in page.text
+    assert ">Use download token</span>" in page.text
+    assert ">Use activation code</span>" in page.text
     assert 'name="activation_code_file"' in page.text
     assert 'name="activation_code_text"' in page.text
     assert "application-prodv2.properties" in page.text
@@ -9650,6 +9653,10 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert 'return "review"' in app_js.text
     assert 'selectedCredential() === "preserve"' in app_js.text
     assert "Continue to apply confirmation" in app_js.text
+    assert 'controller.setSkippedSteps' in app_js.text
+    assert 'wizard.setSkippedSteps' in app_js.text
+    assert "data-vcf-depot-configuration-credentials" in page.text
+    assert "0 credentials ·" not in page.text
     assert "formatNginxListen(listenAddress, port)" in app_js.text
     software_depot_modal_js = app_js.text.split("function initializeVcfDepotSoftwareDepotIdGenerator", 1)[1].split("function ", 1)[0]
     assert "event.preventDefault()" in software_depot_modal_js
@@ -10284,6 +10291,9 @@ def test_vcf_offline_depot_tool_reset_can_preserve_or_clear_configuration(client
     assert refreshed.text.count("<strong data-vcf-depot-tool-version>9.1.0</strong>") == 2
     assert 'data-vcf-depot-tool-reset-action>Reset</button>' in refreshed.text
     assert 'button danger compact-button hidden' not in refreshed.text
+    assert 'name="credential_replacement_choice" value="preserve"' in refreshed.text
+    assert ">Replace download token</span>" in refreshed.text
+    assert ">Use activation code</span>" in refreshed.text
 
     properties = client.post(
         "/vcf-offline-depot/application-properties",

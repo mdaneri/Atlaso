@@ -3532,6 +3532,46 @@ textarea {
   flex: 0 0 auto;
 }
 
+.detail-rail .settings-list .vcf-depot-configuration-status {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 4px 0 10px;
+}
+
+.vcf-depot-status-item {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  min-width: 0;
+  border-radius: 6px;
+  padding: 6px 4px;
+  background: #e2e8f0;
+  color: #475569;
+  text-align: center;
+}
+
+.vcf-depot-status-item.good {
+  background: #dcfce7;
+  color: var(--good);
+}
+
+.vcf-depot-status-item.warn {
+  background: #fef3c7;
+  color: var(--warn);
+}
+
+.vcf-depot-status-item small {
+  font-size: 10px;
+  line-height: 1.1;
+}
+
+.vcf-depot-status-item strong {
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
 .copyable-inline-value {
   display: flex;
   align-items: center;

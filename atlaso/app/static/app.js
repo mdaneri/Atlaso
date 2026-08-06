@@ -12793,6 +12793,9 @@ function updateVcfDepotCredentialStatus(payload = {}) {
 function updateVcfDepotConfigurationStatus(payload = {}) {
   const status = document.querySelector("[data-vcf-depot-configuration-status]");
   if (!(status instanceof HTMLElement)) return;
+  const credentialsStatus = status.querySelector("[data-vcf-depot-configuration-credentials]");
+  const propertiesStatus = status.querySelector("[data-vcf-depot-configuration-properties]");
+  const idStatus = status.querySelector("[data-vcf-depot-configuration-id]");
   const tokenStatus = document.querySelector("[data-vcf-depot-token-status]");
   const activationStatus = document.querySelector("[data-vcf-depot-activation-status]");
   const tokenPresent = payload.download_token_present !== undefined
@@ -12801,14 +12804,27 @@ function updateVcfDepotConfigurationStatus(payload = {}) {
   const activationPresent = payload.activation_code_present !== undefined
     ? Boolean(payload.activation_code_present)
     : activationStatus instanceof HTMLElement && activationStatus.dataset.present === "1";
-  const currentText = status.textContent || "";
   const propertiesPresent = payload.application_properties_present !== undefined
     ? Boolean(payload.application_properties_present)
-    : currentText.includes("properties saved");
+    : propertiesStatus instanceof HTMLElement && propertiesStatus.dataset.present === "1";
   const softwareDepotId = payload.software_depot_id !== undefined
     ? String(payload.software_depot_id || "")
-    : document.querySelector("[data-vcf-depot-software-depot-id]")?.textContent?.trim() || "";
-  status.textContent = `${Number(tokenPresent) + Number(activationPresent)} credentials · ${propertiesPresent ? "properties saved" : "properties required"} · ${softwareDepotId ? "ID generated" : "ID pending"}`;
+    : idStatus instanceof HTMLElement && idStatus.dataset.present === "1" ? "present" : "";
+  const updateItem = (item, value, present) => {
+    if (!(item instanceof HTMLElement)) return;
+    const valueElement = item.querySelector("strong");
+    if (valueElement instanceof HTMLElement) valueElement.textContent = value;
+    item.dataset.present = present ? "1" : "0";
+    item.classList.toggle("good", present);
+    item.classList.toggle("warn", !present);
+  };
+  updateItem(
+    credentialsStatus,
+    tokenPresent && activationPresent ? "Both" : tokenPresent ? "Token" : activationPresent ? "Activation" : "Needed",
+    tokenPresent || activationPresent,
+  );
+  updateItem(propertiesStatus, propertiesPresent ? "Saved" : "Needed", propertiesPresent);
+  updateItem(idStatus, softwareDepotId ? "Ready" : "Pending", Boolean(softwareDepotId));
 }
 
 function initializeApplianceUpdateSubmission() {
@@ -13283,10 +13299,11 @@ function initializeVcfDepotConfigurationWizard() {
   const refreshId = form.querySelector("[data-vcf-depot-refresh-id]");
   const submitButton = form.querySelector("[data-atlaso-wizard-submit]");
   let refreshAfterSave = false;
+  let wizard;
 
   const selectedCredential = () => {
     const choice = form.querySelector('input[name="credential_replacement_choice"]:checked');
-    return choice instanceof HTMLInputElement ? choice.value : "preserve";
+    return choice instanceof HTMLInputElement ? choice.value : "";
   };
   const replacementControls = (credentialType) => {
     const panel = form.querySelector(`[data-vcf-depot-credential-replacement="${credentialType}"]`);
@@ -13351,12 +13368,12 @@ function initializeVcfDepotConfigurationWizard() {
     });
   };
 
-  const wizard = window.AtlasoUiPatterns.createWizard({
+  wizard = window.AtlasoUiPatterns.createWizard({
     form,
     dialog,
     steps: [
       { id: "software-depot-id", title: "Software Depot ID", description: "Preserve the current ID or select the explicit generation or refresh handoff." },
-      { id: "credentials", title: "Broadcom credential", description: "Keep both stored inputs or choose exactly one credential to replace." },
+      { id: "credentials", title: "Broadcom credential", description: "Keep staged inputs unchanged or choose exactly one credential to use." },
       { id: "credential-input", title: "Credential input", description: "Upload or paste the selected credential without revealing any stored value." },
       { id: "properties", title: "Application properties", description: "Review the bundled INI editor content saved with the selected credential replacement." },
       { id: "review", title: "Review VCFDT configuration", description: "Confirm the presence-only changes and remaining Appliance Apply boundary." },
@@ -13365,6 +13382,7 @@ function initializeVcfDepotConfigurationWizard() {
     discardMessage: "Credential replacements and application-properties edits entered in this wizard will be lost.",
     onOpen: ({ controller }) => {
       refreshAfterSave = false;
+      controller.setSkippedSteps(refreshId instanceof HTMLInputElement && refreshId.checked ? ["credentials", "credential-input", "properties"] : []);
       ["download_token", "activation_code"].forEach(syncReplacementPanel);
       if (properties instanceof HTMLTextAreaElement && window.AtlasoMonaco && typeof window.AtlasoMonaco.setValue === "function") {
         window.AtlasoMonaco.setValue(properties, properties.defaultValue);
@@ -13383,6 +13401,9 @@ function initializeVcfDepotConfigurationWizard() {
       }
     },
     validateStep: ({ step }) => {
+      if (step.id === "credentials" && !selectedCredential()) {
+        return { valid: false, field: "credential_replacement_choice", message: "Choose a download token or activation code to continue." };
+      }
       if (step.id === "credential-input") {
         for (const credentialType of [selectedCredential()]) {
           const { panel } = replacementControls(credentialType);
@@ -13469,6 +13490,9 @@ function initializeVcfDepotConfigurationWizard() {
         if (confirmation instanceof HTMLDialogElement) confirmation.showModal();
       }, 0);
     },
+  });
+  refreshId?.addEventListener("change", () => {
+    wizard.setSkippedSteps(refreshId instanceof HTMLInputElement && refreshId.checked ? ["credentials", "credential-input", "properties"] : []);
   });
   document.querySelectorAll("[data-vcf-depot-configuration-open]").forEach((launcher) => {
     if (!(launcher instanceof HTMLButtonElement)) return;

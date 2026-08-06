@@ -639,8 +639,10 @@ status: current
   application-properties changes must use one transactional desired-state save. The wizard must never preload stored
   credential values, must prefer an uploaded credential file over pasted text, and must return only presence flags,
   safe display names, the version parsed from the validated staged archive name, properties metadata,
-  validation/previews, and Software Depot ID metadata. If refresh is selected, the wizard skips to Review without
-  resaving unchanged configuration; a second confirmation must submit explicit refresh intent through the global `/appliance-apply`
+  validation/previews, and Software Depot ID metadata. Credential choices are state-aware: omit Keep when none is
+  staged, use Replace only for present inputs, and require choosing which absent input to use. If refresh is selected,
+  hide the credential and properties steps so the rail contains only Software Depot ID and Review, without resaving
+  unchanged configuration; a second confirmation must submit explicit refresh intent through the global `/appliance-apply`
   workflow for `vcf_offline_depot`, not call the helper directly. Ordinary wizard saves must preserve an existing ID.
   Manual
   VCFDT command generation

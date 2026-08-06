@@ -28,8 +28,10 @@ This verified appliance view provides visual orientation before you begin.
 3. Upload the VCF Download Tool package, then select **Configure** under **VCFDT configuration**. Atlaso displays the
    version encoded in the validated staged archive name immediately; Appliance Apply later replaces it with VCFDT's
    authoritative `--version` result. The five-step wizard starts with the current Software Depot ID and refresh intent,
-   then offers an exclusive choice to preserve both Broadcom inputs or replace either the download token or activation
-   code. A selected credential gets its own upload-or-paste step before `application-prodv2.properties` and Review.
+   then offers an exclusive, state-aware credential choice. **Keep** appears only when an input is already staged;
+   absent inputs are labeled **Use** and existing inputs are labeled **Replace**. When no credential exists, selecting
+   either the download token or activation code is required. The selected input gets its own upload-or-paste step before
+   `application-prodv2.properties` and Review.
    Credential values are never loaded into the browser; an uploaded text file takes precedence over pasted text.
 4. Save the wizard. Credentials and application properties are committed together, but the save does not mutate the
    appliance or replace an existing Software Depot ID.
@@ -61,8 +63,9 @@ Do not place depot credentials or authenticated URLs in task notes, manifests, l
 
 Register the displayed software depot ID in the VCF Business Services console, then stage the activation code returned
 for that exact registration. Atlaso preserves this ID when settings or download profiles are changed and applied.
-Selecting **Refresh the Software Depot ID** (or **Generate the Software Depot ID** when none exists) skips directly to
-Review without resaving unchanged credentials or properties. Atlaso then opens a second confirmation. Only
+Selecting **Refresh the Software Depot ID** (or **Generate the Software Depot ID** when none exists) immediately hides
+the credential, credential-input, and properties steps, leaving a two-step Software Depot ID and Review flow. It does
+not resave unchanged credentials or properties. Atlaso then opens a second confirmation. Only
 **Submit appliance changes** in that confirmation sends the
 VCF Offline Depot unit and explicit refresh intent to Appliance Apply. The earlier activation code no longer matches
 the active VCFDT identity, so register the new displayed ID and replace the staged activation code before retrying a download.

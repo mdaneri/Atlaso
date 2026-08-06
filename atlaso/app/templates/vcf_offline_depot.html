@@ -231,12 +231,7 @@
           <div><span>Version</span><strong data-vcf-depot-tool-version>{{ vcf_depot_tool_display_version or "unknown" }}</strong></div>
           <div class="settings-action-row">
             <span class="field-label"><span>VCFDT configuration</span><button class="help-icon" type="button" data-help="Guides Broadcom credential staging, application properties, and the Software Depot ID apply boundary in one desired-state workflow.">i</button></span>
-            <span class="setting-inline-actions">
-              <strong data-vcf-depot-configuration-status>
-                {{ (1 if vcf_depot_download_token.present else 0) + (1 if vcf_depot_activation_code.present else 0) }} credentials · {{ "properties saved" if vcf_depot_application_properties.present else "properties required" }} · {{ "ID generated" if vcf_depot_software_depot_id.id else "ID pending" }}
-              </strong>
-              <button class="button secondary compact-button" type="button" data-vcf-depot-configuration-open data-vcf-depot-requires-tool {{ "disabled" if not vcf_depot_settings.tool_archive_path else "" }}>Configure</button>
-            </span>
+            <button class="button secondary compact-button" type="button" data-vcf-depot-configuration-open data-vcf-depot-requires-tool {{ "disabled" if not vcf_depot_settings.tool_archive_path else "" }}>Configure</button>
             <small class="muted" data-vcf-depot-credentials-status>
               {% set staged_credentials = [] %}
               {% if vcf_depot_download_token.present %}
@@ -247,6 +242,18 @@
               {% endif %}
               {{ staged_credentials|join(" · ") if staged_credentials else "No Broadcom credentials staged." }} Global Appliance Apply is still required.
             </small>
+          </div>
+          <div class="vcf-depot-configuration-status" data-vcf-depot-configuration-status>
+            <span class="vcf-depot-status-item {{ 'good' if vcf_depot_download_token.present or vcf_depot_activation_code.present else 'warn' }}" data-vcf-depot-configuration-credentials>
+              <small>Credentials</small>
+              <strong>{% if vcf_depot_download_token.present and vcf_depot_activation_code.present %}Both{% elif vcf_depot_download_token.present %}Token{% elif vcf_depot_activation_code.present %}Activation{% else %}Needed{% endif %}</strong>
+            </span>
+            <span class="vcf-depot-status-item {{ 'good' if vcf_depot_application_properties.present else 'warn' }}" data-vcf-depot-configuration-properties data-present="{{ '1' if vcf_depot_application_properties.present else '0' }}">
+              <small>Properties</small><strong>{{ "Saved" if vcf_depot_application_properties.present else "Needed" }}</strong>
+            </span>
+            <span class="vcf-depot-status-item {{ 'good' if vcf_depot_software_depot_id.id else 'warn' }}" data-vcf-depot-configuration-id data-present="{{ '1' if vcf_depot_software_depot_id.id else '0' }}">
+              <small>Depot ID</small><strong>{{ "Ready" if vcf_depot_software_depot_id.id else "Pending" }}</strong>
+            </span>
           </div>
       </div>
     </div>
@@ -368,18 +375,20 @@
         <strong data-vcf-depot-activation-status data-present="{{ '1' if vcf_depot_activation_code.present else '0' }}">{{ "staged" if vcf_depot_activation_code.present else "not staged" }}</strong>
       </div>
     </div>
-    <p class="muted">Stored values are never loaded into the browser. Choose at most one credential to replace in this save.</p>
+    <p class="muted">Stored values are never loaded into the browser. Keep staged inputs unchanged or choose exactly one credential to use.</p>
+    {% if vcf_depot_download_token.present or vcf_depot_activation_code.present %}
     <label class="checkbox-row">
       <input type="radio" name="credential_replacement_choice" value="preserve" data-vcf-depot-credential-choice checked>
-      <span>Keep both credentials unchanged</span>
+      <span>Keep staged credentials unchanged</span>
+    </label>
+    {% endif %}
+    <label class="checkbox-row">
+      <input type="radio" name="credential_replacement_choice" value="download_token" data-vcf-depot-credential-choice required>
+      <span>{{ "Replace" if vcf_depot_download_token.present else "Use" }} download token</span>
     </label>
     <label class="checkbox-row">
-      <input type="radio" name="credential_replacement_choice" value="download_token" data-vcf-depot-credential-choice>
-      <span>Replace download token</span>
-    </label>
-    <label class="checkbox-row">
-      <input type="radio" name="credential_replacement_choice" value="activation_code" data-vcf-depot-credential-choice>
-      <span>Replace activation code</span>
+      <input type="radio" name="credential_replacement_choice" value="activation_code" data-vcf-depot-credential-choice required>
+      <span>{{ "Replace" if vcf_depot_activation_code.present else "Use" }} activation code</span>
     </label>
   </section>
   <section class="hidden" data-atlaso-wizard-step="credential-input">

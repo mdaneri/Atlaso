@@ -467,6 +467,31 @@ test("createWizard supports conditional next and back routing", async () => {
   assert.equal(controller.currentStepId, "details");
 });
 
+test("createWizard hides skipped steps and recalculates progress", async () => {
+  installBrowserGlobals();
+  const fixture = wizardFixture(["identity", "credentials", "properties", "review"]);
+  const controller = createWizard({
+    form: fixture.form,
+    dialog: fixture.dialog,
+    steps: [
+      { id: "identity", title: "Identity" },
+      { id: "credentials", title: "Credentials" },
+      { id: "properties", title: "Properties" },
+      { id: "review", title: "Review" },
+    ],
+  });
+
+  controller.setSkippedSteps(["credentials", "properties"]);
+  assert.equal(fixture.nav[1].hidden, true);
+  assert.equal(fixture.nav[2].hidden, true);
+  assert.equal(fixture.kicker.textContent, "Step 1 of 2");
+  assert.equal(await controller.next(), true);
+  assert.equal(controller.currentStepId, "review");
+  assert.equal(fixture.kicker.textContent, "Step 2 of 2");
+  assert.equal(await controller.back(), true);
+  assert.equal(controller.currentStepId, "identity");
+});
+
 test("createWizard confirms dirty cancellation and restores launcher focus", async () => {
   installBrowserGlobals();
   const fixture = wizardFixture(["identity", "review"]);
