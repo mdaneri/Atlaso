@@ -210,6 +210,10 @@ function wizardFixture(stepIds = ["identity", "review"]) {
   });
   const nav = stepIds.map((id, index) => {
     const button = new FakeElement({ dataset: { atlasoWizardNav: id }, tagName: "BUTTON" });
+    const number = new FakeElement({ tagName: "SPAN" });
+    number.textContent = String(index + 1);
+    button.setQuery("span", number);
+    button.number = number;
     button.disabled = index > 0;
     return button;
   });
@@ -484,6 +488,8 @@ test("createWizard hides skipped steps and recalculates progress", async () => {
   controller.setSkippedSteps(["credentials", "properties"]);
   assert.equal(fixture.nav[1].hidden, true);
   assert.equal(fixture.nav[2].hidden, true);
+  assert.equal(fixture.nav[0].number.textContent, "1");
+  assert.equal(fixture.nav[3].number.textContent, "2");
   assert.equal(fixture.kicker.textContent, "Step 1 of 2");
   assert.equal(await controller.next(), true);
   assert.equal(controller.currentStepId, "review");

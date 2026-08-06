@@ -829,7 +829,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6" in service_worker.text
     assert "/static/app.css?v=vcfdt-configuration-248-20260806-3" in service_worker.text
-    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-7" in service_worker.text
+    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
     assert "/static/app.js?v=vcfdt-configuration-248-20260806-6" in service_worker.text
 
     registration = client.get("/static/pwa.js")
@@ -854,10 +854,10 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
         (public_base, "/static/app.js?v=vcfdt-configuration-248-20260806-6"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
-            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-7"
+            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8"
         )
         assert shell.index(
-            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-7"
+            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8"
         ) < shell.index(app_asset)
 
     wizard_templates = [
@@ -1356,7 +1356,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vcfdt-configuration-248-20260806-3" in page.text
-    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-7" in page.text
+    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
     assert "/static/app.js?v=vcfdt-configuration-248-20260806-6" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200

@@ -301,10 +301,14 @@
         page.setAttribute?.("aria-hidden", active ? "false" : "true");
         if (!page.dataset.atlasoWizardStep) page.dataset.atlasoWizardStep = steps[pageIndex]?.id || String(pageIndex);
       });
+      const visible = visibleStepIndices();
       navButtons.forEach((button, buttonIndex) => {
         const index = navIndex(button, buttonIndex);
         const skipped = skippedStepIds.has(steps[index]?.id);
         const active = index === currentIndex;
+        const visiblePosition = visible.indexOf(index);
+        const stepNumber = button.querySelector?.("span");
+        if (stepNumber && visiblePosition >= 0) stepNumber.textContent = String(visiblePosition + 1);
         button.disabled = skipped || index > highestIndex;
         button.classList?.toggle?.("hidden", skipped);
         button.toggleAttribute?.("hidden", skipped);
@@ -316,7 +320,6 @@
         button.setAttribute?.("aria-current", active ? "step" : "false");
         button.setAttribute?.("aria-disabled", button.disabled ? "true" : "false");
       });
-      const visible = visibleStepIndices();
       const visiblePosition = visible.indexOf(currentIndex);
       const lastVisibleIndex = visible[visible.length - 1];
       if (kicker) kicker.textContent = `Step ${visiblePosition + 1} of ${visible.length}`;
