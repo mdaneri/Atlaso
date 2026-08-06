@@ -829,8 +829,8 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6" in service_worker.text
     assert "/static/app.css?v=vcfdt-configuration-248-20260806-1" in service_worker.text
-    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in service_worker.text
-    assert "/static/app.js?v=vcfdt-configuration-248-20260806-2" in service_worker.text
+    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-6" in service_worker.text
+    assert "/static/app.js?v=vcfdt-configuration-248-20260806-3" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -850,14 +850,14 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=vcfdt-configuration-248-20260806-2"),
-        (public_base, "/static/app.js?v=vcfdt-configuration-248-20260806-2"),
+        (base, "/static/app.js?v=vcfdt-configuration-248-20260806-3"),
+        (public_base, "/static/app.js?v=vcfdt-configuration-248-20260806-3"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
-            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5"
+            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-6"
         )
         assert shell.index(
-            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5"
+            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-6"
         ) < shell.index(app_asset)
 
     wizard_templates = [
@@ -1356,8 +1356,8 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vcfdt-configuration-248-20260806-1" in page.text
-    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in page.text
-    assert "/static/app.js?v=vcfdt-configuration-248-20260806-2" in page.text
+    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-6" in page.text
+    assert "/static/app.js?v=vcfdt-configuration-248-20260806-3" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
