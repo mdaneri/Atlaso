@@ -15,9 +15,9 @@ Open **VCF Offline Depot** to configure the local content repository used by sup
 
 This verified appliance view provides visual orientation before you begin.
 
-![Atlaso VCF Offline Depot page in the clean-appliance desktop viewport.](../assets/screenshots/vcf-offline-depot-clean-desktop.webp)
+![Atlaso VCF Offline Depot desktop page showing Metadata before Binaries and ESX profiles and the combined VCFDT configuration action.](../assets/screenshots/vcf-offline-depot-clean-desktop.webp)
 
-*Figure: VCF Offline Depot in the verified clean-appliance desktop state.*
+*Figure: VCF Offline Depot with metadata first and the compact VCFDT configuration summary in the desktop settings rail.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
@@ -79,8 +79,12 @@ These captures show responsive layouts and useful operational states referenced 
 
 ### VCF Offline Depot
 
-![Atlaso VCF Offline Depot page in the clean-appliance responsive viewport.](../assets/screenshots/vcf-offline-depot-clean-responsive.webp)
+![Atlaso VCF Offline Depot responsive page showing Metadata first with the add-profile row pinned last.](../assets/screenshots/vcf-offline-depot-clean-responsive.webp)
 
-*Figure: VCF Offline Depot in the verified clean-appliance responsive state.*
+*Figure: VCF Offline Depot profile ordering and staging state in the responsive viewport.*
+
+![Atlaso VCFDT configuration wizard review step without credential contents.](../assets/screenshots/vcf-offline-depot-configuration-wizard.webp)
+
+*Figure: VCFDT configuration review shows presence-only changes and the remaining Appliance Apply boundary.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
