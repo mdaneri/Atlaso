@@ -383,11 +383,11 @@
     </label>
     {% endif %}
     <label class="checkbox-row">
-      <input type="radio" name="credential_replacement_choice" value="download_token" data-vcf-depot-credential-choice required>
+      <input type="radio" name="credential_replacement_choice" value="download_token" data-vcf-depot-credential-choice>
       <span>{{ "Replace" if vcf_depot_download_token.present else "Use" }} download token</span>
     </label>
     <label class="checkbox-row">
-      <input type="radio" name="credential_replacement_choice" value="activation_code" data-vcf-depot-credential-choice required>
+      <input type="radio" name="credential_replacement_choice" value="activation_code" data-vcf-depot-credential-choice>
       <span>{{ "Replace" if vcf_depot_activation_code.present else "Use" }} activation code</span>
     </label>
   </section>
