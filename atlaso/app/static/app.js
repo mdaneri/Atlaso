@@ -12648,7 +12648,6 @@ function updateVcfDepotSummary(form, payload = {}) {
   const accessLabel = document.querySelector("[data-vcf-depot-access]");
   const dnsStatus = document.querySelector("[data-vcf-depot-dns-status]");
   const propertiesStatuses = document.querySelectorAll("[data-vcf-depot-properties-status]");
-  const softwareDepotGenerateButtons = document.querySelectorAll("[data-vcf-depot-generate-id-modal-open]");
   if (endpoint instanceof HTMLElement) {
     endpoint.textContent = endpointValue || "depot hostname required";
   }
@@ -12690,11 +12689,6 @@ function updateVcfDepotSummary(form, payload = {}) {
     toolResetPanels.forEach((toolResetPanel) => {
       if (toolResetPanel instanceof HTMLElement) {
         toolResetPanel.classList.toggle("hidden", !toolAvailable);
-      }
-    });
-    softwareDepotGenerateButtons.forEach((softwareDepotGenerateButton) => {
-      if (softwareDepotGenerateButton instanceof HTMLButtonElement) {
-        softwareDepotGenerateButton.disabled = !toolAvailable;
       }
     });
     setVcfDepotToolDependentActions(toolAvailable);
@@ -12875,7 +12869,6 @@ function setVcfDepotToolDependentActions(toolAvailable) {
 
 function updateVcfDepotSoftwareDepotId(payload = {}) {
   const softwareDepotId = document.querySelector("[data-vcf-depot-software-depot-id]");
-  const softwareDepotCell = document.querySelector("[data-vcf-depot-software-depot-cell]");
   const softwareDepotMessage = document.querySelector("[data-vcf-depot-software-depot-message]");
   const softwareDepotCopy = document.querySelector("[data-vcf-depot-software-depot-copy]");
   if (softwareDepotId instanceof HTMLElement && payload.software_depot_id !== undefined) {
@@ -12883,20 +12876,11 @@ function updateVcfDepotSoftwareDepotId(payload = {}) {
     if (softwareDepotId instanceof HTMLInputElement) {
       softwareDepotId.value = depotId;
     } else {
-      softwareDepotId.textContent = depotId;
+      softwareDepotId.textContent = depotId || "Not generated";
     }
-    softwareDepotId.classList.toggle("hidden", !depotId);
     if (softwareDepotCopy instanceof HTMLButtonElement) {
       softwareDepotCopy.dataset.copyValue = depotId;
       softwareDepotCopy.classList.toggle("hidden", !depotId);
-    }
-    const button = softwareDepotCell?.querySelector("[data-vcf-depot-generate-id-modal-open]");
-    if (button instanceof HTMLButtonElement) {
-      button.textContent = "↻";
-      button.classList.add("icon-button");
-      button.classList.remove("compact-button");
-      button.setAttribute("aria-label", "Refresh software depot ID");
-      button.setAttribute("title", "Refresh software depot ID");
     }
   }
   if (softwareDepotMessage instanceof HTMLElement && (payload.software_depot_id_error !== undefined || payload.software_depot_id_generated_at !== undefined)) {
@@ -13243,52 +13227,6 @@ function initializeVcfDepotSettings(root = document) {
   });
 }
 
-function initializeVcfDepotSoftwareDepotIdGenerator() {
-  const modal = document.getElementById("vcf-depot-generate-id-modal");
-  document.querySelectorAll("[data-vcf-depot-generate-id-modal-open]").forEach((button) => {
-    if (!(button instanceof HTMLButtonElement)) {
-      return;
-    }
-    button.addEventListener("click", () => {
-      if (modal instanceof HTMLDialogElement) {
-        modal.showModal();
-      }
-    });
-  });
-  document.querySelectorAll("[data-vcf-depot-generate-id-modal-cancel]").forEach((button) => {
-    if (!(button instanceof HTMLButtonElement)) {
-      return;
-    }
-    button.addEventListener("click", () => {
-      if (modal instanceof HTMLDialogElement) {
-        modal.close("cancel");
-      }
-    });
-  });
-  const form = modal?.querySelector("form");
-  if (form instanceof HTMLFormElement) {
-    form.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const submitButton = form.querySelector('button[type="submit"]');
-      if (submitButton instanceof HTMLButtonElement) {
-        submitButton.disabled = true;
-        submitButton.textContent = "Creating task…";
-      }
-      try {
-        const submitted = await submitApplianceApplyForm(form);
-        if (submitted && modal instanceof HTMLDialogElement) {
-          modal.close("submit");
-        }
-      } finally {
-        if (submitButton instanceof HTMLButtonElement) {
-          submitButton.disabled = false;
-          submitButton.textContent = "Submit appliance changes";
-        }
-      }
-    });
-  }
-}
-
 function initializeVcfDepotConfigurationWizard() {
   const dialog = document.getElementById("vcf-depot-configuration-dialog");
   const form = document.querySelector("[data-vcf-depot-configuration-form]");
@@ -13298,7 +13236,6 @@ function initializeVcfDepotConfigurationWizard() {
   const properties = form.querySelector("[data-vcf-depot-properties-textarea]");
   const refreshId = form.querySelector("[data-vcf-depot-refresh-id]");
   const submitButton = form.querySelector("[data-atlaso-wizard-submit]");
-  let refreshAfterSave = false;
   let wizard;
 
   const selectedCredential = () => {
@@ -13352,7 +13289,7 @@ function initializeVcfDepotConfigurationWizard() {
       ["Activation code", credentialReplacementSummary("activation_code", "Activation code").replace(/^Activation code: /, "")],
       ["Application properties", refreshRequested ? "unchanged by the ID-only path" : `${new TextEncoder().encode(content).length.toLocaleString()} UTF-8 bytes to save`],
       ["Software Depot ID", refreshRequested ? (softwareDepotId ? "queue replacement" : "queue generation") : (softwareDepotId ? "preserve current ID" : "generate on first Appliance Apply")],
-      ["Apply handoff", refreshRequested ? "second confirmation queues the scoped activity" : "global Appliance Apply still required"],
+      ["Apply handoff", refreshRequested ? "Review submission queues the scoped activity" : "global Appliance Apply still required"],
     ];
     review.innerHTML = rows.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("");
   };
@@ -13381,7 +13318,6 @@ function initializeVcfDepotConfigurationWizard() {
     discardTitle: "Discard VCFDT configuration changes?",
     discardMessage: "Credential replacements and application-properties edits entered in this wizard will be lost.",
     onOpen: ({ controller }) => {
-      refreshAfterSave = false;
       controller.setSkippedSteps(refreshId instanceof HTMLInputElement && refreshId.checked ? ["credentials", "credential-input", "properties"] : []);
       ["download_token", "activation_code"].forEach(syncReplacementPanel);
       if (properties instanceof HTMLTextAreaElement && window.AtlasoMonaco && typeof window.AtlasoMonaco.setValue === "function") {
@@ -13393,7 +13329,7 @@ function initializeVcfDepotConfigurationWizard() {
       if (step.id === "credential-input") ["download_token", "activation_code"].forEach(syncReplacementPanel);
       if (step.id === "review" && submitButton instanceof HTMLButtonElement) {
         submitButton.textContent = refreshId instanceof HTMLInputElement && refreshId.checked
-          ? "Continue to apply confirmation"
+          ? "Queue appliance changes"
           : "Save VCFDT configuration";
       }
       if (step.id === "properties" && properties instanceof HTMLTextAreaElement && window.AtlasoMonaco && typeof window.AtlasoMonaco.focus === "function") {
@@ -13449,7 +13385,22 @@ function initializeVcfDepotConfigurationWizard() {
     prepareReview: renderReview,
     onSubmit: async () => {
       if (refreshId instanceof HTMLInputElement && refreshId.checked) {
-        refreshAfterSave = true;
+        const body = new FormData();
+        const csrf = form.querySelector('input[name="csrf"]');
+        if (csrf instanceof HTMLInputElement) body.set("csrf", csrf.value);
+        body.set("selected_units", "vcf_offline_depot");
+        body.set("refresh_vcf_depot_software_depot_id", "true");
+        const response = await fetch("/appliance-apply", {
+          method: "POST",
+          body,
+          credentials: "same-origin",
+          headers: { Accept: "application/json" },
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.detail || "Software Depot ID activity could not be queued.");
+        applianceApplyActiveJobId = payload.job_id || payload.task?.id || "";
+        renderApplianceApplyTask(payload.task);
+        refreshApplianceApplySidebar().catch(() => {});
         return { valid: true };
       }
       const content = syncProperties();
@@ -13478,17 +13429,8 @@ function initializeVcfDepotConfigurationWizard() {
         properties.value = content;
         properties.defaultValue = content;
       }
-      refreshAfterSave = refreshId instanceof HTMLInputElement && refreshId.checked;
       scrubSecretInputs();
       return { valid: true };
-    },
-    onClose: ({ returnValue }) => {
-      if (returnValue !== "submit" || !refreshAfterSave) return;
-      refreshAfterSave = false;
-      window.setTimeout(() => {
-        const confirmation = document.getElementById("vcf-depot-generate-id-modal");
-        if (confirmation instanceof HTMLDialogElement) confirmation.showModal();
-      }, 0);
     },
   });
   refreshId?.addEventListener("change", () => {
@@ -20046,7 +19988,6 @@ document.addEventListener("DOMContentLoaded", initializeVcfLdapHelper);
 document.addEventListener("DOMContentLoaded", () => initializeVcfBackupSettings());
 document.addEventListener("DOMContentLoaded", () => initializeVcfRegistrySettings());
 document.addEventListener("DOMContentLoaded", () => initializeVcfDepotSettings());
-document.addEventListener("DOMContentLoaded", initializeVcfDepotSoftwareDepotIdGenerator);
 document.addEventListener("DOMContentLoaded", initializeVcfDepotConfigurationWizard);
 document.addEventListener("DOMContentLoaded", initializeVcfDepotToolResetModal);
 document.addEventListener("DOMContentLoaded", initializeVcfDepotTokenPaste);

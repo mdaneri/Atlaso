@@ -830,7 +830,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6" in service_worker.text
     assert "/static/app.css?v=vcfdt-configuration-248-20260806-3" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-7" in service_worker.text
-    assert "/static/app.js?v=vcfdt-configuration-248-20260806-4" in service_worker.text
+    assert "/static/app.js?v=vcfdt-configuration-248-20260806-5" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -850,8 +850,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=vcfdt-configuration-248-20260806-4"),
-        (public_base, "/static/app.js?v=vcfdt-configuration-248-20260806-4"),
+        (base, "/static/app.js?v=vcfdt-configuration-248-20260806-5"),
+        (public_base, "/static/app.js?v=vcfdt-configuration-248-20260806-5"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-7"
@@ -1357,7 +1357,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vcfdt-configuration-248-20260806-3" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-7" in page.text
-    assert "/static/app.js?v=vcfdt-configuration-248-20260806-4" in page.text
+    assert "/static/app.js?v=vcfdt-configuration-248-20260806-5" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -9578,11 +9578,10 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "Start" in page.text
     assert page.text.index("<th>Name</th>") < page.text.index("<th>Start</th>") < page.text.index("<th>Type</th>")
     assert 'href="/logs"' in page.text
-    assert "Generate software depot ID" in page.text
+    assert "Generate the Software Depot ID" in page.text
     assert 'name="refresh_software_depot_id"' in page.text
     assert page.text.index('data-atlaso-wizard-step="software-depot-id"') < page.text.index('data-atlaso-wizard-step="credentials"')
-    assert 'name="selected_units" value="vcf_offline_depot"' in page.text
-    assert 'name="refresh_vcf_depot_software_depot_id" value="true"' in page.text
+    assert 'id="vcf-depot-generate-id-modal"' not in page.text
     assert "Software depot ID" in page.text
     assert "VCFDT staging" in page.text
     assert "Staged VCFDT inputs" not in page.text
@@ -9614,7 +9613,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert 'data-vcf-depot-software-depot-copy' in page.text
     assert 'Copy software depot ID' in page.text
     assert 'data-autosave-upload-progress' in page.text
-    assert "not generated" not in page.text
+    assert "Not generated" in page.text
     assert "<span>Tool file</span>" not in page.text
     assert 'data-vcf-depot-tool-name' not in page.text
     assert 'data-tab-storage-key="atlaso:vcf-offline-depot:active-tab"' not in page.text
@@ -9648,23 +9647,18 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "window.AtlasoUiPatterns.createWizard" in app_js.text
     assert 'body.set("application_properties", content)' in app_js.text
     assert "new TextEncoder().encode(content).length > 512 * 1024" in app_js.text
-    assert "confirmation.showModal()" in app_js.text
+    assert 'body.set("selected_units", "vcf_offline_depot")' in app_js.text
+    assert 'body.set("refresh_vcf_depot_software_depot_id", "true")' in app_js.text
+    assert 'fetch("/appliance-apply"' in app_js.text
     assert 'step.id === "software-depot-id"' in app_js.text
     assert 'return "review"' in app_js.text
     assert 'selectedCredential() === "preserve"' in app_js.text
-    assert "Continue to apply confirmation" in app_js.text
+    assert "Queue appliance changes" in app_js.text
     assert 'controller.setSkippedSteps' in app_js.text
     assert 'wizard.setSkippedSteps' in app_js.text
     assert "data-vcf-depot-configuration-credentials" in page.text
     assert "0 credentials ·" not in page.text
     assert "formatNginxListen(listenAddress, port)" in app_js.text
-    software_depot_modal_js = app_js.text.split("function initializeVcfDepotSoftwareDepotIdGenerator", 1)[1].split("function ", 1)[0]
-    assert "event.preventDefault()" in software_depot_modal_js
-    assert "await submitApplianceApplyForm(form)" in software_depot_modal_js
-    assert 'modal.close("submit")' in software_depot_modal_js
-    assert 'submitButton.textContent = "Creating task…"' in software_depot_modal_js
-    assert 'submitButton.textContent = "Submit appliance changes"' in software_depot_modal_js
-    assert "data-appliance-apply-submit-error" in page.text
     assert "initializeVcfDepotProfilesTable" in app_js.text
     assert "initializeVcfDepotTasksTable" not in app_js.text
     assert "initializeTasksPage" in app_js.text
@@ -9716,7 +9710,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "location = /requests" in app_js.text
     assert "location ^~ /requests/" in app_js.text
     assert "updateVcfDepotValidation" in app_js.text
-    assert "initializeVcfDepotSoftwareDepotIdGenerator" in app_js.text
+    assert "initializeVcfDepotSoftwareDepotIdGenerator" not in app_js.text
     assert "initializeVcfDepotCredentialsPaste" in app_js.text
     assert "updateVcfDepotCredentialStatus" in app_js.text
     assert "previewVcfDepotProfileScript" in app_js.text

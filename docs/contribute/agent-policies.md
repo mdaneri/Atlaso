@@ -642,8 +642,9 @@ status: current
   validation/previews, and Software Depot ID metadata. Credential choices are state-aware: omit Keep when none is
   staged, use Replace only for present inputs, and require choosing which absent input to use. If refresh is selected,
   hide the credential and properties steps so the rail contains only Software Depot ID and Review, without resaving
-  unchanged configuration; a second confirmation must submit explicit refresh intent through the global `/appliance-apply`
-  workflow for `vcf_offline_depot`, not call the helper directly. Ordinary wizard saves must preserve an existing ID.
+  unchanged configuration; Review is the explicit confirmation boundary and must submit refresh intent directly through
+  the global `/appliance-apply` workflow for `vcf_offline_depot`, not call the helper directly or open another dialog.
+  Ordinary wizard saves must preserve an existing ID.
   Manual
   VCFDT command generation
   should use `/var/lib/atlaso/vcfDownloadTool/active-tool` token and activation-code file paths, write telemetry and ESX

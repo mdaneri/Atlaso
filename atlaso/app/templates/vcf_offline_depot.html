@@ -352,7 +352,7 @@
       <div class="settings-action-row software-depot-id-row">
         <span>Current Software Depot ID</span>
         <span class="setting-inline-actions" data-vcf-depot-software-depot-cell>
-          <strong class="{{ 'hidden' if vcf_depot_software_depot_id.id else '' }}" data-vcf-depot-software-depot-id>{{ vcf_depot_software_depot_id.id }}</strong>
+          <strong data-vcf-depot-software-depot-id>{{ vcf_depot_software_depot_id.id or "Not generated" }}</strong>
           <button class="button secondary icon-button {{ 'hidden' if not vcf_depot_software_depot_id.id else '' }}" type="button" data-copy-value="{{ vcf_depot_software_depot_id.id }}" data-vcf-depot-software-depot-copy aria-label="Copy software depot ID" title="Copy software depot ID"><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2 2v1"/></svg></button>
         </span>
       </div>
@@ -362,7 +362,7 @@
       <input type="checkbox" name="refresh_software_depot_id" data-vcf-depot-refresh-id>
       <span>{{ "Refresh the Software Depot ID" if vcf_depot_software_depot_id.id else "Generate the Software Depot ID" }}</span>
     </label>
-    <div class="alert warning">{% if vcf_depot_software_depot_id.id %}Refreshing replaces the current ID. Register the new ID with Broadcom and stage its matching activation code before the next download.{% else %}Generation runs through the VCF Offline Depot Appliance Apply unit.{% endif %} Selecting this option skips directly to Review; a second confirmation queues the scoped apply activity.</div>
+    <div class="alert warning">{% if vcf_depot_software_depot_id.id %}Refreshing replaces the current ID. Register the new ID with Broadcom and stage its matching activation code before the next download.{% else %}Generation runs through the VCF Offline Depot Appliance Apply unit.{% endif %} Selecting this option skips directly to Review; submitting Review queues the scoped apply activity.</div>
   </section>
   <section class="hidden" data-atlaso-wizard-step="credentials">
     <div class="settings-list">
@@ -423,7 +423,7 @@
   </section>
   <section class="hidden" data-atlaso-wizard-step="review">
     <div class="settings-list" data-atlaso-resource-review></div>
-    <div class="alert warning">Ordinary configuration saves update Atlaso desired state only. ID generation or refresh continues to a separate confirmation and is queued only after explicit submission.</div>
+    <div class="alert warning">Ordinary configuration saves update Atlaso desired state only. When ID generation or refresh is selected, submitting this Review queues only the VCF Offline Depot Appliance Apply unit.</div>
   </section>
 {% endcall %}
 {% include "partials/task_modals.html" %}
@@ -442,23 +442,6 @@
     <div class="confirm-modal-actions">
       <button class="button ghost" value="cancel" type="button" data-vcf-depot-tool-reset-modal-cancel>Cancel</button>
       <button class="button danger" type="submit">Reset package</button>
-    </div>
-  </form>
-</dialog>
-<dialog id="vcf-depot-generate-id-modal" class="confirm-modal" aria-labelledby="vcf-depot-generate-id-modal-title">
-  <form class="confirm-modal-panel form-stack" action="/appliance-apply" method="post">
-    <input type="hidden" name="csrf" value="{{ csrf_token }}">
-    <input type="hidden" name="selected_units" value="vcf_offline_depot">
-    <input type="hidden" name="refresh_vcf_depot_software_depot_id" value="true">
-    <div class="confirm-modal-body">
-      <p class="kicker">VCF Offline Depot</p>
-      <h2 id="vcf-depot-generate-id-modal-title">{{ "Refresh" if vcf_depot_software_depot_id.id else "Generate" }} software depot ID</h2>
-      <p class="muted">This queues the VCF Offline Depot apply unit and explicitly {{ "replaces the current" if vcf_depot_software_depot_id.id else "generates the first" }} software depot ID.{% if vcf_depot_software_depot_id.id %} Register the new ID and replace its activation code before the next download.{% endif %}</p>
-      <div class="alert error hidden" data-appliance-apply-submit-error role="alert"></div>
-    </div>
-    <div class="confirm-modal-actions">
-      <button class="button ghost" value="cancel" type="button" data-vcf-depot-generate-id-modal-cancel>Cancel</button>
-      <button class="button secondary" type="submit">Submit appliance changes</button>
     </div>
   </form>
 </dialog>
