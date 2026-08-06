@@ -89,8 +89,8 @@ These captures show responsive layouts and useful operational states referenced 
 
 *Figure: VCF Offline Depot profile ordering and staging state in the responsive viewport.*
 
-![Atlaso VCFDT configuration wizard showing only Software Depot ID and Review after generation is selected.](../assets/screenshots/vcf-offline-depot-configuration-wizard.webp)
+![Atlaso two-step VCFDT Software Depot ID wizard Review with a Queue appliance changes action and no additional confirmation dialog.](../assets/screenshots/vcf-offline-depot-configuration-wizard.webp)
 
-*Figure: VCFDT configuration hides credential and properties steps when Software Depot ID generation is selected.*
+*Figure: VCFDT Software Depot ID generation ends at Review, which directly queues the scoped appliance activity.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
