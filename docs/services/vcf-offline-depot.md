@@ -26,7 +26,8 @@ This verified appliance view provides visual orientation before you begin.
 1. Confirm the fixed depot mount is present and has sufficient working space.
 2. Configure the service listener and the HTTP user used by approved VCF targets.
 3. Select **Add** or **Update** for the VCF Download Tool package. The two-step package wizard reviews the archive name,
-   size, and desired-state boundary before upload. Then select **Configure** under **VCFDT configuration**. Atlaso
+   size, and desired-state boundary before upload. During upload, Review remains visible and reports transferred bytes
+   and upload percentage. Then select **Configure** under **VCFDT configuration**. Atlaso
    displays the
    version encoded in the validated staged archive name immediately; Appliance Apply later replaces it with VCFDT's
    authoritative `--version` result. The five-step wizard starts with the current Software Depot ID and refresh intent,

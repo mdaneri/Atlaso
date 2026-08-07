@@ -9551,6 +9551,9 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert 'data-vcf-depot-tool-package-form' in page.text
     assert 'action="/vcf-offline-depot/tool-package"' in page.text
     assert 'data-atlaso-wizard-step="package"' in page.text
+    assert 'data-vcf-depot-package-progress hidden' in page.text
+    assert 'data-vcf-depot-package-status role="status" aria-live="polite"' in page.text
+    assert "Select <strong>Stage package</strong> to start the upload." in page.text
     assert "Add or update the VCF Download Tool package" in page.text
     assert "no package staged" in page.text
     assert '>Add</span></button>' in page.text
@@ -9664,6 +9667,9 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "initializeVcfDepotConfigurationWizard" in app_js.text
     assert "Review VCFDT package staging" in app_js.text
     assert "Discard VCFDT package upload?" in app_js.text
+    assert 'form.toggleAttribute("aria-busy", uploading)' in app_js.text
+    assert "transferred" in app_js.text
+    assert "Atlaso is validating and saving the package" in app_js.text
     assert "window.AtlasoUiPatterns.createWizard" in app_js.text
     assert 'body.set("application_properties", content)' in app_js.text
     assert "new TextEncoder().encode(content).length > 512 * 1024" in app_js.text

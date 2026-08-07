@@ -348,8 +348,7 @@
       <span class="field-label"><span>VCF Download Tool package</span><button class="help-icon" type="button" data-help="Choose the proprietary vcf-download-tool-*.tar.gz package. Atlaso validates the archive before saving it as desired state; runtime staging remains part of Appliance Apply.">i</button></span>
       <span class="file-upload-control"><input class="file-upload-input" type="file" name="tool_archive_file" accept=".tar.gz,.gz,application/gzip,application/x-gzip" data-file-upload-input required><span class="file-upload-surface"><span class="file-upload-copy"><strong>Choose VCFDT package</strong><small data-file-upload-name>no file selected</small></span></span></span>
     </label>
-    <progress class="upload-progress" value="0" max="100" data-vcf-depot-package-progress hidden></progress>
-    <small class="muted" data-vcf-depot-package-status>Expected file: {{ vcf_depot_archive_pattern }}</small>
+    <small class="muted">Expected file: {{ vcf_depot_archive_pattern }}</small>
   </section>
   <section class="hidden" data-atlaso-wizard-step="review">
     <div class="settings-list">
@@ -358,6 +357,10 @@
       <div><span>Apply boundary</span><strong>Desired state only</strong></div>
     </div>
     <div class="alert warning">Staging validates and saves the package without extracting it or changing appliance runtime files. Global Appliance Apply performs runtime staging.</div>
+    <div class="form-stack" data-vcf-depot-package-upload-state>
+      <progress class="upload-progress" value="0" max="100" data-vcf-depot-package-progress hidden></progress>
+      <small class="muted" data-vcf-depot-package-status role="status" aria-live="polite">Select <strong>Stage package</strong> to start the upload.</small>
+    </div>
   </section>
 {% endcall %}
 {% set vcf_depot_configuration_steps = [

@@ -13484,6 +13484,13 @@ function initializeVcfDepotToolPackageWizard() {
   const reviewSize = form.querySelector("[data-vcf-depot-package-review-size]");
   const currentPackage = form.querySelector("[data-vcf-depot-package-current]");
   const selectedFile = () => fileInput instanceof HTMLInputElement ? fileInput.files?.[0] : null;
+  const wizardControls = () => [...form.querySelectorAll("[data-atlaso-wizard-nav], [data-atlaso-wizard-back], [data-atlaso-wizard-cancel], [data-atlaso-wizard-submit]")];
+  const setUploading = (uploading) => {
+    form.toggleAttribute("aria-busy", uploading);
+    wizardControls().forEach((control) => {
+      if (control instanceof HTMLButtonElement) control.disabled = uploading;
+    });
+  };
   const setStatus = (message, state = "idle") => {
     if (!(status instanceof HTMLElement)) return;
     status.textContent = message;
@@ -13501,10 +13508,21 @@ function initializeVcfDepotToolPackageWizard() {
       setStatus(`Uploading ${file.name}...`, "saving");
     });
     xhr.upload.addEventListener("progress", (event) => {
-      if (!(progress instanceof HTMLProgressElement) || !event.lengthComputable) return;
+      if (!(progress instanceof HTMLProgressElement)) return;
+      if (!event.lengthComputable) {
+        progress.removeAttribute("value");
+        setStatus(`Uploading ${file.name}: ${formatMonitorBytes(event.loaded)} transferred`, "saving");
+        return;
+      }
       const percent = Math.max(0, Math.min(100, Math.round((event.loaded / event.total) * 100)));
       progress.value = percent;
-      setStatus(`Uploading ${file.name}: ${percent}%`, "saving");
+      setStatus(`Uploading ${file.name}: ${formatMonitorBytes(event.loaded)} of ${formatMonitorBytes(event.total)} (${percent}%)`, "saving");
+    });
+    xhr.upload.addEventListener("load", () => {
+      if (progress instanceof HTMLProgressElement) {
+        progress.value = 100;
+      }
+      setStatus("Upload complete. Atlaso is validating and saving the package...", "saving");
     });
     xhr.addEventListener("load", () => {
       let payload = {};
@@ -13558,10 +13576,16 @@ function initializeVcfDepotToolPackageWizard() {
       const file = selectedFile();
       if (reviewName instanceof HTMLElement) reviewName.textContent = file?.name || "Not selected";
       if (reviewSize instanceof HTMLElement) reviewSize.textContent = file ? formatMonitorBytes(file.size) : "Not available";
+      if (progress instanceof HTMLProgressElement) {
+        progress.hidden = true;
+        progress.value = 0;
+      }
+      setStatus("Select Stage package to start the upload.");
     },
     onSubmit: async () => {
       const file = selectedFile();
       if (!file) return { valid: false, message: "Choose a VCF Download Tool package.", step: "package", field: "tool_archive_file" };
+      setUploading(true);
       try {
         const payload = await uploadPackage(file);
         const settingsForm = document.querySelector("[data-vcf-depot-settings]");
@@ -13574,6 +13598,8 @@ function initializeVcfDepotToolPackageWizard() {
         const message = error instanceof Error ? error.message : "The VCF Download Tool package could not be uploaded.";
         setStatus(message, "error");
         return { valid: false, message, step: "review" };
+      } finally {
+        setUploading(false);
       }
     },
   });
