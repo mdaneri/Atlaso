@@ -10641,7 +10641,7 @@ def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path):
     assert payload["profile_name"] == "vcf-install"
     assert payload["profile_status"] == "ready"
     assert payload["dry_run"] is False
-    assert payload["log_path"] == f"/var/lib/atlaso/vcfDownloadTool/task-logs/{payload['job_id']}-vcf-install.log"
+    assert payload["log_path"] == f"/var/lib/atlaso/vcfDownloadTool/task-logs/{payload['job_id']}.log"
     assert len(payload["commands"]) == 1
     assert payload["commands"][0]["command"][0] == "/var/lib/atlaso/vcfDownloadTool/active-tool/bin/vcf-download-tool"
     assert payload["commands"][0]["command"][1:3] == ["binaries", "download"]
@@ -10671,7 +10671,7 @@ def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path):
         assert job.status == "pending"
         assert '"profile_name": "vcf-install"' in (job.result or "")
         assert '"dry_run": false' in (job.result or "")
-        assert f'"log_path": "/var/lib/atlaso/vcfDownloadTool/task-logs/{job.id}-vcf-install.log"' in (job.result or "")
+        assert f'"log_path": "/var/lib/atlaso/vcfDownloadTool/task-logs/{job.id}.log"' in (job.result or "")
         assert '"trigger": "manual"' in (job.result or "")
         assert '"commands"' not in (job.result or "")
         assert "manual-secret-token" not in (job.result or "")

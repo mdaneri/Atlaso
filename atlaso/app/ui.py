@@ -175,6 +175,7 @@ from atlaso.app.services.vcf_depot_downloads import (
     disable_vcf_depot_profile_schedules,
     enqueue_vcf_depot_download,
     vcf_depot_schedules_for_profile,
+    vcf_depot_task_log_reference,
 )
 from atlaso.app.services.update_sources import (
     ATLASO_CHANNELS,
@@ -647,7 +648,6 @@ APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 TEMPLATES_DIR = APP_DIR / "templates"
 VCF_DEPOT_VDT_LOG_PATH = PurePosixPath("/var/lib/atlaso/vcfDownloadTool/active-tool/log/vdt.log")
-VCF_DEPOT_TASK_LOG_DIR = PurePosixPath("/var/lib/atlaso/vcfDownloadTool/task-logs")
 ATLASO_APP_LOG_PATH = get_settings().app_log_path
 KMS_SERVER_LOG_PATH = Path("/var/log/atlaso/kmip/server.log")
 APPLY_LOGGER = logging.getLogger("atlaso.appliance_apply")
@@ -3026,11 +3026,6 @@ def append_vcf_depot_log(text: str) -> None:
         handle.write(text)
         if not text.endswith("\n"):
             handle.write("\n")
-
-
-def vcf_depot_task_log_reference(job_id: str, profile_name: str = "") -> PurePosixPath:
-    profile_slug = re.sub(r"[^a-z0-9]+", "-", profile_name.lower()).strip("-") or "task"
-    return VCF_DEPOT_TASK_LOG_DIR / f"{job_id}-{profile_slug}.log"
 
 
 def vcf_depot_task_log_path(job_id: str, profile_name: str = "") -> Path:

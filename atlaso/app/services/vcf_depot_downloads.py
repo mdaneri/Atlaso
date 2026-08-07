@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from datetime import datetime
 from typing import Any
 from uuid import uuid4
@@ -73,9 +72,8 @@ def active_vcf_depot_download_job(db: Session) -> Job | None:
     ).first()
 
 
-def vcf_depot_task_log_reference(job_id: str, profile_name: str) -> str:
-    profile_slug = re.sub(r"[^a-z0-9]+", "-", profile_name.lower()).strip("-") or "task"
-    return f"{VCF_DEPOT_TASK_LOG_DIR}/{job_id}-{profile_slug}.log"
+def vcf_depot_task_log_reference(job_id: str, _profile_name: str = "") -> str:
+    return f"{VCF_DEPOT_TASK_LOG_DIR}/{job_id}.log"
 
 
 def vcf_depot_initial_job_result(

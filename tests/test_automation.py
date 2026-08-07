@@ -514,6 +514,7 @@ def test_vcf_download_database_guard_rejects_second_active_job(client):
     from atlaso.app.services.vcf_depot_downloads import (
         ActiveVcfDepotDownloadError,
         enqueue_vcf_depot_download,
+        vcf_depot_task_log_reference,
     )
 
     client.get("/login")
@@ -522,6 +523,9 @@ def test_vcf_download_database_guard_rejects_second_active_job(client):
         db.add(profile)
         db.flush()
         first = enqueue_vcf_depot_download(db, profile=profile, actor="admin", trigger="manual")
+        expected_log = f"/var/lib/atlaso/vcfDownloadTool/task-logs/{first.id}.log"
+        assert vcf_depot_task_log_reference(first.id, "before-rename") == expected_log
+        assert vcf_depot_task_log_reference(first.id, "after-rename") == expected_log
         with pytest.raises(ActiveVcfDepotDownloadError, match=first.id):
             enqueue_vcf_depot_download(db, profile=profile, actor="admin", trigger="manual")
         db.commit()
