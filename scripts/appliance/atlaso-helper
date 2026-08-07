@@ -7447,9 +7447,6 @@ def _generate_vcf_download_tool_software_depot_id() -> int:
             {
                 "vcf_offline_depot": "software depot ID generated",
                 "software_depot_id": software_depot_id,
-                "credentials_cleared": True,
-                "command": "vcf-download-tool configuration generate --software-depot-id",
-                "readback_command": "vcf-download-tool configuration get --software-depot-id",
             },
             sort_keys=True,
         )

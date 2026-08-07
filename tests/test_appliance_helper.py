@@ -4332,9 +4332,9 @@ def test_vcf_offline_depot_helper_generates_software_depot_id(monkeypatch, tmp_p
         ([str(wrapper), "configuration", "get", "--software-depot-id"], ""),
     ]
     assert payload["software_depot_id"] == "8c9506c6-7bdf-44d5-b2e9-50d829d66b99"
-    assert payload["credentials_cleared"] is True
-    assert payload["command"] == "vcf-download-tool configuration generate --software-depot-id"
-    assert payload["readback_command"] == "vcf-download-tool configuration get --software-depot-id"
+    assert "credentials_cleared" not in payload
+    assert "command" not in payload
+    assert "readback_command" not in payload
     assert all(not credential_path.exists() for credential_path in credential_paths)
 
 

@@ -2494,7 +2494,11 @@ def persist_vcf_depot_metadata_from_apply(db: Session, unit_results: list[dict[s
                         if stale_setting is not None:
                             db.delete(stale_setting)
                     clear_vcf_depot_credentials(db)
-                error = (stderr or stdout or "VCFDT software depot ID generation failed.").strip()
+                error = (
+                    _strip_task_action_metadata(stderr)
+                    or _strip_task_action_metadata(stdout)
+                    or "VCFDT software depot ID generation failed."
+                )
                 set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_ERROR_KEY, error)
         return
 
@@ -11775,14 +11779,21 @@ def run_vcf_depot_software_id_job(job_id: str) -> None:
                     message = f"{step.label} skipped because an earlier VCFDT operation failed."
                     step.error = message
                 else:
-                    command_succeeded = int(command_result.get("returncode") or 0) == 0
+                    command_returncode = int(command_result.get("returncode") or 0)
+                    command_succeeded = command_returncode == 0
                     if step.component_key == "generate-software-depot-id":
                         command_succeeded = command_succeeded and id_readback_valid
                     step.status = JobStatus.SUCCEEDED.value if command_succeeded else JobStatus.FAILED.value
-                    if command_succeeded or (step.component_key == "generate-software-depot-id" and not id_readback_valid):
+                    if command_succeeded:
+                        message = success_messages[step.component_key]
+                    elif step.component_key == "generate-software-depot-id" and command_returncode == 0:
                         message = success_messages[step.component_key]
                     else:
-                        message = f"{step.label} failed."
+                        failure_detail = apply_output_excerpt(
+                            _strip_task_action_metadata(command_result.get("stderr") or command_result.get("stdout")),
+                            limit=800,
+                        )
+                        message = f"{step.label} failed{f': {failure_detail}' if failure_detail else '.'}"
                     step.error = None if command_succeeded else message
                 step.result = json.dumps({"summary": [message], "stdout": message}, indent=2)
                 log_lines.append(f"{step.label}: {message}")

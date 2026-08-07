@@ -13399,6 +13399,23 @@ def test_successful_command_stderr_is_not_reported_as_task_failure():
     assert _task_failure_messages(failure) == ["nginx syntax failed"]
 
 
+def test_vcf_depot_software_id_metadata_survives_apply_output_redaction():
+    from atlaso.app.ui import apply_output_excerpt, helper_json_payload_with_key
+
+    output = json.dumps(
+        {
+            "vcf_offline_depot": "software depot ID generated",
+            "software_depot_id": "8c9506c6-7bdf-44d5-b2e9-50d829d66b99",
+        }
+    )
+
+    redacted = apply_output_excerpt(output)
+
+    assert helper_json_payload_with_key(redacted, "software_depot_id")["software_depot_id"] == (
+        "8c9506c6-7bdf-44d5-b2e9-50d829d66b99"
+    )
+
+
 def test_appliance_apply_rejects_submission_while_another_task_is_active(client):
     from sqlalchemy import select
 
