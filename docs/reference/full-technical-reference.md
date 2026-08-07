@@ -442,9 +442,9 @@ Atlaso runs `vcf-download-tool configuration generate --software-depot-id`, read
 `vcf-download-tool configuration get --software-depot-id`, and records only one unambiguous canonical readback value;
 a generation failure preserves the previous ID, while successful generation followed by failed or ambiguous readback
 invalidates it because VCFDT may already have replaced its runtime identity. Apply then syncs intent and applies HTTPS.
-Upload Broadcom
-credentials through the unified Broadcom credentials modal as either a download token or activation code, by file or
-pasted text; existing storage keys remain separate, and credential bodies are never returned in responses, previews,
+Stage Broadcom credentials through the combined VCFDT configuration wizard as either a download token or activation
+code, by file or pasted text; existing storage keys remain separate, and credential bodies are never returned in
+responses, previews,
 logs, or job output. Metadata and binaries profiles use the most recently staged runtime credential: the download-token
 file used by `--depot-download-token-file` or the activation-code file used by
 `--depot-download-activation-code-file`. Existing state with indistinguishable credential timestamps retains the

@@ -375,20 +375,14 @@
         <strong data-vcf-depot-activation-status data-present="{{ '1' if vcf_depot_activation_code.present else '0' }}">{{ "staged" if vcf_depot_activation_code.present else "not staged" }}</strong>
       </div>
     </div>
-    <p class="muted">Stored values are never loaded into the browser. Keep staged inputs unchanged or choose exactly one credential to use.</p>
-    {% if vcf_depot_download_token.present or vcf_depot_activation_code.present %}
-    <label class="checkbox-row">
-      <input type="radio" name="credential_replacement_choice" value="preserve" data-vcf-depot-credential-choice checked>
-      <span>Keep staged credentials unchanged</span>
-    </label>
-    {% endif %}
-    <label class="checkbox-row">
-      <input type="radio" name="credential_replacement_choice" value="download_token" data-vcf-depot-credential-choice>
-      <span>{{ "Replace" if vcf_depot_download_token.present else "Use" }} download token</span>
-    </label>
-    <label class="checkbox-row">
-      <input type="radio" name="credential_replacement_choice" value="activation_code" data-vcf-depot-credential-choice>
-      <span>{{ "Replace" if vcf_depot_activation_code.present else "Use" }} activation code</span>
+    <p class="muted">Stored values are never loaded into the browser. Select one action for this configuration save.</p>
+    <label>
+      <span class="field-label"><span>Credential action</span><button class="help-icon" type="button" data-help="Keep an existing staged credential unchanged, or upload or paste exactly one replacement. Stored values are never shown in the browser.">i</button></span>
+      <select name="credential_replacement_choice" data-vcf-depot-credential-choice required>
+        {% if vcf_depot_download_token.present or vcf_depot_activation_code.present %}<option value="preserve">Keep staged credentials unchanged</option>{% else %}<option value="" selected disabled>Select a credential</option>{% endif %}
+        <option value="download_token">{{ "Replace" if vcf_depot_download_token.present else "Use" }} download token</option>
+        <option value="activation_code">{{ "Replace" if vcf_depot_activation_code.present else "Use" }} activation code</option>
+      </select>
     </label>
   </section>
   <section class="hidden" data-atlaso-wizard-step="credential-input">
@@ -415,10 +409,10 @@
   </section>
   <section class="hidden" data-atlaso-wizard-step="properties">
     <p class="muted">Atlaso saves this desired-state file transactionally with any selected credential replacements. Global Appliance Apply installs it into the active VCFDT configuration.</p>
-    <label>
-      <span class="field-label"><span>application-prodv2.properties</span><button class="help-icon" type="button" data-help="Non-empty UTF-8 INI content, limited to 512 KiB. The editor starts with the saved, packaged, or Atlaso default content.">i</button></span>
-      <textarea class="code-editor-textarea" name="application_properties" rows="22" spellcheck="false" data-monaco-editor data-monaco-language="ini" data-vcf-depot-properties-textarea required>{{ vcf_depot_application_properties.content }}</textarea>
-    </label>
+    <div class="form-stack" data-vcf-depot-properties-editor>
+      <div class="field-label"><span>application-prodv2.properties</span><button class="help-icon" type="button" data-help="Non-empty UTF-8 INI content, limited to 512 KiB. The editor starts with the saved, packaged, or Atlaso default content.">i</button></div>
+      <textarea class="code-editor-textarea" name="application_properties" rows="22" spellcheck="false" aria-label="Application properties editor" data-monaco-editor data-monaco-language="ini" data-vcf-depot-properties-textarea required>{{ vcf_depot_application_properties.content }}</textarea>
+    </div>
     <small class="muted" data-vcf-depot-properties-status>Source: {{ vcf_depot_application_properties.source }}{% if vcf_depot_application_properties.updated_at %} · saved {{ vcf_depot_application_properties.updated_at }}{% endif %}</small>
   </section>
   <section class="hidden" data-atlaso-wizard-step="review">

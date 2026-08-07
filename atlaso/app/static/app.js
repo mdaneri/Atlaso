@@ -13240,8 +13240,14 @@ function initializeVcfDepotConfigurationWizard() {
   let wizard;
 
   const selectedCredential = () => {
-    const choice = form.querySelector('input[name="credential_replacement_choice"]:checked');
-    return choice instanceof HTMLInputElement ? choice.value : "";
+    const choice = form.elements.namedItem("credential_replacement_choice");
+    return choice instanceof HTMLSelectElement ? choice.value : "";
+  };
+  const skippedConfigurationSteps = () => {
+    if (refreshId instanceof HTMLInputElement && refreshId.checked) {
+      return ["credentials", "credential-input", "properties"];
+    }
+    return selectedCredential() === "preserve" ? ["credential-input"] : [];
   };
   const replacementControls = (credentialType) => {
     const panel = form.querySelector(`[data-vcf-depot-credential-replacement="${credentialType}"]`);
@@ -13260,6 +13266,7 @@ function initializeVcfDepotConfigurationWizard() {
   form.querySelectorAll("[data-vcf-depot-credential-choice]").forEach((choice) => {
     choice.addEventListener("change", () => {
       ["download_token", "activation_code"].forEach(syncReplacementPanel);
+      wizard?.setSkippedSteps(skippedConfigurationSteps());
     });
   });
 
@@ -13322,7 +13329,7 @@ function initializeVcfDepotConfigurationWizard() {
     discardTitle: "Discard VCFDT configuration changes?",
     discardMessage: "Credential replacements and application-properties edits entered in this wizard will be lost.",
     onOpen: ({ controller }) => {
-      controller.setSkippedSteps(refreshId instanceof HTMLInputElement && refreshId.checked ? ["credentials", "credential-input", "properties"] : []);
+      controller.setSkippedSteps(skippedConfigurationSteps());
       ["download_token", "activation_code"].forEach(syncReplacementPanel);
       if (properties instanceof HTMLTextAreaElement && window.AtlasoMonaco && typeof window.AtlasoMonaco.setValue === "function") {
         window.AtlasoMonaco.setValue(properties, properties.defaultValue);
@@ -13337,7 +13344,10 @@ function initializeVcfDepotConfigurationWizard() {
           : "Save VCFDT configuration";
       }
       if (step.id === "properties" && properties instanceof HTMLTextAreaElement && window.AtlasoMonaco && typeof window.AtlasoMonaco.focus === "function") {
-        window.requestAnimationFrame(() => window.AtlasoMonaco.focus(properties));
+        window.requestAnimationFrame(() => {
+          window.AtlasoMonaco.layout?.(properties);
+          window.AtlasoMonaco.focus(properties);
+        });
       }
     },
     validateStep: ({ step }) => {
@@ -13438,7 +13448,7 @@ function initializeVcfDepotConfigurationWizard() {
     },
   });
   refreshId?.addEventListener("change", () => {
-    wizard.setSkippedSteps(refreshId instanceof HTMLInputElement && refreshId.checked ? ["credentials", "credential-input", "properties"] : []);
+    wizard.setSkippedSteps(skippedConfigurationSteps());
   });
   document.querySelectorAll("[data-vcf-depot-configuration-open]").forEach((launcher) => {
     if (!(launcher instanceof HTMLButtonElement)) return;

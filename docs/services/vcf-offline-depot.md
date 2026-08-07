@@ -28,11 +28,15 @@ This verified appliance view provides visual orientation before you begin.
 3. Upload the VCF Download Tool package, then select **Configure** under **VCFDT configuration**. Atlaso displays the
    version encoded in the validated staged archive name immediately; Appliance Apply later replaces it with VCFDT's
    authoritative `--version` result. The five-step wizard starts with the current Software Depot ID and refresh intent,
-   then offers an exclusive, state-aware credential choice. **Keep** appears only when an input is already staged;
+   then offers a standard **Credential action** selector. **Keep staged credentials unchanged** appears only when an
+   input is already staged;
    absent inputs are labeled **Use** and existing inputs are labeled **Replace**. When no credential exists, selecting
    either the download token or activation code is required. The selected input gets its own upload-or-paste step before
-   `application-prodv2.properties` and Review.
-   Credential values are never loaded into the browser; an uploaded text file takes precedence over pasted text.
+   `application-prodv2.properties` and Review. Choosing **Keep staged credentials unchanged** removes the credential-input
+   step because no secret input is needed.
+Credential values are never loaded into the browser; an uploaded text file takes precedence over pasted text.
+The application-properties Monaco editor is directly editable and synchronizes every change to the submitted textarea;
+its visible editor is not nested in the source textarea's label.
 4. Save the wizard. Credentials and application properties are committed together, but the save does not mutate the
    appliance or replace an existing Software Depot ID.
 5. Review certificate readiness and the generated software depot identity. Atlaso reads the persisted identity back

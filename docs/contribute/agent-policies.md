@@ -634,13 +634,15 @@ status: current
   writes `/etc/atlaso/nginx/htpasswd/vcf-offline-depot.htpasswd` from the applied Photon password hash when
   authentication is required, and reloads nginx. The non-grid settings rail exposes one VCFDT configuration summary;
   its five-step shared `createWizard(...)` flow starts with the current Software Depot ID and refresh intent, then
-  covers an exclusive presence-only Broadcom credential choice, a dedicated upload-or-paste step,
+  covers a standard select-based, presence-only Broadcom credential choice, a conditional upload-or-paste step,
   `application-prodv2.properties`, and review. Credential and
   application-properties changes must use one transactional desired-state save. The wizard must never preload stored
   credential values, must prefer an uploaded credential file over pasted text, and must return only presence flags,
   safe display names, the version parsed from the validated staged archive name, properties metadata,
   validation/previews, and Software Depot ID metadata. Credential choices are state-aware: omit Keep when none is
-  staged, use Replace only for present inputs, and require choosing which absent input to use. If refresh is selected,
+  staged, use Replace only for present inputs, require choosing which absent input to use, and hide the credential-input
+  step when Keep is selected. The bundled Monaco application-properties editor must remain writable, synchronize its
+  source textarea, and avoid a wrapping label that can steal pointer focus from the editor. If refresh is selected,
   hide the credential and properties steps so the rail contains only Software Depot ID and Review, without resaving
   unchanged configuration; Review is the explicit confirmation boundary and must submit refresh intent directly through
   the global `/appliance-apply` workflow for `vcf_offline_depot`, not call the helper directly or open another dialog.

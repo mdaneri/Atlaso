@@ -827,10 +827,10 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert 'url.pathname.startsWith("/api/")' in service_worker.text
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
-    assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6" in service_worker.text
+    assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
     assert "/static/app.css?v=vcfdt-configuration-248-20260806-3" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
-    assert "/static/app.js?v=vcfdt-configuration-248-20260806-6" in service_worker.text
+    assert "/static/app.js?v=vcfdt-configuration-248-20260806-7" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -850,8 +850,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=vcfdt-configuration-248-20260806-6"),
-        (public_base, "/static/app.js?v=vcfdt-configuration-248-20260806-6"),
+        (base, "/static/app.js?v=vcfdt-configuration-248-20260806-7"),
+        (public_base, "/static/app.js?v=vcfdt-configuration-248-20260806-7"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8"
@@ -1357,7 +1357,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vcfdt-configuration-248-20260806-3" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=vcfdt-configuration-248-20260806-6" in page.text
+    assert "/static/app.js?v=vcfdt-configuration-248-20260806-7" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -3844,6 +3844,11 @@ def test_monaco_is_the_only_bundled_editor_and_kickstart_uses_shared_collection(
     assert 'linePrefix.endsWith("{{")' in monaco_source
     assert "requestAnimationFrame(() => editor.trigger" in monaco_source
     assert '"editor.action.triggerSuggest"' in monaco_source
+    assert 'ariaLabel: textarea.getAttribute("aria-label") || "Editor content"' in monaco_source
+    assert "readOnly: false" in monaco_source
+    assert "domReadOnly: false" in monaco_source
+    assert "function layout(textarea)" in monaco_source
+    assert "{ enhanceTextarea, focus, getValue, layout, setLanguage, setValue }" in monaco_source
     assert "modelCompletions" in monaco_source
     assert 'headers: { Accept: "application/json", "X-Atlaso-Grid": "1" }' in app_js
     assert '"atlaso-monaco-expand-button"' in monaco_source
@@ -9561,17 +9566,20 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert 'data-atlaso-wizard-step="properties"' in page.text
     assert 'data-atlaso-wizard-step="software-depot-id"' in page.text
     assert 'data-atlaso-wizard-step="review"' in page.text
-    assert 'name="credential_replacement_choice" value="download_token"' in page.text
+    assert '<select name="credential_replacement_choice" data-vcf-depot-credential-choice required>' in page.text
+    assert '<option value="" selected disabled>Select a credential</option>' in page.text
+    assert '<option value="download_token">Use download token</option>' in page.text
     assert 'name="download_token_file"' in page.text
     assert 'name="download_token_text"' in page.text
-    assert 'name="credential_replacement_choice" value="activation_code"' in page.text
-    assert 'name="credential_replacement_choice" value="preserve"' not in page.text
-    assert ">Use download token</span>" in page.text
-    assert ">Use activation code</span>" in page.text
+    assert '<option value="activation_code">Use activation code</option>' in page.text
+    assert '<option value="preserve">' not in page.text
     assert 'name="activation_code_file"' in page.text
     assert 'name="activation_code_text"' in page.text
     assert "application-prodv2.properties" in page.text
     assert 'name="application_properties"' in page.text
+    assert 'aria-label="Application properties editor"' in page.text
+    assert 'data-vcf-depot-properties-editor' in page.text
+    assert '<label>\n      <span class="field-label"><span>application-prodv2.properties' not in page.text
     assert "Save VCFDT configuration" in page.text
     assert "lcm.depot.adapter.host=dl.broadcom.com" in page.text
     assert "/vcf-offline-depot/profiles/" in page.text
@@ -9655,6 +9663,8 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert 'step.id === "software-depot-id"' in app_js.text
     assert 'return "review"' in app_js.text
     assert 'selectedCredential() === "preserve"' in app_js.text
+    assert 'choice instanceof HTMLSelectElement' in app_js.text
+    assert 'window.AtlasoMonaco.layout?.(properties)' in app_js.text
     assert "Queue appliance changes" in app_js.text
     assert 'controller.setSkippedSteps' in app_js.text
     assert 'wizard.setSkippedSteps' in app_js.text
@@ -10208,7 +10218,7 @@ def test_vcf_offline_depot_apply_stages_tool_without_download_profiles(client, t
         assert "vcf-download-tool binaries download" not in (job.result or "")
 
 
-def test_vcf_offline_depot_apply_can_disable_https_without_vcfdt_tool_steps(client, tmp_path):
+def test_vcf_offline_depot_apply_stages_vcfdt_while_https_is_disabled(client, tmp_path):
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -10242,9 +10252,9 @@ def test_vcf_offline_depot_apply_can_disable_https_without_vcfdt_tool_steps(clie
         assert job.status == "succeeded"
         assert "validate" in (job.result or "")
         assert "apply-https" in (job.result or "")
-        assert "stage-tool" not in (job.result or "")
-        assert "generate-software-depot-id" not in (job.result or "")
-        assert "apply-properties" not in (job.result or "")
+        assert "stage-tool" in (job.result or "")
+        assert "apply-properties" in (job.result or "")
+        assert "generate-software-depot-id" in (job.result or "")
 
 
 def test_vcf_offline_depot_tool_reset_can_preserve_or_clear_configuration(client, tmp_path, monkeypatch):
@@ -10296,9 +10306,9 @@ def test_vcf_offline_depot_tool_reset_can_preserve_or_clear_configuration(client
     assert refreshed.text.count("<strong data-vcf-depot-tool-version>9.1.0</strong>") == 2
     assert 'data-vcf-depot-tool-reset-action>Reset</button>' in refreshed.text
     assert 'button danger compact-button hidden' not in refreshed.text
-    assert 'name="credential_replacement_choice" value="preserve"' in refreshed.text
-    assert ">Replace download token</span>" in refreshed.text
-    assert ">Use activation code</span>" in refreshed.text
+    assert '<option value="preserve">Keep staged credentials unchanged</option>' in refreshed.text
+    assert '<option value="download_token">Replace download token</option>' in refreshed.text
+    assert '<option value="activation_code">Use activation code</option>' in refreshed.text
 
     properties = client.post(
         "/vcf-offline-depot/application-properties",

@@ -5,7 +5,7 @@ const ATLASO_ASSETS = [
   "/static/offline.html",
   "/static/app.css?v=vcfdt-configuration-248-20260806-3",
   "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8",
-  "/static/app.js?v=vcfdt-configuration-248-20260806-6",
+  "/static/app.js?v=vcfdt-configuration-248-20260806-7",
   "/static/terminal.js?v=web-terminal-review-20260716-3",
   "/static/vendor/xterm/xterm.css?v=5.5.0",
   "/static/vendor/xterm/xterm.js?v=5.5.0",
@@ -18,9 +18,9 @@ const ATLASO_ASSETS = [
   "/static/brand/atlaso-app-icon-dark-512.png",
   "/static/vendor/tabulator/tabulator.min.css",
   "/static/vendor/tabulator/tabulator.min.js",
-  "/static/vendor/monaco/atlaso-monaco.min.css?v=atlaso-monaco-20260729-6",
-  "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6",
-  "/static/vendor/monaco/editor.worker.js?v=atlaso-monaco-20260729-6",
+  "/static/vendor/monaco/atlaso-monaco.min.css?v=atlaso-monaco-20260806-7",
+  "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7",
+  "/static/vendor/monaco/editor.worker.js?v=atlaso-monaco-20260806-7",
   "/static/vendor/prism/prism-core.min.js",
   "/static/vendor/prism/prism-diff.min.js"
 ];
