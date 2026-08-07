@@ -1100,7 +1100,7 @@
       "viewport": "1600x1000",
       "source_commit": "01a995e62e4a+working-tree",
       "atlaso_version": "0.9.80",
-      "caption": "VCFDT Software Depot ID generation ends at Review, which queues a dedicated pending task for an explicit start.",
+      "caption": "VCFDT Software Depot ID generation ends at Review, which immediately dispatches a dedicated identity task.",
       "alt": "Atlaso two-step VCFDT Software Depot ID wizard Review with a Queue Software Depot ID task action and no additional confirmation dialog.",
       "capture_method": "codex-in-app-browser",
       "documentation_page": "services/vcf-offline-depot.md",

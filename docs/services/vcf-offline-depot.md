@@ -74,10 +74,11 @@ When no Software Depot ID exists, **Generate the Software Depot ID** is selected
 required before credentials can be registered. Selecting generation, or **Refresh the Software Depot ID** for an
 existing ID, immediately hides
 the credential, credential-input, and properties steps, leaving a two-step Software Depot ID and Review flow. It does
-not resave unchanged credentials or properties. **Queue Software Depot ID task** on Review creates a dedicated pending
-VCFDT identity task; it does not start or change appliance state automatically. Atlaso opens the ordinary Tasks view for
-that new job; use **Start task** there when ready. The task stages the required VCFDT runtime inputs, generates or
-refreshes the identity, and persists its safe metadata without invoking nginx or global Appliance Apply. Once
+not resave unchanged credentials or properties. **Queue Software Depot ID task** on Review creates and immediately
+dispatches a dedicated VCFDT identity task. Atlaso opens the ordinary Tasks view for that job while it stages the
+required VCFDT runtime inputs, applies the properties and CEIP prerequisites, and generates and reads back the identity
+without invoking nginx or global Appliance Apply. The task exposes those four safe child operations and sanitized logs.
+It succeeds only after Atlaso persists a non-empty Software Depot ID (and a different ID for refresh). Once
 VCFDT changes the identity, Atlaso removes both the staged and runtime download token and activation code. A generation
 failure that leaves the identity unchanged preserves both credentials. Register the new displayed ID, then stage a
 matching credential before retrying a download. Use the copy control on the **Depot ID Ready** status tile to copy the

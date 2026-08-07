@@ -830,7 +830,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
     assert "/static/app.css?v=vcfdt-configuration-248-20260807-4" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
-    assert "/static/app.js?v=vcfdt-configuration-248-20260807-13" in service_worker.text
+    assert "/static/app.js?v=vcfdt-configuration-248-20260807-14" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -850,8 +850,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=vcfdt-configuration-248-20260807-13"),
-        (public_base, "/static/app.js?v=vcfdt-configuration-248-20260807-13"),
+        (base, "/static/app.js?v=vcfdt-configuration-248-20260807-14"),
+        (public_base, "/static/app.js?v=vcfdt-configuration-248-20260807-14"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8"
@@ -1358,7 +1358,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vcfdt-configuration-248-20260807-4" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=vcfdt-configuration-248-20260807-13" in page.text
+    assert "/static/app.js?v=vcfdt-configuration-248-20260807-14" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -9683,7 +9683,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert 'softwareDepotIdPresent ? "Refresh the Software Depot ID" : "Generate the Software Depot ID"' in app_js.text
     assert 'choice.disabled = refreshId instanceof HTMLInputElement && refreshId.checked' in app_js.text
     assert "Queueing the VCFDT Software Depot ID task" in app_js.text
-    assert "Start task" in app_js.text
+    assert "task queued for execution" in app_js.text
     assert 'data-vcf-depot-queue-status role="status" aria-live="polite"' in page.text
     assert 'step.id === "software-depot-id"' in app_js.text
     assert 'return "review"' in app_js.text
@@ -11186,6 +11186,7 @@ def test_vcf_offline_depot_prepare_runtime_stages_saved_application_properties(c
 def test_vcf_offline_depot_queues_software_depot_id_task_and_persists_safe_readback(client, tmp_path, monkeypatch):
     from sqlalchemy import select
 
+    from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Setting, VcfOfflineDepotSettings
     from atlaso.app.services.vcf_offline_depot import (
@@ -11214,6 +11215,7 @@ def test_vcf_offline_depot_queues_software_depot_id_task_and_persists_safe_readb
     login(client)
     page = client.get("/vcf-offline-depot")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    monkeypatch.setattr(ui, "run_vcf_depot_software_id_job", lambda _job_id: None)
 
     response = client.post(
         "/vcf-offline-depot/software-depot-id/generate",
@@ -11225,8 +11227,8 @@ def test_vcf_offline_depot_queues_software_depot_id_task_and_persists_safe_readb
     payload = response.json()
     assert payload["status"] == "pending"
     assert payload["task"]["type"] == "vcf-depot-software-id"
-    assert payload["task"]["state"] == "pending-start"
-    assert payload["task"]["can_start"] is True
+    assert payload["task"]["state"] == "pending"
+    assert payload["task"]["can_start"] is False
 
     with SessionLocal() as db:
         persist_vcf_depot_metadata_from_apply(
@@ -13178,9 +13180,7 @@ def test_appliance_apply_carries_explicit_vcf_depot_id_refresh_intent_to_executi
         assert completed_job.status == "succeeded"
 
 
-def test_vcf_depot_software_id_task_can_queue_for_explicit_start(client, monkeypatch):
-    import json
-
+def test_vcf_depot_software_id_task_queues_for_immediate_execution(client, monkeypatch):
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job
@@ -13204,24 +13204,17 @@ def test_vcf_depot_software_id_task_can_queue_for_explicit_start(client, monkeyp
     assert response.status_code == 202
     queued = response.json()["task"]
     assert queued["status"] == "pending"
-    assert queued["state"] == "pending-start"
+    assert queued["state"] == "pending"
     assert queued["type"] == "vcf-depot-software-id"
     assert queued["type_label"] == "VCFDT Software Depot ID"
-    assert queued["can_start"] is True
-    assert started_jobs == []
-    with SessionLocal() as db:
-        submitted_job = db.get(Job, queued["id"])
-        assert json.loads(submitted_job.result)["manual_start_required"] is True
-
-    start_response = client.post(
-        f"/tasks/{queued['id']}/start",
-        data={"csrf": csrf},
-        headers={"Accept": "application/json"},
-    )
-
-    assert start_response.status_code == 202
+    assert queued["can_start"] is False
     assert started_jobs == [queued["id"]]
-    assert start_response.json()["task"]["can_start"] is False
+    assert [step["label"] for step in queued["_children"]] == [
+        "Stage VCF Download Tool",
+        "Apply application properties",
+        "Apply VMware CEIP preference",
+        "Generate and read back Software Depot ID",
+    ]
 
 
 def test_queued_vcf_depot_software_id_task_can_be_cancelled_before_start(client, monkeypatch):
@@ -13249,7 +13242,7 @@ def test_queued_vcf_depot_software_id_task_can_be_cancelled_before_start(client,
     assert cancelled["status"] == "cancelled"
     assert cancelled["state"] == "cancelled"
     assert cancelled["can_start"] is False
-    assert "_children" not in cancelled
+    assert len(cancelled["_children"]) == 4
 
 
 def test_vcf_depot_software_id_runner_persists_raw_metadata_before_task_redaction(client, monkeypatch):
@@ -13266,7 +13259,12 @@ def test_vcf_depot_software_id_runner_persists_raw_metadata_before_task_redactio
         "success": True,
         "status": "succeeded",
         "dry_run": False,
-        "commands": [{"command": raw_command, "returncode": 0, "stdout": '{"software_depot_id":"generated-id"}', "stderr": ""}],
+        "commands": [
+            {"command": ["atlaso-helper", "stage-tool"], "returncode": 0, "stdout": "staged", "stderr": ""},
+            {"command": ["atlaso-helper", "apply-properties"], "returncode": 0, "stdout": "applied", "stderr": ""},
+            {"command": ["atlaso-helper", "apply-ceip"], "returncode": 0, "stdout": "applied", "stderr": ""},
+            {"command": raw_command, "returncode": 0, "stdout": '{"software_depot_id":"generated-id"}', "stderr": ""},
+        ],
         "summary": ["software depot ID generated"],
         "validation_errors": [],
         "validation_warnings": [],
@@ -13277,11 +13275,11 @@ def test_vcf_depot_software_id_runner_persists_raw_metadata_before_task_redactio
     persisted_commands: list[list[str]] = []
     monkeypatch.setattr(ui, "appliance_apply_status", lambda _db, _unit_id: {"id": "vcf_offline_depot"})
     monkeypatch.setattr(ui, "execute_appliance_apply_unit", lambda _unit: raw_result)
-    monkeypatch.setattr(
-        ui,
-        "persist_vcf_depot_metadata_from_apply",
-        lambda _db, results: persisted_commands.append(results[0]["commands"][0]["command"]),
-    )
+    def persist_readback(db, results):
+        persisted_commands.append(results[0]["commands"][-1]["command"])
+        ui.set_setting_value(db, ui.VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY, "generated-id")
+
+    monkeypatch.setattr(ui, "persist_vcf_depot_metadata_from_apply", persist_readback)
     with SessionLocal() as db:
         db.add(
             Job(
@@ -13290,7 +13288,7 @@ def test_vcf_depot_software_id_runner_persists_raw_metadata_before_task_redactio
                 status=JobStatus.PENDING.value,
                 created_by="admin",
                 progress_percent=0,
-                result=json.dumps({"manual_start_required": True, "state": "pending"}),
+                result=json.dumps({"state": "pending"}),
             )
         )
         db.commit()
@@ -13303,9 +13301,55 @@ def test_vcf_depot_software_id_runner_persists_raw_metadata_before_task_redactio
         assert completed.status == "succeeded"
         assert "credential-value" not in completed.result
         assert "Software Depot ID generated and saved." in completed.result
+        assert "generated-id" in completed.result
+        assert [step.status for step in completed.steps] == ["succeeded"] * 4
 
 
-def test_vcf_depot_software_id_startup_recovers_running_but_preserves_pending(client):
+def test_vcf_depot_software_id_runner_fails_when_id_is_not_persisted(client, monkeypatch):
+    import json
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
+
+    raw_result = {
+        "unit_id": "vcf_offline_depot",
+        "label": "VCF Offline Depot",
+        "success": True,
+        "status": "succeeded",
+        "commands": [
+            {"returncode": 0},
+            {"returncode": 0},
+            {"returncode": 0},
+            {"returncode": 0},
+        ],
+    }
+    monkeypatch.setattr(ui, "appliance_apply_status", lambda _db, _unit_id: {"id": "vcf_offline_depot"})
+    monkeypatch.setattr(ui, "execute_appliance_apply_unit", lambda _unit: raw_result)
+    monkeypatch.setattr(ui, "persist_vcf_depot_metadata_from_apply", lambda _db, _results: None)
+    with SessionLocal() as db:
+        db.add(
+            Job(
+                id="job_vcfdt_missing_id",
+                type="vcf-depot-software-id",
+                status=JobStatus.PENDING.value,
+                created_by="admin",
+                progress_percent=0,
+                result=json.dumps({"state": "pending"}),
+            )
+        )
+        db.commit()
+
+    ui.run_vcf_depot_software_id_job("job_vcfdt_missing_id")
+
+    with SessionLocal() as db:
+        completed = db.get(Job, "job_vcfdt_missing_id")
+        assert completed.status == JobStatus.FAILED.value
+        assert "without a new persisted Software Depot ID" in completed.result
+        assert completed.steps[-1].status == JobStatus.FAILED.value
+
+
+def test_vcf_depot_software_id_startup_recovers_pending_and_running(client):
     import json
 
     from atlaso.app.database import SessionLocal
@@ -13321,7 +13365,7 @@ def test_vcf_depot_software_id_startup_recovers_running_but_preserves_pending(cl
                     status=JobStatus.RUNNING.value,
                     created_by="admin",
                     progress_percent=30,
-                    result=json.dumps({"state": "running", "manual_start_required": True}),
+                    result=json.dumps({"state": "running"}),
                 ),
                 Job(
                     id="job_vcfdt_id_pending",
@@ -13329,20 +13373,20 @@ def test_vcf_depot_software_id_startup_recovers_running_but_preserves_pending(cl
                     status=JobStatus.PENDING.value,
                     created_by="admin",
                     progress_percent=0,
-                    result=json.dumps({"state": "pending-start", "manual_start_required": True}),
+                    result=json.dumps({"state": "pending"}),
                 ),
             ]
         )
         db.commit()
 
-        assert recover_interrupted_vcf_depot_software_id_jobs(db) == 1
+        assert recover_interrupted_vcf_depot_software_id_jobs(db) == 2
         running = db.get(Job, "job_vcfdt_id_running")
         pending = db.get(Job, "job_vcfdt_id_pending")
         assert running.status == JobStatus.FAILED.value
         assert running.progress_percent == 100
         assert "restart" in (running.error or "")
-        assert pending.status == JobStatus.PENDING.value
-        assert pending.progress_percent == 0
+        assert pending.status == JobStatus.FAILED.value
+        assert pending.progress_percent == 100
 
 
 def test_successful_command_stderr_is_not_reported_as_task_failure():

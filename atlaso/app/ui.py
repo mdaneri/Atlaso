@@ -2632,11 +2632,10 @@ def recover_interrupted_vcf_depot_download_jobs(db: Session) -> int:
 
 
 def recover_interrupted_vcf_depot_software_id_jobs(db: Session) -> int:
-    """Fail only running ID tasks; queued manual tasks remain available to start."""
     jobs = db.scalars(
         select(Job).where(
             Job.type == "vcf-depot-software-id",
-            Job.status == JobStatus.RUNNING.value,
+            Job.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value]),
         )
     ).all()
     if not jobs:
@@ -2646,7 +2645,7 @@ def recover_interrupted_vcf_depot_software_id_jobs(db: Session) -> int:
         job.status = JobStatus.FAILED.value
         job.finished_at = finished
         job.progress_percent = 100
-        job.error = "Interrupted by a Atlaso restart while generating the VCFDT Software Depot ID."
+        job.error = "Interrupted by a Atlaso restart before VCFDT Software Depot ID generation completed."
         payload = _job_payload(job)
         payload["state"] = JobStatus.FAILED.value
         payload["interrupted"] = True
@@ -6083,18 +6082,6 @@ def _can_cancel_task(job: Job, identity: Identity | None = None) -> bool:
     return identity.has_role(Role.SERVICE_ADMIN.value) and job.type in SERVICE_ADMIN_CANCELLABLE_JOB_TYPES
 
 
-def _can_start_task(job: Job, identity: Identity | None = None) -> bool:
-    payload = _job_payload(job)
-    if (
-        job.type != "vcf-depot-software-id"
-        or job.status != JobStatus.PENDING.value
-        or not payload.get("manual_start_required")
-        or payload.get("start_requested_at")
-    ):
-        return False
-    return identity is None or identity.has_role(Role.ADMIN.value)
-
-
 def _job_step_payload(step: JobStep) -> dict[str, Any]:
     if not step.result:
         return {}
@@ -6142,7 +6129,7 @@ def _task_row(job: Job, identity: Identity | None = None) -> dict[str, Any]:
         "error": error,
         "error_messages": error_messages,
         "can_cancel": _can_cancel_task(job, identity),
-        "can_start": _can_start_task(job, identity),
+        "can_start": False,
     }
     if job.type == "vcf-depot-download":
         row["log_url"] = f"/vcf-offline-depot/tasks/{job.id}/log"
@@ -11708,17 +11695,50 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
             )
 
 
+VCF_DEPOT_SOFTWARE_ID_TASK_STEPS = (
+    ("stage-tool", "Stage VCF Download Tool"),
+    ("apply-properties", "Apply application properties"),
+    ("apply-ceip", "Apply VMware CEIP preference"),
+    ("generate-software-depot-id", "Generate and read back Software Depot ID"),
+)
+
+
+def ensure_vcf_depot_software_id_task_steps(db: Session, job: Job) -> list[JobStep]:
+    existing = {step.component_key: step for step in job.steps}
+    for position, (component_key, label) in enumerate(VCF_DEPOT_SOFTWARE_ID_TASK_STEPS, start=1):
+        if component_key in existing:
+            continue
+        step = JobStep(
+            id=f"{job.id}:{component_key}",
+            job=job,
+            component_key=component_key,
+            label=label,
+            position=position,
+            status=JobStatus.PENDING.value,
+            progress_percent=0,
+            result=json.dumps({"summary": [f"{label} queued."]}, indent=2),
+        )
+        db.add(step)
+        existing[component_key] = step
+    db.flush()
+    return [existing[component_key] for component_key, _label in VCF_DEPOT_SOFTWARE_ID_TASK_STEPS]
+
+
 def run_vcf_depot_software_id_job(job_id: str) -> None:
     with SessionLocal() as db:
-        job = db.get(Job, job_id)
+        job = db.scalar(select(Job).options(selectinload(Job.steps)).where(Job.id == job_id))
         if job is None or job.type != "vcf-depot-software-id" or job.status != JobStatus.PENDING.value:
             return
+        task_steps = ensure_vcf_depot_software_id_task_steps(db, job)
         payload = _job_payload(job)
+        previous_id = str(vcf_depot_software_depot_id_context(db).get("id") or "").strip()
         job.status = JobStatus.RUNNING.value
         job.started_at = utcnow()
-        job.progress_percent = 5
+        job.progress_percent = 1
         payload["state"] = JobStatus.RUNNING.value
         job.result = json.dumps(payload, indent=2)
+        task_steps[0].status = JobStatus.RUNNING.value
+        task_steps[0].started_at = job.started_at
         db.commit()
         try:
             unit = appliance_apply_status(db, "vcf_offline_depot")
@@ -11729,7 +11749,43 @@ def run_vcf_depot_software_id_job(job_id: str) -> None:
             }
             raw_result = execute_appliance_apply_unit(execution_unit)
             persist_vcf_depot_metadata_from_apply(db, [raw_result])
-            succeeded = bool(raw_result.get("success"))
+            software_depot_id = str(vcf_depot_software_depot_id_context(db).get("id") or "").strip()
+            id_readback_valid = bool(software_depot_id) and (not previous_id or software_depot_id != previous_id)
+            succeeded = bool(raw_result.get("success")) and id_readback_valid
+            command_results = list(raw_result.get("commands") or [])
+            finished = utcnow()
+            log_lines: list[str] = []
+            success_messages = {
+                "stage-tool": "VCF Download Tool package staged.",
+                "apply-properties": "application-prodv2.properties applied.",
+                "apply-ceip": "VMware CEIP preference applied.",
+                "generate-software-depot-id": (
+                    f"Software Depot ID generated and read back: {software_depot_id}"
+                    if id_readback_valid
+                    else "VCFDT returned without a new persisted Software Depot ID."
+                ),
+            }
+            for index, step in enumerate(task_steps):
+                command_result = command_results[index] if index < len(command_results) else None
+                step.started_at = step.started_at or job.started_at
+                step.finished_at = finished
+                step.progress_percent = 100
+                if command_result is None:
+                    step.status = "skipped"
+                    message = f"{step.label} skipped because an earlier VCFDT operation failed."
+                    step.error = message
+                else:
+                    command_succeeded = int(command_result.get("returncode") or 0) == 0
+                    if step.component_key == "generate-software-depot-id":
+                        command_succeeded = command_succeeded and id_readback_valid
+                    step.status = JobStatus.SUCCEEDED.value if command_succeeded else JobStatus.FAILED.value
+                    if command_succeeded or (step.component_key == "generate-software-depot-id" and not id_readback_valid):
+                        message = success_messages[step.component_key]
+                    else:
+                        message = f"{step.label} failed."
+                    step.error = None if command_succeeded else message
+                step.result = json.dumps({"summary": [message], "stdout": message}, indent=2)
+                log_lines.append(f"{step.label}: {message}")
             safe_result = {
                 "unit_id": "vcf_offline_depot",
                 "label": "VCFDT Software Depot ID",
@@ -11742,7 +11798,6 @@ def run_vcf_depot_software_id_job(job_id: str) -> None:
                 ],
                 "errors": [] if succeeded else ["VCFDT Software Depot ID generation failed. Review the Atlaso operational log."],
             }
-            finished = utcnow()
             job.status = JobStatus.SUCCEEDED.value if succeeded else JobStatus.FAILED.value
             job.finished_at = finished
             job.progress_percent = 100
@@ -11751,6 +11806,8 @@ def run_vcf_depot_software_id_job(job_id: str) -> None:
                 {
                     **payload,
                     "state": job.status,
+                    "software_depot_id": software_depot_id if succeeded else "",
+                    "log_lines": log_lines,
                     "units": [safe_result],
                 },
                 indent=2,
@@ -11777,6 +11834,16 @@ def run_vcf_depot_software_id_job(job_id: str) -> None:
             job.progress_percent = 100
             job.error = "VCFDT Software Depot ID task failed unexpectedly."
             job.result = json.dumps({**payload, "state": JobStatus.FAILED.value}, indent=2)
+            finished = job.finished_at
+            for step in job.steps:
+                if step.status == JobStatus.RUNNING.value:
+                    step.status = JobStatus.FAILED.value
+                    step.error = "VCFDT Software Depot ID task failed unexpectedly."
+                elif step.status == JobStatus.PENDING.value:
+                    step.status = "skipped"
+                    step.error = "Skipped because an earlier VCFDT operation failed."
+                step.finished_at = finished
+                step.progress_percent = 100
             db.commit()
             record_audit(
                 db,
@@ -18397,6 +18464,7 @@ def save_vcf_depot_application_properties_from_ui(
 @router.post("/vcf-offline-depot/software-depot-id/generate", response_model=None)
 def generate_vcf_depot_software_depot_id_from_ui(
     request: Request,
+    background_tasks: BackgroundTasks,
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
@@ -18425,15 +18493,15 @@ def generate_vcf_depot_software_depot_id_from_ui(
         progress_percent=0,
         result=json.dumps(
             {
-                "state": "pending-start",
+                "state": JobStatus.PENDING.value,
                 "target": "Generate Software Depot ID",
-                "manual_start_required": True,
                 "refresh_existing": bool(vcf_depot_software_depot_id_context(db).get("id")),
             },
             indent=2,
         ),
     )
     db.add(job)
+    ensure_vcf_depot_software_id_task_steps(db, job)
     db.commit()
     record_audit(
         db,
@@ -18441,8 +18509,9 @@ def generate_vcf_depot_software_depot_id_from_ui(
         action="create_vcf_depot_software_id_task",
         resource_type="job",
         resource_id=job.id,
-        detail="manual_start_required=true",
+        detail="execution=queued",
     )
+    background_tasks.add_task(run_vcf_depot_software_id_job, job.id)
     db.refresh(job)
     if "application/json" in request.headers.get("accept", "") or request.headers.get("X-Atlaso-Autosave") == "1":
         return JSONResponse(
@@ -20967,49 +21036,6 @@ def task_log(
             "text": "\n".join(_task_log_lines(job, db)),
         }
     )
-
-
-@router.post("/tasks/{job_id}/start", response_class=JSONResponse, response_model=None)
-def start_task_from_ui(
-    job_id: str,
-    request: Request,
-    background_tasks: BackgroundTasks,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> JSONResponse:
-    verify_csrf(request, csrf)
-    if not identity.has_role(Role.ADMIN.value):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Administrator role required to start this task")
-    with APPLIANCE_APPLY_SUBMIT_LOCK:
-        job = db.scalar(select(Job).options(selectinload(Job.steps)).where(Job.id == job_id))
-        if job is None:
-            raise HTTPException(status_code=404, detail="Task not found")
-        if job.type != "vcf-depot-software-id":
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This task type does not support an explicit start.")
-        payload = _job_payload(job)
-        if not payload.get("manual_start_required"):
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This task is not waiting for a manual start.")
-        if job.status != JobStatus.PENDING.value:
-            return JSONResponse({"task": _task_row(job, identity), "message": "Task is no longer pending."})
-        if payload.get("start_requested_at"):
-            return JSONResponse({"task": _task_row(job, identity), "message": "Task start is already queued."})
-        payload["state"] = JobStatus.PENDING.value
-        payload["start_requested_at"] = utcnow().isoformat()
-        payload["started_by"] = identity.username
-        job.result = json.dumps(payload, indent=2)
-        db.commit()
-        record_audit(
-            db,
-            actor=identity.username,
-            action="start_task",
-            resource_type="job",
-            resource_id=job.id,
-            detail=f"type={job.type}",
-        )
-    background_tasks.add_task(run_vcf_depot_software_id_job, job.id)
-    db.refresh(job)
-    return JSONResponse({"task": _task_row(job, identity), "message": "Task start requested."}, status_code=202)
 
 
 @router.post("/tasks/{job_id}/cancel", response_class=JSONResponse, response_model=None)
