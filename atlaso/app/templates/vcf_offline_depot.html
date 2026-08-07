@@ -214,16 +214,12 @@
               <strong data-vcf-depot-tool-archive-name>{{ vcf_depot_settings_json.tool_archive_name or "no package staged" }}</strong>
               <small class="muted">Expected file: {{ vcf_depot_archive_pattern }}</small>
             </div>
-            <label class="file-upload-control compact-file-upload">
-              <input class="file-upload-input" type="file" name="tool_archive_file" accept=".gz,application/gzip,application/x-gzip" data-file-upload-input>
-              <span class="file-upload-surface"><span class="file-upload-copy"><strong data-vcf-depot-tool-upload-action>{{ "Update" if vcf_depot_settings.tool_archive_path else "Add" }}</strong><small data-file-upload-name data-vcf-depot-tool-upload-name>{{ vcf_depot_settings_json.tool_archive_name or vcf_depot_archive_pattern }}</small></span></span>
-            </label>
+            <button class="button secondary compact-button" type="button" data-vcf-depot-tool-package-open><span data-vcf-depot-tool-upload-action>{{ "Update" if vcf_depot_settings.tool_archive_path else "Add" }}</span></button>
           </div>
           <button class="button danger compact-button {{ '' if vcf_depot_settings.tool_archive_path else 'hidden' }}" type="button" data-vcf-depot-tool-reset-modal-open data-vcf-depot-tool-reset-action>Reset</button>
           <div class="vcfdt-tool-reset-note {{ '' if vcf_depot_settings.tool_archive_path else 'hidden' }}" data-vcf-depot-tool-reset-panel>
-            <small class="muted">Reset clears the staged VCFDT package, Broadcom credentials, generated metadata, and disables download profiles. Appliance files are changed only by the global apply workflow.</small>
+            <small class="muted">Reset clears the staged package, Broadcom credentials, application properties, generated metadata, and disables download profiles. Appliance files are changed only by the global apply workflow.</small>
           </div>
-            <progress class="upload-progress" value="0" max="100" data-autosave-upload-progress hidden></progress>
         </div>
         <p id="vcf-depot-settings-status" class="autosave-status" data-state="idle">Changes save automatically.</p>
       </form>
@@ -248,8 +244,8 @@
               <small>Credentials</small>
               <strong>{% if vcf_depot_download_token.present and vcf_depot_activation_code.present %}Both{% elif vcf_depot_download_token.present %}Token{% elif vcf_depot_activation_code.present %}Activation{% else %}Needed{% endif %}</strong>
             </span>
-            <span class="vcf-depot-status-item {{ 'good' if vcf_depot_application_properties.present else 'warn' }}" data-vcf-depot-configuration-properties data-present="{{ '1' if vcf_depot_application_properties.present else '0' }}">
-              <small>Properties</small><strong>{{ "Saved" if vcf_depot_application_properties.present else "Needed" }}</strong>
+            <span class="vcf-depot-status-item {{ 'good' if vcf_depot_application_properties.saved else 'warn' }}" data-vcf-depot-configuration-properties data-present="{{ '1' if vcf_depot_application_properties.present else '0' }}" data-saved="{{ '1' if vcf_depot_application_properties.saved else '0' }}">
+              <small>Properties</small><strong>{% if vcf_depot_application_properties.saved %}Saved{% elif vcf_depot_application_properties.present %}Default{% else %}Needed{% endif %}</strong>
             </span>
             <button class="vcf-depot-status-item vcf-depot-status-copy {{ 'good' if vcf_depot_software_depot_id.id else 'warn' }}" type="button" data-vcf-depot-configuration-id data-vcf-depot-software-depot-copy data-copy-value="{{ vcf_depot_software_depot_id.id }}" data-present="{{ '1' if vcf_depot_software_depot_id.id else '0' }}" aria-label="Copy software depot ID" title="Copy software depot ID" {{ "disabled" if not vcf_depot_software_depot_id.id else "" }}>
               <small>Depot ID</small><span class="vcf-depot-status-value"><strong>{{ "Ready" if vcf_depot_software_depot_id.id else "Pending" }}</strong><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2 2v1"/></svg></span>
@@ -328,6 +324,41 @@
   </section>
   <section class="hidden" data-atlaso-wizard-step="enablement"><label class="switch-field"><span class="field-label"><span>Profile enabled</span><button class="help-icon" type="button" data-help="Requires a staged VCFDT package and valid credential before a task can start.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label></section>
   <section class="hidden" data-atlaso-wizard-step="review"><div class="settings-list" data-atlaso-resource-review></div><div class="alert warning">Saving stages the VCFDT profile only. Downloads are explicit row actions and appliance mutation remains separately controlled.</div></section>
+{% endcall %}
+{% set vcf_depot_tool_package_steps = [
+  {"id": "package", "label": "Package", "summary": "Choose the VCFDT archive"},
+  {"id": "review", "label": "Review", "summary": "Confirm package staging"}
+] %}
+{% call resource_wizard(
+  "vcf-depot-tool-package-dialog",
+  "vcf-depot-tool-package-form",
+  "/vcf-offline-depot/tool-package",
+  vcf_depot_tool_package_steps,
+  "Stage VCF Download Tool",
+  "Choose the Broadcom VCF Download Tool archive to validate and save as Atlaso desired state.",
+  "Stage package",
+  "multipart/form-data"
+) %}
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <section data-atlaso-wizard-step="package">
+    <div class="settings-list">
+      <div><span>Current package</span><strong data-vcf-depot-package-current>{{ vcf_depot_settings_json.tool_archive_name or "Not staged" }}</strong></div>
+    </div>
+    <label>
+      <span class="field-label"><span>VCF Download Tool package</span><button class="help-icon" type="button" data-help="Choose the proprietary vcf-download-tool-*.tar.gz package. Atlaso validates the archive before saving it as desired state; runtime staging remains part of Appliance Apply.">i</button></span>
+      <span class="file-upload-control"><input class="file-upload-input" type="file" name="tool_archive_file" accept=".tar.gz,.gz,application/gzip,application/x-gzip" data-file-upload-input required><span class="file-upload-surface"><span class="file-upload-copy"><strong>Choose VCFDT package</strong><small data-file-upload-name>no file selected</small></span></span></span>
+    </label>
+    <progress class="upload-progress" value="0" max="100" data-vcf-depot-package-progress hidden></progress>
+    <small class="muted" data-vcf-depot-package-status>Expected file: {{ vcf_depot_archive_pattern }}</small>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="review">
+    <div class="settings-list">
+      <div><span>Selected package</span><strong data-vcf-depot-package-review-name>Not selected</strong></div>
+      <div><span>Upload size</span><strong data-vcf-depot-package-review-size>Not available</strong></div>
+      <div><span>Apply boundary</span><strong>Desired state only</strong></div>
+    </div>
+    <div class="alert warning">Staging validates and saves the package without extracting it or changing appliance runtime files. Global Appliance Apply performs runtime staging.</div>
+  </section>
 {% endcall %}
 {% set vcf_depot_configuration_steps = [
   {"id": "software-depot-id", "label": "Software depot ID", "summary": "Preserve or queue refresh"},
@@ -426,16 +457,12 @@
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <div class="confirm-modal-body">
       <p class="kicker">VCF Offline Depot</p>
-      <h2 id="vcf-depot-tool-reset-modal-title">Reset VCFDT package</h2>
-      <p class="muted">This removes the staged VCF Download Tool package, saved Broadcom download token or activation code, and generated software depot metadata from Atlaso desired state, and disables all download profiles. It does not mutate appliance runtime files until global appliance apply removes the staged and active tool trees.</p>
-      <label class="checkbox-row">
-        <input type="checkbox" name="reset_application_properties">
-        <span>Also reset saved application-prodv2.properties configuration</span>
-      </label>
+      <h2 id="vcf-depot-tool-reset-modal-title">Reset VCFDT staging</h2>
+      <p class="muted">This removes the staged VCF Download Tool package, saved Broadcom download token or activation code, application-prodv2.properties configuration, and generated software depot metadata from Atlaso desired state, and disables all download profiles. It does not mutate appliance runtime files until global appliance apply removes the staged and active tool trees.</p>
     </div>
     <div class="confirm-modal-actions">
       <button class="button ghost" value="cancel" type="button" data-vcf-depot-tool-reset-modal-cancel>Cancel</button>
-      <button class="button danger" type="submit">Reset package</button>
+      <button class="button danger" type="submit">Reset VCFDT staging</button>
     </div>
   </form>
 </dialog>

@@ -617,7 +617,8 @@ status: current
   replacement while the old appliance remains available for VMware rekey.
 - Real VCF Offline Depot apply stages nginx config under
   `/var/lib/atlaso/apply/vcf-offline-depot/atlaso-vcf-offline-depot.conf` as the `atlaso` service user before invoking
-  the root helper. Uploading `vcf-download-tool-*.tar.gz` is desired-state only: validate/store the package and clear
+  the root helper. Uploading `vcf-download-tool-*.tar.gz` uses a shared two-step package wizard and remains desired-state
+  only: validate/store the package and clear
   stale generated metadata, but do not extract, create runtime folders, invoke VCFDT, or generate a software depot ID
   from the upload route. Global `vcf_offline_depot` apply must validate the staged nginx site, run `stage-tool` to
   extract the archive under `/opt/atlaso/vcf-download-tool/extracted`, expose
@@ -649,6 +650,9 @@ status: current
   hide the credential and properties steps so the rail contains only Software Depot ID and Review, without resaving
   unchanged configuration; Review is the explicit confirmation boundary and must submit refresh intent directly through
   the global `/appliance-apply` workflow for `vcf_offline_depot`, not call the helper directly or open another dialog.
+  Resetting VCFDT staging is one destructive confirmation that always clears the staged package, both Broadcom
+  credentials, saved application properties, generated identity/version metadata, and profile enablement; it must not
+  offer a partial configuration-preservation mode.
   Review must state that both staged credentials are removed after identity replacement. The settings-rail Depot ID
   ready state uses the shared clipboard action with accessible labeling and transient completion feedback.
   Tool staging and Software Depot ID generation must not depend on the HTTPS service-enabled toggle. Ordinary wizard

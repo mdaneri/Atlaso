@@ -25,7 +25,9 @@ This verified appliance view provides visual orientation before you begin.
 
 1. Confirm the fixed depot mount is present and has sufficient working space.
 2. Configure the service listener and the HTTP user used by approved VCF targets.
-3. Upload the VCF Download Tool package, then select **Configure** under **VCFDT configuration**. Atlaso displays the
+3. Select **Add** or **Update** for the VCF Download Tool package. The two-step package wizard reviews the archive name,
+   size, and desired-state boundary before upload. Then select **Configure** under **VCFDT configuration**. Atlaso
+   displays the
    version encoded in the validated staged archive name immediately; Appliance Apply later replaces it with VCFDT's
    authoritative `--version` result. The five-step wizard starts with the current Software Depot ID and refresh intent,
    then offers a standard **Credential action** selector. **Keep staged credentials unchanged** appears only when an
@@ -77,6 +79,9 @@ matching credential before retrying a download. Use the copy control on the **De
 current ID; Atlaso confirms the clipboard action without exposing any credential value.
 VCFDT tool staging and Software Depot ID generation remain available while the HTTPS depot service is disabled; the
 service toggle controls publishing, not VCFDT identity preparation.
+**Reset** uses one destructive confirmation and clears the staged package, both Broadcom credentials, saved application
+properties, generated identity/version metadata, and all profile enablement together. Runtime removal still waits for
+global Appliance Apply.
 If VCFDT generates a replacement but Atlaso cannot read it back unambiguously, Atlaso clears the displayed ID instead
 of presenting the previous registration as current. Retry the refresh before registering or downloading.
 

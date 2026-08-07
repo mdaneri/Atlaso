@@ -12641,7 +12641,7 @@ function updateVcfDepotSummary(form, payload = {}) {
   const storePaths = document.querySelectorAll("[data-vcf-depot-store]");
   const toolVersions = document.querySelectorAll("[data-vcf-depot-tool-version]");
   const toolStatuses = document.querySelectorAll("[data-vcf-depot-tool-status]");
-  const toolArchiveNames = document.querySelectorAll("[data-vcf-depot-tool-archive-name]");
+  const toolArchiveNames = document.querySelectorAll("[data-vcf-depot-tool-archive-name], [data-vcf-depot-package-current]");
   const toolUploadActions = document.querySelectorAll("[data-vcf-depot-tool-upload-action]");
   const toolUploadNames = document.querySelectorAll("[data-vcf-depot-tool-upload-name]");
   const toolResetPanels = document.querySelectorAll("[data-vcf-depot-tool-reset-panel], [data-vcf-depot-tool-reset-action]");
@@ -12801,6 +12801,9 @@ function updateVcfDepotConfigurationStatus(payload = {}) {
   const propertiesPresent = payload.application_properties_present !== undefined
     ? Boolean(payload.application_properties_present)
     : propertiesStatus instanceof HTMLElement && propertiesStatus.dataset.present === "1";
+  const propertiesSaved = payload.application_properties_saved !== undefined
+    ? Boolean(payload.application_properties_saved)
+    : propertiesStatus instanceof HTMLElement && propertiesStatus.dataset.saved === "1";
   const softwareDepotId = payload.software_depot_id !== undefined
     ? String(payload.software_depot_id || "")
     : idStatus instanceof HTMLElement && idStatus.dataset.present === "1" ? "present" : "";
@@ -12817,7 +12820,14 @@ function updateVcfDepotConfigurationStatus(payload = {}) {
     tokenPresent && activationPresent ? "Both" : tokenPresent ? "Token" : activationPresent ? "Activation" : "Needed",
     tokenPresent || activationPresent,
   );
-  updateItem(propertiesStatus, propertiesPresent ? "Saved" : "Needed", propertiesPresent);
+  if (propertiesStatus instanceof HTMLElement) {
+    const valueElement = propertiesStatus.querySelector("strong");
+    if (valueElement instanceof HTMLElement) valueElement.textContent = propertiesSaved ? "Saved" : propertiesPresent ? "Default" : "Needed";
+    propertiesStatus.dataset.present = propertiesPresent ? "1" : "0";
+    propertiesStatus.dataset.saved = propertiesSaved ? "1" : "0";
+    propertiesStatus.classList.toggle("good", propertiesSaved);
+    propertiesStatus.classList.toggle("warn", !propertiesSaved);
+  }
   updateItem(idStatus, softwareDepotId ? "Ready" : "Pending", Boolean(softwareDepotId));
 }
 
@@ -13458,6 +13468,116 @@ function initializeVcfDepotConfigurationWizard() {
     wizard.setSkippedSteps(skippedConfigurationSteps());
   });
   document.querySelectorAll("[data-vcf-depot-configuration-open]").forEach((launcher) => {
+    if (!(launcher instanceof HTMLButtonElement)) return;
+    launcher.addEventListener("click", () => wizard.open({ launcher }));
+  });
+}
+
+function initializeVcfDepotToolPackageWizard() {
+  const dialog = document.getElementById("vcf-depot-tool-package-dialog");
+  const form = document.querySelector("[data-vcf-depot-tool-package-form]");
+  if (!(dialog instanceof HTMLDialogElement) || !(form instanceof HTMLFormElement) || !window.AtlasoUiPatterns) return;
+  const fileInput = form.querySelector('input[name="tool_archive_file"]');
+  const progress = form.querySelector("[data-vcf-depot-package-progress]");
+  const status = form.querySelector("[data-vcf-depot-package-status]");
+  const reviewName = form.querySelector("[data-vcf-depot-package-review-name]");
+  const reviewSize = form.querySelector("[data-vcf-depot-package-review-size]");
+  const currentPackage = form.querySelector("[data-vcf-depot-package-current]");
+  const selectedFile = () => fileInput instanceof HTMLInputElement ? fileInput.files?.[0] : null;
+  const setStatus = (message, state = "idle") => {
+    if (!(status instanceof HTMLElement)) return;
+    status.textContent = message;
+    status.dataset.state = state;
+  };
+  const uploadPackage = (file) => new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", form.action);
+    xhr.setRequestHeader("Accept", "application/json");
+    xhr.upload.addEventListener("loadstart", () => {
+      if (progress instanceof HTMLProgressElement) {
+        progress.hidden = false;
+        progress.value = 0;
+      }
+      setStatus(`Uploading ${file.name}...`, "saving");
+    });
+    xhr.upload.addEventListener("progress", (event) => {
+      if (!(progress instanceof HTMLProgressElement) || !event.lengthComputable) return;
+      const percent = Math.max(0, Math.min(100, Math.round((event.loaded / event.total) * 100)));
+      progress.value = percent;
+      setStatus(`Uploading ${file.name}: ${percent}%`, "saving");
+    });
+    xhr.addEventListener("load", () => {
+      let payload = {};
+      try {
+        payload = xhr.responseText ? JSON.parse(xhr.responseText) : {};
+      } catch (_error) {
+        payload = {};
+      }
+      if (xhr.status >= 200 && xhr.status < 300 && payload.tool_archive_name) {
+        resolve(payload);
+        return;
+      }
+      reject(new Error(payload.detail || `Package upload failed with HTTP ${xhr.status}.`));
+    });
+    xhr.addEventListener("error", () => reject(new Error("Package upload failed before Atlaso received the file. Check appliance connectivity.")));
+    xhr.addEventListener("abort", () => reject(new Error("Package upload canceled.")));
+    xhr.send(new FormData(form));
+  });
+  const wizard = window.AtlasoUiPatterns.createWizard({
+    form,
+    dialog,
+    steps: [
+      { id: "package", title: "Choose the VCF Download Tool package", description: "Select one validated vcf-download-tool-*.tar.gz archive." },
+      { id: "review", title: "Review VCFDT package staging", description: "Confirm the selected archive and desired-state boundary before upload." },
+    ],
+    discardTitle: "Discard VCFDT package upload?",
+    discardMessage: "The selected VCF Download Tool package will not be uploaded.",
+    onOpen: ({ controller }) => {
+      form.reset();
+      const fileName = form.querySelector("[data-file-upload-name]");
+      if (fileName instanceof HTMLElement) fileName.textContent = "no file selected";
+      if (progress instanceof HTMLProgressElement) {
+        progress.hidden = true;
+        progress.value = 0;
+      }
+      const stagedName = document.querySelector("[data-vcf-depot-tool-archive-name]")?.textContent?.trim() || "Not staged";
+      if (currentPackage instanceof HTMLElement) currentPackage.textContent = stagedName === "no package staged" ? "Not staged" : stagedName;
+      setStatus("Choose the Broadcom VCF Download Tool package to stage.");
+      controller.markClean();
+    },
+    validateStep: ({ step }) => {
+      if (step.id !== "package") return { valid: true };
+      const file = selectedFile();
+      if (!file) return { valid: false, message: "Choose a VCF Download Tool package before continuing.", field: "tool_archive_file" };
+      if (!/^vcf-download-tool-[A-Za-z0-9._-]+\.tar\.gz$/.test(file.name)) {
+        return { valid: false, message: "Choose a package named vcf-download-tool-*.tar.gz.", field: "tool_archive_file" };
+      }
+      return { valid: true };
+    },
+    prepareReview: () => {
+      const file = selectedFile();
+      if (reviewName instanceof HTMLElement) reviewName.textContent = file?.name || "Not selected";
+      if (reviewSize instanceof HTMLElement) reviewSize.textContent = file ? formatMonitorBytes(file.size) : "Not available";
+    },
+    onSubmit: async () => {
+      const file = selectedFile();
+      if (!file) return { valid: false, message: "Choose a VCF Download Tool package.", step: "package", field: "tool_archive_file" };
+      try {
+        const payload = await uploadPackage(file);
+        const settingsForm = document.querySelector("[data-vcf-depot-settings]");
+        if (settingsForm instanceof HTMLFormElement) updateVcfDepotSummary(settingsForm, payload);
+        updateVcfDepotValidation(payload);
+        setStatus(`${payload.tool_archive_name} staged.`, "saved");
+        showTransientGridStatus(`${payload.tool_archive_name} staged for Appliance Apply.`);
+        return { valid: true };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "The VCF Download Tool package could not be uploaded.";
+        setStatus(message, "error");
+        return { valid: false, message, step: "review" };
+      }
+    },
+  });
+  document.querySelectorAll("[data-vcf-depot-tool-package-open]").forEach((launcher) => {
     if (!(launcher instanceof HTMLButtonElement)) return;
     launcher.addEventListener("click", () => wizard.open({ launcher }));
   });
@@ -20009,6 +20129,7 @@ document.addEventListener("DOMContentLoaded", initializeVcfLdapHelper);
 document.addEventListener("DOMContentLoaded", () => initializeVcfBackupSettings());
 document.addEventListener("DOMContentLoaded", () => initializeVcfRegistrySettings());
 document.addEventListener("DOMContentLoaded", () => initializeVcfDepotSettings());
+document.addEventListener("DOMContentLoaded", initializeVcfDepotToolPackageWizard);
 document.addEventListener("DOMContentLoaded", initializeVcfDepotConfigurationWizard);
 document.addEventListener("DOMContentLoaded", initializeVcfDepotToolResetModal);
 document.addEventListener("DOMContentLoaded", initializeVcfDepotTokenPaste);

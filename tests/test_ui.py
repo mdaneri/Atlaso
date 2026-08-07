@@ -830,7 +830,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
     assert "/static/app.css?v=vcfdt-configuration-248-20260807-4" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
-    assert "/static/app.js?v=vcfdt-configuration-248-20260807-8" in service_worker.text
+    assert "/static/app.js?v=vcfdt-configuration-248-20260807-9" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -850,8 +850,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=vcfdt-configuration-248-20260807-8"),
-        (public_base, "/static/app.js?v=vcfdt-configuration-248-20260807-8"),
+        (base, "/static/app.js?v=vcfdt-configuration-248-20260807-9"),
+        (public_base, "/static/app.js?v=vcfdt-configuration-248-20260807-9"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8"
@@ -1267,7 +1267,8 @@ def test_reported_template_accessibility_contracts():
     assert 'aria-label="ESXi PXE hostname"' in esxi_pxe
     assert 'aria-label="Installer ISO for ESXi PXE host"' in esxi_pxe
     assert 'aria-label="Enable ESXi PXE host"' in esxi_pxe
-    assert '<label class="file-upload-control compact-file-upload">' in vcf_depot
+    assert '"vcf-depot-tool-package-form"' in vcf_depot
+    assert '<span class="file-upload-control"><input class="file-upload-input" type="file" name="tool_archive_file"' in vcf_depot
     assert '<div class="dns-authority-records" role="list">' in dns
     assert '<dl class="dns-authority-records">' not in dns
     assert '<div class="error-list" role="list" data-oidc-provider-validation-errors>' in authentication
@@ -1357,7 +1358,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vcfdt-configuration-248-20260807-4" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=vcfdt-configuration-248-20260807-8" in page.text
+    assert "/static/app.js?v=vcfdt-configuration-248-20260807-9" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -9545,12 +9546,17 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "Tool & Credentials" not in page.text
     assert "Review appliance changes" in page.text
     assert "VCF Download Tool" in page.text
-    assert '<label class="file-upload-control compact-file-upload">' in page.text
+    assert 'data-vcf-depot-tool-package-open' in page.text
+    assert 'id="vcf-depot-tool-package-dialog"' in page.text
+    assert 'data-vcf-depot-tool-package-form' in page.text
+    assert 'action="/vcf-offline-depot/tool-package"' in page.text
+    assert 'data-atlaso-wizard-step="package"' in page.text
     assert "Add or update the VCF Download Tool package" in page.text
     assert "no package staged" in page.text
-    assert ">Add</strong>" in page.text
-    assert "Reset VCFDT package" in page.text
-    assert "Also reset saved application-prodv2.properties configuration" in page.text
+    assert '>Add</span></button>' in page.text
+    assert "Reset VCFDT staging" in page.text
+    assert "application-prodv2.properties configuration" in page.text
+    assert "Also reset saved application-prodv2.properties configuration" not in page.text
     assert 'data-vcf-depot-tool-reset-action>Reset</button>' in page.text
     assert 'button danger compact-button hidden' in page.text
     assert "Configure VCF Download Tool" in page.text
@@ -9600,7 +9606,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "Activation code" in page.text
     assert "Choose token file" in page.text
     assert "no file selected" in page.text
-    assert "Choose VCFDT archive" not in page.text
+    assert "Choose the VCFDT archive" in page.text
     assert "DNS alias follows the first selected service listener." in page.text
     assert "Server certificate" not in page.text
     assert 'name="server_certificate"' not in page.text
@@ -9623,7 +9629,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert 'vcf-depot-status-copy' in page.text
     assert 'Copy software depot ID' in page.text
     assert "Atlaso removes the staged download token and activation code" in page.text
-    assert 'data-autosave-upload-progress' in page.text
+    assert 'data-vcf-depot-package-progress' in page.text
     assert "Not generated" in page.text
     assert "<span>Tool file</span>" not in page.text
     assert 'data-vcf-depot-tool-name' not in page.text
@@ -9654,7 +9660,10 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     app_js = client.get("/static/app.js")
     assert app_js.status_code == 200
     assert "initializeVcfDepotSettings" in app_js.text
+    assert "initializeVcfDepotToolPackageWizard" in app_js.text
     assert "initializeVcfDepotConfigurationWizard" in app_js.text
+    assert "Review VCFDT package staging" in app_js.text
+    assert "Discard VCFDT package upload?" in app_js.text
     assert "window.AtlasoUiPatterns.createWizard" in app_js.text
     assert 'body.set("application_properties", content)' in app_js.text
     assert "new TextEncoder().encode(content).length > 512 * 1024" in app_js.text
@@ -9840,6 +9849,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert payload["software_depot_id_error"] == ""
     assert payload["download_token_present"] is True
     assert payload["application_properties_present"] is True
+    assert payload["application_properties_saved"] is False
     assert payload["application_properties_source"] == "Atlaso default"
     assert payload["valid"] is True
     assert payload["dns_record_action"] == "created"
@@ -9967,6 +9977,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert properties_response.status_code == 200
     properties_payload = properties_response.json()
     assert properties_payload["application_properties_present"] is True
+    assert properties_payload["application_properties_saved"] is True
     assert properties_payload["application_properties_source"] == "operator saved"
     assert properties_payload["application_properties_updated_at"]
     assert "secret-activation-property" not in properties_response.text
@@ -10264,7 +10275,7 @@ def test_vcf_offline_depot_apply_stages_vcfdt_while_https_is_disabled(client, tm
         assert "generate-software-depot-id" in (job.result or "")
 
 
-def test_vcf_offline_depot_tool_reset_can_preserve_or_clear_configuration(client, tmp_path, monkeypatch):
+def test_vcf_offline_depot_tool_package_wizard_endpoint_and_reset_clear_configuration(client, tmp_path, monkeypatch):
     from pathlib import Path
 
     from sqlalchemy import select
@@ -10293,14 +10304,23 @@ def test_vcf_offline_depot_tool_reset_can_preserve_or_clear_configuration(client
     page = client.get("/vcf-offline-depot")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
+    missing_upload = client.post("/vcf-offline-depot/tool-package", data={"csrf": csrf})
+    assert missing_upload.status_code == 400
+    assert missing_upload.json()["detail"] == "Choose a VCF Download Tool package to upload."
+
     upload = client.post(
-        "/vcf-offline-depot/settings",
-        data={"hostname": "depot.atlaso.internal", "listen_interface": "eth2", "port": "443", "csrf": csrf},
+        "/vcf-offline-depot/tool-package",
+        data={"csrf": csrf},
         files={"tool_archive_file": ("vcf-download-tool-9.1.0.test.tar.gz", archive_path.read_bytes(), "application/gzip")},
-        headers={"X-Atlaso-Autosave": "1"},
     )
     assert upload.status_code == 200
-    assert upload.json()["tool_archive_name"] == "vcf-download-tool-9.1.0.test.tar.gz"
+    upload_payload = upload.json()
+    assert upload_payload["tool_archive_name"] == "vcf-download-tool-9.1.0.test.tar.gz"
+    assert upload_payload["tool_archive_uploaded"] is True
+    assert upload_payload["tool_version"] == "9.1.0"
+    assert upload_payload["application_properties_saved"] is False
+    assert "download_token_name" not in upload_payload
+    assert "activation_code_name" not in upload_payload
     credential = client.post(
         "/vcf-offline-depot/credentials",
         data={"credential_type": "download_token", "credential_text": "reset-me", "csrf": csrf},
@@ -10309,7 +10329,7 @@ def test_vcf_offline_depot_tool_reset_can_preserve_or_clear_configuration(client
     assert credential.status_code == 200
 
     refreshed = client.get("/vcf-offline-depot")
-    assert ">Update</strong>" in refreshed.text
+    assert ">Update</span></button>" in refreshed.text
     assert refreshed.text.count("<strong data-vcf-depot-tool-version>9.1.0</strong>") == 2
     assert 'data-vcf-depot-tool-reset-action>Reset</button>' in refreshed.text
     assert 'button danger compact-button hidden' not in refreshed.text
@@ -10347,35 +10367,6 @@ def test_vcf_offline_depot_tool_reset_can_preserve_or_clear_configuration(client
             VCF_DEPOT_ACTIVATION_VALUE_KEY,
         ]:
             assert db.execute(select(Setting).where(Setting.key == key)).scalar_one_or_none() is None
-        properties_setting = db.execute(select(Setting).where(Setting.key == VCF_DEPOT_APPLICATION_PROPERTIES_CONTENT_KEY)).scalar_one()
-        assert "custom.setting=true" in properties_setting.value
-
-    reset_page = client.get("/vcf-offline-depot")
-    assert "no package staged" in reset_page.text
-    assert "operator saved · saved" in reset_page.text
-    assert 'data-vcf-depot-configuration-open data-vcf-depot-requires-tool disabled' in reset_page.text
-
-    apply_reset = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "vcf_offline_depot"})
-    assert apply_reset.status_code == 200
-    with SessionLocal() as db:
-        job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()
-        assert "reset-tool" in (job.result or "")
-
-    upload_again = client.post(
-        "/vcf-offline-depot/settings",
-        data={"hostname": "depot.atlaso.internal", "listen_interface": "eth2", "port": "443", "csrf": csrf},
-        files={"tool_archive_file": ("vcf-download-tool-9.1.0.test.tar.gz", archive_path.read_bytes(), "application/gzip")},
-        headers={"X-Atlaso-Autosave": "1"},
-    )
-    assert upload_again.status_code == 200
-
-    reset_with_configuration = client.post(
-        "/vcf-offline-depot/tool/reset",
-        data={"csrf": csrf, "reset_application_properties": "on"},
-        follow_redirects=False,
-    )
-    assert reset_with_configuration.status_code == 303
-    with SessionLocal() as db:
         for key in [
             VCF_DEPOT_APPLICATION_PROPERTIES_CONTENT_KEY,
             VCF_DEPOT_APPLICATION_PROPERTIES_SOURCE_KEY,
@@ -10383,6 +10374,17 @@ def test_vcf_offline_depot_tool_reset_can_preserve_or_clear_configuration(client
         ]:
             assert db.execute(select(Setting).where(Setting.key == key)).scalar_one_or_none() is None
 
+    reset_page = client.get("/vcf-offline-depot")
+    assert "no package staged" in reset_page.text
+    assert "operator saved · saved" not in reset_page.text
+    assert "Properties</small><strong>Default</strong>" in reset_page.text
+    assert 'data-vcf-depot-configuration-open data-vcf-depot-requires-tool disabled' in reset_page.text
+
+    apply_reset = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "vcf_offline_depot"})
+    assert apply_reset.status_code == 200
+    with SessionLocal() as db:
+        job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()
+        assert "reset-tool" in (job.result or "")
 
 def test_vcf_offline_depot_without_tool_clears_stale_credential_state(client, monkeypatch):
     from sqlalchemy import select
