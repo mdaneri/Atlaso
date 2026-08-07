@@ -12223,6 +12223,7 @@ function renderTaskDetail(task) {
   const consoleContent = modal.querySelector("[data-task-detail-console-content]");
   const consoleErrorContent = modal.querySelector("[data-task-detail-console-error-content]");
   const result = modal.querySelector("[data-task-detail-result]");
+  const startButton = modal.querySelector("[data-task-detail-start]");
   const cancelButton = modal.querySelector("[data-task-detail-cancel]");
   const logButton = modal.querySelector("[data-task-detail-log]");
   if (title instanceof HTMLElement) {
@@ -12277,6 +12278,11 @@ function renderTaskDetail(task) {
   if (result instanceof HTMLElement) {
     result.textContent = task.result_json || "{}";
     highlightConfigPreviewElement(result);
+  }
+  if (startButton instanceof HTMLButtonElement) {
+    startButton.classList.toggle("hidden", !task.can_start);
+    startButton.disabled = !task.can_start;
+    startButton.dataset.taskId = task.id;
   }
   if (cancelButton instanceof HTMLButtonElement) {
     cancelButton.classList.toggle("hidden", !task.can_cancel);
@@ -12456,6 +12462,23 @@ async function cancelTask(taskId) {
   }
 }
 
+async function startTask(taskId) {
+  const page = document.querySelector("[data-tasks-page]");
+  if (!(page instanceof HTMLElement)) return;
+  const body = new URLSearchParams();
+  body.set("csrf", page.dataset.csrf || "");
+  const response = await fetch(`/tasks/${encodeURIComponent(taskId)}/start`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+    body,
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.detail || "Unable to start task.");
+  await refreshTasksPage();
+  if (payload.task) renderTaskDetail(payload.task);
+}
+
 function initializeTasksPage() {
   const page = document.querySelector("[data-tasks-page]");
   if (!(page instanceof HTMLElement)) {
@@ -12508,6 +12531,15 @@ function initializeTasksPage() {
           label: "Log",
           disabled: (component) => Boolean(component.getData().is_step),
           action: (_event, row) => openTaskLog(row.getData()),
+        },
+        {
+          label: "Start task",
+          disabled: (component) => !component.getData().can_start,
+          action: (_event, row) => {
+            const task = row.getData();
+            if (!task.can_start) return;
+            startTask(task.id).catch((error) => window.alert(error instanceof Error ? error.message : "Unable to start task."));
+          },
         },
         {
           label: "Cancel task",
@@ -12603,6 +12635,11 @@ function initializeTasksPage() {
   document.querySelector("[data-task-detail-log]")?.addEventListener("click", () => {
     if (atlasoSelectedTaskId) {
       openTaskLog(taskById(atlasoSelectedTaskId) || atlasoSelectedTaskId);
+    }
+  });
+  document.querySelector("[data-task-detail-start]")?.addEventListener("click", () => {
+    if (atlasoSelectedTaskId) {
+      startTask(atlasoSelectedTaskId).catch((error) => window.alert(error instanceof Error ? error.message : "Unable to start task."));
     }
   });
   document.querySelector("[data-task-detail-cancel]")?.addEventListener("click", () => {
@@ -13339,8 +13376,8 @@ function initializeVcfDepotConfigurationWizard() {
       ["Download token", credentialReview("download_token", "Download token")],
       ["Activation code", credentialReview("activation_code", "Activation code")],
       ["Application properties", refreshRequested ? "unchanged by the ID-only path" : `${new TextEncoder().encode(content).length.toLocaleString()} UTF-8 bytes to save`],
-      ["Software Depot ID", refreshRequested ? (softwareDepotId ? "queue replacement" : "queue generation") : (softwareDepotId ? "preserve current ID" : "generate on first Appliance Apply")],
-      ["Apply handoff", refreshRequested ? "Review submission queues the scoped activity" : softwareDepotId ? "global Appliance Apply still required" : "first Appliance Apply generates the ID and clears both credentials"],
+      ["Software Depot ID", refreshRequested ? (softwareDepotId ? "queue replacement" : "queue generation") : "preserve current ID"],
+      ["Task handoff", refreshRequested ? "Review creates a dedicated pending identity task" : "global Appliance Apply still required"],
     ];
     review.innerHTML = rows.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("");
   };
@@ -13390,11 +13427,11 @@ function initializeVcfDepotConfigurationWizard() {
       if (step.id === "credential-input") ["download_token", "activation_code"].forEach(syncReplacementPanel);
       if (step.id === "review" && submitButton instanceof HTMLButtonElement) {
         submitButton.textContent = refreshId instanceof HTMLInputElement && refreshId.checked
-          ? "Queue appliance changes"
+          ? "Queue Software Depot ID task"
           : "Save VCFDT configuration";
         if (queueStatus instanceof HTMLElement) {
           queueStatus.textContent = refreshId instanceof HTMLInputElement && refreshId.checked
-            ? "Submitting Review will create a VCF Offline Depot Appliance Apply task."
+            ? "Submitting Review will create a dedicated pending VCFDT Software Depot ID task."
             : "Submitting Review saves VCFDT desired-state configuration.";
           queueStatus.dataset.state = "idle";
         }
@@ -13458,16 +13495,13 @@ function initializeVcfDepotConfigurationWizard() {
         const body = new FormData();
         const csrf = form.querySelector('input[name="csrf"]');
         if (csrf instanceof HTMLInputElement) body.set("csrf", csrf.value);
-        body.set("selected_units", "vcf_offline_depot");
-        body.set("refresh_vcf_depot_software_depot_id", "true");
-        body.set("queue_only", "true");
         form.setAttribute("aria-busy", "true");
         if (queueStatus instanceof HTMLElement) {
-          queueStatus.textContent = "Queueing the VCF Offline Depot Appliance Apply task...";
+          queueStatus.textContent = "Queueing the VCFDT Software Depot ID task...";
           queueStatus.dataset.state = "saving";
         }
         try {
-          const response = await fetch("/appliance-apply", {
+          const response = await fetch("/vcf-offline-depot/software-depot-id/generate", {
             method: "POST",
             body,
             credentials: "same-origin",
@@ -13475,12 +13509,14 @@ function initializeVcfDepotConfigurationWizard() {
           });
           const payload = await response.json();
           if (!response.ok) throw new Error(payload.detail || "Software Depot ID activity could not be queued.");
-          applianceApplyActiveJobId = payload.job_id || payload.task?.id || "";
-          renderApplianceApplyTask(payload.task);
+          const queuedTaskId = payload.job_id || payload.task?.id || "";
           refreshApplianceApplySidebar().catch(() => {});
           if (queueStatus instanceof HTMLElement) {
-            queueStatus.textContent = "Appliance Apply task queued. Start it explicitly when ready.";
+            queueStatus.textContent = "VCFDT Software Depot ID task queued. Start it explicitly when ready.";
             queueStatus.dataset.state = "saved";
+          }
+          if (queuedTaskId) {
+            window.setTimeout(() => window.location.assign(`/tasks?job_id=${encodeURIComponent(queuedTaskId)}`), 0);
           }
           return { valid: true };
         } catch (error) {
@@ -14773,7 +14809,6 @@ function applianceApplyModalElements() {
     selectionSummary: modal?.querySelector("[data-appliance-apply-selection-summary]"),
     submit: modal?.querySelector("[data-appliance-apply-submit]"),
     liveSummary: modal?.querySelector("[data-appliance-apply-live-summary]"),
-    start: modal?.querySelector("[data-appliance-apply-start]"),
     cancel: modal?.querySelector("[data-appliance-apply-cancel]"),
     resultClose: modal?.querySelector("[data-appliance-apply-result-close]"),
   };
@@ -15080,16 +15115,9 @@ function renderApplianceApplyTask(task) {
   if (elements.liveSummary instanceof HTMLElement) {
     const children = Array.isArray(task._children) ? task._children : [];
     const complete = children.filter((child) => !taskStatusActive(child.status) && child.status !== "pending").length;
-    elements.liveSummary.textContent = task.can_start
-      ? `${children.length} components queued · start this task when ready`
-      : active
-        ? `${complete} of ${children.length} components finished · changes are globally locked`
+    elements.liveSummary.textContent = active
+      ? `${complete} of ${children.length} components finished · changes are globally locked`
       : `${children.length} components · appliance changes are unlocked`;
-  }
-  if (elements.start instanceof HTMLButtonElement) {
-    elements.start.classList.toggle("hidden", !task.can_start);
-    elements.start.disabled = !task.can_start;
-    elements.start.dataset.taskId = task.id || "";
   }
   if (elements.cancel instanceof HTMLButtonElement) {
     elements.cancel.classList.toggle("hidden", !task.can_cancel);
@@ -15233,30 +15261,6 @@ function initializeApplianceApplyProgress() {
   elements.reviewForm?.addEventListener("submit", (event) => {
     event.preventDefault();
     submitApplianceApplyForm(elements.reviewForm).catch(() => {});
-  });
-  elements.start?.addEventListener("click", async () => {
-    const taskId = elements.start?.dataset.taskId || "";
-    if (!taskId) return;
-    elements.start.disabled = true;
-    elements.start.textContent = "Starting…";
-    try {
-      const body = new URLSearchParams();
-      body.set("csrf", elements.modal.dataset.csrf || "");
-      const response = await fetch(`/tasks/${encodeURIComponent(taskId)}/start`, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
-        body,
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.detail || "Unable to start the Appliance Apply task.");
-      renderApplianceApplyTask(payload.task);
-    } catch (error) {
-      setApplianceApplyModalError(error instanceof Error ? error.message : "Unable to start the Appliance Apply task.");
-      elements.start.disabled = false;
-    } finally {
-      elements.start.textContent = "Start appliance task";
-    }
   });
   elements.cancel?.addEventListener("click", async () => {
     const taskId = elements.cancel?.dataset.taskId || "";

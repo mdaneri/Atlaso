@@ -648,11 +648,12 @@ status: current
   step when Keep is selected. The bundled Monaco application-properties editor must remain writable, synchronize its
   source textarea, and avoid a wrapping label that can steal pointer focus from the editor. If refresh is selected,
   hide the credential and properties steps so the rail contains only Software Depot ID and Review, without resaving
-  unchanged configuration; Review is the explicit confirmation boundary and must submit refresh intent directly through
-  the global `/appliance-apply` workflow for `vcf_offline_depot`, not call the helper directly or open another
-  confirmation dialog. When no ID exists, generation is selected and cannot be cleared. Review creates the scoped
-  Appliance Apply task in a pending-start state; appliance mutation begins only after the administrator explicitly
-  starts that task.
+  unchanged configuration; Review is the explicit confirmation boundary and must create a dedicated
+  `vcf-depot-software-id` task, not call the helper directly or route identity generation through global Appliance
+  Apply. When no ID exists, generation is selected and cannot be cleared. The task begins in `pending-start`; work begins
+  only after the administrator explicitly starts it from the ordinary Tasks workflow. Its execution may stage the VCFDT
+  tool, application properties, and CEIP prerequisite, then generate/read back the identity. It must not validate, sync,
+  or apply nginx, update the VCF Offline Depot apply baseline, or open the global Appliance Apply monitor.
   Resetting VCFDT staging is one destructive confirmation that always clears the staged package, both Broadcom
   credentials, saved application properties, generated identity/version metadata, and profile enablement; it must not
   offer a partial configuration-preservation mode.

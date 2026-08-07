@@ -74,9 +74,10 @@ When no Software Depot ID exists, **Generate the Software Depot ID** is selected
 required before credentials can be registered. Selecting generation, or **Refresh the Software Depot ID** for an
 existing ID, immediately hides
 the credential, credential-input, and properties steps, leaving a two-step Software Depot ID and Review flow. It does
-not resave unchanged credentials or properties. **Queue appliance changes** on Review creates a pending task containing
-only the VCF Offline Depot unit and explicit refresh intent; it does not start or change appliance state automatically.
-Use **Start appliance task** in the Appliance Apply task view when ready. There is no additional confirmation dialog. Once
+not resave unchanged credentials or properties. **Queue Software Depot ID task** on Review creates a dedicated pending
+VCFDT identity task; it does not start or change appliance state automatically. Atlaso opens the ordinary Tasks view for
+that new job; use **Start task** there when ready. The task stages the required VCFDT runtime inputs, generates or
+refreshes the identity, and persists its safe metadata without invoking nginx or global Appliance Apply. Once
 VCFDT changes the identity, Atlaso removes both the staged and runtime download token and activation code. A generation
 failure that leaves the identity unchanged preserves both credentials. Register the new displayed ID, then stage a
 matching credential before retrying a download. Use the copy control on the **Depot ID Ready** status tile to copy the
@@ -106,9 +107,9 @@ These captures show responsive layouts and useful operational states referenced 
 
 *Figure: VCF Offline Depot profile ordering and staging state in the responsive viewport.*
 
-![Atlaso two-step VCFDT Software Depot ID wizard Review with a Queue appliance changes action and no additional confirmation dialog.](../assets/screenshots/vcf-offline-depot-configuration-wizard.webp)
+![Atlaso two-step VCFDT Software Depot ID wizard Review with a Queue Software Depot ID task action and no additional confirmation dialog.](../assets/screenshots/vcf-offline-depot-configuration-wizard.webp)
 
-*Figure: VCFDT Software Depot ID generation ends at Review, which queues a pending scoped appliance task for an
-explicit start.*
+*Figure: VCFDT Software Depot ID generation ends at Review, which queues a dedicated pending task for an explicit
+start.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
