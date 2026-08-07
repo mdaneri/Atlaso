@@ -9583,7 +9583,7 @@ def execute_appliance_apply_unit(unit: dict[str, Any], *, adapter: SystemAdapter
                 str(context["vcf_depot_application_properties"].get("content") or ""),
             )
         steps = [lambda: adapter.validate_vcf_offline_depot_config(config_path)]
-        if settings.enabled and settings.tool_archive_path:
+        if settings.tool_archive_path:
             steps.extend(
                 [
                     lambda: adapter.stage_vcf_offline_depot_tool(settings.tool_archive_path),

@@ -10151,6 +10151,15 @@ def test_vcf_offline_depot_apply_preserves_existing_software_depot_id_unless_ref
     )
     assert "generate-software-depot-id" in json.dumps(first_apply["commands"])
 
+    missing_id_context["vcf_depot_settings"].enabled = False
+    disabled_service_first_apply = execute_appliance_apply_unit(
+        {**unit, "context": missing_id_context},
+        adapter=SystemAdapter(dry_run=True),
+    )
+    disabled_service_commands = json.dumps(disabled_service_first_apply["commands"])
+    assert "stage-tool" in disabled_service_commands
+    assert "generate-software-depot-id" in disabled_service_commands
+
 
 def test_vcf_offline_depot_apply_stages_tool_without_download_profiles(client, tmp_path, monkeypatch):
     from sqlalchemy import delete, select

@@ -644,7 +644,8 @@ status: current
   hide the credential and properties steps so the rail contains only Software Depot ID and Review, without resaving
   unchanged configuration; Review is the explicit confirmation boundary and must submit refresh intent directly through
   the global `/appliance-apply` workflow for `vcf_offline_depot`, not call the helper directly or open another dialog.
-  Ordinary wizard saves must preserve an existing ID.
+  Tool staging and Software Depot ID generation must not depend on the HTTPS service-enabled toggle. Ordinary wizard
+  saves must preserve an existing ID.
   Manual
   VCFDT command generation
   should use `/var/lib/atlaso/vcfDownloadTool/active-tool` token and activation-code file paths, write telemetry and ESX

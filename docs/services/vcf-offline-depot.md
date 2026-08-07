@@ -69,6 +69,8 @@ not resave unchanged credentials or properties. **Queue appliance changes** on R
 Offline Depot unit and explicit refresh intent to Appliance Apply; there is no additional confirmation dialog. The
 earlier activation code no longer matches the active VCFDT identity, so register the new displayed ID and replace the
 staged activation code before retrying a download.
+VCFDT tool staging and Software Depot ID generation remain available while the HTTPS depot service is disabled; the
+service toggle controls publishing, not VCFDT identity preparation.
 If VCFDT generates a replacement but Atlaso cannot read it back unambiguously, Atlaso clears the displayed ID instead
 of presenting the previous registration as current. Retry the refresh before registering or downloading.
 
