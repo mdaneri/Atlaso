@@ -513,7 +513,8 @@ Figure: VCF Offline Depot profile ordering and staging state in the responsive v
 
 ![Atlaso two-step VCFDT Software Depot ID wizard Review with a Queue appliance changes action and no additional confirmation dialog.](../assets/screenshots/vcf-offline-depot-configuration-wizard.webp)
 
-Figure: VCFDT Software Depot ID generation ends at Review, which directly queues the scoped appliance activity.
+Figure: VCFDT Software Depot ID generation ends at Review, which queues a pending scoped appliance task for an
+explicit start.
 
 ## Vcf Private Registry
 

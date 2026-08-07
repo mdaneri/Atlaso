@@ -830,7 +830,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
     assert "/static/app.css?v=vcfdt-configuration-248-20260807-4" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
-    assert "/static/app.js?v=vcfdt-configuration-248-20260807-11" in service_worker.text
+    assert "/static/app.js?v=vcfdt-configuration-248-20260807-12" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -850,8 +850,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=vcfdt-configuration-248-20260807-11"),
-        (public_base, "/static/app.js?v=vcfdt-configuration-248-20260807-11"),
+        (base, "/static/app.js?v=vcfdt-configuration-248-20260807-12"),
+        (public_base, "/static/app.js?v=vcfdt-configuration-248-20260807-12"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8"
@@ -1358,7 +1358,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vcfdt-configuration-248-20260807-4" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=vcfdt-configuration-248-20260807-11" in page.text
+    assert "/static/app.js?v=vcfdt-configuration-248-20260807-12" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -9630,9 +9630,10 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert 'data-vcf-depot-software-depot-cell' in page.text
     assert 'data-vcf-depot-software-depot-id' in page.text
     assert 'data-vcf-depot-software-depot-id data-present="0"' in page.text
-    assert 'data-vcf-depot-software-depot-copy' in page.text
-    assert 'vcf-depot-status-copy' in page.text
-    assert 'Copy software depot ID' in page.text
+    rail_configuration_status = page.text.split('<div class="vcf-depot-configuration-status"', 1)[1].split("</div>", 1)[0]
+    assert 'data-vcf-depot-software-depot-copy' not in rail_configuration_status
+    assert 'vcf-depot-status-copy' not in rail_configuration_status
+    assert 'Copy software depot ID' not in rail_configuration_status
     assert "Atlaso removes the staged download token and activation code" in page.text
     assert 'data-vcf-depot-package-progress' in page.text
     assert "Not generated" in page.text
@@ -9677,11 +9678,14 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "new TextEncoder().encode(content).length > 512 * 1024" in app_js.text
     assert 'body.set("selected_units", "vcf_offline_depot")' in app_js.text
     assert 'body.set("refresh_vcf_depot_software_depot_id", "true")' in app_js.text
+    assert 'body.set("queue_only", "true")' in app_js.text
     assert 'softwareDepotIdElement.dataset.present === "1"' in app_js.text
     assert 'refreshId.checked = !softwareDepotIdPresent' in app_js.text
+    assert 'refreshId.disabled = !softwareDepotIdPresent' in app_js.text
     assert 'softwareDepotIdPresent ? "Refresh the Software Depot ID" : "Generate the Software Depot ID"' in app_js.text
     assert 'choice.disabled = refreshId instanceof HTMLInputElement && refreshId.checked' in app_js.text
     assert "Queueing the VCF Offline Depot Appliance Apply task" in app_js.text
+    assert "Start appliance task" in app_js.text
     assert 'data-vcf-depot-queue-status role="status" aria-live="polite"' in page.text
     assert 'fetch("/appliance-apply"' in app_js.text
     assert 'step.id === "software-depot-id"' in app_js.text
@@ -10662,6 +10666,10 @@ def test_vcf_offline_depot_tool_configuration_is_atomic_and_presence_only(client
 
     login(client)
     page = client.get("/vcf-offline-depot")
+    rail_configuration_status = page.text.split('<div class="vcf-depot-configuration-status"', 1)[1].split("</div>", 1)[0]
+    assert 'data-vcf-depot-software-depot-copy' in rail_configuration_status
+    assert 'vcf-depot-status-copy' in rail_configuration_status
+    assert 'Copy software depot ID' in rail_configuration_status
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     properties = "spring.profiles.active=depot\nfixture.setting=combined-save\n"
     response = client.post(
@@ -13158,6 +13166,74 @@ def test_appliance_apply_carries_explicit_vcf_depot_id_refresh_intent_to_executi
     with SessionLocal() as db:
         completed_job = db.get(Job, job_id)
         assert completed_job.status == "succeeded"
+
+
+def test_appliance_apply_can_queue_for_explicit_start(client, monkeypatch):
+    import json
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    login(client)
+    page = client.get("/vcf-offline-depot")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    started_jobs: list[str] = []
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda job_id: started_jobs.append(job_id))
+
+    response = client.post(
+        "/appliance-apply",
+        data={
+            "csrf": csrf,
+            "selected_units": "vcf_offline_depot",
+            "refresh_vcf_depot_software_depot_id": "true",
+            "queue_only": "true",
+        },
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202
+    queued = response.json()["task"]
+    assert queued["status"] == "pending"
+    assert queued["state"] == "pending-start"
+    assert queued["can_start"] is True
+    assert started_jobs == []
+    with SessionLocal() as db:
+        submitted_job = db.get(Job, queued["id"])
+        assert json.loads(submitted_job.result)["manual_start_required"] is True
+
+    start_response = client.post(
+        f"/tasks/{queued['id']}/start",
+        data={"csrf": csrf},
+        headers={"Accept": "application/json"},
+    )
+
+    assert start_response.status_code == 202
+    assert started_jobs == [queued["id"]]
+    assert start_response.json()["task"]["can_start"] is False
+
+
+def test_queued_appliance_apply_can_be_cancelled_before_start(client, monkeypatch):
+    from atlaso.app import ui
+
+    login(client)
+    page = client.get("/vcf-offline-depot")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    queued = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "vcf_offline_depot", "queue_only": "true"},
+        headers={"Accept": "application/json"},
+    ).json()["task"]
+
+    response = client.post(f"/tasks/{queued['id']}/cancel", data={"csrf": csrf})
+
+    assert response.status_code == 200
+    cancelled = response.json()["task"]
+    assert cancelled["status"] == "cancelled"
+    assert cancelled["state"] == "cancelled"
+    assert cancelled["can_start"] is False
+    assert [step["status"] for step in cancelled["_children"]] == ["cancelled"]
 
 
 def test_appliance_apply_rejects_submission_while_another_task_is_active(client):

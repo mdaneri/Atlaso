@@ -6055,6 +6055,18 @@ def _can_cancel_task(job: Job, identity: Identity | None = None) -> bool:
     return identity.has_role(Role.SERVICE_ADMIN.value) and job.type in SERVICE_ADMIN_CANCELLABLE_JOB_TYPES
 
 
+def _can_start_task(job: Job, identity: Identity | None = None) -> bool:
+    payload = _job_payload(job)
+    if (
+        job.type != "appliance-apply"
+        or job.status != JobStatus.PENDING.value
+        or not payload.get("manual_start_required")
+        or payload.get("start_requested_at")
+    ):
+        return False
+    return identity is None or identity.has_role(Role.ADMIN.value)
+
+
 def _job_step_payload(step: JobStep) -> dict[str, Any]:
     if not step.result:
         return {}
@@ -6102,6 +6114,7 @@ def _task_row(job: Job, identity: Identity | None = None) -> dict[str, Any]:
         "error": error,
         "error_messages": error_messages,
         "can_cancel": _can_cancel_task(job, identity),
+        "can_start": _can_start_task(job, identity),
     }
     if job.type == "vcf-depot-download":
         row["log_url"] = f"/vcf-offline-depot/tasks/{job.id}/log"
@@ -11398,6 +11411,10 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
         job.status = JobStatus.RUNNING.value
         job.started_at = utcnow()
         job.progress_percent = 1
+        starting_payload = _job_payload(job)
+        if starting_payload.get("manual_start_required"):
+            starting_payload["state"] = JobStatus.RUNNING.value
+            job.result = json.dumps(starting_payload, indent=2)
         db.commit()
 
         unit_results: list[dict[str, Any]] = []
@@ -11663,6 +11680,7 @@ def submit_appliance_apply(
     selected_units: list[str] = Form(default=[]),
     format_confirmations: list[str] = Form(default=[]),
     refresh_vcf_depot_software_depot_id: bool = Form(False),
+    queue_only: bool = Form(False),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
@@ -11782,6 +11800,8 @@ def submit_appliance_apply(
         "dry_run": bool(get_settings().dry_run_system_adapters),
         "format_authorizations": [],
         "refresh_vcf_depot_software_depot_id": refresh_vcf_depot_software_depot_id,
+        "manual_start_required": bool(queue_only),
+        "state": "pending-start" if queue_only else JobStatus.PENDING.value,
     }
     with APPLIANCE_APPLY_SUBMIT_LOCK:
         db.expire_all()
@@ -11839,7 +11859,8 @@ def submit_appliance_apply(
             resource_id=job.id,
             detail=f"selected_units={','.join(job_result['selected_units'])}",
         )
-    background_tasks.add_task(run_appliance_apply_job, job.id)
+    if not queue_only:
+        background_tasks.add_task(run_appliance_apply_job, job.id)
     if wants_json:
         db.refresh(job)
         return JSONResponse(
@@ -20806,6 +20827,49 @@ def task_log(
     )
 
 
+@router.post("/tasks/{job_id}/start", response_class=JSONResponse, response_model=None)
+def start_task_from_ui(
+    job_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    verify_csrf(request, csrf)
+    if not identity.has_role(Role.ADMIN.value):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Administrator role required to start this task")
+    with APPLIANCE_APPLY_SUBMIT_LOCK:
+        job = db.scalar(select(Job).options(selectinload(Job.steps)).where(Job.id == job_id))
+        if job is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if job.type != "appliance-apply":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only queued Appliance Apply tasks can be started here.")
+        payload = _job_payload(job)
+        if not payload.get("manual_start_required"):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This Appliance Apply task is not waiting for a manual start.")
+        if job.status != JobStatus.PENDING.value:
+            return JSONResponse({"task": _task_row(job, identity), "message": "Task is no longer pending."})
+        if payload.get("start_requested_at"):
+            return JSONResponse({"task": _task_row(job, identity), "message": "Task start is already queued."})
+        payload["state"] = JobStatus.PENDING.value
+        payload["start_requested_at"] = utcnow().isoformat()
+        payload["started_by"] = identity.username
+        job.result = json.dumps(payload, indent=2)
+        db.commit()
+        record_audit(
+            db,
+            actor=identity.username,
+            action="start_appliance_apply_task",
+            resource_type="job",
+            resource_id=job.id,
+            detail=f"selected_units={','.join(str(unit_id) for unit_id in payload.get('selected_units', []))}",
+        )
+    background_tasks.add_task(run_appliance_apply_job, job.id)
+    db.refresh(job)
+    return JSONResponse({"task": _task_row(job, identity), "message": "Appliance Apply task start requested."}, status_code=202)
+
+
 @router.post("/tasks/{job_id}/cancel", response_class=JSONResponse, response_model=None)
 def cancel_task_from_ui(
     job_id: str,
@@ -20837,6 +20901,31 @@ def cancel_task_from_ui(
             )
     if job.type == "appliance-apply":
         payload = _job_payload(job)
+        if job.status == JobStatus.PENDING.value and payload.get("manual_start_required") and not payload.get("start_requested_at"):
+            finished = utcnow()
+            payload["state"] = JobStatus.CANCELLED.value
+            payload["cancelled_by"] = identity.username
+            payload["cancel_requested_at"] = finished.isoformat()
+            job.status = JobStatus.CANCELLED.value
+            job.finished_at = finished
+            job.progress_percent = 100
+            job.result = json.dumps(_redact_task_value(payload), indent=2, sort_keys=True)
+            for step in job.steps:
+                step.status = JobStatus.CANCELLED.value
+                step.finished_at = finished
+                step.progress_percent = 100
+                step.error = "Cancelled before the Appliance Apply task was started."
+            db.commit()
+            record_audit(
+                db,
+                actor=identity.username,
+                action="cancel_task",
+                resource_type="job",
+                resource_id=job.id,
+                detail=f"type={job.type}; before_start=true",
+            )
+            db.refresh(job)
+            return JSONResponse({"task": _task_row(job, identity), "message": "Task cancelled before start."})
         if not payload.get("cancel_requested"):
             payload["state"] = "cancellation-requested"
             payload["cancel_requested"] = True

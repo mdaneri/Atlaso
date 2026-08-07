@@ -13374,6 +13374,10 @@ function initializeVcfDepotConfigurationWizard() {
       if (refreshIdLabel instanceof HTMLElement) {
         refreshIdLabel.textContent = softwareDepotIdPresent ? "Refresh the Software Depot ID" : "Generate the Software Depot ID";
       }
+      if (refreshId instanceof HTMLInputElement) {
+        refreshId.disabled = !softwareDepotIdPresent;
+        refreshId.setAttribute("aria-readonly", softwareDepotIdPresent ? "false" : "true");
+      }
       syncIdOnlyControls();
       controller.setSkippedSteps(skippedConfigurationSteps());
       ["download_token", "activation_code"].forEach(syncReplacementPanel);
@@ -13456,6 +13460,7 @@ function initializeVcfDepotConfigurationWizard() {
         if (csrf instanceof HTMLInputElement) body.set("csrf", csrf.value);
         body.set("selected_units", "vcf_offline_depot");
         body.set("refresh_vcf_depot_software_depot_id", "true");
+        body.set("queue_only", "true");
         form.setAttribute("aria-busy", "true");
         if (queueStatus instanceof HTMLElement) {
           queueStatus.textContent = "Queueing the VCF Offline Depot Appliance Apply task...";
@@ -13474,7 +13479,7 @@ function initializeVcfDepotConfigurationWizard() {
           renderApplianceApplyTask(payload.task);
           refreshApplianceApplySidebar().catch(() => {});
           if (queueStatus instanceof HTMLElement) {
-            queueStatus.textContent = "Appliance Apply task queued.";
+            queueStatus.textContent = "Appliance Apply task queued. Start it explicitly when ready.";
             queueStatus.dataset.state = "saved";
           }
           return { valid: true };
@@ -14768,6 +14773,7 @@ function applianceApplyModalElements() {
     selectionSummary: modal?.querySelector("[data-appliance-apply-selection-summary]"),
     submit: modal?.querySelector("[data-appliance-apply-submit]"),
     liveSummary: modal?.querySelector("[data-appliance-apply-live-summary]"),
+    start: modal?.querySelector("[data-appliance-apply-start]"),
     cancel: modal?.querySelector("[data-appliance-apply-cancel]"),
     resultClose: modal?.querySelector("[data-appliance-apply-result-close]"),
   };
@@ -15074,9 +15080,16 @@ function renderApplianceApplyTask(task) {
   if (elements.liveSummary instanceof HTMLElement) {
     const children = Array.isArray(task._children) ? task._children : [];
     const complete = children.filter((child) => !taskStatusActive(child.status) && child.status !== "pending").length;
-    elements.liveSummary.textContent = active
-      ? `${complete} of ${children.length} components finished · changes are globally locked`
+    elements.liveSummary.textContent = task.can_start
+      ? `${children.length} components queued · start this task when ready`
+      : active
+        ? `${complete} of ${children.length} components finished · changes are globally locked`
       : `${children.length} components · appliance changes are unlocked`;
+  }
+  if (elements.start instanceof HTMLButtonElement) {
+    elements.start.classList.toggle("hidden", !task.can_start);
+    elements.start.disabled = !task.can_start;
+    elements.start.dataset.taskId = task.id || "";
   }
   if (elements.cancel instanceof HTMLButtonElement) {
     elements.cancel.classList.toggle("hidden", !task.can_cancel);
@@ -15220,6 +15233,30 @@ function initializeApplianceApplyProgress() {
   elements.reviewForm?.addEventListener("submit", (event) => {
     event.preventDefault();
     submitApplianceApplyForm(elements.reviewForm).catch(() => {});
+  });
+  elements.start?.addEventListener("click", async () => {
+    const taskId = elements.start?.dataset.taskId || "";
+    if (!taskId) return;
+    elements.start.disabled = true;
+    elements.start.textContent = "Starting…";
+    try {
+      const body = new URLSearchParams();
+      body.set("csrf", elements.modal.dataset.csrf || "");
+      const response = await fetch(`/tasks/${encodeURIComponent(taskId)}/start`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+        body,
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || "Unable to start the Appliance Apply task.");
+      renderApplianceApplyTask(payload.task);
+    } catch (error) {
+      setApplianceApplyModalError(error instanceof Error ? error.message : "Unable to start the Appliance Apply task.");
+      elements.start.disabled = false;
+    } finally {
+      elements.start.textContent = "Start appliance task";
+    }
   });
   elements.cancel?.addEventListener("click", async () => {
     const taskId = elements.cancel?.dataset.taskId || "";

@@ -247,9 +247,15 @@
             <span class="vcf-depot-status-item {{ 'good' if vcf_depot_application_properties.saved else 'warn' }}" data-vcf-depot-configuration-properties data-present="{{ '1' if vcf_depot_application_properties.present else '0' }}" data-saved="{{ '1' if vcf_depot_application_properties.saved else '0' }}">
               <small>Properties</small><strong>{% if vcf_depot_application_properties.saved %}Saved{% elif vcf_depot_application_properties.present %}Default{% else %}Needed{% endif %}</strong>
             </span>
-            <button class="vcf-depot-status-item vcf-depot-status-copy {{ 'good' if vcf_depot_software_depot_id.id else 'warn' }}" type="button" data-vcf-depot-configuration-id data-vcf-depot-software-depot-copy data-copy-value="{{ vcf_depot_software_depot_id.id }}" data-present="{{ '1' if vcf_depot_software_depot_id.id else '0' }}" aria-label="Copy software depot ID" title="Copy software depot ID" {{ "disabled" if not vcf_depot_software_depot_id.id else "" }}>
-              <small>Depot ID</small><span class="vcf-depot-status-value"><strong>{{ "Ready" if vcf_depot_software_depot_id.id else "Pending" }}</strong><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2 2v1"/></svg></span>
-            </button>
+            {% if vcf_depot_software_depot_id.id %}
+              <button class="vcf-depot-status-item vcf-depot-status-copy good" type="button" data-vcf-depot-configuration-id data-vcf-depot-software-depot-copy data-copy-value="{{ vcf_depot_software_depot_id.id }}" data-present="1" aria-label="Copy software depot ID" title="Copy software depot ID">
+                <small>Depot ID</small><span class="vcf-depot-status-value"><strong>Ready</strong><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2 2v1"/></svg></span>
+              </button>
+            {% else %}
+              <span class="vcf-depot-status-item warn" data-vcf-depot-configuration-id data-present="0">
+                <small>Depot ID</small><strong>Pending</strong>
+              </span>
+            {% endif %}
           </div>
       </div>
     </div>

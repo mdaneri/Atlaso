@@ -127,10 +127,11 @@ def create_app() -> FastAPI:
             with SessionLocal() as db:
                 active_job = active_appliance_apply_job(db)
                 cancellation_path = f"/tasks/{active_job.id}/cancel" if active_job is not None else ""
+                start_path = f"/tasks/{active_job.id}/start" if active_job is not None else ""
                 exempt = (
                     request.url.path in APPLIANCE_LOCK_EXEMPT_PATHS
                     or request.url.path.startswith("/pxe/inventory/")
-                    or request.url.path == cancellation_path
+                    or request.url.path in {cancellation_path, start_path}
                 )
                 if active_job is not None and not exempt:
                     return JSONResponse(
