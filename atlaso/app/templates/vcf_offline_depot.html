@@ -251,9 +251,9 @@
             <span class="vcf-depot-status-item {{ 'good' if vcf_depot_application_properties.present else 'warn' }}" data-vcf-depot-configuration-properties data-present="{{ '1' if vcf_depot_application_properties.present else '0' }}">
               <small>Properties</small><strong>{{ "Saved" if vcf_depot_application_properties.present else "Needed" }}</strong>
             </span>
-            <span class="vcf-depot-status-item {{ 'good' if vcf_depot_software_depot_id.id else 'warn' }}" data-vcf-depot-configuration-id data-present="{{ '1' if vcf_depot_software_depot_id.id else '0' }}">
-              <small>Depot ID</small><strong>{{ "Ready" if vcf_depot_software_depot_id.id else "Pending" }}</strong>
-            </span>
+            <button class="vcf-depot-status-item vcf-depot-status-copy {{ 'good' if vcf_depot_software_depot_id.id else 'warn' }}" type="button" data-vcf-depot-configuration-id data-vcf-depot-software-depot-copy data-copy-value="{{ vcf_depot_software_depot_id.id }}" data-present="{{ '1' if vcf_depot_software_depot_id.id else '0' }}" aria-label="Copy software depot ID" title="Copy software depot ID" {{ "disabled" if not vcf_depot_software_depot_id.id else "" }}>
+              <small>Depot ID</small><span class="vcf-depot-status-value"><strong>{{ "Ready" if vcf_depot_software_depot_id.id else "Pending" }}</strong><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2 2v1"/></svg></span>
+            </button>
           </div>
       </div>
     </div>
@@ -362,7 +362,7 @@
       <input type="checkbox" name="refresh_software_depot_id" data-vcf-depot-refresh-id>
       <span>{{ "Refresh the Software Depot ID" if vcf_depot_software_depot_id.id else "Generate the Software Depot ID" }}</span>
     </label>
-    <div class="alert warning">{% if vcf_depot_software_depot_id.id %}Refreshing replaces the current ID. Register the new ID with Broadcom and stage its matching activation code before the next download.{% else %}Generation runs through the VCF Offline Depot Appliance Apply unit.{% endif %} Selecting this option skips directly to Review; submitting Review queues the scoped apply activity.</div>
+    <div class="alert warning">{% if vcf_depot_software_depot_id.id %}Refreshing replaces the current ID.{% else %}Generation creates the first Software Depot ID.{% endif %} After VCFDT changes the identity, Atlaso removes the staged download token and activation code because neither remains valid for the new ID. Register the new ID with Broadcom, then stage a matching credential before the next download. Selecting this option skips directly to Review; submitting Review queues the scoped apply activity.</div>
   </section>
   <section class="hidden" data-atlaso-wizard-step="credentials">
     <div class="settings-list">
@@ -417,7 +417,7 @@
   </section>
   <section class="hidden" data-atlaso-wizard-step="review">
     <div class="settings-list" data-atlaso-resource-review></div>
-    <div class="alert warning">Ordinary configuration saves update Atlaso desired state only. When ID generation or refresh is selected, submitting this Review queues only the VCF Offline Depot Appliance Apply unit.</div>
+    <div class="alert warning">Ordinary configuration saves update Atlaso desired state only. When the first ID is generated or an existing ID is refreshed, Atlaso removes both staged credentials after VCFDT changes the identity. When ID generation or refresh is selected here, submitting this Review queues only the VCF Offline Depot Appliance Apply unit.</div>
   </section>
 {% endcall %}
 {% include "partials/task_modals.html" %}

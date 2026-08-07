@@ -3572,6 +3572,37 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.vcf-depot-status-copy {
+  width: 100%;
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.vcf-depot-status-copy:not(:disabled):hover {
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+
+.vcf-depot-status-copy:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.vcf-depot-status-copy:disabled {
+  cursor: default;
+}
+
+.vcf-depot-status-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vcf-depot-status-value .button-icon {
+  width: 12px;
+  height: 12px;
+}
+
 .copyable-inline-value {
   display: flex;
   align-items: center;

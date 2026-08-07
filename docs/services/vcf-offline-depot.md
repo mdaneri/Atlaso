@@ -70,9 +70,11 @@ for that exact registration. Atlaso preserves this ID when settings or download 
 Selecting **Refresh the Software Depot ID** (or **Generate the Software Depot ID** when none exists) immediately hides
 the credential, credential-input, and properties steps, leaving a two-step Software Depot ID and Review flow. It does
 not resave unchanged credentials or properties. **Queue appliance changes** on Review directly sends only the VCF
-Offline Depot unit and explicit refresh intent to Appliance Apply; there is no additional confirmation dialog. The
-earlier activation code no longer matches the active VCFDT identity, so register the new displayed ID and replace the
-staged activation code before retrying a download.
+Offline Depot unit and explicit refresh intent to Appliance Apply; there is no additional confirmation dialog. Once
+VCFDT changes the identity, Atlaso removes both the staged and runtime download token and activation code. A generation
+failure that leaves the identity unchanged preserves both credentials. Register the new displayed ID, then stage a
+matching credential before retrying a download. Use the copy control on the **Depot ID Ready** status tile to copy the
+current ID; Atlaso confirms the clipboard action without exposing any credential value.
 VCFDT tool staging and Software Depot ID generation remain available while the HTTPS depot service is disabled; the
 service toggle controls publishing, not VCFDT identity preparation.
 If VCFDT generates a replacement but Atlaso cannot read it back unambiguously, Atlaso clears the displayed ID instead

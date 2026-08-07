@@ -627,7 +627,10 @@ status: current
   the software depot ID refresh action; then read the persisted identity back with
   `vcf-download-tool configuration get --software-depot-id`, store only one unambiguous canonical readback value, sync
   intent, and apply HTTPS. Preserve the old ID when generation itself fails. If generation succeeds but canonical
-  readback fails, invalidate the stored ID because VCFDT may already have replaced its runtime identity. The helper
+  readback fails, invalidate the stored ID because VCFDT may already have replaced its runtime identity. The helper must
+  remove both runtime credential files immediately after the generation command succeeds, and Atlaso must remove both
+  staged credential records when the result contains a new canonical ID or identity-invalidated marker. Preserve both
+  credential locations when generation itself fails before changing the identity. The helper
   validates CA-managed
   `vcf_offline_depot:https` cert/key paths, server name/listener uniqueness, document root, auth mode, selected local
   HTTP user, and static-file directives, then installs or removes `/etc/atlaso/nginx/sites.d/vcf-offline-depot.conf`,
@@ -646,6 +649,8 @@ status: current
   hide the credential and properties steps so the rail contains only Software Depot ID and Review, without resaving
   unchanged configuration; Review is the explicit confirmation boundary and must submit refresh intent directly through
   the global `/appliance-apply` workflow for `vcf_offline_depot`, not call the helper directly or open another dialog.
+  Review must state that both staged credentials are removed after identity replacement. The settings-rail Depot ID
+  ready state uses the shared clipboard action with accessible labeling and transient completion feedback.
   Tool staging and Software Depot ID generation must not depend on the HTTPS service-enabled toggle. Ordinary wizard
   saves must preserve an existing ID.
   Manual

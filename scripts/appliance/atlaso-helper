@@ -7410,6 +7410,17 @@ def _generate_vcf_download_tool_software_depot_id() -> int:
         print(f"VCFDT exited with code {completed.returncode}.", file=sys.stderr)
         return completed.returncode
 
+    try:
+        for credential_name in ("download-token.txt", "activation-code.txt"):
+            (VCF_DEPOT_RUNTIME_TOOL_DIR / "secrets" / credential_name).unlink(missing_ok=True)
+    except OSError as exc:
+        print(json.dumps({"software_depot_id_invalidated": True}, sort_keys=True))
+        print(
+            f"VCFDT replaced the software depot ID, but obsolete runtime credentials could not be removed: {exc}",
+            file=sys.stderr,
+        )
+        return 2
+
     readback_command = [str(wrapper_path), "configuration", "get", "--software-depot-id"]
     try:
         readback = _run_vcfdt_user_command(readback_command)
@@ -7436,6 +7447,7 @@ def _generate_vcf_download_tool_software_depot_id() -> int:
             {
                 "vcf_offline_depot": "software depot ID generated",
                 "software_depot_id": software_depot_id,
+                "credentials_cleared": True,
                 "command": "vcf-download-tool configuration generate --software-depot-id",
                 "readback_command": "vcf-download-tool configuration get --software-depot-id",
             },

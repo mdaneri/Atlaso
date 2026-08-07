@@ -2390,6 +2390,17 @@ def reset_vcf_depot_tool_staging(db: Session, settings: VcfOfflineDepotSettings,
     set_setting_value(db, VCF_DEPOT_RUNTIME_RESET_PENDING_KEY, "1")
 
 
+def clear_vcf_depot_credentials(db: Session) -> None:
+    credential_keys = [
+        VCF_DEPOT_TOKEN_NAME_KEY,
+        VCF_DEPOT_TOKEN_VALUE_KEY,
+        VCF_DEPOT_ACTIVATION_NAME_KEY,
+        VCF_DEPOT_ACTIVATION_VALUE_KEY,
+    ]
+    for setting in db.execute(select(Setting).where(Setting.key.in_(credential_keys))).scalars().all():
+        db.delete(setting)
+
+
 def vcf_depot_software_depot_id_context(db: Session) -> dict[str, str]:
     software_id = db.execute(select(Setting).where(Setting.key == VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY)).scalar_one_or_none()
     generated_at = db.execute(select(Setting).where(Setting.key == VCF_DEPOT_SOFTWARE_DEPOT_ID_GENERATED_AT_KEY)).scalar_one_or_none()
@@ -2479,6 +2490,7 @@ def persist_vcf_depot_metadata_from_apply(db: Session, unit_results: list[dict[s
                 set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY, software_depot_id)
                 set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_GENERATED_AT_KEY, generated_at)
                 set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_ERROR_KEY, "")
+                clear_vcf_depot_credentials(db)
             else:
                 invalidated = helper_json_payload_with_key(stdout, "software_depot_id_invalidated")
                 if invalidated.get("software_depot_id_invalidated") is True:
@@ -2486,6 +2498,7 @@ def persist_vcf_depot_metadata_from_apply(db: Session, unit_results: list[dict[s
                         stale_setting = db.execute(select(Setting).where(Setting.key == key)).scalar_one_or_none()
                         if stale_setting is not None:
                             db.delete(stale_setting)
+                    clear_vcf_depot_credentials(db)
                 error = (stderr or stdout or "VCFDT software depot ID generation failed.").strip()
                 set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_ERROR_KEY, error)
         return

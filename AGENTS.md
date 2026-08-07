@@ -62,7 +62,8 @@ The following cross-cutting boundaries always apply:
 - VCF Offline Depot settings and download-profile applies preserve the registered VCFDT software depot ID. Generate an
   ID only when none exists or an administrator explicitly confirms **Refresh software depot ID** through global apply;
   preserve the old ID when generation itself fails, but invalidate it if generation succeeds and canonical readback
-  fails because VCFDT may already have replaced its runtime identity. Keep Broadcom credential replacement,
+  fails because VCFDT may already have replaced its runtime identity. Once generation succeeds, remove both staged and
+  runtime Broadcom credentials because neither remains valid for the replacement identity. Keep Broadcom credential replacement,
   application properties, Software Depot ID review, and the explicit refresh handoff in the shared VCFDT configuration
   wizard; its ordinary transactional save never refreshes an existing ID.
 - Keep development system adapters in dry-run mode unless a reviewed apply unit explicitly promotes real mutation.

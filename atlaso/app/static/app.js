@@ -12870,7 +12870,7 @@ function setVcfDepotToolDependentActions(toolAvailable) {
 function updateVcfDepotSoftwareDepotId(payload = {}) {
   const softwareDepotId = document.querySelector("[data-vcf-depot-software-depot-id]");
   const softwareDepotMessage = document.querySelector("[data-vcf-depot-software-depot-message]");
-  const softwareDepotCopy = document.querySelector("[data-vcf-depot-software-depot-copy]");
+  const softwareDepotCopies = document.querySelectorAll("[data-vcf-depot-software-depot-copy]");
   if (softwareDepotId instanceof HTMLElement && payload.software_depot_id !== undefined) {
     const depotId = payload.software_depot_id || "";
     if (softwareDepotId instanceof HTMLInputElement) {
@@ -12879,10 +12879,12 @@ function updateVcfDepotSoftwareDepotId(payload = {}) {
       softwareDepotId.textContent = depotId || "Not generated";
     }
     softwareDepotId.dataset.present = depotId ? "1" : "0";
-    if (softwareDepotCopy instanceof HTMLButtonElement) {
+    softwareDepotCopies.forEach((softwareDepotCopy) => {
+      if (!(softwareDepotCopy instanceof HTMLButtonElement)) return;
       softwareDepotCopy.dataset.copyValue = depotId;
-      softwareDepotCopy.classList.toggle("hidden", !depotId);
-    }
+      softwareDepotCopy.classList.toggle("hidden", softwareDepotCopy.closest("[data-vcf-depot-software-depot-cell]") !== null && !depotId);
+      softwareDepotCopy.disabled = softwareDepotCopy.matches("[data-vcf-depot-configuration-id]") && !depotId;
+    });
   }
   if (softwareDepotMessage instanceof HTMLElement && (payload.software_depot_id_error !== undefined || payload.software_depot_id_generated_at !== undefined)) {
     if (payload.software_depot_id_error) {
@@ -13295,12 +13297,17 @@ function initializeVcfDepotConfigurationWizard() {
       ? softwareDepotIdElement.textContent?.trim() || ""
       : "";
     const refreshRequested = refreshId instanceof HTMLInputElement && refreshId.checked;
+    const credentialReview = (credentialType, label) => {
+      if (refreshRequested) return "remove after the depot identity changes";
+      const savedAction = credentialReplacementSummary(credentialType, label).replace(new RegExp(`^${label}: `), "");
+      return softwareDepotId ? savedAction : `${savedAction}; remove after first ID generation`;
+    };
     const rows = [
-      ["Download token", credentialReplacementSummary("download_token", "Download token").replace(/^Download token: /, "")],
-      ["Activation code", credentialReplacementSummary("activation_code", "Activation code").replace(/^Activation code: /, "")],
+      ["Download token", credentialReview("download_token", "Download token")],
+      ["Activation code", credentialReview("activation_code", "Activation code")],
       ["Application properties", refreshRequested ? "unchanged by the ID-only path" : `${new TextEncoder().encode(content).length.toLocaleString()} UTF-8 bytes to save`],
       ["Software Depot ID", refreshRequested ? (softwareDepotId ? "queue replacement" : "queue generation") : (softwareDepotId ? "preserve current ID" : "generate on first Appliance Apply")],
-      ["Apply handoff", refreshRequested ? "Review submission queues the scoped activity" : "global Appliance Apply still required"],
+      ["Apply handoff", refreshRequested ? "Review submission queues the scoped activity" : softwareDepotId ? "global Appliance Apply still required" : "first Appliance Apply generates the ID and clears both credentials"],
     ];
     review.innerHTML = rows.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("");
   };
