@@ -413,11 +413,15 @@ def test_due_schedule_queues_one_job_and_skips_overlap(client):
         assert len(db.execute(select(Job).where(Job.schedule_id == schedule_id)).scalars().all()) == 1
 
 
-def test_worker_rejects_queued_vcf_download_when_profile_was_disabled(client):
+def test_worker_rejects_queued_vcf_download_when_profile_was_disabled(client, monkeypatch):
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AuditEvent, Job, JobStatus, VcfDepotDownloadProfile
     from atlaso.app.worker import run_worker_once
 
+    def reject_appliance_log_path(_path):
+        raise PermissionError("appliance log path unavailable")
+
+    monkeypatch.setattr("atlaso.app.ui.filesystem_path", reject_appliance_log_path)
     client.get("/login")
     with SessionLocal() as db:
         profile = VcfDepotDownloadProfile(name="disabled-after-queue", enabled=False)

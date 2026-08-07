@@ -3117,12 +3117,12 @@ def run_vcf_depot_download_job(job_id: str, profile_id: int) -> None:
         if not job:
             return
         try:
-            active_log_path = filesystem_path(VCF_DEPOT_VDT_LOG_PATH)
-            active_log_path.parent.mkdir(parents=True, exist_ok=True)
-            active_log_path.write_text("", encoding="utf-8")
             if profile is None:
                 raise ValueError("The VCF Offline Depot profile no longer exists.")
             settings, commands, validation_warnings = vcf_depot_download_preflight(db, profile)
+            active_log_path = filesystem_path(VCF_DEPOT_VDT_LOG_PATH)
+            active_log_path.parent.mkdir(parents=True, exist_ok=True)
+            active_log_path.write_text("", encoding="utf-8")
             appliance_settings = get_appliance_settings_row(db)
             secrets = vcf_depot_secret_context(db)
             generated_script = render_vcfdt_command_preview(
