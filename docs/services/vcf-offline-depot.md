@@ -110,7 +110,6 @@ These captures show responsive layouts and useful operational states referenced 
 
 ![Atlaso two-step VCFDT Software Depot ID wizard Review with a Queue Software Depot ID task action and no additional confirmation dialog.](../assets/screenshots/vcf-offline-depot-configuration-wizard.webp)
 
-*Figure: VCFDT Software Depot ID generation ends at Review, which queues a dedicated pending task for an explicit
-start.*
+*Figure: VCFDT Software Depot ID generation ends at Review, which immediately dispatches a dedicated identity task.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
