@@ -393,8 +393,8 @@
     </div>
     <small class="muted" data-vcf-depot-software-depot-message>{% if vcf_depot_software_depot_id.error %}{{ vcf_depot_software_depot_id.error }}{% elif vcf_depot_software_depot_id.generated_at %}Generated {{ vcf_depot_software_depot_id.generated_at }}{% else %}No ID exists. You can queue its generation now or leave it for the first VCF Offline Depot Appliance Apply.{% endif %}</small>
     <label class="checkbox-row">
-      <input type="checkbox" name="refresh_software_depot_id" data-vcf-depot-refresh-id>
-      <span>{{ "Refresh the Software Depot ID" if vcf_depot_software_depot_id.id else "Generate the Software Depot ID" }}</span>
+      <input type="checkbox" name="refresh_software_depot_id" data-vcf-depot-refresh-id {{ "" if vcf_depot_software_depot_id.id else "checked" }}>
+      <span data-vcf-depot-refresh-label>{{ "Refresh the Software Depot ID" if vcf_depot_software_depot_id.id else "Generate the Software Depot ID" }}</span>
     </label>
     <div class="alert warning">{% if vcf_depot_software_depot_id.id %}Refreshing replaces the current ID.{% else %}Generation creates the first Software Depot ID.{% endif %} After VCFDT changes the identity, Atlaso removes the staged download token and activation code because neither remains valid for the new ID. Register the new ID with Broadcom, then stage a matching credential before the next download. Selecting this option skips directly to Review; submitting Review queues the scoped apply activity.</div>
   </section>
@@ -452,6 +452,7 @@
   <section class="hidden" data-atlaso-wizard-step="review">
     <div class="settings-list" data-atlaso-resource-review></div>
     <div class="alert warning">Ordinary configuration saves update Atlaso desired state only. When the first ID is generated or an existing ID is refreshed, Atlaso removes both staged credentials after VCFDT changes the identity. When ID generation or refresh is selected here, submitting this Review queues only the VCF Offline Depot Appliance Apply unit.</div>
+    <small class="muted" data-vcf-depot-queue-status role="status" aria-live="polite">Submitting Review creates or saves the selected desired-state activity.</small>
   </section>
 {% endcall %}
 {% include "partials/task_modals.html" %}

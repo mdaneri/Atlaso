@@ -70,7 +70,8 @@ Do not place depot credentials or authenticated URLs in task notes, manifests, l
 
 Register the displayed software depot ID in the VCF Business Services console, then stage the activation code returned
 for that exact registration. Atlaso preserves this ID when settings or download profiles are changed and applied.
-Selecting **Refresh the Software Depot ID** (or **Generate the Software Depot ID** when none exists) immediately hides
+When no Software Depot ID exists, **Generate the Software Depot ID** is selected by default; clear it to keep the full
+configuration flow. Selecting generation, or **Refresh the Software Depot ID** for an existing ID, immediately hides
 the credential, credential-input, and properties steps, leaving a two-step Software Depot ID and Review flow. It does
 not resave unchanged credentials or properties. **Queue appliance changes** on Review directly sends only the VCF
 Offline Depot unit and explicit refresh intent to Appliance Apply; there is no additional confirmation dialog. Once

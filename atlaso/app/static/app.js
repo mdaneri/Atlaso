@@ -12768,6 +12768,20 @@ function updateVcfDepotCredentialStatus(payload = {}) {
     status.textContent = activationPresent ? "staged" : "not staged";
     status.dataset.present = activationPresent ? "1" : "0";
   });
+  document.querySelectorAll("[data-vcf-depot-credential-choice]").forEach((choice) => {
+    if (!(choice instanceof HTMLSelectElement)) return;
+    const options = [];
+    if (tokenPresent || activationPresent) {
+      options.push(new Option("Keep staged credentials unchanged", "preserve", true, true));
+    } else {
+      const placeholder = new Option("Select a credential", "", true, true);
+      placeholder.disabled = true;
+      options.push(placeholder);
+    }
+    options.push(new Option(`${tokenPresent ? "Replace" : "Use"} download token`, "download_token"));
+    options.push(new Option(`${activationPresent ? "Replace" : "Use"} activation code`, "activation_code"));
+    choice.replaceChildren(...options);
+  });
   credentialsStatuses.forEach((credentialsStatus) => {
     if (!(credentialsStatus instanceof HTMLElement)) return;
     const staged = [];
@@ -13248,12 +13262,21 @@ function initializeVcfDepotConfigurationWizard() {
   }
   const properties = form.querySelector("[data-vcf-depot-properties-textarea]");
   const refreshId = form.querySelector("[data-vcf-depot-refresh-id]");
+  const refreshIdLabel = form.querySelector("[data-vcf-depot-refresh-label]");
+  const softwareDepotIdElement = form.querySelector("[data-vcf-depot-software-depot-id]");
   const submitButton = form.querySelector("[data-atlaso-wizard-submit]");
+  const queueStatus = form.querySelector("[data-vcf-depot-queue-status]");
   let wizard;
 
   const selectedCredential = () => {
     const choice = form.elements.namedItem("credential_replacement_choice");
     return choice instanceof HTMLSelectElement ? choice.value : "";
+  };
+  const syncIdOnlyControls = () => {
+    const choice = form.elements.namedItem("credential_replacement_choice");
+    if (choice instanceof HTMLSelectElement) {
+      choice.disabled = refreshId instanceof HTMLInputElement && refreshId.checked;
+    }
   };
   const skippedConfigurationSteps = () => {
     if (refreshId instanceof HTMLInputElement && refreshId.checked) {
@@ -13346,6 +13369,12 @@ function initializeVcfDepotConfigurationWizard() {
     discardTitle: "Discard VCFDT configuration changes?",
     discardMessage: "Credential replacements and application-properties edits entered in this wizard will be lost.",
     onOpen: ({ controller }) => {
+      const softwareDepotIdPresent = softwareDepotIdElement instanceof HTMLElement && softwareDepotIdElement.dataset.present === "1";
+      if (refreshId instanceof HTMLInputElement) refreshId.checked = !softwareDepotIdPresent;
+      if (refreshIdLabel instanceof HTMLElement) {
+        refreshIdLabel.textContent = softwareDepotIdPresent ? "Refresh the Software Depot ID" : "Generate the Software Depot ID";
+      }
+      syncIdOnlyControls();
       controller.setSkippedSteps(skippedConfigurationSteps());
       ["download_token", "activation_code"].forEach(syncReplacementPanel);
       if (properties instanceof HTMLTextAreaElement && window.AtlasoMonaco && typeof window.AtlasoMonaco.setValue === "function") {
@@ -13359,6 +13388,12 @@ function initializeVcfDepotConfigurationWizard() {
         submitButton.textContent = refreshId instanceof HTMLInputElement && refreshId.checked
           ? "Queue appliance changes"
           : "Save VCFDT configuration";
+        if (queueStatus instanceof HTMLElement) {
+          queueStatus.textContent = refreshId instanceof HTMLInputElement && refreshId.checked
+            ? "Submitting Review will create a VCF Offline Depot Appliance Apply task."
+            : "Submitting Review saves VCFDT desired-state configuration.";
+          queueStatus.dataset.state = "idle";
+        }
       }
       if (step.id === "properties" && properties instanceof HTMLTextAreaElement && window.AtlasoMonaco && typeof window.AtlasoMonaco.focus === "function") {
         window.requestAnimationFrame(() => {
@@ -13421,18 +13456,37 @@ function initializeVcfDepotConfigurationWizard() {
         if (csrf instanceof HTMLInputElement) body.set("csrf", csrf.value);
         body.set("selected_units", "vcf_offline_depot");
         body.set("refresh_vcf_depot_software_depot_id", "true");
-        const response = await fetch("/appliance-apply", {
-          method: "POST",
-          body,
-          credentials: "same-origin",
-          headers: { Accept: "application/json" },
-        });
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.detail || "Software Depot ID activity could not be queued.");
-        applianceApplyActiveJobId = payload.job_id || payload.task?.id || "";
-        renderApplianceApplyTask(payload.task);
-        refreshApplianceApplySidebar().catch(() => {});
-        return { valid: true };
+        form.setAttribute("aria-busy", "true");
+        if (queueStatus instanceof HTMLElement) {
+          queueStatus.textContent = "Queueing the VCF Offline Depot Appliance Apply task...";
+          queueStatus.dataset.state = "saving";
+        }
+        try {
+          const response = await fetch("/appliance-apply", {
+            method: "POST",
+            body,
+            credentials: "same-origin",
+            headers: { Accept: "application/json" },
+          });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.detail || "Software Depot ID activity could not be queued.");
+          applianceApplyActiveJobId = payload.job_id || payload.task?.id || "";
+          renderApplianceApplyTask(payload.task);
+          refreshApplianceApplySidebar().catch(() => {});
+          if (queueStatus instanceof HTMLElement) {
+            queueStatus.textContent = "Appliance Apply task queued.";
+            queueStatus.dataset.state = "saved";
+          }
+          return { valid: true };
+        } catch (error) {
+          if (queueStatus instanceof HTMLElement) {
+            queueStatus.textContent = error instanceof Error ? error.message : "Software Depot ID activity could not be queued.";
+            queueStatus.dataset.state = "error";
+          }
+          throw error;
+        } finally {
+          form.removeAttribute("aria-busy");
+        }
       }
       const content = syncProperties();
       const body = new FormData(form);
@@ -13465,6 +13519,7 @@ function initializeVcfDepotConfigurationWizard() {
     },
   });
   refreshId?.addEventListener("change", () => {
+    syncIdOnlyControls();
     wizard.setSkippedSteps(skippedConfigurationSteps());
   });
   document.querySelectorAll("[data-vcf-depot-configuration-open]").forEach((launcher) => {
