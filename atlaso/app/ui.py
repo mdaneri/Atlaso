@@ -3237,9 +3237,18 @@ def run_vcf_depot_download_job(job_id: str, profile_id: int) -> None:
                 indent=2,
                 sort_keys=True,
             )
-            append_vcf_depot_task_log(job_id, profile_name, f"ERROR: {exc}\n")
-            append_vcf_depot_task_log(job_id, profile_name, f"===== Atlaso VCFDT job {job_id} failed {finished.isoformat()} =====\n")
-            archive_vcf_depot_task_log(job_id, profile_name)
+            try:
+                append_vcf_depot_task_log(job_id, profile_name, f"ERROR: {exc}\n")
+                append_vcf_depot_task_log(
+                    job_id,
+                    profile_name,
+                    f"===== Atlaso VCFDT job {job_id} failed {finished.isoformat()} =====\n",
+                )
+                archive_vcf_depot_task_log(job_id, profile_name)
+            except OSError:
+                # Preserve the actionable execution failure even when a development
+                # or recovery environment cannot write the appliance log directory.
+                pass
             db.add(
                 AuditEvent(
                     actor=job.created_by,
