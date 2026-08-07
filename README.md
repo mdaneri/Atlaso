@@ -62,6 +62,8 @@ certificate-fingerprint confirmation as their trust decision.
 VCF Offline Depot settings and download-profile applies preserve the registered VCF Download Tool software depot ID.
 Atlaso generates a replacement only during first setup or when an administrator explicitly confirms
 **Refresh software depot ID** through global appliance apply.
+Enabled depot profiles can use the shared Automation scheduler. Manual and scheduled downloads share one global
+single-active task guard and execution-time prerequisite validation; schedule definitions contain no Broadcom secrets.
 
 The integrated CA can maintain trust and deploy managed service certificates without publishing its public portal on
 an access interface. Selecting a CA listen interface is the explicit portal-publication boundary. When NTS server

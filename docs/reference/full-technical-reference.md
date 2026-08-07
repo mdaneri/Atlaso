@@ -462,6 +462,13 @@ stages nginx config under `/var/lib/atlaso/apply/vcf-offline-depot/`, serves the
 document root, uses the CA-managed `vcf_offline_depot:https` certificate/key file paths, and protects `/PROD/` with HTTP
 Basic Auth backed by the selected local `vcf-depot` user unless unauthenticated access is explicitly enabled.
 
+The profile grid's **Schedule download** action opens the shared Automation wizard with the profile selected. Manual,
+Run now, and due-schedule admission share an atomic single-active VCFDT job guard. Scheduled overlap is retained as a
+skipped execution, while execution-time tool, enabled-profile, credential, desired-state, and command checks fail the
+task before VCFDT mutation. Disabling or tool-resetting a profile disables its schedules; profile deletion requires all
+attached schedules to be removed first. Schedule archives remain compatible because only the stable integer
+`profile_id` is stored.
+
 ## Public Service Front Door
 
 VMware CEIP consent is centralized under **Settings → VMware Product Preferences**. The single appliance-wide choice

@@ -63,6 +63,18 @@ Figure: Automation in the verified clean-appliance desktop state.
 
 Figure: Automation in the verified clean-appliance responsive state.
 
+## Automation: Schedules
+
+Route: `/automation#schedules`
+
+![Atlaso Automation schedule wizard with VCF Offline Depot profile download selected at the desktop viewport.](../assets/screenshots/automation-vcf-schedule-wizard-desktop.webp)
+
+Figure: VCF Offline Depot profile scheduling in the shared Automation wizard.
+
+![Atlaso Automation schedule wizard with VCF Offline Depot profile download selected at the responsive viewport.](../assets/screenshots/automation-vcf-schedule-wizard-responsive.webp)
+
+Figure: VCF Offline Depot profile scheduling in the shared Automation wizard at the responsive viewport.
+
 ## Backup Restore
 
 Route: `/backup-restore`
@@ -510,6 +522,10 @@ Figure: VCF Offline Depot in the verified clean-appliance desktop state.
 ![Atlaso VCF Offline Depot page in the clean-appliance responsive viewport.](../assets/screenshots/vcf-offline-depot-clean-responsive.webp)
 
 Figure: VCF Offline Depot in the verified clean-appliance responsive state.
+
+![VCF Offline Depot profile row menu showing Schedule download disabled until the profile is enabled.](../assets/screenshots/vcf-offline-depot-schedule-action-desktop.webp)
+
+Figure: VCF Offline Depot profile scheduling action with the disabled-profile reason.
 
 ## Vcf Private Registry
 

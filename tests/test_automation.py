@@ -185,6 +185,10 @@ def test_managed_script_revision_is_immutable_enabled_and_run_by_worker(client):
     assert "basic-languages/powershell/powershell.contribution" in monaco_source
     assert "basic-languages/python/python.contribution" in monaco_source
     assert '"X-Atlaso-Wizard": "1"' in app_js
+    assert 'scheduleQuery.get("new") === "vcf_depot_download"' in app_js
+    assert 'scheduleForm.elements.task_type.value = "vcf_depot_download"' in app_js
+    assert 'scheduleForm.elements.vcf_profile_id.value = profileOption ? requestedProfileId : ""' in app_js
+    assert 'window.history.replaceState({}, "", cleanUrl)' in app_js
     csrf = csrf_from_page(page.text)
     wizard_response = client.post(
         "/automation/scripts",
@@ -409,15 +413,12 @@ def test_due_schedule_queues_one_job_and_skips_overlap(client):
         assert len(db.execute(select(Job).where(Job.schedule_id == schedule_id)).scalars().all()) == 1
 
 
-def test_worker_rejects_queued_vcf_download_when_profile_was_disabled(client, monkeypatch):
+def test_worker_rejects_queued_vcf_download_when_profile_was_disabled(client):
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import Job, JobStatus, VcfDepotDownloadProfile
+    from atlaso.app.models import AuditEvent, Job, JobStatus, VcfDepotDownloadProfile
     from atlaso.app.worker import run_worker_once
-    import atlaso.app.ui as ui
 
     client.get("/login")
-    called = []
-    monkeypatch.setattr(ui, "run_vcf_depot_download_job", lambda *_args: called.append(True))
     with SessionLocal() as db:
         profile = VcfDepotDownloadProfile(name="disabled-after-queue", enabled=False)
         db.add(profile)
@@ -435,11 +436,146 @@ def test_worker_rejects_queued_vcf_download_when_profile_was_disabled(client, mo
         db.commit()
 
     assert run_worker_once() == "job_disabled_vcf_profile"
-    assert called == []
     with SessionLocal() as db:
         failed = db.get(Job, "job_disabled_vcf_profile")
         assert failed.status == JobStatus.FAILED.value
-        assert "Enable the scheduled VCF Offline Depot profile" in failed.error
+        assert "Enable the VCFDT download profile" in failed.error
+        audit = db.execute(
+            select(AuditEvent).where(AuditEvent.resource_id == failed.id)
+        ).scalar_one()
+        assert audit.action == "fail_vcf_depot_download"
+        assert audit.success is False
+
+
+def test_due_vcf_schedules_share_global_download_lock_and_record_skipped_run(client):
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, Job, JobStatus, Schedule, VcfDepotDownloadProfile
+    from atlaso.app.services.automation import enqueue_due_schedules
+
+    client.get("/login")
+    now = datetime.now(timezone.utc)
+    with SessionLocal() as db:
+        first_profile = VcfDepotDownloadProfile(name="scheduled-metadata", profile_type="metadata", enabled=True)
+        second_profile = VcfDepotDownloadProfile(name="scheduled-esx", profile_type="esx", enabled=True)
+        db.add_all([first_profile, second_profile])
+        db.flush()
+        db.add_all(
+            [
+                Schedule(
+                    name="scheduled-metadata-nightly",
+                    task_type="vcf_depot_download",
+                    task_config_json=json.dumps({"profile_id": first_profile.id}),
+                    schedule_kind="cron",
+                    cron_expression="0 2 * * *",
+                    timezone_name="UTC",
+                    enabled=True,
+                    next_run_at=now - timedelta(minutes=2),
+                    created_by="admin",
+                ),
+                Schedule(
+                    name="scheduled-esx-nightly",
+                    task_type="vcf_depot_download",
+                    task_config_json=json.dumps({"profile_id": second_profile.id}),
+                    schedule_kind="cron",
+                    cron_expression="0 3 * * *",
+                    timezone_name="UTC",
+                    enabled=True,
+                    next_run_at=now - timedelta(minutes=1),
+                    created_by="admin",
+                ),
+            ]
+        )
+        db.commit()
+
+    with SessionLocal() as db:
+        jobs = enqueue_due_schedules(db, now=now)
+        assert [job.status for job in jobs] == [JobStatus.PENDING.value, JobStatus.SKIPPED.value]
+        skipped = jobs[1]
+        result = json.loads(skipped.result)
+        assert result["profile_name"] == "scheduled-esx"
+        assert result["schedule_name"] == "scheduled-esx-nightly"
+        assert result["planned_for"]
+        assert result["active_job_id"] == jobs[0].id
+        assert db.execute(
+            select(AuditEvent).where(
+                AuditEvent.resource_id == skipped.id,
+                AuditEvent.action == "skip_scheduled_vcf_depot_download",
+            )
+        ).scalar_one().success is False
+
+
+def test_vcf_download_database_guard_rejects_second_active_job(client):
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import VcfDepotDownloadProfile
+    from atlaso.app.services.vcf_depot_downloads import (
+        ActiveVcfDepotDownloadError,
+        enqueue_vcf_depot_download,
+    )
+
+    client.get("/login")
+    with SessionLocal() as db:
+        profile = VcfDepotDownloadProfile(name="atomic-profile", profile_type="metadata", enabled=True)
+        db.add(profile)
+        db.flush()
+        first = enqueue_vcf_depot_download(db, profile=profile, actor="admin", trigger="manual")
+        with pytest.raises(ActiveVcfDepotDownloadError, match=first.id):
+            enqueue_vcf_depot_download(db, profile=profile, actor="admin", trigger="manual")
+        db.commit()
+
+
+def test_disabling_vcf_profile_disables_schedules_and_delete_requires_detach(client):
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Schedule, VcfDepotDownloadProfile
+
+    login(client)
+    with SessionLocal() as db:
+        profile = VcfDepotDownloadProfile(name="lifecycle-profile", profile_type="metadata", enabled=True)
+        db.add(profile)
+        db.flush()
+        schedule = Schedule(
+            name="lifecycle-profile-nightly",
+            task_type="vcf_depot_download",
+            task_config_json=json.dumps({"profile_id": profile.id}),
+            schedule_kind="cron",
+            cron_expression="0 2 * * *",
+            timezone_name="UTC",
+            enabled=True,
+            next_run_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            created_by="admin",
+        )
+        db.add(schedule)
+        db.commit()
+        profile_id = profile.id
+        schedule_id = schedule.id
+
+    csrf = csrf_from_page(client.get("/automation").text)
+    delete_response = client.post(
+        f"/vcf-offline-depot/profiles/{profile_id}/delete",
+        data={"csrf": csrf},
+        follow_redirects=False,
+    )
+    assert delete_response.status_code == 409
+    assert "lifecycle-profile-nightly" in delete_response.text
+
+    edit_response = client.post(
+        f"/vcf-offline-depot/profiles/{profile_id}/edit",
+        data={
+            "csrf": csrf,
+            "name": "renamed-lifecycle-profile",
+            "profile_type": "metadata",
+            "sku": "VCF",
+            "vcf_version": "9.1.0",
+            "binary_type": "INSTALL",
+            "automated_install": "on",
+        },
+        follow_redirects=False,
+    )
+    assert edit_response.status_code == 303
+    with SessionLocal() as db:
+        schedule = db.get(Schedule, schedule_id)
+        assert schedule.enabled is False
+        assert schedule.next_run_at is None
+        assert json.loads(schedule.task_config_json)["profile_id"] == profile_id
 
 
 def test_schedule_edit_run_now_and_script_dependency_guards(client):

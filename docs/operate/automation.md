@@ -24,14 +24,17 @@ This verified appliance view provides visual orientation before you begin.
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
 - Appliance Update checks and installs with selected update streams.
-- Enabled VCF Offline Depot download profiles. The worker rechecks the profile immediately before execution, so a
-  profile disabled after queueing fails closed instead of starting a download.
+- Enabled VCF Offline Depot download profiles. Manual starts, **Run now**, and scheduled starts share one server-owned
+  admission and execution path. The worker rechecks the applied VCF Download Tool, staged credential, current profile
+  state, and generated command set immediately before execution, so a prerequisite removed after queueing fails closed
+  before VCFDT starts.
 - Explicitly enabled immutable managed-script revisions.
 
 Schedules use either a one-time local date/time or a standard five-field cron expression
 (`minute hour day month weekday`) with an IANA timezone such as `UTC` or `America/Los_Angeles`. Execution timestamps are
-stored in UTC. Missed runs and overlaps are not replayed: the scheduler advances to the next time and does not queue a
-second active task for the same schedule.
+stored in UTC. Missed runs are not replayed. Every due occurrence advances to the next time; when any manual or
+scheduled VCFDT download is already pending or running, the occurrence is recorded as a terminal skipped task that
+links to the active task instead of starting a second VCFDT process.
 
 Schedules can be edited, enabled or disabled, run immediately, and deleted. **Run now** creates a normal queued task
 with a `manual_schedule` trigger and does not change the next calculated recurring run. The Automation table shows the
@@ -50,6 +53,13 @@ enabled state, and review. The second step changes with the selected task: updat
 or an enabled managed-script revision and its parameters. The timing step includes an hourly/daily/weekly/monthly cron
 builder with a generated summary; advanced operators can choose Custom for a standard five-field expression. The same
 wizard is used for edits.
+
+The **Schedule download** action in a VCF Offline Depot profile row opens this same wizard with the VCF task type and
+stable profile ID preselected. Schedule definitions contain that ID and timing only; they never contain Broadcom
+credentials, authenticated URLs, generated commands, or credential-bearing output. Profile renames and content edits
+therefore affect future runs without rewriting history. Disabling a profile disables its attached schedules and clears
+their next-run timestamps; re-enabling the profile does not silently re-enable them. Delete the attached schedules
+before deleting a profile.
 
 ## Managed scripts
 
@@ -111,6 +121,9 @@ never claimed remains pending.
 ## Task history and output
 
 Scheduled work always creates normal Atlaso Jobs, so it appears in both the Automation **Executions** tab and `/tasks`.
+VCFDT scheduled tasks also appear in the profile-scoped task grid. Failed prerequisite checks and skipped overlaps are
+terminal history entries with schedule, profile, planned-time, and active-task context; missed or failed runs are not
+retried outside the next configured occurrence.
 The Tasks grid uses backend-owned filtering and pagination. Status and state are fixed lists; Task / Component is an
 autocomplete list built from recorded job types and component labels while still accepting a custom job id, task, or
 component fragment.
@@ -130,5 +143,15 @@ These captures show responsive layouts and useful operational states referenced 
 ![Atlaso Automation page in the clean-appliance responsive viewport.](../assets/screenshots/automation-clean-responsive.webp)
 
 *Figure: Automation in the verified clean-appliance responsive state.*
+
+### Automation: Schedules
+
+![Atlaso Automation schedule wizard with VCF Offline Depot profile download selected at the desktop viewport.](../assets/screenshots/automation-vcf-schedule-wizard-desktop.webp)
+
+*Figure: VCF Offline Depot profile scheduling in the shared Automation wizard.*
+
+![Atlaso Automation schedule wizard with VCF Offline Depot profile download selected at the responsive viewport.](../assets/screenshots/automation-vcf-schedule-wizard-responsive.webp)
+
+*Figure: VCF Offline Depot profile scheduling in the shared Automation wizard at the responsive viewport.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->

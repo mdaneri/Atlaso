@@ -229,6 +229,33 @@ def init_db() -> None:
                     "AND status IN ('pending', 'running')"
                 )
             )
+            active_vcf_downloads = connection.execute(
+                text(
+                    "SELECT id FROM jobs "
+                    "WHERE type = 'vcf-depot-download' "
+                    "AND status IN ('pending', 'running') "
+                    "ORDER BY created_at, id"
+                )
+            ).scalars().all()
+            for duplicate_job_id in active_vcf_downloads[1:]:
+                connection.execute(
+                    text(
+                        "UPDATE jobs SET status = 'skipped', progress_percent = 100, "
+                        "finished_at = CURRENT_TIMESTAMP, "
+                        "error = 'Skipped during database upgrade because another VCF Offline Depot download was active.' "
+                        "WHERE id = :job_id"
+                    ),
+                    {"job_id": duplicate_job_id},
+                )
+            connection.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS "
+                    "uq_jobs_active_vcf_depot_download "
+                    "ON jobs ((1)) "
+                    "WHERE type = 'vcf-depot-download' "
+                    "AND status IN ('pending', 'running')"
+                )
+            )
 
 
 def get_db() -> Generator[Session, None, None]:

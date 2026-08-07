@@ -644,6 +644,11 @@ status: current
   status from the process exit code; missing profile credentials should disable only the profile Start button and must
   not block applying or disabling the depot service. Enabled VCF Offline Depot profiles are selectable in the real
   Automation scheduler and execute as the same durable `vcf-depot-download` jobs as manual starts. The application
+  must admit both paths through one atomic database-backed single-active guard, revalidate tool/profile/credential
+  prerequisites at execution, record scheduled collisions as skipped Jobs, and preserve terminal task/log/audit
+  evidence. Disabling a profile or resetting the tool disables attached schedules without re-enabling them later;
+  profile deletion is blocked while any schedule references it. Schedule configuration stores only the stable integer
+  `profile_id` and never credentials, authenticated URLs, generated commands, or secret-bearing output. The application
   properties editor saves desired-state text and syncs Monaco Editor before submit; global apply writes the runtime
   properties used by the active tool. Depot private keys, HTTP user passwords/hashes, and VCFDT credential contents must
   remain path references or presence flags only; never print key contents, token values, activation-code values, private

@@ -830,7 +830,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260729-6" in service_worker.text
     assert "/static/app.css?v=vcf-depot-tasks-239-20260804-1" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in service_worker.text
-    assert "/static/app.js?v=vcf-depot-status-238-20260804-1" in service_worker.text
+    assert "/static/app.js?v=vcf-depot-schedules-250-20260807-1" in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
@@ -850,8 +850,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=vcf-depot-status-238-20260804-1"),
-        (public_base, "/static/app.js?v=vcf-depot-status-238-20260804-1"),
+        (base, "/static/app.js?v=vcf-depot-schedules-250-20260807-1"),
+        (public_base, "/static/app.js?v=vcf-depot-schedules-250-20260807-1"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5"
@@ -1357,7 +1357,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vcf-depot-tasks-239-20260804-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-5" in page.text
-    assert "/static/app.js?v=vcf-depot-status-238-20260804-1" in page.text
+    assert "/static/app.js?v=vcf-depot-schedules-250-20260807-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -9564,6 +9564,12 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "lcm.depot.adapter.host=dl.broadcom.com" in page.text
     assert "/vcf-offline-depot/profiles/" in page.text
     assert "Start" in page.text
+    assert "Start, schedule, and preview actions" in page.text
+    assert "Schedule" in page.text
+    assert "new=vcf_depot_download" in Path("atlaso/app/templates/vcf_offline_depot.html").read_text(encoding="utf-8")
+    app_js = client.get("/static/app.js").text
+    assert '"Schedule download (enable profile first)"' in app_js
+    assert "function scheduleVcfDepotProfileDownload(row)" in app_js
     assert page.text.index("<th>Name</th>") < page.text.index("<th>Start</th>") < page.text.index("<th>Type</th>")
     assert 'href="/logs"' in page.text
     assert "Refresh software depot ID" in page.text
@@ -10666,8 +10672,8 @@ def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path):
         assert '"profile_name": "vcf-install"' in (job.result or "")
         assert '"dry_run": false' in (job.result or "")
         assert f'"log_path": "/var/lib/atlaso/vcfDownloadTool/task-logs/{job.id}-vcf-install.log"' in (job.result or "")
-        assert "/var/lib/atlaso/vcfDownloadTool/active-tool/bin/vcf-download-tool" in (job.result or "")
-        assert "--depot-download-token-file=/var/lib/atlaso/vcfDownloadTool/active-tool/secrets/download-token.txt" in (job.result or "")
+        assert '"trigger": "manual"' in (job.result or "")
+        assert '"commands"' not in (job.result or "")
         assert "manual-secret-token" not in (job.result or "")
         assert profile and profile.status == "ready"
 
@@ -10889,7 +10895,8 @@ def test_vcf_offline_depot_manual_profile_download_accepts_activation_code_witho
         job = db.execute(select(Job).where(Job.type == "vcf-depot-download")).scalar_one()
         assert json.loads(job.task_config_json or "{}") == {"profile_id": profile_id}
         assert "configuration get --software-depot-id" not in (job.result or "")
-        assert "--depot-download-activation-code-file=/var/lib/atlaso/vcfDownloadTool/active-tool/secrets/activation-code.txt" in (job.result or "")
+        assert '"trigger": "manual"' in (job.result or "")
+        assert '"commands"' not in (job.result or "")
         assert "--depot-download-token-file=/var/lib/atlaso/vcfDownloadTool/active-tool/secrets/download-token.txt" not in (job.result or "")
         assert "manual-secret-activation-code" not in (job.result or "")
 

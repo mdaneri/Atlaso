@@ -11996,6 +11996,19 @@ async function previewVcfDepotProfileScript(row) {
   }
 }
 
+function scheduleVcfDepotProfileDownload(row) {
+  const data = row.getData();
+  if (data.is_new || !data.enabled) {
+    showVcfDepotMessage("Enable the VCFDT download profile before scheduling it.");
+    return;
+  }
+  const query = new URLSearchParams({
+    new: "vcf_depot_download",
+    vcf_profile_id: String(data.id),
+  });
+  window.location.assign(`/automation?${query.toString()}#schedules`);
+}
+
 let vcfDepotProfilesTable = null;
 
 function setVcfDepotDownloadActive(active, activeJobId = "") {
@@ -12084,6 +12097,16 @@ function initializeVcfDepotProfilesTable() {
           return data.is_new || !data.enabled || !data.can_start;
         },
         action: (_event, row) => startVcfDepotProfileDownload(row, element.dataset.csrf || ""),
+      },
+      {
+        label: (row) => row.getData().enabled
+          ? "Schedule download"
+          : "Schedule download (enable profile first)",
+        disabled: (row) => {
+          const data = row.getData();
+          return data.is_new || !data.enabled;
+        },
+        action: (_event, row) => scheduleVcfDepotProfileDownload(row),
       },
     ],
     deleteConfirmation: (data) => ({
@@ -17567,6 +17590,18 @@ function initializeAutomationTables() {
       },
       options: atlasoGridOptions31,
     }).table;
+    const scheduleQuery = new URLSearchParams(window.location.search);
+    if (scheduleQuery.get("new") === "vcf_depot_download") {
+      const requestedProfileId = scheduleQuery.get("vcf_profile_id") || "";
+      const profileOption = [...scheduleForm.elements.vcf_profile_id.options]
+        .find((option) => option.value === requestedProfileId && !option.disabled);
+      openScheduleWizard(null, schedulesElement);
+      scheduleForm.elements.task_type.value = "vcf_depot_download";
+      scheduleForm.elements.vcf_profile_id.value = profileOption ? requestedProfileId : "";
+      updateConfigVisibility();
+      const cleanUrl = `${window.location.pathname}${window.location.hash || "#schedules"}`;
+      window.history.replaceState({}, "", cleanUrl);
+    }
   }
 
   const executionsElement = document.getElementById("automation-executions-table");

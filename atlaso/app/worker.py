@@ -628,7 +628,6 @@ def run_worker_once() -> str | None:
             _run_appliance_update(job_id)
         elif job_type == "vcf-depot-download":
             from atlaso.app.ui import run_vcf_depot_download_job
-            from atlaso.app.models import VcfDepotDownloadProfile
 
             with SessionLocal() as db:
                 job = db.get(Job, job_id)
@@ -638,9 +637,6 @@ def run_worker_once() -> str | None:
                 if not config:
                     config = json_object(job.result or "{}", label="VCF job configuration")
                 profile_id = int(config.get("profile_id") or 0)
-                profile = db.get(VcfDepotDownloadProfile, profile_id)
-                if profile is None or not profile.enabled:
-                    raise ValueError("Enable the scheduled VCF Offline Depot profile before running it.")
             run_vcf_depot_download_job(job_id, profile_id)
         elif job_type == "managed-script":
             with SessionLocal() as db:

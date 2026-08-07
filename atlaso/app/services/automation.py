@@ -18,11 +18,19 @@ from atlaso.app.models import (
     Job,
     JobStatus,
     Schedule,
+    VcfDepotDownloadProfile,
     Vault,
     utcnow,
 )
 from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
 from atlaso.app.services.vaults import vault_scope_identity
+from atlaso.app.services.vcf_depot_downloads import (
+    ActiveVcfDepotDownloadError,
+    active_vcf_depot_download_job,
+    enqueue_vcf_depot_download,
+    vcf_depot_initial_job_result,
+    vcf_depot_task_log_reference,
+)
 
 
 SCHEDULE_TASK_TYPES = {
@@ -303,12 +311,16 @@ def create_script_revision(
 
 def enqueue_schedule_now(db: Session, *, schedule: Schedule, actor: str, now: datetime | None = None) -> Job:
     current = _aware_utc(now or utcnow())
-    active = db.execute(
-        select(Job).where(
-            Job.schedule_id == schedule.id,
-            Job.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value]),
-        )
-    ).scalars().first()
+    active = (
+        active_vcf_depot_download_job(db)
+        if schedule.task_type == "vcf_depot_download"
+        else db.execute(
+            select(Job).where(
+                Job.schedule_id == schedule.id,
+                Job.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value]),
+            )
+        ).scalars().first()
+    )
     if active is not None:
         raise ValueError(f"Schedule already has active task {active.id}.")
     config = json_object(schedule.task_config_json, label="Task configuration")
@@ -320,20 +332,34 @@ def enqueue_schedule_now(db: Session, *, schedule: Schedule, actor: str, now: da
         config["mode"] = "run"
     config["_schedule_id"] = schedule.id
     config["_schedule_name"] = schedule.name
-    job = Job(
-        id=f"job_schedule_{schedule.id}_{uuid4().hex[:12]}",
-        type=SCHEDULE_JOB_TYPES[schedule.task_type],
-        status=JobStatus.PENDING.value,
-        created_by=actor,
-        progress_percent=0,
-        schedule_id=schedule.id,
-        trigger="manual_schedule",
-        planned_for=current,
-        task_config_json=json.dumps(config, sort_keys=True),
-        result=json.dumps({"schedule_id": schedule.id, "schedule_name": schedule.name, "trigger": "manual_schedule"}, indent=2),
-    )
-    db.add(job)
-    db.flush()
+    if schedule.task_type == "vcf_depot_download":
+        profile = db.get(VcfDepotDownloadProfile, int(config.get("profile_id") or 0))
+        if profile is None or not profile.enabled:
+            raise ValueError("Enable the scheduled VCF Offline Depot profile before running it.")
+        job = enqueue_vcf_depot_download(
+            db,
+            profile=profile,
+            actor=actor,
+            trigger="manual_schedule",
+            schedule=schedule,
+            planned_for=current,
+            job_id=f"job_schedule_{schedule.id}_{uuid4().hex[:12]}",
+        )
+    else:
+        job = Job(
+            id=f"job_schedule_{schedule.id}_{uuid4().hex[:12]}",
+            type=SCHEDULE_JOB_TYPES[schedule.task_type],
+            status=JobStatus.PENDING.value,
+            created_by=actor,
+            progress_percent=0,
+            schedule_id=schedule.id,
+            trigger="manual_schedule",
+            planned_for=current,
+            task_config_json=json.dumps(config, sort_keys=True),
+            result=json.dumps({"schedule_id": schedule.id, "schedule_name": schedule.name, "trigger": "manual_schedule"}, indent=2),
+        )
+        db.add(job)
+        db.flush()
     if job.type == "appliance-update":
         ensure_appliance_update_job_steps(
             db,
@@ -366,12 +392,16 @@ def enqueue_due_schedules(db: Session, *, now: datetime | None = None) -> list[J
     ).scalars().all()
     jobs: list[Job] = []
     for schedule in due:
-        active = db.execute(
-            select(Job).where(
-                Job.schedule_id == schedule.id,
-                Job.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value]),
-            )
-        ).scalars().first()
+        active = (
+            active_vcf_depot_download_job(db)
+            if schedule.task_type == "vcf_depot_download"
+            else db.execute(
+                select(Job).where(
+                    Job.schedule_id == schedule.id,
+                    Job.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value]),
+                )
+            ).scalars().first()
+        )
         planned_for = schedule.next_run_at
         schedule.last_run_at = current
         if schedule.schedule_kind == "once":
@@ -380,7 +410,7 @@ def enqueue_due_schedules(db: Session, *, now: datetime | None = None) -> list[J
         else:
             schedule.next_run_at = next_cron_run(schedule.cron_expression, schedule.timezone_name, after=current)
         schedule.updated_at = current
-        if active is not None:
+        if active is not None and schedule.task_type != "vcf_depot_download":
             db.add(
                 AuditEvent(
                     actor=f"scheduler:{schedule.name}",
@@ -401,20 +431,132 @@ def enqueue_due_schedules(db: Session, *, now: datetime | None = None) -> list[J
             config["mode"] = "run"
         config["_schedule_id"] = schedule.id
         config["_schedule_name"] = schedule.name
-        job = Job(
-            id=f"job_schedule_{schedule.id}_{int(current.timestamp())}",
-            type=SCHEDULE_JOB_TYPES[schedule.task_type],
-            status=JobStatus.PENDING.value,
-            created_by=f"scheduler:{schedule.name}",
-            progress_percent=0,
-            schedule_id=schedule.id,
-            trigger="scheduled",
-            planned_for=planned_for,
-            task_config_json=json.dumps(config, sort_keys=True),
-            result=json.dumps({"schedule_id": schedule.id, "schedule_name": schedule.name, "trigger": "scheduled"}, indent=2),
-        )
-        db.add(job)
-        db.flush()
+        if schedule.task_type == "vcf_depot_download":
+            profile = db.get(VcfDepotDownloadProfile, int(config.get("profile_id") or 0))
+            job_id = f"job_schedule_{schedule.id}_{int(current.timestamp())}"
+            vcf_task_config = json.dumps({"profile_id": int(config.get("profile_id") or 0)}, sort_keys=True)
+            if profile is None:
+                job = Job(
+                    id=job_id,
+                    type="vcf-depot-download",
+                    status=JobStatus.FAILED.value,
+                    created_by=f"scheduler:{schedule.name}",
+                    progress_percent=100,
+                    schedule_id=schedule.id,
+                    trigger="scheduled",
+                    planned_for=planned_for,
+                    task_config_json=vcf_task_config,
+                    result=json.dumps(
+                        {
+                            "profile_id": config.get("profile_id"),
+                            "profile_name": "Deleted profile",
+                            "trigger": "scheduled",
+                            "schedule_id": schedule.id,
+                            "schedule_name": schedule.name,
+                            "planned_for": planned_for.isoformat() if planned_for else "",
+                            "log_path": vcf_depot_task_log_reference(job_id, "deleted-profile"),
+                            "success": False,
+                            "status": JobStatus.FAILED.value,
+                            "error": "The scheduled VCF Offline Depot profile no longer exists.",
+                        },
+                        indent=2,
+                        sort_keys=True,
+                    ),
+                    error="The scheduled VCF Offline Depot profile no longer exists.",
+                    finished_at=current,
+                )
+                db.add(job)
+                db.flush()
+            elif active is not None:
+                job = Job(
+                    id=job_id,
+                    type="vcf-depot-download",
+                    status=JobStatus.SKIPPED.value,
+                    created_by=f"scheduler:{schedule.name}",
+                    progress_percent=100,
+                    schedule_id=schedule.id,
+                    trigger="scheduled",
+                    planned_for=planned_for,
+                    task_config_json=vcf_task_config,
+                    result=json.dumps(
+                        {
+                            **vcf_depot_initial_job_result(
+                                job_id=job_id,
+                                profile=profile,
+                                trigger="scheduled",
+                                schedule=schedule,
+                                planned_for=planned_for,
+                            ),
+                            "active_job_id": active.id,
+                            "status": JobStatus.SKIPPED.value,
+                            "success": False,
+                        },
+                        indent=2,
+                        sort_keys=True,
+                    ),
+                    error=f"Skipped because VCFDT task {active.id} was already active.",
+                    finished_at=current,
+                )
+                db.add(job)
+                db.flush()
+            else:
+                try:
+                    job = enqueue_vcf_depot_download(
+                        db,
+                        profile=profile,
+                        actor=f"scheduler:{schedule.name}",
+                        trigger="scheduled",
+                        schedule=schedule,
+                        planned_for=planned_for,
+                        job_id=job_id,
+                    )
+                except ActiveVcfDepotDownloadError as exc:
+                    job = Job(
+                        id=job_id,
+                        type="vcf-depot-download",
+                        status=JobStatus.SKIPPED.value,
+                        created_by=f"scheduler:{schedule.name}",
+                        progress_percent=100,
+                        schedule_id=schedule.id,
+                        trigger="scheduled",
+                        planned_for=planned_for,
+                        task_config_json=vcf_task_config,
+                        result=json.dumps(
+                            {
+                                **vcf_depot_initial_job_result(
+                                    job_id=job_id,
+                                    profile=profile,
+                                    trigger="scheduled",
+                                    schedule=schedule,
+                                    planned_for=planned_for,
+                                ),
+                                "active_job_id": exc.active_job_id,
+                                "status": JobStatus.SKIPPED.value,
+                                "success": False,
+                            },
+                            indent=2,
+                            sort_keys=True,
+                        ),
+                        error=f"Skipped because VCFDT task {exc.active_job_id} was already active.",
+                        finished_at=current,
+                    )
+                    db.add(job)
+                    db.flush()
+        else:
+            job = Job(
+                id=f"job_schedule_{schedule.id}_{int(current.timestamp())}",
+                type=SCHEDULE_JOB_TYPES[schedule.task_type],
+                status=JobStatus.PENDING.value,
+                created_by=f"scheduler:{schedule.name}",
+                progress_percent=0,
+                schedule_id=schedule.id,
+                trigger="scheduled",
+                planned_for=planned_for,
+                task_config_json=json.dumps(config, sort_keys=True),
+                result=json.dumps({"schedule_id": schedule.id, "schedule_name": schedule.name, "trigger": "scheduled"}, indent=2),
+            )
+            db.add(job)
+            db.flush()
         if job.type == "appliance-update":
             ensure_appliance_update_job_steps(
                 db,
@@ -422,15 +564,35 @@ def enqueue_due_schedules(db: Session, *, now: datetime | None = None) -> list[J
                 selected_streams=[str(value) for value in config.get("selected_streams", [])],
             )
         schedule.last_job_id = job.id
-        db.add(
-            AuditEvent(
-                actor=f"scheduler:{schedule.name}",
-                action="queue_scheduled_task",
-                resource_type="job",
-                resource_id=job.id,
-                detail=f"schedule_id={schedule.id}; task_type={schedule.task_type}",
+        if job.status == JobStatus.SKIPPED.value:
+            try:
+                skipped_result = json.loads(job.result or "{}")
+            except json.JSONDecodeError:
+                skipped_result = {}
+            db.add(
+                AuditEvent(
+                    actor=f"scheduler:{schedule.name}",
+                    action="skip_scheduled_vcf_depot_download",
+                    resource_type="job",
+                    resource_id=job.id,
+                    success=False,
+                    detail=(
+                        f"active_job={skipped_result.get('active_job_id', '')}; "
+                        f"planned_for={planned_for.isoformat() if planned_for else ''}"
+                    ),
+                )
             )
-        )
+        else:
+            db.add(
+                AuditEvent(
+                    actor=f"scheduler:{schedule.name}",
+                    action="queue_scheduled_task" if job.status == JobStatus.PENDING.value else "fail_scheduled_task",
+                    resource_type="job",
+                    resource_id=job.id,
+                    success=job.status == JobStatus.PENDING.value,
+                    detail=f"schedule_id={schedule.id}; task_type={schedule.task_type}",
+                )
+            )
         jobs.append(job)
     db.commit()
     return jobs
