@@ -3807,6 +3807,7 @@ function initializeDepotBrowserTable() {
       index: "href",
       layout: "fitColumns",
       height: "420px",
+      placeholder: "No depot content is available in this directory.",
       columns: [
         { title: "Name", field: "name", minWidth: 260, formatter: depotEntryLinkFormatter, widthGrow: 1.6 },
         { title: "Type", field: "kind", minWidth: 120, formatter: depotEntryTypeFormatter },
@@ -15897,6 +15898,7 @@ function initializeMonitorDetailTables(root) {
         index: "name",
         layout: "fitColumns",
         height: "180px",
+        placeholder: "No interfaces sampled.",
         columns: [
           { title: "Interface", field: "name", minWidth: 120 },
           { title: "State", field: "oper_state", minWidth: 90, formatter: (cell) => escapeHtml(cell.getValue() || "unknown") },
@@ -15923,6 +15925,7 @@ function initializeMonitorDetailTables(root) {
         index: "device",
         layout: "fitColumns",
         height: "180px",
+        placeholder: "No devices sampled.",
         columns: [
           { title: "Device", field: "device", minWidth: 150, formatter: (cell) => escapeHtml(cell.getValue() || cell.getRow().getData().name || "--") },
           { title: "Read/s", field: "read_bytes_per_sec", minWidth: 120, hozAlign: "right", formatter: (cell) => formatMonitorRate(cell.getValue()) },
