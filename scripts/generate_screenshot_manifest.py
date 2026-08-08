@@ -13,6 +13,46 @@ SOURCE_COMMIT = "0247c34bc85e+working-tree"
 ATLASO_VERSION = "0.9.21"
 
 CAPTURE_OVERRIDES = {
+    "dhcp-ip-zone-wizard-services-desktop": {
+        "source_commit": "1c7f6f653ffd+working-tree",
+        "atlaso_version": "0.9.70",
+        "capture_method": "edge-browser",
+    },
+    "dhcp-ip-zone-wizard-services-narrow": {
+        "source_commit": "1c7f6f653ffd+working-tree",
+        "atlaso_version": "0.9.70",
+        "capture_method": "edge-browser",
+    },
+    "dns-domain-tools-desktop": {
+        "source_commit": "1c7f6f653ffd+working-tree",
+        "atlaso_version": "0.9.70",
+        "capture_method": "edge-browser",
+    },
+    "dns-domain-tools-narrow": {
+        "source_commit": "1c7f6f653ffd+working-tree",
+        "atlaso_version": "0.9.70",
+        "capture_method": "edge-browser",
+    },
+    "esxi-custom-variable-description-desktop": {
+        "source_commit": "1c7f6f653ffd+working-tree",
+        "atlaso_version": "0.9.70",
+        "capture_method": "edge-browser",
+    },
+    "esxi-custom-variable-description-narrow": {
+        "source_commit": "1c7f6f653ffd+working-tree",
+        "atlaso_version": "0.9.70",
+        "capture_method": "edge-browser",
+    },
+    "managed-ldap-group-members-desktop": {
+        "source_commit": "1c7f6f653ffd+working-tree",
+        "atlaso_version": "0.9.70",
+        "capture_method": "edge-browser",
+    },
+    "managed-ldap-group-members-narrow": {
+        "source_commit": "1c7f6f653ffd+working-tree",
+        "atlaso_version": "0.9.70",
+        "capture_method": "edge-browser",
+    },
     "authentication-clean-desktop": {
         "source_commit": "fd88ffe+working-tree",
         "atlaso_version": "0.9.37",
@@ -57,6 +97,21 @@ CAPTURE_OVERRIDES = {
         "atlaso_version": "0.9.26",
         "capture_method": "chrome-browser",
     },
+    "automation-vcf-schedule-wizard-desktop": {
+        "source_commit": "3b10df0+working-tree",
+        "atlaso_version": "0.9.80",
+        "capture_method": "edge-browser",
+    },
+    "automation-vcf-schedule-wizard-responsive": {
+        "source_commit": "3b10df0+working-tree",
+        "atlaso_version": "0.9.80",
+        "capture_method": "edge-browser",
+    },
+    "vcf-offline-depot-schedule-action-desktop": {
+        "source_commit": "3b10df0+working-tree",
+        "atlaso_version": "0.9.80",
+        "capture_method": "edge-browser",
+    },
 }
 
 DOCUMENTATION_PAGES = {
@@ -79,10 +134,10 @@ DOCUMENTATION_PAGES = {
     "services/firewall.md": ("firewall-",),
     "services/ntp.md": ("ntp-",),
     "services/esx-storage.md": ("esx-storage-",),
-    "services/ipxe.md": ("esxi-pxe-",),
+    "services/ipxe.md": ("esxi-pxe-", "esxi-custom-variable-"),
     "services/kms.md": ("kms-",),
     "services/local-users.md": ("users-",),
-    "services/managed-ldap.md": ("ldap-",),
+    "services/managed-ldap.md": ("ldap-", "managed-ldap-"),
     "services/oidc-provider.md": ("authentication-",),
     "services/certificate-authority.md": ("ca-public-", "ca-requests-", "certificate-authority-"),
     "services/vcf-backups.md": ("vcf-backups-",),
@@ -149,6 +204,18 @@ SPECIAL = {
         "Appliance change review with valid and invalid desired-state units.",
         "Review appliance changes dialog with selected valid units and one unit needing attention.",
     ),
+    "automation-vcf-schedule-wizard-desktop": (
+        "/automation#schedules",
+        "vcf-schedule-wizard",
+        "VCF Offline Depot profile scheduling in the shared Automation wizard.",
+        "Atlaso Automation schedule wizard with VCF Offline Depot profile download selected at the desktop viewport.",
+    ),
+    "automation-vcf-schedule-wizard-responsive": (
+        "/automation#schedules",
+        "vcf-schedule-wizard",
+        "VCF Offline Depot profile scheduling in the shared Automation wizard at the responsive viewport.",
+        "Atlaso Automation schedule wizard with VCF Offline Depot profile download selected at the responsive viewport.",
+    ),
     "authentication-clean-desktop": (
         "/openid-connect#oidc-provider",
         "oidc-provider-settings",
@@ -191,6 +258,42 @@ SPECIAL = {
         "Dashboard with valid pending changes and a unit needing attention.",
         "Atlaso dashboard showing pending appliance changes and a validation exception.",
     ),
+    "dhcp-ip-zone-wizard-services-desktop": (
+        "/dhcp#ip-zone-services",
+        "ip-zone-services-wizard",
+        "DHCP IP zone Services step with aligned service fields and a framed Lease time group.",
+        "Atlaso DHCP IP zone wizard Services step showing a framed Lease time group and aligned Domain, DNS server, and NTP server fields.",
+    ),
+    "dhcp-ip-zone-wizard-services-narrow": (
+        "/dhcp#ip-zone-services",
+        "ip-zone-services-wizard",
+        "DHCP IP zone Services step in the verified narrow viewport.",
+        "Atlaso DHCP IP zone wizard Services step in a narrow viewport without page overflow.",
+    ),
+    "dns-domain-tools-desktop": (
+        "/dns#managed-domain",
+        "domain-tools",
+        "DNS domain tools with the Enabled switch beside the tabs and compact generated authoritative records.",
+        "Atlaso DNS managed domain showing Records, Import Hosts, and Import Zone File tabs with Domain enabled on the right and compact generated authoritative records above.",
+    ),
+    "dns-domain-tools-narrow": (
+        "/dns#managed-domain",
+        "domain-tools",
+        "DNS domain tools in the verified narrow viewport.",
+        "Atlaso DNS managed domain in a narrow viewport with Domain enabled aligned to the right of the tool tabs.",
+    ),
+    "esxi-custom-variable-description-desktop": (
+        "/network-boot#custom-variables",
+        "custom-variable-wizard",
+        "ESXi custom variable wizard with Description on its own full-width row.",
+        "Atlaso ESXi custom variable wizard showing full-width Description and Default value rows below Name.",
+    ),
+    "esxi-custom-variable-description-narrow": (
+        "/network-boot#custom-variables",
+        "custom-variable-wizard",
+        "ESXi custom variable wizard in the verified narrow viewport.",
+        "Atlaso ESXi custom variable wizard in a narrow viewport with full-width Description and Default value fields.",
+    ),
     "dns-applied-desktop": (
         "/dns",
         "applied",
@@ -202,6 +305,18 @@ SPECIAL = {
         "applied",
         "Runtime monitoring after a successful appliance apply.",
         "Atlaso Monitor page showing live appliance runtime metrics after apply.",
+    ),
+    "managed-ldap-group-members-desktop": (
+        "/ldap#groups",
+        "group-members-wizard",
+        "Managed LDAP group wizard populated with selectable users and nested groups.",
+        "Atlaso Managed LDAP group wizard Members step showing selectable organization users and nested groups.",
+    ),
+    "managed-ldap-group-members-narrow": (
+        "/ldap#groups",
+        "group-members-wizard",
+        "Managed LDAP group Members step in the verified narrow viewport.",
+        "Atlaso Managed LDAP group wizard Members step in a narrow viewport with populated membership options.",
     ),
     "settings-pending-desktop": (
         "/settings",
@@ -238,6 +353,12 @@ SPECIAL = {
         "succeeded-log",
         "Successful appliance apply log with captured commands and audit events.",
         "Atlaso task log showing successful dnsmasq validation, apply, and reload.",
+    ),
+    "vcf-offline-depot-schedule-action-desktop": (
+        "/vcf-offline-depot",
+        "schedule-action",
+        "VCF Offline Depot profile scheduling action with the disabled-profile reason.",
+        "VCF Offline Depot profile row menu showing Schedule download disabled until the profile is enabled.",
     ),
     "terminal-clean-desktop": (
         "/terminal",
@@ -287,7 +408,7 @@ def metadata(path: Path) -> dict[str, object]:
         alt = f"Atlaso sign-in page in the {viewport_name} viewport."
     else:
         route, state, caption, alt = clean_entry(stem)
-    responsive = "responsive" in stem
+    responsive = "responsive" in stem or "narrow" in stem
     entry = {
         "path": path.relative_to(ROOT / "docs").as_posix(),
         "route": route,

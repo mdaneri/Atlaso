@@ -168,8 +168,18 @@ from atlaso.app.services.automation import (
     enabled_script_revision,
     enqueue_schedule_now,
     next_schedule_run,
+    normalize_script_content,
     parse_script_arguments,
     validate_schedule_values,
+)
+from atlaso.app.services.vcf_depot_downloads import (
+    ActiveVcfDepotDownloadError,
+    active_vcf_depot_download_job,
+    active_vcf_depot_operation_job,
+    disable_vcf_depot_profile_schedules,
+    enqueue_vcf_depot_download,
+    vcf_depot_schedules_for_profile,
+    vcf_depot_task_log_reference,
 )
 from atlaso.app.services.update_sources import (
     ATLASO_CHANNELS,
@@ -644,7 +654,6 @@ APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 TEMPLATES_DIR = APP_DIR / "templates"
 VCF_DEPOT_VDT_LOG_PATH = PurePosixPath("/var/lib/atlaso/vcfDownloadTool/active-tool/log/vdt.log")
-VCF_DEPOT_TASK_LOG_DIR = PurePosixPath("/var/lib/atlaso/vcfDownloadTool/task-logs")
 ATLASO_APP_LOG_PATH = get_settings().app_log_path
 KMS_SERVER_LOG_PATH = Path("/var/log/atlaso/kmip/server.log")
 APPLY_LOGGER = logging.getLogger("atlaso.appliance_apply")
@@ -2275,6 +2284,7 @@ def reset_vcf_depot_tool_staging(db: Session, settings: VcfOfflineDepotSettings)
         profile.enabled = False
         profile.status = "planned"
         profile.updated_at = utcnow()
+        disable_vcf_depot_profile_schedules(db, profile.id)
     keys = [
         VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY,
         VCF_DEPOT_SOFTWARE_DEPOT_ID_GENERATED_AT_KEY,
@@ -2514,15 +2524,7 @@ def vcf_depot_download_job_rows(
 
 
 def vcf_depot_active_download_job(db: Session) -> Job | None:
-    return db.scalars(
-        select(Job)
-        .where(
-            Job.type == "vcf-depot-download",
-            Job.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value]),
-        )
-        .order_by(desc(Job.created_at))
-        .limit(1)
-    ).first()
+    return active_vcf_depot_download_job(db)
 
 
 def recover_interrupted_vcf_depot_download_jobs(db: Session) -> int:
@@ -2768,10 +2770,24 @@ def vcf_offline_depot_context(db: Session, *, reconcile: bool = True) -> dict:
     )
     if reconcile and not vcf_depot_tool_installed(settings):
         changed_profiles = [profile for profile in profiles if profile.enabled]
-        for profile in changed_profiles:
-            profile.enabled = False
-            profile.updated_at = utcnow()
-        if changed_profiles:
+        changed_schedule_count = 0
+        for profile in profiles:
+            if profile.enabled:
+                profile.enabled = False
+                profile.updated_at = utcnow()
+            disabled_schedules = disable_vcf_depot_profile_schedules(db, profile.id)
+            if disabled_schedules:
+                changed_schedule_count += len(disabled_schedules)
+                db.add(
+                    AuditEvent(
+                        actor="system:vcf-offline-depot",
+                        action="disable_vcf_depot_profile_schedules",
+                        resource_type="vcf_depot_profile",
+                        resource_id=str(profile.id),
+                        detail="tool unavailable; schedules=" + ",".join(schedule.name for schedule in disabled_schedules),
+                    )
+                )
+        if changed_profiles or changed_schedule_count:
             db.commit()
     users = db.execute(select(User).order_by(User.username)).scalars().all()
     all_service_interfaces = service_bind_options(db)
@@ -3040,11 +3056,6 @@ def append_vcf_depot_log(text: str) -> None:
             handle.write("\n")
 
 
-def vcf_depot_task_log_reference(job_id: str, profile_name: str = "") -> PurePosixPath:
-    profile_slug = re.sub(r"[^a-z0-9]+", "-", profile_name.lower()).strip("-") or "task"
-    return VCF_DEPOT_TASK_LOG_DIR / f"{job_id}-{profile_slug}.log"
-
-
 def vcf_depot_task_log_path(job_id: str, profile_name: str = "") -> Path:
     return filesystem_path(vcf_depot_task_log_reference(job_id, profile_name))
 
@@ -3063,6 +3074,50 @@ def resolve_vcf_depot_download_mode_flags(*flags: str | None) -> tuple[bool, boo
     return selected if any(selected) else (True, False, False)
 
 
+def vcf_depot_download_preflight(
+    db: Session,
+    profile: VcfDepotDownloadProfile,
+) -> tuple[VcfOfflineDepotSettings, list[list[str]], list[str]]:
+    settings = get_vcf_offline_depot_settings_row(db)
+    secrets = vcf_depot_secret_context(db)
+    start_blocker = vcf_depot_profile_start_blocker(
+        profile,
+        download_token_present=bool(secrets["download_token_present"]),
+        activation_code_present=bool(secrets["activation_code_present"]),
+    )
+    if start_blocker:
+        raise ValueError(start_blocker)
+    if not vcf_depot_tool_installed(settings):
+        raise ValueError("Apply the staged VCF Download Tool before starting this profile.")
+    all_service_interfaces = service_bind_options(db)
+    management_interface_names = {
+        str(interface["name"])
+        for interface in all_service_interfaces
+        if str(interface.get("role") or "").strip().lower() == "management"
+    }
+    validation_errors, validation_warnings = validate_vcf_depot_state(
+        settings,
+        [profile],
+        {interface["name"] for interface in vcf_depot_service_bind_options(db)},
+        bool(secrets["download_token_present"]),
+        bool(secrets["activation_code_present"]),
+        management_interface_names,
+        users=db.execute(select(User).order_by(User.username)).scalars().all(),
+    )
+    if validation_errors:
+        raise ValueError(" ".join(validation_errors))
+    commands = vcfdt_commands_for_profile(
+        settings,
+        profile,
+        download_token_present=bool(secrets["download_token_present"]),
+        activation_code_present=bool(secrets["activation_code_present"]),
+        preferred_credential_type=str(secrets["download_credential_type"]),
+    )
+    if not commands:
+        raise ValueError("The VCFDT download profile did not produce any commands.")
+    return settings, commands, validation_warnings
+
+
 def archive_vcf_depot_task_log(job_id: str, profile_name: str) -> Path:
     active_log_path = filesystem_path(VCF_DEPOT_VDT_LOG_PATH)
     task_log_path = vcf_depot_task_log_path(job_id, profile_name)
@@ -3076,28 +3131,23 @@ def run_vcf_depot_download_job(job_id: str, profile_id: int) -> None:
     with SessionLocal() as db:
         job = db.get(Job, job_id)
         profile = db.get(VcfDepotDownloadProfile, profile_id)
-        settings = get_vcf_offline_depot_settings_row(db)
-        appliance_settings = get_appliance_settings_row(db)
         started = utcnow()
         if job:
             job.status = JobStatus.RUNNING.value
             job.started_at = started
             job.progress_percent = 5
             db.commit()
-        if not job or not profile:
+        if not job:
             return
         try:
+            if profile is None:
+                raise ValueError("The VCF Offline Depot profile no longer exists.")
+            settings, commands, validation_warnings = vcf_depot_download_preflight(db, profile)
             active_log_path = filesystem_path(VCF_DEPOT_VDT_LOG_PATH)
             active_log_path.parent.mkdir(parents=True, exist_ok=True)
             active_log_path.write_text("", encoding="utf-8")
+            appliance_settings = get_appliance_settings_row(db)
             secrets = vcf_depot_secret_context(db)
-            commands = vcfdt_commands_for_profile(
-                settings,
-                profile,
-                download_token_present=bool(secrets["download_token_present"]),
-                activation_code_present=bool(secrets["activation_code_present"]),
-                preferred_credential_type=str(secrets["download_credential_type"]),
-            )
             generated_script = render_vcfdt_command_preview(
                 settings,
                 [profile],
@@ -3150,7 +3200,15 @@ def run_vcf_depot_download_job(job_id: str, profile_id: int) -> None:
                     }
                 )
                 job.progress_percent = int(index / max(len(commands), 1) * 95)
-                job.result = json.dumps({**json.loads(job.result or "{}"), "commands": command_results}, indent=2)
+                job.result = json.dumps(
+                    {
+                        **json.loads(job.result or "{}"),
+                        "commands": command_results,
+                        "validation_warnings": validation_warnings,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
                 db.commit()
                 if completed.returncode != 0:
                     raise RuntimeError(f"VCFDT command exited with code {completed.returncode}.")
@@ -3161,20 +3219,69 @@ def run_vcf_depot_download_job(job_id: str, profile_id: int) -> None:
             job.finished_at = finished
             job.progress_percent = 100
             job.error = None
+            job.result = json.dumps(
+                {
+                    **json.loads(job.result or "{}"),
+                    "status": JobStatus.SUCCEEDED.value,
+                    "success": True,
+                },
+                indent=2,
+                sort_keys=True,
+            )
             append_vcf_depot_task_log(job_id, profile.name, f"===== Atlaso VCFDT job {job_id} succeeded {finished.isoformat()} =====\n")
             archive_vcf_depot_task_log(job_id, profile.name)
+            db.add(
+                AuditEvent(
+                    actor=job.created_by,
+                    action="complete_vcf_depot_download",
+                    resource_type="job",
+                    resource_id=job.id,
+                    detail=f"profile_id={profile.id}; trigger={job.trigger}",
+                )
+            )
             db.commit()
         except Exception as exc:  # noqa: BLE001 - background worker must persist failures instead of crashing silently.
             finished = utcnow()
-            profile.status = "blocked"
-            profile.updated_at = finished
+            profile_name = profile.name if profile is not None else "deleted-profile"
+            if profile is not None:
+                profile.status = "blocked"
+                profile.updated_at = finished
             job.status = JobStatus.FAILED.value
             job.finished_at = finished
             job.progress_percent = 100
             job.error = str(exc)
-            append_vcf_depot_task_log(job_id, profile.name, f"ERROR: {exc}\n")
-            append_vcf_depot_task_log(job_id, profile.name, f"===== Atlaso VCFDT job {job_id} failed {finished.isoformat()} =====\n")
-            archive_vcf_depot_task_log(job_id, profile.name)
+            job.result = json.dumps(
+                {
+                    **json.loads(job.result or "{}"),
+                    "status": JobStatus.FAILED.value,
+                    "success": False,
+                    "error": str(exc),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            try:
+                append_vcf_depot_task_log(job_id, profile_name, f"ERROR: {exc}\n")
+                append_vcf_depot_task_log(
+                    job_id,
+                    profile_name,
+                    f"===== Atlaso VCFDT job {job_id} failed {finished.isoformat()} =====\n",
+                )
+                archive_vcf_depot_task_log(job_id, profile_name)
+            except OSError:
+                # Preserve the actionable execution failure even when a development
+                # or recovery environment cannot write the appliance log directory.
+                pass
+            db.add(
+                AuditEvent(
+                    actor=job.created_by,
+                    action="fail_vcf_depot_download",
+                    resource_type="job",
+                    resource_id=job.id,
+                    success=False,
+                    detail=f"profile_id={profile_id}; trigger={job.trigger}; error={exc}",
+                )
+            )
             db.commit()
 
 
@@ -8820,7 +8927,7 @@ def automation_context(db: Session) -> dict[str, Any]:
                 "schedule_count": sum(1 for revision in script.revisions if revision.id in scheduled_revision_ids),
             }
         )
-    profiles = db.execute(select(VcfDepotDownloadProfile).where(VcfDepotDownloadProfile.enabled.is_(True)).order_by(VcfDepotDownloadProfile.name)).scalars().all()
+    profiles = db.execute(select(VcfDepotDownloadProfile).order_by(VcfDepotDownloadProfile.name)).scalars().all()
     return {
         "automation_schedule_rows": schedule_rows,
         "automation_execution_rows": execution_rows,
@@ -8832,6 +8939,7 @@ def automation_context(db: Session) -> dict[str, Any]:
         "automation_task_types": sorted(SCHEDULE_TASK_TYPES),
         "automation_interpreters": sorted(SCRIPT_INTERPRETERS),
         "automation_vcf_profiles": profiles,
+        "automation_vcf_enabled_profile_count": sum(1 for profile in profiles if profile.enabled),
         "automation_vaults": db.execute(select(Vault).order_by(Vault.name)).scalars().all(),
         "automation_update_streams": [{"id": stream, "label": UPDATE_STREAM_LABELS[stream]} for stream in UPDATE_STREAMS],
         "system_adapter_dry_run": get_settings().dry_run_system_adapters,
@@ -10802,9 +10910,13 @@ def _automation_render_error(request: Request, identity: Identity, db: Session, 
 def _automation_script_validation_message(interpreter: str, content: str, timeout_seconds: int) -> str | None:
     if interpreter not in SCRIPT_INTERPRETERS:
         return "Interpreter must be bash, python, or powershell."
-    if not content.strip():
+    try:
+        normalized_content = normalize_script_content(content, interpreter)
+    except ValueError as exc:
+        return str(exc)
+    if not normalized_content.strip():
         return "Script content is required."
-    if len(content.encode("utf-8")) > MAX_SCRIPT_CONTENT_BYTES:
+    if len(normalized_content.encode("utf-8")) > MAX_SCRIPT_CONTENT_BYTES:
         return "Script content must be 1 MiB or smaller."
     if timeout_seconds < 1 or timeout_seconds > MAX_SCRIPT_TIMEOUT_SECONDS:
         return "Script timeout must be between 1 second and 24 hours."
@@ -11037,6 +11149,10 @@ def run_automation_schedule_now(
         profile = db.get(VcfDepotDownloadProfile, int(config.get("profile_id") or 0))
         if profile is None or not profile.enabled:
             return _automation_render_error(request, identity, db, "Enable the scheduled VCF Offline Depot profile before running it.")
+        try:
+            vcf_depot_download_preflight(db, profile)
+        except ValueError as exc:
+            return _automation_render_error(request, identity, db, str(exc), status_code=409)
     try:
         job = enqueue_schedule_now(db, schedule=schedule, actor=identity.username)
     except (KeyError, ValueError) as exc:
@@ -11058,6 +11174,20 @@ def toggle_automation_schedule(
     schedule = db.get(Schedule, schedule_id)
     if schedule is None:
         raise HTTPException(status_code=404, detail="Schedule not found.")
+    if not schedule.enabled and schedule.task_type == "vcf_depot_download":
+        try:
+            config = json.loads(schedule.task_config_json or "{}")
+        except json.JSONDecodeError:
+            return _automation_render_error(request, identity, db, "The schedule task configuration is invalid.")
+        profile = db.get(VcfDepotDownloadProfile, int(config.get("profile_id") or 0))
+        if profile is None or not profile.enabled:
+            return _automation_render_error(
+                request,
+                identity,
+                db,
+                "Enable the VCF Offline Depot profile before enabling its schedule.",
+                status_code=409,
+            )
     schedule.enabled = not schedule.enabled
     try:
         schedule.next_run_at = next_schedule_run(schedule, after=utcnow()) if schedule.enabled else None
@@ -11439,26 +11569,7 @@ def active_appliance_apply_submitted_unit_ids(db: Session) -> set[str]:
 
 
 def active_vcf_depot_execution_job(db: Session) -> Job | None:
-    direct_job = db.scalars(
-        select(Job)
-        .where(
-            Job.type.in_(["vcf-depot-download", "vcf-depot-software-id"]),
-            Job.status.in_(ACTIVE_JOB_STATUSES),
-        )
-        .order_by(Job.created_at)
-        .limit(1)
-    ).first()
-    if direct_job is not None:
-        return direct_job
-    apply_job = active_appliance_apply_job(db)
-    if apply_job is None:
-        return None
-    submitted_units = (
-        {step.component_key for step in apply_job.steps}
-        if apply_job.steps
-        else {str(unit_id) for unit_id in _job_payload(apply_job).get("selected_units", [])}
-    )
-    return apply_job if "vcf_offline_depot" in submitted_units else None
+    return active_vcf_depot_operation_job(db)
 
 
 def vcf_depot_execution_conflict_detail(job: Job) -> str:
@@ -12055,6 +12166,7 @@ def submit_appliance_apply(
             id=job_id,
             type="appliance-apply",
             status=JobStatus.PENDING.value,
+            vcf_depot_operation="vcf_offline_depot" in selected_ids,
             created_by=identity.username,
             progress_percent=0,
             result=json.dumps(job_result, indent=2),
@@ -12076,7 +12188,19 @@ def submit_appliance_apply(
                     error=None,
                 )
             )
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            if "vcf_offline_depot" not in selected_ids:
+                raise
+            conflicting_job = active_vcf_depot_execution_job(db)
+            detail = (
+                vcf_depot_execution_conflict_detail(conflicting_job)
+                if conflicting_job is not None
+                else "Another VCFDT operation became active. Wait for it to finish and try again."
+            )
+            return JSONResponse({"detail": detail}, status_code=409) if wants_json else Response(detail, status_code=409, media_type="text/plain")
         record_audit(
             db,
             actor=identity.username,
@@ -18498,6 +18622,7 @@ def generate_vcf_depot_software_depot_id_from_ui(
             id=f"job_{uuid4().hex[:12]}",
             type="vcf-depot-software-id",
             status=JobStatus.PENDING.value,
+            vcf_depot_operation=True,
             created_by=identity.username,
             progress_percent=0,
             result=json.dumps(
@@ -18511,7 +18636,20 @@ def generate_vcf_depot_software_depot_id_from_ui(
         )
         db.add(job)
         ensure_vcf_depot_software_id_task_steps(db, job)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            active = active_vcf_depot_execution_job(db)
+            detail = (
+                vcf_depot_execution_conflict_detail(active)
+                if active is not None
+                else "Another VCFDT operation became active. Wait for it to finish and try again."
+            )
+            return JSONResponse(
+                {"detail": detail, "job_id": active.id if active is not None else ""},
+                status_code=409,
+            )
         record_audit(
             db,
             actor=identity.username,
@@ -18664,6 +18802,11 @@ def edit_vcf_depot_profile_from_ui(
     profile.component_version = component_version.strip()
     profile.disabled_platforms = disabled_platforms.strip()
     profile.enabled = enabled == "on" and vcf_depot_tool_installed(settings)
+    disabled_schedules = (
+        disable_vcf_depot_profile_schedules(db, profile.id)
+        if not profile.enabled
+        else []
+    )
     if status is not None:
         profile.status = status.strip() or profile.status
     profile.notes = notes.strip() or None
@@ -18673,7 +18816,18 @@ def edit_vcf_depot_profile_from_ui(
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=400, detail="A VCFDT download profile with this name already exists.") from exc
-    record_audit(db, actor=identity.username, action="update_vcf_depot_profile", resource_type="vcf_depot_profile", resource_id=str(profile.id))
+    record_audit(
+        db,
+        actor=identity.username,
+        action="update_vcf_depot_profile",
+        resource_type="vcf_depot_profile",
+        resource_id=str(profile.id),
+        detail=(
+            "disabled_schedules=" + ",".join(schedule.name for schedule in disabled_schedules)
+            if disabled_schedules
+            else None
+        ),
+    )
     db.refresh(profile)
     secrets = vcf_depot_secret_context(db)
     return grid_saved_response(
@@ -18697,7 +18851,6 @@ def start_vcf_depot_profile_download_from_ui(
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
     verify_csrf(request, csrf)
-    settings = get_vcf_offline_depot_settings_row(db)
     profile = db.get(VcfDepotDownloadProfile, profile_id)
     if not profile:
         raise HTTPException(status_code=404, detail="VCFDT download profile not found.")
@@ -18707,87 +18860,46 @@ def start_vcf_depot_profile_download_from_ui(
             status_code=409,
             detail=vcf_depot_execution_conflict_detail(active_job),
         )
-    if not profile.enabled:
-        raise HTTPException(status_code=400, detail="Enable the VCFDT download profile before starting a download.")
-    secrets = vcf_depot_secret_context(db)
-    start_blocker = vcf_depot_profile_start_blocker(
-        profile,
-        download_token_present=bool(secrets["download_token_present"]),
-        activation_code_present=bool(secrets["activation_code_present"]),
-    )
-    if start_blocker:
-        raise HTTPException(status_code=400, detail=start_blocker)
-    all_service_interfaces = service_bind_options(db)
-    management_interface_names = {
-        str(interface["name"])
-        for interface in all_service_interfaces
-        if str(interface.get("role") or "").strip().lower() == "management"
-    }
-    validation_errors, validation_warnings = validate_vcf_depot_state(
-        settings,
-        [profile],
-        {interface["name"] for interface in vcf_depot_service_bind_options(db)},
-        bool(secrets["download_token_present"]),
-        bool(secrets["activation_code_present"]),
-        management_interface_names,
-        users=db.execute(select(User).order_by(User.username)).scalars().all(),
-    )
-    if validation_errors:
-        raise HTTPException(status_code=400, detail=" ".join(validation_errors))
+    try:
+        _settings, raw_commands, validation_warnings = vcf_depot_download_preflight(db, profile)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     system_dry_run = get_settings().dry_run_system_adapters
     commands = [
         vcf_depot_command_entry(command, dry_run=False)
-        for command in vcfdt_commands_for_profile(
-            settings,
-            profile,
-            download_token_present=bool(secrets["download_token_present"]),
-            activation_code_present=bool(secrets["activation_code_present"]),
-            preferred_credential_type=str(secrets["download_credential_type"]),
-        )
+        for command in raw_commands
     ]
     if not commands:
         raise HTTPException(status_code=400, detail="The VCFDT download profile did not produce any commands.")
-    with VCF_DEPOT_SUBMIT_LOCK:
-        db.expire_all()
-        active_job = active_vcf_depot_execution_job(db)
-        if active_job is not None:
-            raise HTTPException(status_code=409, detail=vcf_depot_execution_conflict_detail(active_job))
-        now = utcnow()
-        job_id = f"job_{uuid4().hex[:12]}"
-        job_result = {
-            "profile_id": profile.id,
-            "profile_name": profile.name,
-            "profile_type": profile.profile_type,
+    try:
+        job = enqueue_vcf_depot_download(
+            db,
+            profile=profile,
+            actor=identity.username,
+            trigger="manual",
+        )
+    except ActiveVcfDepotDownloadError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    job_result = json.loads(job.result or "{}")
+    job_result.update(
+        {
             "dry_run": False,
             "system_adapter_dry_run": system_dry_run,
-            "log_path": str(vcf_depot_task_log_reference(job_id, profile.name)),
-            "commands": commands,
             "validation_warnings": validation_warnings,
         }
-        job = Job(
-            id=job_id,
-            type="vcf-depot-download",
-            status=JobStatus.PENDING.value,
-            created_by=identity.username,
-            started_at=None,
-            finished_at=None,
-            progress_percent=0,
-            result=json.dumps(job_result, indent=2),
-            trigger="manual",
-            task_config_json=json.dumps({"profile_id": profile.id}, sort_keys=True),
-        )
-        profile.status = "ready"
-        profile.updated_at = now
-        db.add(job)
-        db.commit()
-        record_audit(
-            db,
-            actor=identity.username,
-            action="start_vcf_depot_profile_download",
-            resource_type="job",
-            resource_id=job.id,
-            detail=f"profile={profile.name}; log={vcf_depot_task_log_reference(job.id, profile.name)}",
-        )
+    )
+    job.result = json.dumps(job_result, indent=2, sort_keys=True)
+    db.add(job)
+    db.commit()
+    record_audit(
+        db,
+        actor=identity.username,
+        action="start_vcf_depot_profile_download",
+        resource_type="job",
+        resource_id=job.id,
+        detail=f"profile={profile.name}; log={vcf_depot_task_log_reference(job.id, profile.name)}",
+    )
     if request.headers.get("X-Atlaso-Autosave") == "1":
         return JSONResponse(
             {
@@ -18819,6 +18931,24 @@ def delete_vcf_depot_profile_from_ui(
     profile = db.get(VcfDepotDownloadProfile, profile_id)
     if not profile:
         raise HTTPException(status_code=404, detail="VCFDT download profile not found.")
+    schedules = vcf_depot_schedules_for_profile(db, profile.id)
+    if schedules:
+        schedule_names = ", ".join(schedule.name for schedule in schedules)
+        raise HTTPException(
+            status_code=409,
+            detail=f"Delete the attached Automation schedule(s) first: {schedule_names}.",
+        )
+    active_job = active_vcf_depot_download_job(db)
+    if active_job is not None:
+        try:
+            active_profile_id = int(json.loads(active_job.task_config_json or "{}").get("profile_id") or 0)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            active_profile_id = 0
+        if active_profile_id == profile.id:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Wait for active VCFDT task {active_job.id} to finish before deleting this profile.",
+            )
     db.delete(profile)
     db.commit()
     record_audit(db, actor=identity.username, action="delete_vcf_depot_profile", resource_type="vcf_depot_profile", resource_id=str(profile_id))

@@ -69,6 +69,8 @@ credential replacements and application properties together, then queues an expl
 scoped Appliance Apply unit. A successful identity replacement removes both the staged download token and activation
 code because they no longer match the new Software Depot ID. Package add/update uses a separate reviewed package wizard;
 reset clears the package and its complete saved configuration together.
+Enabled depot profiles can use the shared Automation scheduler. Manual and scheduled downloads share one global
+single-active task guard and execution-time prerequisite validation; schedule definitions contain no Broadcom secrets.
 
 The integrated CA can maintain trust and deploy managed service certificates without publishing its public portal on
 an access interface. Selecting a CA listen interface is the explicit portal-publication boundary. NTP uses ordinary

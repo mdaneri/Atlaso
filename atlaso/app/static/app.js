@@ -11969,6 +11969,19 @@ async function previewVcfDepotProfileScript(row) {
   }
 }
 
+function scheduleVcfDepotProfileDownload(row) {
+  const data = row.getData();
+  if (data.is_new || !data.enabled) {
+    showVcfDepotMessage("Enable the VCFDT download profile before scheduling it.");
+    return;
+  }
+  const query = new URLSearchParams({
+    new: "vcf_depot_download",
+    vcf_profile_id: String(data.id),
+  });
+  window.location.assign(`/automation?${query.toString()}#schedules`);
+}
+
 let vcfDepotProfilesTable = null;
 
 function setVcfDepotDownloadActive(active, activeJobId = "") {
@@ -12057,6 +12070,16 @@ function initializeVcfDepotProfilesTable() {
           return data.is_new || !data.enabled || !data.can_start;
         },
         action: (_event, row) => startVcfDepotProfileDownload(row, element.dataset.csrf || ""),
+      },
+      {
+        label: (row) => row.getData().enabled
+          ? "Schedule download"
+          : "Schedule download (enable profile first)",
+        disabled: (row) => {
+          const data = row.getData();
+          return data.is_new || !data.enabled;
+        },
+        action: (_event, row) => scheduleVcfDepotProfileDownload(row),
       },
     ],
     deleteConfirmation: (data) => ({
@@ -17150,6 +17173,41 @@ function initializeAutomationTables() {
   let activeScriptInterpreter = "bash";
   let scriptCreateWizard = null;
   let openScriptCreateWizard = null;
+  const managedScriptSourceError = (interpreter, content) => {
+    const firstLine = String(content || "").replace(/^\uFEFF/, "").split(/\r?\n/, 1)[0].trim();
+    if (interpreter === "bash" && firstLine.startsWith("!/")) {
+      return "A Bash shebang must start with #!; add the missing # or remove the shebang line.";
+    }
+    return "";
+  };
+  const managedScriptInterpreterEditor = (cell, onRendered, success, cancel) => {
+    const select = document.createElement("select");
+    select.className = "automation-script-interpreter-editor";
+    select.setAttribute("aria-label", "Managed script interpreter");
+    ["bash", "powershell", "python"].forEach((interpreter) => {
+      const option = document.createElement("option");
+      option.value = interpreter;
+      option.textContent = interpreter;
+      select.appendChild(option);
+    });
+    select.value = cell.getValue() || "bash";
+    let finished = false;
+    const commit = () => {
+      if (finished) return;
+      finished = true;
+      success(select.value);
+    };
+    select.addEventListener("change", commit);
+    select.addEventListener("blur", commit);
+    select.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        finished = true;
+        cancel();
+      }
+    });
+    onRendered(() => select.focus({ preventScroll: true }));
+    return select;
+  };
   const openAutomationModal = (modal) => {
     if (!(modal instanceof HTMLDialogElement)) return;
     modal.showModal();
@@ -17198,7 +17256,7 @@ function initializeAutomationTables() {
       }
       if (scriptConfirm instanceof HTMLButtonElement) scriptConfirm.textContent = "Create new disabled revision";
       if (scriptImportStatus instanceof HTMLElement) {
-        scriptImportStatus.textContent = "Paste code or import a .sh, .bash, .py, .ps1, or .txt file (maximum 1 MiB).";
+        scriptImportStatus.textContent = "";
         scriptImportStatus.classList.remove("error-text");
       }
       scriptModal.showModal();
@@ -17246,6 +17304,14 @@ function initializeAutomationTables() {
           }
           return;
         }
+        const sourceError = managedScriptSourceError(activeScriptInterpreter, content);
+        if (sourceError) {
+          if (scriptImportStatus instanceof HTMLElement) {
+            scriptImportStatus.textContent = sourceError;
+            scriptImportStatus.classList.add("error-text");
+          }
+          return;
+        }
         const data = activeScriptRow.getData();
         const revisionForm = document.getElementById(`automation-script-revision-${data.id}`);
         if (!(revisionForm instanceof HTMLFormElement)) return;
@@ -17265,11 +17331,6 @@ function initializeAutomationTables() {
     const scriptCreateInterpreter = scriptCreateForm.querySelector("[data-automation-script-create-interpreter]");
     const scriptCreateLanguage = scriptCreateForm.querySelector("[data-automation-script-create-language]");
     const scriptCreateImportStatus = scriptCreateForm.querySelector("[data-automation-script-create-import-status]");
-    const scriptCreateFullscreenButton = scriptCreateForm.querySelector("[data-automation-script-create-fullscreen]");
-    const scriptCreateFullscreenDialog = document.getElementById("automation-script-create-fullscreen-dialog");
-    const scriptCreateFullscreenContent = document.getElementById("automation-script-create-fullscreen-content");
-    const scriptCreateFullscreenLanguage = document.querySelector("[data-automation-script-fullscreen-language]");
-    const scriptCreateFullscreenClose = document.querySelector("[data-automation-script-fullscreen-close]");
     const normalizedScriptInterpreter = (value) => (
       ["bash", "powershell", "python"].includes(value) ? value : "bash"
     );
@@ -17291,7 +17352,6 @@ function initializeAutomationTables() {
       const editorLanguage = { bash: "shell", powershell: "powershell", python: "python" }[interpreter];
       if (scriptCreateInterpreter instanceof HTMLSelectElement) scriptCreateInterpreter.value = interpreter;
       if (scriptCreateLanguage instanceof HTMLElement) scriptCreateLanguage.textContent = interpreter;
-      if (scriptCreateFullscreenLanguage instanceof HTMLElement) scriptCreateFullscreenLanguage.textContent = interpreter;
       if (scriptCreateContent instanceof HTMLTextAreaElement) {
         scriptCreateContent.dataset.scriptInterpreter = interpreter;
         scriptCreateContent.dataset.monacoLanguage = editorLanguage;
@@ -17300,18 +17360,10 @@ function initializeAutomationTables() {
           window.AtlasoMonaco.setLanguage(scriptCreateContent, editorLanguage);
         }
       }
-      if (scriptCreateFullscreenContent instanceof HTMLTextAreaElement) {
-        scriptCreateFullscreenContent.dataset.scriptInterpreter = interpreter;
-        scriptCreateFullscreenContent.dataset.monacoLanguage = editorLanguage;
-        scriptCreateFullscreenContent.setAttribute("aria-label", `Full-screen ${interpreter} managed script source code`);
-        if (typeof window.AtlasoMonaco?.setLanguage === "function") {
-          window.AtlasoMonaco.setLanguage(scriptCreateFullscreenContent, editorLanguage);
-        }
-      }
     };
     const resetScriptCreateImportStatus = () => {
       if (!(scriptCreateImportStatus instanceof HTMLElement)) return;
-      scriptCreateImportStatus.textContent = "Paste code or import a .sh, .bash, .py, .ps1, or .txt file (maximum 1 MiB).";
+      scriptCreateImportStatus.textContent = "";
       scriptCreateImportStatus.classList.remove("error-text");
     };
     if (scriptCreateFile instanceof HTMLInputElement && scriptCreateContent instanceof HTMLTextAreaElement) {
@@ -17338,50 +17390,6 @@ function initializeAutomationTables() {
         }
       });
     }
-    if (
-      scriptCreateFullscreenButton instanceof HTMLButtonElement
-      && scriptCreateFullscreenDialog instanceof HTMLDialogElement
-      && scriptCreateFullscreenContent instanceof HTMLTextAreaElement
-    ) {
-      let fullscreenCommitted = true;
-      const fullScreenEditorValue = () => (
-        window.AtlasoMonaco?.getValue(scriptCreateFullscreenContent)
-        ?? scriptCreateFullscreenContent.value
-      );
-      const commitFullscreenValue = () => {
-        if (fullscreenCommitted) return;
-        setScriptCreateEditorValue(fullScreenEditorValue());
-        fullscreenCommitted = true;
-      };
-      scriptCreateFullscreenButton.addEventListener("click", () => {
-        setScriptCreateEditorValue(scriptCreateEditorValue());
-        if (window.AtlasoMonaco && typeof window.AtlasoMonaco.setValue === "function") {
-          window.AtlasoMonaco.setValue(scriptCreateFullscreenContent, scriptCreateEditorValue());
-        } else {
-          scriptCreateFullscreenContent.value = scriptCreateEditorValue();
-        }
-        updateScriptCreateLanguage(scriptCreateInterpreter?.value || "bash");
-        fullscreenCommitted = false;
-        scriptCreateFullscreenDialog.showModal();
-        window.requestAnimationFrame(() => {
-          if (typeof window.AtlasoMonaco?.focus === "function") {
-            window.AtlasoMonaco.focus(scriptCreateFullscreenContent);
-          } else {
-            scriptCreateFullscreenContent.focus();
-          }
-        });
-      });
-      scriptCreateFullscreenClose?.addEventListener("click", () => {
-        commitFullscreenValue();
-        scriptCreateFullscreenDialog.close();
-        window.requestAnimationFrame(() => {
-          if (typeof window.AtlasoMonaco?.focus === "function") {
-            window.AtlasoMonaco.focus(scriptCreateContent);
-          }
-        });
-      });
-      scriptCreateFullscreenDialog.addEventListener("close", commitFullscreenValue);
-    }
     scriptCreateInterpreter?.addEventListener("change", () => updateScriptCreateLanguage(scriptCreateInterpreter.value));
     scriptCreateWizard = window.AtlasoUiPatterns.createWizard({
       form: scriptCreateForm,
@@ -17407,6 +17415,8 @@ function initializeAutomationTables() {
         if (!content.trim()) {
           return { valid: false, field: "content", message: "Script content is required." };
         }
+        const sourceError = managedScriptSourceError(scriptCreateInterpreter?.value || "bash", content);
+        if (sourceError) return { valid: false, field: "content", message: sourceError };
         if (scriptCreateContent instanceof HTMLTextAreaElement) scriptCreateContent.value = content;
         return { valid: true };
       },
@@ -17449,7 +17459,8 @@ function initializeAutomationTables() {
         } catch {
           // The hash still restores the Managed Scripts workspace when storage is unavailable.
         }
-        window.location.assign("/automation#scripts");
+        window.location.hash = "scripts";
+        window.location.reload();
         return { valid: true };
       },
     });
@@ -17752,7 +17763,8 @@ function initializeAutomationTables() {
     };
     const updateConfigVisibility = () => {
       const value = taskType instanceof HTMLSelectElement ? taskType.value : "";
-      const step = wizardSteps.find((item) => item.id === "config");
+      const step = scheduleWizard?.steps.find((item) => item.id === "config")
+        || wizardSteps.find((item) => item.id === "config");
       const configCopy = value === "managed_script"
         ? { label: "Managed script", subtitle: "Choose enabled revision", title: "Choose a managed script", description: "Select the enabled immutable script revision this schedule should run." }
         : value === "vcf_depot_download"
@@ -17988,6 +18000,18 @@ function initializeAutomationTables() {
       },
       options: atlasoGridOptions31,
     }).table;
+    const scheduleQuery = new URLSearchParams(window.location.search);
+    if (scheduleQuery.get("new") === "vcf_depot_download") {
+      const requestedProfileId = scheduleQuery.get("vcf_profile_id") || "";
+      const profileOption = [...scheduleForm.elements.vcf_profile_id.options]
+        .find((option) => option.value === requestedProfileId && !option.disabled);
+      openScheduleWizard(null, schedulesElement);
+      scheduleForm.elements.task_type.value = "vcf_depot_download";
+      scheduleForm.elements.vcf_profile_id.value = profileOption ? requestedProfileId : "";
+      updateConfigVisibility();
+      const cleanUrl = `${window.location.pathname}${window.location.hash || "#schedules"}`;
+      window.history.replaceState({}, "", cleanUrl);
+    }
   }
 
   const executionsElement = document.getElementById("automation-executions-table");
@@ -18144,7 +18168,21 @@ function initializeAutomationTables() {
           },
         },
         { title: "Description", field: "description", minWidth: 190, editor: "input", editable: (cell) => !cell.getRow().getData().is_new, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || ""), cellEdited: saveExistingScriptMetadata },
-        { title: "Interpreter", field: "interpreter", width: 115, editor: "list", editable: (cell) => !cell.getRow().getData().is_new, editorParams: { values: { bash: "bash", powershell: "powershell", python: "python" } }, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || ""), cellEdited: createRevisionFromGridCell },
+        {
+          title: "Interpreter",
+          field: "interpreter",
+          width: 115,
+          editor: managedScriptInterpreterEditor,
+          editable: (cell) => !cell.getRow().getData().is_new,
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || ""),
+          cellClick: (_event, cell) => {
+            if (cell.getRow().getData().is_new) return;
+            window.setTimeout(() => {
+              if (!cell.getElement().querySelector("input, select, textarea")) cell.edit();
+            }, 0);
+          },
+          cellEdited: createRevisionFromGridCell,
+        },
         { title: "Timeout", field: "timeout_seconds", width: 95, editor: "number", editable: (cell) => !cell.getRow().getData().is_new, editorParams: { min: 1, max: 86400 }, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || ""), cellEdited: createRevisionFromGridCell },
         {
           title: "Source",

@@ -833,7 +833,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v227" in service_worker.text
+    assert "atlaso-pwa-v230" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -845,9 +845,9 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
-    assert "/static/app.css?v=appliance-update-source-actions-253-20260807-3" in service_worker.text
+    assert "/static/app.css?v=automation-256-appliance-update-253-20260808-6" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
-    assert "/static/app.js?v=appliance-update-253-ntp-disable-252-20260808-3" in service_worker.text
+    assert "/static/app.js?v=automation-256-appliance-update-253-20260808-6" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
 
     registration = client.get("/static/pwa.js")
@@ -857,7 +857,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=appliance-update-source-actions-253-20260807-3" in offline.text
+    assert "/static/app.css?v=automation-256-appliance-update-253-20260808-6" in offline.text
 
 
 def test_shared_ui_pattern_shell_and_wizard_contracts(client):
@@ -868,8 +868,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=appliance-update-253-ntp-disable-252-20260808-3"),
-        (public_base, "/static/app.js?v=appliance-update-253-ntp-disable-252-20260808-3"),
+        (base, "/static/app.js?v=automation-256-appliance-update-253-20260808-6"),
+        (public_base, "/static/app.js?v=automation-256-appliance-update-253-20260808-6"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8"
@@ -1374,9 +1374,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=appliance-update-source-actions-253-20260807-3" in page.text
+    assert "/static/app.css?v=automation-256-appliance-update-253-20260808-6" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=appliance-update-253-ntp-disable-252-20260808-3" in page.text
+    assert "/static/app.js?v=automation-256-appliance-update-253-20260808-6" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -9509,6 +9509,12 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "lcm.depot.adapter.host=dl.broadcom.com" in page.text
     assert "/vcf-offline-depot/profiles/" in page.text
     assert "Start" in page.text
+    assert "Start, schedule, and preview actions" in page.text
+    assert "Schedule" in page.text
+    assert "new=vcf_depot_download" in Path("atlaso/app/templates/vcf_offline_depot.html").read_text(encoding="utf-8")
+    app_js = client.get("/static/app.js").text
+    assert '"Schedule download (enable profile first)"' in app_js
+    assert "function scheduleVcfDepotProfileDownload(row)" in app_js
     assert page.text.index("<th>Name</th>") < page.text.index("<th>Start</th>") < page.text.index("<th>Type</th>")
     assert 'href="/logs"' in page.text
     assert "Generate the Software Depot ID" in page.text
@@ -10383,17 +10389,18 @@ def test_vcf_offline_depot_profiles_cannot_enable_without_installed_tool(client,
 
 def test_vcf_offline_depot_active_log_moves_to_named_task_log(tmp_path, monkeypatch):
     from atlaso.app import ui
+    from atlaso.app.services import vcf_depot_downloads
 
     active_log = tmp_path / "active-tool" / "log" / "vdt.log"
     task_logs = tmp_path / "task-logs"
     monkeypatch.setattr(ui, "VCF_DEPOT_VDT_LOG_PATH", active_log)
-    monkeypatch.setattr(ui, "VCF_DEPOT_TASK_LOG_DIR", task_logs)
+    monkeypatch.setattr(vcf_depot_downloads, "VCF_DEPOT_TASK_LOG_DIR", str(task_logs))
     active_log.parent.mkdir(parents=True)
     active_log.write_text("live output\n", encoding="utf-8")
 
     archived = ui.archive_vcf_depot_task_log("job_123", "Binaries Download")
 
-    assert archived == task_logs / "job_123-binaries-download.log"
+    assert archived == task_logs / "job_123.log"
     assert archived.read_text(encoding="utf-8") == "live output\n"
     assert not active_log.exists()
 
@@ -10795,7 +10802,7 @@ def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path):
     assert payload["profile_name"] == "vcf-install"
     assert payload["profile_status"] == "ready"
     assert payload["dry_run"] is False
-    assert payload["log_path"] == f"/var/lib/atlaso/vcfDownloadTool/task-logs/{payload['job_id']}-vcf-install.log"
+    assert payload["log_path"] == f"/var/lib/atlaso/vcfDownloadTool/task-logs/{payload['job_id']}.log"
     assert len(payload["commands"]) == 1
     assert payload["commands"][0]["command"][0] == "/var/lib/atlaso/vcfDownloadTool/active-tool/bin/vcf-download-tool"
     assert payload["commands"][0]["command"][1:3] == ["binaries", "download"]
@@ -10825,9 +10832,9 @@ def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path):
         assert job.status == "pending"
         assert '"profile_name": "vcf-install"' in (job.result or "")
         assert '"dry_run": false' in (job.result or "")
-        assert f'"log_path": "/var/lib/atlaso/vcfDownloadTool/task-logs/{job.id}-vcf-install.log"' in (job.result or "")
-        assert "/var/lib/atlaso/vcfDownloadTool/active-tool/bin/vcf-download-tool" in (job.result or "")
-        assert "--depot-download-token-file=/var/lib/atlaso/vcfDownloadTool/active-tool/secrets/download-token.txt" in (job.result or "")
+        assert f'"log_path": "/var/lib/atlaso/vcfDownloadTool/task-logs/{job.id}.log"' in (job.result or "")
+        assert '"trigger": "manual"' in (job.result or "")
+        assert '"commands"' not in (job.result or "")
         assert "manual-secret-token" not in (job.result or "")
         assert profile and profile.status == "ready"
 
@@ -11049,7 +11056,8 @@ def test_vcf_offline_depot_manual_profile_download_accepts_activation_code_witho
         job = db.execute(select(Job).where(Job.type == "vcf-depot-download")).scalar_one()
         assert json.loads(job.task_config_json or "{}") == {"profile_id": profile_id}
         assert "configuration get --software-depot-id" not in (job.result or "")
-        assert "--depot-download-activation-code-file=/var/lib/atlaso/vcfDownloadTool/active-tool/secrets/activation-code.txt" in (job.result or "")
+        assert '"trigger": "manual"' in (job.result or "")
+        assert '"commands"' not in (job.result or "")
         assert "--depot-download-token-file=/var/lib/atlaso/vcfDownloadTool/active-tool/secrets/download-token.txt" not in (job.result or "")
         assert "manual-secret-activation-code" not in (job.result or "")
 
@@ -13394,36 +13402,23 @@ def test_vcf_depot_software_id_startup_reconciles_runtime_identity_before_failin
         set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY, "previous-id")
         set_setting_value(db, VCF_DEPOT_TOKEN_VALUE_KEY, "token-fixture")
         set_setting_value(db, VCF_DEPOT_ACTIVATION_VALUE_KEY, "activation-fixture")
-        db.add_all(
-            [
-                Job(
-                    id="job_vcfdt_id_running",
-                    type="vcf-depot-software-id",
-                    status=JobStatus.RUNNING.value,
-                    created_by="admin",
-                    progress_percent=30,
-                    result=json.dumps({"state": "running"}),
-                ),
-                Job(
-                    id="job_vcfdt_id_pending",
-                    type="vcf-depot-software-id",
-                    status=JobStatus.PENDING.value,
-                    created_by="admin",
-                    progress_percent=0,
-                    result=json.dumps({"state": "pending"}),
-                ),
-            ]
+        db.add(
+            Job(
+                id="job_vcfdt_id_running",
+                type="vcf-depot-software-id",
+                status=JobStatus.RUNNING.value,
+                created_by="admin",
+                progress_percent=30,
+                result=json.dumps({"state": "running"}),
+            )
         )
         db.commit()
 
-        assert recover_interrupted_vcf_depot_software_id_jobs(db) == 2
+        assert recover_interrupted_vcf_depot_software_id_jobs(db) == 1
         running = db.get(Job, "job_vcfdt_id_running")
-        pending = db.get(Job, "job_vcfdt_id_pending")
         assert running.status == JobStatus.FAILED.value
         assert running.progress_percent == 100
         assert "restart" in (running.error or "")
-        assert pending.status == JobStatus.FAILED.value
-        assert pending.progress_percent == 100
         assert "reconciled" in (running.error or "")
         assert db.scalar(select(Setting.value).where(Setting.key == VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY)) == "runtime-id"
         assert db.scalar(select(Setting).where(Setting.key == VCF_DEPOT_TOKEN_VALUE_KEY)) is None

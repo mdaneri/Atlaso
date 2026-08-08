@@ -219,6 +219,13 @@ def init_db() -> None:
                         "ADD COLUMN network_boot_source VARCHAR(20)"
                     )
                 )
+            if "vcf_depot_operation" not in job_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE jobs "
+                        "ADD COLUMN vcf_depot_operation BOOLEAN NOT NULL DEFAULT 0"
+                    )
+                )
             connection.execute(
                 text(
                     "CREATE UNIQUE INDEX IF NOT EXISTS "
@@ -226,6 +233,41 @@ def init_db() -> None:
                     "ON jobs (network_boot_environment_key) "
                     "WHERE type = 'pxe-media-sync' "
                     "AND network_boot_source = 'download' "
+                    "AND status IN ('pending', 'running')"
+                )
+            )
+            connection.execute(
+                text(
+                    "UPDATE jobs SET vcf_depot_operation = 1 "
+                    "WHERE type IN ('vcf-depot-download', 'vcf-depot-software-id') "
+                    "OR (type = 'appliance-apply' AND instr(COALESCE(result, ''), '\"vcf_offline_depot\"') > 0)"
+                )
+            )
+            active_vcf_operations = connection.execute(
+                text(
+                    "SELECT id FROM jobs "
+                    "WHERE vcf_depot_operation = 1 "
+                    "AND status IN ('pending', 'running') "
+                    "ORDER BY created_at, id"
+                )
+            ).scalars().all()
+            for duplicate_job_id in active_vcf_operations[1:]:
+                connection.execute(
+                    text(
+                        "UPDATE jobs SET status = 'skipped', progress_percent = 100, "
+                        "finished_at = CURRENT_TIMESTAMP, "
+                        "error = 'Skipped during database upgrade because another VCFDT operation was active.' "
+                        "WHERE id = :job_id"
+                    ),
+                    {"job_id": duplicate_job_id},
+                )
+            connection.execute(text("DROP INDEX IF EXISTS uq_jobs_active_vcf_depot_download"))
+            connection.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS "
+                    "uq_jobs_active_vcf_depot_operation "
+                    "ON jobs (vcf_depot_operation) "
+                    "WHERE vcf_depot_operation = 1 "
                     "AND status IN ('pending', 'running')"
                 )
             )

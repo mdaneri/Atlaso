@@ -51,7 +51,16 @@
                 <legend><span class="field-label"><span>Update streams</span><button class="help-icon" type="button" data-help="Selects the same repository-backed update streams available on Appliance Update. Check schedules do not install changes; install schedules do.">i</button></span></legend>
                 <div class="automation-option-grid">{% for stream in automation_update_streams %}<label><input type="checkbox" name="selected_streams" value="{{ stream.id }}" {{ 'checked' if stream.id == 'photon_os' else '' }}><span>{{ stream.label }}</span></label>{% endfor %}</div>
               </fieldset>
-              <label class="full hidden" data-automation-config="vcf-depot"><span class="field-label"><span>Download profile</span><button class="help-icon" type="button" data-help="Runs this enabled VCF Offline Depot profile through the durable worker. Profile credentials remain managed by the depot workflow.">i</button></span><select name="vcf_profile_id"><option value="">Choose a profile</option>{% for profile in automation_vcf_profiles %}<option value="{{ profile.id }}">{{ profile.name }}</option>{% endfor %}</select></label>
+              <label class="full hidden" data-automation-config="vcf-depot">
+                <span class="field-label"><span>Download profile</span><button class="help-icon" type="button" data-help="Runs this enabled VCF Offline Depot profile through the durable worker. Profile credentials remain managed by the depot workflow.">i</button></span>
+                <select name="vcf_profile_id">
+                  <option value="" disabled selected>{{ 'Choose a profile' if automation_vcf_enabled_profile_count else 'No enabled profiles' }}</option>
+                  {% for profile in automation_vcf_profiles %}<option value="{{ profile.id }}" {{ 'disabled' if not profile.enabled else '' }}>{{ profile.name }}{{ ' · disabled' if not profile.enabled else '' }}</option>{% endfor %}
+                </select>
+                <small class="muted" data-automation-vcf-profile-guidance>
+                  {% if not automation_vcf_profiles %}No download profiles exist. <a href="/vcf-offline-depot">Create and enable a profile in VCF Offline Depot</a> before scheduling it.{% elif not automation_vcf_enabled_profile_count %}All configured download profiles are disabled. <a href="/vcf-offline-depot">Enable a profile in VCF Offline Depot</a> before scheduling it.{% else %}Only enabled profiles can be scheduled. <a href="/vcf-offline-depot">Manage profiles in VCF Offline Depot</a>.{% endif %}
+                </small>
+              </label>
               <label class="full hidden" data-automation-config="managed-script"><span class="field-label"><span>Managed script</span><button class="help-icon" type="button" data-help="Pins this schedule to an enabled immutable script revision. Enable a revision from the Managed Scripts grid before scheduling it.">i</button></span><select name="revision_id" data-automation-script-revision><option value="">Choose a managed script</option>{% for revision in automation_revisions %}<option value="{{ revision.id }}" data-interpreter="{{ revision.interpreter }}" {{ 'disabled' if not revision.enabled else '' }}>{{ revision.script.name }} · revision {{ revision.revision }} · {{ revision.interpreter }}{{ ' · disabled' if not revision.enabled else '' }}</option>{% endfor %}</select></label>
               <label class="full hidden" data-automation-config="managed-script"><span class="field-label"><span>Scoped vault</span><button class="help-icon" type="button" data-help="Makes one vault available only for the lifetime of this managed-script process. The task stores the vault identifier, never its passwords.">i</button></span><select name="vault_id"><option value="">No vault access</option>{% for vault in automation_vaults %}<option value="{{ vault.id }}">{{ vault.name }}</option>{% endfor %}</select></label>
               <label class="full hidden" data-automation-config="managed-script"><span class="field-label"><span>Script parameters</span><button class="help-icon" type="button" data-automation-script-arguments-help data-help="Enter one logical command line. Quote values containing spaces and use the continuation marker shown for the selected interpreter. Atlaso parses literal arguments without shell evaluation. Parameters are stored with the schedule and task history; do not enter secrets.">i</button></span><textarea name="script_arguments" rows="3" data-automation-script-arguments placeholder="Choose a managed script to see its parameter syntax." spellcheck="false"></textarea><small class="muted" data-automation-script-arguments-hint>Choose a managed script to see its continuation syntax.</small></label>
@@ -161,7 +170,6 @@
           <span class="field-label"><span>Script content</span><button class="help-icon" type="button" data-help="Enter code or load a local script file. Atlaso stores this content as immutable revision 1.">i</button></span>
           <span class="automation-script-editor-actions">
             <span class="status-pill" data-automation-script-create-language>bash</span>
-            <button class="button secondary icon-button" type="button" data-automation-script-create-fullscreen aria-label="Open full-screen script editor" title="Open full-screen editor">⛶</button>
             <label class="file-upload-control compact-file-upload automation-script-import-control">
               <input class="file-upload-input" type="file" accept=".sh,.bash,.py,.ps1,.txt,text/plain" data-automation-script-create-file>
               <span class="file-upload-surface"><span class="file-upload-copy"><strong>Import script file</strong></span></span>
@@ -169,7 +177,7 @@
           </span>
         </div>
         <textarea id="automation-script-create-content" name="content" class="code-editor-textarea" rows="20" spellcheck="false" data-monaco-editor data-monaco-language="shell" aria-label="Bash managed script source code"></textarea>
-        <p class="muted automation-script-import-status" data-automation-script-create-import-status>Paste code or import a .sh, .bash, .py, .ps1, or .txt file (maximum 1 MiB).</p>
+        <p class="muted automation-script-import-status" data-automation-script-create-import-status aria-live="polite"></p>
       </div>
     </section>
     <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review">
@@ -177,18 +185,6 @@
       <div class="alert warning">Creation stores immutable revision 1 in the disabled state. Review it before enabling or scheduling it.</div>
     </section>
   {% endcall %}
-  <dialog id="automation-script-create-fullscreen-dialog" class="confirm-modal wide-modal automation-script-fullscreen-dialog" aria-labelledby="automation-script-create-fullscreen-title">
-    <div class="confirm-modal-panel">
-      <div class="automation-script-fullscreen-toolbar">
-        <h2 id="automation-script-create-fullscreen-title">Script editor</h2>
-        <span class="status-pill" data-automation-script-fullscreen-language>bash</span>
-        <button class="button secondary icon-button" type="button" data-automation-script-fullscreen-close aria-label="Close full-screen script editor" title="Return to wizard">✕</button>
-      </div>
-      <div class="automation-script-editor automation-script-fullscreen-editor">
-        <textarea id="automation-script-create-fullscreen-content" class="code-editor-textarea" rows="30" spellcheck="false" data-monaco-editor data-monaco-language="shell" aria-label="Full-screen Bash managed script source code"></textarea>
-      </div>
-    </div>
-  </dialog>
   <dialog id="automation-script-modal" class="confirm-modal wide-modal" aria-labelledby="automation-script-modal-title">
     <div class="confirm-modal-panel">
       <div class="confirm-modal-body">
@@ -205,7 +201,7 @@
           </label>
         </div>
         <textarea id="automation-script-content" class="code-editor-textarea" rows="14" required spellcheck="false" data-monaco-editor data-monaco-language="shell" aria-label="Managed script source code"></textarea>
-        <p class="muted automation-script-import-status" data-automation-script-import-status>Paste code or import a .sh, .bash, .py, .ps1, or .txt file (maximum 1 MiB).</p>
+        <p class="muted automation-script-import-status" data-automation-script-import-status aria-live="polite"></p>
       </div>
       </div>
       <div class="confirm-modal-actions"><button class="button secondary" type="button" data-automation-script-modal-cancel>Cancel</button><button class="button primary" type="button" data-automation-script-source-confirm>Use script content</button></div>

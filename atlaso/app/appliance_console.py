@@ -37,7 +37,7 @@ def _load_environment() -> None:
 _load_environment()
 
 from sqlalchemy import select
-from sqlalchemy.exc import OperationalError as SQLAlchemyOperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError as SQLAlchemyOperationalError
 
 from atlaso.app.audit import record_audit
 from atlaso.app.database import SessionLocal
@@ -707,7 +707,12 @@ def _ensure_no_active_apply() -> None:
 
 def _submit_console_apply(required_ids: set[str], *, changed_dependents: dict[str, str] | None = None) -> str:
     # Imported lazily so read-only status remains available even if the web stack has a startup issue.
-    from atlaso.app.ui import active_appliance_apply_job, appliance_apply_units, run_appliance_apply_job
+    from atlaso.app.ui import (
+        active_appliance_apply_job,
+        active_vcf_depot_execution_job,
+        appliance_apply_units,
+        run_appliance_apply_job,
+    )
 
     with SessionLocal() as db:
         active = active_appliance_apply_job(db)
@@ -731,6 +736,7 @@ def _submit_console_apply(required_ids: set[str], *, changed_dependents: dict[st
             id=job_id,
             type="appliance-apply",
             status=JobStatus.PENDING.value,
+            vcf_depot_operation="vcf_offline_depot" in selected_ids,
             created_by=CONSOLE_ACTOR,
             progress_percent=0,
             result=json.dumps(payload, indent=2),
@@ -750,7 +756,16 @@ def _submit_console_apply(required_ids: set[str], *, changed_dependents: dict[st
                     result=json.dumps(captured, indent=2, sort_keys=True),
                 )
             )
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError as exc:
+            db.rollback()
+            active_vcf_job = active_vcf_depot_execution_job(db)
+            if "vcf_offline_depot" in selected_ids and active_vcf_job is not None:
+                raise ConsoleOperationError(
+                    f"VCFDT task {active_vcf_job.id} is already {active_vcf_job.status}."
+                ) from exc
+            raise
         record_audit(
             db,
             actor=CONSOLE_ACTOR,

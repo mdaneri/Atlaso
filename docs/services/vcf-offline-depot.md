@@ -52,6 +52,8 @@ its visible editor is not nested in the source textarea's label.
    shared [Tasks](../operate/tasks.md) grid scoped to VCF Download Tool profile downloads, with the same filters,
    pagination, detail view, live state refresh, and access to the active or archived VCFDT task log. Use **Open full
    task history** when you need the appliance-wide view.
+9. Use **Schedule download** in an enabled profile's row menu to open the shared Automation schedule wizard with that
+   profile selected. Disabled profiles cannot be scheduled.
 
 Download-profile creation uses a reviewed wizard. Notes stay with profile identity, task execution owns lifecycle
 status, and profile enablement has its own step so availability is an explicit decision before review.
@@ -61,6 +63,20 @@ the profiles, while the add row remains last.
 ![Atlaso VCFDT configuration wizard starting with the Software Depot ID generation or refresh choice.](../assets/screenshots/vcf-offline-depot-configuration-wizard.webp)
 
 *Figure: VCFDT configuration starts with the safe Software Depot ID apply choice and contains no credential contents.*
+
+Manual and scheduled starts share one execution path and a database-backed admission guard with Software Depot ID
+tasks and any Appliance Apply that includes VCF Offline Depot. Only one of those VCFDT operations may be pending or
+running across web and scheduler processes. At execution, Atlaso revalidates the applied tool, current profile
+enablement, the credential required by the profile type, depot desired state, and the generated command set before it
+writes runtime files or launches VCFDT. A scheduled occurrence that overlaps another VCFDT operation is recorded as
+skipped and points to the active task; it is not replayed. Other prerequisite failures are recorded as failed tasks with
+a sanitized archived log.
+
+Schedules keep the profile ID, so renames and profile updates apply to future runs while completed task metadata keeps
+the profile and schedule names used at queue time. Disabling a profile also disables every attached schedule and clears
+its next run. Re-enabling the profile leaves those schedules disabled for explicit review. Atlaso blocks profile
+deletion until attached enabled or disabled schedules are deleted, and blocks deletion while that profile has an active
+download task. Resetting or losing the staged VCFDT package disables profiles and their schedules.
 
 Metadata and binaries profiles use the download token or activation code staged most recently. Staging one credential
 does not remove the other because ESX profiles always require the activation code. Review the generated command preview
@@ -117,5 +133,9 @@ These captures show responsive layouts and useful operational states referenced 
 ![Atlaso two-step VCFDT Software Depot ID wizard Review with a Queue Software Depot ID task action and no additional confirmation dialog.](../assets/screenshots/vcf-offline-depot-configuration-wizard.webp)
 
 *Figure: VCFDT Software Depot ID generation ends at Review, which immediately dispatches a dedicated identity task.*
+
+![VCF Offline Depot profile row menu showing Schedule download disabled until the profile is enabled.](../assets/screenshots/vcf-offline-depot-schedule-action-desktop.webp)
+
+*Figure: VCF Offline Depot profile scheduling action with the disabled-profile reason.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
