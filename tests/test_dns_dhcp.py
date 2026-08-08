@@ -274,7 +274,7 @@ def test_dnsmasq_renderer_filters_loopback_configured_upstreams():
     assert "server=127.0.0.1" not in config
 
 
-def test_ntp_renderer_supports_nts_sources_server_and_hardening():
+def test_ntp_renderer_disables_legacy_nts_state_and_preserves_hardening():
     settings = NtpSettings(
         enabled=True,
         hostname="ntp.atlaso.internal",
@@ -304,17 +304,14 @@ def test_ntp_renderer_supports_nts_sources_server_and_hardening():
     assert "restrict source kod limited nomodify noquery" in config
     assert "interface listen 192.168.50.1" in config
     assert "restrict default kod limited nomodify noquery" in config
-    assert "server time.cloudflare.com iburst nts" in config
+    assert "server time.cloudflare.com iburst" in config
     assert "server time.google.com iburst" in config
     assert "disabled.example.com" not in config
-    assert "nts enable" in config
-    assert "nts cert /etc/atlaso/certs/ntp.pem" in config
-    assert "nts key /etc/atlaso/certs/ntp.key" in config
-    assert "nts cookie /var/lib/ntp/nts-keys" in config
+    assert "nts" not in config.lower()
     assert "tos minsane 2" in config
 
 
-def test_ntp_default_server_fallback_uses_nts_sources():
+def test_ntp_default_server_fallback_uses_plain_ntp_sources():
     settings = NtpSettings(
         hostname="ntp.atlaso.internal",
         upstream_servers=NTP_DEFAULT_UPSTREAM_SERVERS,
@@ -336,11 +333,11 @@ def test_ntp_default_server_fallback_uses_nts_sources():
         "time.nist.gov",
         "time.facebook.com",
     ]
-    assert [source["use_nts"] for source in sources[:3]] == [True, True, True]
+    assert [source["use_nts"] for source in sources[:3]] == [False, False, False]
     assert sources[2]["enabled"] is False
     assert all(source["enabled"] is False and source["use_nts"] is False for source in sources[3:])
-    assert "server time.cloudflare.com iburst nts" in config
-    assert "server nts.netnod.se iburst nts" in config
+    assert "server time.cloudflare.com iburst" in config
+    assert "server nts.netnod.se iburst" in config
     assert "server ptbtime1.ptb.de" not in config
     assert "server 0.pool.ntp.org" not in config
     assert "server time.google.com" not in config
@@ -362,7 +359,7 @@ def test_ntp_custom_server_fallback_remains_plain_ntp():
     ]
 
 
-def test_ntp_rejects_nts_source_ip_and_renders_disabled_state_without_servers():
+def test_ntp_normalizes_legacy_nts_source_and_renders_disabled_state_without_servers():
     invalid = NtpSettings(
         enabled=True,
         hostname="ntp.atlaso.internal",
@@ -377,7 +374,8 @@ def test_ntp_rejects_nts_source_ip_and_renders_disabled_state_without_servers():
             [{"source": "192.0.2.10", "enabled": True, "use_nts": True, "description": "invalid NTS identity"}]
         ),
     )
-    assert "certificate-valid DNS hostname" in "\n".join(validate_ntp_state(invalid, {"eth2"}))
+    assert validate_ntp_state(invalid, {"eth2"}) == []
+    assert ntp_upstream_sources(invalid)[0]["use_nts"] is False
 
     disabled = NtpSettings(enabled=False, hostname="ntp.atlaso.internal", listen_interface="", listen_address="", upstream_servers="", upstream_sources_json="", allow_clients="any")
     config = render_ntp_config(disabled)
@@ -407,14 +405,14 @@ def test_ntp_sources_accept_addresses_fqdns_and_optional_ports():
 
     assert validate_ntp_state(settings, {"eth2"}) == []
     config = render_ntp_config(settings)
-    assert "server time.example.com:7443 iburst nts" in config
+    assert "server time.example.com:7443 iburst" in config
     assert "server 192.0.2.10:123 iburst" in config
     assert "server [2001:db8::10] iburst" in config
     assert "server [2001:db8::20]:123 iburst" in config
     assert parse_ntp_source("time.example.com:7443") == ("time.example.com", 7443, False)
 
 
-def test_ntp_sources_reject_invalid_identity_port_and_nts_ip():
+def test_ntp_sources_reject_invalid_identity_and_port_but_allow_plain_ip():
     settings = NtpSettings(
         enabled=True,
         hostname="ntp.atlaso.internal",
@@ -436,7 +434,7 @@ def test_ntp_sources_reject_invalid_identity_port_and_nts_ip():
     errors = "\n".join(validate_ntp_state(settings, {"eth2"}))
     assert "NTP upstream server not-a-fqdn" in errors
     assert "NTP upstream server time.example.com:70000" in errors
-    assert "NTS upstream 192.0.2.10:4460 must use a certificate-valid DNS hostname" in errors
+    assert "certificate-valid DNS hostname" not in errors
 
 
 def test_dnsmasq_renderer_supports_dnssec_rebind_logging_and_extended_records():

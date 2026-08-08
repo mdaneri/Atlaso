@@ -442,9 +442,9 @@ Atlaso runs `vcf-download-tool configuration generate --software-depot-id`, read
 `vcf-download-tool configuration get --software-depot-id`, and records only one unambiguous canonical readback value;
 a generation failure preserves the previous ID, while successful generation followed by failed or ambiguous readback
 invalidates it because VCFDT may already have replaced its runtime identity. Apply then syncs intent and applies HTTPS.
-Upload Broadcom
-credentials through the unified Broadcom credentials modal as either a download token or activation code, by file or
-pasted text; existing storage keys remain separate, and credential bodies are never returned in responses, previews,
+Stage Broadcom credentials through the combined VCFDT configuration wizard as either a download token or activation
+code, by file or pasted text; existing storage keys remain separate, and credential bodies are never returned in
+responses, previews,
 logs, or job output. Metadata and binaries profiles use the most recently staged runtime credential: the download-token
 file used by `--depot-download-token-file` or the activation-code file used by
 `--depot-download-activation-code-file`. Existing state with indistinguishable credential timestamps retains the
@@ -581,7 +581,7 @@ PAM/pwquality during Local Users apply.
 
 Appliance Settings owns the appliance FQDN, OS hostname, resolver mode, resolver servers, management UI HTTPS
 preference, passwordless web-terminal preference, and root SSH login preference. NTPsec owns appliance time service
-desired state and NTP/NTS enforcement. The helper installs nginx Atlaso site config, writes a loopback-only
+desired state and enforces ordinary NTP only. The helper installs nginx Atlaso site config, writes a loopback-only
 `atlaso.service` override, applies the Atlaso-owned root SSH and web-terminal CA sshd drop-ins and schedules a short
 delayed restart so the apply job can finish recording before uvicorn moves behind nginx. Root SSH and the web terminal
 are disabled by default. The web terminal requires management HTTPS, is always bound to the management interface when
@@ -634,11 +634,11 @@ behavior and verification. DHCP IP zones can be IPv4 or IPv6: IPv4 zones bind to
 bind to interfaces with IPv6 CIDR and render dnsmasq DHCPv6/RA config. Each DHCP zone uses one comma-separated range
 expression, such as `192.168.87.100-200, 192.168.87.222, 192.168.87.226-228` for a `/24` or `192.168.87.100-87.200` for
 a `/16`; IPv6 ranges use full IPv6 addresses. Live lease readback uses the Atlaso-owned dnsmasq lease file under
-`/var/lib/atlaso/dnsmasq/`. The **NTP / NTS** page owns NTPsec desired state, including its upstream grid, explicit
+`/var/lib/atlaso/dnsmasq/`. The **NTP** page owns NTPsec desired state, including its upstream grid, explicit
 address binding, restrictive client access, `tos minsane`, source health through `ntpq`, and Firewall-owned UDP/123. The
-helper requires Photon’s `ntpsec` package and NTPsec binary identity. Fresh desired state uses NTS-enabled
-`time.cloudflare.com` and `nts.netnod.se`; NTS server mode uses CA-managed certificate material, persistent cookie keys,
-and Firewall-owned TCP/4460 while ordinary NTP remains available. Certificate Authority stores CA and leaf private keys
+helper requires Photon’s `ntpsec` package and NTPsec binary identity. NTS is disabled: legacy NTS desired state is
+normalized off, NTS directives are rejected, and NTP apply removes legacy certificate and cookie material. Certificate
+Authority stores CA and leaf private keys
 encrypted in the database with `ATLASO_SECRETS_KEY`, auto-ensures VCF/KMS/service certificates when enabled, and stages
 `/var/lib/atlaso/apply/ca/atlaso-ca.json`; the helper writes public bundles and service certificate/key files under
 `/etc/atlaso`. The public CA portal defaults to `ca.atlaso.internal`: `/` shows public trust material and `/requests` is
@@ -711,7 +711,7 @@ lab-to-management forwarding is always dropped. Managed listener rules default t
 can create, rename, remove, and assign firewall groups containing `any`, CIDRs, addresses, or other groups when rule
 sources or destinations need narrower access. DHCP bootstrap remains interface-bound because clients may not have an
 address yet: IPv4 zones open UDP/67 and IPv6 zones open UDP/547. NTPsec opens UDP/123 on selected service bind targets
-and adds TCP/4460 when NTS server mode is enabled. Moving a DHCP scope, service listener, or routing permission to a
+and never adds TCP/4460. Moving a DHCP scope, service listener, or routing permission to a
 VLAN such as `eth2.50` also changes the Firewall apply unit. In development, system adapters remain dry-run by default
 and record command intent instead of mutating host services directly.
 

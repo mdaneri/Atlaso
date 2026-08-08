@@ -3532,6 +3532,77 @@ textarea {
   flex: 0 0 auto;
 }
 
+.settings-list .vcf-depot-configuration-status {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 4px 0 10px;
+}
+
+.vcf-depot-status-item {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  min-width: 0;
+  border-radius: 6px;
+  padding: 6px 4px;
+  background: #e2e8f0;
+  color: #475569;
+  text-align: center;
+}
+
+.vcf-depot-status-item.good {
+  background: #dcfce7;
+  color: var(--good);
+}
+
+.vcf-depot-status-item.warn {
+  background: #fef3c7;
+  color: var(--warn);
+}
+
+.vcf-depot-status-item small {
+  font-size: 10px;
+  line-height: 1.1;
+}
+
+.vcf-depot-status-item strong {
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.vcf-depot-status-copy {
+  width: 100%;
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.vcf-depot-status-copy:not(:disabled):hover {
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+
+.vcf-depot-status-copy:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.vcf-depot-status-copy:disabled {
+  cursor: default;
+}
+
+.vcf-depot-status-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vcf-depot-status-value .button-icon {
+  width: 12px;
+  height: 12px;
+}
+
 .copyable-inline-value {
   display: flex;
   align-items: center;
@@ -6560,6 +6631,10 @@ textarea {
   display: grid;
   align-content: start;
   gap: 5px;
+}
+
+.vcf-sddc-wizard-body [data-atlaso-wizard-step] > label.checkbox-row {
+  display: flex;
 }
 
 .vcf-sddc-step-page > .form-grid,

@@ -552,18 +552,13 @@ status: current
   allow root certificates, forwarding, X11, agent use, user RC, or passwordless `sudo`.
 - Real NTPsec apply stages `/var/lib/atlaso/apply/ntpd/atlaso-ntp.conf` as the `atlaso` service user before invoking the
   root helper. NTPsec owns appliance time service behavior; Appliance Settings no longer owns the NTP client. Fresh
-  desired state uses the structured upstream grid with NTS-enabled `time.cloudflare.com` and `nts.netnod.se` rows,
-  including descriptions. Per-upstream NTS client mode renders `nts` on source lines; NTS server mode renders
-  `nts enable`, the CA-managed certificate chain and key, and persistent cookie storage under `/var/lib/ntp/nts-keys`.
+  desired state uses the structured upstream grid with ordinary NTP sources and descriptions.
   The renderer ignores every interface before explicitly listening on selected addresses, uses restrictive client rules
-  that still permit time service, and maps minimum sources to `tos minsane`. Firewall apply owns TCP/4460 NTS-KE access
-  in addition to UDP/123. The helper requires Photon `ntpsec`, installs `/etc/ntp.conf`, grants the NTS key `root:ntp`
-  mode `0640`, disables competing daemons, enables/restarts `ntpd.service`, and exposes bounded source health through
-  `ntpq -pn`, `ntpq -c rv`, and `ntpq -c ntsinfo`.
-- NTPsec NTS controls must reflect the installed `ntpd` feature set. Detect capability through the allowlisted
-  `atlaso-helper ntpd capabilities` path; when NTS is unavailable, disable the server switch and upstream NTS editors,
-  normalize saved NTS state off, reject NTS enable attempts, and keep ordinary NTP behavior available. Do not imply that
-  packaged/default upstream choices guarantee local NTS support.
+  that still permit time service, and maps minimum sources to `tos minsane`. Firewall apply owns UDP/123 only. NTS is
+  disabled: normalize legacy desired state off, reject NTS directives, remove `/etc/atlaso/ntp/certs` and
+  `/var/lib/ntp/nts-keys` during every apply, and never add a CA dependency or TCP/4460 rule. The helper requires Photon
+  `ntpsec`, installs `/etc/ntp.conf`, disables competing daemons, enables/restarts `ntpd.service`, and exposes bounded
+  source health through `ntpq -pn` and `ntpq -c rv`.
 - The Logs page fixed source set is Atlaso App, KMS, NTPsec, Nginx, DNS, DHCP, TFTP, and Audit Events. DNS, DHCP, and
   TFTP must remain classified views of one allowlisted `dnsmasq.service` journal read, with `dnsmasq-dhcp` and
   `dnsmasq-tftp` lines routed to their protocol tabs and base/service lines routed to DNS. Keep logs read-only and
@@ -590,8 +585,7 @@ status: current
   CA interface is the explicit publication boundary for the portal, DNS, firewall, and public-service configuration.
   The public CA portal defaults to `ca.atlaso.internal`: `/` shows public trust material and `/requests` is the
   authenticated certificate request/revocation workflow. Do not put Certificate Requests in the primary Atlaso
-  sidebar; link it from CA-associated surfaces instead. Every selected NTS server apply automatically includes the CA
-  material unit and preserves CA-before-NTP execution order, even when the CA baseline appears current.
+  sidebar; link it from CA-associated surfaces instead. NTP has no CA-managed certificate dependency.
 - Real KMS apply stages strict JSON under `/var/lib/atlaso/apply/kms/server.json` as the `atlaso` service user before
   invoking the root helper. KMS can be activated only when CA desired state is enabled and healthy; the page derives
   IPv4 and IPv6 listen addresses from the selected access interface or enabled VLAN, creates app-owned DNS records for
@@ -617,7 +611,8 @@ status: current
   replacement while the old appliance remains available for VMware rekey.
 - Real VCF Offline Depot apply stages nginx config under
   `/var/lib/atlaso/apply/vcf-offline-depot/atlaso-vcf-offline-depot.conf` as the `atlaso` service user before invoking
-  the root helper. Uploading `vcf-download-tool-*.tar.gz` is desired-state only: validate/store the package and clear
+  the root helper. Uploading `vcf-download-tool-*.tar.gz` uses a shared two-step package wizard and remains desired-state
+  only: validate/store the package and clear
   stale generated metadata, but do not extract, create runtime folders, invoke VCFDT, or generate a software depot ID
   from the upload route. Global `vcf_offline_depot` apply must validate the staged nginx site, run `stage-tool` to
   extract the archive under `/opt/atlaso/vcf-download-tool/extracted`, expose
@@ -627,18 +622,54 @@ status: current
   the software depot ID refresh action; then read the persisted identity back with
   `vcf-download-tool configuration get --software-depot-id`, store only one unambiguous canonical readback value, sync
   intent, and apply HTTPS. Preserve the old ID when generation itself fails. If generation succeeds but canonical
-  readback fails, invalidate the stored ID because VCFDT may already have replaced its runtime identity. The helper
+  readback fails, invalidate the stored ID because VCFDT may already have replaced its runtime identity. The helper must
+  remove both runtime credential files immediately after the generation command succeeds, and Atlaso must remove both
+  staged credential records when the result contains a new canonical ID or identity-invalidated marker. Preserve both
+  credential locations when generation itself fails before changing the identity. The helper
   validates CA-managed
   `vcf_offline_depot:https` cert/key paths, server name/listener uniqueness, document root, auth mode, selected local
   HTTP user, and static-file directives, then installs or removes `/etc/atlaso/nginx/sites.d/vcf-offline-depot.conf`,
   writes `/etc/atlaso/nginx/htpasswd/vcf-offline-depot.htpasswd` from the applied Photon password hash when
-  authentication is required, and reloads nginx. The refresh icon for software depot ID must submit explicit refresh
-  intent through the global `/appliance-apply` workflow for `vcf_offline_depot`, not call the helper directly. Manual
+  authentication is required, and reloads nginx. The non-grid settings rail exposes one VCFDT configuration summary;
+  its five-step shared `createWizard(...)` flow starts with the current Software Depot ID and refresh intent, then
+  covers a standard select-based, presence-only Broadcom credential choice, a conditional upload-or-paste step,
+  `application-prodv2.properties`, and review. Credential and
+  application-properties changes must use one transactional desired-state save. The wizard must never preload stored
+  credential values, must prefer an uploaded credential file over pasted text, and must return only presence flags,
+  safe display names, the version parsed from the validated staged archive name, properties metadata,
+  validation/previews, and Software Depot ID metadata. Credential choices are state-aware: omit Keep when none is
+  staged, use Replace only for present inputs, require choosing which absent input to use, and hide the credential-input
+  step when Keep is selected. The bundled Monaco application-properties editor must remain writable, synchronize its
+  source textarea, and avoid a wrapping label that can steal pointer focus from the editor. If refresh is selected,
+  hide the credential and properties steps so the rail contains only Software Depot ID and Review, without resaving
+  unchanged configuration; Review is the explicit confirmation boundary and must create a dedicated
+  `vcf-depot-software-id` task, not call the helper directly or route identity generation through global Appliance
+  Apply. When no ID exists, generation is selected and cannot be cleared. Review immediately dispatches the dedicated
+  task and opens the ordinary Tasks workflow. Its safe child operations stage the VCFDT tool, apply application
+  properties and the CEIP prerequisite, then generate/read back the identity. The task succeeds only after a non-empty
+  ID is persisted, and refresh additionally requires a different ID. It must not validate, sync,
+  or apply nginx, update the VCF Offline Depot apply baseline, or open the global Appliance Apply monitor.
+  Identity tasks, profile-download tasks, and Appliance Apply tasks containing `vcf_offline_depot` must share one
+  admission boundary so only one VCFDT runtime operation can be pending or running. Pending identity tasks may be
+  cancelled, but running identity tasks must reject cancellation because the helper may already have replaced the
+  runtime identity. Startup recovery for an interrupted running identity task must perform a read-only canonical VCFDT
+  ID readback before finalizing the task: persist a changed runtime ID and clear obsolete credentials, or invalidate
+  the stored ID and credentials when runtime identity cannot be verified.
+  Resetting VCFDT staging is one destructive confirmation that always clears the staged package, both Broadcom
+  credentials, saved application properties, generated identity/version metadata, and profile enablement; it must not
+  offer a partial configuration-preservation mode.
+  Review must state that both staged credentials are removed after identity replacement. The settings-rail Depot ID
+  ready state uses the shared clipboard action with accessible labeling and transient completion feedback.
+  Tool staging and Software Depot ID generation must not depend on the HTTPS service-enabled toggle. Ordinary wizard
+  saves must preserve an existing ID.
+  Manual
   VCFDT command generation
   should use `/var/lib/atlaso/vcfDownloadTool/active-tool` token and activation-code file paths, write telemetry and ESX
   disabled-platform config without exposing secret contents, and model patch-only separately from upgrade-only. Download
-  tokens and activation codes share one Broadcom credentials modal with a credential-type selector; files or pasted text
-  still become the runtime credential files used by VCFDT and existing storage keys remain as compatibility aliases.
+  tokens and activation codes can be preserved together or replaced one at a time in the VCFDT configuration wizard;
+  files or pasted text still become the runtime credential files used by VCFDT and existing storage keys remain as compatibility
+  aliases. Metadata profiles appear first by default, followed by binaries and ESX with deterministic name/ID
+  tie-breaking; user sorting may reorder them while the shared add row remains pinned last.
   Manual profile starts create `vcf-depot-download` background jobs that write runtime credential files under
   `/var/lib/atlaso/vcfDownloadTool/active-tool/secrets`, run VCFDT as the `atlaso` service user, and update job/profile
   status from the process exit code; missing profile credentials should disable only the profile Start button and must
@@ -649,7 +680,7 @@ status: current
   evidence. Disabling a profile or resetting the tool disables attached schedules without re-enabling them later;
   profile deletion is blocked while any schedule references it. Schedule configuration stores only the stable integer
   `profile_id` and never credentials, authenticated URLs, generated commands, or secret-bearing output. The application
-  properties editor saves desired-state text and syncs Monaco Editor before submit; global apply writes the runtime
+  properties editor in the shared VCFDT configuration wizard saves desired-state text and syncs Monaco Editor before submit; global apply writes the runtime
   properties used by the active tool. Depot private keys, HTTP user passwords/hashes, and VCFDT credential contents must
   remain path references or presence flags only; never print key contents, token values, activation-code values, private
   keys, passwords, or password hashes in previews, jobs, logs, docs, or final responses.

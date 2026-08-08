@@ -35,6 +35,7 @@ from atlaso.app.ui import (
     ensure_ca_state,
     initialize_factory_appliance_apply_baseline,
     recover_interrupted_appliance_apply_jobs,
+    recover_interrupted_vcf_depot_software_id_jobs,
     recover_interrupted_vcf_helper_jobs,
 )
 from atlaso.app.ui import router as ui_router
@@ -84,6 +85,7 @@ async def lifespan(app: FastAPI):
         register_bundled_inventory_media(db)
         db.commit()
         recover_interrupted_appliance_apply_jobs(db)
+        recover_interrupted_vcf_depot_software_id_jobs(db)
         recover_interrupted_vcf_helper_jobs(db)
         refresh_startup_host_inventory(db, environment=settings.environment)
         if appliance_mode:

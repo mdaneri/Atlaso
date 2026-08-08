@@ -133,7 +133,7 @@ file exists only for the constrained helper execution window. Atlaso and `atlaso
 validation failure, or apply failure, and application startup removes stale input after an interrupted process. Raw
 secrets remain excluded from previews, baselines, task payloads, logs, audits, and test output. When LDAP-related CA,
 DNS, or firewall desired state changes, global appliance apply submits the changed dependency units together, including
-when NTS server selection adds Certificate Authority to the task.
+when other selected services add dependency units to the task.
 
 Normal settings backup contains LDAP metadata but no bind secrets or password hashes. Use the separate
 passphrase-encrypted LDAP recovery export to preserve `slapcat` data. Recovery import decrypts and validates the archive

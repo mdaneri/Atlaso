@@ -232,6 +232,7 @@
     const cancelButtons = [...form.querySelectorAll("[data-atlaso-wizard-cancel]")];
     let currentIndex = 0;
     let highestIndex = 0;
+    let skippedStepIds = new Set();
     let dirty = false;
     let launcher = null;
     let closing = false;
@@ -255,6 +256,15 @@
     const navIndex = (button, fallbackIndex) => {
       const id = button.dataset.atlasoWizardNav || button.dataset.step;
       return id ? indexFor(id) : fallbackIndex;
+    };
+    const visibleStepIndices = () => steps
+      .map((_step, index) => index)
+      .filter((index) => !skippedStepIds.has(steps[index].id));
+    const adjacentVisibleIndex = (index, direction) => {
+      const visible = visibleStepIndices();
+      const position = visible.indexOf(index);
+      if (position < 0) return index;
+      return visible[Math.max(0, Math.min(position + direction, visible.length - 1))];
     };
     const clearInvalidControl = () => {
       invalidControl?.removeAttribute?.("aria-invalid");
@@ -291,22 +301,34 @@
         page.setAttribute?.("aria-hidden", active ? "false" : "true");
         if (!page.dataset.atlasoWizardStep) page.dataset.atlasoWizardStep = steps[pageIndex]?.id || String(pageIndex);
       });
+      const visible = visibleStepIndices();
       navButtons.forEach((button, buttonIndex) => {
         const index = navIndex(button, buttonIndex);
+        const skipped = skippedStepIds.has(steps[index]?.id);
         const active = index === currentIndex;
-        button.disabled = index > highestIndex;
+        const visiblePosition = visible.indexOf(index);
+        const stepNumber = button.querySelector?.("span");
+        if (stepNumber && visiblePosition >= 0) stepNumber.textContent = String(visiblePosition + 1);
+        button.disabled = skipped || index > highestIndex;
+        button.classList?.toggle?.("hidden", skipped);
+        button.toggleAttribute?.("hidden", skipped);
+        const navItem = button.closest?.("li");
+        navItem?.classList?.toggle?.("hidden", skipped);
+        navItem?.toggleAttribute?.("hidden", skipped);
         button.classList?.toggle?.("active", active);
         button.classList?.toggle?.("complete", index < currentIndex);
         button.setAttribute?.("aria-current", active ? "step" : "false");
         button.setAttribute?.("aria-disabled", button.disabled ? "true" : "false");
       });
-      if (kicker) kicker.textContent = `Step ${currentIndex + 1} of ${steps.length}`;
+      const visiblePosition = visible.indexOf(currentIndex);
+      const lastVisibleIndex = visible[visible.length - 1];
+      if (kicker) kicker.textContent = `Step ${visiblePosition + 1} of ${visible.length}`;
       if (title) title.textContent = step.title;
       if (description) description.textContent = step.description;
       backButton?.classList?.toggle?.("hidden", currentIndex === 0);
-      nextButton?.classList?.toggle?.("hidden", currentIndex === steps.length - 1);
-      submitButton?.classList?.toggle?.("hidden", currentIndex !== steps.length - 1);
-      if (submitButton) submitButton.disabled = currentIndex !== steps.length - 1 || submitting;
+      nextButton?.classList?.toggle?.("hidden", currentIndex === lastVisibleIndex);
+      submitButton?.classList?.toggle?.("hidden", currentIndex !== lastVisibleIndex);
+      if (submitButton) submitButton.disabled = currentIndex !== lastVisibleIndex || submitting;
       clearError();
       config.onStepChange?.({
         controller,
@@ -359,7 +381,7 @@
 
     const next = async () => {
       if (!(await validate(currentIndex))) return false;
-      let target = currentIndex + 1;
+      let target = adjacentVisibleIndex(currentIndex, 1);
       if (typeof config.onNext === "function") {
         const result = await config.onNext({
           controller,
@@ -367,20 +389,36 @@
           dialog,
           step: steps[currentIndex],
           index: currentIndex,
-          nextStep: steps[Math.min(target, steps.length - 1)],
+          nextStep: steps[target],
         });
         if (result === false || result?.stay) return false;
         if (typeof result === "string" || typeof result === "number") target = indexFor(result);
         else if (result?.target !== undefined) target = indexFor(result.target);
       }
       target = Math.min(target, steps.length - 1);
-      if (target === steps.length - 1) {
+      if (target === visibleStepIndices().at(-1)) {
         await config.prepareReview?.({ controller, form, dialog, step: steps[target], index: target });
       }
       return showStep(target, { unlock: true, previous: currentIndex });
     };
 
-    const back = () => showStep(currentIndex - 1, { previous: currentIndex });
+    const back = async () => {
+      let target = adjacentVisibleIndex(currentIndex, -1);
+      if (typeof config.onBack === "function") {
+        const result = await config.onBack({
+          controller,
+          form,
+          dialog,
+          step: steps[currentIndex],
+          index: currentIndex,
+          previousStep: steps[target],
+        });
+        if (result === false || result?.stay) return false;
+        if (typeof result === "string" || typeof result === "number") target = indexFor(result);
+        else if (result?.target !== undefined) target = indexFor(result.target);
+      }
+      return showStep(target, { previous: currentIndex });
+    };
     const confirmDiscard = async () => {
       if (!dirty) return true;
       if (typeof config.confirmDiscard === "function") return Boolean(await config.confirmDiscard({ controller, form, dialog }));
@@ -414,6 +452,7 @@
     };
     const reset = () => {
       form.reset?.();
+      skippedStepIds = new Set();
       dirty = false;
       highestIndex = 0;
       currentIndex = 0;
@@ -468,6 +507,10 @@
       setHighestStep(target) {
         highestIndex = Math.max(highestIndex, indexFor(target));
       },
+      setSkippedSteps(targets = []) {
+        skippedStepIds = new Set((targets || []).map(String).filter((id) => steps.some((step) => step.id === id)));
+        showStep(currentIndex, { force: true });
+      },
     };
 
     form.addEventListener?.("input", () => {
@@ -479,7 +522,9 @@
     nextButton?.addEventListener?.("click", () => {
       next().catch((error) => setError(error?.message || "The next step could not be opened."));
     });
-    backButton?.addEventListener?.("click", back);
+    backButton?.addEventListener?.("click", () => {
+      back().catch((error) => setError(error?.message || "The previous step could not be opened."));
+    });
     navButtons.forEach((button, buttonIndex) => {
       button.addEventListener?.("click", async () => {
         const target = navIndex(button, buttonIndex);

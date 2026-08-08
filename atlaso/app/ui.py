@@ -14,6 +14,7 @@ import subprocess
 import threading
 import time
 import zipfile
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from ipaddress import IPv4Address, IPv4Network, IPv6Address, IPv6Network, ip_address, ip_interface, ip_network
 from pathlib import Path, PurePosixPath
@@ -112,6 +113,7 @@ from atlaso.app.services.vaults import (
 )
 from atlaso.app.operational_logging import (
     configure_operational_logging,
+    log_audit_event,
     logging_preferences_from_db,
     logging_preferences_to_dict,
     save_logging_preferences,
@@ -504,6 +506,7 @@ from atlaso.app.services.ntp import (
     NTP_DEFAULT_HOSTNAME,
     NTP_STAGED_CONFIG_PATH,
     default_ntp_upstream_fields,
+    disable_nts_state,
     duplicate_ntp_upstream_source,
     dump_ntp_upstream_sources,
     join_allow_clients,
@@ -580,6 +583,7 @@ from atlaso.app.services.vcf_offline_depot import (
     render_vcfdt_command_preview,
     safe_archive_upload_name,
     setting_secret_state,
+    staged_vcf_download_tool_version,
     vcf_depot_application_properties_from_tool,
     validate_vcf_depot_state,
     validate_vcf_download_tool_upload_envelope,
@@ -961,11 +965,6 @@ def ca_service_cert_paths(service_dir: str, certificate_name: str) -> tuple[str,
     return f"{base}.crt", f"{base}.key", f"{base}-chain.pem"
 
 
-def ntp_nts_certificate_paths(settings: NtpSettings) -> tuple[str, str, str]:
-    hostname = normalize_dns_hostname(settings.hostname or NTP_DEFAULT_HOSTNAME)
-    return ca_service_cert_paths("ntp", hostname)
-
-
 def kms_client_common_name(client: KmsClient) -> str:
     match = re.search(r"(?:^|,)CN=([^,]+)", client.certificate_subject or "")
     return match.group(1).strip() if match else client.name
@@ -1091,23 +1090,6 @@ def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
             )
         )
 
-    ntp_settings = get_ntp_settings_row(db)
-    if ntp_settings.nts_server_enabled:
-        cert_path, key_path, chain_path = ntp_nts_certificate_paths(ntp_settings)
-        specs.append(
-            ManagedCertificateSpec(
-                owner="ntp:nts",
-                common_name=normalize_dns_hostname(ntp_settings.hostname or NTP_DEFAULT_HOSTNAME),
-                dns_names=[normalize_dns_hostname(ntp_settings.hostname or NTP_DEFAULT_HOSTNAME)],
-                ip_addresses=split_addresses(ntp_settings.listen_address),
-                profile_name=CA_SERVER_PROFILE_NAME,
-                description="Managed NTPsec NTS server certificate.",
-                cert_path=cert_path,
-                key_path=key_path,
-                chain_path=chain_path,
-            )
-        )
-
     depot_settings = get_vcf_offline_depot_settings_row(db)
     if depot_settings.enabled:
         cert_path, key_path, chain_path = ca_service_cert_paths("vcf-offline-depot", depot_settings.server_certificate or depot_settings.hostname)
@@ -1223,6 +1205,9 @@ def get_ntp_settings_row(db: Session) -> NtpSettings:
             config_path=NTP_STAGED_CONFIG_PATH,
         )
         db.add(settings)
+        db.commit()
+        db.refresh(settings)
+    elif disable_nts_state(settings):
         db.commit()
         db.refresh(settings)
     return settings
@@ -1594,7 +1579,7 @@ def refresh_interface_dependent_addresses(
 
     for model, label in [
         (DnsSettings, "DNS"),
-        (NtpSettings, "NTP / NTS"),
+        (NtpSettings, "NTP"),
         (CaSettings, "Certificate Authority"),
         (KmsSettings, "KMS"),
         (LdapSettings, "LDAP"),
@@ -1859,83 +1844,14 @@ def vcf_backup_context(db: Session, *, reconcile: bool = True) -> dict:
     }
 
 
-def ntpd_capabilities_payload(result: AdapterResult) -> dict[str, Any]:
-    if result.returncode != 0:
-        return {}
-    text = result.stdout or ""
-    decoder = json.JSONDecoder()
-    index = 0
-    capabilities: dict[str, Any] = {}
-    while index < len(text):
-        while index < len(text) and text[index].isspace():
-            index += 1
-        if index >= len(text):
-            break
-        try:
-            payload, index = decoder.raw_decode(text, index)
-        except json.JSONDecodeError:
-            return {}
-        if isinstance(payload, dict) and "nts" in payload:
-            capabilities = payload
-    return capabilities
-
-
 def ntp_context(db: Session, *, include_runtime_health: bool = False, reconcile: bool = True) -> dict:
     settings = get_ntp_settings_row(db)
     if reconcile and normalize_service_bind_settings(db, settings):
         db.commit()
         db.refresh(settings)
-    capability_result = SystemAdapter().read_ntpd_capabilities()
-    ntp_capabilities = ntpd_capabilities_payload(capability_result)
-    ntp_nts_capability_known = "nts" in ntp_capabilities
-    ntp_nts_supported = ntp_capabilities.get("nts") is True
-    if ntp_nts_capability_known and not ntp_nts_supported:
-        upstream_sources = ntp_upstream_sources(settings)
-        nts_state_changed = settings.nts_server_enabled or any(bool(source.get("use_nts")) for source in upstream_sources)
-        if reconcile and nts_state_changed:
-            for source in upstream_sources:
-                source["use_nts"] = False
-            settings.nts_server_enabled = False
-            settings.upstream_sources_json = dump_ntp_upstream_sources(upstream_sources)
-            settings.upstream_servers = join_servers([str(source["source"]) for source in upstream_sources if source.get("enabled")])
-            settings.updated_at = utcnow()
-            db.add(settings)
-            db.commit()
-            db.refresh(settings)
-            record_audit(
-                db,
-                actor="system",
-                action="disable_unsupported_ntp_nts",
-                resource_type="ntpd",
-                resource_id=str(settings.id),
-                detail="Installed ntpd does not include NTS support; NTS server and upstream flags were disabled.",
-            )
     available_interfaces = service_bind_options(db)
-    ntp_nts_cert_path, ntp_nts_key_path, ntp_nts_chain_path = ntp_nts_certificate_paths(settings)
-    if reconcile and settings.nts_server_enabled:
-        settings.nts_server_cert_path = ntp_nts_chain_path
-        settings.nts_server_key_path = ntp_nts_key_path
-        settings.nts_ke_port = 4460
     config_preview = render_ntp_config(settings)
-    ca_state_errors = ensure_ca_state(db) if reconcile and settings.nts_server_enabled else []
-    validation_errors = [*ca_state_errors, *validate_ntp_state(settings, {interface["name"] for interface in available_interfaces})]
-    if settings.nts_server_enabled:
-        ca_settings = get_ca_settings_row(db)
-        if not ca_settings.enabled:
-            validation_errors.append("NTPsec NTS server mode requires Certificate Authority to be enabled.")
-        elif ca_state_errors:
-            validation_errors.append("NTPsec NTS server mode requires healthy Certificate Authority state.")
-        elif not ca_certificate_available(db, "ntp:nts"):
-            validation_errors.append("NTPsec NTS server mode requires an issued CA-managed server certificate before apply.")
-    nts_requested = settings.nts_server_enabled or any(
-        bool(source.get("enabled", True)) and bool(source.get("use_nts"))
-        for source in ntp_upstream_sources(settings)
-    )
-    if not ntp_nts_capability_known and nts_requested:
-        validation_errors.append(
-            "NTPsec NTS capability detection is temporarily unavailable; existing NTS desired state was preserved, "
-            "but appliance apply is blocked until detection succeeds."
-        )
+    validation_errors = validate_ntp_state(settings, {interface["name"] for interface in available_interfaces})
     status_result = SystemAdapter().read_ntpd_status() if include_runtime_health else None
     return {
         "ntp_settings": settings,
@@ -1952,12 +1868,6 @@ def ntp_context(db: Session, *, include_runtime_health: bool = False, reconcile:
         "ntp_ntpq_status": status_result.stdout if status_result else "NTPsec source health is not loaded during page render.",
         "ntp_ntpq_status_error": status_result.stderr if status_result and status_result.returncode != 0 else "",
         "ntp_ntpq_status_dry_run": status_result.dry_run if status_result else False,
-        "ntp_nts_cert_path": ntp_nts_chain_path,
-        "ntp_nts_key_path": ntp_nts_key_path,
-        "ntp_nts_chain_path": ntp_nts_chain_path,
-        "ntp_nts_capability_known": ntp_nts_capability_known,
-        "ntp_nts_supported": ntp_nts_supported,
-        "ntp_nts_capabilities": ntp_capabilities,
     }
 
 
@@ -2250,12 +2160,13 @@ def store_uploaded_vcf_depot_secret(
     value_key: str,
     actor: str,
     action: str,
+    pending_audits: list[AuditEvent] | None = None,
 ) -> str | None:
     if upload is None or not upload.filename:
         return None
     content = upload.file.read()
     if not content:
-        return None
+        raise HTTPException(status_code=400, detail="VCFDT credential uploads cannot be empty.")
     if len(content) > 128 * 1024:
         raise HTTPException(status_code=400, detail="VCFDT credential uploads must be 128 KB or smaller.")
     try:
@@ -2266,14 +2177,25 @@ def store_uploaded_vcf_depot_secret(
         raise HTTPException(status_code=400, detail="VCFDT credential uploads cannot be empty.")
     name_setting = set_setting_value(db, name_key, Path(upload.filename).name)
     set_setting_value(db, value_key, text)
-    record_audit(
-        db,
-        actor=actor,
-        action=action,
-        resource_type="setting",
-        resource_id=str(name_setting.id),
-        detail=Path(upload.filename).name,
-    )
+    if pending_audits is None:
+        record_audit(
+            db,
+            actor=actor,
+            action=action,
+            resource_type="setting",
+            resource_id=str(name_setting.id),
+            detail=Path(upload.filename).name,
+        )
+    else:
+        audit = AuditEvent(
+            actor=actor,
+            action=action,
+            resource_type="setting",
+            resource_id=str(name_setting.id),
+            detail=Path(upload.filename).name,
+        )
+        db.add(audit)
+        pending_audits.append(audit)
     return Path(upload.filename).name
 
 
@@ -2286,6 +2208,7 @@ def store_pasted_vcf_depot_secret(
     display_name: str,
     actor: str,
     action: str,
+    pending_audits: list[AuditEvent] | None = None,
 ) -> str:
     if len(value.encode("utf-8")) > 128 * 1024:
         raise HTTPException(status_code=400, detail="VCFDT credential text must be 128 KB or smaller.")
@@ -2293,14 +2216,25 @@ def store_pasted_vcf_depot_secret(
         raise HTTPException(status_code=400, detail="VCFDT credential text cannot be empty.")
     name_setting = set_setting_value(db, name_key, display_name)
     set_setting_value(db, value_key, value)
-    record_audit(
-        db,
-        actor=actor,
-        action=action,
-        resource_type="setting",
-        resource_id=str(name_setting.id),
-        detail=display_name,
-    )
+    if pending_audits is None:
+        record_audit(
+            db,
+            actor=actor,
+            action=action,
+            resource_type="setting",
+            resource_id=str(name_setting.id),
+            detail=display_name,
+        )
+    else:
+        audit = AuditEvent(
+            actor=actor,
+            action=action,
+            resource_type="setting",
+            resource_id=str(name_setting.id),
+            detail=display_name,
+        )
+        db.add(audit)
+        pending_audits.append(audit)
     return display_name
 
 
@@ -2331,7 +2265,7 @@ def store_uploaded_vcf_depot_archive(settings: VcfOfflineDepotSettings, archive_
     return archive_name
 
 
-def reset_vcf_depot_tool_staging(db: Session, settings: VcfOfflineDepotSettings, *, reset_application_properties: bool) -> None:
+def reset_vcf_depot_tool_staging(db: Session, settings: VcfOfflineDepotSettings) -> None:
     archive_path = Path(settings.tool_archive_path) if settings.tool_archive_path else None
     if archive_path is not None:
         try:
@@ -2358,18 +2292,33 @@ def reset_vcf_depot_tool_staging(db: Session, settings: VcfOfflineDepotSettings,
         VCF_DEPOT_TOKEN_VALUE_KEY,
         VCF_DEPOT_ACTIVATION_NAME_KEY,
         VCF_DEPOT_ACTIVATION_VALUE_KEY,
+        VCF_DEPOT_APPLICATION_PROPERTIES_CONTENT_KEY,
+        VCF_DEPOT_APPLICATION_PROPERTIES_SOURCE_KEY,
+        VCF_DEPOT_APPLICATION_PROPERTIES_UPDATED_AT_KEY,
     ]
-    if reset_application_properties:
-        keys.extend(
-            [
-                VCF_DEPOT_APPLICATION_PROPERTIES_CONTENT_KEY,
-                VCF_DEPOT_APPLICATION_PROPERTIES_SOURCE_KEY,
-                VCF_DEPOT_APPLICATION_PROPERTIES_UPDATED_AT_KEY,
-            ]
-        )
     for setting in db.execute(select(Setting).where(Setting.key.in_(keys))).scalars().all():
         db.delete(setting)
     set_setting_value(db, VCF_DEPOT_RUNTIME_RESET_PENDING_KEY, "1")
+
+
+def clear_vcf_depot_credentials(db: Session) -> None:
+    credential_keys = [
+        VCF_DEPOT_TOKEN_NAME_KEY,
+        VCF_DEPOT_TOKEN_VALUE_KEY,
+        VCF_DEPOT_ACTIVATION_NAME_KEY,
+        VCF_DEPOT_ACTIVATION_VALUE_KEY,
+    ]
+    for setting in db.execute(select(Setting).where(Setting.key.in_(credential_keys))).scalars().all():
+        db.delete(setting)
+
+
+def invalidate_vcf_depot_software_depot_identity(db: Session, error: str) -> None:
+    for key in [VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY, VCF_DEPOT_SOFTWARE_DEPOT_ID_GENERATED_AT_KEY]:
+        setting = db.execute(select(Setting).where(Setting.key == key)).scalar_one_or_none()
+        if setting is not None:
+            db.delete(setting)
+    clear_vcf_depot_credentials(db)
+    set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_ERROR_KEY, error)
 
 
 def vcf_depot_software_depot_id_context(db: Session) -> dict[str, str]:
@@ -2461,6 +2410,7 @@ def persist_vcf_depot_metadata_from_apply(db: Session, unit_results: list[dict[s
                 set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY, software_depot_id)
                 set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_GENERATED_AT_KEY, generated_at)
                 set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_ERROR_KEY, "")
+                clear_vcf_depot_credentials(db)
             else:
                 invalidated = helper_json_payload_with_key(stdout, "software_depot_id_invalidated")
                 if invalidated.get("software_depot_id_invalidated") is True:
@@ -2468,7 +2418,12 @@ def persist_vcf_depot_metadata_from_apply(db: Session, unit_results: list[dict[s
                         stale_setting = db.execute(select(Setting).where(Setting.key == key)).scalar_one_or_none()
                         if stale_setting is not None:
                             db.delete(stale_setting)
-                error = (stderr or stdout or "VCFDT software depot ID generation failed.").strip()
+                    clear_vcf_depot_credentials(db)
+                error = (
+                    _strip_task_action_metadata(stderr)
+                    or _strip_task_action_metadata(stdout)
+                    or "VCFDT software depot ID generation failed."
+                )
                 set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_ERROR_KEY, error)
         return
 
@@ -2501,6 +2456,7 @@ def vcf_depot_application_properties_context(db: Session, settings: VcfOfflineDe
         updated_at = setting_value(db, VCF_DEPOT_APPLICATION_PROPERTIES_UPDATED_AT_KEY)
         return {
             "present": True,
+            "saved": True,
             "filename": VCF_DEPOT_APPLICATION_PROPERTIES_NAME,
             "content": content_setting.value,
             "source": source,
@@ -2510,6 +2466,7 @@ def vcf_depot_application_properties_context(db: Session, settings: VcfOfflineDe
     content, source = vcf_depot_application_properties_from_tool(settings)
     return {
         "present": bool(content.strip()),
+        "saved": False,
         "filename": VCF_DEPOT_APPLICATION_PROPERTIES_NAME,
         "content": content,
         "source": source,
@@ -2591,6 +2548,64 @@ def recover_interrupted_vcf_depot_download_jobs(db: Session) -> int:
         if profile is not None:
             profile.status = "blocked"
             profile.updated_at = finished
+    db.commit()
+    return len(jobs)
+
+
+def recover_interrupted_vcf_depot_software_id_jobs(db: Session) -> int:
+    jobs = db.scalars(
+        select(Job).options(selectinload(Job.steps)).where(
+            Job.type == "vcf-depot-software-id",
+            Job.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value]),
+        )
+    ).all()
+    if not jobs:
+        return 0
+    finished = utcnow()
+    running_jobs = [job for job in jobs if job.status == JobStatus.RUNNING.value]
+    reconciliation_message = ""
+    if running_jobs:
+        previous_id = str(vcf_depot_software_depot_id_context(db).get("id") or "").strip()
+        readback = SystemAdapter(dry_run=False).read_vcf_offline_depot_software_depot_id()
+        readback_payload = helper_json_payload_with_key(readback.stdout, "software_depot_id")
+        runtime_id = str(readback_payload.get("software_depot_id") or "").strip()
+        if readback.returncode == 0 and runtime_id:
+            if runtime_id != previous_id:
+                set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY, runtime_id)
+                set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_GENERATED_AT_KEY, finished.isoformat())
+                clear_vcf_depot_credentials(db)
+                reconciliation_message = " The runtime Software Depot ID was reconciled and obsolete credentials were removed."
+            else:
+                reconciliation_message = " The existing Software Depot ID was confirmed by canonical VCFDT readback."
+            set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_ERROR_KEY, "")
+        else:
+            reconciliation_error = (
+                "Atlaso restarted while VCFDT identity replacement was running and the runtime Software Depot ID "
+                "could not be verified. The stored identity and credentials were invalidated."
+            )
+            invalidate_vcf_depot_software_depot_identity(db, reconciliation_error)
+            reconciliation_message = f" {reconciliation_error}"
+    for job in jobs:
+        job.status = JobStatus.FAILED.value
+        job.finished_at = finished
+        job.progress_percent = 100
+        job.error = "Interrupted by an Atlaso restart before VCFDT Software Depot ID generation completed."
+        if job in running_jobs:
+            job.error += reconciliation_message
+        payload = _job_payload(job)
+        payload["state"] = JobStatus.FAILED.value
+        payload["interrupted"] = True
+        payload["interrupted_at"] = finished.isoformat()
+        job.result = json.dumps(payload, indent=2, sort_keys=True)
+        for step in job.steps:
+            if step.status == JobStatus.RUNNING.value:
+                step.status = JobStatus.FAILED.value
+                step.error = job.error
+            elif step.status == JobStatus.PENDING.value:
+                step.status = "skipped"
+                step.error = "Skipped because Atlaso restarted before this operation began."
+            step.finished_at = finished
+            step.progress_percent = 100
     db.commit()
     return len(jobs)
 
@@ -2742,7 +2757,15 @@ def vcf_offline_depot_context(db: Session, *, reconcile: bool = True) -> dict:
     if reconcile and normalize_service_bind_settings(db, settings):
         db.commit()
         db.refresh(settings)
-    profiles = db.execute(select(VcfDepotDownloadProfile).order_by(VcfDepotDownloadProfile.name)).scalars().all()
+    profile_type_order = {"metadata": 0, "binaries": 1, "esx": 2}
+    profiles = sorted(
+        db.execute(select(VcfDepotDownloadProfile)).scalars().all(),
+        key=lambda profile: (
+            profile_type_order.get(str(profile.profile_type or "").strip().lower(), 99),
+            str(profile.name or "").casefold(),
+            int(profile.id or 0),
+        ),
+    )
     if reconcile and not vcf_depot_tool_installed(settings):
         changed_profiles = [profile for profile in profiles if profile.enabled]
         changed_schedule_count = 0
@@ -2774,6 +2797,7 @@ def vcf_offline_depot_context(db: Session, *, reconcile: bool = True) -> dict:
     }
     secrets = vcf_depot_secret_context(db)
     software_depot_id = vcf_depot_software_depot_id_context(db)
+    tool_display_version = settings.tool_version or staged_vcf_download_tool_version(settings.tool_archive_path)
     application_properties = vcf_depot_application_properties_context(db, settings)
     validation_errors, validation_warnings = validate_vcf_depot_state(
         settings,
@@ -2814,8 +2838,10 @@ def vcf_offline_depot_context(db: Session, *, reconcile: bool = True) -> dict:
         "vcf_depot_settings": settings,
         "vcf_depot_settings_json": {
             **vcf_depot_settings_to_dict(settings),
+            "tool_display_version": tool_display_version,
             "vmware_ceip_enabled": bool(appliance_settings.vmware_ceip_enabled),
         },
+        "vcf_depot_tool_display_version": tool_display_version,
         "vmware_ceip_enabled": bool(appliance_settings.vmware_ceip_enabled),
         "vcf_depot_users": users,
         "vcf_depot_profiles": profiles,
@@ -6016,8 +6042,10 @@ def _task_failure_messages(value: Any) -> list[str]:
 
     def collect(candidate: Any) -> None:
         if isinstance(candidate, dict):
+            successful_command = candidate.get("returncode") == 0 or candidate.get("success") is True
             for item_key, item_value in candidate.items():
-                if str(item_key).lower() in message_keys:
+                normalized_key = str(item_key).lower()
+                if normalized_key in message_keys and not (normalized_key == "stderr" and successful_command):
                     add_message(item_value)
                 if isinstance(item_value, (dict, list)):
                     collect(item_value)
@@ -6083,6 +6111,7 @@ def _task_type_label(job_type: str) -> str:
         "vcf-offline-depot-target-config": "Configure VCF Offline Depot",
         "vcf-ca-trust": "VCF Certificate Trust",
         "vcf-depot-download": "VCF Depot Download",
+        "vcf-depot-software-id": "VCFDT Software Depot ID",
         "pxe-media-sync": "Network Boot Media Sync",
     }
     return labels.get(job_type, job_type.replace("-", " ").title())
@@ -6105,6 +6134,8 @@ def _can_cancel_task(job: Job, identity: Identity | None = None) -> bool:
         if config.get("source") == "delete":
             return False
     if job.type == "appliance-apply" and _job_payload(job).get("cancel_requested"):
+        return False
+    if job.type == "vcf-depot-software-id" and job.status == JobStatus.RUNNING.value:
         return False
     if identity is None:
         return True
@@ -6160,6 +6191,7 @@ def _task_row(job: Job, identity: Identity | None = None) -> dict[str, Any]:
         "error": error,
         "error_messages": error_messages,
         "can_cancel": _can_cancel_task(job, identity),
+        "can_start": False,
     }
     if job.type == "vcf-depot-download":
         row["log_url"] = f"/vcf-offline-depot/tasks/{job.id}/log"
@@ -7815,7 +7847,7 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
         ),
         make_appliance_apply_unit(
             unit_id="ntpd",
-            label="NTP / NTS",
+            label="NTP",
             page_url="/ntp",
             context=ntp,
             summary=[
@@ -7963,7 +7995,7 @@ def ntpd_apply_status(db: Session, ntp: dict[str, Any]) -> dict[str, Any]:
     baselines = load_appliance_apply_baselines(db)
     unit = make_appliance_apply_unit(
         unit_id="ntpd",
-        label="NTP / NTS",
+        label="NTP",
         page_url="/ntp",
         context=ntp,
         summary=[
@@ -9290,7 +9322,7 @@ def log_sources_context(*, max_lines: int = 100) -> list[dict[str, Any]]:
             max_lines=line_count,
             path_label="slapd.service journal: LDAP and LDAPS directory events",
         ),
-        journal_log_source("ntp", "NTP / NTS", "ntpd.service", adapter.read_ntpd_logs(), max_lines=line_count),
+        journal_log_source("ntp", "NTP", "ntpd.service", adapter.read_ntpd_logs(), max_lines=line_count),
         journal_log_source("esx-storage", "ESX Storage NFS", "nfs-server.service", adapter.esx_storage_logs(), max_lines=line_count),
         journal_log_source("nginx", "Nginx", "nginx.service", adapter.read_nginx_logs(), max_lines=line_count),
         journal_log_source(
@@ -9642,16 +9674,26 @@ def execute_appliance_apply_unit(unit: dict[str, Any], *, adapter: SystemAdapter
         settings = context["vcf_depot_settings"]
         software_depot_id = str(context["vcf_depot_software_depot_id"].get("id") or "").strip()
         refresh_software_depot_id = bool(unit.get("refresh_vcf_depot_software_depot_id"))
+        software_depot_id_only = bool(unit.get("vcf_depot_id_only"))
         config_path = settings.config_path
         properties_path = VCF_DEPOT_STAGED_APPLICATION_PROPERTIES_PATH
         if not adapter.dry_run:
-            config_path = stage_appliance_apply_config(VCF_DEPOT_STAGED_CONFIG_PATH, context["vcf_depot_https_config_preview"])
+            if not software_depot_id_only:
+                config_path = stage_appliance_apply_config(VCF_DEPOT_STAGED_CONFIG_PATH, context["vcf_depot_https_config_preview"])
             properties_path = stage_appliance_apply_config(
                 VCF_DEPOT_STAGED_APPLICATION_PROPERTIES_PATH,
                 str(context["vcf_depot_application_properties"].get("content") or ""),
             )
-        steps = [lambda: adapter.validate_vcf_offline_depot_config(config_path)]
-        if settings.enabled and settings.tool_archive_path:
+        if software_depot_id_only:
+            steps = [
+                lambda: adapter.stage_vcf_offline_depot_tool(settings.tool_archive_path),
+                lambda: adapter.apply_vcf_offline_depot_application_properties(properties_path),
+                lambda: adapter.apply_vcf_offline_depot_ceip(bool(context["vmware_ceip_enabled"])),
+                lambda: adapter.generate_vcf_offline_depot_software_depot_id(),
+            ]
+        else:
+            steps = [lambda: adapter.validate_vcf_offline_depot_config(config_path)]
+        if not software_depot_id_only and settings.tool_archive_path:
             steps.extend(
                 [
                     lambda: adapter.stage_vcf_offline_depot_tool(settings.tool_archive_path),
@@ -9661,14 +9703,15 @@ def execute_appliance_apply_unit(unit: dict[str, Any], *, adapter: SystemAdapter
             )
             if not software_depot_id or refresh_software_depot_id:
                 steps.append(lambda: adapter.generate_vcf_offline_depot_software_depot_id())
-        elif not settings.tool_archive_path:
+        elif not software_depot_id_only and not settings.tool_archive_path:
             steps.append(lambda: adapter.reset_vcf_offline_depot_tool())
-        steps.extend(
-            [
-                lambda: adapter.sync_vcf_offline_depot(config_path),
-                lambda: adapter.apply_vcf_offline_depot_https_config(config_path),
-            ]
-        )
+        if not software_depot_id_only:
+            steps.extend(
+                [
+                    lambda: adapter.sync_vcf_offline_depot(config_path),
+                    lambda: adapter.apply_vcf_offline_depot_https_config(config_path),
+                ]
+            )
         results = run_adapter_steps(steps)
     elif unit_id == "vcf_private_registry":
         settings = context["vcf_registry_settings"]
@@ -11440,6 +11483,7 @@ class ApplianceApplyJobError(RuntimeError):
 
 
 APPLIANCE_APPLY_SUBMIT_LOCK = threading.Lock()
+VCF_DEPOT_SUBMIT_LOCK = threading.Lock()
 
 
 def active_appliance_apply_job(db: Session) -> Job | None:
@@ -11462,6 +11506,36 @@ def active_appliance_apply_submitted_unit_ids(db: Session) -> set[str]:
     if job.steps:
         return {step.component_key for step in job.steps}
     return {str(unit_id) for unit_id in _job_payload(job).get("selected_units", [])}
+
+
+def active_vcf_depot_execution_job(db: Session) -> Job | None:
+    direct_job = db.scalars(
+        select(Job)
+        .where(
+            Job.type.in_(["vcf-depot-download", "vcf-depot-software-id"]),
+            Job.status.in_(ACTIVE_JOB_STATUSES),
+        )
+        .order_by(Job.created_at)
+        .limit(1)
+    ).first()
+    if direct_job is not None:
+        return direct_job
+    apply_job = active_appliance_apply_job(db)
+    if apply_job is None:
+        return None
+    submitted_units = (
+        {step.component_key for step in apply_job.steps}
+        if apply_job.steps
+        else {str(unit_id) for unit_id in _job_payload(apply_job).get("selected_units", [])}
+    )
+    return apply_job if "vcf_offline_depot" in submitted_units else None
+
+
+def vcf_depot_execution_conflict_detail(job: Job) -> str:
+    return (
+        f"{_task_type_label(job.type)} task {job.id} is already {job.status}. "
+        "Wait for it to finish before starting another VCFDT operation."
+    )
 
 
 def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
@@ -11550,6 +11624,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                     execution_unit,
                     adapter=SystemAdapter(dry_run=False) if force_real else None,
                 )
+                persist_vcf_depot_metadata_from_apply(db, [result])
                 result = _redact_task_value(result)
                 db.refresh(job)
                 current_payload = _job_payload(job)
@@ -11564,7 +11639,6 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 )
                 job.progress_percent = min(99, int((index / total_steps) * 100))
                 job.result = json.dumps({**current_payload, "units": unit_results}, indent=2)
-                persist_vcf_depot_metadata_from_apply(db, [result])
                 prune_network_boot_media = False
                 if result["success"]:
                     if unit["id"] == "esxi_pxe" and not result.get("dry_run"):
@@ -11732,6 +11806,174 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
             )
 
 
+VCF_DEPOT_SOFTWARE_ID_TASK_STEPS = (
+    ("stage-tool", "Stage VCF Download Tool"),
+    ("apply-properties", "Apply application properties"),
+    ("apply-ceip", "Apply VMware CEIP preference"),
+    ("generate-software-depot-id", "Generate and read back Software Depot ID"),
+)
+
+
+def ensure_vcf_depot_software_id_task_steps(db: Session, job: Job) -> list[JobStep]:
+    existing = {step.component_key: step for step in job.steps}
+    for position, (component_key, label) in enumerate(VCF_DEPOT_SOFTWARE_ID_TASK_STEPS, start=1):
+        if component_key in existing:
+            continue
+        step = JobStep(
+            id=f"{job.id}:{component_key}",
+            job=job,
+            component_key=component_key,
+            label=label,
+            position=position,
+            status=JobStatus.PENDING.value,
+            progress_percent=0,
+            result=json.dumps({"summary": [f"{label} queued."]}, indent=2),
+        )
+        db.add(step)
+        existing[component_key] = step
+    db.flush()
+    return [existing[component_key] for component_key, _label in VCF_DEPOT_SOFTWARE_ID_TASK_STEPS]
+
+
+def run_vcf_depot_software_id_job(job_id: str) -> None:
+    with SessionLocal() as db:
+        job = db.scalar(select(Job).options(selectinload(Job.steps)).where(Job.id == job_id))
+        if job is None or job.type != "vcf-depot-software-id" or job.status != JobStatus.PENDING.value:
+            return
+        task_steps = ensure_vcf_depot_software_id_task_steps(db, job)
+        payload = _job_payload(job)
+        previous_id = str(vcf_depot_software_depot_id_context(db).get("id") or "").strip()
+        job.status = JobStatus.RUNNING.value
+        job.started_at = utcnow()
+        job.progress_percent = 1
+        payload["state"] = JobStatus.RUNNING.value
+        job.result = json.dumps(payload, indent=2)
+        task_steps[0].status = JobStatus.RUNNING.value
+        task_steps[0].started_at = job.started_at
+        db.commit()
+        try:
+            unit = appliance_apply_status(db, "vcf_offline_depot")
+            execution_unit = {
+                **unit,
+                "refresh_vcf_depot_software_depot_id": True,
+                "vcf_depot_id_only": True,
+            }
+            raw_result = execute_appliance_apply_unit(execution_unit)
+            persist_vcf_depot_metadata_from_apply(db, [raw_result])
+            software_depot_id = str(vcf_depot_software_depot_id_context(db).get("id") or "").strip()
+            id_readback_valid = bool(software_depot_id) and (not previous_id or software_depot_id != previous_id)
+            succeeded = bool(raw_result.get("success")) and id_readback_valid
+            command_results = list(raw_result.get("commands") or [])
+            finished = utcnow()
+            log_lines: list[str] = []
+            success_messages = {
+                "stage-tool": "VCF Download Tool package staged.",
+                "apply-properties": "application-prodv2.properties applied.",
+                "apply-ceip": "VMware CEIP preference applied.",
+                "generate-software-depot-id": (
+                    f"Software Depot ID generated and read back: {software_depot_id}"
+                    if id_readback_valid
+                    else "VCFDT returned without a new persisted Software Depot ID."
+                ),
+            }
+            for index, step in enumerate(task_steps):
+                command_result = command_results[index] if index < len(command_results) else None
+                step.started_at = step.started_at or job.started_at
+                step.finished_at = finished
+                step.progress_percent = 100
+                if command_result is None:
+                    step.status = "skipped"
+                    message = f"{step.label} skipped because an earlier VCFDT operation failed."
+                    step.error = message
+                else:
+                    command_returncode = int(command_result.get("returncode") or 0)
+                    command_succeeded = command_returncode == 0
+                    if step.component_key == "generate-software-depot-id":
+                        command_succeeded = command_succeeded and id_readback_valid
+                    step.status = JobStatus.SUCCEEDED.value if command_succeeded else JobStatus.FAILED.value
+                    if command_succeeded:
+                        message = success_messages[step.component_key]
+                    elif step.component_key == "generate-software-depot-id" and command_returncode == 0:
+                        message = success_messages[step.component_key]
+                    else:
+                        failure_detail = apply_output_excerpt(
+                            _strip_task_action_metadata(command_result.get("stderr") or command_result.get("stdout")),
+                            limit=800,
+                        )
+                        message = f"{step.label} failed{f': {failure_detail}' if failure_detail else '.'}"
+                    step.error = None if command_succeeded else message
+                step.result = json.dumps({"summary": [message], "stdout": message}, indent=2)
+                log_lines.append(f"{step.label}: {message}")
+            safe_result = {
+                "unit_id": "vcf_offline_depot",
+                "label": "VCFDT Software Depot ID",
+                "success": succeeded,
+                "status": JobStatus.SUCCEEDED.value if succeeded else JobStatus.FAILED.value,
+                "summary": [
+                    "Software Depot ID generated and saved."
+                    if succeeded
+                    else "Software Depot ID generation failed."
+                ],
+                "errors": [] if succeeded else ["VCFDT Software Depot ID generation failed. Review the Atlaso operational log."],
+            }
+            job.status = JobStatus.SUCCEEDED.value if succeeded else JobStatus.FAILED.value
+            job.finished_at = finished
+            job.progress_percent = 100
+            job.error = None if succeeded else "VCFDT Software Depot ID generation failed."
+            job.result = json.dumps(
+                {
+                    **payload,
+                    "state": job.status,
+                    "software_depot_id": software_depot_id if succeeded else "",
+                    "log_lines": log_lines,
+                    "units": [safe_result],
+                },
+                indent=2,
+            )
+            db.commit()
+            record_audit(
+                db,
+                actor=job.created_by,
+                action="complete_vcf_depot_software_id_task",
+                resource_type="job",
+                resource_id=job.id,
+                detail=f"result={job.status}",
+                success=succeeded,
+            )
+        except Exception:  # noqa: BLE001 - persist an operator-safe terminal task state.
+            APPLY_LOGGER.exception("VCFDT Software Depot ID task %s failed", job_id)
+            db.rollback()
+            job = db.get(Job, job_id)
+            if job is None:
+                return
+            payload = _job_payload(job)
+            job.status = JobStatus.FAILED.value
+            job.finished_at = utcnow()
+            job.progress_percent = 100
+            job.error = "VCFDT Software Depot ID task failed unexpectedly."
+            job.result = json.dumps({**payload, "state": JobStatus.FAILED.value}, indent=2)
+            finished = job.finished_at
+            for step in job.steps:
+                if step.status == JobStatus.RUNNING.value:
+                    step.status = JobStatus.FAILED.value
+                    step.error = "VCFDT Software Depot ID task failed unexpectedly."
+                elif step.status == JobStatus.PENDING.value:
+                    step.status = "skipped"
+                    step.error = "Skipped because an earlier VCFDT operation failed."
+                step.finished_at = finished
+                step.progress_percent = 100
+            db.commit()
+            record_audit(
+                db,
+                actor=job.created_by,
+                action="complete_vcf_depot_software_id_task",
+                resource_type="job",
+                resource_id=job.id,
+                detail="result=failed",
+                success=False,
+            )
+
+
 @router.post("/appliance-apply", response_class=HTMLResponse, response_model=None)
 def submit_appliance_apply(
     request: Request,
@@ -11751,14 +11993,6 @@ def submit_appliance_apply(
     refresh_vcf_depot_software_depot_id = bool(
         refresh_vcf_depot_software_depot_id and "vcf_offline_depot" in selected_ids
     )
-    ntp_settings_for_apply = unit_map.get("ntpd", {}).get("context", {}).get("ntp_settings")
-    ca_required_for_nts = bool(
-        "ntpd" in selected_ids
-        and getattr(ntp_settings_for_apply, "nts_server_enabled", False)
-        and "ca" in unit_map
-    )
-    if ca_required_for_nts:
-        selected_ids.add("ca")
     ldap_related_units = {"ca", "dnsmasq", "firewall", "ldap"}
     ldap_context_for_apply = unit_map.get("ldap", {}).get("context", {})
     ldap_dependency_active = bool(
@@ -11859,7 +12093,8 @@ def submit_appliance_apply(
         "format_authorizations": [],
         "refresh_vcf_depot_software_depot_id": refresh_vcf_depot_software_depot_id,
     }
-    with APPLIANCE_APPLY_SUBMIT_LOCK:
+    vcf_depot_submit_guard = VCF_DEPOT_SUBMIT_LOCK if "vcf_offline_depot" in selected_ids else nullcontext()
+    with vcf_depot_submit_guard, APPLIANCE_APPLY_SUBMIT_LOCK:
         db.expire_all()
         active_job = active_appliance_apply_job(db)
         if active_job is not None:
@@ -11868,6 +12103,11 @@ def submit_appliance_apply(
                 "Wait for it to finish before submitting another appliance apply task."
             )
             return JSONResponse({"detail": detail}, status_code=409) if wants_json else Response(detail, status_code=409, media_type="text/plain")
+        if "vcf_offline_depot" in selected_ids:
+            conflicting_job = active_vcf_depot_execution_job(db)
+            if conflicting_job is not None:
+                detail = vcf_depot_execution_conflict_detail(conflicting_job)
+                return JSONResponse({"detail": detail}, status_code=409) if wants_json else Response(detail, status_code=409, media_type="text/plain")
 
         job_id = f"job_{uuid4().hex[:12]}"
         if required_format_volumes:
@@ -16346,12 +16586,8 @@ def update_ntp_settings_from_ui(
     upstream_source: list[str] = Form(default_factory=list),
     upstream_sources_json: str = Form(""),
     upstream_enabled: list[str] = Form(default_factory=list),
-    upstream_use_nts: list[str] = Form(default_factory=list),
     upstream_description: list[str] = Form(default_factory=list),
     allow_clients: str = Form("any"),
-    nts_server_enabled: str | None = Form(None),
-    nts_server_cert_path: str = Form(""),
-    nts_server_key_path: str = Form(""),
     minsources: int | None = Form(None),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
@@ -16359,10 +16595,6 @@ def update_ntp_settings_from_ui(
 ) -> RedirectResponse | JSONResponse:
     verify_csrf(request, csrf)
     settings = get_ntp_settings_row(db)
-    capability_result = SystemAdapter().read_ntpd_capabilities()
-    ntp_capabilities = ntpd_capabilities_payload(capability_result)
-    ntp_nts_capability_known = "nts" in ntp_capabilities
-    ntp_nts_supported = ntp_capabilities.get("nts") is True
     selected_interfaces, selected_addresses = resolve_service_bind_targets(
         db,
         [*listen_interfaces, listen_interface],
@@ -16395,18 +16627,13 @@ def update_ntp_settings_from_ui(
                         "id": str(item.get("id") or f"source-{index}"),
                         "source": source,
                         "enabled": bool(item.get("enabled", True)),
-                        "use_nts": (
-                            bool(item.get("use_nts", False))
-                            if not ntp_nts_capability_known
-                            else ntp_nts_supported and bool(item.get("use_nts", False))
-                        ),
+                        "use_nts": False,
                         "description": str(item.get("description") or "").strip(),
                     }
                 )
     if not source_rows:
         max_rows = max(len(upstream_source), len(upstream_description))
         enabled_indexes = {int(value) for value in upstream_enabled if str(value).isdigit()}
-        nts_indexes = {int(value) for value in upstream_use_nts if str(value).isdigit()}
         for index in range(max_rows):
             source = upstream_source[index].strip() if index < len(upstream_source) else ""
             if not source:
@@ -16416,11 +16643,7 @@ def update_ntp_settings_from_ui(
                     "id": f"source-{index + 1}",
                     "source": source,
                     "enabled": index in enabled_indexes,
-                    "use_nts": (
-                        index in nts_indexes
-                        if not ntp_nts_capability_known
-                        else ntp_nts_supported and index in nts_indexes
-                    ),
+                    "use_nts": False,
                     "description": upstream_description[index].strip() if index < len(upstream_description) else "",
                 }
             )
@@ -16438,22 +16661,12 @@ def update_ntp_settings_from_ui(
     settings.upstream_sources_json = dump_ntp_upstream_sources(source_rows)
     settings.upstream_servers = join_servers([str(row["source"]) for row in source_rows if row.get("enabled")])
     settings.allow_clients = join_allow_clients(split_allow_clients(allow_clients))
-    settings.nts_server_enabled = (
-        settings.nts_server_enabled
-        if not ntp_nts_capability_known
-        else ntp_nts_supported and nts_server_enabled == "on"
-    )
-    _ntp_nts_cert_path, ntp_nts_key_path, ntp_nts_chain_path = ntp_nts_certificate_paths(settings)
-    settings.nts_server_cert_path = ntp_nts_chain_path
-    settings.nts_server_key_path = ntp_nts_key_path
-    settings.nts_ke_port = 4460
+    disable_nts_state(settings)
     settings.minsources = minsources if minsources and minsources > 0 else None
     settings.config_path = NTP_STAGED_CONFIG_PATH
     settings.updated_at = utcnow()
     db.add(settings)
     db.commit()
-    if settings.nts_server_enabled:
-        ensure_ca_state(db)
     record_audit(db, actor=identity.username, action="update_ntp_settings", resource_type="ntpd", resource_id=str(settings.id))
     if request.headers.get("X-Atlaso-Autosave") == "1":
         context = ntp_context(db)
@@ -16472,12 +16685,6 @@ def update_ntp_settings_from_ui(
                 "upstream_servers": context["ntp_settings_json"]["upstream_servers"],
                 "upstream_sources": context["ntp_settings_json"]["upstream_sources"],
                 "allow_clients": saved_settings.allow_clients,
-                "nts_server_enabled": saved_settings.nts_server_enabled,
-                "nts_server_cert_path": saved_settings.nts_server_cert_path,
-                "nts_server_key_path": saved_settings.nts_server_key_path,
-                "nts_ke_port": saved_settings.nts_ke_port,
-                "nts_supported": context["ntp_nts_supported"],
-                "nts_capability_known": context["ntp_nts_capability_known"],
                 "valid": not context["ntp_validation_errors"],
                 "validation_errors": context["ntp_validation_errors"],
                 "config_path": saved_settings.config_path,
@@ -17861,7 +18068,7 @@ def update_vcf_offline_depot_settings_from_ui(
                 "depot_store_path": saved_settings.depot_store_path,
                 "tool_archive_name": uploaded_archive_name or Path(saved_settings.tool_archive_path).name if saved_settings.tool_archive_path else "",
                 "tool_archive_uploaded": bool(uploaded_archive_name),
-                "tool_version": saved_settings.tool_version,
+                "tool_version": context["vcf_depot_tool_display_version"],
                 "software_depot_id": software_depot_id["id"],
                 "software_depot_id_generated_at": software_depot_id["generated_at"],
                 "software_depot_id_error": software_depot_id["error"],
@@ -17872,6 +18079,7 @@ def update_vcf_offline_depot_settings_from_ui(
                 "activation_code_name": uploaded_activation_name or activation_state.filename,
                 "activation_code_updated_at": activation_state.updated_at,
                 "application_properties_present": application_properties["present"],
+                "application_properties_saved": application_properties["saved"],
                 "application_properties_source": application_properties["source"],
                 "application_properties_updated_at": application_properties["updated_at"],
                 "vmware_ceip_enabled": context["vmware_ceip_enabled"],
@@ -17887,25 +18095,75 @@ def update_vcf_offline_depot_settings_from_ui(
     return RedirectResponse("/vcf-offline-depot", status_code=303)
 
 
+@router.post("/vcf-offline-depot/tool-package", response_model=None)
+def upload_vcf_depot_tool_package_from_ui(
+    request: Request,
+    tool_archive_file: UploadFile | None = File(None),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    verify_csrf(request, csrf)
+    settings = get_vcf_offline_depot_settings_row(db)
+    uploaded_archive_name = store_uploaded_vcf_depot_archive(settings, tool_archive_file)
+    if not uploaded_archive_name:
+        raise HTTPException(status_code=400, detail="Choose a VCF Download Tool package to upload.")
+    settings.updated_at = utcnow()
+    db.commit()
+    record_audit(
+        db,
+        actor=identity.username,
+        action="upload_vcf_depot_tool_package",
+        resource_type="vcf_offline_depot",
+        resource_id=str(settings.id),
+        detail=uploaded_archive_name,
+    )
+    context = vcf_offline_depot_context(db)
+    token_state = context["vcf_depot_download_token"]
+    activation_state = context["vcf_depot_activation_code"]
+    application_properties = context["vcf_depot_application_properties"]
+    software_depot_id = context["vcf_depot_software_depot_id"]
+    return JSONResponse(
+        {
+            "status": "saved",
+            "tool_archive_name": uploaded_archive_name,
+            "tool_archive_uploaded": True,
+            "tool_version": context["vcf_depot_tool_display_version"],
+            "software_depot_id": software_depot_id["id"],
+            "software_depot_id_generated_at": software_depot_id["generated_at"],
+            "software_depot_id_error": software_depot_id["error"],
+            "download_token_present": token_state.present,
+            "activation_code_present": activation_state.present,
+            "application_properties_present": application_properties["present"],
+            "application_properties_saved": application_properties["saved"],
+            "application_properties_source": application_properties["source"],
+            "application_properties_updated_at": application_properties["updated_at"],
+            "valid": not context["vcf_depot_validation_errors"],
+            "validation_errors": context["vcf_depot_validation_errors"],
+            "validation_warnings": context["vcf_depot_validation_warnings"],
+            "https_config_preview": context["vcf_depot_https_config_preview"],
+            "command_preview": context["vcf_depot_command_preview"],
+        }
+    )
+
+
 @router.post("/vcf-offline-depot/tool/reset", response_model=None)
 def reset_vcf_depot_tool_from_ui(
     request: Request,
-    reset_application_properties: str | None = Form(None),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
     verify_csrf(request, csrf)
     settings = get_vcf_offline_depot_settings_row(db)
-    reset_properties = reset_application_properties == "on"
-    reset_vcf_depot_tool_staging(db, settings, reset_application_properties=reset_properties)
+    reset_vcf_depot_tool_staging(db, settings)
     record_audit(
         db,
         actor=identity.username,
         action="reset_vcf_depot_tool",
         resource_type="vcf_offline_depot",
         resource_id=str(settings.id),
-        detail="VCFDT package reset; application properties reset." if reset_properties else "VCFDT package reset.",
+        detail="VCFDT package and configuration reset.",
     )
     db.commit()
     return RedirectResponse("/vcf-offline-depot", status_code=303)
@@ -17918,6 +18176,7 @@ def _store_vcf_depot_credential_from_ui(
     credential_text: str,
     credential_file: UploadFile | None,
     actor: str,
+    pending_audits: list[AuditEvent] | None = None,
 ) -> str:
     if credential_type == "activation_code":
         display_name = store_uploaded_vcf_depot_secret(
@@ -17927,6 +18186,7 @@ def _store_vcf_depot_credential_from_ui(
             value_key=VCF_DEPOT_ACTIVATION_VALUE_KEY,
             actor=actor,
             action="upload_vcf_depot_activation_code",
+            pending_audits=pending_audits,
         )
         if not display_name:
             display_name = store_pasted_vcf_depot_secret(
@@ -17937,6 +18197,7 @@ def _store_vcf_depot_credential_from_ui(
                 display_name="pasted activation code",
                 actor=actor,
                 action="paste_vcf_depot_activation_code",
+                pending_audits=pending_audits,
             )
         return display_name
     if credential_type != "download_token":
@@ -17948,6 +18209,7 @@ def _store_vcf_depot_credential_from_ui(
         value_key=VCF_DEPOT_TOKEN_VALUE_KEY,
         actor=actor,
         action="upload_vcf_depot_download_token",
+        pending_audits=pending_audits,
     )
     if not display_name:
         display_name = store_pasted_vcf_depot_secret(
@@ -17958,8 +18220,79 @@ def _store_vcf_depot_credential_from_ui(
             display_name="pasted token",
             actor=actor,
             action="paste_vcf_depot_download_token",
+            pending_audits=pending_audits,
         )
     return display_name
+
+
+def _save_vcf_depot_application_properties(
+    db: Session,
+    *,
+    application_properties: str,
+    actor: str,
+    pending_audits: list[AuditEvent] | None = None,
+) -> None:
+    content = application_properties.replace("\r\n", "\n").replace("\r", "\n")
+    if len(content.encode("utf-8")) > 512 * 1024:
+        raise HTTPException(status_code=400, detail="application-prodv2.properties must be 512 KB or smaller.")
+    if not content.strip():
+        raise HTTPException(status_code=400, detail="application-prodv2.properties cannot be empty.")
+    updated_at = utcnow().isoformat()
+    content_setting = set_setting_value(db, VCF_DEPOT_APPLICATION_PROPERTIES_CONTENT_KEY, content)
+    set_setting_value(db, VCF_DEPOT_APPLICATION_PROPERTIES_SOURCE_KEY, "operator saved")
+    set_setting_value(db, VCF_DEPOT_APPLICATION_PROPERTIES_UPDATED_AT_KEY, updated_at)
+    if pending_audits is None:
+        record_audit(
+            db,
+            actor=actor,
+            action="update_vcf_depot_application_properties",
+            resource_type="setting",
+            resource_id=str(content_setting.id),
+            detail=VCF_DEPOT_APPLICATION_PROPERTIES_NAME,
+        )
+    else:
+        audit = AuditEvent(
+            actor=actor,
+            action="update_vcf_depot_application_properties",
+            resource_type="setting",
+            resource_id=str(content_setting.id),
+            detail=VCF_DEPOT_APPLICATION_PROPERTIES_NAME,
+        )
+        db.add(audit)
+        pending_audits.append(audit)
+
+
+def _vcf_depot_tool_configuration_response(db: Session) -> dict[str, Any]:
+    context = vcf_offline_depot_context(db)
+    token_state = context["vcf_depot_download_token"]
+    activation_state = context["vcf_depot_activation_code"]
+    properties = context["vcf_depot_application_properties"]
+    software_depot_id = context["vcf_depot_software_depot_id"]
+    validation_errors = context["vcf_depot_validation_errors"]
+    return {
+        "status": "saved",
+        "download_token_present": token_state.present,
+        "download_token_name": token_state.filename,
+        "download_token_updated_at": token_state.updated_at,
+        "activation_code_present": activation_state.present,
+        "activation_code_name": activation_state.filename,
+        "activation_code_updated_at": activation_state.updated_at,
+        "application_properties_present": properties["present"],
+        "application_properties_saved": properties["saved"],
+        "application_properties_name": properties["filename"],
+        "application_properties_source": properties["source"],
+        "application_properties_updated_at": properties["updated_at"],
+        "software_depot_id": software_depot_id["id"],
+        "software_depot_id_generated_at": software_depot_id["generated_at"],
+        "software_depot_id_error": software_depot_id["error"],
+        "tool_version": context["vcf_depot_tool_display_version"],
+        "valid": not validation_errors,
+        "validation_errors": validation_errors,
+        "validation_warnings": context["vcf_depot_validation_warnings"],
+        "config_path": context["vcf_depot_settings"].config_path,
+        "https_config_preview": context["vcf_depot_https_config_preview"],
+        "command_preview": context["vcf_depot_command_preview"],
+    }
 
 
 @router.post("/vcf-offline-depot/credentials", response_model=None)
@@ -18114,6 +18447,65 @@ def paste_vcf_depot_activation_code_from_ui(
     return RedirectResponse("/vcf-offline-depot", status_code=303)
 
 
+@router.post("/vcf-offline-depot/tool-configuration", response_model=None)
+def save_vcf_depot_tool_configuration_from_ui(
+    request: Request,
+    application_properties: str = Form(...),
+    replace_download_token: str | None = Form(None),
+    download_token_text: str = Form(""),
+    download_token_file: UploadFile | None = File(None),
+    replace_activation_code: str | None = Form(None),
+    activation_code_text: str = Form(""),
+    activation_code_file: UploadFile | None = File(None),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> RedirectResponse | JSONResponse:
+    verify_csrf(request, csrf)
+    if replace_download_token == "on" and replace_activation_code == "on":
+        raise HTTPException(status_code=400, detail="Replace only one Broadcom credential per VCFDT configuration save.")
+    pending_audits: list[AuditEvent] = []
+    try:
+        _save_vcf_depot_application_properties(
+            db,
+            application_properties=application_properties,
+            actor=identity.username,
+            pending_audits=pending_audits,
+        )
+        credentials_changed = False
+        if replace_download_token == "on":
+            _store_vcf_depot_credential_from_ui(
+                db,
+                credential_type="download_token",
+                credential_text=download_token_text,
+                credential_file=download_token_file,
+                actor=identity.username,
+                pending_audits=pending_audits,
+            )
+            credentials_changed = True
+        if replace_activation_code == "on":
+            _store_vcf_depot_credential_from_ui(
+                db,
+                credential_type="activation_code",
+                credential_text=activation_code_text,
+                credential_file=activation_code_file,
+                actor=identity.username,
+                pending_audits=pending_audits,
+            )
+            credentials_changed = True
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    for audit in pending_audits:
+        log_audit_event(audit)
+    if credentials_changed:
+        stage_vcf_depot_runtime_secrets_after_upload(db)
+    if request.headers.get("X-Atlaso-Autosave") == "1":
+        return JSONResponse(_vcf_depot_tool_configuration_response(db))
+    return RedirectResponse("/vcf-offline-depot", status_code=303)
+
+
 @router.post("/vcf-offline-depot/application-properties", response_model=None)
 def save_vcf_depot_application_properties_from_ui(
     request: Request,
@@ -18123,22 +18515,10 @@ def save_vcf_depot_application_properties_from_ui(
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
     verify_csrf(request, csrf)
-    content = application_properties.replace("\r\n", "\n").replace("\r", "\n")
-    if len(content.encode("utf-8")) > 512 * 1024:
-        raise HTTPException(status_code=400, detail="application-prodv2.properties must be 512 KB or smaller.")
-    if not content.strip():
-        raise HTTPException(status_code=400, detail="application-prodv2.properties cannot be empty.")
-    updated_at = utcnow().isoformat()
-    content_setting = set_setting_value(db, VCF_DEPOT_APPLICATION_PROPERTIES_CONTENT_KEY, content)
-    set_setting_value(db, VCF_DEPOT_APPLICATION_PROPERTIES_SOURCE_KEY, "operator saved")
-    set_setting_value(db, VCF_DEPOT_APPLICATION_PROPERTIES_UPDATED_AT_KEY, updated_at)
-    record_audit(
+    _save_vcf_depot_application_properties(
         db,
+        application_properties=application_properties,
         actor=identity.username,
-        action="update_vcf_depot_application_properties",
-        resource_type="setting",
-        resource_id=str(content_setting.id),
-        detail=VCF_DEPOT_APPLICATION_PROPERTIES_NAME,
     )
     db.commit()
     if request.headers.get("X-Atlaso-Autosave") == "1":
@@ -18150,6 +18530,7 @@ def save_vcf_depot_application_properties_from_ui(
             {
                 "status": "saved",
                 "application_properties_present": properties["present"],
+                "application_properties_saved": properties["saved"],
                 "application_properties_source": properties["source"],
                 "application_properties_updated_at": properties["updated_at"],
                 "valid": not validation_errors,
@@ -18166,6 +18547,7 @@ def save_vcf_depot_application_properties_from_ui(
 @router.post("/vcf-offline-depot/software-depot-id/generate", response_model=None)
 def generate_vcf_depot_software_depot_id_from_ui(
     request: Request,
+    background_tasks: BackgroundTasks,
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
@@ -18174,26 +18556,53 @@ def generate_vcf_depot_software_depot_id_from_ui(
     settings = get_vcf_offline_depot_settings_row(db)
     if not settings.tool_archive_path:
         raise HTTPException(status_code=400, detail="Upload VCFDT before generating the software depot ID.")
-    record_audit(
-        db,
-        actor=identity.username,
-        action="request_vcf_depot_software_depot_id_apply",
-        resource_type="vcf_offline_depot",
-        resource_id=str(settings.id),
-        detail="software depot ID generation is handled by the global appliance apply unit",
-    )
-    db.commit()
-    if request.headers.get("X-Atlaso-Autosave") == "1":
+    with VCF_DEPOT_SUBMIT_LOCK:
+        db.expire_all()
+        active = active_vcf_depot_execution_job(db)
+        if active is not None:
+            return JSONResponse(
+                {"detail": vcf_depot_execution_conflict_detail(active), "job_id": active.id},
+                status_code=409,
+            )
+        job = Job(
+            id=f"job_{uuid4().hex[:12]}",
+            type="vcf-depot-software-id",
+            status=JobStatus.PENDING.value,
+            created_by=identity.username,
+            progress_percent=0,
+            result=json.dumps(
+                {
+                    "state": JobStatus.PENDING.value,
+                    "target": "Generate Software Depot ID",
+                    "refresh_existing": bool(vcf_depot_software_depot_id_context(db).get("id")),
+                },
+                indent=2,
+            ),
+        )
+        db.add(job)
+        ensure_vcf_depot_software_id_task_steps(db, job)
+        db.commit()
+        record_audit(
+            db,
+            actor=identity.username,
+            action="create_vcf_depot_software_id_task",
+            resource_type="job",
+            resource_id=job.id,
+            detail="execution=queued",
+        )
+    background_tasks.add_task(run_vcf_depot_software_id_job, job.id)
+    db.refresh(job)
+    if "application/json" in request.headers.get("accept", "") or request.headers.get("X-Atlaso-Autosave") == "1":
         return JSONResponse(
             {
-                "status": "apply-required",
-                "software_depot_id": "",
-                "software_depot_id_generated_at": "",
-                "software_depot_id_error": "Submit the VCF Offline Depot unit on Appliance Apply to generate or refresh the software depot ID.",
+                "status": "pending",
+                "job_id": job.id,
+                "task": _task_row(job, identity),
+                "status_url": f"/tasks/{job.id}/status",
             },
-            status_code=409,
+            status_code=202,
         )
-    return RedirectResponse("/dashboard#appliance-apply-review", status_code=303)
+    return RedirectResponse(f"/tasks?job_id={quote(job.id)}", status_code=303)
 
 
 @router.get("/vcf-offline-depot/profiles/{profile_id}/preview", response_model=None)
@@ -18377,11 +18786,11 @@ def start_vcf_depot_profile_download_from_ui(
     profile = db.get(VcfDepotDownloadProfile, profile_id)
     if not profile:
         raise HTTPException(status_code=404, detail="VCFDT download profile not found.")
-    active_job = vcf_depot_active_download_job(db)
+    active_job = active_vcf_depot_execution_job(db)
     if active_job is not None:
         raise HTTPException(
             status_code=409,
-            detail=f"VCFDT task {active_job.id} is already running. Wait for it to finish before starting another download.",
+            detail=vcf_depot_execution_conflict_detail(active_job),
         )
     try:
         _settings, raw_commands, validation_warnings = vcf_depot_download_preflight(db, profile)
@@ -18392,6 +18801,8 @@ def start_vcf_depot_profile_download_from_ui(
         vcf_depot_command_entry(command, dry_run=False)
         for command in raw_commands
     ]
+    if not commands:
+        raise HTTPException(status_code=400, detail="The VCFDT download profile did not produce any commands.")
     try:
         job = enqueue_vcf_depot_download(
             db,
@@ -20732,6 +21143,14 @@ def cancel_task_from_ui(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="A running Network Boot media deletion cannot be cancelled.",
             )
+    if job.type == "vcf-depot-software-id" and job.status == JobStatus.RUNNING.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "A running VCFDT Software Depot ID task cannot be cancelled because identity replacement "
+                "may already be in progress."
+            ),
+        )
     if job.type == "appliance-apply":
         payload = _job_payload(job)
         if not payload.get("cancel_requested"):

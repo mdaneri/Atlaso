@@ -62,7 +62,12 @@ The following cross-cutting boundaries always apply:
 - VCF Offline Depot settings and download-profile applies preserve the registered VCFDT software depot ID. Generate an
   ID only when none exists or an administrator explicitly confirms **Refresh software depot ID** through global apply;
   preserve the old ID when generation itself fails, but invalidate it if generation succeeds and canonical readback
-  fails because VCFDT may already have replaced its runtime identity.
+  fails because VCFDT may already have replaced its runtime identity. Once generation succeeds, remove both staged and
+  runtime Broadcom credentials because neither remains valid for the replacement identity. Keep Broadcom credential replacement,
+  application properties, Software Depot ID review, and the explicit refresh handoff in the shared VCFDT configuration
+  wizard; its ordinary transactional save never refreshes an existing ID. Stage VCFDT package add/update through its
+  shared two-step package wizard. Resetting VCFDT staging always clears the package, credentials, application properties,
+  generated metadata, and profile enablement together.
 - Keep development system adapters in dry-run mode unless a reviewed apply unit explicitly promotes real mutation.
 - VMware Workstation is the default live appliance target; use Hyper-V lifecycle coverage for exact VLAN behavior.
 - VMware release images use separate compacted Photon OS and required Atlaso system-content payload VMDKs, followed by
@@ -114,8 +119,8 @@ The following cross-cutting boundaries always apply:
   for the constrained helper execution window. Remove them on success, validation or apply failure, and startup
   recovery; read-only Local Users status must use a separate short-lived file.
 - Keep internal CA custody and managed service-certificate deployment available without a public CA listen interface.
-  Interface selection owns portal publication only. Every selected NTS server apply includes the CA unit and executes
-  it before NTP/NTS validation so runtime certificate material is present even when the CA baseline is current.
+  Interface selection owns portal publication only. NTS is disabled: NTP apply must use ordinary UDP/123 sources,
+  reject NTS directives, remove legacy NTP certificate and cookie material, and never add a CA dependency or TCP/4460.
 - Require TLS 1.2 or newer for the KMS compatibility listener and pre-authentication certificate-fingerprint probes.
   Preserve explicit certificate-fingerprint confirmation as the trust decision for VCF Automation and vSphere probes.
 - Vault passwords are the narrow exception for an explicit administrator eye reveal: keep them masked by default,

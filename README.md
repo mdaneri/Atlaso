@@ -61,14 +61,17 @@ certificate-fingerprint confirmation as their trust decision.
 
 VCF Offline Depot settings and download-profile applies preserve the registered VCF Download Tool software depot ID.
 Atlaso generates a replacement only during first setup or when an administrator explicitly confirms
-**Refresh software depot ID** through global appliance apply.
+**Refresh software depot ID** through global appliance apply. A shared VCFDT configuration wizard saves Broadcom
+credential replacements and application properties together, then queues an explicitly reviewed ID refresh through the
+scoped Appliance Apply unit. A successful identity replacement removes both the staged download token and activation
+code because they no longer match the new Software Depot ID. Package add/update uses a separate reviewed package wizard;
+reset clears the package and its complete saved configuration together.
 Enabled depot profiles can use the shared Automation scheduler. Manual and scheduled downloads share one global
 single-active task guard and execution-time prerequisite validation; schedule definitions contain no Broadcom secrets.
 
 The integrated CA can maintain trust and deploy managed service certificates without publishing its public portal on
-an access interface. Selecting a CA listen interface is the explicit portal-publication boundary. When NTS server
-changes are selected, global appliance apply automatically runs Certificate Authority before NTP/NTS so missing or
-stale runtime certificate files are repaired even when the CA desired-state baseline appears current.
+an access interface. Selecting a CA listen interface is the explicit portal-publication boundary. NTP uses ordinary
+UDP/123 sources; NTS is disabled and legacy NTP certificate and cookie material is removed during NTP apply.
 
 ## Project
 

@@ -366,8 +366,8 @@ DNS and service listener rules default to the built-in `Any` group. Operators ca
 firewall groups containing `any`, CIDRs, addresses, or other groups when rule sources or destinations need narrower
 access than the default. DHCP bootstrap rules are the exception: they remain interface-bound input rules without group
 filtering because clients and relay paths may arrive before a client address is assigned. IPv4 DHCP zones open UDP/67;
-IPv6 DHCP zones open UDP/547; NTPsec opens UDP/123 on selected bind targets and TCP/4460 when NTPsec NTS server mode is
-enabled. If a DHCP zone or service listener moves from a physical interface to a VLAN such as `eth2.50`, the firewall
+IPv6 DHCP zones open UDP/547; NTPsec opens UDP/123 on selected bind targets. NTS is disabled, so Atlaso does not open
+TCP/4460. If a DHCP zone or service listener moves from a physical interface to a VLAN such as `eth2.50`, the firewall
 preview and apply diff should move the generated rule to that same interface. Apply the changed Firewall unit with the
 service unit that changed when the global apply page shows both as pending.
 
@@ -448,35 +448,19 @@ TCP/5696 access to the selected interface. The bounded KMIP operation and eviden
 
 ### NTPsec apply
 
-The real NTPsec apply path is Photon `ntpd.service` backed. The **NTP / NTS** page owns enabled state, service hostname,
-upstream NTP sources, per-source NTS client selection, optional NTS server certificate/key paths, hardening directives,
-bind targets, derived listen addresses, UDP/123, and client allow sources. Fresh NTPsec desired state uses NTS-capable
-upstream rows for `time.cloudflare.com` and `nts.netnod.se` with NTS enabled and descriptions populated. This is a clean
-desired-state replacement: the retired Chrony table and old Appliance Settings time fields are not imported, restored,
-or migrated.
+The real NTPsec apply path is Photon `ntpd.service` backed. The **NTP** page owns enabled state, service hostname,
+ordinary NTP sources, hardening directives, bind targets, derived listen addresses, UDP/123, and client allow sources.
+Fresh desired state provides ordinary NTP upstream rows with descriptions. This is a clean desired-state replacement:
+the retired Chrony table and old Appliance Settings time fields are not imported, restored, or migrated.
 
 The `ntpd` unit stages `/var/lib/atlaso/apply/ntpd/atlaso-ntp.conf`. Through `atlaso-helper ntpd validate|apply`, the
 helper confines the staged file to that directory, requires Photon `ntpsec` and NTPsec binary identity without starting
-another daemon, validates upstream identities, explicit listen addresses, restrictive client access, and NTS
-certificate/key/cookie paths, then atomically installs `/etc/ntp.conf`. Per-source NTS renders
-`server <hostname> iburst nts`; server mode renders `nts enable`, the CA-managed certificate chain, the private-key
-path, and persistent `/var/lib/ntp/nts-keys` cookie storage. The read-only status action runs bounded `ntpq -pn`,
-`ntpq -c rv`, and `ntpq -c ntsinfo`; logs read only `ntpd.service`. When enabled, apply grants the NTS key `root:ntp`
-mode `0640`, stops/disables competing time daemons, and enables/restarts `ntpd.service`. When disabled, it
-stops/disables `ntpd.service`. Firewall apply owns UDP/123 access and, when enabled, TCP/4460 NTS-KE access to the
-selected interfaces.
-
-When an operator selects NTP/NTS server changes, submission always adds the CA unit, including when its desired-state
-baseline appears current. The global unit order executes CA first so the helper materializes or repairs the NTS chain
-and private key before `ntpd` validation checks those paths. Adding CA through this NTS dependency also preserves the
-managed LDAP closure: any changed CA, DNS/DHCP, Firewall, and Managed LDAP units are submitted together when managed
-LDAP desired state is active.
-
-The read-only `atlaso-helper ntpd capabilities` action requires Photon’s `ntpsec` package and verifies the `ntpd` binary
-identifies itself as NTPsec without starting a daemon. If those checks fail, Atlaso disables the NTS server switch and
-per-upstream NTS editors, marks NTS cells unavailable, and rejects attempts to persist or apply NTS state. The normal
-NTP service, source health, UDP/123 listener, and non-NTS upstreams continue to work once the required package is
-present.
+another daemon, validates upstream identities, explicit listen addresses, and restrictive client access, then
+atomically installs `/etc/ntp.conf`. The read-only status action runs bounded `ntpq -pn` and `ntpq -c rv`; logs read
+only `ntpd.service`. Apply removes legacy `/etc/atlaso/ntp/certs` and `/var/lib/ntp/nts-keys` material, rejects any NTS
+directive, stops/disables competing time daemons, and enables/restarts `ntpd.service`. When disabled, it stops/disables
+`ntpd.service`. Firewall apply owns UDP/123 only, and NTP submission has no CA dependency. The compatibility
+`atlaso-helper ntpd capabilities` action reports NTS disabled.
 
 ### Appliance Settings apply
 
@@ -595,8 +579,8 @@ it does not trust the first UUID printed during first-run initialization. A gene
 recorded. Successful generation followed by failed or ambiguous readback clears the displayed ID because VCFDT may
 already have replaced its runtime identity. The refresh icon submits explicit refresh intent through the same global
 `/appliance-apply` workflow for `vcf_offline_depot`; it is not a service-specific helper call.
-Download tokens and activation codes share one Broadcom credentials modal with a
-credential-type selector and can be uploaded as files or pasted text; storage keys remain separate for compatibility.
+Download tokens and activation codes use the combined VCFDT configuration wizard's state-aware credential selector and
+conditional upload-or-paste step; storage keys remain separate for compatibility.
 Metadata and binaries profiles use whichever credential was staged most recently: the runtime download-token file used
 by `--depot-download-token-file` or the runtime activation-code file used by
 `--depot-download-activation-code-file`. Existing state with indistinguishable credential timestamps retains the

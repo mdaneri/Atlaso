@@ -323,18 +323,6 @@ Figure: ESXi custom variable wizard with Description on its own full-width row.
 
 Figure: ESXi custom variable wizard in the verified narrow viewport.
 
-## Ntp
-
-Route: `/ntp`
-
-![Atlaso NTP and NTS page in the clean-appliance desktop viewport.](../assets/screenshots/ntp-clean-desktop.webp)
-
-Figure: NTP and NTS in the verified clean-appliance desktop state.
-
-![Atlaso NTP and NTS page in the clean-appliance responsive viewport.](../assets/screenshots/ntp-clean-responsive.webp)
-
-Figure: NTP and NTS in the verified clean-appliance responsive state.
-
 ## Openid Connect: Oidc Group Mappings
 
 Route: `/openid-connect#oidc-group-mappings`
@@ -515,13 +503,17 @@ Figure: VCF Helper in the verified clean-appliance responsive state.
 
 Route: `/vcf-offline-depot`
 
-![Atlaso VCF Offline Depot page in the clean-appliance desktop viewport.](../assets/screenshots/vcf-offline-depot-clean-desktop.webp)
+![Atlaso VCF Offline Depot desktop page showing Metadata before Binaries and ESX profiles and the combined VCFDT configuration action.](../assets/screenshots/vcf-offline-depot-clean-desktop.webp)
 
-Figure: VCF Offline Depot in the verified clean-appliance desktop state.
+Figure: VCF Offline Depot with metadata first and the compact VCFDT configuration summary in the desktop settings rail.
 
-![Atlaso VCF Offline Depot page in the clean-appliance responsive viewport.](../assets/screenshots/vcf-offline-depot-clean-responsive.webp)
+![Atlaso VCF Offline Depot responsive page showing Metadata first with the add-profile row pinned last.](../assets/screenshots/vcf-offline-depot-clean-responsive.webp)
 
-Figure: VCF Offline Depot in the verified clean-appliance responsive state.
+Figure: VCF Offline Depot profile ordering and staging state in the responsive viewport.
+
+![Atlaso two-step VCFDT Software Depot ID wizard Review with a Queue Software Depot ID task action and no additional confirmation dialog.](../assets/screenshots/vcf-offline-depot-configuration-wizard.webp)
+
+Figure: VCFDT Software Depot ID generation ends at Review, which immediately dispatches a dedicated identity task.
 
 ![VCF Offline Depot profile row menu showing Schedule download disabled until the profile is enabled.](../assets/screenshots/vcf-offline-depot-schedule-action-desktop.webp)
 

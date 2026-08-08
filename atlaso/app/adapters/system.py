@@ -201,7 +201,6 @@ class SystemAdapter:
                     {
                         "peers": {"returncode": 0, "stdout": "remote refid st t when poll reach delay offset jitter\n", "stderr": ""},
                         "variables": {"returncode": 0, "stdout": "status=0615 leap_none, sync_ntp\n", "stderr": ""},
-                        "nts": {"returncode": 0, "stdout": "NTS client status unavailable in dry-run\n", "stderr": ""},
                     },
                     sort_keys=True,
                 ),
@@ -258,7 +257,7 @@ class SystemAdapter:
 
     def read_ntpd_capabilities(self) -> AdapterResult:
         if self.dry_run:
-            return self._record_only_result(["atlaso-helper", "ntpd", "capabilities"], json.dumps({"nts": True, "version": "ntpd ntpsec dry-run"}))
+            return self._record_only_result(["atlaso-helper", "ntpd", "capabilities"], json.dumps({"nts": False, "policy": "disabled"}))
         return self._helper_result(
             "ntpd",
             "capabilities",
@@ -333,6 +332,14 @@ class SystemAdapter:
             "vcf-offline-depot",
             "generate-software-depot-id",
             dry_run_message="dry-run: VCF Download Tool software depot ID generation command recorded",
+        )
+
+    def read_vcf_offline_depot_software_depot_id(self) -> AdapterResult:
+        return self._helper_result(
+            "vcf-offline-depot",
+            "read-software-depot-id",
+            dry_run_message="dry-run: VCF Download Tool software depot ID readback unavailable",
+            dry_run_returncode=2,
         )
 
     def sync_vcf_offline_depot(self, config_path: str) -> AdapterResult:

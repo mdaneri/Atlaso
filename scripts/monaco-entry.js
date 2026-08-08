@@ -132,7 +132,10 @@ function enhanceTextarea(textarea, options = {}) {
   const editor = monaco.editor.create(container, {
     value: textarea.value,
     language: editorLanguage(textarea, options),
+    ariaLabel: textarea.getAttribute("aria-label") || "Editor content",
     theme: "vs",
+    readOnly: false,
+    domReadOnly: false,
     automaticLayout: true,
     fontFamily: "ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace",
     fontSize: 12,
@@ -224,9 +227,13 @@ function focus(textarea) {
   else if (textarea instanceof HTMLTextAreaElement) textarea.focus();
 }
 
+function layout(textarea) {
+  textarea?.atlasoMonacoEditor?.layout();
+}
+
 window.MonacoEnvironment = {
   getWorker() {
-    return new Worker("/static/vendor/monaco/editor.worker.js?v=atlaso-monaco-20260729-6");
+    return new Worker("/static/vendor/monaco/editor.worker.js?v=atlaso-monaco-20260806-7");
   },
 };
-window.AtlasoMonaco = { enhanceTextarea, focus, getValue, setLanguage, setValue };
+window.AtlasoMonaco = { enhanceTextarea, focus, getValue, layout, setLanguage, setValue };
