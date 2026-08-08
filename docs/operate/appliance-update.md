@@ -86,19 +86,19 @@ remain encrypted in the database and move to the privileged helper only in the e
 are not written to manifests, tasks, audits, URLs, or helper output.
 
 Create a Photon, PowerShell, or Atlaso source from the **+ Repository** launcher in that ecosystem's repository tab
-strip. The guided
-workflow collects repository identity, its endpoint and ecosystem-specific trust policy, desired availability, and a
-final review. Saving the wizard creates desired state only: it does not install packages or change a running package
-client.
+strip. The guided workflow collects repository identity, its endpoint and ecosystem-specific trust policy, desired
+availability, and a final review. Configured source tabs remain read-only. Select **Edit repository** beside **Delete
+repository** from the icon actions at the right of **Repository identity** to reopen the same wizard with the source's
+current values. Creating or editing through the wizard saves desired state only: it does not install packages or change
+a running package client.
 
-Existing Photon and PowerShell source fields autosave as desired runtime-maintenance configuration. **Synchronize
-repositories** explicitly writes only Atlaso-owned tdnf and PowerShell client configuration. Their source cards show
-whether that synchronization has not run, succeeded, or failed. Signed Atlaso sources are read directly, are checked
-during each update, and do not configure pip or report package-client synchronization state.
+**Synchronize repositories** explicitly writes only Atlaso-owned tdnf and PowerShell client configuration. Source
+details show whether that synchronization has not run, succeeded, or failed. Signed Atlaso sources are read directly,
+are checked during each update, and do not configure pip or report package-client synchronization state.
 
-Each source editor presents repository identity first, then its location or discovered runtime data, followed by one
-grouped **Repository behavior** row. Autosave and synchronization state remain together in a separated footer, with
-repository deletion isolated as the destructive action.
+Each source detail presents repository identity first, then its location or discovered runtime data, followed by
+read-only **Repository behavior** values. Desired-state guidance and synchronization state remain together in a
+separated footer. The accessible edit and delete icon actions stay together in the identity header.
 
 Managed PowerShell module editors follow the same hierarchy: module identity and version policy first, then a grouped
 **Module behavior** switch and a separated autosave/delete footer. The **+ Module** launcher opens a reviewed wizard for
@@ -109,8 +109,10 @@ row menu, and detail behavior. Because the embedded endpoint is already scoped t
 column is fixed there; the full Tasks page retains its editable component filter. The grid expands through the remaining
 Update Streams workspace height rather than using a compact fixed-height embed. This table replaces the former Last
 Update rail and submission-result cards. Checks and installations submit asynchronously: only grid data refreshes, the
-new task is highlighted, and both action buttons remain disabled until that task succeeds, fails, or is cancelled. The
-stream actions use explicit **Check for updates** and **Install updates** labels, with distinct search and install cues
+new task is highlighted, expanded stream rows stay expanded, and both action buttons remain disabled until that task
+succeeds, fails, or is cancelled. Parent rows identify **Appliance Update check**, **Appliance Update install**, or
+**Appliance Update repository sync** so read-only checks are distinct from package-changing work. The stream actions use
+explicit **Check for updates** and **Install updates** labels, with distinct search and install cues
 and visible copy that identifies the check as read-only. The same header links recurring maintenance to the Automation
 Schedules workspace, where operators can schedule Appliance Update checks or installations. The Update Info rail card
 reports whether durable updater evidence is available and opens the full JSON through the shared preview modal, matching

@@ -585,8 +585,10 @@ def test_tasks_page_lists_redacts_logs_and_cancels(client):
                 status=JobStatus.SUCCEEDED.value,
                 created_by="admin",
                 progress_percent=100,
+                task_config_json=json.dumps({"mode": "check"}),
                 result=json.dumps(
                     {
+                        "mode": "check",
                         "state": "succeeded",
                         "stdout": (
                             '{"action":"run","args":["script.ps1"],"dry_run":false,'
@@ -622,6 +624,9 @@ def test_tasks_page_lists_redacts_logs_and_cancels(client):
     assert 'class="language-atlaso-log" data-task-log-content' in page.text
     assert "task-grid-shell" in page.text
     assert "data-task-component-options" in page.text
+    assert "Appliance Update check" in page.text
+    assert "Appliance Update install" in page.text
+    assert "Appliance Update repository sync" in page.text
     assert 'data-selected-task-id="job_taskgrid001"' in page.text
     plain_page = client.get("/tasks")
     assert plain_page.status_code == 200
@@ -648,6 +653,8 @@ def test_tasks_page_lists_redacts_logs_and_cancels(client):
     assert "task-grid-new-badge" in tasks_table_js
     assert 'height: page.dataset.taskGridHeight || "100%"' in tasks_table_js
     assert 'query.set("filters", JSON.stringify(params.filters || params.filter || []));' in app_js
+    assert "const expandedRowIds = expandedTaskRowIds(atlasoTasksTable);" in app_js
+    assert "restoreExpandedTaskRows(atlasoTasksTable, expandedRowIds);" in app_js
     assert 'headerFilterPlaceholder: "Choose or type custom"' in tasks_table_js
     assert "values: atlasoTaskComponentOptions" in tasks_table_js
     assert "autocomplete: true" in tasks_table_js
@@ -698,6 +705,16 @@ def test_tasks_page_lists_redacts_logs_and_cancels(client):
     assert [row["id"] for row in component_payload["tasks"]] == ["job_taskgrid001"]
     assert component_payload["filtered_count"] == 1
     assert component_payload["total_count"] == 2
+
+    appliance_update_mode_filter = client.get(
+        "/tasks/status",
+        params={"filters": json.dumps([{"field": "id", "type": "like", "value": "Appliance Update check"}])},
+    )
+    assert appliance_update_mode_filter.status_code == 200
+    appliance_update_mode_payload = appliance_update_mode_filter.json()
+    assert [row["id"] for row in appliance_update_mode_payload["tasks"]] == ["job_taskgrid_leaf"]
+    assert appliance_update_mode_payload["filtered_count"] == 1
+    assert appliance_update_mode_payload["total_count"] == 2
 
     status_filter = client.get(
         "/tasks/status",
@@ -816,7 +833,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v224" in service_worker.text
+    assert "atlaso-pwa-v227" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -828,9 +845,9 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
-    assert "/static/app.css?v=vcfdt-configuration-248-20260807-4" in service_worker.text
+    assert "/static/app.css?v=appliance-update-source-actions-253-20260807-3" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
-    assert "/static/app.js?v=ntp-disable-252-20260808-1" in service_worker.text
+    assert "/static/app.js?v=appliance-update-253-ntp-disable-252-20260808-3" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
 
     registration = client.get("/static/pwa.js")
@@ -840,7 +857,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=vcfdt-configuration-248-20260807-4" in offline.text
+    assert "/static/app.css?v=appliance-update-source-actions-253-20260807-3" in offline.text
 
 
 def test_shared_ui_pattern_shell_and_wizard_contracts(client):
@@ -851,8 +868,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=ntp-disable-252-20260808-1"),
-        (public_base, "/static/app.js?v=ntp-disable-252-20260808-1"),
+        (base, "/static/app.js?v=appliance-update-253-ntp-disable-252-20260808-3"),
+        (public_base, "/static/app.js?v=appliance-update-253-ntp-disable-252-20260808-3"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8"
@@ -1357,9 +1374,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "data-monitor-disk-activity-table" in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=vcfdt-configuration-248-20260807-4" in page.text
+    assert "/static/app.css?v=appliance-update-source-actions-253-20260807-3" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=ntp-disable-252-20260808-1" in page.text
+    assert "/static/app.js?v=appliance-update-253-ntp-disable-252-20260808-3" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
