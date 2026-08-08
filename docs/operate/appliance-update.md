@@ -86,19 +86,18 @@ remain encrypted in the database and move to the privileged helper only in the e
 are not written to manifests, tasks, audits, URLs, or helper output.
 
 Create a Photon, PowerShell, or Atlaso source from the **+ Repository** launcher in that ecosystem's repository tab
-strip. The guided
-workflow collects repository identity, its endpoint and ecosystem-specific trust policy, desired availability, and a
-final review. Saving the wizard creates desired state only: it does not install packages or change a running package
-client.
+strip. The guided workflow collects repository identity, its endpoint and ecosystem-specific trust policy, desired
+availability, and a final review. Configured source tabs remain read-only. Select **Edit repository** beside **Delete
+repository** to reopen the same wizard with the source's current values. Creating or editing through the wizard saves
+desired state only: it does not install packages or change a running package client.
 
-Existing Photon and PowerShell source fields autosave as desired runtime-maintenance configuration. **Synchronize
-repositories** explicitly writes only Atlaso-owned tdnf and PowerShell client configuration. Their source cards show
-whether that synchronization has not run, succeeded, or failed. Signed Atlaso sources are read directly, are checked
-during each update, and do not configure pip or report package-client synchronization state.
+**Synchronize repositories** explicitly writes only Atlaso-owned tdnf and PowerShell client configuration. Source
+details show whether that synchronization has not run, succeeded, or failed. Signed Atlaso sources are read directly,
+are checked during each update, and do not configure pip or report package-client synchronization state.
 
-Each source editor presents repository identity first, then its location or discovered runtime data, followed by one
-grouped **Repository behavior** row. Autosave and synchronization state remain together in a separated footer, with
-repository deletion isolated as the destructive action.
+Each source detail presents repository identity first, then its location or discovered runtime data, followed by
+read-only **Repository behavior** values. Desired-state guidance and synchronization state remain together in a
+separated footer, with guided editing adjacent to the isolated destructive action.
 
 Managed PowerShell module editors follow the same hierarchy: module identity and version policy first, then a grouped
 **Module behavior** switch and a separated autosave/delete footer. The **+ Module** launcher opens a reviewed wizard for

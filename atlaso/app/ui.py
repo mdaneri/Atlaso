@@ -10404,6 +10404,7 @@ def update_appliance_update_source(
 ) -> Response:
     verify_csrf(request, csrf)
     require_admin_identity(identity)
+    wizard_request = request.headers.get("X-Atlaso-Wizard") == "1"
     source = db.get(UpdateSource, source_id)
     if source is None:
         raise HTTPException(status_code=404, detail="Update source not found.")
@@ -10435,6 +10436,8 @@ def update_appliance_update_source(
         errors.insert(0, "Source name is required.")
     if errors:
         db.rollback()
+        if wizard_request:
+            return JSONResponse({"status": "error", "detail": " ".join(errors), "errors": errors}, status_code=422)
         if request.headers.get("X-Atlaso-Autosave") == "1":
             return JSONResponse({"status": "error", "errors": errors}, status_code=422)
         return render(
@@ -10449,6 +10452,8 @@ def update_appliance_update_source(
     except IntegrityError:
         db.rollback()
         message = "A source with this name and type already exists."
+        if wizard_request:
+            return JSONResponse({"status": "error", "detail": message, "errors": [message]}, status_code=409)
         if request.headers.get("X-Atlaso-Autosave") == "1":
             return JSONResponse({"status": "error", "errors": [message]}, status_code=409)
         return render(request, "appliance_update.html", {"identity": identity, **appliance_update_context(db), "update_error": message}, status_code=409)
@@ -10462,6 +10467,8 @@ def update_appliance_update_source(
     )
     if request.headers.get("X-Atlaso-Autosave") == "1":
         return JSONResponse({"status": "saved", "saved_at": utcnow().isoformat()})
+    if wizard_request:
+        return JSONResponse({"status": "saved", "source": update_source_payload(source)})
     return RedirectResponse("/appliance-update", status_code=303)
 
 

@@ -5199,6 +5199,66 @@ textarea {
   padding-top: 14px;
 }
 
+.source-readonly-view {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  padding-top: 14px;
+}
+
+.source-readonly-section {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.source-readonly-section > h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.source-readonly-list {
+  gap: 0;
+}
+
+.source-readonly-list > div {
+  grid-template-columns: minmax(150px, 220px) minmax(0, 1fr);
+  align-items: start;
+  min-width: 0;
+}
+
+.source-readonly-list strong,
+.source-readonly-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.source-readonly-list > .source-readonly-full {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 7px;
+}
+
+.source-readonly-full pre {
+  max-height: 180px;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.source-readonly-full code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .source-editor-grid {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(150px, 1fr);
@@ -5283,6 +5343,19 @@ textarea {
 .source-editor-state .autosave-status {
   min-height: 0;
   margin: 0;
+}
+
+.source-editor-state > .muted {
+  margin: 0;
+}
+
+.source-editor-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
 }
 
 .source-editor-footer > .button {
@@ -5402,6 +5475,16 @@ textarea {
 
   .source-editor-footer > .button {
     align-self: flex-start;
+  }
+
+  .source-readonly-list > div {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .source-editor-actions {
+    align-self: flex-start;
+    justify-content: flex-start;
   }
 
   .managed-package-option-grid {

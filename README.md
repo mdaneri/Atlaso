@@ -12,6 +12,9 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - [Documentation](https://mdaneri.github.io/Atlaso/docs/) — install, configure, operate, and troubleshoot Atlaso.
 - [Getting started](docs/getting-started/index.md) — choose an appliance path and complete initial setup.
 - [Operations](docs/operate/index.md) — run the appliance and review desired-state changes.
+- [Appliance Update](docs/operate/appliance-update.md) — inspect configured Photon, PowerShell, and signed Atlaso
+  sources in read-only repository tabs, then create or edit desired source state through the shared reviewed wizard
+  before explicitly synchronizing package clients.
 - [Services](docs/services/index.md) — configure DNS, identity, storage, network boot, and VCF integrations.
 - [Network Boot](docs/services/ipxe.md) — discover unassigned hardware with
   independently released read-only Inventory Linux, download its latest package

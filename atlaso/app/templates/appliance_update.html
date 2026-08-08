@@ -17,7 +17,7 @@
       <div class="appliance-update-source-actions">
         <form method="post" action="/appliance-update/source-sync">
           <input type="hidden" name="csrf" value="{{ csrf_token }}">
-          <span class="field-label"><button class="button secondary icon-button" type="submit" aria-label="Synchronize repositories" title="Synchronize repositories">↻</button><button class="help-icon" type="button" data-help="Writes the autosaved desired repository state to the appliance package clients through an audited maintenance task. Atlaso validates enabled sources before updating its owned tdnf and PowerShell configuration. Signed Atlaso release sources are read directly and do not modify a package client.">i</button></span>
+          <span class="field-label"><button class="button secondary icon-button" type="submit" aria-label="Synchronize repositories" title="Synchronize repositories">↻</button><button class="help-icon" type="button" data-help="Writes the desired repository state saved through the source wizard to the appliance package clients through an audited maintenance task. Atlaso validates enabled sources before updating its owned tdnf and PowerShell configuration. Signed Atlaso release sources are read directly and do not modify a package client.">i</button></span>
         </form>
         <span class="status-pill {{ 'warn' if system_adapter_dry_run else 'good' }}">{{ "dry-run" if system_adapter_dry_run else "real" }}</span>
       </div>
@@ -30,11 +30,11 @@
           <summary><span><strong>{{ group.kind|upper }}</strong> · repositories</span><span class="status-pill muted">{{ group.sources|length }} configured</span></summary>
           <div class="managed-package-content">
             <div class="panel-head compact">
-              <p class="muted">Open a configured repository to edit it, or use guided setup to add another source.</p>
+              <p class="muted">Open a configured repository to inspect it, or use guided setup to add another source.</p>
             </div>
             <div class="tab-buttons zone-tabs" role="tablist" aria-label="{{ group.kind }} repositories" data-tab-storage-key="atlaso:appliance-update:{{ group.kind }}-repository-tab">
               {% for source in group.sources %}<button class="tab-button {{ 'active' if loop.first else '' }}" type="button" role="tab" data-tab-target="update-source-{{ source.id }}" aria-controls="update-source-{{ source.id }}" {% if loop.first %}aria-selected="true"{% else %}aria-selected="false"{% endif %}>{{ source.name }}</button>{% endfor %}
-              <button class="tab-button" type="button" data-update-source-wizard-open data-update-source-kind="{{ group.kind }}">+ Repository</button>
+              <button class="tab-button" type="button" data-update-source-wizard-open data-update-source-mode="create" data-update-source-kind="{{ group.kind }}">+ Repository</button>
             </div>
             {% if not group.sources %}
               <p class="muted">No {{ group.kind }} repositories are configured.</p>
@@ -42,32 +42,37 @@
             <div class="tab-panels">
               {% for source in group.sources %}
                 <div id="update-source-{{ source.id }}" class="tab-panel {{ 'active' if loop.first else '' }}" role="tabpanel" {{ 'hidden' if not loop.first else '' }}>
-                  <form class="source-editor-form" action="/appliance-update/sources/{{ source.id }}" method="post" data-autosave-form data-autosave-status-id="update-source-status-{{ source.id }}">
-                    <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="enabled_present" value="1">
-                    <div class="source-editor-grid source-editor-identity">
-                      <label><span class="field-label"><span>Source name</span><button class="help-icon" type="button" data-help="Names this repository in Atlaso and in update task results. PowerShell uses this as its registered repository name.">i</button></span><input name="name" value="{{ source.name }}" autocomplete="off" required></label>
-                      <label><span class="field-label"><span>Priority</span><button class="help-icon" type="button" data-help="Lower values are considered first among repositories in this ecosystem.">i</button></span><input type="number" name="priority" min="0" max="100" value="{{ source.priority }}"></label>
-                    </div>
-                    <div class="source-editor-grid source-editor-location">
-                      {% if source.kind == 'photon' and not source.settings.managed %}
-                        <label class="source-editor-full"><span class="field-label"><span>Enabled tdnf repositories</span><button class="help-icon" type="button" data-help="Read directly from enabled definitions under /etc/yum.repos.d. Each line shows repository id, name, and baseurl, mirrorlist, or metalink. Atlaso does not rewrite these inherited definitions.">i</button></span><textarea rows="{{ photon_repository_rows }}" disabled aria-disabled="true" data-runtime-photon-repositories>{{ photon_repository_summary }}</textarea><input type="hidden" name="url" value=""></label>
-                      {% else %}
-                        <label class="{{ '' if source.kind == 'atlaso' else 'source-editor-full' }}"><span class="field-label"><span>{{ 'Signed release base URL' if source.kind == 'atlaso' else 'Source URL' }}</span><button class="help-icon" type="button" data-help="{{ 'HTTPS location containing signed Atlaso channel pointers. The appliance verifies the channel and immutable release manifests with its pinned Ed25519 trust key before downloading a bundle.' if source.kind == 'atlaso' else 'HTTP(S) repository location used by this package ecosystem.' }}">i</button></span><input name="url" value="{{ source.url }}" autocomplete="off"></label>
-                      {% endif %}
-                      {% if source.kind == 'atlaso' %}<label><span class="field-label"><span>Release channel</span><button class="help-icon" type="button" data-help="Selects the signed channel pointer below this base URL. Stable and preview move only through explicit GitHub promotion; development follows each successful main release.">i</button></span><select name="channel">{% for channel in atlaso_channels %}<option value="{{ channel }}" {{ 'selected' if source.settings.channel|default('stable') == channel else '' }}>{{ channel }}</option>{% endfor %}</select></label>{% endif %}
-                      {% if source.kind == 'photon' %}<label class="source-editor-full"><span class="field-label"><span>GPG key URL</span><button class="help-icon" type="button" data-help="Key reference written into the managed Photon repository definition. It is used only when Atlaso manages this source.">i</button></span><input name="gpgkey" value="{{ source.settings.gpgkey|default('') }}" autocomplete="off"></label>{% endif %}
-                    </div>
-                    <fieldset class="source-editor-options">
-                      <legend>Repository behavior</legend>
-                      <div class="source-option-grid">
-                        {% if source.kind == 'powershell' %}<label class="switch-field source-option"><span class="field-label"><span>Trusted repository</span><button class="help-icon" type="button" data-help="Registers this repository as Trusted for non-interactive module installation. Enable only for a controlled source.">i</button></span><input class="switch-input" type="checkbox" name="trusted" {{ 'checked' if source.settings.trusted else '' }}><span class="switch-track" aria-hidden="true"></span></label>{% endif %}
-                        {% if source.kind == 'photon' %}<label class="switch-field source-option"><span class="field-label"><span>Atlaso managed</span><button class="help-icon" type="button" data-help="Writes this repository into Atlaso's owned Photon repo file.">i</button></span><input class="switch-input" type="checkbox" name="managed" {{ 'checked' if source.settings.managed else '' }}><span class="switch-track" aria-hidden="true"></span></label><label class="switch-field source-option"><span class="field-label"><span>Verify RPM signatures</span><button class="help-icon" type="button" data-help="Requires RPM signature validation for this managed Photon repository.">i</button></span><input class="switch-input" type="checkbox" name="gpgcheck" {{ 'checked' if source.settings.gpgcheck|default(true) else '' }}><span class="switch-track" aria-hidden="true"></span></label><label class="switch-field source-option"><span class="field-label"><span>Verify TLS</span><button class="help-icon" type="button" data-help="Requires certificate validation when connecting to this source.">i</button></span><input class="switch-input" type="checkbox" name="tls_verify" {{ 'checked' if source.settings.tls_verify|default(true) else '' }}><span class="switch-track" aria-hidden="true"></span></label>{% endif %}
-                        <label class="switch-field source-option"><span class="field-label"><span>Source enabled</span><button class="help-icon" type="button" data-help="Includes this repository in source synchronization and update work.">i</button></span><input class="switch-input" type="checkbox" name="enabled" {{ 'checked' if source.enabled else '' }}><span class="switch-track" aria-hidden="true"></span></label>
+                  <div class="source-readonly-view" data-update-source-readonly>
+                    <section class="source-readonly-section" aria-labelledby="update-source-{{ source.id }}-identity">
+                      <h3 id="update-source-{{ source.id }}-identity">Repository identity</h3>
+                      <div class="settings-list source-readonly-list">
+                        <div><span>Source name</span><strong>{{ source.name }}</strong></div>
+                        <div><span>Priority</span><strong>{{ source.priority }}</strong></div>
                       </div>
-                    </fieldset>
+                    </section>
+                    <section class="source-readonly-section" aria-labelledby="update-source-{{ source.id }}-location">
+                      <h3 id="update-source-{{ source.id }}-location">{{ 'Discovered runtime repositories' if source.kind == 'photon' and not source.settings.managed else 'Repository location' }}</h3>
+                      <div class="settings-list source-readonly-list">
+                        {% if source.kind == 'photon' and not source.settings.managed %}
+                          <div class="source-readonly-full"><span>Enabled tdnf repositories</span><pre data-runtime-photon-repositories><code>{{ photon_repository_summary }}</code></pre></div>
+                        {% else %}
+                          <div><span>{{ 'Signed release base URL' if source.kind == 'atlaso' else 'Source URL' }}</span><strong class="source-readonly-value">{{ source.url or 'Not configured' }}</strong></div>
+                        {% endif %}
+                        {% if source.kind == 'atlaso' %}<div><span>Release channel</span><strong>{{ source.settings.channel|default('stable') }}</strong></div>{% endif %}
+                        {% if source.kind == 'photon' %}<div><span>GPG key URL</span><strong class="source-readonly-value">{{ source.settings.gpgkey|default('') or 'Not configured' }}</strong></div>{% endif %}
+                      </div>
+                    </section>
+                    <section class="source-readonly-section" aria-labelledby="update-source-{{ source.id }}-behavior">
+                      <h3 id="update-source-{{ source.id }}-behavior">Repository behavior</h3>
+                      <div class="settings-list source-readonly-list source-readonly-behavior">
+                        {% if source.kind == 'powershell' %}<div><span>Trusted repository</span><strong>{{ 'Yes' if source.settings.trusted else 'No' }}</strong></div>{% endif %}
+                        {% if source.kind == 'photon' %}<div><span>Atlaso managed</span><strong>{{ 'Yes' if source.settings.managed else 'No' }}</strong></div><div><span>Verify RPM signatures</span><strong>{{ 'Yes' if source.settings.gpgcheck|default(true) else 'No' }}</strong></div><div><span>Verify TLS</span><strong>{{ 'Yes' if source.settings.tls_verify|default(true) else 'No' }}</strong></div>{% endif %}
+                        <div><span>Source state</span><strong><span class="status-pill {{ 'good' if source.enabled else 'muted' }}">{{ 'Enabled' if source.enabled else 'Disabled' }}</span></strong></div>
+                      </div>
+                    </section>
                     <div class="source-editor-footer">
                       <div class="source-editor-state">
-                        <p id="update-source-status-{{ source.id }}" class="autosave-status" data-state="idle">Changes save automatically.</p>
+                        <p class="muted">Use Edit repository to change this desired source.</p>
                         {% if source.kind == 'atlaso' %}
                           <span class="source-validation-state"><span class="status-pill muted">Checked during update</span><button class="help-icon" type="button" data-help="Signed release sources are verified when an update check or installation reads the channel. Synchronize repositories does not write this source into a package client.">i</button></span>
                         {% elif source.validation_status == 'valid' %}
@@ -78,9 +83,12 @@
                           <span class="source-validation-state"><span class="status-pill muted">Not synchronized</span><button class="help-icon" type="button" data-help="{{ source.validation_message or 'Run Synchronize repositories to validate and write this repository into its appliance package client.' }}">i</button></span>
                         {% endif %}
                       </div>
-                      <button class="button danger compact" type="submit" form="delete-update-source-{{ source.id }}">Delete repository</button>
+                      <div class="source-editor-actions">
+                        <button class="button secondary compact" type="button" data-update-source-wizard-open data-update-source-mode="edit" data-update-source-kind="{{ source.kind }}" data-update-source='{{ source|tojson|forceescape }}'>Edit repository</button>
+                        <button class="button danger compact" type="submit" form="delete-update-source-{{ source.id }}">Delete repository</button>
+                      </div>
                     </div>
-                  </form>
+                  </div>
                   <form id="delete-update-source-{{ source.id }}" class="hidden" action="/appliance-update/sources/{{ source.id }}/delete" method="post" data-confirm-modal data-confirm-title="Delete {{ source.name }}?" data-confirm-message="This removes the repository from Atlaso. Packages assigned to it block deletion." data-confirm-label="Delete repository"><input type="hidden" name="csrf" value="{{ csrf_token }}"></form>
                 </div>
               {% endfor %}
@@ -260,19 +268,20 @@
   {"id": "identity", "label": "Repository", "summary": "Ecosystem, name, and priority"},
   {"id": "endpoint", "label": "Endpoint", "summary": "Location and trust policy"},
   {"id": "state", "label": "State", "summary": "Desired availability"},
-  {"id": "review", "label": "Review", "summary": "Confirm repository creation"}
+  {"id": "review", "label": "Review", "summary": "Confirm repository changes"}
 ] %}
 {% call resource_wizard(
   "appliance-update-source-dialog",
   "appliance-update-source-form",
   "/appliance-update/sources",
   update_source_steps,
-  "Add update repository",
-  "Define a desired update source without changing the running package clients.",
-  "Create repository"
+  "Configure update repository",
+  "Create or edit desired source state without changing the running package clients.",
+  "Save repository"
 ) %}
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
   <input type="hidden" name="kind" value="">
+  <input type="hidden" name="enabled_present" value="1">
   <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity">
     <div class="settings-list compact-list">
       <div><span>Ecosystem</span><strong data-update-source-kind-label>Not selected</strong></div>

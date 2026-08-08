@@ -547,7 +547,8 @@ def test_software_source_and_managed_module_lifecycle(client):
     assert "data-add-powershell-repository" not in grouped_page.text
     assert 'data-update-source-group="powershell"' in grouped_page.text
     assert 'aria-label="powershell repositories"' in grouped_page.text
-    assert grouped_page.text.count("data-update-source-wizard-open") == 3
+    assert grouped_page.text.count('data-update-source-mode="create"') == 3
+    assert grouped_page.text.count('data-update-source-mode="edit"') >= 4
     assert 'data-update-source-kind="powershell"' in grouped_page.text
     powershell_tabs = grouped_page.text.split('aria-label="powershell repositories"', 1)[1].split("</div>", 1)[0]
     assert "data-update-source-wizard-open" in powershell_tabs
@@ -561,10 +562,20 @@ def test_software_source_and_managed_module_lifecycle(client):
     assert "function initializeApplianceUpdateSourceWizard()" in app_js
     assert "function initializeManagedPackageWizard()" in app_js
     assert "window.AtlasoUiPatterns.createWizard({" in app_js
+    assert 'form.action = source?.id ? `${createAction}/${source.id}` : createAction;' in app_js
+    assert "if (source) populateSource(source);" in app_js
     app_css = Path("atlaso/app/static/app.css").read_text(encoding="utf-8")
     assert ".detail-rail .detail-panel {\n  position: static;" in app_css
     assert ".detail-rail {\n  position: sticky;\n  top: 22px;" in app_css
-    assert 'class="source-editor-form"' in grouped_page.text
+    assert 'data-update-source-readonly' in grouped_page.text
+    private_source_panel = grouped_page.text.split(f'id="update-source-{source_id}"', 1)[1].split(
+        f'id="delete-update-source-{source_id}"', 1
+    )[0]
+    assert 'data-update-source-mode="edit"' in private_source_panel
+    assert "Edit repository" in private_source_panel
+    assert "Delete repository" in private_source_panel
+    assert '<input name="name"' not in private_source_panel
+    assert 'data-autosave-form' not in private_source_panel
     assert 'class="source-editor-options"' in grouped_page.text
     assert 'class="source-option-grid"' in grouped_page.text
     assert 'class="source-editor-footer"' in grouped_page.text
@@ -575,6 +586,7 @@ def test_software_source_and_managed_module_lifecycle(client):
     assert "appliance-update-task-card" not in app_css
     assert ".appliance-update-history .tabulator-row.task-grid-new-task" in app_css
     assert ".source-editor-grid {\n  display: grid;" in app_css
+    assert ".source-readonly-view {\n  display: grid;" in app_css
     assert ".source-option-grid {\n  display: grid;" in app_css
     assert ".source-editor-footer {\n  display: flex;" in app_css
     assert "class=\"source-validation-state\"" in grouped_page.text
@@ -602,6 +614,24 @@ def test_software_source_and_managed_module_lifecycle(client):
         "managed": True,
         "tls_verify": True,
     }
+    wizard_updated = client.post(
+        f"/appliance-update/sources/{source_id}",
+        data={
+            "csrf": csrf,
+            "name": "PrivateGallery",
+            "url": "https://packages.example.test/powershell-v2",
+            "priority": "25",
+            "enabled_present": "1",
+            "enabled": "on",
+            "trusted": "on",
+        },
+        headers={"X-Atlaso-Wizard": "1", "Accept": "application/json"},
+    )
+    assert wizard_updated.status_code == 200
+    assert wizard_updated.json()["status"] == "saved"
+    assert wizard_updated.json()["source"]["priority"] == 25
+    assert wizard_updated.json()["source"]["url"] == "https://packages.example.test/powershell-v2"
+    assert wizard_updated.json()["source"]["settings"] == {"trusted": True}
     with SessionLocal() as db:
         package = db.execute(select(ManagedPackage).where(ManagedPackage.name == "Private.PowerCLI.Tools")).scalar_one()
         package_id = package.id
