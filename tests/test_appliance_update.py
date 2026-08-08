@@ -571,6 +571,8 @@ def test_software_source_and_managed_module_lifecycle(client):
     assert "if (source) populateSource(source);" in app_js
     assert 'form.action = editing ? `${defaultAction}/${managedPackage.id}` : defaultAction;' in app_js
     assert 'wizard.open({ launcher, context: managedPackage });' in app_js
+    assert '"X-Atlaso-Wizard": "1"' in app_js
+    assert 'throw new Error(payload.detail || "The managed PowerShell module could not be saved.");' in app_js
     app_css = Path("atlaso/app/static/app.css").read_text(encoding="utf-8")
     assert ".detail-rail .detail-panel {\n  position: static;" in app_css
     assert ".detail-rail {\n  position: sticky;\n  top: 22px;" in app_css
@@ -659,6 +661,30 @@ def test_software_source_and_managed_module_lifecycle(client):
         assert module["repository_name"] == "PrivateGallery"
         assert module["target_version"] == "1.2.3"
 
+    rejected_wizard_edit = client.post(
+        f"/appliance-update/packages/{package_id}",
+        data={
+            "csrf": csrf,
+            "name": "VCF.PowerCLI",
+            "source_id": str(source_id),
+            "policy": "latest",
+            "enabled_present": "1",
+            "enabled": "on",
+        },
+        headers={"X-Atlaso-Wizard": "1", "Accept": "application/json"},
+    )
+    assert rejected_wizard_edit.status_code == 409
+    assert rejected_wizard_edit.json() == {
+        "status": "error",
+        "detail": "This PowerShell module is already managed.",
+        "errors": ["This PowerShell module is already managed."],
+    }
+    with SessionLocal() as db:
+        package = db.get(ManagedPackage, package_id)
+        assert package.name == "Private.PowerCLI.Tools"
+        assert package.policy == "pinned"
+        assert package.target_version == "1.2.3"
+
     changed_to_latest = client.post(
         f"/appliance-update/packages/{package_id}",
         data={
@@ -670,9 +696,10 @@ def test_software_source_and_managed_module_lifecycle(client):
             "enabled_present": "1",
             "enabled": "on",
         },
-        follow_redirects=False,
+        headers={"X-Atlaso-Wizard": "1", "Accept": "application/json"},
     )
-    assert changed_to_latest.status_code == 303
+    assert changed_to_latest.status_code == 200
+    assert changed_to_latest.json() == {"status": "saved", "package": {"id": package_id}}
     with SessionLocal() as db:
         package = db.get(ManagedPackage, package_id)
         assert package.policy == "latest"

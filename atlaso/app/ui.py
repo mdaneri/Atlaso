@@ -10687,17 +10687,25 @@ def create_managed_update_package(
 ) -> Response:
     verify_csrf(request, csrf)
     require_admin_identity(identity)
+    wizard_request = request.headers.get("X-Atlaso-Wizard") == "1"
     package = ManagedPackage(ecosystem="powershell", name="", source_id=source_id)
     errors = _managed_package_from_form(package, name=name, source_id=source_id, policy=policy, target_version=target_version, enabled=enabled == "on", db=db)
     if errors:
+        if wizard_request:
+            return JSONResponse({"status": "error", "detail": " ".join(errors), "errors": errors}, status_code=422)
         return render(request, "appliance_update.html", {"identity": identity, **appliance_update_context(db), "update_error": " ".join(errors)}, status_code=422)
     db.add(package)
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
-        return render(request, "appliance_update.html", {"identity": identity, **appliance_update_context(db), "update_error": "This PowerShell module is already managed."}, status_code=409)
+        message = "This PowerShell module is already managed."
+        if wizard_request:
+            return JSONResponse({"status": "error", "detail": message, "errors": [message]}, status_code=409)
+        return render(request, "appliance_update.html", {"identity": identity, **appliance_update_context(db), "update_error": message}, status_code=409)
     record_audit(db, actor=identity.username, action="create_managed_package", resource_type="managed_package", resource_id=str(package.id), detail=f"ecosystem=powershell; name={package.name}")
+    if wizard_request:
+        return JSONResponse({"status": "saved", "package": {"id": package.id}})
     return RedirectResponse("/appliance-update#managed-packages", status_code=303)
 
 
@@ -10717,12 +10725,15 @@ def update_managed_update_package(
 ) -> Response:
     verify_csrf(request, csrf)
     require_admin_identity(identity)
+    wizard_request = request.headers.get("X-Atlaso-Wizard") == "1"
     package = db.get(ManagedPackage, package_id)
     if package is None or package.ecosystem != "powershell":
         raise HTTPException(status_code=404, detail="Managed PowerShell module not found.")
     errors = _managed_package_from_form(package, name=name, source_id=source_id, policy=policy, target_version=target_version, enabled=(enabled == "on") if enabled_present is not None else package.enabled, db=db)
     if errors:
         db.rollback()
+        if wizard_request:
+            return JSONResponse({"status": "error", "detail": " ".join(errors), "errors": errors}, status_code=422)
         if request.headers.get("X-Atlaso-Autosave") == "1":
             return JSONResponse({"status": "error", "errors": errors}, status_code=422)
         return render(request, "appliance_update.html", {"identity": identity, **appliance_update_context(db), "update_error": " ".join(errors)}, status_code=422)
@@ -10732,12 +10743,16 @@ def update_managed_update_package(
     except IntegrityError:
         db.rollback()
         message = "This PowerShell module is already managed."
+        if wizard_request:
+            return JSONResponse({"status": "error", "detail": message, "errors": [message]}, status_code=409)
         if request.headers.get("X-Atlaso-Autosave") == "1":
             return JSONResponse({"status": "error", "errors": [message]}, status_code=409)
         return render(request, "appliance_update.html", {"identity": identity, **appliance_update_context(db), "update_error": message}, status_code=409)
     record_audit(db, actor=identity.username, action="update_managed_package", resource_type="managed_package", resource_id=str(package.id), detail=f"ecosystem=powershell; name={package.name}")
     if request.headers.get("X-Atlaso-Autosave") == "1":
         return JSONResponse({"status": "saved", "saved_at": utcnow().isoformat()})
+    if wizard_request:
+        return JSONResponse({"status": "saved", "package": {"id": package.id}})
     return RedirectResponse("/appliance-update#managed-packages", status_code=303)
 
 

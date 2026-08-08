@@ -18630,6 +18630,41 @@ function initializeManagedPackageWizard() {
         { label: "Desired state", field: "enabled" },
       ]);
     },
+    onSubmit: async () => {
+      const response = await fetch(form.action, {
+        method: "POST",
+        body: new FormData(form),
+        credentials: "same-origin",
+        headers: {
+          Accept: "application/json",
+          "X-Atlaso-Wizard": "1",
+        },
+      });
+      const responseText = await response.text();
+      let payload = {};
+      try {
+        payload = responseText ? JSON.parse(responseText) : {};
+      } catch (_error) {
+        payload = {};
+      }
+      if (!response.ok) {
+        throw new Error(payload.detail || "The managed PowerShell module could not be saved.");
+      }
+      if (!payload.package?.id) {
+        throw new Error("The server did not return the saved managed PowerShell module.");
+      }
+      try {
+        window.localStorage.setItem("atlaso:appliance-update:workspace-tab", "appliance-update-sources");
+        window.localStorage.setItem(
+          "atlaso:appliance-update:powershell-module-tab",
+          `powershell-module-${payload.package.id}`,
+        );
+      } catch {
+        // Reloading the page still shows the saved module when storage is unavailable.
+      }
+      window.location.assign("/appliance-update#managed-packages");
+      return { valid: true };
+    },
   });
   launchers.forEach((launcher) => {
     launcher.addEventListener("click", () => {

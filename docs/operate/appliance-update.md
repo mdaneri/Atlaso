@@ -111,7 +111,11 @@ The peer **POWERSHELL · managed modules** disclosure uses the same section spac
 hierarchy, and tab treatment as the repository disclosures. Each module tab presents identity, repository, version
 policy, target version, and desired state without implying inline editing. **Edit module** and **Delete module** remain
 together in the identity header. Both **+ Module** and **Edit module** open the shared reviewed wizard for module
-identity, version resolution, enablement, and final confirmation; saving it does not install the module. A single
+identity, version resolution, enablement, and final confirmation; saving it does not install the module.
+Server-side validation failures remain in the open wizard with the attempted values intact so an administrator can
+correct the entry without rebuilding it.
+
+A single
 shared Tasks grid remains below both Appliance Update tab panels, so recent work stays visible from Update Streams and
 Update Sources. It is server-scoped to Appliance Update tasks and preserves standard sorting, filtering, progress,
 row menu, and detail behavior. Because the embedded endpoint is already scoped to Appliance Update, the Task / Component

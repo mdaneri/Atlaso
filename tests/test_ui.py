@@ -834,7 +834,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v232" in service_worker.text
+    assert "atlaso-pwa-v233" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -846,9 +846,9 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
-    assert "/static/app.css?v=appliance-update-261-primary-grids-20260808-1" in service_worker.text
+    assert "/static/app.css?v=appliance-update-261-primary-grids-20260808-2" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
-    assert "/static/app.js?v=appliance-update-261-primary-grids-20260808-1" in service_worker.text
+    assert "/static/app.js?v=appliance-update-261-primary-grids-20260808-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
 
     registration = client.get("/static/pwa.js")
@@ -858,7 +858,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=appliance-update-261-primary-grids-20260808-1" in offline.text
+    assert "/static/app.css?v=appliance-update-261-primary-grids-20260808-2" in offline.text
 
 
 def test_shared_ui_pattern_shell_and_wizard_contracts(client):
@@ -869,8 +869,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=appliance-update-261-primary-grids-20260808-1"),
-        (public_base, "/static/app.js?v=appliance-update-261-primary-grids-20260808-1"),
+        (base, "/static/app.js?v=appliance-update-261-primary-grids-20260808-2"),
+        (public_base, "/static/app.js?v=appliance-update-261-primary-grids-20260808-2"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8"
@@ -1442,9 +1442,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "Loading devices" not in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=appliance-update-261-primary-grids-20260808-1" in page.text
+    assert "/static/app.css?v=appliance-update-261-primary-grids-20260808-2" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=appliance-update-261-primary-grids-20260808-1" in page.text
+    assert "/static/app.js?v=appliance-update-261-primary-grids-20260808-2" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
