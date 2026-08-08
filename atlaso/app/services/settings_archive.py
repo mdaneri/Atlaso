@@ -79,6 +79,7 @@ from atlaso.app.services.esxi_pxe import (
     normalize_host_variables,
 )
 from atlaso.app.services.firewall import FIREWALL_SOURCE_GROUPS_SETTING_KEY
+from atlaso.app.services.ntp import disable_nts_state
 from atlaso.app.services.local_users import LOCAL_USERS_PASSWORD_POLICY_KEY
 from atlaso.app.services.ldap import clear_ldap_recovery_payload, ensure_organization_bind_secret
 from atlaso.app.services.update_sources import UPDATE_SOURCE_KINDS
@@ -223,10 +224,25 @@ def export_settings_archive(db: Session, *, actor: str) -> dict[str, Any]:
     for key, model in SCALAR_TABLES.items():
         rows = db.execute(select(model)).scalars().all()
         data[key] = [_row_to_dict(row) for row in rows]
+    for row in data["ntp_settings"]:
+        row["nts_server_enabled"] = False
+        row["nts_server_cert_path"] = ""
+        row["nts_server_key_path"] = ""
+        try:
+            upstream_sources = json.loads(str(row.get("upstream_sources_json") or "[]"))
+        except json.JSONDecodeError:
+            upstream_sources = []
+        if isinstance(upstream_sources, list):
+            for source in upstream_sources:
+                if isinstance(source, dict):
+                    source["use_nts"] = False
+            row["upstream_sources_json"] = json.dumps(upstream_sources, separators=(",", ":"), sort_keys=True)
 
     data["routes"] = _routes_to_archive(db)
     data["dhcp_options"] = _dhcp_options_to_archive(db)
-    data["ca_certificates"] = _ca_certificates_to_archive(db)
+    data["ca_certificates"] = [
+        row for row in _ca_certificates_to_archive(db) if row.get("managed_owner") != "ntp:nts"
+    ]
     data["kms_keys"] = _kms_keys_to_archive(db)
     data["ldap_organizations"] = _ldap_organizations_to_archive(db)
     data["ldap_users"] = _ldap_users_to_archive(db)
@@ -543,6 +559,9 @@ def restore_settings_archive(db: Session, archive: dict[str, Any]) -> dict[str, 
     ]:
         counts[key] = _insert_rows(db, SCALAR_TABLES[key], data.get(key, []))
     db.flush()
+    restored_ntp_settings = db.execute(select(NtpSettings)).scalar_one_or_none()
+    if restored_ntp_settings is not None:
+        disable_nts_state(restored_ntp_settings)
     _force_services_stopped_unconfigured(db)
 
     counts["dhcp_options"] = _restore_dhcp_options(db, data.get("dhcp_options", []))
@@ -865,13 +884,17 @@ def _restore_dhcp_options(db: Session, rows: list[dict[str, Any]]) -> int:
 
 def _restore_ca_certificates(db: Session, rows: list[dict[str, Any]]) -> int:
     profiles = {profile.name: profile.id for profile in db.execute(select(CaProfile)).scalars().all()}
+    restored = 0
     for row in rows:
+        if row.get("managed_owner") == "ntp:nts":
+            continue
         payload = _model_kwargs(CaCertificate, row, exclude={"profile_id", "issued_at", "expires_at"})
         profile_name = str(row.get("profile_name") or "")
         payload["profile_id"] = profiles.get(profile_name) if profile_name else None
         db.add(CaCertificate(**payload))
+        restored += 1
     db.flush()
-    return len(rows)
+    return restored
 
 
 def _restore_kms_keys(db: Session, rows: list[dict[str, Any]]) -> int:

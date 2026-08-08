@@ -4163,7 +4163,7 @@ function initializeServicesTable() {
           },
         },
         {
-          label: "Check NTPsec source health",
+          label: "Check NTP source health",
           action: () => openNTPsecSourceHealthModal(),
           disabled: (component) => component.getData().service !== "ntpd",
         },
@@ -5779,20 +5779,6 @@ function ntpGuardedTickFormatter(cell) {
   return atlasoBooleanFormatter(cell);
 }
 
-function ntpNtsTickFormatter(cell) {
-  if (!ntpUpstreamRowHasSource(cell) || !cell.getValue()) {
-    return "";
-  }
-  return atlasoBooleanFormatter(cell);
-}
-
-function ntpUnsupportedNtsFormatter(cell) {
-  if (!ntpUpstreamRowHasSource(cell)) {
-    return "";
-  }
-  return '<span class="muted" title="NTS is not supported by the installed ntpd binary">unavailable</span>';
-}
-
 function ntpGuardedTextFormatter(cell) {
   if (!ntpUpstreamRowHasSource(cell)) {
     return "";
@@ -5806,7 +5792,7 @@ function normalizeNTPsecUpstreamRows(rows = []) {
       id: row.id || `source-${index + 1}`,
       source: String(row.source || "").trim(),
       enabled: row.enabled !== false,
-      use_nts: Boolean(row.use_nts),
+      use_nts: false,
       description: String(row.description || "").trim(),
     }))
     .filter((row) => row.source);
@@ -5894,8 +5880,6 @@ function initializeNTPsecUpstreamsTable() {
   }
   try {
     const parsedRows = JSON.parse(tableElement.dataset.ntpUpstreams || "[]");
-    const ntsSupported = tableElement.dataset.ntpNtsSupported !== "false";
-    const ntsCapabilityKnown = tableElement.dataset.ntpNtsCapabilityKnown !== "false";
     const rows = normalizeNTPsecUpstreamRows(parsedRows);
     rows.push(ntpBlankUpstreamRow());
     let table;
@@ -5944,13 +5928,6 @@ function initializeNTPsecUpstreamsTable() {
             headerTooltip: "IPv4, IPv6, or fully qualified DNS name. Append :port when the upstream uses a non-default port; use [IPv6]:port for IPv6.",
           },
           {
-            title: "NTS",
-            field: "use_nts",
-            formatter: ntsSupported ? ntpNtsTickFormatter : ntpUnsupportedNtsFormatter,
-            width: ntsSupported ? 70 : 105,
-            hozAlign: "center",
-          },
-          {
             title: "Enabled",
             field: "enabled",
             formatter: ntpGuardedTickFormatter,
@@ -5978,7 +5955,7 @@ function initializeNTPsecUpstreamsTable() {
       dialog,
       steps: [
         { id: "identity", title: "Define the NTP source", description: "Set the upstream endpoint and its operator-visible purpose." },
-        { id: "enablement", title: "Choose source security and state", description: "Choose NTS authentication and whether the source enters desired state." },
+        { id: "enablement", title: "Choose source state", description: "Choose whether the source enters desired state." },
         { id: "review", title: "Review NTP desired state", description: "Confirm the source and global appliance-apply boundary." },
       ],
       onOpen: ({ context }) => {
@@ -5986,7 +5963,6 @@ function initializeNTPsecUpstreamsTable() {
           id: context?.id || "",
           source: context?.source || "",
           description: context?.description || "",
-          use_nts: Boolean(context?.use_nts),
           enabled: context ? Boolean(context.enabled) : true,
         });
       },
@@ -6017,7 +5993,6 @@ function initializeNTPsecUpstreamsTable() {
       prepareReview: () => renderAtlasoWizardReview(form, [
         { label: "Source", field: "source" },
         { label: "Description", field: "description" },
-        { label: "NTS", field: "use_nts" },
         { label: "Enabled", field: "enabled" },
       ]),
       onSubmit: async () => {
@@ -6028,9 +6003,7 @@ function initializeNTPsecUpstreamsTable() {
           id: id || `source-${Date.now()}`,
           source: form.elements.source.value.trim(),
           description: form.elements.description.value.trim(),
-          use_nts: ntsSupported
-            ? form.elements.use_nts.checked
-            : (!ntsCapabilityKnown && existingData ? Boolean(existingData.use_nts) : false),
+          use_nts: false,
           enabled: form.elements.enabled.checked,
         };
         const previous = existingData ? { ...existingData } : null;
@@ -6158,13 +6131,13 @@ function formatNTPsecSourceHealthSection(name, section = {}) {
 
 function formatNTPsecSourceHealthPayload(payload = {}) {
   const sections = payload.status && typeof payload.status === "object" ? payload.status : {};
-  const names = ["peers", "variables", "nts"];
+  const names = ["peers", "variables"];
   if (names.some((name) => sections[name])) {
     return names.map((name) => formatNTPsecSourceHealthSection(name, sections[name] || {})).join("\n\n");
   }
   const stdout = String(payload.stdout || "").trimEnd();
   const stderr = String(payload.stderr || "").trimEnd();
-  return [stdout, stderr ? `stderr: ${stderr}` : ""].filter(Boolean).join("\n\n") || "No NTPsec source health output was returned.";
+  return [stdout, stderr ? `stderr: ${stderr}` : ""].filter(Boolean).join("\n\n") || "No NTP source health output was returned.";
 }
 
 function setNTPsecSourceHealthStatus(statusElement, text, state) {
@@ -6206,7 +6179,7 @@ function initializeNTPsecSourceHealthModal() {
 
   const loadHealth = async () => {
     setNTPsecSourceHealthStatus(status, "checking", "muted");
-    output.textContent = "Checking ntpq peers, runtime variables, and NTS state...";
+    output.textContent = "Checking ntpq peers and runtime variables...";
     if (refreshButton instanceof HTMLButtonElement) {
       refreshButton.disabled = true;
     }
@@ -6227,7 +6200,7 @@ function initializeNTPsecSourceHealthModal() {
         setNTPsecSourceHealthStatus(status, "healthy", "good");
       }
     } catch (error) {
-      output.textContent = error instanceof Error ? error.message : "Unable to check NTPsec source health.";
+      output.textContent = error instanceof Error ? error.message : "Unable to check NTP source health.";
       setNTPsecSourceHealthStatus(status, "failed", "warn");
     } finally {
       if (refreshButton instanceof HTMLButtonElement) {

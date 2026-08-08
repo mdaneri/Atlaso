@@ -71,7 +71,7 @@ ROUTE_TITLES = {
     "/login": "Sign in",
     "/logs": "Logs",
     "/monitor": "Monitor",
-    "/ntp": "NTP and NTS",
+    "/ntp": "NTP",
     "/physical-interfaces": "Physical interfaces",
     "/requests": "Certificate requests",
     "/routes-wan": "Routes and WAN simulation",

@@ -232,8 +232,7 @@ def test_managed_service_firewall_rules_include_all_enabled_service_listeners():
     assert by_name["ntpd-eth2.50"].protocol == "udp"
     assert by_name["ntpd-eth2.50"].destination_port == "123"
     assert by_name["ntpd-eth3.60"].interface_name == "eth3.60"
-    assert by_name["ntpd-nts-eth2.50"].protocol == "tcp"
-    assert by_name["ntpd-nts-eth2.50"].destination_port == "4460"
+    assert "ntpd-nts-eth2.50" not in by_name
     assert by_name["oidc-eth2.50"].destination_port == "8443"
     assert by_name["vcf-backups-sftp-eth2.50"].destination_port == "22"
     assert by_name["vcf-backups-sftp-eth3.60"].interface_name == "eth3.60"

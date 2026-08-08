@@ -2154,13 +2154,23 @@ def test_settings_autosave_enables_passwordless_terminal_on_management_interface
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import ApplianceSettings
+    from atlaso.app.models import ApplianceSettings, NtpSettings
 
     login(client)
     page = client.get("/settings")
     assert "Web terminal access" in page.text
     assert 'name="web_terminal_interfaces_present"' in page.text
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    with SessionLocal() as db:
+        ntp = db.execute(select(NtpSettings)).scalar_one()
+        ntp_before = (
+            ntp.upstream_servers,
+            ntp.upstream_sources_json,
+            ntp.nts_server_enabled,
+            ntp.nts_server_cert_path,
+            ntp.nts_server_key_path,
+            ntp.updated_at,
+        )
 
     response = client.post(
         "/settings",
@@ -2194,8 +2204,17 @@ def test_settings_autosave_enables_passwordless_terminal_on_management_interface
 
     with SessionLocal() as db:
         settings = db.execute(select(ApplianceSettings)).scalar_one()
+        ntp = db.execute(select(NtpSettings)).scalar_one()
         assert settings.web_terminal_enabled is True
         assert settings.web_terminal_interfaces_json == '["eth0"]'
+        assert (
+            ntp.upstream_servers,
+            ntp.upstream_sources_json,
+            ntp.nts_server_enabled,
+            ntp.nts_server_cert_path,
+            ntp.nts_server_key_path,
+            ntp.updated_at,
+        ) == ntp_before
 
 
 def test_validation_rails_use_modal_config_previews(client):
@@ -2463,50 +2482,18 @@ def test_settings_autosave_does_not_update_ntp_servers_when_ntp_is_disabled(clie
         assert "ntp_servers" not in status["config_preview"]
 
 
-def test_ntp_page_autosave_updates_desired_state_and_preview(client, monkeypatch):
+def test_ntp_page_autosave_updates_desired_state_and_preview(client):
     import json
 
     from sqlalchemy import select
 
-    from atlaso.app.adapters.system import AdapterResult
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import CaCertificate, CaSettings, NtpSettings
+    from atlaso.app.models import CaCertificate, NtpSettings
 
-    supported = AdapterResult(
-        command=["atlaso-helper", "ntpd", "capabilities"],
-        dry_run=False,
-        stdout=(
-            json.dumps(
-                {
-                    "timestamp": "2026-07-13T18:00:00+00:00",
-                    "helper": "atlaso-helper",
-                    "group": "ntpd",
-                    "action": "capabilities",
-                    "args": [],
-                    "dry_run": False,
-                },
-                sort_keys=True,
-            )
-            + "\n"
-            + json.dumps({"nts": True, "version": "ntpd version 4.6 (+NTS)"}, sort_keys=True)
-            + "\n"
-        ),
-    )
-    monkeypatch.setattr(
-        "atlaso.app.ui.SystemAdapter.read_ntpd_capabilities",
-        lambda _self: supported,
-    )
     login(client)
-    with SessionLocal() as db:
-        ca_settings = db.execute(select(CaSettings)).scalar_one_or_none()
-        if ca_settings is None:
-            ca_settings = CaSettings()
-            db.add(ca_settings)
-        ca_settings.enabled = True
-        db.commit()
     page = client.get("/ntp")
     assert page.status_code == 200
-    assert "NTP / NTS Settings" in page.text
+    assert "NTP Settings" in page.text
     assert "ntp-source-health-modal" in page.text
     assert "Check source health" not in page.text
     assert "ntp-upstreams-table" in page.text
@@ -2516,18 +2503,12 @@ def test_ntp_page_autosave_updates_desired_state_and_preview(client, monkeypatch
     ntp_source_identity = ntp_source_wizard.split('data-atlaso-wizard-step="identity"', 1)[1].split("</section>", 1)[0]
     assert '<textarea name="description" rows="3" maxlength="1000">' in ntp_source_identity
     assert "ntp-main-panel" in page.text
-    assert '"source": "0.pool.ntp.org"' in page.text
+    assert '"source": "time.cloudflare.com"' in page.text
     assert '"source": "ptbtime1.ptb.de"' in page.text
-    assert '"source": "time.google.com"' in page.text
-    assert '"source": "time.nist.gov"' in page.text
-    assert '"source": "time.facebook.com"' in page.text
-    assert "NTS-KE disabled" in page.text or "NTS-KE ntp.atlaso.internal:4460" in page.text
+    assert "NTS" not in page.text
     assert page.text.index('id="ntp-upstreams-table"') < page.text.index('<aside class="side-stack">')
-    assert "NTS-KE port" in page.text
-    assert 'type="number" value="4460" min="4460" max="4460" readonly aria-label="NTS-KE port"' in page.text
     assert "4460/tcp" not in page.text
     assert "NTP port" in page.text
-    assert "NTS key" not in page.text
     assert "/var/lib/atlaso/apply/ntpd/atlaso-ntp.conf" in page.text
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     upstream_sources = json.dumps(
@@ -2564,20 +2545,18 @@ def test_ntp_page_autosave_updates_desired_state_and_preview(client, monkeypatch
     assert payload["listen_interfaces"] == ["eth2"]
     assert payload["listen_addresses"] == ["192.168.50.1"]
     assert payload["upstream_servers"] == ["time.cloudflare.com", "time.google.com"]
-    assert payload["upstream_sources"][0]["use_nts"] is True
+    assert payload["upstream_sources"][0]["use_nts"] is False
     assert payload["upstream_sources"][2]["enabled"] is False
     assert payload["allow_clients"] == "192.168.50.0/24"
-    assert payload["nts_server_enabled"] is True
-    assert payload["nts_server_cert_path"] == "/etc/atlaso/ntp/certs/ntp.atlaso.internal-chain.pem"
-    assert payload["nts_server_key_path"] == "/etc/atlaso/ntp/certs/ntp.atlaso.internal.key"
-    assert payload["nts_ke_port"] == 4460
+    assert "nts_server_enabled" not in payload
+    assert "nts_server_cert_path" not in payload
+    assert "nts_server_key_path" not in payload
     assert payload["valid"] is True
-    assert "nts cookie /var/lib/ntp/nts-keys" in payload["config_preview"]
-    assert "server time.cloudflare.com iburst nts" in payload["config_preview"]
+    assert "nts" not in payload["config_preview"].lower()
+    assert "server time.cloudflare.com iburst" in payload["config_preview"]
     assert "interface ignore wildcard" in payload["config_preview"]
     assert "interface listen 192.168.50.1" in payload["config_preview"]
     assert "restrict 192.168.50.0 mask 255.255.255.0 kod limited nomodify noquery" in payload["config_preview"]
-    assert "nts cert /etc/atlaso/ntp/certs/ntp.atlaso.internal-chain.pem" in payload["config_preview"]
     assert "/tmp/operator-input" not in payload["config_preview"]
 
     duplicate_response = client.post(
@@ -2605,7 +2584,7 @@ def test_ntp_page_autosave_updates_desired_state_and_preview(client, monkeypatch
         "NTP upstream source time.example.com is duplicated. Source names must be unique."
     )
 
-    assert "NTS-KE ntp.atlaso.internal:4460" in client.get("/ntp").text
+    assert "NTS" not in client.get("/ntp").text
     js = client.get("/static/app.js")
     assert js.status_code == 200
     assert "initializeNtpSettings" in js.text
@@ -2621,13 +2600,12 @@ def test_ntp_page_autosave_updates_desired_state_and_preview(client, monkeypatch
     assert "record_id: context?.id" not in ntp_table_js
     assert "findDuplicateNtpUpstreamSource" in ntp_table_js
     assert "onReady: (readyTable) => syncNTPsecUpstreamsHiddenInput(readyTable)" in ntp_table_js
-    assert 'const ntsCapabilityKnown = tableElement.dataset.ntpNtsCapabilityKnown !== "false"' in ntp_table_js
-    assert "!ntsCapabilityKnown && existingData ? Boolean(existingData.use_nts) : false" in ntp_table_js
+    assert "use_nts: false" in ntp_table_js
     assert "ntpUpstreamRowHasSource" in js.text
     assert "editable: ntpUpstreamRowHasSource" in js.text
     assert "rowContextMenu" in js.text
     assert 'label: "Delete server"' in js.text
-    assert "ntpNtsTickFormatter" in js.text
+    assert "ntpNtsTickFormatter" not in js.text
     assert "parseNtpUpstreamSource" in js.text
     assert "widthGrow: 5" in js.text
     assert "function atlasoBooleanFormatter" in js.text
@@ -2635,8 +2613,8 @@ def test_ntp_page_autosave_updates_desired_state_and_preview(client, monkeypatch
     assert "const tone = enabled ? \"good\" : \"bad\"" in js.text
     assert "boolean-glyph ${tone}" in js.text
     assert "initializeNTPsecSourceHealthModal" in js.text
-    assert "Check NTPsec source health" in js.text
-    assert 'const names = ["peers", "variables", "nts"]' in js.text
+    assert "Check NTP source health" in js.text
+    assert 'const names = ["peers", "variables"]' in js.text
     assert "openNTPsecSourceHealthModal" in js.text
     assert "/ntp/source-health" in js.text
     assert "updateNtpValidation" in js.text
@@ -2657,39 +2635,35 @@ def test_ntp_page_autosave_updates_desired_state_and_preview(client, monkeypatch
 
     with SessionLocal() as db:
         settings = db.execute(select(NtpSettings)).scalar_one()
-        managed_certificate = db.execute(select(CaCertificate).where(CaCertificate.managed_owner == "ntp:nts")).scalar_one()
+        managed_certificate = db.execute(
+            select(CaCertificate).where(CaCertificate.managed_owner == "ntp:nts")
+        ).scalar_one_or_none()
         assert settings.enabled is True
         assert settings.listen_interface == "eth2"
         assert settings.listen_address == "192.168.50.1"
-        assert settings.nts_server_cert_path == "/etc/atlaso/ntp/certs/ntp.atlaso.internal-chain.pem"
-        assert managed_certificate.status == "issued"
-        assert managed_certificate.chain_path == settings.nts_server_cert_path
+        assert settings.nts_server_enabled is False
+        assert settings.nts_server_cert_path == ""
+        assert settings.nts_server_key_path == ""
+        assert managed_certificate is None
 
 
-def test_ntp_disables_and_rejects_nts_when_runtime_does_not_support_it(client, monkeypatch):
+def test_ntp_normalizes_legacy_nts_desired_state(client):
     import json
 
     from sqlalchemy import select
 
-    from atlaso.app.adapters.system import AdapterResult
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import AuditEvent, NtpSettings
-    from atlaso.app.services.ntp import ntp_upstream_sources, dump_ntp_upstream_sources
+    from atlaso.app.models import CaCertificate, NtpSettings
+    from atlaso.app.seed import seed_initial_data
+    from atlaso.app.services.ntp import ntp_upstream_sources
 
-    unsupported = AdapterResult(
-        command=["atlaso-helper", "ntpd", "capabilities"],
-        dry_run=False,
-        stdout=json.dumps({"nts": False, "version": "ntpd version 4.3 (-NTS)"}),
-    )
-    monkeypatch.setattr(
-        "atlaso.app.ui.SystemAdapter.read_ntpd_capabilities",
-        lambda _self: unsupported,
-    )
     login(client)
     with SessionLocal() as db:
         settings = db.execute(select(NtpSettings)).scalar_one()
         settings.nts_server_enabled = True
-        settings.upstream_sources_json = dump_ntp_upstream_sources(
+        settings.nts_server_cert_path = "/etc/atlaso/ntp/certs/legacy-chain.pem"
+        settings.nts_server_key_path = "/etc/atlaso/ntp/certs/legacy.key"
+        settings.upstream_sources_json = json.dumps(
             [
                 {
                     "id": "cloudflare-nts",
@@ -2700,157 +2674,33 @@ def test_ntp_disables_and_rejects_nts_when_runtime_does_not_support_it(client, m
                 }
             ]
         )
-        db.commit()
-
-    page = client.get("/ntp")
-
-    assert page.status_code == 200
-    assert 'data-ntp-nts-supported="false"' in page.text
-    assert "Installed ntpd has no NTS support." in page.text
-    assert "NTS unavailable" in page.text
-    assert "NTS server (disabled)" in page.text
-    assert 'class="switch-field disabled-field" aria-disabled="true"' in page.text
-    assert 'name="nts_server_enabled" disabled' in page.text
-    assert 'name="upstream_use_nts" value="0" disabled' in page.text
-    assert 'readonly disabled aria-label="NTS-KE port"' in page.text
-
-    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post(
-        "/ntp/settings",
-        data={
-            "enabled": "on",
-            "hostname": "ntp.atlaso.internal",
-            "listen_interfaces_present": "1",
-            "listen_addresses_present": "1",
-            "listen_interfaces": ["eth2"],
-            "upstream_sources_json": json.dumps(
-                [
-                    {
-                        "source": "time.cloudflare.com",
-                        "enabled": True,
-                        "use_nts": True,
-                    }
-                ]
-            ),
-            "allow_clients": "any",
-            "port": "123",
-            "nts_server_enabled": "on",
-            "csrf": csrf,
-        },
-        headers={"X-Atlaso-Autosave": "1"},
-    )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["nts_supported"] is False
-    assert payload["nts_server_enabled"] is False
-    assert payload["upstream_sources"][0]["use_nts"] is False
-    assert "nts cookie" not in payload["config_preview"]
-    assert "server time.cloudflare.com iburst nts" not in payload["config_preview"]
-
-    with SessionLocal() as db:
-        settings = db.execute(select(NtpSettings)).scalar_one()
-        assert settings.nts_server_enabled is False
-        assert all(source["use_nts"] is False for source in ntp_upstream_sources(settings))
-        audit = db.execute(
-            select(AuditEvent).where(AuditEvent.action == "disable_unsupported_ntp_nts")
-        ).scalar_one()
-        assert audit.actor == "system"
-
-
-def test_ntp_preserves_nts_desired_state_when_capability_check_fails(client, monkeypatch):
-    import json
-
-    from sqlalchemy import select
-
-    from atlaso.app.adapters.system import AdapterResult
-    from atlaso.app.database import SessionLocal
-    from atlaso.app.models import AuditEvent, NtpSettings
-    from atlaso.app.services.ntp import dump_ntp_upstream_sources, ntp_upstream_sources
-
-    unavailable = AdapterResult(
-        command=["atlaso-helper", "ntpd", "capabilities"],
-        dry_run=False,
-        returncode=1,
-        stderr="capability check unavailable",
-    )
-    monkeypatch.setattr(
-        "atlaso.app.ui.SystemAdapter.read_ntpd_capabilities",
-        lambda _self: unavailable,
-    )
-    login(client)
-    with SessionLocal() as db:
-        settings = db.execute(select(NtpSettings)).scalar_one()
-        settings.nts_server_enabled = False
-        settings.upstream_sources_json = dump_ntp_upstream_sources(
-            [
-                {
-                    "id": "cloudflare-nts",
-                    "source": "time.cloudflare.com",
-                    "enabled": True,
-                    "use_nts": True,
-                    "description": "Cloudflare public NTS",
-                }
-            ]
+        db.add(
+            CaCertificate(
+                common_name="ntp.atlaso.internal",
+                managed_owner="ntp:nts",
+                cert_path="/etc/atlaso/ntp/certs/legacy.crt",
+                key_path="/etc/atlaso/ntp/certs/legacy.key",
+                chain_path="/etc/atlaso/ntp/certs/legacy-chain.pem",
+            )
         )
         db.commit()
+        seed_initial_data(db)
 
     page = client.get("/ntp")
-
     assert page.status_code == 200
-    assert 'data-ntp-nts-supported="false"' in page.text
-    assert 'data-ntp-nts-capability-known="false"' in page.text
-    assert "NTS check unavailable" in page.text
-    assert "Existing NTS desired state is preserved" in page.text
-    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-
-    response = client.post(
-        "/ntp/settings",
-        data={
-            "enabled": "on",
-            "hostname": "ntp.atlaso.internal",
-            "listen_interfaces_present": "1",
-            "listen_addresses_present": "1",
-            "listen_interfaces": ["eth2"],
-            "upstream_sources_json": json.dumps(
-                [
-                    {
-                        "id": "cloudflare-nts",
-                        "source": "time.cloudflare.com",
-                        "enabled": True,
-                        "use_nts": True,
-                        "description": "Cloudflare public NTS",
-                    }
-                ]
-            ),
-            "allow_clients": "any",
-            "port": "123",
-            "csrf": csrf,
-        },
-        headers={"X-Atlaso-Autosave": "1"},
-    )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["nts_supported"] is False
-    assert payload["nts_capability_known"] is False
-    assert payload["nts_server_enabled"] is False
-    assert payload["upstream_sources"][0]["use_nts"] is True
-    assert "server time.cloudflare.com iburst nts" in payload["config_preview"]
-    assert payload["valid"] is False
-    assert any(
-        "existing NTS desired state was preserved, but appliance apply is blocked until detection succeeds." in error
-        for error in payload["validation_errors"]
-    )
+    assert "NTS server" not in page.text
+    assert "NTS-KE" not in page.text
 
     with SessionLocal() as db:
         settings = db.execute(select(NtpSettings)).scalar_one()
-        assert settings.nts_server_enabled is False
-        assert ntp_upstream_sources(settings)[0]["use_nts"] is True
-        audit = db.execute(
-            select(AuditEvent).where(AuditEvent.action == "disable_unsupported_ntp_nts")
+        legacy_certificate = db.execute(
+            select(CaCertificate).where(CaCertificate.managed_owner == "ntp:nts")
         ).scalar_one_or_none()
-        assert audit is None
+        assert settings.nts_server_enabled is False
+        assert settings.nts_server_cert_path == ""
+        assert settings.nts_server_key_path == ""
+        assert all(source["use_nts"] is False for source in ntp_upstream_sources(settings))
+        assert legacy_certificate is None
 
 
 def test_ntp_validation_rejects_enabled_service_without_bind_or_upstreams(client):
@@ -3446,6 +3296,54 @@ def test_settings_archive_round_trips_management_ipv6_gateway(client):
         assert restored is not None
         assert restored.ipv6_cidr == "2001:db8:49::10/64"
         assert restored.ipv6_gateway == "fe80::1"
+
+
+def test_settings_archive_excludes_and_rejects_legacy_nts_state(client):
+    import json
+
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate, NtpSettings
+    from atlaso.app.services.ntp import ntp_upstream_sources
+    from atlaso.app.services.settings_archive import export_settings_archive, restore_settings_archive
+
+    with SessionLocal() as db:
+        settings = db.scalar(select(NtpSettings))
+        settings.nts_server_enabled = True
+        settings.nts_server_cert_path = "/etc/atlaso/ntp/certs/legacy-chain.pem"
+        settings.nts_server_key_path = "/etc/atlaso/ntp/certs/legacy.key"
+        settings.upstream_sources_json = json.dumps(
+            [{"source": "time.cloudflare.com", "enabled": True, "use_nts": True}]
+        )
+        db.add(CaCertificate(common_name="ntp.atlaso.internal", managed_owner="ntp:nts"))
+        db.commit()
+
+        archive = export_settings_archive(db, actor="test")
+        archived_ntp = archive["data"]["ntp_settings"][0]
+        assert archived_ntp["nts_server_enabled"] is False
+        assert all(not source["use_nts"] for source in json.loads(archived_ntp["upstream_sources_json"]))
+        assert all(row.get("managed_owner") != "ntp:nts" for row in archive["data"]["ca_certificates"])
+
+        archived_ntp["nts_server_enabled"] = True
+        archived_ntp["nts_server_cert_path"] = "/etc/atlaso/ntp/certs/restored-chain.pem"
+        archived_ntp["nts_server_key_path"] = "/etc/atlaso/ntp/certs/restored.key"
+        archived_ntp["upstream_sources_json"] = json.dumps(
+            [{"source": "time.cloudflare.com", "enabled": True, "use_nts": True}]
+        )
+        archive["data"]["ca_certificates"].append(
+            {"common_name": "ntp.atlaso.internal", "managed_owner": "ntp:nts"}
+        )
+        counts = restore_settings_archive(db, archive)
+        db.commit()
+
+        restored = db.scalar(select(NtpSettings))
+        assert restored.nts_server_enabled is False
+        assert restored.nts_server_cert_path == ""
+        assert restored.nts_server_key_path == ""
+        assert all(not source["use_nts"] for source in ntp_upstream_sources(restored))
+        assert counts["ca_certificates"] == len(archive["data"]["ca_certificates"]) - 1
+        assert db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "ntp:nts")) is None
 
 
 def test_settings_archive_round_trips_authoritative_dns_policy(client):
@@ -6786,7 +6684,7 @@ def test_logs_page_renders_refreshable_fixed_source_tabs_and_redacts_logs(client
     assert "TFTP" in response.text
     assert "LDAP / LDAPS" in response.text
     assert "KMS" in response.text
-    assert "NTP / NTS" in response.text
+    assert "NTP" in response.text
     assert "ESX Storage NFS" in response.text
     assert "Nginx" in response.text
     assert "HTTP Access" in response.text
@@ -12919,18 +12817,16 @@ def test_depot_submission_includes_only_relevant_local_user_dependency(
 
 
 @pytest.mark.parametrize(
-    ("nts_server_enabled", "ca_changed", "ldap_changes_pending", "expected_units"),
+    ("ca_changed", "ldap_changes_pending", "expected_units"),
     [
-        (True, True, False, ["ca", "ntpd"]),
-        (True, False, False, ["ca", "ntpd"]),
-        (False, True, False, ["ntpd"]),
-        (True, True, True, ["ca", "dnsmasq", "firewall", "ldap", "ntpd"]),
+        (True, False, ["ntpd"]),
+        (False, False, ["ntpd"]),
+        (True, True, ["ntpd"]),
     ],
 )
-def test_nts_submission_includes_ca_material_dependency(
+def test_ntp_submission_has_no_ca_material_dependency(
     client,
     monkeypatch,
-    nts_server_enabled,
     ca_changed,
     ldap_changes_pending,
     expected_units,
@@ -12972,9 +12868,9 @@ def test_nts_submission_includes_ca_material_dependency(
         ),
         unit(
             "ntpd",
-            "NTP / NTS",
+            "NTP",
             changed=True,
-            context={"ntp_settings": SimpleNamespace(nts_server_enabled=nts_server_enabled)},
+            context={"ntp_settings": SimpleNamespace(nts_server_enabled=True)},
         ),
     ]
     started_jobs = []
@@ -14496,7 +14392,7 @@ def test_services_ui_records_dry_run_action(client):
     assert all(row["service"] != "chronyd" for row in service_rows)
     assert "NTPD" not in page.text
     ntp_row = next(row for row in service_rows if row["service"] == "ntpd")
-    assert ntp_row["display_name"] == "NTP / NTS"
+    assert ntp_row["display_name"] == "NTP"
     assert ntp_row["detail"] == "ntpd.service / UDP 123"
     ca_row = next(row for row in service_rows if row["service"] == "ca")
     assert ca_row["running"] is False
@@ -14519,7 +14415,7 @@ def test_services_ui_records_dry_run_action(client):
     assert js.status_code == 200
     assert "initializeServicesTable" in js.text
     assert "submitServiceAction" in js.text
-    assert "Check NTPsec source health" in js.text
+    assert "Check NTP source health" in js.text
     assert "openNTPsecSourceHealthModal" in js.text
     assert 'height: "100%"' in js.text
     assert 'height: "520px"' not in js.text
