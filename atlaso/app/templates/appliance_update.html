@@ -103,35 +103,44 @@
           <span class="status-pill muted">{{ powershell_packages|length }} configured</span>
         </summary>
         <div class="managed-package-content">
-        <p class="muted">Select a module tab to edit its repository and version policy, or open the final tab to add another module.</p>
+        <p class="muted">Open a configured module to inspect it, or use guided setup to add another module.</p>
         <div class="tab-buttons zone-tabs" role="tablist" aria-label="Managed PowerShell modules" data-tab-storage-key="atlaso:appliance-update:powershell-module-tab">
           {% for package in powershell_packages %}
             <button class="tab-button {{ 'active' if loop.first else '' }}" type="button" role="tab" data-tab-target="powershell-module-{{ package.id }}" aria-controls="powershell-module-{{ package.id }}" {% if loop.first %}aria-selected="true"{% else %}aria-selected="false"{% endif %}>{{ package.name }}</button>
           {% endfor %}
-          <button class="tab-button" type="button" data-managed-package-wizard-open {{ 'disabled' if not powershell_sources else '' }}>+ Module</button>
+          <button class="tab-button" type="button" data-managed-package-wizard-open data-managed-package-mode="create" {{ 'disabled' if not powershell_sources else '' }}>+ Module</button>
         </div>
         <div class="tab-panels">
           {% for package in powershell_packages %}
             <div id="powershell-module-{{ package.id }}" class="tab-panel {{ 'active' if loop.first else '' }}" role="tabpanel" {{ 'hidden' if not loop.first else '' }}>
-              <form class="apply-unit-card source-editor-form managed-package-editor" action="/appliance-update/packages/{{ package.id }}" method="post" data-autosave-form data-autosave-status-id="managed-package-status-{{ package.id }}" data-managed-package-form>
-                <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="enabled_present" value="1">
-                <div class="source-editor-grid">
-                  <label><span class="field-label"><span>Module name</span><button class="help-icon" type="button" data-help="Exact PowerShell module name passed to Find-Module and Install-Module.">i</button></span><input name="name" value="{{ package.name }}" required autocomplete="off"></label>
-                  <label><span class="field-label"><span>Repository</span><button class="help-icon" type="button" data-help="Registered PowerShell repository used to resolve and install this module. Configure repositories in the PowerShell source tabs above.">i</button></span><select name="source_id">{% for source in powershell_sources %}<option value="{{ source.id }}" {{ 'selected' if package.source_id == source.id else '' }}>{{ source.name }}{{ '' if source.enabled else ' (disabled)' }}</option>{% endfor %}</select></label>
-                  <label><span class="field-label"><span>Version policy</span><button class="help-icon" type="button" data-help="Pinned installs the exact target version. Latest resolves the newest version exposed by the selected repository.">i</button></span><select name="policy" data-managed-package-policy><option value="pinned" {{ 'selected' if package.policy == 'pinned' else '' }}>Pinned</option><option value="latest" {{ 'selected' if package.policy == 'latest' else '' }}>Latest</option></select></label>
-                  <label data-managed-package-target-label><span class="field-label"><span>Target version</span><button class="help-icon" type="button" data-help="Required for pinned policy. Latest resolves the repository version and disables this field.">i</button></span><input name="target_version" value="{{ package.target_version }}" autocomplete="off" data-managed-package-target></label>
-                </div>
-                <fieldset class="source-editor-options">
-                  <legend>Module behavior</legend>
-                  <div class="source-option-grid managed-package-option-grid">
-                    <label class="switch-field source-option"><span class="field-label"><span>Module enabled</span><button class="help-icon" type="button" data-help="Includes this module in PowerShell update checks and installation runs.">i</button></span><input class="switch-input" type="checkbox" name="enabled" {{ 'checked' if package.enabled else '' }}><span class="switch-track" aria-hidden="true"></span></label>
+              <div class="source-readonly-view" data-managed-package-readonly>
+                <section class="source-readonly-section" aria-labelledby="powershell-module-{{ package.id }}-identity">
+                  <div class="source-readonly-heading">
+                    <h3 id="powershell-module-{{ package.id }}-identity">Module identity</h3>
+                    <div class="source-editor-actions" aria-label="Module actions">
+                      <button class="button secondary icon-button" type="button" data-managed-package-wizard-open data-managed-package-mode="edit" data-managed-package='{{ package|tojson|forceescape }}' aria-label="Edit {{ package.name }} module" title="Edit module"><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>
+                      <button class="button danger icon-button" type="submit" form="delete-managed-package-{{ package.id }}" aria-label="Delete {{ package.name }} module" title="Delete module"><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="m19 6-1 14H6L5 6"/><path d="M10 11v5M14 11v5"/></svg></button>
+                    </div>
                   </div>
-                </fieldset>
-                <div class="source-editor-footer">
-                  <p id="managed-package-status-{{ package.id }}" class="autosave-status" data-state="idle">Changes save automatically.</p>
-                  <button class="button danger compact" type="submit" form="delete-managed-package-{{ package.id }}">Delete module</button>
-                </div>
-              </form>
+                  <div class="settings-list source-readonly-list">
+                    <div><span>Module name</span><strong>{{ package.name }}</strong></div>
+                    <div><span>Repository</span><strong>{{ package.source_name }}</strong></div>
+                  </div>
+                </section>
+                <section class="source-readonly-section" aria-labelledby="powershell-module-{{ package.id }}-version">
+                  <h3 id="powershell-module-{{ package.id }}-version">Version policy</h3>
+                  <div class="settings-list source-readonly-list">
+                    <div><span>Resolution</span><strong>{{ package.policy|capitalize }}</strong></div>
+                    <div><span>Target version</span><strong>{{ package.target_version if package.policy == 'pinned' else 'Latest available' }}</strong></div>
+                  </div>
+                </section>
+                <section class="source-readonly-section" aria-labelledby="powershell-module-{{ package.id }}-behavior">
+                  <h3 id="powershell-module-{{ package.id }}-behavior">Module behavior</h3>
+                  <div class="settings-list source-readonly-list">
+                    <div><span>Module state</span><strong><span class="status-pill {{ 'good' if package.enabled else 'muted' }}">{{ 'Enabled' if package.enabled else 'Disabled' }}</span></strong></div>
+                  </div>
+                </section>
+              </div>
               <form id="delete-managed-package-{{ package.id }}" class="hidden" action="/appliance-update/packages/{{ package.id }}/delete" method="post" data-confirm-modal data-confirm-title="Stop managing {{ package.name }}?" data-confirm-message="This removes the module from future update checks and runs. It does not uninstall an already installed module from the appliance." data-confirm-label="Delete managed module"><input type="hidden" name="csrf" value="{{ csrf_token }}"></form>
             </div>
           {% endfor %}
@@ -337,6 +346,7 @@
   "Create managed module"
 ) %}
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="enabled_present" value="1">
   <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity">
     {% if powershell_sources %}
     <div class="form-stack">

@@ -567,6 +567,8 @@ def test_software_source_and_managed_module_lifecycle(client):
     assert "window.AtlasoUiPatterns.createWizard({" in app_js
     assert 'form.action = source?.id ? `${createAction}/${source.id}` : createAction;' in app_js
     assert "if (source) populateSource(source);" in app_js
+    assert 'form.action = editing ? `${defaultAction}/${managedPackage.id}` : defaultAction;' in app_js
+    assert 'wizard.open({ launcher, context: managedPackage });' in app_js
     app_css = Path("atlaso/app/static/app.css").read_text(encoding="utf-8")
     assert ".detail-rail .detail-panel {\n  position: static;" in app_css
     assert ".detail-rail {\n  position: sticky;\n  top: 22px;" in app_css
@@ -585,13 +587,18 @@ def test_software_source_and_managed_module_lifecycle(client):
     )
     assert '<input name="name"' not in private_source_panel
     assert 'data-autosave-form' not in private_source_panel
-    assert 'class="source-editor-options"' in grouped_page.text
-    assert 'class="source-option-grid"' in grouped_page.text
-    assert 'class="source-editor-footer"' in grouped_page.text
+    assert 'data-managed-package-readonly' in grouped_page.text
+    assert 'data-managed-package-mode="create"' in grouped_page.text
+    assert 'data-managed-package-mode="edit"' in grouped_page.text
+    assert 'aria-label="Edit Private.PowerCLI.Tools module"' in grouped_page.text
+    assert 'aria-label="Delete Private.PowerCLI.Tools module"' in grouped_page.text
+    assert 'class="source-readonly-view" data-managed-package-readonly' in grouped_page.text
+    assert 'data-managed-package-form' not in grouped_page.text
+    assert 'class="apply-unit-card source-editor-form managed-package-editor"' not in grouped_page.text
+    assert "Changes save automatically." not in grouped_page.text
     assert "Repository behavior" in grouped_page.text
     assert "Module behavior" in grouped_page.text
-    assert 'class="source-option-grid managed-package-option-grid"' in grouped_page.text
-    assert 'class="apply-unit-card source-editor-form managed-package-editor"' in grouped_page.text
+    assert "1.2.3" in grouped_page.text
     assert "appliance-update-task-card" not in app_css
     assert ".appliance-update-history .tabulator-row.task-grid-new-task" in app_css
     assert ".source-editor-grid {\n  display: grid;" in app_css

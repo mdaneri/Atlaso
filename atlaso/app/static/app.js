@@ -18232,26 +18232,6 @@ function initializeAutomationTables() {
 
 }
 
-function initializeManagedPackagePolicies() {
-  document.querySelectorAll("[data-managed-package-form]").forEach((form) => {
-    const policy = form.querySelector("[data-managed-package-policy]");
-    const target = form.querySelector("[data-managed-package-target]");
-    const targetLabel = form.querySelector("[data-managed-package-target-label]");
-    if (!(policy instanceof HTMLSelectElement) || !(target instanceof HTMLInputElement)) return;
-    const updateTargetState = () => {
-      const usesLatest = policy.value === "latest";
-      if (usesLatest) target.value = "";
-      target.disabled = usesLatest;
-      target.required = !usesLatest;
-      target.placeholder = usesLatest ? "Resolved from repository" : "Required for pinned policy";
-      target.setAttribute("aria-disabled", usesLatest ? "true" : "false");
-      targetLabel?.classList.toggle("muted", usesLatest);
-    };
-    policy.addEventListener("change", updateTargetState);
-    updateTargetState();
-  });
-}
-
 function initializeApplianceUpdateSourceWizard() {
   const form = document.querySelector("[data-appliance-update-source-form]");
   const dialog = document.getElementById("appliance-update-source-dialog");
@@ -18435,15 +18415,18 @@ function initializeApplianceUpdateSourceWizard() {
 function initializeManagedPackageWizard() {
   const form = document.querySelector("[data-managed-package-create-form]");
   const dialog = document.getElementById("managed-package-dialog");
-  const launcher = document.querySelector("[data-managed-package-wizard-open]");
+  const launchers = [...document.querySelectorAll("[data-managed-package-wizard-open]")];
   if (
     !(form instanceof HTMLFormElement)
     || !(dialog instanceof HTMLDialogElement)
-    || !(launcher instanceof HTMLButtonElement)
+    || !launchers.length
     || !window.AtlasoUiPatterns
   ) {
     return;
   }
+  const defaultAction = form.action;
+  const dialogTitle = document.getElementById("managed-package-dialog-title");
+  const submit = form.querySelector("[data-atlaso-wizard-submit]");
   const policy = form.querySelector("[data-managed-package-create-policy]");
   const target = form.querySelector("[data-managed-package-create-target]");
   const targetLabel = form.querySelector("[data-managed-package-create-target-label]");
@@ -18465,12 +18448,27 @@ function initializeManagedPackageWizard() {
       { id: "identity", title: "Choose the managed module", description: "Enter the exact module name and select its registered PowerShell repository." },
       { id: "policy", title: "Choose version resolution", description: "Pin an exact version or follow the latest version published by the repository." },
       { id: "enablement", title: "Choose desired availability", description: "Decide whether update checks and installation runs include this module." },
-      { id: "review", title: "Review module creation", description: "Confirm the desired update state before saving it." },
+      { id: "review", title: "Review module changes", description: "Confirm the desired update state before saving it." },
     ],
-    discardTitle: "Discard managed module?",
+    discardTitle: "Discard module changes?",
     discardMessage: "The module identity and version policy entered in this wizard will be lost.",
-    onOpen: () => {
+    onOpen: ({ context: managedPackage }) => {
       form.reset();
+      const editing = managedPackage && managedPackage.id;
+      form.action = editing ? `${defaultAction}/${managedPackage.id}` : defaultAction;
+      if (dialogTitle instanceof HTMLElement) {
+        dialogTitle.textContent = editing ? "Edit managed PowerShell module" : "Add managed PowerShell module";
+      }
+      if (submit instanceof HTMLButtonElement) {
+        submit.textContent = editing ? "Save module changes" : "Create managed module";
+      }
+      if (editing) {
+        form.elements.name.value = managedPackage.name || "";
+        form.elements.source_id.value = String(managedPackage.source_id || "");
+        form.elements.policy.value = managedPackage.policy || "pinned";
+        form.elements.target_version.value = managedPackage.target_version || "";
+        form.elements.enabled.checked = Boolean(managedPackage.enabled);
+      }
       updateTargetState();
     },
     validateStep: (state) => validateAtlasoWizardStep(state),
@@ -18484,7 +18482,19 @@ function initializeManagedPackageWizard() {
       ]);
     },
   });
-  launcher.addEventListener("click", () => wizard.open({ launcher }));
+  launchers.forEach((launcher) => {
+    launcher.addEventListener("click", () => {
+      let managedPackage = null;
+      if (launcher.dataset.managedPackage) {
+        try {
+          managedPackage = JSON.parse(launcher.dataset.managedPackage);
+        } catch (_error) {
+          return;
+        }
+      }
+      wizard.open({ launcher, context: managedPackage });
+    });
+  });
 }
 
 function initializeEsxStorageTables() {
@@ -20242,7 +20252,6 @@ document.addEventListener("DOMContentLoaded", initializeLdapDirectoryTables);
 document.addEventListener("DOMContentLoaded", initializeLdapPasswordModal);
 document.addEventListener("DOMContentLoaded", initializeLdapBindSecretModal);
 document.addEventListener("DOMContentLoaded", initializeAutomationTables);
-document.addEventListener("DOMContentLoaded", initializeManagedPackagePolicies);
 document.addEventListener("DOMContentLoaded", initializeApplianceUpdateSourceWizard);
 document.addEventListener("DOMContentLoaded", initializeManagedPackageWizard);
 document.addEventListener("DOMContentLoaded", () => initializeNtpSettings());

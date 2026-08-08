@@ -8463,7 +8463,19 @@ def appliance_update_context(db: Session) -> dict[str, Any]:
     packages = managed_package_rows(db)
     source_payloads = [update_source_payload(source) for source in sources]
     powershell_sources = [source for source in sources if source.kind == "powershell"]
-    powershell_packages = [package for package in packages if package.ecosystem == "powershell"]
+    powershell_packages = [
+        {
+            "id": package.id,
+            "name": package.name,
+            "source_id": package.source_id,
+            "source_name": package.source.name if package.source is not None else "Unavailable repository",
+            "policy": package.policy,
+            "target_version": package.target_version,
+            "enabled": package.enabled,
+        }
+        for package in packages
+        if package.ecosystem == "powershell"
+    ]
     selected = list(UPDATE_STREAMS)
     manifest_preview = render_update_manifest(selected_streams=selected, settings=settings, actor="preview")
     photon_repositories = photon_repository_details()

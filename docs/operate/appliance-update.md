@@ -102,9 +102,10 @@ Each source detail presents repository identity first, then its location or disc
 read-only **Repository behavior** values. Desired-state guidance and synchronization state remain together in a
 separated footer. The accessible edit and delete icon actions stay together in the identity header.
 
-The peer **POWERSHELL · managed modules** disclosure uses the same section spacing, count badge, and tab treatment as
-the repository disclosures. Its module editors keep module identity and version policy first, then a grouped **Module
-behavior** switch and a separated autosave/delete footer. The **+ Module** launcher opens a reviewed wizard for module
+The peer **POWERSHELL · managed modules** disclosure uses the same section spacing, count badge, read-only detail
+hierarchy, and tab treatment as the repository disclosures. Each module tab presents identity, repository, version
+policy, target version, and desired state without implying inline editing. **Edit module** and **Delete module** remain
+together in the identity header. Both **+ Module** and **Edit module** open the shared reviewed wizard for module
 identity, version resolution, enablement, and final confirmation; saving it does not install the module. The
 Update Streams workspace keeps the shared Tasks
 grid, server-scoped to Appliance Update tasks. It preserves the standard sorting, filtering, component tree, progress,
