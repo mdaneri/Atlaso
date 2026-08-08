@@ -98,6 +98,10 @@ The following cross-cutting boundaries always apply:
   distribution selection, native-Linux cache, Linux-only child `PATH`, per-repository `flock`, and checkout-wide output
   serialization described in the canonical contributor guide.
 - Validate live appliance readiness through `/openapi.json`, not VMware Tools IP discovery or service color alone.
+- Keep configured Appliance Update source tabs read-only. Create and edit Photon, PowerShell, and signed Atlaso sources
+  through the shared reviewed source wizard, with **Edit repository** beside the destructive action. Wizard submission
+  saves desired runtime-maintenance state only; package-client changes still require the explicit audited
+  **Synchronize repositories** task.
 - Boot ShredOS only from the verified stable ISO's allowlisted `/boot/bzImage` kernel through iPXE. Do not restore raw
   disk-image SAN boot or add unattended erase arguments.
 - OIDC clients use explicit validated identity sources and emit only granted, explicitly mapped claims; see the detailed

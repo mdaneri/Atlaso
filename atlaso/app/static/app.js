@@ -12334,6 +12334,23 @@ function applyTasksStatusPayload(payload, { reopen = false } = {}) {
   return atlasoTasks;
 }
 
+function expandedTaskRowIds(table) {
+  if (!table || typeof table.getRows !== "function") {
+    return [];
+  }
+  return table.getRows()
+    .filter((row) => row.getTreeChildren().length > 0 && row.isTreeExpanded())
+    .map((row) => row.getData().id)
+    .filter(Boolean);
+}
+
+function restoreExpandedTaskRows(table, rowIds) {
+  if (!table || typeof table.getRow !== "function") {
+    return;
+  }
+  rowIds.forEach((rowId) => table.getRow(rowId)?.treeExpand());
+}
+
 async function refreshTasksPage({ reopen = false } = {}) {
   const page = document.querySelector("[data-tasks-page]");
   if (!(page instanceof HTMLElement)) {
@@ -12341,7 +12358,9 @@ async function refreshTasksPage({ reopen = false } = {}) {
   }
   if (atlasoTasksTable) {
     atlasoTasksReopenSelected = reopen;
+    const expandedRowIds = expandedTaskRowIds(atlasoTasksTable);
     await atlasoTasksTable.replaceData();
+    restoreExpandedTaskRows(atlasoTasksTable, expandedRowIds);
     return;
   }
   const queryId = atlasoSelectedTaskId || page.dataset.selectedTaskId || "";
@@ -18251,6 +18270,9 @@ function initializeApplianceUpdateSourceWizard() {
   const managedControl = form.elements.namedItem("managed");
   const kindLabel = form.querySelector("[data-update-source-kind-label]");
   const urlLabel = form.querySelector("[data-update-source-url-label]");
+  const dialogTitle = document.getElementById("appliance-update-source-dialog-title");
+  const submitButton = form.querySelector("[data-atlaso-wizard-submit]");
+  const createAction = "/appliance-update/sources";
   let selectedKind = "";
 
   const updateUrlRequirement = () => {
@@ -18282,6 +18304,35 @@ function initializeApplianceUpdateSourceWizard() {
     managedControl.addEventListener("change", updateUrlRequirement);
   }
 
+  const setControlValue = (name, value) => {
+    const control = form.elements.namedItem(name);
+    if (control instanceof HTMLInputElement || control instanceof HTMLSelectElement) {
+      control.value = String(value ?? "");
+    }
+  };
+
+  const setCheckboxValue = (name, checked) => {
+    const control = form.elements.namedItem(name);
+    if (control instanceof HTMLInputElement && control.type === "checkbox") {
+      control.checked = Boolean(checked);
+    }
+  };
+
+  const populateSource = (source) => {
+    const settings = source?.settings && typeof source.settings === "object" ? source.settings : {};
+    setControlValue("name", source?.name || "");
+    setControlValue("priority", source?.priority ?? 50);
+    setControlValue("url", source?.url || "");
+    setControlValue("channel", settings.channel || "stable");
+    setControlValue("gpgkey", settings.gpgkey || "");
+    setCheckboxValue("trusted", settings.trusted);
+    setCheckboxValue("managed", settings.managed);
+    setCheckboxValue("gpgcheck", settings.gpgcheck ?? true);
+    setCheckboxValue("tls_verify", settings.tls_verify ?? true);
+    setCheckboxValue("enabled", source?.enabled);
+    updateUrlRequirement();
+  };
+
   const wizard = window.AtlasoUiPatterns.createWizard({
     form,
     dialog,
@@ -18289,13 +18340,23 @@ function initializeApplianceUpdateSourceWizard() {
       { id: "identity", title: "Name the repository", description: "Confirm its ecosystem, operator-visible name, and resolution priority." },
       { id: "endpoint", title: "Configure the endpoint", description: "Set the repository location and ecosystem-specific trust policy." },
       { id: "state", title: "Choose desired availability", description: "Decide whether the source participates in future update work." },
-      { id: "review", title: "Review repository creation", description: "Confirm the desired state before saving it." },
+      { id: "review", title: "Review repository changes", description: "Confirm the desired state before saving it." },
     ],
-    discardTitle: "Discard repository setup?",
+    discardTitle: "Discard repository changes?",
     discardMessage: "The repository values entered in this wizard will be lost.",
     onOpen: ({ context }) => {
       form.reset();
-      selectKind(context?.kind || "");
+      const source = context?.source && typeof context.source === "object" ? context.source : null;
+      form.action = source?.id ? `${createAction}/${source.id}` : createAction;
+      form.dataset.updateSourceMode = source?.id ? "edit" : "create";
+      if (dialogTitle instanceof HTMLElement) {
+        dialogTitle.textContent = source?.id ? "Edit update repository" : "Add update repository";
+      }
+      if (submitButton instanceof HTMLButtonElement) {
+        submitButton.textContent = source?.id ? "Save repository changes" : "Create repository";
+      }
+      selectKind(source?.kind || context?.kind || "");
+      if (source) populateSource(source);
     },
     validateStep: (state) => validateAtlasoWizardStep(state),
     prepareReview: () => {
@@ -18336,10 +18397,10 @@ function initializeApplianceUpdateSourceWizard() {
         payload = {};
       }
       if (!response.ok) {
-        throw new Error(payload.detail || "The repository could not be created.");
+        throw new Error(payload.detail || "The repository could not be saved.");
       }
       if (!payload.source?.id) {
-        throw new Error("The server did not return the created repository.");
+        throw new Error("The server did not return the saved repository.");
       }
       try {
         window.localStorage.setItem("atlaso:appliance-update:workspace-tab", "appliance-update-sources");
@@ -18357,7 +18418,16 @@ function initializeApplianceUpdateSourceWizard() {
 
   launchers.forEach((button) => {
     button.addEventListener("click", () => {
-      wizard.open({ launcher: button, context: { kind: button.dataset.updateSourceKind || "" } });
+      let source = null;
+      try {
+        source = button.dataset.updateSource ? JSON.parse(button.dataset.updateSource) : null;
+      } catch (_error) {
+        source = null;
+      }
+      wizard.open({
+        launcher: button,
+        context: { kind: button.dataset.updateSourceKind || "", source },
+      });
     });
   });
 }
