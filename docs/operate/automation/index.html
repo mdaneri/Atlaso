@@ -1262,6 +1262,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#automation-schedules" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Automation: Schedules
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3108,6 +3119,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#automation-schedules" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Automation: Schedules
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3242,14 +3264,18 @@ supports:</p>
 
 <ul>
 <li>Appliance Update checks and installs with selected update streams.</li>
-<li>Enabled VCF Offline Depot download profiles. The worker rechecks the profile immediately before execution, so a
-  profile disabled after queueing fails closed instead of starting a download.</li>
+<li>Enabled VCF Offline Depot download profiles. Manual starts, <strong>Run now</strong>, and scheduled starts share one server-owned
+  admission and execution path. The worker rechecks the applied VCF Download Tool, staged credential, current profile
+  state, and generated command set immediately before execution, so a prerequisite removed after queueing fails closed
+  before VCFDT starts.</li>
 <li>Explicitly enabled immutable managed-script revisions.</li>
 </ul>
 <p>Schedules use either a one-time local date/time or a standard five-field cron expression
 (<code>minute hour day month weekday</code>) with an IANA timezone such as <code>UTC</code> or <code>America/Los_Angeles</code>. Execution timestamps are
-stored in UTC. Missed runs and overlaps are not replayed: the scheduler advances to the next time and does not queue a
-second active task for the same schedule.</p>
+stored in UTC. Missed runs are not replayed. Every due occurrence advances to the next time; when a profile download,
+Software Depot ID task, or VCF Offline Depot Appliance Apply is already pending or running, the occurrence is recorded
+as a terminal skipped task that links to the active task instead of starting a second VCFDT process. The shared
+database admission guard applies across web and scheduler processes.</p>
 <p>Schedules can be edited, enabled or disabled, run immediately, and deleted. <strong>Run now</strong> creates a normal queued task
 with a <code>manual_schedule</code> trigger and does not change the next calculated recurring run. The Automation table shows the
 latest task state; full execution output remains on the Tasks page.</p>
@@ -3266,6 +3292,16 @@ enabled state, and review. The second step changes with the selected task: updat
 or an enabled managed-script revision and its parameters. The timing step includes an hourly/daily/weekly/monthly cron
 builder with a generated summary; advanced operators can choose Custom for a standard five-field expression. The same
 wizard is used for edits.</p>
+<p>The <strong>Schedule download</strong> action in a VCF Offline Depot profile row opens this same wizard with the VCF task type and
+stable profile ID preselected. Schedule definitions contain that ID and timing only; they never contain Broadcom
+credentials, authenticated URLs, generated commands, or credential-bearing output. Profile renames and content edits
+therefore affect future runs without rewriting history. Disabling a profile disables its attached schedules and clears
+their next-run timestamps; re-enabling the profile does not silently re-enable them. Delete the attached schedules
+before deleting a profile.</p>
+<p>The profile selector shows every configured VCF Offline Depot profile so unavailable entries are not mistaken for
+missing data. Disabled profiles are labeled and cannot be selected. When no profile is enabled, the wizard reports that
+state and links back to <strong>VCF Offline Depot</strong>, where an administrator can review and enable the intended profile before
+creating the schedule.</p>
 <h2 id="managed-scripts">Managed scripts<a class="headerlink" href="#managed-scripts" title="Permanent link">&para;</a></h2>
 <p>Creating or editing a script always creates a new immutable, disabled revision. An administrator must review and enable
 a particular revision before it can be run manually or selected by a schedule. Schedules remain pinned to that exact
@@ -3273,8 +3309,8 @@ revision; disabling it makes execution fail closed.</p>
 <p>Selecting <strong>+ Add managed script here</strong> opens a four-step wizard for identity, runtime, the first source revision, and
 review. The source editor expands through the available wizard workspace and accepts direct Monaco Editor input or imports
 <code>.sh</code>, <code>.bash</code>, <code>.py</code>, <code>.ps1</code>, or <code>.txt</code> files up to 1 MiB. Bash, PowerShell, and Python selections load matching syntax
-highlighting. An accessible full-screen control opens the same source buffer in a focused editor-only dialog. Creation
-always stores immutable revision 1 in the disabled state.</p>
+highlighting. Creation always stores immutable revision 1 in the disabled state and refreshes the managed-script grid so
+the new row is visible immediately.</p>
 <p>Existing managed-script rows edit name, description, interpreter, timeout, and state in the grid. Their compact source
 action opens a nearly full-window Monaco Editor modal for creating another disabled immutable revision. An edit that
 changes revision-owned fields creates a new disabled immutable revision; it never rewrites historical source. When a
@@ -3300,6 +3336,10 @@ removes its stored revisions but preserves existing task history.</p>
 <li>a read-only system filesystem except for <code>/var/lib/atlaso/automation/runs</code>;</li>
 <li>the revision's configured timeout, capped at 24 hours.</li>
 </ul>
+<p>Atlaso canonicalizes imported and pasted source to Unix LF line endings before storing and again before execution, so
+scripts authored on Windows do not pass carriage returns to Bash. A Bash shebang is optional because Atlaso invokes the
+selected interpreter explicitly; when supplied, it must begin with <code>#!</code> (for example, <code>#!/bin/bash</code>). The editor reports
+a leading <code>!/</code> as a missing <code>#</code> before the revision can be created.</p>
 <p>Scripts receive no Atlaso credentials by default. A schedule or manual run may select one named VCF/ESX password vault.
 Atlaso stages that vault as a transient systemd credential and provides <code>atlaso-vault get --key &lt;key&gt;</code> to Bash/Python
 and <code>Get-AtlasoVault -Key &lt;key&gt;</code> to PowerShell. The helper fails outside the scoped process and exact injected values are
@@ -3314,6 +3354,9 @@ settings archives, but restored revisions and schedules are always disabled and 
 never claimed remains pending.</p>
 <h2 id="task-history-and-output">Task history and output<a class="headerlink" href="#task-history-and-output" title="Permanent link">&para;</a></h2>
 <p>Scheduled work always creates normal Atlaso Jobs, so it appears in both the Automation <strong>Executions</strong> tab and <code>/tasks</code>.
+VCFDT scheduled tasks also appear in the profile-scoped task grid. Failed prerequisite checks and skipped overlaps are
+terminal history entries with schedule, profile, planned-time, and active-task context; missed or failed runs are not
+retried outside the next configured occurrence.
 The Tasks grid uses backend-owned filtering and pagination. Status and state are fixed lists; Task / Component is an
 autocomplete list built from recorded job types and component labels while still accepting a custom job id, task, or
 component fragment.</p>
@@ -3327,6 +3370,11 @@ in the corner without reserving blank text rows.</p>
 <h3 id="automation_1">Automation<a class="headerlink" href="#automation_1" title="Permanent link">&para;</a></h3>
 <p><img alt="Atlaso Automation page in the clean-appliance responsive viewport." src="../../assets/screenshots/automation-clean-responsive.webp" /></p>
 <p><em>Figure: Automation in the verified clean-appliance responsive state.</em></p>
+<h3 id="automation-schedules">Automation: Schedules<a class="headerlink" href="#automation-schedules" title="Permanent link">&para;</a></h3>
+<p><img alt="Atlaso Automation schedule wizard with VCF Offline Depot profile download selected at the desktop viewport." src="../../assets/screenshots/automation-vcf-schedule-wizard-desktop.webp" /></p>
+<p><em>Figure: VCF Offline Depot profile scheduling in the shared Automation wizard.</em></p>
+<p><img alt="Atlaso Automation schedule wizard with VCF Offline Depot profile download selected at the responsive viewport." src="../../assets/screenshots/automation-vcf-schedule-wizard-responsive.webp" /></p>
+<p><em>Figure: VCF Offline Depot profile scheduling in the shared Automation wizard at the responsive viewport.</em></p>
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
 
 

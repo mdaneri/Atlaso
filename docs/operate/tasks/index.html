@@ -3226,6 +3226,11 @@ job with its type, state, timestamps, and result.</p>
 </ol>
 <p>Pending and running tasks are not proof that appliance state changed. Treat only a successful terminal result plus the
 service-specific verification as success.</p>
+<p>VCF Offline Depot downloads use the same task type for profile-row starts and Automation starts. Their result records
+identify the profile, trigger, optional schedule, planned time, and sanitized task log. A scheduled VCFDT overlap is a
+terminal <strong>skipped</strong> task linked to the already-active profile download, Software Depot ID task, or VCF Offline Depot
+Appliance Apply; a failed execution-time prerequisite is a terminal <strong>failed</strong> task. Neither outcome implies depot
+content changed, and neither is replayed automatically.</p>
 <h2 id="diagnose-a-failure">Diagnose a failure<a class="headerlink" href="#diagnose-a-failure" title="Permanent link">&para;</a></h2>
 <p>Read the failed step and sanitized task log, then correlate its identifier with <a href="../logs/">Operational logs</a> and the
 <a href="../audit-log/">Audit log</a>. Correct desired state in the owning page and submit a new task. Do not edit task history or
