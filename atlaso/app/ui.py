@@ -168,6 +168,7 @@ from atlaso.app.services.automation import (
     enabled_script_revision,
     enqueue_schedule_now,
     next_schedule_run,
+    normalize_script_content,
     parse_script_arguments,
     validate_schedule_values,
 )
@@ -8879,7 +8880,7 @@ def automation_context(db: Session) -> dict[str, Any]:
                 "schedule_count": sum(1 for revision in script.revisions if revision.id in scheduled_revision_ids),
             }
         )
-    profiles = db.execute(select(VcfDepotDownloadProfile).where(VcfDepotDownloadProfile.enabled.is_(True)).order_by(VcfDepotDownloadProfile.name)).scalars().all()
+    profiles = db.execute(select(VcfDepotDownloadProfile).order_by(VcfDepotDownloadProfile.name)).scalars().all()
     return {
         "automation_schedule_rows": schedule_rows,
         "automation_execution_rows": execution_rows,
@@ -8891,6 +8892,7 @@ def automation_context(db: Session) -> dict[str, Any]:
         "automation_task_types": sorted(SCHEDULE_TASK_TYPES),
         "automation_interpreters": sorted(SCRIPT_INTERPRETERS),
         "automation_vcf_profiles": profiles,
+        "automation_vcf_enabled_profile_count": sum(1 for profile in profiles if profile.enabled),
         "automation_vaults": db.execute(select(Vault).order_by(Vault.name)).scalars().all(),
         "automation_update_streams": [{"id": stream, "label": UPDATE_STREAM_LABELS[stream]} for stream in UPDATE_STREAMS],
         "system_adapter_dry_run": get_settings().dry_run_system_adapters,
@@ -10854,9 +10856,13 @@ def _automation_render_error(request: Request, identity: Identity, db: Session, 
 def _automation_script_validation_message(interpreter: str, content: str, timeout_seconds: int) -> str | None:
     if interpreter not in SCRIPT_INTERPRETERS:
         return "Interpreter must be bash, python, or powershell."
-    if not content.strip():
+    try:
+        normalized_content = normalize_script_content(content, interpreter)
+    except ValueError as exc:
+        return str(exc)
+    if not normalized_content.strip():
         return "Script content is required."
-    if len(content.encode("utf-8")) > MAX_SCRIPT_CONTENT_BYTES:
+    if len(normalized_content.encode("utf-8")) > MAX_SCRIPT_CONTENT_BYTES:
         return "Script content must be 1 MiB or smaller."
     if timeout_seconds < 1 or timeout_seconds > MAX_SCRIPT_TIMEOUT_SECONDS:
         return "Script timeout must be between 1 second and 24 hours."

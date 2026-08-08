@@ -61,6 +61,11 @@ therefore affect future runs without rewriting history. Disabling a profile disa
 their next-run timestamps; re-enabling the profile does not silently re-enable them. Delete the attached schedules
 before deleting a profile.
 
+The profile selector shows every configured VCF Offline Depot profile so unavailable entries are not mistaken for
+missing data. Disabled profiles are labeled and cannot be selected. When no profile is enabled, the wizard reports that
+state and links back to **VCF Offline Depot**, where an administrator can review and enable the intended profile before
+creating the schedule.
+
 ## Managed scripts
 
 Creating or editing a script always creates a new immutable, disabled revision. An administrator must review and enable
@@ -70,8 +75,8 @@ revision; disabling it makes execution fail closed.
 Selecting **+ Add managed script here** opens a four-step wizard for identity, runtime, the first source revision, and
 review. The source editor expands through the available wizard workspace and accepts direct Monaco Editor input or imports
 `.sh`, `.bash`, `.py`, `.ps1`, or `.txt` files up to 1 MiB. Bash, PowerShell, and Python selections load matching syntax
-highlighting. An accessible full-screen control opens the same source buffer in a focused editor-only dialog. Creation
-always stores immutable revision 1 in the disabled state.
+highlighting. Creation always stores immutable revision 1 in the disabled state and refreshes the managed-script grid so
+the new row is visible immediately.
 
 Existing managed-script rows edit name, description, interpreter, timeout, and state in the grid. Their compact source
 action opens a nearly full-window Monaco Editor modal for creating another disabled immutable revision. An edit that
@@ -100,6 +105,11 @@ Interpreters are allowlisted to Bash, system Python, and PowerShell. The helper 
 - a private temporary directory and protected home directories;
 - a read-only system filesystem except for `/var/lib/atlaso/automation/runs`;
 - the revision's configured timeout, capped at 24 hours.
+
+Atlaso canonicalizes imported and pasted source to Unix LF line endings before storing and again before execution, so
+scripts authored on Windows do not pass carriage returns to Bash. A Bash shebang is optional because Atlaso invokes the
+selected interpreter explicitly; when supplied, it must begin with `#!` (for example, `#!/bin/bash`). The editor reports
+a leading `!/` as a missing `#` before the revision can be created.
 
 Scripts receive no Atlaso credentials by default. A schedule or manual run may select one named VCF/ESX password vault.
 Atlaso stages that vault as a transient systemd credential and provides `atlaso-vault get --key <key>` to Bash/Python

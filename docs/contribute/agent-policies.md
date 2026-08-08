@@ -680,8 +680,9 @@ status: current
   evidence. Disabling a profile or resetting the tool disables attached schedules without re-enabling them later;
   profile deletion is blocked while any schedule references it. Schedule configuration stores only the stable integer
   `profile_id` and never credentials, authenticated URLs, generated commands, or secret-bearing output. The application
-  properties editor in the shared VCFDT configuration wizard saves desired-state text and syncs Monaco Editor before submit; global apply writes the runtime
-  properties used by the active tool. Depot private keys, HTTP user passwords/hashes, and VCFDT credential contents must
+  properties editor in the shared VCFDT configuration wizard saves desired-state text and syncs Monaco Editor before
+  submit; global apply writes the runtime properties used by the active tool. Depot private keys, HTTP user
+  passwords/hashes, and VCFDT credential contents must
   remain path references or presence flags only; never print key contents, token values, activation-code values, private
   keys, passwords, or password hashes in previews, jobs, logs, docs, or final responses.
 - When testing real apply from the UI, select only the intended apply unit. Existing appliances that predate factory

@@ -21,7 +21,7 @@ from atlaso.app.services.appliance_update import (
     UPDATE_STREAM_LABELS,
     ensure_appliance_update_job_steps,
 )
-from atlaso.app.services.automation import enqueue_due_schedules, json_object
+from atlaso.app.services.automation import enqueue_due_schedules, json_object, normalize_script_content
 from atlaso.app.services.network_boot import (
     cleanup_network_boot_upload,
     recover_interrupted_network_boot_media_swaps,
@@ -400,7 +400,7 @@ def _run_managed_script(db: Session, job: Job) -> None:
         raise ValueError("The scheduled managed script arguments are invalid.")
     stage_path = _automation_stage_path(job.id, revision.interpreter)
     stage_path.parent.mkdir(parents=True, exist_ok=True)
-    stage_path.write_text(revision.content, encoding="utf-8")
+    stage_path.write_text(normalize_script_content(revision.content, revision.interpreter), encoding="utf-8", newline="\n")
     stage_path.chmod(0o640)
     vault_path: Path | None = None
     vault_values: dict[str, str] = {}

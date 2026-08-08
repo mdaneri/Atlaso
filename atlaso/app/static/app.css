@@ -5553,7 +5553,9 @@ textarea {
 }
 
 #automation-script-modal .confirm-modal-body {
+  display: grid;
   grid-template-rows: auto auto auto minmax(0, 1fr);
+  height: 100%;
   min-height: 0;
   overflow: hidden;
 }
@@ -5601,6 +5603,10 @@ textarea {
   margin: 0;
 }
 
+.automation-script-import-status:empty {
+  display: none;
+}
+
 #automation-script-create-dialog .vcf-sddc-wizard-body {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -5609,6 +5615,8 @@ textarea {
 }
 
 #automation-script-create-dialog .automation-script-source-step {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
   min-height: 0;
   height: 100%;
 }
@@ -5617,50 +5625,18 @@ textarea {
   height: 100%;
 }
 
-.automation-script-fullscreen-dialog {
-  width: calc(100vw - 32px);
-  max-width: none;
-  height: calc(100vh - 32px);
-  max-height: none;
-}
-
-.automation-script-fullscreen-dialog .confirm-modal-panel {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  width: 100%;
-  height: 100%;
-  max-width: none;
-  max-height: none;
-  overflow: hidden;
-  padding: 0;
-}
-
-.automation-script-fullscreen-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  border-bottom: 1px solid var(--border);
-  padding: 10px 12px;
-}
-
-.automation-script-fullscreen-toolbar h2 {
-  flex: 1;
-  margin: 0;
-  font-size: 16px;
-}
-
-.automation-script-fullscreen-editor {
-  min-height: 0;
-  padding: 12px;
-}
-
-.automation-script-fullscreen-editor .code-editor-textarea + .atlaso-monaco-shell .atlaso-monaco-editor {
-  min-height: 0;
-}
-
 .automation-grid-status {
   min-height: 18px;
   margin: 7px 0 0;
+}
+
+.automation-script-interpreter-editor {
+  width: 100%;
+  height: 100%;
+  border: 1px solid var(--accent);
+  border-radius: 0;
+  padding: 0 6px;
+  background: white;
 }
 
 .automation-source-button {

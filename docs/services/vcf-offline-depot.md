@@ -52,7 +52,7 @@ its visible editor is not nested in the source textarea's label.
    shared [Tasks](../operate/tasks.md) grid scoped to VCF Download Tool profile downloads, with the same filters,
    pagination, detail view, live state refresh, and access to the active or archived VCFDT task log. Use **Open full
    task history** when you need the appliance-wide view.
-7. Use **Schedule download** in an enabled profile's row menu to open the shared Automation schedule wizard with that
+9. Use **Schedule download** in an enabled profile's row menu to open the shared Automation schedule wizard with that
    profile selected. Disabled profiles cannot be scheduled.
 
 Download-profile creation uses a reviewed wizard. Notes stay with profile identity, task execution owns lifecycle

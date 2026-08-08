@@ -53,6 +53,15 @@ MAX_SCRIPT_ARGUMENT_BYTES = 4096
 MAX_SCRIPT_ARGUMENTS_BYTES = 16 * 1024
 
 
+def normalize_script_content(content: str, interpreter: str) -> str:
+    """Return the canonical source stored and staged for a managed script."""
+    normalized = content.removeprefix("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
+    first_line = normalized.split("\n", 1)[0].strip()
+    if interpreter == "bash" and first_line.startswith("!/"):
+        raise ValueError("A Bash shebang must start with #!; add the missing # or remove the shebang line.")
+    return normalized
+
+
 def json_object(raw_value: str, *, label: str = "configuration") -> dict[str, Any]:
     try:
         payload = json.loads(raw_value or "{}")
@@ -284,9 +293,10 @@ def create_script_revision(
 ) -> AutomationScriptRevision:
     if interpreter not in SCRIPT_INTERPRETERS:
         raise ValueError("Interpreter must be bash, python, or powershell.")
-    if not content.strip():
+    normalized_content = normalize_script_content(content, interpreter)
+    if not normalized_content.strip():
         raise ValueError("Script content is required.")
-    if len(content.encode("utf-8")) > MAX_SCRIPT_CONTENT_BYTES:
+    if len(normalized_content.encode("utf-8")) > MAX_SCRIPT_CONTENT_BYTES:
         raise ValueError("Script content must be 1 MiB or smaller.")
     if timeout_seconds < 1 or timeout_seconds > MAX_SCRIPT_TIMEOUT_SECONDS:
         raise ValueError("Script timeout must be between 1 second and 24 hours.")
@@ -299,8 +309,8 @@ def create_script_revision(
         script_id=script.id,
         revision=(latest.revision + 1) if latest else 1,
         interpreter=interpreter,
-        content=content,
-        content_sha256=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        content=normalized_content,
+        content_sha256=hashlib.sha256(normalized_content.encode("utf-8")).hexdigest(),
         enabled=False,
         timeout_seconds=timeout_seconds,
         created_by=actor,
