@@ -24,6 +24,13 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _job_vcf_depot_operation_default(context) -> bool:
+    return str(context.get_current_parameters().get("type") or "") in {
+        "vcf-depot-download",
+        "vcf-depot-software-id",
+    }
+
+
 class Role(StrEnum):
     ADMIN = "admin"
     NETWORK_ADMIN = "network-admin"
@@ -1529,6 +1536,10 @@ class Job(Base):
     task_config_json: Mapped[str] = mapped_column(Text, default="{}")
     network_boot_environment_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
     network_boot_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    vcf_depot_operation: Mapped[bool] = mapped_column(
+        Boolean,
+        default=_job_vcf_depot_operation_default,
+    )
 
     steps: Mapped[list["JobStep"]] = relationship(
         back_populates="job",

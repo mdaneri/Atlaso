@@ -21,7 +21,7 @@ class ActiveVcfDepotDownloadError(ValueError):
     def __init__(self, active_job_id: str) -> None:
         self.active_job_id = active_job_id
         super().__init__(
-            f"VCFDT task {active_job_id} is already active. Wait for it to finish before starting another download."
+            f"VCFDT task {active_job_id} is already active. Wait for it to finish before starting another VCFDT operation."
         )
 
 
@@ -61,6 +61,18 @@ def disable_vcf_depot_profile_schedules(db: Session, profile_id: int) -> list[Sc
             db.add(schedule)
             disabled.append(schedule)
     return disabled
+
+
+def active_vcf_depot_operation_job(db: Session) -> Job | None:
+    return db.scalars(
+        select(Job)
+        .where(
+            Job.vcf_depot_operation.is_(True),
+            Job.status.in_(ACTIVE_VCF_DEPOT_JOB_STATUSES),
+        )
+        .order_by(desc(Job.created_at), desc(Job.id))
+        .limit(1)
+    ).first()
 
 
 def active_vcf_depot_download_job(db: Session) -> Job | None:
@@ -111,6 +123,7 @@ def enqueue_vcf_depot_download(
         id=identifier,
         type=VCF_DEPOT_JOB_TYPE,
         status=JobStatus.PENDING.value,
+        vcf_depot_operation=True,
         created_by=actor,
         progress_percent=0,
         schedule_id=schedule.id if schedule is not None else None,
@@ -134,7 +147,7 @@ def enqueue_vcf_depot_download(
             db.add(job)
             db.flush()
     except IntegrityError as exc:
-        active = active_vcf_depot_download_job(db)
+        active = active_vcf_depot_operation_job(db)
         raise ActiveVcfDepotDownloadError(active.id if active is not None else "unknown") from exc
     if profile.enabled:
         profile.status = "ready"

@@ -32,9 +32,10 @@ This verified appliance view provides visual orientation before you begin.
 
 Schedules use either a one-time local date/time or a standard five-field cron expression
 (`minute hour day month weekday`) with an IANA timezone such as `UTC` or `America/Los_Angeles`. Execution timestamps are
-stored in UTC. Missed runs are not replayed. Every due occurrence advances to the next time; when any manual or
-scheduled VCFDT download is already pending or running, the occurrence is recorded as a terminal skipped task that
-links to the active task instead of starting a second VCFDT process.
+stored in UTC. Missed runs are not replayed. Every due occurrence advances to the next time; when a profile download,
+Software Depot ID task, or VCF Offline Depot Appliance Apply is already pending or running, the occurrence is recorded
+as a terminal skipped task that links to the active task instead of starting a second VCFDT process. The shared
+database admission guard applies across web and scheduler processes.
 
 Schedules can be edited, enabled or disabled, run immediately, and deleted. **Run now** creates a normal queued task
 with a `manual_schedule` trigger and does not change the next calculated recurring run. The Automation table shows the

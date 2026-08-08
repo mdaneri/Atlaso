@@ -35,8 +35,9 @@ service-specific verification as success.
 
 VCF Offline Depot downloads use the same task type for profile-row starts and Automation starts. Their result records
 identify the profile, trigger, optional schedule, planned time, and sanitized task log. A scheduled VCFDT overlap is a
-terminal **skipped** task linked to the already-active download; a failed execution-time prerequisite is a terminal
-**failed** task. Neither outcome implies depot content changed, and neither is replayed automatically.
+terminal **skipped** task linked to the already-active profile download, Software Depot ID task, or VCF Offline Depot
+Appliance Apply; a failed execution-time prerequisite is a terminal **failed** task. Neither outcome implies depot
+content changed, and neither is replayed automatically.
 
 ## Diagnose a failure
 

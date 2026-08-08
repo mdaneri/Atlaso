@@ -175,6 +175,7 @@ from atlaso.app.services.automation import (
 from atlaso.app.services.vcf_depot_downloads import (
     ActiveVcfDepotDownloadError,
     active_vcf_depot_download_job,
+    active_vcf_depot_operation_job,
     disable_vcf_depot_profile_schedules,
     enqueue_vcf_depot_download,
     vcf_depot_schedules_for_profile,
@@ -11515,26 +11516,7 @@ def active_appliance_apply_submitted_unit_ids(db: Session) -> set[str]:
 
 
 def active_vcf_depot_execution_job(db: Session) -> Job | None:
-    direct_job = db.scalars(
-        select(Job)
-        .where(
-            Job.type.in_(["vcf-depot-download", "vcf-depot-software-id"]),
-            Job.status.in_(ACTIVE_JOB_STATUSES),
-        )
-        .order_by(Job.created_at)
-        .limit(1)
-    ).first()
-    if direct_job is not None:
-        return direct_job
-    apply_job = active_appliance_apply_job(db)
-    if apply_job is None:
-        return None
-    submitted_units = (
-        {step.component_key for step in apply_job.steps}
-        if apply_job.steps
-        else {str(unit_id) for unit_id in _job_payload(apply_job).get("selected_units", [])}
-    )
-    return apply_job if "vcf_offline_depot" in submitted_units else None
+    return active_vcf_depot_operation_job(db)
 
 
 def vcf_depot_execution_conflict_detail(job: Job) -> str:
@@ -12131,6 +12113,7 @@ def submit_appliance_apply(
             id=job_id,
             type="appliance-apply",
             status=JobStatus.PENDING.value,
+            vcf_depot_operation="vcf_offline_depot" in selected_ids,
             created_by=identity.username,
             progress_percent=0,
             result=json.dumps(job_result, indent=2),
@@ -12152,7 +12135,19 @@ def submit_appliance_apply(
                     error=None,
                 )
             )
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            if "vcf_offline_depot" not in selected_ids:
+                raise
+            conflicting_job = active_vcf_depot_execution_job(db)
+            detail = (
+                vcf_depot_execution_conflict_detail(conflicting_job)
+                if conflicting_job is not None
+                else "Another VCFDT operation became active. Wait for it to finish and try again."
+            )
+            return JSONResponse({"detail": detail}, status_code=409) if wants_json else Response(detail, status_code=409, media_type="text/plain")
         record_audit(
             db,
             actor=identity.username,
@@ -18574,6 +18569,7 @@ def generate_vcf_depot_software_depot_id_from_ui(
             id=f"job_{uuid4().hex[:12]}",
             type="vcf-depot-software-id",
             status=JobStatus.PENDING.value,
+            vcf_depot_operation=True,
             created_by=identity.username,
             progress_percent=0,
             result=json.dumps(
@@ -18587,7 +18583,20 @@ def generate_vcf_depot_software_depot_id_from_ui(
         )
         db.add(job)
         ensure_vcf_depot_software_id_task_steps(db, job)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            active = active_vcf_depot_execution_job(db)
+            detail = (
+                vcf_depot_execution_conflict_detail(active)
+                if active is not None
+                else "Another VCFDT operation became active. Wait for it to finish and try again."
+            )
+            return JSONResponse(
+                {"detail": detail, "job_id": active.id if active is not None else ""},
+                status_code=409,
+            )
         record_audit(
             db,
             actor=identity.username,

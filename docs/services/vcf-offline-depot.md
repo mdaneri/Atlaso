@@ -64,12 +64,13 @@ the profiles, while the add row remains last.
 
 *Figure: VCFDT configuration starts with the safe Software Depot ID apply choice and contains no credential contents.*
 
-Manual and scheduled starts share one global VCFDT download lock and one execution path. Only one
-`vcf-depot-download` task may be pending or running. At execution, Atlaso revalidates the applied tool, current profile
+Manual and scheduled starts share one execution path and a database-backed admission guard with Software Depot ID
+tasks and any Appliance Apply that includes VCF Offline Depot. Only one of those VCFDT operations may be pending or
+running across web and scheduler processes. At execution, Atlaso revalidates the applied tool, current profile
 enablement, the credential required by the profile type, depot desired state, and the generated command set before it
-writes runtime files or launches VCFDT. A scheduled occurrence that overlaps another VCFDT task is recorded as skipped
-and points to the active task; it is not replayed. Other prerequisite failures are recorded as failed tasks with a
-sanitized archived log.
+writes runtime files or launches VCFDT. A scheduled occurrence that overlaps another VCFDT operation is recorded as
+skipped and points to the active task; it is not replayed. Other prerequisite failures are recorded as failed tasks with
+a sanitized archived log.
 
 Schedules keep the profile ID, so renames and profile updates apply to future runs while completed task metadata keeps
 the profile and schedule names used at queue time. Disabling a profile also disables every attached schedule and clears

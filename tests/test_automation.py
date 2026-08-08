@@ -673,6 +673,96 @@ def test_vcf_download_database_guard_rejects_second_active_job(client):
         db.commit()
 
 
+def test_vcf_download_database_guard_covers_software_id_and_appliance_apply(client):
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, VcfDepotDownloadProfile
+    from atlaso.app.services.vcf_depot_downloads import (
+        ActiveVcfDepotDownloadError,
+        enqueue_vcf_depot_download,
+    )
+
+    client.get("/login")
+    with SessionLocal() as db:
+        profile = VcfDepotDownloadProfile(name="cross-operation-profile", profile_type="metadata", enabled=True)
+        db.add(profile)
+        db.flush()
+        software_id_job = Job(
+            id="job_active_software_id",
+            type="vcf-depot-software-id",
+            status=JobStatus.PENDING.value,
+            created_by="admin",
+        )
+        db.add(software_id_job)
+        db.commit()
+        assert software_id_job.vcf_depot_operation is True
+
+        with pytest.raises(ActiveVcfDepotDownloadError, match=software_id_job.id):
+            enqueue_vcf_depot_download(db, profile=profile, actor="admin", trigger="manual")
+
+        software_id_job.status = JobStatus.SUCCEEDED.value
+        db.add(software_id_job)
+        db.commit()
+        apply_job = Job(
+            id="job_active_vcf_apply",
+            type="appliance-apply",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+            vcf_depot_operation=True,
+            result=json.dumps({"selected_units": ["vcf_offline_depot"]}),
+        )
+        db.add(apply_job)
+        db.commit()
+
+        with pytest.raises(ActiveVcfDepotDownloadError, match=apply_job.id):
+            enqueue_vcf_depot_download(db, profile=profile, actor="admin", trigger="manual")
+        db.commit()
+
+
+def test_due_vcf_schedule_records_software_id_collision_as_skipped(client):
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, Job, JobStatus, Schedule, VcfDepotDownloadProfile
+    from atlaso.app.services.automation import enqueue_due_schedules
+
+    client.get("/login")
+    now = datetime.now(timezone.utc)
+    with SessionLocal() as db:
+        profile = VcfDepotDownloadProfile(name="identity-collision-profile", profile_type="metadata", enabled=True)
+        db.add(profile)
+        db.flush()
+        schedule = Schedule(
+            name="identity-collision-nightly",
+            task_type="vcf_depot_download",
+            task_config_json=json.dumps({"profile_id": profile.id}),
+            schedule_kind="cron",
+            cron_expression="0 2 * * *",
+            timezone_name="UTC",
+            enabled=True,
+            next_run_at=now - timedelta(minutes=1),
+            created_by="admin",
+        )
+        active = Job(
+            id="job_active_identity_collision",
+            type="vcf-depot-software-id",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+        )
+        db.add_all([schedule, active])
+        db.commit()
+
+    with SessionLocal() as db:
+        jobs = enqueue_due_schedules(db, now=now)
+        assert len(jobs) == 1
+        skipped = jobs[0]
+        assert skipped.status == JobStatus.SKIPPED.value
+        assert json.loads(skipped.result)["active_job_id"] == active.id
+        assert db.execute(
+            select(AuditEvent).where(
+                AuditEvent.resource_id == skipped.id,
+                AuditEvent.action == "skip_scheduled_vcf_depot_download",
+            )
+        ).scalar_one().success is False
+
+
 def test_disabling_vcf_profile_disables_schedules_and_delete_requires_detach(client):
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Schedule, VcfDepotDownloadProfile

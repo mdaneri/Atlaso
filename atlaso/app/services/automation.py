@@ -26,7 +26,7 @@ from atlaso.app.services.appliance_update import ensure_appliance_update_job_ste
 from atlaso.app.services.vaults import vault_scope_identity
 from atlaso.app.services.vcf_depot_downloads import (
     ActiveVcfDepotDownloadError,
-    active_vcf_depot_download_job,
+    active_vcf_depot_operation_job,
     enqueue_vcf_depot_download,
     vcf_depot_initial_job_result,
     vcf_depot_task_log_reference,
@@ -322,7 +322,7 @@ def create_script_revision(
 def enqueue_schedule_now(db: Session, *, schedule: Schedule, actor: str, now: datetime | None = None) -> Job:
     current = _aware_utc(now or utcnow())
     active = (
-        active_vcf_depot_download_job(db)
+        active_vcf_depot_operation_job(db)
         if schedule.task_type == "vcf_depot_download"
         else db.execute(
             select(Job).where(
@@ -403,7 +403,7 @@ def enqueue_due_schedules(db: Session, *, now: datetime | None = None) -> list[J
     jobs: list[Job] = []
     for schedule in due:
         active = (
-            active_vcf_depot_download_job(db)
+            active_vcf_depot_operation_job(db)
             if schedule.task_type == "vcf_depot_download"
             else db.execute(
                 select(Job).where(
