@@ -3220,37 +3220,80 @@
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 <h2 id="interface-overview">Interface overview<a class="headerlink" href="#interface-overview" title="Permanent link">&para;</a></h2>
 <p>This verified appliance view provides visual orientation before you begin.</p>
-<p><img alt="Atlaso VCF Offline Depot page in the clean-appliance desktop viewport." src="../../assets/screenshots/vcf-offline-depot-clean-desktop.webp" /></p>
-<p><em>Figure: VCF Offline Depot in the verified clean-appliance desktop state.</em></p>
+<p><img alt="Atlaso VCF Offline Depot desktop page showing Metadata before Binaries and ESX profiles and the combined VCFDT configuration action." src="../../assets/screenshots/vcf-offline-depot-clean-desktop.webp" /></p>
+<p><em>Figure: VCF Offline Depot with metadata first and the compact VCFDT configuration summary in the desktop settings rail.</em></p>
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
 <h2 id="configure-the-depot">Configure the depot<a class="headerlink" href="#configure-the-depot" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Confirm the fixed depot mount is present and has sufficient working space.</li>
 <li>Configure the service listener and the HTTP user used by approved VCF targets.</li>
+<li>Select <strong>Add</strong> or <strong>Update</strong> for the VCF Download Tool package. The two-step package wizard reviews the archive name,
+   size, and desired-state boundary before upload. During upload, Review remains visible and reports transferred bytes
+   and upload percentage. Then select <strong>Configure</strong> under <strong>VCFDT configuration</strong>. Atlaso
+   displays the
+   version encoded in the validated staged archive name immediately; Appliance Apply later replaces it with VCFDT's
+   authoritative <code>--version</code> result. The five-step wizard starts with the current Software Depot ID and refresh intent,
+   then offers a standard <strong>Credential action</strong> selector. <strong>Keep staged credentials unchanged</strong> appears only when an
+   input is already staged;
+   absent inputs are labeled <strong>Use</strong> and existing inputs are labeled <strong>Replace</strong>. When no credential exists, selecting
+   either the download token or activation code is required. The selected input gets its own upload-or-paste step before
+   <code>application-prodv2.properties</code> and Review. Choosing <strong>Keep staged credentials unchanged</strong> removes the credential-input
+   step because no secret input is needed.
+Credential values are never loaded into the browser; an uploaded text file takes precedence over pasted text.
+The application-properties Monaco editor is directly editable and synchronizes every change to the submitted textarea;
+its visible editor is not nested in the source textarea's label.</li>
+<li>Save the wizard. Credentials and application properties are committed together, but the save does not mutate the
+   appliance or replace an existing Software Depot ID.</li>
 <li>Review certificate readiness and the generated software depot identity. Atlaso reads the persisted identity back
    from VCFDT after generation and displays only that canonical value.</li>
 <li>Validate the desired state and submit the VCF Offline Depot unit through
    <a href="../../operate/appliance-apply/">Appliance Apply</a>.</li>
-<li>When the apply task succeeds, the page refreshes automatically so the applied VCF Download Tool version and
-   generated Software Depot ID replace the previously staged values.</li>
+<li>When the apply task succeeds, the page refreshes automatically so the authoritative applied VCF Download Tool
+   version and generated Software Depot ID replace the previously staged values.</li>
 <li>Run downloads as tasks and follow their terminal result in the page's <strong>Profile download tasks</strong> grid. This is the
    shared <a href="../../operate/tasks/">Tasks</a> grid scoped to VCF Download Tool profile downloads, with the same filters,
    pagination, detail view, live state refresh, and access to the active or archived VCFDT task log. Use <strong>Open full
    task history</strong> when you need the appliance-wide view.</li>
 </ol>
 <p>Download-profile creation uses a reviewed wizard. Notes stay with profile identity, task execution owns lifecycle
-status, and profile enablement has its own step so availability is an explicit decision before review.</p>
+status, and profile enablement has its own step so availability is an explicit decision before review.
+Metadata profiles appear first initially, followed by binaries and ESX profiles. Column sorting can temporarily reorder
+the profiles, while the add row remains last.</p>
+<p><img alt="Atlaso VCFDT configuration wizard starting with the Software Depot ID generation or refresh choice." src="../../assets/screenshots/vcf-offline-depot-configuration-wizard.webp" /></p>
+<p><em>Figure: VCFDT configuration starts with the safe Software Depot ID apply choice and contains no credential contents.</em></p>
 <p>Metadata and binaries profiles use the download token or activation code staged most recently. Staging one credential
 does not remove the other because ESX profiles always require the activation code. Review the generated command preview
 after changing credentials to confirm that it references the intended runtime credential file.</p>
 <p>Do not place depot credentials or authenticated URLs in task notes, manifests, logs, or screenshots.</p>
 <p>Register the displayed software depot ID in the VCF Business Services console, then stage the activation code returned
 for that exact registration. Atlaso preserves this ID when settings or download profiles are changed and applied.
-<strong>Refresh software depot ID</strong> intentionally replaces it; its earlier activation code no longer matches the active
-VCFDT identity, so register the current displayed ID and replace the staged activation code before retrying a download.
+When no Software Depot ID exists, <strong>Generate the Software Depot ID</strong> is selected and disabled because the first ID is
+required before credentials can be registered. Selecting generation, or <strong>Refresh the Software Depot ID</strong> for an
+existing ID, immediately hides
+the credential, credential-input, and properties steps, leaving a two-step Software Depot ID and Review flow. It does
+not resave unchanged credentials or properties. <strong>Queue Software Depot ID task</strong> on Review creates and immediately
+dispatches a dedicated VCFDT identity task. Atlaso opens the ordinary Tasks view for that job while it stages the
+required VCFDT runtime inputs, applies the properties and CEIP prerequisites, and generates and reads back the identity
+without invoking nginx or global Appliance Apply. The task exposes those four safe child operations and sanitized logs.
+Atlaso serializes this identity task with profile downloads and any Appliance Apply task that includes VCF Offline
+Depot. A queued identity task can be cancelled before it starts; once VCFDT execution begins, cancellation is disabled
+because the identity may already have changed.
+It succeeds only after Atlaso persists a non-empty Software Depot ID (and a different ID for refresh). Once
+VCFDT changes the identity, Atlaso removes both the staged and runtime download token and activation code. A generation
+failure that leaves the identity unchanged preserves both credentials. Register the new displayed ID, then stage a
+matching credential before retrying a download. Use the copy control on the <strong>Depot ID Ready</strong> status tile to copy the
+current ID; Atlaso confirms the clipboard action without exposing any credential value.
+VCFDT tool staging and Software Depot ID generation remain available while the HTTPS depot service is disabled; the
+service toggle controls publishing, not VCFDT identity preparation.
+<strong>Reset</strong> uses one destructive confirmation and clears the staged package, both Broadcom credentials, saved application
+properties, generated identity/version metadata, and all profile enablement together. Runtime removal still waits for
+global Appliance Apply.
 If VCFDT generates a replacement but Atlaso cannot read it back unambiguously, Atlaso clears the displayed ID instead
-of presenting the previous registration as current. Retry the refresh before registering or downloading.</p>
+of presenting the previous registration as current. Retry the refresh before registering or downloading.
+After an Atlaso restart interrupts a running identity task, startup performs the same canonical VCFDT readback before
+failing the interrupted task. Atlaso saves a changed runtime ID and removes obsolete credentials; if readback cannot
+verify the runtime identity, it invalidates the stored ID and credentials instead of retaining stale registration data.</p>
 <h2 id="verify">Verify<a class="headerlink" href="#verify" title="Permanent link">&para;</a></h2>
 <p>Confirm the service is healthy, an approved target trusts the Atlaso CA, and required metadata or content is reachable
 with the configured account. Use <a href="../vcf-helper/">VCF Helper</a> for the separate remote workflow that points a supported
@@ -3259,8 +3302,10 @@ VCF appliance at the applied local depot.</p>
 <h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>
 <p>These captures show responsive layouts and useful operational states referenced by this page.</p>
 <h3 id="vcf-offline-depot_1">VCF Offline Depot<a class="headerlink" href="#vcf-offline-depot_1" title="Permanent link">&para;</a></h3>
-<p><img alt="Atlaso VCF Offline Depot page in the clean-appliance responsive viewport." src="../../assets/screenshots/vcf-offline-depot-clean-responsive.webp" /></p>
-<p><em>Figure: VCF Offline Depot in the verified clean-appliance responsive state.</em></p>
+<p><img alt="Atlaso VCF Offline Depot responsive page showing Metadata first with the add-profile row pinned last." src="../../assets/screenshots/vcf-offline-depot-clean-responsive.webp" /></p>
+<p><em>Figure: VCF Offline Depot profile ordering and staging state in the responsive viewport.</em></p>
+<p><img alt="Atlaso two-step VCFDT Software Depot ID wizard Review with a Queue Software Depot ID task action and no additional confirmation dialog." src="../../assets/screenshots/vcf-offline-depot-configuration-wizard.webp" /></p>
+<p><em>Figure: VCFDT Software Depot ID generation ends at Review, which immediately dispatches a dedicated identity task.</em></p>
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
 
 
