@@ -41,7 +41,7 @@ from atlaso.app.services.local_users import DEFAULT_LOCAL_USER_SHELL, POWERSHELL
 from atlaso.app.services.ldap import LDAP_DEFAULT_HOSTNAME, LDAP_STAGED_CONFIG_PATH
 from atlaso.app.services.dnsmasq import ensure_dns_authoritative_defaults, join_domains, split_domains, validate_dns_record
 from atlaso.app.services.networking import normalize_interface_mode, normalize_ipv4_method
-from atlaso.app.services.ntp import NTP_DEFAULT_HOSTNAME, NTP_STAGED_CONFIG_PATH, default_ntp_upstream_fields
+from atlaso.app.services.ntp import NTP_DEFAULT_HOSTNAME, NTP_STAGED_CONFIG_PATH, default_ntp_upstream_fields, disable_nts_state
 from atlaso.app.services.service_registry import RETIRED_SERVICE_IDS, SERVICE_STATE_DEFAULTS
 from atlaso.app.services.vcf_backups import VCF_BACKUP_DEFAULT_USERNAME
 from atlaso.app.services.vcf_offline_depot import VCF_DEPOT_DEFAULT_USERNAME
@@ -261,6 +261,13 @@ def seed_initial_data(db: Session, *, include_examples: bool = True, appliance_m
         )
         db.add(ntp_settings)
         db.flush()
+    else:
+        disable_nts_state(ntp_settings)
+    legacy_nts_certificate = db.execute(
+        select(CaCertificate).where(CaCertificate.managed_owner == "ntp:nts")
+    ).scalar_one_or_none()
+    if legacy_nts_certificate is not None:
+        db.delete(legacy_nts_certificate)
 
     if db.execute(select(LdapSettings)).scalar_one_or_none() is None:
         db.add(

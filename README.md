@@ -71,9 +71,8 @@ code because they no longer match the new Software Depot ID. Package add/update 
 reset clears the package and its complete saved configuration together.
 
 The integrated CA can maintain trust and deploy managed service certificates without publishing its public portal on
-an access interface. Selecting a CA listen interface is the explicit portal-publication boundary. When NTS server
-changes are selected, global appliance apply automatically runs Certificate Authority before NTP/NTS so missing or
-stale runtime certificate files are repaired even when the CA desired-state baseline appears current.
+an access interface. Selecting a CA listen interface is the explicit portal-publication boundary. NTP uses ordinary
+UDP/123 sources; NTS is disabled and legacy NTP certificate and cookie material is removed during NTP apply.
 
 ## Project
 

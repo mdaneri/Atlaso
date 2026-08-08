@@ -37,7 +37,7 @@
             ]),
             ("Core Services", [
               ("DNS", "/dns", "read:dns"),
-              ("NTP / NTS", "/ntp", "read:services"),
+              ("NTP", "/ntp", "read:services"),
               ("DHCP", "/dhcp", "read:dhcp")
             ]),
             ("Identity & Trust", [
@@ -236,7 +236,7 @@
         <div class="preview-modal-head">
           <div>
             <p class="kicker">Runtime check</p>
-            <h2 id="ntp-source-health-title">NTP / NTS Source Health</h2>
+            <h2 id="ntp-source-health-title">NTP Source Health</h2>
           </div>
           <div class="preview-modal-actions">
             <span class="status-pill muted" data-ntp-source-health-status>not checked</span>
@@ -244,7 +244,7 @@
             <button class="button ghost icon-button" type="button" data-ntp-source-health-close aria-label="Close source health" title="Close">×</button>
           </div>
         </div>
-        <pre><code data-ntp-source-health-output>Use the NTP / NTS service menu to check ntpq peers, runtime variables, and NTS state.</code></pre>
+        <pre><code data-ntp-source-health-output>Use the NTP service menu to check ntpq peers and runtime variables.</code></pre>
       </div>
     </dialog>
     {% if identity %}
@@ -307,7 +307,7 @@
     <script src="/static/vendor/prism/prism-diff.min.js"></script>
     <link rel="stylesheet" href="/static/vendor/monaco/atlaso-monaco.min.css?v=atlaso-monaco-20260806-7">
     <script src="/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7"></script>
-    <script src="/static/app.js?v=appliance-update-source-wizard-253-20260807-2"></script>
+    <script src="/static/app.js?v=appliance-update-253-ntp-disable-252-20260808-3"></script>
     <script src="/static/pwa.js?v=atlaso-brand-20260725-1"></script>
     {% block extra_scripts %}{% endblock %}
   </body>

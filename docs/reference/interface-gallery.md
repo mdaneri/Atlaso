@@ -311,18 +311,6 @@ Figure: ESXi custom variable wizard with Description on its own full-width row.
 
 Figure: ESXi custom variable wizard in the verified narrow viewport.
 
-## Ntp
-
-Route: `/ntp`
-
-![Atlaso NTP and NTS page in the clean-appliance desktop viewport.](../assets/screenshots/ntp-clean-desktop.webp)
-
-Figure: NTP and NTS in the verified clean-appliance desktop state.
-
-![Atlaso NTP and NTS page in the clean-appliance responsive viewport.](../assets/screenshots/ntp-clean-responsive.webp)
-
-Figure: NTP and NTS in the verified clean-appliance responsive state.
-
 ## Openid Connect: Oidc Group Mappings
 
 Route: `/openid-connect#oidc-group-mappings`
