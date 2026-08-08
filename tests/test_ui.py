@@ -13217,6 +13217,74 @@ def test_vcf_depot_software_id_task_queues_for_immediate_execution(client, monke
     ]
 
 
+def test_vcf_depot_software_id_submission_rejects_active_profile_download(client, monkeypatch):
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
+    from atlaso.app.ui import get_vcf_offline_depot_settings_row
+
+    login(client)
+    page = client.get("/vcf-offline-depot")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    with SessionLocal() as db:
+        get_vcf_offline_depot_settings_row(db).tool_archive_path = "/var/lib/atlaso/vcfDownloadTool/test.tar.gz"
+        db.add(
+            Job(
+                id="job_active_vcfdt_download",
+                type="vcf-depot-download",
+                status=JobStatus.PENDING.value,
+                created_by="admin",
+                progress_percent=0,
+                result="{}",
+            )
+        )
+        db.commit()
+    monkeypatch.setattr(ui, "run_vcf_depot_software_id_job", lambda _job_id: None)
+
+    response = client.post(
+        "/vcf-offline-depot/software-depot-id/generate",
+        data={"csrf": csrf},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["job_id"] == "job_active_vcfdt_download"
+    assert "VCF Depot Download" in response.json()["detail"]
+
+
+def test_vcf_depot_appliance_apply_submission_rejects_active_software_id_task(client, monkeypatch):
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
+
+    login(client)
+    page = client.get("/vcf-offline-depot")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    with SessionLocal() as db:
+        db.add(
+            Job(
+                id="job_active_vcfdt_identity",
+                type="vcf-depot-software-id",
+                status=JobStatus.PENDING.value,
+                created_by="admin",
+                progress_percent=0,
+                result="{}",
+            )
+        )
+        db.commit()
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "vcf_offline_depot"},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 409
+    assert "job_active_vcfdt_identity" in response.json()["detail"]
+    assert "VCFDT Software Depot ID" in response.json()["detail"]
+
+
 def test_queued_vcf_depot_software_id_task_can_be_cancelled_before_start(client, monkeypatch):
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
@@ -13243,6 +13311,40 @@ def test_queued_vcf_depot_software_id_task_can_be_cancelled_before_start(client,
     assert cancelled["state"] == "cancelled"
     assert cancelled["can_start"] is False
     assert len(cancelled["_children"]) == 4
+
+
+def test_running_vcf_depot_software_id_task_rejects_cancellation(client, monkeypatch):
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
+    from atlaso.app.ui import get_vcf_offline_depot_settings_row
+
+    login(client)
+    page = client.get("/vcf-offline-depot")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    with SessionLocal() as db:
+        get_vcf_offline_depot_settings_row(db).tool_archive_path = "/var/lib/atlaso/vcfDownloadTool/test.tar.gz"
+        db.commit()
+    monkeypatch.setattr(ui, "run_vcf_depot_software_id_job", lambda _job_id: None)
+    queued = client.post(
+        "/vcf-offline-depot/software-depot-id/generate",
+        data={"csrf": csrf},
+        headers={"Accept": "application/json"},
+    ).json()["task"]
+    with SessionLocal() as db:
+        job = db.get(Job, queued["id"])
+        job.status = JobStatus.RUNNING.value
+        db.commit()
+
+    status_response = client.get(f"/tasks/{queued['id']}/status")
+    cancel_response = client.post(f"/tasks/{queued['id']}/cancel", data={"csrf": csrf})
+
+    assert status_response.status_code == 200
+    assert status_response.json()["task"]["can_cancel"] is False
+    assert cancel_response.status_code == 409
+    assert "cannot be cancelled" in cancel_response.json()["detail"]
+    with SessionLocal() as db:
+        assert db.get(Job, queued["id"]).status == JobStatus.RUNNING.value
 
 
 def test_vcf_depot_software_id_runner_persists_raw_metadata_before_task_redaction(client, monkeypatch):
@@ -13349,14 +13451,35 @@ def test_vcf_depot_software_id_runner_fails_when_id_is_not_persisted(client, mon
         assert completed.steps[-1].status == JobStatus.FAILED.value
 
 
-def test_vcf_depot_software_id_startup_recovers_pending_and_running(client):
+def test_vcf_depot_software_id_startup_reconciles_runtime_identity_before_failing_jobs(client, monkeypatch):
     import json
 
+    from sqlalchemy import select
+
+    from atlaso.app.adapters.system import AdapterResult
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import Job, JobStatus
-    from atlaso.app.ui import recover_interrupted_vcf_depot_software_id_jobs
+    from atlaso.app.models import Job, JobStatus, Setting
+    from atlaso.app.services.vcf_offline_depot import (
+        VCF_DEPOT_ACTIVATION_VALUE_KEY,
+        VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY,
+        VCF_DEPOT_TOKEN_VALUE_KEY,
+    )
+    from atlaso.app.ui import SystemAdapter, recover_interrupted_vcf_depot_software_id_jobs, set_setting_value
+
+    monkeypatch.setattr(
+        SystemAdapter,
+        "read_vcf_offline_depot_software_depot_id",
+        lambda _self: AdapterResult(
+            command=["atlaso-helper", "vcf-offline-depot", "read-software-depot-id"],
+            dry_run=False,
+            stdout='{"software_depot_id":"runtime-id"}',
+        ),
+    )
 
     with SessionLocal() as db:
+        set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY, "previous-id")
+        set_setting_value(db, VCF_DEPOT_TOKEN_VALUE_KEY, "token-fixture")
+        set_setting_value(db, VCF_DEPOT_ACTIVATION_VALUE_KEY, "activation-fixture")
         db.add_all(
             [
                 Job(
@@ -13387,6 +13510,58 @@ def test_vcf_depot_software_id_startup_recovers_pending_and_running(client):
         assert "restart" in (running.error or "")
         assert pending.status == JobStatus.FAILED.value
         assert pending.progress_percent == 100
+        assert "reconciled" in (running.error or "")
+        assert db.scalar(select(Setting.value).where(Setting.key == VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY)) == "runtime-id"
+        assert db.scalar(select(Setting).where(Setting.key == VCF_DEPOT_TOKEN_VALUE_KEY)) is None
+        assert db.scalar(select(Setting).where(Setting.key == VCF_DEPOT_ACTIVATION_VALUE_KEY)) is None
+
+
+def test_vcf_depot_software_id_startup_invalidates_unverifiable_runtime_identity(client, monkeypatch):
+    import json
+
+    from sqlalchemy import select
+
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, Setting
+    from atlaso.app.services.vcf_offline_depot import (
+        VCF_DEPOT_SOFTWARE_DEPOT_ID_ERROR_KEY,
+        VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY,
+        VCF_DEPOT_TOKEN_VALUE_KEY,
+    )
+    from atlaso.app.ui import SystemAdapter, recover_interrupted_vcf_depot_software_id_jobs, set_setting_value
+
+    monkeypatch.setattr(
+        SystemAdapter,
+        "read_vcf_offline_depot_software_depot_id",
+        lambda _self: AdapterResult(
+            command=["atlaso-helper", "vcf-offline-depot", "read-software-depot-id"],
+            dry_run=False,
+            stderr="readback unavailable",
+            returncode=2,
+        ),
+    )
+
+    with SessionLocal() as db:
+        set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY, "stale-id")
+        set_setting_value(db, VCF_DEPOT_TOKEN_VALUE_KEY, "token-fixture")
+        db.add(
+            Job(
+                id="job_vcfdt_id_unverifiable",
+                type="vcf-depot-software-id",
+                status=JobStatus.RUNNING.value,
+                created_by="admin",
+                progress_percent=30,
+                result=json.dumps({"state": "running"}),
+            )
+        )
+        db.commit()
+
+        assert recover_interrupted_vcf_depot_software_id_jobs(db) == 1
+        assert db.scalar(select(Setting).where(Setting.key == VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY)) is None
+        assert db.scalar(select(Setting).where(Setting.key == VCF_DEPOT_TOKEN_VALUE_KEY)) is None
+        error = db.scalar(select(Setting.value).where(Setting.key == VCF_DEPOT_SOFTWARE_DEPOT_ID_ERROR_KEY))
+        assert "could not be verified" in (error or "")
 
 
 def test_successful_command_stderr_is_not_reported_as_task_failure():

@@ -4421,6 +4421,47 @@ def test_vcf_offline_depot_generate_software_depot_id_main_allows_no_path(monkey
     assert calls == [("generate-software-depot-id", [])]
 
 
+def test_vcf_offline_depot_helper_reads_software_depot_id_without_mutation(monkeypatch, tmp_path, capsys):
+    helper = load_helper_module()
+    runtime_tool_dir = tmp_path / "var" / "lib" / "atlaso" / "vcfDownloadTool" / "active-tool"
+    wrapper = runtime_tool_dir / "vcf-download-tool"
+    wrapper.parent.mkdir(parents=True)
+    wrapper.write_text("#!/bin/sh\n", encoding="utf-8")
+    wrapper.chmod(0o755)
+    commands: list[list[str]] = []
+
+    def fake_run_vcfdt(command: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            "Software Depot ID: 8c9506c6-7bdf-44d5-b2e9-50d829d66b99\n",
+            "",
+        )
+
+    monkeypatch.setattr(helper, "VCF_DEPOT_RUNTIME_TOOL_DIR", runtime_tool_dir)
+    monkeypatch.setattr(helper, "_run_vcfdt_user_command", fake_run_vcfdt)
+
+    assert helper._handle_vcf_offline_depot("read-software-depot-id", []) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert commands == [[str(wrapper), "configuration", "get", "--software-depot-id"]]
+    assert payload == {
+        "software_depot_id": "8c9506c6-7bdf-44d5-b2e9-50d829d66b99",
+        "vcf_offline_depot": "software depot ID read back",
+    }
+
+
+def test_vcf_offline_depot_read_software_depot_id_main_allows_no_path(monkeypatch):
+    helper = load_helper_module()
+    calls: list[tuple[str, list[str]]] = []
+
+    monkeypatch.delenv("ATLASO_HELPER_USE_SYSTEMD_RUN", raising=False)
+    monkeypatch.setattr(helper, "_handle_vcf_offline_depot", lambda action, args: calls.append((action, args)) or 0)
+
+    assert helper.main(["atlaso-helper", "vcf-offline-depot", "read-software-depot-id", "--real"]) == 0
+    assert calls == [("read-software-depot-id", [])]
+
+
 def test_vcf_offline_depot_helper_applies_vcfdt_application_properties(monkeypatch, tmp_path, capsys):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "vcf-offline-depot"

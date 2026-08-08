@@ -48,6 +48,31 @@ def test_real_appliance_power_action_uses_sudo_helper(monkeypatch):
     assert commands == [result.command]
 
 
+def test_real_vcf_depot_software_id_readback_uses_fixed_helper_action(monkeypatch):
+    import atlaso.app.adapters.system as system_adapter
+
+    commands: list[list[str]] = []
+
+    def fake_run(command, **_kwargs):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, '{"software_depot_id":"safe-id"}', "")
+
+    monkeypatch.setattr(system_adapter.subprocess, "run", fake_run)
+
+    result = SystemAdapter(dry_run=False).read_vcf_offline_depot_software_depot_id()
+
+    assert result.returncode == 0
+    assert result.command == [
+        "sudo",
+        "-n",
+        SystemAdapter.HELPER_PATH,
+        "vcf-offline-depot",
+        "read-software-depot-id",
+        "--real",
+    ]
+    assert commands == [result.command]
+
+
 def test_appliance_power_action_rejects_unknown_action():
     result = SystemAdapter(dry_run=False).schedule_appliance_power("restart")
 

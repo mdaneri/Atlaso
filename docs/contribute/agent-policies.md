@@ -655,6 +655,12 @@ status: current
   properties and the CEIP prerequisite, then generate/read back the identity. The task succeeds only after a non-empty
   ID is persisted, and refresh additionally requires a different ID. It must not validate, sync,
   or apply nginx, update the VCF Offline Depot apply baseline, or open the global Appliance Apply monitor.
+  Identity tasks, profile-download tasks, and Appliance Apply tasks containing `vcf_offline_depot` must share one
+  admission boundary so only one VCFDT runtime operation can be pending or running. Pending identity tasks may be
+  cancelled, but running identity tasks must reject cancellation because the helper may already have replaced the
+  runtime identity. Startup recovery for an interrupted running identity task must perform a read-only canonical VCFDT
+  ID readback before finalizing the task: persist a changed runtime ID and clear obsolete credentials, or invalidate
+  the stored ID and credentials when runtime identity cannot be verified.
   Resetting VCFDT staging is one destructive confirmation that always clears the staged package, both Broadcom
   credentials, saved application properties, generated identity/version metadata, and profile enablement; it must not
   offer a partial configuration-preservation mode.

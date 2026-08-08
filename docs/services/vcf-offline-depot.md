@@ -78,6 +78,9 @@ not resave unchanged credentials or properties. **Queue Software Depot ID task**
 dispatches a dedicated VCFDT identity task. Atlaso opens the ordinary Tasks view for that job while it stages the
 required VCFDT runtime inputs, applies the properties and CEIP prerequisites, and generates and reads back the identity
 without invoking nginx or global Appliance Apply. The task exposes those four safe child operations and sanitized logs.
+Atlaso serializes this identity task with profile downloads and any Appliance Apply task that includes VCF Offline
+Depot. A queued identity task can be cancelled before it starts; once VCFDT execution begins, cancellation is disabled
+because the identity may already have changed.
 It succeeds only after Atlaso persists a non-empty Software Depot ID (and a different ID for refresh). Once
 VCFDT changes the identity, Atlaso removes both the staged and runtime download token and activation code. A generation
 failure that leaves the identity unchanged preserves both credentials. Register the new displayed ID, then stage a
@@ -90,6 +93,9 @@ properties, generated identity/version metadata, and all profile enablement toge
 global Appliance Apply.
 If VCFDT generates a replacement but Atlaso cannot read it back unambiguously, Atlaso clears the displayed ID instead
 of presenting the previous registration as current. Retry the refresh before registering or downloading.
+After an Atlaso restart interrupts a running identity task, startup performs the same canonical VCFDT readback before
+failing the interrupted task. Atlaso saves a changed runtime ID and removes obsolete credentials; if readback cannot
+verify the runtime identity, it invalidates the stored ID and credentials instead of retaining stale registration data.
 
 ## Verify
 

@@ -14,6 +14,7 @@ import subprocess
 import threading
 import time
 import zipfile
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from ipaddress import IPv4Address, IPv4Network, IPv6Address, IPv6Network, ip_address, ip_interface, ip_network
 from pathlib import Path, PurePosixPath
@@ -2396,6 +2397,15 @@ def clear_vcf_depot_credentials(db: Session) -> None:
         db.delete(setting)
 
 
+def invalidate_vcf_depot_software_depot_identity(db: Session, error: str) -> None:
+    for key in [VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY, VCF_DEPOT_SOFTWARE_DEPOT_ID_GENERATED_AT_KEY]:
+        setting = db.execute(select(Setting).where(Setting.key == key)).scalar_one_or_none()
+        if setting is not None:
+            db.delete(setting)
+    clear_vcf_depot_credentials(db)
+    set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_ERROR_KEY, error)
+
+
 def vcf_depot_software_depot_id_context(db: Session) -> dict[str, str]:
     software_id = db.execute(select(Setting).where(Setting.key == VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY)).scalar_one_or_none()
     generated_at = db.execute(select(Setting).where(Setting.key == VCF_DEPOT_SOFTWARE_DEPOT_ID_GENERATED_AT_KEY)).scalar_one_or_none()
@@ -2637,7 +2647,7 @@ def recover_interrupted_vcf_depot_download_jobs(db: Session) -> int:
 
 def recover_interrupted_vcf_depot_software_id_jobs(db: Session) -> int:
     jobs = db.scalars(
-        select(Job).where(
+        select(Job).options(selectinload(Job.steps)).where(
             Job.type == "vcf-depot-software-id",
             Job.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value]),
         )
@@ -2645,16 +2655,50 @@ def recover_interrupted_vcf_depot_software_id_jobs(db: Session) -> int:
     if not jobs:
         return 0
     finished = utcnow()
+    running_jobs = [job for job in jobs if job.status == JobStatus.RUNNING.value]
+    reconciliation_message = ""
+    if running_jobs:
+        previous_id = str(vcf_depot_software_depot_id_context(db).get("id") or "").strip()
+        readback = SystemAdapter(dry_run=False).read_vcf_offline_depot_software_depot_id()
+        readback_payload = helper_json_payload_with_key(readback.stdout, "software_depot_id")
+        runtime_id = str(readback_payload.get("software_depot_id") or "").strip()
+        if readback.returncode == 0 and runtime_id:
+            if runtime_id != previous_id:
+                set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY, runtime_id)
+                set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_GENERATED_AT_KEY, finished.isoformat())
+                clear_vcf_depot_credentials(db)
+                reconciliation_message = " The runtime Software Depot ID was reconciled and obsolete credentials were removed."
+            else:
+                reconciliation_message = " The existing Software Depot ID was confirmed by canonical VCFDT readback."
+            set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_ERROR_KEY, "")
+        else:
+            reconciliation_error = (
+                "Atlaso restarted while VCFDT identity replacement was running and the runtime Software Depot ID "
+                "could not be verified. The stored identity and credentials were invalidated."
+            )
+            invalidate_vcf_depot_software_depot_identity(db, reconciliation_error)
+            reconciliation_message = f" {reconciliation_error}"
     for job in jobs:
         job.status = JobStatus.FAILED.value
         job.finished_at = finished
         job.progress_percent = 100
-        job.error = "Interrupted by a Atlaso restart before VCFDT Software Depot ID generation completed."
+        job.error = "Interrupted by an Atlaso restart before VCFDT Software Depot ID generation completed."
+        if job in running_jobs:
+            job.error += reconciliation_message
         payload = _job_payload(job)
         payload["state"] = JobStatus.FAILED.value
         payload["interrupted"] = True
         payload["interrupted_at"] = finished.isoformat()
         job.result = json.dumps(payload, indent=2, sort_keys=True)
+        for step in job.steps:
+            if step.status == JobStatus.RUNNING.value:
+                step.status = JobStatus.FAILED.value
+                step.error = job.error
+            elif step.status == JobStatus.PENDING.value:
+                step.status = "skipped"
+                step.error = "Skipped because Atlaso restarted before this operation began."
+            step.finished_at = finished
+            step.progress_percent = 100
     db.commit()
     return len(jobs)
 
@@ -6078,6 +6122,8 @@ def _can_cancel_task(job: Job, identity: Identity | None = None) -> bool:
         if config.get("source") == "delete":
             return False
     if job.type == "appliance-apply" and _job_payload(job).get("cancel_requested"):
+        return False
+    if job.type == "vcf-depot-software-id" and job.status == JobStatus.RUNNING.value:
         return False
     if identity is None:
         return True
@@ -11407,6 +11453,7 @@ class ApplianceApplyJobError(RuntimeError):
 
 
 APPLIANCE_APPLY_SUBMIT_LOCK = threading.Lock()
+VCF_DEPOT_SUBMIT_LOCK = threading.Lock()
 
 
 def active_appliance_apply_job(db: Session) -> Job | None:
@@ -11429,6 +11476,36 @@ def active_appliance_apply_submitted_unit_ids(db: Session) -> set[str]:
     if job.steps:
         return {step.component_key for step in job.steps}
     return {str(unit_id) for unit_id in _job_payload(job).get("selected_units", [])}
+
+
+def active_vcf_depot_execution_job(db: Session) -> Job | None:
+    direct_job = db.scalars(
+        select(Job)
+        .where(
+            Job.type.in_(["vcf-depot-download", "vcf-depot-software-id"]),
+            Job.status.in_(ACTIVE_JOB_STATUSES),
+        )
+        .order_by(Job.created_at)
+        .limit(1)
+    ).first()
+    if direct_job is not None:
+        return direct_job
+    apply_job = active_appliance_apply_job(db)
+    if apply_job is None:
+        return None
+    submitted_units = (
+        {step.component_key for step in apply_job.steps}
+        if apply_job.steps
+        else {str(unit_id) for unit_id in _job_payload(apply_job).get("selected_units", [])}
+    )
+    return apply_job if "vcf_offline_depot" in submitted_units else None
+
+
+def vcf_depot_execution_conflict_detail(job: Job) -> str:
+    return (
+        f"{_task_type_label(job.type)} task {job.id} is already {job.status}. "
+        "Wait for it to finish before starting another VCFDT operation."
+    )
 
 
 def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
@@ -11994,7 +12071,8 @@ def submit_appliance_apply(
         "format_authorizations": [],
         "refresh_vcf_depot_software_depot_id": refresh_vcf_depot_software_depot_id,
     }
-    with APPLIANCE_APPLY_SUBMIT_LOCK:
+    vcf_depot_submit_guard = VCF_DEPOT_SUBMIT_LOCK if "vcf_offline_depot" in selected_ids else nullcontext()
+    with vcf_depot_submit_guard, APPLIANCE_APPLY_SUBMIT_LOCK:
         db.expire_all()
         active_job = active_appliance_apply_job(db)
         if active_job is not None:
@@ -12003,6 +12081,11 @@ def submit_appliance_apply(
                 "Wait for it to finish before submitting another appliance apply task."
             )
             return JSONResponse({"detail": detail}, status_code=409) if wants_json else Response(detail, status_code=409, media_type="text/plain")
+        if "vcf_offline_depot" in selected_ids:
+            conflicting_job = active_vcf_depot_execution_job(db)
+            if conflicting_job is not None:
+                detail = vcf_depot_execution_conflict_detail(conflicting_job)
+                return JSONResponse({"detail": detail}, status_code=409) if wants_json else Response(detail, status_code=409, media_type="text/plain")
 
         job_id = f"job_{uuid4().hex[:12]}"
         if required_format_volumes:
@@ -18484,44 +18567,40 @@ def generate_vcf_depot_software_depot_id_from_ui(
     settings = get_vcf_offline_depot_settings_row(db)
     if not settings.tool_archive_path:
         raise HTTPException(status_code=400, detail="Upload VCFDT before generating the software depot ID.")
-    active = db.scalar(
-        select(Job)
-        .where(
-            Job.type == "vcf-depot-software-id",
-            Job.status.in_(ACTIVE_JOB_STATUSES),
+    with VCF_DEPOT_SUBMIT_LOCK:
+        db.expire_all()
+        active = active_vcf_depot_execution_job(db)
+        if active is not None:
+            return JSONResponse(
+                {"detail": vcf_depot_execution_conflict_detail(active), "job_id": active.id},
+                status_code=409,
+            )
+        job = Job(
+            id=f"job_{uuid4().hex[:12]}",
+            type="vcf-depot-software-id",
+            status=JobStatus.PENDING.value,
+            created_by=identity.username,
+            progress_percent=0,
+            result=json.dumps(
+                {
+                    "state": JobStatus.PENDING.value,
+                    "target": "Generate Software Depot ID",
+                    "refresh_existing": bool(vcf_depot_software_depot_id_context(db).get("id")),
+                },
+                indent=2,
+            ),
         )
-        .order_by(Job.created_at)
-        .limit(1)
-    )
-    if active is not None:
-        detail = f"VCFDT Software Depot ID task {active.id} is already {active.status}."
-        return JSONResponse({"detail": detail, "job_id": active.id}, status_code=409)
-    job = Job(
-        id=f"job_{uuid4().hex[:12]}",
-        type="vcf-depot-software-id",
-        status=JobStatus.PENDING.value,
-        created_by=identity.username,
-        progress_percent=0,
-        result=json.dumps(
-            {
-                "state": JobStatus.PENDING.value,
-                "target": "Generate Software Depot ID",
-                "refresh_existing": bool(vcf_depot_software_depot_id_context(db).get("id")),
-            },
-            indent=2,
-        ),
-    )
-    db.add(job)
-    ensure_vcf_depot_software_id_task_steps(db, job)
-    db.commit()
-    record_audit(
-        db,
-        actor=identity.username,
-        action="create_vcf_depot_software_id_task",
-        resource_type="job",
-        resource_id=job.id,
-        detail="execution=queued",
-    )
+        db.add(job)
+        ensure_vcf_depot_software_id_task_steps(db, job)
+        db.commit()
+        record_audit(
+            db,
+            actor=identity.username,
+            action="create_vcf_depot_software_id_task",
+            resource_type="job",
+            resource_id=job.id,
+            detail="execution=queued",
+        )
     background_tasks.add_task(run_vcf_depot_software_id_job, job.id)
     db.refresh(job)
     if "application/json" in request.headers.get("accept", "") or request.headers.get("X-Atlaso-Autosave") == "1":
@@ -18703,11 +18782,11 @@ def start_vcf_depot_profile_download_from_ui(
     profile = db.get(VcfDepotDownloadProfile, profile_id)
     if not profile:
         raise HTTPException(status_code=404, detail="VCFDT download profile not found.")
-    active_job = vcf_depot_active_download_job(db)
+    active_job = active_vcf_depot_execution_job(db)
     if active_job is not None:
         raise HTTPException(
             status_code=409,
-            detail=f"VCFDT task {active_job.id} is already running. Wait for it to finish before starting another download.",
+            detail=vcf_depot_execution_conflict_detail(active_job),
         )
     if not profile.enabled:
         raise HTTPException(status_code=400, detail="Enable the VCFDT download profile before starting a download.")
@@ -18749,42 +18828,47 @@ def start_vcf_depot_profile_download_from_ui(
     ]
     if not commands:
         raise HTTPException(status_code=400, detail="The VCFDT download profile did not produce any commands.")
-    now = utcnow()
-    job_id = f"job_{uuid4().hex[:12]}"
-    job_result = {
-        "profile_id": profile.id,
-        "profile_name": profile.name,
-        "profile_type": profile.profile_type,
-        "dry_run": False,
-        "system_adapter_dry_run": system_dry_run,
-        "log_path": str(vcf_depot_task_log_reference(job_id, profile.name)),
-        "commands": commands,
-        "validation_warnings": validation_warnings,
-    }
-    job = Job(
-        id=job_id,
-        type="vcf-depot-download",
-        status=JobStatus.PENDING.value,
-        created_by=identity.username,
-        started_at=None,
-        finished_at=None,
-        progress_percent=0,
-        result=json.dumps(job_result, indent=2),
-        trigger="manual",
-        task_config_json=json.dumps({"profile_id": profile.id}, sort_keys=True),
-    )
-    profile.status = "ready"
-    profile.updated_at = now
-    db.add(job)
-    db.commit()
-    record_audit(
-        db,
-        actor=identity.username,
-        action="start_vcf_depot_profile_download",
-        resource_type="job",
-        resource_id=job.id,
-        detail=f"profile={profile.name}; log={vcf_depot_task_log_reference(job.id, profile.name)}",
-    )
+    with VCF_DEPOT_SUBMIT_LOCK:
+        db.expire_all()
+        active_job = active_vcf_depot_execution_job(db)
+        if active_job is not None:
+            raise HTTPException(status_code=409, detail=vcf_depot_execution_conflict_detail(active_job))
+        now = utcnow()
+        job_id = f"job_{uuid4().hex[:12]}"
+        job_result = {
+            "profile_id": profile.id,
+            "profile_name": profile.name,
+            "profile_type": profile.profile_type,
+            "dry_run": False,
+            "system_adapter_dry_run": system_dry_run,
+            "log_path": str(vcf_depot_task_log_reference(job_id, profile.name)),
+            "commands": commands,
+            "validation_warnings": validation_warnings,
+        }
+        job = Job(
+            id=job_id,
+            type="vcf-depot-download",
+            status=JobStatus.PENDING.value,
+            created_by=identity.username,
+            started_at=None,
+            finished_at=None,
+            progress_percent=0,
+            result=json.dumps(job_result, indent=2),
+            trigger="manual",
+            task_config_json=json.dumps({"profile_id": profile.id}, sort_keys=True),
+        )
+        profile.status = "ready"
+        profile.updated_at = now
+        db.add(job)
+        db.commit()
+        record_audit(
+            db,
+            actor=identity.username,
+            action="start_vcf_depot_profile_download",
+            resource_type="job",
+            resource_id=job.id,
+            detail=f"profile={profile.name}; log={vcf_depot_task_log_reference(job.id, profile.name)}",
+        )
     if request.headers.get("X-Atlaso-Autosave") == "1":
         return JSONResponse(
             {
@@ -21078,6 +21162,14 @@ def cancel_task_from_ui(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="A running Network Boot media deletion cannot be cancelled.",
             )
+    if job.type == "vcf-depot-software-id" and job.status == JobStatus.RUNNING.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "A running VCFDT Software Depot ID task cannot be cancelled because identity replacement "
+                "may already be in progress."
+            ),
+        )
     if job.type == "appliance-apply":
         payload = _job_payload(job)
         if not payload.get("cancel_requested"):
