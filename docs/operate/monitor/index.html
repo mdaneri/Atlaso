@@ -3213,8 +3213,8 @@ network throughput, unique-device disk activity, interface state, and virtual-ma
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 <h2 id="interface-overview">Interface overview<a class="headerlink" href="#interface-overview" title="Permanent link">&para;</a></h2>
 <p>This verified appliance view provides visual orientation before you begin.</p>
-<p><img alt="Atlaso Monitor page in the clean-appliance desktop viewport." src="../../assets/screenshots/monitor-clean-desktop.webp" /></p>
-<p><em>Figure: Monitor in the verified clean-appliance desktop state.</em></p>
+<p><img alt="Atlaso Monitor page showing live appliance metrics in the desktop viewport." src="../../assets/screenshots/monitor-clean-desktop.webp" /></p>
+<p><em>Figure: Monitor summary and live charts in the verified desktop state.</em></p>
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
 <h2 id="read-the-charts">Read the charts<a class="headerlink" href="#read-the-charts" title="Permanent link">&para;</a></h2>
@@ -3222,11 +3222,14 @@ network throughput, unique-device disk activity, interface state, and virtual-ma
 <li>Start with the appliance totals before expanding per-CPU, per-interface, or per-device series.</li>
 <li>Use the common time-range selector to compare the same interval across charts.</li>
 <li>Expand a chart when series overlap; full-screen zoom does not change the selected history range.</li>
+<li>Use the read-only interface and device grids below Network Throughput and Disk Activity for the latest per-resource
+  values. Live refresh replaces grid data in place so sorting and scroll context remain stable.</li>
 <li>Treat unexpectedly down configured physical interfaces as actionable. Disabled optional services and unused
   interfaces are not exceptions.</li>
 </ul>
 <p>Filesystem-capacity charts are intentionally not part of this page. Disk activity is counted once per underlying
-device, even when a filesystem is visible through multiple mount paths.</p>
+device, even when a filesystem is visible through multiple mount paths. The initial server snapshot also populates the
+accessible fallback tables when browser scripting is unavailable.</p>
 <h2 id="verify-an-exception">Verify an exception<a class="headerlink" href="#verify-an-exception" title="Permanent link">&para;</a></h2>
 <p>Compare interface exceptions with <a href="../networking/">Network configuration</a>, service health with the owning service guide,
 and recent failures with <a href="../tasks/">Tasks</a>. Monitor is read-only; make changes through the owning desired-state workflow
@@ -3237,8 +3240,12 @@ and use <a href="../appliance-apply/">Appliance Apply</a> for enforcement.</p>
 <h3 id="monitor">Monitor<a class="headerlink" href="#monitor" title="Permanent link">&para;</a></h3>
 <p><img alt="Atlaso Monitor page showing live appliance runtime metrics after apply." src="../../assets/screenshots/monitor-applied-desktop.webp" /></p>
 <p><em>Figure: Runtime monitoring after a successful appliance apply.</em></p>
-<p><img alt="Atlaso Monitor page in the clean-appliance responsive viewport." src="../../assets/screenshots/monitor-clean-responsive.webp" /></p>
-<p><em>Figure: Monitor in the verified clean-appliance responsive state.</em></p>
+<p><img alt="Atlaso Monitor page showing live appliance metrics in the narrow viewport." src="../../assets/screenshots/monitor-clean-responsive.webp" /></p>
+<p><em>Figure: Monitor summary and live charts in the verified narrow state.</em></p>
+<p><img alt="Atlaso Monitor desktop page showing read-only network interface and disk activity detail grids." src="../../assets/screenshots/monitor-detail-grids-clean-desktop.webp" /></p>
+<p><em>Figure: Network-interface and disk-device activity use read-only grids beneath their live charts.</em></p>
+<p><img alt="Atlaso Monitor narrow page showing read-only network interface and disk activity detail grids." src="../../assets/screenshots/monitor-detail-grids-clean-responsive.webp" /></p>
+<p><em>Figure: Network-interface and disk-device grids remain readable without page overflow in the narrow viewport.</em></p>
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
 
 

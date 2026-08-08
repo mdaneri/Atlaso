@@ -3573,9 +3573,10 @@ versioned asset.</p>
   navigation, status, and actions. Page adapters keep only business-specific discovery, validation, conditional-field,
   review-population, and submission callbacks.</li>
 </ul>
-<p>All existing Tabulator initializers use <code>createGrid</code>. Raw constructors outside the shared foundation are forbidden;
-issues #118 and #119 retain their resource-conversion scopes. The repository policy check rejects raw constructors,
-wizard markup without the generic contract, and page-specific generic step-controller logic.</p>
+<p>All existing Tabulator initializers use <code>createGrid</code>, and primary resource collections use the shared grid rather than
+custom interactive native tables. Raw constructors outside the shared foundation are forbidden. The repository policy
+check rejects raw constructors, wizard markup without the generic contract, and page-specific generic step-controller
+logic.</p>
 <h2 id="tabulator-collection-contract">Tabulator collection contract<a class="headerlink" href="#tabulator-collection-contract" title="Permanent link">&para;</a></h2>
 <p>All primary resource collections use the repository's vendored Tabulator assets and shared Atlaso grid styles. Do not
 recreate sorting, selection, editing, keyboard behavior, responsive columns, pagination, empty states, or context menus

@@ -1591,6 +1591,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#certificate-requests-management" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Certificate requests (management)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#public-certificate-portal" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3142,6 +3153,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#certificate-requests-management" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Certificate requests (management)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#public-certificate-portal" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3307,6 +3329,10 @@ appliance apply. It does not add the CA portal to access-interface DNS, firewall
 <h2 id="review-requests">Review requests<a class="headerlink" href="#review-requests" title="Permanent link">&para;</a></h2>
 <p>Use <strong>Certificate Requests</strong> to identify the requester, requested names, intended use, and current status before
 approving or rejecting enrollment. Confirm that every requested name belongs to the intended lab boundary.
+The management and public request lists use the same read-only collection pattern. Sort or inspect the rows normally;
+when an issued certificate can be revoked, open its row menu and select <strong>Revoke certificate</strong>. The shared confirmation
+states that revocation changes desired state and reaches appliance files only through the next global CA apply. The
+server-rendered list and revoke forms remain available when browser scripting is unavailable.
 The request wizard presents the common name, profile, multiline description, DNS SANs, and IP SANs on separate rows so
 long names, operator notes, and multi-value SAN lists remain readable before review. Descriptions stay with request
 identity, while enablement has a
@@ -3325,10 +3351,15 @@ separate task that installs the active Atlaso root into a supported VCF applianc
 <p><img alt="Atlaso Certificate Authority page in the clean-appliance responsive viewport." src="../../assets/screenshots/certificate-authority-clean-responsive.webp" /></p>
 <p><em>Figure: Certificate Authority in the verified clean-appliance responsive state.</em></p>
 <h3 id="certificate-requests">Certificate requests<a class="headerlink" href="#certificate-requests" title="Permanent link">&para;</a></h3>
-<p><img alt="Atlaso Certificate requests page in the clean-appliance desktop viewport." src="../../assets/screenshots/ca-requests-clean-desktop.webp" /></p>
-<p><em>Figure: Certificate requests in the verified clean-appliance desktop state.</em></p>
-<p><img alt="Atlaso Certificate requests page in the clean-appliance responsive viewport." src="../../assets/screenshots/ca-requests-clean-responsive.webp" /></p>
-<p><em>Figure: Certificate requests in the verified clean-appliance responsive state.</em></p>
+<p><img alt="Atlaso public Certificate Request Portal showing issued certificates in a read-only grid." src="../../assets/screenshots/ca-requests-clean-desktop.webp" /></p>
+<p><em>Figure: Public certificate requests rendered through the shared read-only grid in the desktop viewport.</em></p>
+<p><img alt="Atlaso public Certificate Request Portal showing its read-only grid in the narrow viewport." src="../../assets/screenshots/ca-requests-clean-responsive.webp" /></p>
+<p><em>Figure: Public certificate requests remain contained in the narrow viewport.</em></p>
+<h3 id="certificate-requests-management">Certificate requests (management)<a class="headerlink" href="#certificate-requests-management" title="Permanent link">&para;</a></h3>
+<p><img alt="Atlaso management Certificate Requests page showing issued certificates in a read-only grid." src="../../assets/screenshots/ca-management-requests-clean-desktop.webp" /></p>
+<p><em>Figure: Management certificate requests rendered through the shared read-only grid in the desktop viewport.</em></p>
+<p><img alt="Atlaso management Certificate Requests page showing its read-only grid in the narrow viewport." src="../../assets/screenshots/ca-management-requests-clean-responsive.webp" /></p>
+<p><em>Figure: Management certificate requests remain contained in the narrow viewport.</em></p>
 <h3 id="public-certificate-portal">Public certificate portal<a class="headerlink" href="#public-certificate-portal" title="Permanent link">&para;</a></h3>
 <p><img alt="Atlaso Public certificate portal page in the clean-appliance desktop viewport." src="../../assets/screenshots/ca-public-clean-desktop.webp" /></p>
 <p><em>Figure: Public certificate portal in the verified clean-appliance desktop state.</em></p>
