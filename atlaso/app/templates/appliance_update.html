@@ -17,7 +17,7 @@
       <div class="appliance-update-source-actions">
         <form method="post" action="/appliance-update/source-sync">
           <input type="hidden" name="csrf" value="{{ csrf_token }}">
-          <span class="field-label"><button class="button secondary compact" type="submit" title="Synchronize repositories"><span aria-hidden="true">↻</span> <span>Synchronize repositories</span></button><button class="help-icon" type="button" data-help="Writes the desired repository state saved through the source wizard to the appliance package clients through an audited maintenance task. Atlaso validates enabled sources before updating its owned tdnf and PowerShell configuration. Signed Atlaso release sources are read directly and do not modify a package client.">i</button></span>
+          <span class="field-label"><button class="button secondary icon-button" type="submit" aria-label="Synchronize repositories" title="Synchronize repositories"><span aria-hidden="true">↻</span></button><button class="help-icon" type="button" data-help="Writes the desired repository state saved through the source wizard to the appliance package clients through an audited maintenance task. Atlaso validates enabled sources before updating its owned tdnf and PowerShell configuration. Signed Atlaso release sources are read directly and do not modify a package client.">i</button></span>
         </form>
         <span class="status-pill {{ 'warn' if system_adapter_dry_run else 'good' }}">{{ "dry-run" if system_adapter_dry_run else "real" }}</span>
       </div>
@@ -199,10 +199,14 @@
       </div>
     </form>
 
+      </div>
+    </div>
+
+    <div data-appliance-update-shared-history>
     {% set task_grid_class = "appliance-update-history task-grid-section" %}
     {% set task_grid_title = "Recent update tasks" %}
     {% set task_grid_title_id = "appliance-update-history-title" %}
-    {% set task_grid_description = "The same task grid used by Tasks, scoped to Appliance Update checks, installations, and repository synchronizations." %}
+    {% set task_grid_description = "The same task grid used by Tasks, scoped to Appliance Update checks, installations, and repository synchronizations. It remains visible for both workspaces above." %}
     {% set task_grid_rows = recent_update_tasks %}
     {% set task_grid_component_options = task_component_filter_options %}
     {% set task_grid_type = "appliance-update" %}
@@ -213,8 +217,6 @@
     {% set task_grid_empty_message = "No Appliance Update tasks have been recorded yet." %}
     {% include "partials/task_grid.html" %}
     {% include "partials/task_modals.html" %}
-
-      </div>
     </div>
   </div>
 

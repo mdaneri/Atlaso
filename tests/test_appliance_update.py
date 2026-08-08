@@ -70,6 +70,8 @@ def test_appliance_update_page_and_dry_run_job(client):
     assert 'data-task-grid-height="100%"' in page.text
     assert 'id="tasks-table" class="tabulator-shell"' in page.text
     assert 'class="tab-panel active appliance-update-stream-panel"' in page.text
+    assert page.text.count("data-appliance-update-shared-history") == 1
+    assert page.text.index("data-appliance-update-shared-history") > page.text.index('id="appliance-update-streams"')
     assert "The same task grid used by Tasks" in page.text
     assert "Last Update" not in page.text
     assert 'data-tab-target="appliance-update-streams" aria-controls="appliance-update-streams" aria-selected="true"' in page.text
@@ -523,7 +525,7 @@ def test_software_source_and_managed_module_lifecycle(client):
     assert grouped_page.text.index('data-tab-target="appliance-update-streams"') < grouped_page.text.index('data-tab-target="appliance-update-sources"')
     assert "Synchronize repositories" in grouped_page.text
     assert grouped_page.text.count('class="appliance-update-source-actions"') == 1
-    assert 'class="button secondary compact"' in grouped_page.text
+    assert 'class="button secondary icon-button" type="submit" aria-label="Synchronize repositories" title="Synchronize repositories"' in grouped_page.text
     assert grouped_page.text.count("Synchronize repositories") >= 2
     assert 'class="muted appliance-update-source-intro"' in grouped_page.text
     assert 'data-appliance-update-validation-panel' in grouped_page.text
@@ -843,6 +845,77 @@ def test_helper_syncs_only_owned_photon_and_powershell_sources(monkeypatch, tmp_
     assert "[internal-photon]" in photon_path.read_text(encoding="utf-8")
     assert "gpgcheck=1" in photon_path.read_text(encoding="utf-8")
     assert json.loads(state_path.read_text(encoding="utf-8")) == {"powershell_repositories": []}
+
+
+def test_helper_reports_unresolvable_powershell_repository_host(monkeypatch, tmp_path):
+    import socket
+
+    helper = load_helper_module()
+    state_path = tmp_path / "update-sources.json"
+    monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", state_path)
+    monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
+    monkeypatch.setattr(
+        helper.socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(socket.gaierror(-2, "Name or service not known")),
+    )
+
+    result = helper._sync_appliance_update_sources(
+        {
+            "source_definitions": [
+                {
+                    "kind": "powershell",
+                    "name": "PSGallery",
+                    "url": "https://www.powershellgallery.com/api/v2",
+                    "enabled": True,
+                    "settings": {"trusted": False},
+                }
+            ]
+        }
+    )
+
+    assert result["status"] == "failed"
+    assert result["commands"][0]["command"] == ["resolve", "www.powershellgallery.com"]
+    assert result["error"].startswith("PowerShell repository PSGallery host www.powershellgallery.com could not be resolved:")
+
+
+def test_appliance_update_failure_message_uses_actionable_command_stderr():
+    from atlaso.app.ui import appliance_update_failure_message
+
+    message = appliance_update_failure_message(
+        {
+            "success": False,
+            "commands": [
+                {
+                    "command": ["resolve", "www.powershellgallery.com"],
+                    "returncode": 1,
+                    "stderr": "PowerShell repository PSGallery host www.powershellgallery.com could not be resolved.",
+                }
+            ],
+        }
+    )
+
+    assert message == "PowerShell repository PSGallery host www.powershellgallery.com could not be resolved."
+
+
+def test_helper_promotes_source_sync_failure_to_stderr(monkeypatch, tmp_path, capsys):
+    helper = load_helper_module()
+    config_path = tmp_path / "atlaso-update.json"
+    config_path.write_text("{}\n", encoding="utf-8")
+    message = "PowerShell repository PSGallery host www.powershellgallery.com could not be resolved."
+    monkeypatch.setattr(helper, "_validate_appliance_update_config_path", lambda _path: config_path)
+    monkeypatch.setattr(helper, "_load_appliance_update_config", lambda _path: {"source_definitions": []})
+    monkeypatch.setattr(helper, "_load_appliance_update_credentials", lambda _args: {})
+    monkeypatch.setattr(helper, "_appliance_update_config_errors", lambda _payload, require_streams: [])
+    monkeypatch.setattr(
+        helper,
+        "_sync_appliance_update_sources",
+        lambda _payload, _credentials: {"status": "failed", "commands": [], "error": message},
+    )
+
+    assert helper._handle_appliance_update("sync-sources", [str(config_path)]) == 1
+    captured = capsys.readouterr()
+    assert message in captured.err
 
 
 def test_helper_uses_each_modules_bound_powershell_repository(monkeypatch, tmp_path):

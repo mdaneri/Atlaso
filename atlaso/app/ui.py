@@ -9124,7 +9124,7 @@ def complete_appliance_update_task(db: Session, *, job: Job, update_result: dict
     job.finished_at = now
     job.progress_percent = 100
     job.result = json.dumps(update_result, indent=2)
-    job.error = None if update_result["success"] else "One or more appliance update steps reported a failure."
+    job.error = None if update_result["success"] else appliance_update_failure_message(update_result)
     db.add(job)
     db.commit()
     should_log_final_result = not update_result.get("restart_after_commit")
@@ -9167,6 +9167,19 @@ def complete_appliance_update_task(db: Session, *, job: Job, update_result: dict
             log_appliance_update_failures(job.id, update_result)
         log_appliance_update_submission(job.id, update_result)
     return job
+
+
+def appliance_update_failure_message(update_result: dict[str, Any]) -> str:
+    explicit = str(update_result.get("error") or "").strip()
+    if explicit:
+        return apply_output_excerpt(explicit, limit=2000)
+    for command in update_result.get("commands", []):
+        if not isinstance(command, dict) or int(command.get("returncode") or 0) == 0:
+            continue
+        detail = str(command.get("stderr") or "").strip()
+        if detail:
+            return apply_output_excerpt(detail, limit=2000)
+    return "One or more appliance update steps reported a failure."
 
 
 def appliance_update_exception_result(

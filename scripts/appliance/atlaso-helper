@@ -16,6 +16,7 @@ import hmac
 import os
 import re
 import shutil
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -8110,6 +8111,24 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError(f"PowerShell source {name} must use an HTTP(S) URL")
         current_powershell_names.add(name)
+        host = str(parsed.hostname or "").strip()
+        try:
+            socket.getaddrinfo(
+                host,
+                parsed.port or (443 if parsed.scheme == "https" else 80),
+                type=socket.SOCK_STREAM,
+            )
+        except socket.gaierror as exc:
+            commands.append(
+                {
+                    "command": ["resolve", host],
+                    "returncode": 1,
+                    "success": False,
+                    "stdout": "",
+                    "stderr": f"PowerShell repository {name} host {host} could not be resolved: {exc}",
+                }
+            )
+            continue
         trusted = bool((source.get("settings") or {}).get("trusted")) if isinstance(source.get("settings"), dict) else False
         policy = "Trusted" if trusted else "Untrusted"
         script = (
@@ -8147,7 +8166,11 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
         encoding="utf-8",
     )
     UPDATE_SOURCE_STATE_PATH.chmod(0o600)
-    return {"status": "succeeded" if all(command.get("success") for command in commands) else "failed", "commands": commands}
+    failed_commands = [command for command in commands if not command.get("success")]
+    result = {"status": "failed" if failed_commands else "succeeded", "commands": commands}
+    if failed_commands:
+        result["error"] = str(failed_commands[0].get("stderr") or failed_commands[0].get("stdout") or "Repository synchronization failed.").strip()
+    return result
 
 
 def _check_appliance_update(payload: dict, credentials: dict[str, dict[str, str]] | None = None) -> dict:
@@ -9783,6 +9806,8 @@ def _handle_appliance_update(action: str, args: list[str]) -> int:
             print(str(exc), file=sys.stderr)
             return 1
         print(json.dumps(result, indent=2, sort_keys=True))
+        if result.get("status") != "succeeded" and result.get("error"):
+            print(str(result["error"]), file=sys.stderr)
         return 0 if result.get("status") == "succeeded" else 1
     if action == "restart-service":
         return _restart_atlaso_service_after_update()

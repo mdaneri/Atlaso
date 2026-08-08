@@ -2,6 +2,7 @@ import json
 import re
 import subprocess
 from ipaddress import ip_address, ip_interface
+from pathlib import Path
 from typing import Any
 
 from atlaso.app.models import ApplianceSettings, PhysicalInterface, VlanInterface
@@ -22,6 +23,8 @@ MANAGEMENT_UI_PORT = 8000
 MANAGEMENT_UI_PUBLIC_HTTP_PORT = 80
 MANAGEMENT_UI_PUBLIC_HTTPS_PORT = 443
 MANAGEMENT_UI_UPSTREAM_HOST = "127.0.0.1"
+SYSTEMD_NETWORK_LEASES_DIR = Path("/run/systemd/netif/leases")
+SYS_CLASS_NET_DIR = Path("/sys/class/net")
 
 HOSTNAME_PATTERN = re.compile(r"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
@@ -215,6 +218,20 @@ def parse_resolvectl_dns_servers(output: str) -> list[str]:
     return servers
 
 
+def systemd_networkd_lease_dns_servers(interface_name: str) -> list[str]:
+    if not interface_name or Path(interface_name).name != interface_name:
+        return []
+    try:
+        ifindex = (SYS_CLASS_NET_DIR / interface_name / "ifindex").read_text(encoding="utf-8").strip()
+        if not ifindex.isdigit():
+            return []
+        lease = (SYSTEMD_NETWORK_LEASES_DIR / ifindex).read_text(encoding="utf-8")
+    except OSError:
+        return []
+    values = [line.partition("=")[2] for line in lease.splitlines() if line.startswith("DNS=")]
+    return parse_resolvectl_dns_servers("\n".join(values))
+
+
 def observed_management_dhcp_dns_servers(interface_name: str) -> list[str]:
     if not interface_name:
         return []
@@ -227,10 +244,12 @@ def observed_management_dhcp_dns_servers(interface_name: str) -> list[str]:
             timeout=2,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return []
-    if result.returncode != 0:
-        return []
-    return parse_resolvectl_dns_servers(result.stdout)
+        result = None
+    if result is not None and result.returncode == 0:
+        servers = parse_resolvectl_dns_servers(result.stdout)
+        if servers:
+            return servers
+    return systemd_networkd_lease_dns_servers(interface_name)
 
 
 def management_dhcp_dns_context(interfaces: list[PhysicalInterface]) -> tuple[dict[str, str], list[str]]:

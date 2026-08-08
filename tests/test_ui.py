@@ -2896,6 +2896,32 @@ Link 2 (eth0): 127.0.0.1 ::1 192.168.167.2 2001:4860:4860::8888 fe80::1%eth0 192
     assert parse_resolvectl_dns_servers(output) == ["192.168.167.2", "2001:4860:4860::8888", "fe80::1"]
 
 
+def test_management_dhcp_dns_falls_back_to_systemd_networkd_lease(monkeypatch, tmp_path):
+    from atlaso.app.services import appliance_settings
+
+    sys_class_net = tmp_path / "sys" / "class" / "net"
+    leases = tmp_path / "run" / "systemd" / "netif" / "leases"
+    (sys_class_net / "eth0").mkdir(parents=True)
+    leases.mkdir(parents=True)
+    (sys_class_net / "eth0" / "ifindex").write_text("2\n", encoding="utf-8")
+    (leases / "2").write_text("ADDRESS=192.168.167.251\nDNS=127.0.0.1 192.168.167.2\n", encoding="utf-8")
+    monkeypatch.setattr(appliance_settings, "SYS_CLASS_NET_DIR", sys_class_net)
+    monkeypatch.setattr(appliance_settings, "SYSTEMD_NETWORK_LEASES_DIR", leases)
+    monkeypatch.setattr(
+        appliance_settings.subprocess,
+        "run",
+        lambda *_args, **_kwargs: type("Result", (), {"returncode": 0, "stdout": "Link 2 (eth0): 127.0.0.1\n"})(),
+    )
+
+    assert appliance_settings.observed_management_dhcp_dns_servers("eth0") == ["192.168.167.2"]
+    monkeypatch.setattr(
+        appliance_settings.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(appliance_settings.subprocess.TimeoutExpired("resolvectl", 2)),
+    )
+    assert appliance_settings.observed_management_dhcp_dns_servers("eth0") == ["192.168.167.2"]
+
+
 def test_settings_management_dhcp_allows_empty_external_dns(client, monkeypatch):
     from sqlalchemy import select
 
