@@ -1408,7 +1408,7 @@
   <span class="md-ellipsis">
     
   
-  NTP and NTS
+  NTP
 
     
   </span>
@@ -4384,8 +4384,8 @@ DNS and service listener rules default to the built-in <code>Any</code> group. O
 firewall groups containing <code>any</code>, CIDRs, addresses, or other groups when rule sources or destinations need narrower
 access than the default. DHCP bootstrap rules are the exception: they remain interface-bound input rules without group
 filtering because clients and relay paths may arrive before a client address is assigned. IPv4 DHCP zones open UDP/67;
-IPv6 DHCP zones open UDP/547; NTPsec opens UDP/123 on selected bind targets and TCP/4460 when NTPsec NTS server mode is
-enabled. If a DHCP zone or service listener moves from a physical interface to a VLAN such as <code>eth2.50</code>, the firewall
+IPv6 DHCP zones open UDP/547; NTPsec opens UDP/123 on selected bind targets. NTS is disabled, so Atlaso does not open
+TCP/4460. If a DHCP zone or service listener moves from a physical interface to a VLAN such as <code>eth2.50</code>, the firewall
 preview and apply diff should move the generated rule to that same interface. Apply the changed Firewall unit with the
 service unit that changed when the global apply page shows both as pending.</p>
 <p>The <code>public_services</code> unit stages <code>/var/lib/atlaso/apply/public-services/atlaso-public-services.conf</code> and installs
@@ -4451,32 +4451,18 @@ TCP/5696 access to the selected interface. The bounded KMIP operation and eviden
 <a href="../vsphere-key-provider-protocol/">vSphere Key Provider protocol contract</a>.</p>
 <h2 id="appliance-settings-and-operations">Appliance settings and operations<a class="headerlink" href="#appliance-settings-and-operations" title="Permanent link">&para;</a></h2>
 <h3 id="ntpsec-apply">NTPsec apply<a class="headerlink" href="#ntpsec-apply" title="Permanent link">&para;</a></h3>
-<p>The real NTPsec apply path is Photon <code>ntpd.service</code> backed. The <strong>NTP / NTS</strong> page owns enabled state, service hostname,
-upstream NTP sources, per-source NTS client selection, optional NTS server certificate/key paths, hardening directives,
-bind targets, derived listen addresses, UDP/123, and client allow sources. Fresh NTPsec desired state uses NTS-capable
-upstream rows for <code>time.cloudflare.com</code> and <code>nts.netnod.se</code> with NTS enabled and descriptions populated. This is a clean
-desired-state replacement: the retired Chrony table and old Appliance Settings time fields are not imported, restored,
-or migrated.</p>
+<p>The real NTPsec apply path is Photon <code>ntpd.service</code> backed. The <strong>NTP</strong> page owns enabled state, service hostname,
+ordinary NTP sources, hardening directives, bind targets, derived listen addresses, UDP/123, and client allow sources.
+Fresh desired state provides ordinary NTP upstream rows with descriptions. This is a clean desired-state replacement:
+the retired Chrony table and old Appliance Settings time fields are not imported, restored, or migrated.</p>
 <p>The <code>ntpd</code> unit stages <code>/var/lib/atlaso/apply/ntpd/atlaso-ntp.conf</code>. Through <code>atlaso-helper ntpd validate|apply</code>, the
 helper confines the staged file to that directory, requires Photon <code>ntpsec</code> and NTPsec binary identity without starting
-another daemon, validates upstream identities, explicit listen addresses, restrictive client access, and NTS
-certificate/key/cookie paths, then atomically installs <code>/etc/ntp.conf</code>. Per-source NTS renders
-<code>server &lt;hostname&gt; iburst nts</code>; server mode renders <code>nts enable</code>, the CA-managed certificate chain, the private-key
-path, and persistent <code>/var/lib/ntp/nts-keys</code> cookie storage. The read-only status action runs bounded <code>ntpq -pn</code>,
-<code>ntpq -c rv</code>, and <code>ntpq -c ntsinfo</code>; logs read only <code>ntpd.service</code>. When enabled, apply grants the NTS key <code>root:ntp</code>
-mode <code>0640</code>, stops/disables competing time daemons, and enables/restarts <code>ntpd.service</code>. When disabled, it
-stops/disables <code>ntpd.service</code>. Firewall apply owns UDP/123 access and, when enabled, TCP/4460 NTS-KE access to the
-selected interfaces.</p>
-<p>When an operator selects NTP/NTS server changes, submission always adds the CA unit, including when its desired-state
-baseline appears current. The global unit order executes CA first so the helper materializes or repairs the NTS chain
-and private key before <code>ntpd</code> validation checks those paths. Adding CA through this NTS dependency also preserves the
-managed LDAP closure: any changed CA, DNS/DHCP, Firewall, and Managed LDAP units are submitted together when managed
-LDAP desired state is active.</p>
-<p>The read-only <code>atlaso-helper ntpd capabilities</code> action requires Photon’s <code>ntpsec</code> package and verifies the <code>ntpd</code> binary
-identifies itself as NTPsec without starting a daemon. If those checks fail, Atlaso disables the NTS server switch and
-per-upstream NTS editors, marks NTS cells unavailable, and rejects attempts to persist or apply NTS state. The normal
-NTP service, source health, UDP/123 listener, and non-NTS upstreams continue to work once the required package is
-present.</p>
+another daemon, validates upstream identities, explicit listen addresses, and restrictive client access, then
+atomically installs <code>/etc/ntp.conf</code>. The read-only status action runs bounded <code>ntpq -pn</code> and <code>ntpq -c rv</code>; logs read
+only <code>ntpd.service</code>. Apply removes legacy <code>/etc/atlaso/ntp/certs</code> and <code>/var/lib/ntp/nts-keys</code> material, rejects any NTS
+directive, stops/disables competing time daemons, and enables/restarts <code>ntpd.service</code>. When disabled, it stops/disables
+<code>ntpd.service</code>. Firewall apply owns UDP/123 only, and NTP submission has no CA dependency. The compatibility
+<code>atlaso-helper ntpd capabilities</code> action reports NTS disabled.</p>
 <h3 id="appliance-settings-apply">Appliance Settings apply<a class="headerlink" href="#appliance-settings-apply" title="Permanent link">&para;</a></h3>
 <p>The <code>appliance_settings</code> unit owns the centralized VMware Customer Experience Improvement Program (CEIP) preference. It
 defaults to disabled and is new desired state: Atlaso does not migrate or infer it from the retired VCF Download
