@@ -523,8 +523,8 @@ def test_software_source_and_managed_module_lifecycle(client):
     assert grouped_page.text.index('data-tab-target="appliance-update-streams"') < grouped_page.text.index('data-tab-target="appliance-update-sources"')
     assert "Synchronize repositories" in grouped_page.text
     assert grouped_page.text.count('class="appliance-update-source-actions"') == 1
-    assert 'class="button secondary icon-button"' in grouped_page.text
-    assert 'aria-label="Synchronize repositories"' in grouped_page.text
+    assert 'class="button secondary compact"' in grouped_page.text
+    assert grouped_page.text.count("Synchronize repositories") >= 2
     assert 'class="muted appliance-update-source-intro"' in grouped_page.text
     assert 'data-appliance-update-validation-panel' in grouped_page.text
     assert "Staged update manifest" in grouped_page.text
@@ -543,7 +543,10 @@ def test_software_source_and_managed_module_lifecycle(client):
     assert "data-managed-package-wizard-open" in managed_module_tabs
     assert "VCF.PowerCLI" in grouped_page.text
     assert "Private.PowerCLI.Tools" in grouped_page.text
-    assert "one tab per module" in grouped_page.text
+    assert 'data-update-source-section="managed-modules"' in grouped_page.text
+    assert "<strong>POWERSHELL</strong> · managed modules" in grouped_page.text
+    assert "Saved, not synchronized" in grouped_page.text
+    assert "saved in Atlaso but has not been validated or written" in grouped_page.text
     assert "data-add-powershell-repository" not in grouped_page.text
     assert 'data-update-source-group="powershell"' in grouped_page.text
     assert 'aria-label="powershell repositories"' in grouped_page.text

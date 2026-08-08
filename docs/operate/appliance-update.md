@@ -92,17 +92,20 @@ repository** from the icon actions at the right of **Repository identity** to re
 current values. Creating or editing through the wizard saves desired state only: it does not install packages or change
 a running package client.
 
-**Synchronize repositories** explicitly writes only Atlaso-owned tdnf and PowerShell client configuration. Source
-details show whether that synchronization has not run, succeeded, or failed. Signed Atlaso sources are read directly,
-are checked during each update, and do not configure pip or report package-client synchronization state.
+The visible **Synchronize repositories** action explicitly writes only Atlaso-owned tdnf and PowerShell client
+configuration through an audited **Appliance Update repository sync** task. **Saved, not synchronized** means the
+desired repository is stored in Atlaso but has not yet been validated or written into its appliance package client.
+Source details also show when synchronization succeeded or failed. Signed Atlaso sources are read directly, are checked
+during each update, and do not configure pip or report package-client synchronization state.
 
 Each source detail presents repository identity first, then its location or discovered runtime data, followed by
 read-only **Repository behavior** values. Desired-state guidance and synchronization state remain together in a
 separated footer. The accessible edit and delete icon actions stay together in the identity header.
 
-Managed PowerShell module editors follow the same hierarchy: module identity and version policy first, then a grouped
-**Module behavior** switch and a separated autosave/delete footer. The **+ Module** launcher opens a reviewed wizard for
-module identity, version resolution, enablement, and final confirmation; saving it does not install the module. The
+The peer **POWERSHELL · managed modules** disclosure uses the same section spacing, count badge, and tab treatment as
+the repository disclosures. Its module editors keep module identity and version policy first, then a grouped **Module
+behavior** switch and a separated autosave/delete footer. The **+ Module** launcher opens a reviewed wizard for module
+identity, version resolution, enablement, and final confirmation; saving it does not install the module. The
 Update Streams workspace keeps the shared Tasks
 grid, server-scoped to Appliance Update tasks. It preserves the standard sorting, filtering, component tree, progress,
 row menu, and detail behavior. Because the embedded endpoint is already scoped to Appliance Update, the Task / Component
