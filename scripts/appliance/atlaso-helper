@@ -66,7 +66,7 @@ COMMANDS: dict[str, set[str]] = {
     "nginx": {"logs", "access-logs", "error-logs"},
     "vcf-backups": {"validate", "apply"},
     "vcf-private-registry": {"validate", "apply", "relocate-bundles"},
-    "vcf-offline-depot": {"validate", "stage-tool", "reset-tool", "generate-software-depot-id", "sync", "apply-https", "apply-properties", "apply-ceip"},
+    "vcf-offline-depot": {"validate", "stage-tool", "reset-tool", "generate-software-depot-id", "read-software-depot-id", "sync", "apply-https", "apply-properties", "apply-ceip"},
     "esxi-pxe": {"validate", "apply"},
     "esx-storage": {"inventory", "validate", "apply", "status", "logs"},
     "public-services": {"validate", "apply"},
@@ -118,6 +118,7 @@ NO_PATH_ACTIONS = {
     ("console", "restore-services"),
     ("console", "status"),
     ("vcf-offline-depot", "generate-software-depot-id"),
+    ("vcf-offline-depot", "read-software-depot-id"),
     ("vcf-offline-depot", "reset-tool"),
     ("esx-storage", "inventory"),
     ("esx-storage", "status"),
@@ -7410,6 +7411,17 @@ def _generate_vcf_download_tool_software_depot_id() -> int:
         print(f"VCFDT exited with code {completed.returncode}.", file=sys.stderr)
         return completed.returncode
 
+    try:
+        for credential_name in ("download-token.txt", "activation-code.txt"):
+            (VCF_DEPOT_RUNTIME_TOOL_DIR / "secrets" / credential_name).unlink(missing_ok=True)
+    except OSError as exc:
+        print(json.dumps({"software_depot_id_invalidated": True}, sort_keys=True))
+        print(
+            f"VCFDT replaced the software depot ID, but obsolete runtime credentials could not be removed: {exc}",
+            file=sys.stderr,
+        )
+        return 2
+
     readback_command = [str(wrapper_path), "configuration", "get", "--software-depot-id"]
     try:
         readback = _run_vcfdt_user_command(readback_command)
@@ -7436,8 +7448,40 @@ def _generate_vcf_download_tool_software_depot_id() -> int:
             {
                 "vcf_offline_depot": "software depot ID generated",
                 "software_depot_id": software_depot_id,
-                "command": "vcf-download-tool configuration generate --software-depot-id",
-                "readback_command": "vcf-download-tool configuration get --software-depot-id",
+            },
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def _read_vcf_download_tool_software_depot_id() -> int:
+    wrapper_path = VCF_DEPOT_RUNTIME_TOOL_DIR / "vcf-download-tool"
+    if not wrapper_path.is_file():
+        print(f"VCF Download Tool executable does not exist: {wrapper_path}", file=sys.stderr)
+        return 2
+    command = [str(wrapper_path), "configuration", "get", "--software-depot-id"]
+    try:
+        completed = _run_vcfdt_user_command(command)
+    except KeyError:
+        print("atlaso service user does not exist.", file=sys.stderr)
+        return 2
+    except OSError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if completed.returncode != 0:
+        print(f"VCFDT software depot ID readback exited with code {completed.returncode}.", file=sys.stderr)
+        return completed.returncode
+    output = "\n".join(part for part in [completed.stdout, completed.stderr] if part)
+    software_depot_id = _parse_software_depot_id(output)
+    if not software_depot_id:
+        print("VCFDT did not return one unambiguous persisted software depot ID.", file=sys.stderr)
+        return 2
+    print(
+        json.dumps(
+            {
+                "vcf_offline_depot": "software depot ID read back",
+                "software_depot_id": software_depot_id,
             },
             sort_keys=True,
         )
@@ -7554,6 +7598,12 @@ def _handle_vcf_offline_depot(action: str, args: list[str]) -> int:
             print("vcf-offline-depot generate-software-depot-id does not accept arguments", file=sys.stderr)
             return 2
         return _generate_vcf_download_tool_software_depot_id()
+
+    if action == "read-software-depot-id":
+        if args:
+            print("vcf-offline-depot read-software-depot-id does not accept arguments", file=sys.stderr)
+            return 2
+        return _read_vcf_download_tool_software_depot_id()
 
     if action == "apply-ceip":
         if len(args) != 1:

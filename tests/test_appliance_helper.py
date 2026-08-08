@@ -4300,6 +4300,13 @@ def test_vcf_offline_depot_helper_generates_software_depot_id(monkeypatch, tmp_p
     wrapper.parent.mkdir(parents=True)
     wrapper.write_text("#!/bin/sh\n", encoding="utf-8")
     wrapper.chmod(0o755)
+    credential_paths = [
+        runtime_tool_dir / "secrets" / "download-token.txt",
+        runtime_tool_dir / "secrets" / "activation-code.txt",
+    ]
+    for credential_path in credential_paths:
+        credential_path.parent.mkdir(parents=True, exist_ok=True)
+        credential_path.write_text("non-secret-fixture", encoding="utf-8")
     commands: list[tuple[list[str], str]] = []
 
     def fake_run_vcfdt(command: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
@@ -4325,8 +4332,10 @@ def test_vcf_offline_depot_helper_generates_software_depot_id(monkeypatch, tmp_p
         ([str(wrapper), "configuration", "get", "--software-depot-id"], ""),
     ]
     assert payload["software_depot_id"] == "8c9506c6-7bdf-44d5-b2e9-50d829d66b99"
-    assert payload["command"] == "vcf-download-tool configuration generate --software-depot-id"
-    assert payload["readback_command"] == "vcf-download-tool configuration get --software-depot-id"
+    assert "credentials_cleared" not in payload
+    assert "command" not in payload
+    assert "readback_command" not in payload
+    assert all(not credential_path.exists() for credential_path in credential_paths)
 
 
 def test_vcf_offline_depot_helper_rejects_ambiguous_uuid_only_output():
@@ -4347,6 +4356,13 @@ def test_vcf_offline_depot_helper_invalidates_stored_id_when_readback_fails(monk
     wrapper.parent.mkdir(parents=True)
     wrapper.write_text("#!/bin/sh\n", encoding="utf-8")
     wrapper.chmod(0o755)
+    credential_paths = [
+        runtime_tool_dir / "secrets" / "download-token.txt",
+        runtime_tool_dir / "secrets" / "activation-code.txt",
+    ]
+    for credential_path in credential_paths:
+        credential_path.parent.mkdir(parents=True, exist_ok=True)
+        credential_path.write_text("non-secret-fixture", encoding="utf-8")
 
     def fake_run_vcfdt(command: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
         if "generate" in command:
@@ -4360,6 +4376,34 @@ def test_vcf_offline_depot_helper_invalidates_stored_id_when_readback_fails(monk
     captured = capsys.readouterr()
     assert json.loads(captured.out)["software_depot_id_invalidated"] is True
     assert "readback exited with code 5" in captured.err
+    assert all(not credential_path.exists() for credential_path in credential_paths)
+
+
+def test_vcf_offline_depot_helper_preserves_credentials_when_generation_fails(monkeypatch, tmp_path, capsys):
+    helper = load_helper_module()
+    runtime_tool_dir = tmp_path / "var" / "lib" / "atlaso" / "vcfDownloadTool" / "active-tool"
+    wrapper = runtime_tool_dir / "vcf-download-tool"
+    wrapper.parent.mkdir(parents=True)
+    wrapper.write_text("#!/bin/sh\n", encoding="utf-8")
+    wrapper.chmod(0o755)
+    credential_paths = [
+        runtime_tool_dir / "secrets" / "download-token.txt",
+        runtime_tool_dir / "secrets" / "activation-code.txt",
+    ]
+    for credential_path in credential_paths:
+        credential_path.parent.mkdir(parents=True, exist_ok=True)
+        credential_path.write_text("non-secret-fixture", encoding="utf-8")
+
+    monkeypatch.setattr(helper, "VCF_DEPOT_RUNTIME_TOOL_DIR", runtime_tool_dir)
+    monkeypatch.setattr(
+        helper,
+        "_run_vcfdt_user_command",
+        lambda command, input_text=None: subprocess.CompletedProcess(command, 5, "", "generation failed"),
+    )
+
+    assert helper._handle_vcf_offline_depot("generate-software-depot-id", []) == 5
+    assert "VCFDT exited with code 5" in capsys.readouterr().err
+    assert all(credential_path.exists() for credential_path in credential_paths)
 
 
 def test_vcf_offline_depot_generate_software_depot_id_main_allows_no_path(monkeypatch):
@@ -4375,6 +4419,47 @@ def test_vcf_offline_depot_generate_software_depot_id_main_allows_no_path(monkey
 
     assert helper.main(["atlaso-helper", "vcf-offline-depot", "generate-software-depot-id", "--real"]) == 0
     assert calls == [("generate-software-depot-id", [])]
+
+
+def test_vcf_offline_depot_helper_reads_software_depot_id_without_mutation(monkeypatch, tmp_path, capsys):
+    helper = load_helper_module()
+    runtime_tool_dir = tmp_path / "var" / "lib" / "atlaso" / "vcfDownloadTool" / "active-tool"
+    wrapper = runtime_tool_dir / "vcf-download-tool"
+    wrapper.parent.mkdir(parents=True)
+    wrapper.write_text("#!/bin/sh\n", encoding="utf-8")
+    wrapper.chmod(0o755)
+    commands: list[list[str]] = []
+
+    def fake_run_vcfdt(command: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            "Software Depot ID: 8c9506c6-7bdf-44d5-b2e9-50d829d66b99\n",
+            "",
+        )
+
+    monkeypatch.setattr(helper, "VCF_DEPOT_RUNTIME_TOOL_DIR", runtime_tool_dir)
+    monkeypatch.setattr(helper, "_run_vcfdt_user_command", fake_run_vcfdt)
+
+    assert helper._handle_vcf_offline_depot("read-software-depot-id", []) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert commands == [[str(wrapper), "configuration", "get", "--software-depot-id"]]
+    assert payload == {
+        "software_depot_id": "8c9506c6-7bdf-44d5-b2e9-50d829d66b99",
+        "vcf_offline_depot": "software depot ID read back",
+    }
+
+
+def test_vcf_offline_depot_read_software_depot_id_main_allows_no_path(monkeypatch):
+    helper = load_helper_module()
+    calls: list[tuple[str, list[str]]] = []
+
+    monkeypatch.delenv("ATLASO_HELPER_USE_SYSTEMD_RUN", raising=False)
+    monkeypatch.setattr(helper, "_handle_vcf_offline_depot", lambda action, args: calls.append((action, args)) or 0)
+
+    assert helper.main(["atlaso-helper", "vcf-offline-depot", "read-software-depot-id", "--real"]) == 0
+    assert calls == [("read-software-depot-id", [])]
 
 
 def test_vcf_offline_depot_helper_applies_vcfdt_application_properties(monkeypatch, tmp_path, capsys):

@@ -210,6 +210,10 @@ function wizardFixture(stepIds = ["identity", "review"]) {
   });
   const nav = stepIds.map((id, index) => {
     const button = new FakeElement({ dataset: { atlasoWizardNav: id }, tagName: "BUTTON" });
+    const number = new FakeElement({ tagName: "SPAN" });
+    number.textContent = String(index + 1);
+    button.setQuery("span", number);
+    button.number = number;
     button.disabled = index > 0;
     return button;
   });
@@ -440,6 +444,58 @@ test("createWizard locks future steps and supports async validation and review",
   assert.equal(await controller.next(), true);
   assert.equal(controller.currentStepId, "review");
   assert.equal(reviewPrepared, true);
+});
+
+test("createWizard supports conditional next and back routing", async () => {
+  installBrowserGlobals();
+  const fixture = wizardFixture(["choice", "details", "review"]);
+  let skipDetails = true;
+  const controller = createWizard({
+    form: fixture.form,
+    dialog: fixture.dialog,
+    steps: [
+      { id: "choice", title: "Choice" },
+      { id: "details", title: "Details" },
+      { id: "review", title: "Review" },
+    ],
+    onNext: ({ step }) => step.id === "choice" && skipDetails ? "review" : true,
+    onBack: ({ step }) => step.id === "review" && skipDetails ? "choice" : true,
+  });
+
+  assert.equal(await controller.next(), true);
+  assert.equal(controller.currentStepId, "review");
+  assert.equal(await controller.back(), true);
+  assert.equal(controller.currentStepId, "choice");
+  skipDetails = false;
+  assert.equal(await controller.next(), true);
+  assert.equal(controller.currentStepId, "details");
+});
+
+test("createWizard hides skipped steps and recalculates progress", async () => {
+  installBrowserGlobals();
+  const fixture = wizardFixture(["identity", "credentials", "properties", "review"]);
+  const controller = createWizard({
+    form: fixture.form,
+    dialog: fixture.dialog,
+    steps: [
+      { id: "identity", title: "Identity" },
+      { id: "credentials", title: "Credentials" },
+      { id: "properties", title: "Properties" },
+      { id: "review", title: "Review" },
+    ],
+  });
+
+  controller.setSkippedSteps(["credentials", "properties"]);
+  assert.equal(fixture.nav[1].hidden, true);
+  assert.equal(fixture.nav[2].hidden, true);
+  assert.equal(fixture.nav[0].number.textContent, "1");
+  assert.equal(fixture.nav[3].number.textContent, "2");
+  assert.equal(fixture.kicker.textContent, "Step 1 of 2");
+  assert.equal(await controller.next(), true);
+  assert.equal(controller.currentStepId, "review");
+  assert.equal(fixture.kicker.textContent, "Step 2 of 2");
+  assert.equal(await controller.back(), true);
+  assert.equal(controller.currentStepId, "identity");
 });
 
 test("createWizard confirms dirty cancellation and restores launcher focus", async () => {

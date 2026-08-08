@@ -62,7 +62,12 @@ The following cross-cutting boundaries always apply:
 - VCF Offline Depot settings and download-profile applies preserve the registered VCFDT software depot ID. Generate an
   ID only when none exists or an administrator explicitly confirms **Refresh software depot ID** through global apply;
   preserve the old ID when generation itself fails, but invalidate it if generation succeeds and canonical readback
-  fails because VCFDT may already have replaced its runtime identity.
+  fails because VCFDT may already have replaced its runtime identity. Once generation succeeds, remove both staged and
+  runtime Broadcom credentials because neither remains valid for the replacement identity. Keep Broadcom credential replacement,
+  application properties, Software Depot ID review, and the explicit refresh handoff in the shared VCFDT configuration
+  wizard; its ordinary transactional save never refreshes an existing ID. Stage VCFDT package add/update through its
+  shared two-step package wizard. Resetting VCFDT staging always clears the package, credentials, application properties,
+  generated metadata, and profile enablement together.
 - Keep development system adapters in dry-run mode unless a reviewed apply unit explicitly promotes real mutation.
 - VMware Workstation is the default live appliance target; use Hyper-V lifecycle coverage for exact VLAN behavior.
 - VMware release images use separate compacted Photon OS and required Atlaso system-content payload VMDKs, followed by

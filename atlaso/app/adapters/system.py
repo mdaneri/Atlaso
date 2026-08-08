@@ -335,6 +335,14 @@ class SystemAdapter:
             dry_run_message="dry-run: VCF Download Tool software depot ID generation command recorded",
         )
 
+    def read_vcf_offline_depot_software_depot_id(self) -> AdapterResult:
+        return self._helper_result(
+            "vcf-offline-depot",
+            "read-software-depot-id",
+            dry_run_message="dry-run: VCF Download Tool software depot ID readback unavailable",
+            dry_run_returncode=2,
+        )
+
     def sync_vcf_offline_depot(self, config_path: str) -> AdapterResult:
         return self._helper_result("vcf-offline-depot", "sync", config_path, dry_run_message="dry-run: VCF Offline Depot sync command recorded")
 

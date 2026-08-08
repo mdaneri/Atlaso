@@ -595,8 +595,8 @@ it does not trust the first UUID printed during first-run initialization. A gene
 recorded. Successful generation followed by failed or ambiguous readback clears the displayed ID because VCFDT may
 already have replaced its runtime identity. The refresh icon submits explicit refresh intent through the same global
 `/appliance-apply` workflow for `vcf_offline_depot`; it is not a service-specific helper call.
-Download tokens and activation codes share one Broadcom credentials modal with a
-credential-type selector and can be uploaded as files or pasted text; storage keys remain separate for compatibility.
+Download tokens and activation codes use the combined VCFDT configuration wizard's state-aware credential selector and
+conditional upload-or-paste step; storage keys remain separate for compatibility.
 Metadata and binaries profiles use whichever credential was staged most recently: the runtime download-token file used
 by `--depot-download-token-file` or the runtime activation-code file used by
 `--depot-download-activation-code-file`. Existing state with indistinguishable credential timestamps retains the
