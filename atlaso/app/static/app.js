@@ -3709,6 +3709,115 @@ function initializeCaCertificatesTable() {
   });
 }
 
+function caRequestStatusFormatter(cell) {
+  const status = String(cell.getValue() || "unknown");
+  const pill = status === "issued" ? "good" : status === "revoked" ? "warn" : "muted";
+  return `<span class="status-pill ${pill}">${escapeHtml(status)}</span>`;
+}
+
+function submitCaRequestRevocation(element, data, row) {
+  const template = element.dataset.revokeUrlTemplate || "";
+  const csrf = element.dataset.csrf || "";
+  if (!template || !csrf || !data?.can_revoke) return;
+  requestConfirmation({
+    title: `Revoke ${data.common_name}?`,
+    message: "This marks the certificate revoked in Atlaso desired state and includes it in the next CA CRL. Appliance files change only after global CA apply.",
+    label: "Revoke certificate",
+    tone: "danger",
+  }).then((confirmed) => {
+    if (!confirmed) {
+      row?.getElement?.()?.focus();
+      return;
+    }
+    const form = document.createElement("form");
+    form.method = "post";
+    form.action = template.replace("__id__", encodeURIComponent(String(data.id)));
+    form.hidden = true;
+    [["csrf", csrf], ["reason", "operator requested"]].forEach(([name, value]) => {
+      const input = document.createElement("input");
+      input.type = "hidden";
+      input.name = name;
+      input.value = value;
+      form.append(input);
+    });
+    document.body.append(form);
+    form.submit();
+  });
+}
+
+function initializeCaRequestsTable() {
+  const element = document.getElementById("ca-requests-table");
+  if (!(element instanceof HTMLElement)) return;
+  window.AtlasoUiPatterns.createGrid({
+    element,
+    fallback: `#${element.dataset.fallbackId}`,
+    status: "#ca-requests-status",
+    pattern: "read-only",
+    emptyMessage: "No certificate requests configured.",
+    rowActions: [
+      {
+        label: "Revoke certificate",
+        disabled: (row) => !row.getData().can_revoke,
+        action: (_event, row) => submitCaRequestRevocation(element, row.getData(), row),
+      },
+    ],
+    options: {
+      data: JSON.parse(element.dataset.rows || "[]"),
+      index: "id",
+      layout: "fitColumns",
+      height: "360px",
+      columns: [
+        { title: "Common name", field: "common_name", minWidth: 210, formatter: (cell) => escapeHtml(cell.getValue()) },
+        { title: "Profile", field: "profile_name", minWidth: 150, formatter: (cell) => escapeHtml(cell.getValue() || "Unassigned") },
+        { title: "Status", field: "status", minWidth: 110, formatter: caRequestStatusFormatter },
+        { title: "Serial", field: "serial_number", minWidth: 180, formatter: (cell) => escapeHtml(cell.getValue() || "") },
+        { title: "Revoked", field: "revoked_at", minWidth: 120, formatter: (cell) => escapeHtml(String(cell.getValue() || "").slice(0, 10)) },
+      ],
+    },
+  });
+}
+
+function depotEntryLinkFormatter(cell) {
+  const data = cell.getRow().getData();
+  const link = document.createElement("a");
+  link.className = "text-link";
+  link.href = data.href;
+  link.textContent = data.name;
+  return link;
+}
+
+function depotEntryTypeFormatter(cell) {
+  const pill = document.createElement("span");
+  const data = cell.getRow().getData();
+  pill.className = `status-pill ${data.is_directory ? "muted" : "good"}`;
+  pill.textContent = data.kind || (data.is_directory ? "Directory" : "File");
+  return pill;
+}
+
+function initializeDepotBrowserTable() {
+  const element = document.getElementById("depot-browser-table");
+  if (!(element instanceof HTMLElement)) return;
+  window.AtlasoUiPatterns.createGrid({
+    element,
+    fallback: `#${element.dataset.fallbackId}`,
+    pattern: "read-only",
+    emptyMessage: "No depot content is available in this directory.",
+    options: {
+      data: JSON.parse(element.dataset.rows || "[]"),
+      index: "href",
+      layout: "fitColumns",
+      height: "420px",
+      placeholder: "No depot content is available in this directory.",
+      columns: [
+        { title: "Name", field: "name", minWidth: 260, formatter: depotEntryLinkFormatter, widthGrow: 1.6 },
+        { title: "Type", field: "kind", minWidth: 120, formatter: depotEntryTypeFormatter },
+        { title: "Modified", field: "modified", minWidth: 190 },
+        { title: "Size", field: "size", minWidth: 100, hozAlign: "right" },
+      ],
+    },
+  });
+}
+
 async function postKmsAction(url, data, csrf, options = {}) {
   const reload = options.reload ?? true;
   const body = new FormData();
@@ -15765,44 +15874,84 @@ function drawMonitorChart(canvas, rows, lines, options = {}) {
   context.setLineDash([]);
 }
 
-function renderMonitorNetworkTable(tbody, rows) {
-  if (!(tbody instanceof HTMLElement)) {
-    return;
-  }
-  const networks = Array.isArray(rows) ? rows : [];
-  if (!networks.length) {
-    tbody.replaceChildren(Object.assign(document.createElement("tr"), { innerHTML: '<td colspan="6" class="muted">No interfaces sampled</td>' }));
-    return;
-  }
-  tbody.replaceChildren(...networks.map((network) => {
-    const row = document.createElement("tr");
-    const errors = Number(network.rx_errors || 0) + Number(network.tx_errors || 0);
-    const drops = Number(network.rx_dropped || 0) + Number(network.tx_dropped || 0);
-    [network.name || "--", network.oper_state || "unknown", formatMonitorRate(network.rx_bytes_per_sec), formatMonitorRate(network.tx_bytes_per_sec), formatMonitorNumber(errors), formatMonitorNumber(drops)].forEach((value) => {
-      const cell = document.createElement("td");
-      cell.textContent = value;
-      row.append(cell);
-    });
-    return row;
+let monitorNetworkTable = null;
+let monitorDiskActivityTable = null;
+
+function monitorNetworkRows(rows) {
+  return (Array.isArray(rows) ? rows : []).map((network) => ({
+    ...network,
+    errors: Number(network.rx_errors || 0) + Number(network.tx_errors || 0),
+    drops: Number(network.rx_dropped || 0) + Number(network.tx_dropped || 0),
   }));
 }
 
-function renderMonitorDiskActivityTable(tbody, rows) {
-  if (!(tbody instanceof HTMLElement)) return;
-  const devices = Array.isArray(rows) ? rows : [];
-  if (!devices.length) {
-    tbody.replaceChildren(Object.assign(document.createElement("tr"), { innerHTML: '<td colspan="3" class="muted">No devices sampled</td>' }));
-    return;
-  }
-  tbody.replaceChildren(...devices.map((device) => {
-    const row = document.createElement("tr");
-    [device.device || device.name || "--", formatMonitorRate(device.read_bytes_per_sec), formatMonitorRate(device.write_bytes_per_sec)].forEach((value) => {
-      const cell = document.createElement("td");
-      cell.textContent = value;
-      row.append(cell);
+function initializeMonitorDetailTables(root) {
+  const networkElement = root.querySelector("#monitor-network-table");
+  if (networkElement instanceof HTMLElement) {
+    const grid = window.AtlasoUiPatterns.createGrid({
+      element: networkElement,
+      fallback: `#${networkElement.dataset.fallbackId}`,
+      pattern: "read-only",
+      emptyMessage: "No interfaces sampled.",
+      options: {
+        data: monitorNetworkRows(JSON.parse(networkElement.dataset.rows || "[]")),
+        index: "name",
+        layout: "fitColumns",
+        height: "180px",
+        placeholder: "No interfaces sampled.",
+        columns: [
+          { title: "Interface", field: "name", minWidth: 120 },
+          { title: "State", field: "oper_state", minWidth: 90, formatter: (cell) => escapeHtml(cell.getValue() || "unknown") },
+          { title: "RX/s", field: "rx_bytes_per_sec", minWidth: 110, hozAlign: "right", formatter: (cell) => formatMonitorRate(cell.getValue()) },
+          { title: "TX/s", field: "tx_bytes_per_sec", minWidth: 110, hozAlign: "right", formatter: (cell) => formatMonitorRate(cell.getValue()) },
+          { title: "Errors", field: "errors", minWidth: 90, hozAlign: "right", formatter: (cell) => formatMonitorNumber(cell.getValue()) },
+          { title: "Drops", field: "drops", minWidth: 90, hozAlign: "right", formatter: (cell) => formatMonitorNumber(cell.getValue()) },
+        ],
+      },
     });
-    return row;
-  }));
+    monitorNetworkTable = grid.table;
+    networkElement.atlasoTabulator = monitorNetworkTable;
+  }
+
+  const diskElement = root.querySelector("#monitor-disk-activity-table");
+  if (diskElement instanceof HTMLElement) {
+    const grid = window.AtlasoUiPatterns.createGrid({
+      element: diskElement,
+      fallback: `#${diskElement.dataset.fallbackId}`,
+      pattern: "read-only",
+      emptyMessage: "No devices sampled.",
+      options: {
+        data: JSON.parse(diskElement.dataset.rows || "[]"),
+        index: "device",
+        layout: "fitColumns",
+        height: "180px",
+        placeholder: "No devices sampled.",
+        columns: [
+          { title: "Device", field: "device", minWidth: 150, formatter: (cell) => escapeHtml(cell.getValue() || cell.getRow().getData().name || "--") },
+          { title: "Read/s", field: "read_bytes_per_sec", minWidth: 120, hozAlign: "right", formatter: (cell) => formatMonitorRate(cell.getValue()) },
+          { title: "Write/s", field: "write_bytes_per_sec", minWidth: 120, hozAlign: "right", formatter: (cell) => formatMonitorRate(cell.getValue()) },
+        ],
+      },
+    });
+    monitorDiskActivityTable = grid.table;
+    diskElement.atlasoTabulator = monitorDiskActivityTable;
+  }
+}
+
+function refreshMonitorDetailTables(payload) {
+  const reportFailure = () => {
+    const status = document.querySelector("[data-monitor-status]");
+    if (status instanceof HTMLElement) {
+      status.textContent = "Detail grids could not refresh; the last successful snapshot remains visible.";
+      status.dataset.state = "error";
+    }
+  };
+  if (monitorNetworkTable?.replaceData) {
+    monitorNetworkTable.replaceData(monitorNetworkRows(payload.networks)).catch(reportFailure);
+  }
+  if (monitorDiskActivityTable?.replaceData) {
+    monitorDiskActivityTable.replaceData(Array.isArray(payload.disk_devices) ? payload.disk_devices : []).catch(reportFailure);
+  }
 }
 
 const MONITOR_CHART_TITLES = {
@@ -15879,8 +16028,7 @@ function renderMonitorPage(root, payload) {
   Object.keys(MONITOR_CHART_TITLES).forEach((type) => {
     drawMonitorChartType(root.querySelector(`[data-monitor-chart="${type}"]`), type, payload);
   });
-  renderMonitorNetworkTable(root.querySelector("[data-monitor-network-table]"), payload.networks);
-  renderMonitorDiskActivityTable(root.querySelector("[data-monitor-disk-activity-table]"), payload.disk_devices);
+  refreshMonitorDetailTables(payload);
 }
 
 function initializeMonitorPage() {
@@ -15888,6 +16036,7 @@ function initializeMonitorPage() {
   if (!(root instanceof HTMLElement)) {
     return;
   }
+  initializeMonitorDetailTables(root);
   let hours = 6;
   let latestPayload = null;
   let loading = false;
@@ -20241,6 +20390,7 @@ document.addEventListener("DOMContentLoaded", initializeEsxiPxePreviewTable);
 document.addEventListener("DOMContentLoaded", initializeEsxiCustomVariablesTable);
 document.addEventListener("DOMContentLoaded", initializeCaProfilesTable);
 document.addEventListener("DOMContentLoaded", initializeCaCertificatesTable);
+document.addEventListener("DOMContentLoaded", initializeCaRequestsTable);
 document.addEventListener("DOMContentLoaded", () => initializeCaSettings());
 document.addEventListener("DOMContentLoaded", initializeCaCsrWizard);
 document.addEventListener("DOMContentLoaded", initializeKmsClientsTable);
@@ -20266,6 +20416,7 @@ document.addEventListener("DOMContentLoaded", initializeFirewallRulesTable);
 document.addEventListener("DOMContentLoaded", initializeManagedFirewallRulesTable);
 document.addEventListener("DOMContentLoaded", initializeFirewallSourceGroupManager);
 document.addEventListener("DOMContentLoaded", initializeServicesTable);
+document.addEventListener("DOMContentLoaded", initializeDepotBrowserTable);
 document.addEventListener("DOMContentLoaded", initializeUsersTable);
 document.addEventListener("DOMContentLoaded", initializeUserPasswordForm);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanRoutesTable);

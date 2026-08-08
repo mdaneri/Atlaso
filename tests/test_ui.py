@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -833,7 +834,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v231" in service_worker.text
+    assert "atlaso-pwa-v232" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -845,9 +846,9 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
-    assert "/static/app.css?v=appliance-update-258-20260808-1" in service_worker.text
+    assert "/static/app.css?v=appliance-update-261-primary-grids-20260808-1" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
-    assert "/static/app.js?v=appliance-update-258-20260808-1" in service_worker.text
+    assert "/static/app.js?v=appliance-update-261-primary-grids-20260808-1" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
 
     registration = client.get("/static/pwa.js")
@@ -857,7 +858,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=appliance-update-258-20260808-1" in offline.text
+    assert "/static/app.css?v=appliance-update-261-primary-grids-20260808-1" in offline.text
 
 
 def test_shared_ui_pattern_shell_and_wizard_contracts(client):
@@ -868,8 +869,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=appliance-update-258-20260808-1"),
-        (public_base, "/static/app.js?v=appliance-update-258-20260808-1"),
+        (base, "/static/app.js?v=appliance-update-261-primary-grids-20260808-1"),
+        (public_base, "/static/app.js?v=appliance-update-261-primary-grids-20260808-1"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8"
@@ -923,9 +924,9 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     app_js = client.get("/static/app.js").text
     create_grid = "window.AtlasoUiPatterns.createGrid({"
 
-    assert app_js.count(create_grid) == 34
+    assert app_js.count(create_grid) == 38
     assert app_js.count('pattern: "direct-edit"') == 13
-    assert app_js.count('pattern: "read-only"') == 10
+    assert app_js.count('pattern: "read-only"') == 14
     assert app_js.count('pattern: "wizard-backed"') == 11
     assert "new Tabulator(" not in app_js
     assert "new window.Tabulator(" not in app_js
@@ -956,12 +957,18 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
         "initializeEsxiPxePreviewTable": "read-only",
         "initializeTasksPage": "read-only",
         "initializeAuditEventsTable": "read-only",
+        "initializeCaRequestsTable": "read-only",
+        "initializeDepotBrowserTable": "read-only",
         "renderApplianceApplyTask": "read-only",
     }
     for name, pattern in single_grid_patterns.items():
         block = function_block(name)
         assert block.count(create_grid) == 1, name
         assert block.count(f'pattern: "{pattern}"') == 1, name
+
+    monitor_tables = function_block("initializeMonitorDetailTables")
+    assert monitor_tables.count(create_grid) == 2
+    assert monitor_tables.count('pattern: "read-only"') == 2
 
     host_wizard = function_block("initializeEsxiHostReferenceWizard")
     assert host_wizard.count(create_grid) == 1
@@ -1068,6 +1075,60 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     tasks_block = function_block("initializeTasksPage")
     assert "atlasoTasksReopenSelected = shouldOpenSelected;" in tasks_block
     assert "if (!atlasoTasksTable) {" in tasks_block
+
+
+def test_primary_resource_table_templates_use_shared_read_only_grids():
+    from pathlib import Path
+
+    templates = Path("atlaso/app/templates")
+    expected = {
+        "ca_requests.html": (("ca-requests-table", "ca-requests-fallback"),),
+        "ca_request_portal.html": (("ca-requests-table", "ca-requests-fallback"),),
+        "monitor.html": (
+            ("monitor-network-table", "monitor-network-fallback"),
+            ("monitor-disk-activity-table", "monitor-disk-activity-fallback"),
+        ),
+        "depot_browser.html": (("depot-browser-table", "depot-browser-fallback"),),
+    }
+    for template_name, grids in expected.items():
+        source = (templates / template_name).read_text(encoding="utf-8")
+        for grid_id, fallback_id in grids:
+            assert f'id="{grid_id}"' in source
+            assert f'data-fallback-id="{fallback_id}"' in source
+            assert f'id="{fallback_id}"' in source
+
+    app_js = Path("atlaso/app/static/app.js").read_text(encoding="utf-8")
+    for initializer in ("initializeCaRequestsTable", "initializeDepotBrowserTable", "initializeMonitorDetailTables"):
+        assert f"function {initializer}(" in app_js
+    assert 'link.textContent = data.name;' in app_js
+    assert 'placeholder: "No depot content is available in this directory."' in app_js
+    assert 'placeholder: "No interfaces sampled."' in app_js
+    assert 'placeholder: "No devices sampled."' in app_js
+    assert 'monitorNetworkTable.replaceData(monitorNetworkRows(payload.networks))' in app_js
+    assert 'monitorDiskActivityTable.replaceData(Array.isArray(payload.disk_devices)' in app_js
+
+    reviewed_semantic_summaries = {
+        ("backup_restore.html", '<table class="data-table compact">'),
+        ("dhcp.html", '<table class="data-table compact generated-options-table">'),
+        ("dns.html", '<table class="data-table compact">'),
+        ("vcf_helper.html", '<table class="data-table compact vcf-fqdn-table">'),
+    }
+    remaining_native_tables = set()
+    for path in templates.rglob("*.html"):
+        relative = path.relative_to(templates).as_posix()
+        for table_tag in re.findall(r"<table\b[^>]*>", path.read_text(encoding="utf-8")):
+            if "fallback" in table_tag:
+                continue
+            remaining_native_tables.add((relative, table_tag))
+    assert remaining_native_tables == reviewed_semantic_summaries
+
+    for migrated_template in ("authentication.html", "esxi_pxe.html"):
+        table_tags = re.findall(
+            r"<table\b[^>]*>",
+            (templates / migrated_template).read_text(encoding="utf-8"),
+        )
+        assert table_tags
+        assert all("fallback" in table_tag for table_tag in table_tags)
 
 
 def test_complex_resource_wizard_grid_contracts_return_saved_rows_and_delete_without_reload(client):
@@ -1371,12 +1432,19 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "monitor-chart-zoom-field" in page.text
     assert "Changes the visible time-window magnification for this expanded chart only" in page.text
     assert "data-monitor-chart-zoom-reset" not in page.text
-    assert "data-monitor-disk-activity-table" in page.text
+    assert 'id="monitor-network-table"' in page.text
+    assert 'data-fallback-id="monitor-network-fallback"' in page.text
+    assert 'id="monitor-network-fallback"' in page.text
+    assert 'id="monitor-disk-activity-table"' in page.text
+    assert 'data-fallback-id="monitor-disk-activity-fallback"' in page.text
+    assert 'id="monitor-disk-activity-fallback"' in page.text
+    assert "Loading interfaces" not in page.text
+    assert "Loading devices" not in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=appliance-update-258-20260808-1" in page.text
+    assert "/static/app.css?v=appliance-update-261-primary-grids-20260808-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=appliance-update-258-20260808-1" in page.text
+    assert "/static/app.js?v=appliance-update-261-primary-grids-20260808-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -1426,7 +1494,10 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert 'canvas.addEventListener("pointerdown"' in app_js
     assert 'canvas.addEventListener("pointerup", finishAreaSelection);' in app_js
     assert 'context.fillStyle = "rgba(37, 99, 235, 0.14)";' in app_js
-    assert "function renderMonitorDiskActivityTable(tbody, rows)" in app_js
+    assert "function initializeMonitorDetailTables(root)" in app_js
+    assert "function refreshMonitorDetailTables(payload)" in app_js
+    assert "monitorNetworkTable.replaceData(monitorNetworkRows(payload.networks))" in app_js
+    assert "monitorDiskActivityTable.replaceData" in app_js
     assert "payload.disk_devices" in app_js
     assert 'zoomPercentInput?.addEventListener("input"' in app_js
     assert 'if (event.key === "Enter") event.currentTarget.blur();' in app_js
@@ -8568,12 +8639,14 @@ def test_public_service_home_is_scoped_to_called_ip(client, tmp_path, monkeypatc
     assert "VCF Offline Depot" in depot_browser.text
     assert "Index of /PROD/" not in depot_browser.text
     assert 'class="public-portal-shell"' in depot_browser.text
+    assert 'id="depot-browser-table"' in depot_browser.text
+    assert 'data-fallback-id="depot-browser-fallback"' in depot_browser.text
     assert 'href="/PROD/COMP/"' in depot_browser.text
 
     depot_subdir = client.get("/PROD/COMP/", headers={"host": "192.168.87.32"})
     assert depot_subdir.status_code == 200
     assert 'href="/PROD/COMP/manifest.json"' in depot_subdir.text
-    assert "../" in depot_subdir.text
+    assert ">Up one level</a>" in depot_subdir.text
 
     depot_file = client.get("/PROD/COMP/manifest.json", headers={"host": "192.168.87.32"})
     assert depot_file.status_code == 404
@@ -8668,6 +8741,24 @@ def test_certificate_operator_uses_request_page_without_console_access(client):
     assert "CA Settings" not in page.text
     assert "atlaso-ca.json" not in page.text
     assert "/certificate-authority" not in page.text
+    assert 'id="ca-requests-table"' in page.text
+    assert 'data-fallback-id="ca-requests-fallback"' in page.text
+    assert 'data-revoke-url-template="/ca/certificates/__id__/revoke"' in page.text
+    request_rows = json.loads(
+        page.text.split('id="ca-requests-table"', 1)[1].split("data-rows='", 1)[1].split("'", 1)[0]
+    )
+    assert set(request_rows[0]) == {
+        "id",
+        "common_name",
+        "profile_name",
+        "status",
+        "serial_number",
+        "revoked_at",
+        "can_revoke",
+    }
+    issued_request_row = next(row for row in request_rows if row["common_name"] == "issued.atlaso.internal")
+    assert issued_request_row["can_revoke"] is True
+    assert "certificate_pem" not in page.text
     with SessionLocal() as db:
         issued = db.execute(select(CaCertificate).where(CaCertificate.common_name == "issued.atlaso.internal")).scalar_one()
         certificate_id = issued.id
@@ -8680,6 +8771,17 @@ def test_certificate_operator_uses_request_page_without_console_access(client):
     assert 'data-history-back' in portal_page.text
     assert 'name="next" value="/requests"' in portal_page.text
     assert f'action="/requests/certificates/{certificate_id}/revoke"' in portal_page.text
+    assert 'id="ca-requests-table"' in portal_page.text
+    assert 'data-fallback-id="ca-requests-fallback"' in portal_page.text
+    assert 'data-revoke-url-template="/requests/certificates/__id__/revoke"' in portal_page.text
+    public_request_rows = json.loads(
+        portal_page.text.split('id="ca-requests-table"', 1)[1].split("data-rows='", 1)[1].split("'", 1)[0]
+    )
+    assert public_request_rows == request_rows
+    request_grid_js = client.get("/static/app.js").text.split("function initializeCaRequestsTable()", 1)[0]
+    assert 'label: "Revoke certificate"' in request_grid_js
+    assert 'confirmLabel: "Revoke certificate"' not in request_grid_js
+    assert "row?.getElement?.()?.focus();" in request_grid_js
     assert 'class="app-shell"' not in portal_page.text
     assert 'class="sidebar"' not in portal_page.text
     assert "Unprivileged control plane" not in portal_page.text

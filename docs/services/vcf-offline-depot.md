@@ -21,6 +21,11 @@ This verified appliance view provides visual orientation before you begin.
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+The published `/PROD/` directory uses the public Atlaso shell and a read-only contents grid. Directory links navigate
+within the depot, file links retain their exact artifact URL, and **Up one level** returns to the parent directory.
+Authenticated and unauthenticated access continue to follow the configured depot policy; a server-rendered contents
+table remains available when browser scripting is unavailable.
+
 ## Configure the depot
 
 1. Confirm the fixed depot mount is present and has sufficient working space.
@@ -137,5 +142,15 @@ These captures show responsive layouts and useful operational states referenced 
 ![VCF Offline Depot profile row menu showing Schedule download disabled until the profile is enabled.](../assets/screenshots/vcf-offline-depot-schedule-action-desktop.webp)
 
 *Figure: VCF Offline Depot profile scheduling action with the disabled-profile reason.*
+
+### VCF Offline Depot browser
+
+![Atlaso public VCF Offline Depot browser showing a directory link in the desktop read-only grid.](../assets/screenshots/vcf-depot-browser-clean-desktop.webp)
+
+*Figure: The public VCF Offline Depot directory renders exact artifact paths as safe native links in a read-only grid.*
+
+![Atlaso public VCF Offline Depot browser showing its read-only contents grid in the narrow viewport.](../assets/screenshots/vcf-depot-browser-clean-responsive.webp)
+
+*Figure: The public VCF Offline Depot browser remains contained in the narrow viewport.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->

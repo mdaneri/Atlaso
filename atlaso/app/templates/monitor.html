@@ -95,12 +95,29 @@
       </div>
       <div class="monitor-chart"><canvas data-monitor-chart="network" aria-label="Network throughput trend"></canvas></div>
       <div class="monitor-table-scroll">
-        <table class="data-table compact">
+        <div
+          id="monitor-network-table"
+          class="tabulator-shell"
+          data-rows='{{ monitor_initial_payload.networks | tojson }}'
+          data-fallback-id="monitor-network-fallback"
+        ></div>
+        <table id="monitor-network-fallback" class="data-table compact">
           <thead>
             <tr><th>Interface</th><th>State</th><th>RX/s</th><th>TX/s</th><th>Errors</th><th>Drops</th></tr>
           </thead>
-          <tbody data-monitor-network-table>
-            <tr><td colspan="6" class="muted">Loading interfaces</td></tr>
+          <tbody>
+            {% for network in monitor_network_fallback_rows %}
+              <tr>
+                <td>{{ network.name }}</td>
+                <td>{{ network.oper_state or "unknown" }}</td>
+                <td>{{ network.rx_rate_label }}</td>
+                <td>{{ network.tx_rate_label }}</td>
+                <td>{{ network.errors }}</td>
+                <td>{{ network.drops }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="6" class="muted">No interfaces sampled</td></tr>
+            {% endfor %}
           </tbody>
         </table>
       </div>
@@ -118,12 +135,26 @@
       </div>
       <div class="monitor-chart"><canvas data-monitor-chart="disk" aria-label="Disk activity trend"></canvas></div>
       <div class="monitor-table-scroll monitor-disk-activity-table-scroll">
-        <table class="data-table compact">
+        <div
+          id="monitor-disk-activity-table"
+          class="tabulator-shell"
+          data-rows='{{ monitor_initial_payload.disk_devices | tojson }}'
+          data-fallback-id="monitor-disk-activity-fallback"
+        ></div>
+        <table id="monitor-disk-activity-fallback" class="data-table compact">
           <thead>
             <tr><th>Device</th><th>Read/s</th><th>Write/s</th></tr>
           </thead>
-          <tbody data-monitor-disk-activity-table>
-            <tr><td colspan="3" class="muted">Loading devices</td></tr>
+          <tbody>
+            {% for device in monitor_disk_fallback_rows %}
+              <tr>
+                <td>{{ device.device or device.name }}</td>
+                <td>{{ device.read_rate_label }}</td>
+                <td>{{ device.write_rate_label }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="3" class="muted">No devices sampled</td></tr>
+            {% endfor %}
           </tbody>
         </table>
       </div>

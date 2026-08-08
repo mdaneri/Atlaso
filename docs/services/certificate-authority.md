@@ -41,6 +41,10 @@ appliance apply. It does not add the CA portal to access-interface DNS, firewall
 
 Use **Certificate Requests** to identify the requester, requested names, intended use, and current status before
 approving or rejecting enrollment. Confirm that every requested name belongs to the intended lab boundary.
+The management and public request lists use the same read-only collection pattern. Sort or inspect the rows normally;
+when an issued certificate can be revoked, open its row menu and select **Revoke certificate**. The shared confirmation
+states that revocation changes desired state and reaches appliance files only through the next global CA apply. The
+server-rendered list and revoke forms remain available when browser scripting is unavailable.
 The request wizard presents the common name, profile, multiline description, DNS SANs, and IP SANs on separate rows so
 long names, operator notes, and multi-value SAN lists remain readable before review. Descriptions stay with request
 identity, while enablement has a
@@ -69,13 +73,23 @@ These captures show responsive layouts and useful operational states referenced 
 
 ### Certificate requests
 
-![Atlaso Certificate requests page in the clean-appliance desktop viewport.](../assets/screenshots/ca-requests-clean-desktop.webp)
+![Atlaso public Certificate Request Portal showing issued certificates in a read-only grid.](../assets/screenshots/ca-requests-clean-desktop.webp)
 
-*Figure: Certificate requests in the verified clean-appliance desktop state.*
+*Figure: Public certificate requests rendered through the shared read-only grid in the desktop viewport.*
 
-![Atlaso Certificate requests page in the clean-appliance responsive viewport.](../assets/screenshots/ca-requests-clean-responsive.webp)
+![Atlaso public Certificate Request Portal showing its read-only grid in the narrow viewport.](../assets/screenshots/ca-requests-clean-responsive.webp)
 
-*Figure: Certificate requests in the verified clean-appliance responsive state.*
+*Figure: Public certificate requests remain contained in the narrow viewport.*
+
+### Certificate requests (management)
+
+![Atlaso management Certificate Requests page showing issued certificates in a read-only grid.](../assets/screenshots/ca-management-requests-clean-desktop.webp)
+
+*Figure: Management certificate requests rendered through the shared read-only grid in the desktop viewport.*
+
+![Atlaso management Certificate Requests page showing its read-only grid in the narrow viewport.](../assets/screenshots/ca-management-requests-clean-responsive.webp)
+
+*Figure: Management certificate requests remain contained in the narrow viewport.*
 
 ### Public certificate portal
 

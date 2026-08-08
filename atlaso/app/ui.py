@@ -3872,6 +3872,18 @@ def is_ca_portal_host(request: Request, db: Session) -> bool:
     return bool(request_host and request_host in listen_addresses)
 
 
+def ca_request_to_dict(certificate: CaCertificate) -> dict[str, Any]:
+    return {
+        "id": certificate.id,
+        "common_name": certificate.common_name,
+        "profile_name": certificate.profile.name if certificate.profile else "Unassigned",
+        "status": certificate.status,
+        "serial_number": certificate.serial_number or "",
+        "revoked_at": certificate.revoked_at.isoformat() if certificate.revoked_at else "",
+        "can_revoke": certificate.status == "issued" and bool(certificate.serial_number),
+    }
+
+
 def ca_request_context(db: Session) -> dict:
     if ensure_default_ca_profiles(db):
         db.commit()
@@ -3885,6 +3897,7 @@ def ca_request_context(db: Session) -> dict:
         "ca_profiles": profiles,
         "ca_profile_choices": [{"id": profile.id, "label": profile.name} for profile in profiles if profile.enabled],
         "ca_certificates": certificates,
+        "ca_request_rows": [ca_request_to_dict(certificate) for certificate in certificates],
     }
 
 
@@ -9964,6 +9977,12 @@ def _format_file_size(size: int) -> str:
     return f"{size} B"
 
 
+def _format_byte_rate(value: float | int | None) -> str:
+    if value is None:
+        return "--"
+    return f"{_format_file_size(max(0, int(value)))}/s"
+
+
 def _depot_browser_context(db: Session, depot_path: str = "") -> dict[str, Any]:
     settings = get_vcf_offline_depot_settings_row(db)
     root = (Path(settings.depot_store_path) / "PROD").resolve(strict=False)
@@ -9992,6 +10011,7 @@ def _depot_browser_context(db: Session, depot_path: str = "") -> dict[str, Any]:
                 "name": child.name + ("/" if is_dir else ""),
                 "href": href,
                 "kind": "Directory" if is_dir else "File",
+                "is_directory": is_dir,
                 "pill": "muted" if is_dir else "good",
                 "size": "-" if is_dir else _format_file_size(stat.st_size),
                 "modified": modified.strftime("%Y-%m-%d %H:%M UTC"),
@@ -10346,9 +10366,38 @@ def dashboard_data(
 def monitor_page(
     request: Request,
     identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
 ) -> HTMLResponse:
     require_monitoring_read(identity)
-    return render(request, "monitor.html", {"identity": identity})
+    initial_payload = monitor_payload(db, hours=6)
+    network_rows = [
+        {
+            **row,
+            "rx_rate_label": _format_byte_rate(row.get("rx_bytes_per_sec")),
+            "tx_rate_label": _format_byte_rate(row.get("tx_bytes_per_sec")),
+            "errors": int(row.get("rx_errors") or 0) + int(row.get("tx_errors") or 0),
+            "drops": int(row.get("rx_dropped") or 0) + int(row.get("tx_dropped") or 0),
+        }
+        for row in initial_payload.get("networks", [])
+    ]
+    disk_rows = [
+        {
+            **row,
+            "read_rate_label": _format_byte_rate(row.get("read_bytes_per_sec")),
+            "write_rate_label": _format_byte_rate(row.get("write_bytes_per_sec")),
+        }
+        for row in initial_payload.get("disk_devices", [])
+    ]
+    return render(
+        request,
+        "monitor.html",
+        {
+            "identity": identity,
+            "monitor_initial_payload": initial_payload,
+            "monitor_network_fallback_rows": network_rows,
+            "monitor_disk_fallback_rows": disk_rows,
+        },
+    )
 
 
 @router.get("/monitor/data", response_class=JSONResponse, response_model=None)

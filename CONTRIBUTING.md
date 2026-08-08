@@ -92,8 +92,8 @@ narrow viewport evidence for affected flows.
 
 Use `window.AtlasoUiPatterns.createGrid(...)` as the only constructor entry point for every Tabulator collection.
 Use `window.AtlasoUiPatterns.createWizard(...)` and the generic `data-atlaso-wizard-*` DOM contract for every new or
-changed wizard. Raw Tabulator constructors outside the shared foundation are forbidden. Issues #118 and #119 own the
-remaining resource-wizard and native-table conversions.
+changed wizard. Raw Tabulator constructors outside the shared foundation are forbidden. Primary resource collections
+must not fall back to custom interactive native tables; retain semantic tables only for the reviewed summary exemptions.
 
 ## Automated contributors and coding agents
 
