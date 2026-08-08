@@ -99,6 +99,18 @@ Figure: Public certificate portal in the verified clean-appliance desktop state.
 
 Figure: Public certificate portal in the verified clean-appliance responsive state.
 
+## Ca / Requests
+
+Route: `/ca/requests`
+
+![Atlaso management Certificate Requests page showing issued certificates in a read-only grid.](../assets/screenshots/ca-management-requests-clean-desktop.webp)
+
+Figure: Management certificate requests rendered through the shared read-only grid in the desktop viewport.
+
+![Atlaso management Certificate Requests page showing its read-only grid in the narrow viewport.](../assets/screenshots/ca-management-requests-clean-responsive.webp)
+
+Figure: Management certificate requests remain contained in the narrow viewport.
+
 ## Certificate Authority
 
 Route: `/certificate-authority`
@@ -291,13 +303,21 @@ Route: `/monitor`
 
 Figure: Runtime monitoring after a successful appliance apply.
 
-![Atlaso Monitor page in the clean-appliance desktop viewport.](../assets/screenshots/monitor-clean-desktop.webp)
+![Atlaso Monitor page showing live appliance metrics in the desktop viewport.](../assets/screenshots/monitor-clean-desktop.webp)
 
-Figure: Monitor in the verified clean-appliance desktop state.
+Figure: Monitor summary and live charts in the verified desktop state.
 
-![Atlaso Monitor page in the clean-appliance responsive viewport.](../assets/screenshots/monitor-clean-responsive.webp)
+![Atlaso Monitor page showing live appliance metrics in the narrow viewport.](../assets/screenshots/monitor-clean-responsive.webp)
 
-Figure: Monitor in the verified clean-appliance responsive state.
+Figure: Monitor summary and live charts in the verified narrow state.
+
+![Atlaso Monitor desktop page showing read-only network interface and disk activity detail grids.](../assets/screenshots/monitor-detail-grids-clean-desktop.webp)
+
+Figure: Network-interface and disk-device activity use read-only grids beneath their live charts.
+
+![Atlaso Monitor narrow page showing read-only network interface and disk activity detail grids.](../assets/screenshots/monitor-detail-grids-clean-responsive.webp)
+
+Figure: Network-interface and disk-device grids remain readable without page overflow in the narrow viewport.
 
 ## Network Boot
 
@@ -359,17 +379,29 @@ Figure: Physical Interfaces in the verified clean-appliance desktop state.
 
 Figure: Physical Interfaces in the verified clean-appliance responsive state.
 
+## Prod
+
+Route: `/PROD/`
+
+![Atlaso public VCF Offline Depot browser showing a directory link in the desktop read-only grid.](../assets/screenshots/vcf-depot-browser-clean-desktop.webp)
+
+Figure: The public VCF Offline Depot directory renders exact artifact paths as safe native links in a read-only grid.
+
+![Atlaso public VCF Offline Depot browser showing its read-only contents grid in the narrow viewport.](../assets/screenshots/vcf-depot-browser-clean-responsive.webp)
+
+Figure: The public VCF Offline Depot browser remains contained in the narrow viewport.
+
 ## Requests
 
 Route: `/requests`
 
-![Atlaso Certificate requests page in the clean-appliance desktop viewport.](../assets/screenshots/ca-requests-clean-desktop.webp)
+![Atlaso public Certificate Request Portal showing issued certificates in a read-only grid.](../assets/screenshots/ca-requests-clean-desktop.webp)
 
-Figure: Certificate requests in the verified clean-appliance desktop state.
+Figure: Public certificate requests rendered through the shared read-only grid in the desktop viewport.
 
-![Atlaso Certificate requests page in the clean-appliance responsive viewport.](../assets/screenshots/ca-requests-clean-responsive.webp)
+![Atlaso public Certificate Request Portal showing its read-only grid in the narrow viewport.](../assets/screenshots/ca-requests-clean-responsive.webp)
 
-Figure: Certificate requests in the verified clean-appliance responsive state.
+Figure: Public certificate requests remain contained in the narrow viewport.
 
 ## Routes Wan
 
