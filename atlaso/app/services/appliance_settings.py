@@ -215,6 +215,21 @@ def parse_resolvectl_dns_servers(output: str) -> list[str]:
     return servers
 
 
+def parse_networkd_dhcp_dns_payload(output: str, interface_name: str) -> list[str]:
+    for line in reversed(output.splitlines()):
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict) or payload.get("interface") != interface_name:
+            continue
+        raw_servers = payload.get("servers")
+        if not isinstance(raw_servers, list):
+            return []
+        return parse_resolvectl_dns_servers(" ".join(str(server) for server in raw_servers))
+    return []
+
+
 def observed_management_dhcp_dns_servers(interface_name: str) -> list[str]:
     if not interface_name:
         return []
@@ -227,10 +242,18 @@ def observed_management_dhcp_dns_servers(interface_name: str) -> list[str]:
             timeout=2,
         )
     except (OSError, subprocess.TimeoutExpired):
+        result = None
+    if result is not None and result.returncode == 0:
+        servers = parse_resolvectl_dns_servers(result.stdout)
+        if servers:
+            return servers
+
+    from atlaso.app.adapters.system import SystemAdapter
+
+    lease_result = SystemAdapter().read_networkd_dhcp_dns(interface_name)
+    if lease_result.returncode != 0:
         return []
-    if result.returncode != 0:
-        return []
-    return parse_resolvectl_dns_servers(result.stdout)
+    return parse_networkd_dhcp_dns_payload(lease_result.stdout, interface_name)
 
 
 def management_dhcp_dns_context(interfaces: list[PhysicalInterface]) -> tuple[dict[str, str], list[str]]:

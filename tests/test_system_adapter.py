@@ -286,6 +286,24 @@ def test_real_dhcp_leases_sudo_password_error_becomes_operator_guidance(monkeypa
     assert "sudo: a password is required" not in result.stderr
 
 
+def test_networkd_dhcp_dns_executes_read_only_helper_during_dry_run(monkeypatch):
+    import atlaso.app.adapters.system as system_adapter
+
+    commands: list[list[str]] = []
+
+    def fake_run(command, **_kwargs):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, '{"interface":"eth0","ifindex":2,"servers":["192.168.167.2"]}\n', "")
+
+    monkeypatch.setattr(system_adapter.subprocess, "run", fake_run)
+
+    result = SystemAdapter(dry_run=True).read_networkd_dhcp_dns("eth0")
+
+    assert result.returncode == 0
+    assert result.command == [SystemAdapter.HELPER_PATH, "network", "dhcp-dns", "--real", "eth0"]
+    assert commands == [result.command]
+
+
 def test_real_vcf_backup_apply_uses_sudo_helper(monkeypatch):
     import atlaso.app.adapters.system as system_adapter
 

@@ -606,6 +606,14 @@ def effective_dns_upstream_servers(settings: DnsSettings, fallback_servers: list
     return _non_loopback_servers([server.strip() for server in fallback_servers or [] if server.strip()])
 
 
+def dhcp_dns_upstream_required(settings: DnsSettings, management_interface: dict[str, object]) -> bool:
+    return bool(
+        settings.enabled
+        and management_interface.get("ipv4_method") == "dhcp"
+        and not effective_dns_upstream_servers(settings)
+    )
+
+
 def dhcp_settings_to_scope(settings: DhcpSettings) -> dict:
     return {
         "id": 0,
@@ -685,7 +693,14 @@ def parse_dnsmasq_leases(raw_text: str, now: datetime | None = None) -> list[dic
     return leases
 
 
-def validate_dns_settings(settings: DnsSettings, records: list[DnsRecord], conditional_forwarders: str | None = None) -> list[str]:
+def validate_dns_settings(
+    settings: DnsSettings,
+    records: list[DnsRecord],
+    conditional_forwarders: str | None = None,
+    *,
+    fallback_upstream_servers: list[str] | None = None,
+    require_dhcp_upstream: bool = False,
+) -> list[str]:
     errors: list[str] = []
     if settings.enabled and not split_interfaces(settings.listen_interface):
         errors.append("DNS must listen on at least one interface.")
@@ -741,6 +756,10 @@ def validate_dns_settings(settings: DnsSettings, records: list[DnsRecord], condi
         parsed = _validate_ip(server, f"upstream server {server}", errors)
         if parsed and parsed.is_loopback:
             errors.append(f"upstream server {server} must not be a loopback address.")
+    if require_dhcp_upstream and not effective_dns_upstream_servers(settings, fallback_upstream_servers):
+        errors.append(
+            "DNS requires at least one usable management DHCP upstream server, but the systemd-networkd lease did not provide one."
+        )
     for forwarder in split_conditional_forwarders(conditional_forwarders):
         domain = forwarder["domain"]
         server = forwarder["server"]
@@ -1029,6 +1048,7 @@ def render_dnsmasq_config(
     dhcp_options: list[DhcpOption] | None = None,
     conditional_forwarders: str | None = None,
     fallback_upstream_servers: list[str] | None = None,
+    require_dhcp_upstream: bool = False,
     esxi_pxe_boot: dict | None = None,
 ) -> str:
     ensure_dns_authoritative_defaults(dns_settings)
@@ -1048,6 +1068,8 @@ def render_dnsmasq_config(
         f"dhcp-leasefile={DNSMASQ_LEASE_FILE_PATH}",
         f"cache-size={dns_settings.cache_size if dns_settings.cache_size is not None else 1000}",
     ]
+    if require_dhcp_upstream:
+        lines.insert(1, "# atlaso-dhcp-upstream-required")
     if dns_settings.query_logging_mode == "queries-extra":
         lines.append("log-queries=extra")
     if dns_settings.dnssec_enabled:
@@ -1358,11 +1380,10 @@ def _non_loopback_servers(servers: list[str]) -> list[str]:
         try:
             parsed = ip_address(server)
         except ValueError:
-            normalized = server.strip()
-        else:
-            if parsed.is_loopback:
-                continue
-            normalized = str(parsed)
+            continue
+        if parsed.is_loopback:
+            continue
+        normalized = str(parsed)
         if normalized and normalized not in seen:
             seen.add(normalized)
             filtered.append(normalized)

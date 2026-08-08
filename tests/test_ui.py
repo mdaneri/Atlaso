@@ -2967,6 +2967,43 @@ Link 2 (eth0): 127.0.0.1 ::1 192.168.167.2 2001:4860:4860::8888 fe80::1%eth0 192
     assert parse_resolvectl_dns_servers(output) == ["192.168.167.2", "2001:4860:4860::8888", "fe80::1"]
 
 
+def test_management_dhcp_dns_falls_back_to_exact_networkd_lease_after_local_dns(monkeypatch):
+    import subprocess
+
+    from atlaso.app.adapters.system import AdapterResult, SystemAdapter
+    from atlaso.app.services.appliance_settings import (
+        observed_management_dhcp_dns_servers,
+        parse_networkd_dhcp_dns_payload,
+    )
+
+    monkeypatch.setattr(
+        "atlaso.app.services.appliance_settings.subprocess.run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0, "Link 2 (eth0): 127.0.0.1 ::1\n", ""),
+    )
+    calls: list[str] = []
+
+    def fake_read_networkd_dhcp_dns(_self, interface_name: str) -> AdapterResult:
+        calls.append(interface_name)
+        return AdapterResult(
+            command=["atlaso-helper", "network", "dhcp-dns", interface_name],
+            dry_run=False,
+            stdout=(
+                '{"group":"network","action":"dhcp-dns"}\n'
+                '{"interface":"eth0","ifindex":2,"servers":["127.0.0.1","192.168.167.2","bad","192.168.167.2"]}\n'
+            ),
+        )
+
+    monkeypatch.setattr(SystemAdapter, "read_networkd_dhcp_dns", fake_read_networkd_dhcp_dns)
+
+    assert observed_management_dhcp_dns_servers("eth0") == ["192.168.167.2"]
+    assert observed_management_dhcp_dns_servers("eth0") == ["192.168.167.2"]
+    assert calls == ["eth0", "eth0"]
+    assert parse_networkd_dhcp_dns_payload(
+        '{"interface":"eth1","servers":["192.168.99.99"]}\n',
+        "eth0",
+    ) == []
+
+
 def test_settings_management_dhcp_allows_empty_external_dns(client, monkeypatch):
     from sqlalchemy import select
 
@@ -3066,6 +3103,34 @@ def test_dns_page_uses_management_dhcp_dns_when_upstreams_are_empty(client, monk
     assert payload["observed_dhcp_upstream_servers"] == ["192.168.167.2"]
     assert payload["effective_upstream_servers"] == ["192.168.167.2"]
     assert "server=192.168.167.2" in payload["config_preview"]
+
+
+def test_dns_page_fails_closed_when_management_dhcp_lease_has_no_upstream(client, monkeypatch):
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsSettings, PhysicalInterface
+
+    login(client)
+    monkeypatch.setattr("atlaso.app.services.appliance_settings.observed_management_dhcp_dns_servers", lambda _name: [])
+    with SessionLocal() as db:
+        dns_settings = db.execute(select(DnsSettings)).scalar_one()
+        dns_settings.enabled = True
+        dns_settings.upstream_servers = ""
+        eth0 = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == "eth0")).scalar_one()
+        eth0.role = "management"
+        eth0.ipv4_method = "dhcp"
+        eth0.ip_cidr = None
+        eth0.host_ip_cidr = "192.168.167.219/24"
+        db.commit()
+
+    page = client.get("/dns")
+
+    assert page.status_code == 200
+    assert "systemd-networkd lease did not provide one" in page.text
+    assert "# atlaso-dhcp-upstream-required" in page.text
+    assert "server=127.0.0.1" not in page.text
+    assert "server=::1" not in page.text
 
 
 def test_settings_management_https_requires_ca_managed_certificate(client):

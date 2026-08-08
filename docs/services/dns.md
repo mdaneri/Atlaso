@@ -102,6 +102,20 @@ addresses and names with the appliance's selected listener and managed data. To 
 address, leave Authoritative off for that listener or select a separate DNS interface that is not part of the
 authoritative interface set.
 
+### DHCP upstream preservation
+
+Explicit DNS upstreams always take precedence. When the management interface uses DHCP and upstreams are empty, Atlaso
+uses that interface's observed DHCP resolvers as dnsmasq forwarders. Local DNS intentionally changes
+`resolvectl dns <management-interface>` to loopback; after that transition Atlaso recovers the original resolvers from
+the exact systemd-networkd lease identified by the management interface's ifindex. Loopback, duplicate, malformed, and
+other-interface lease values are excluded.
+
+Every later global appliance apply, including an apply caused by enabling or disabling Web Terminal, reuses the same
+effective forwarders. If DHCP fallback is required and the management lease has no usable resolver, DNS/DHCP validation
+fails before dnsmasq is changed. Restore or renew the management DHCP lease, or configure explicit upstreams, then
+review and resubmit the DNS/DHCP unit. After apply, confirm both an Atlaso-managed name and an external name resolve with
+`getent hosts` or direct `dig @127.0.0.1` queries.
+
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states
 

@@ -11,6 +11,7 @@ from atlaso.app.services.dnsmasq import (
     compact_dhcp_range_expression,
     dhcp_bind_target_families,
     dhcp_bind_target_names,
+    dhcp_dns_upstream_required,
     dns_domain_warnings,
     dns_reverse_records,
     join_conditional_forwarders,
@@ -246,12 +247,28 @@ def test_dnsmasq_renderer_uses_dhcp_upstreams_when_desired_upstreams_empty():
         dhcp_settings=DhcpSettings(enabled=False),
         dhcp_reservations=[],
         fallback_upstream_servers=["127.0.0.1", "::1", "192.168.167.2", "192.168.167.2"],
+        require_dhcp_upstream=True,
     )
 
     assert "server=192.168.167.2" in config
     assert config.count("server=192.168.167.2") == 1
     assert "server=127.0.0.1" not in config
     assert "server=::1" not in config
+    assert "# atlaso-dhcp-upstream-required" in config
+
+
+def test_dnsmasq_validation_fails_closed_when_required_dhcp_upstream_is_unavailable():
+    settings = DnsSettings(enabled=True, upstream_servers="")
+
+    errors = validate_dns_settings(
+        settings,
+        [],
+        fallback_upstream_servers=["127.0.0.1", "malformed"],
+        require_dhcp_upstream=True,
+    )
+
+    assert any("systemd-networkd lease did not provide one" in error for error in errors)
+    assert dhcp_dns_upstream_required(settings, {"ipv4_method": "dhcp"}) is True
 
 
 def test_dnsmasq_renderer_filters_loopback_configured_upstreams():
@@ -548,6 +565,7 @@ def test_dnsmasq_renderer_keeps_configured_upstreams_over_dhcp_fallback():
 
     assert "server=1.1.1.1" in config
     assert "server=192.168.167.2" not in config
+    assert "# atlaso-dhcp-upstream-required" not in config
 
 
 def test_dnsmasq_renderer_supports_ipv6_dhcp_zones():
