@@ -31,20 +31,21 @@
           <h2>Contents</h2>
           <p class="muted">{{ depot_entries|length }} {{ "item" if depot_entries|length == 1 else "items" }}</p>
         </div>
+        {% if depot_parent_href %}
+          <a class="button tiny secondary" href="{{ depot_parent_href }}">Up one level</a>
+        {% endif %}
       </div>
-      <table class="data-table compact">
+      <div
+        id="depot-browser-table"
+        class="tabulator-shell"
+        data-rows='{{ depot_entries | tojson }}'
+        data-fallback-id="depot-browser-fallback"
+      ></div>
+      <table id="depot-browser-fallback" class="data-table compact">
         <thead>
           <tr><th>Name</th><th>Type</th><th>Modified</th><th>Size</th></tr>
         </thead>
         <tbody>
-          {% if depot_parent_href %}
-            <tr>
-              <td><a class="text-link" href="{{ depot_parent_href }}">../</a></td>
-              <td><span class="status-pill muted">Directory</span></td>
-              <td></td>
-              <td>-</td>
-            </tr>
-          {% endif %}
           {% for entry in depot_entries %}
             <tr>
               <td><a class="text-link" href="{{ entry.href }}">{{ entry.name }}</a></td>
@@ -53,7 +54,7 @@
               <td>{{ entry.size }}</td>
             </tr>
           {% endfor %}
-          {% if not depot_entries and not depot_parent_href %}
+          {% if not depot_entries %}
             <tr>
               <td colspan="4">No depot content is available in this directory.</td>
             </tr>

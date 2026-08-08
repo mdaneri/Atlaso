@@ -71,9 +71,10 @@ versioned asset.
   navigation, status, and actions. Page adapters keep only business-specific discovery, validation, conditional-field,
   review-population, and submission callbacks.
 
-All existing Tabulator initializers use `createGrid`. Raw constructors outside the shared foundation are forbidden;
-issues #118 and #119 retain their resource-conversion scopes. The repository policy check rejects raw constructors,
-wizard markup without the generic contract, and page-specific generic step-controller logic.
+All existing Tabulator initializers use `createGrid`, and primary resource collections use the shared grid rather than
+custom interactive native tables. Raw constructors outside the shared foundation are forbidden. The repository policy
+check rejects raw constructors, wizard markup without the generic contract, and page-specific generic step-controller
+logic.
 
 ## Tabulator collection contract
 

@@ -28,7 +28,16 @@
           <p class="muted">Submit certificate requests and revoke issued certificates without changing CA configuration.</p>
         </div>
       </div>
-      <table class="data-table compact">
+      <div
+        id="ca-requests-table"
+        class="tabulator-shell"
+        data-rows='{{ ca_request_rows | tojson }}'
+        data-csrf="{{ csrf_token }}"
+        data-revoke-url-template="/requests/certificates/__id__/revoke"
+        data-fallback-id="ca-requests-fallback"
+      ></div>
+      <p id="ca-requests-status" class="autosave-status" aria-live="polite">Certificate requests are read-only here; use the row menu to revoke an issued certificate.</p>
+      <table id="ca-requests-fallback" class="data-table compact">
         <thead>
           <tr><th>Common name</th><th>Profile</th><th>Status</th><th>Serial</th><th>Revoked</th><th>Actions</th></tr>
         </thead>
@@ -57,6 +66,8 @@
                 {% endif %}
               </td>
             </tr>
+          {% else %}
+            <tr><td colspan="6" class="muted">No certificate requests configured.</td></tr>
           {% endfor %}
         </tbody>
       </table>

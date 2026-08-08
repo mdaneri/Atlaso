@@ -381,6 +381,11 @@ textarea {
   padding: 22px;
 }
 
+.public-portal-main > .panel {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .public-portal-title {
   margin-bottom: 18px;
 }
