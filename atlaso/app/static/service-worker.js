@@ -1,9 +1,9 @@
-const ATLASO_CACHE = "atlaso-pwa-v225";
+const ATLASO_CACHE = "atlaso-pwa-v226";
 const ATLASO_ASSETS = [
   "/manifest.webmanifest",
   "/favicon.ico",
   "/static/offline.html",
-  "/static/app.css?v=appliance-update-source-wizard-253-20260807-2",
+  "/static/app.css?v=appliance-update-source-actions-253-20260807-3",
   "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8",
   "/static/app.js?v=appliance-update-source-wizard-253-20260807-2",
   "/static/terminal.js?v=web-terminal-review-20260716-3",

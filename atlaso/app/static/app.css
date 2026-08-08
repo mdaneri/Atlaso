@@ -5212,6 +5212,15 @@ textarea {
   min-width: 0;
 }
 
+.source-readonly-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.source-readonly-heading > h3,
 .source-readonly-section > h3 {
   margin: 0;
   color: var(--muted);
@@ -5257,6 +5266,13 @@ textarea {
 .source-readonly-full code {
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.config-diff .source-readonly-full pre code,
+.config-diff .source-readonly-full pre code .token {
+  color: #0f172a;
+  opacity: 1;
+  font-style: normal;
 }
 
 .source-editor-grid {
@@ -5354,8 +5370,13 @@ textarea {
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
+  margin-left: auto;
   flex: 0 0 auto;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+}
+
+.source-editor-actions .icon-button.danger {
+  color: #b42318;
 }
 
 .source-editor-footer > .button {
@@ -5480,11 +5501,6 @@ textarea {
   .source-readonly-list > div {
     grid-template-columns: 1fr;
     gap: 4px;
-  }
-
-  .source-editor-actions {
-    align-self: flex-start;
-    justify-content: flex-start;
   }
 
   .managed-package-option-grid {

@@ -572,8 +572,14 @@ def test_software_source_and_managed_module_lifecycle(client):
         f'id="delete-update-source-{source_id}"', 1
     )[0]
     assert 'data-update-source-mode="edit"' in private_source_panel
-    assert "Edit repository" in private_source_panel
-    assert "Delete repository" in private_source_panel
+    assert f'aria-label="Edit PrivateGallery repository"' in private_source_panel
+    assert f'aria-label="Delete PrivateGallery repository"' in private_source_panel
+    assert private_source_panel.index('class="source-readonly-heading"') < private_source_panel.index(
+        'class="settings-list source-readonly-list"'
+    )
+    assert private_source_panel.index('aria-label="Edit PrivateGallery repository"') < private_source_panel.index(
+        'aria-label="Delete PrivateGallery repository"'
+    )
     assert '<input name="name"' not in private_source_panel
     assert 'data-autosave-form' not in private_source_panel
     assert 'class="source-editor-options"' in grouped_page.text
@@ -587,6 +593,8 @@ def test_software_source_and_managed_module_lifecycle(client):
     assert ".appliance-update-history .tabulator-row.task-grid-new-task" in app_css
     assert ".source-editor-grid {\n  display: grid;" in app_css
     assert ".source-readonly-view {\n  display: grid;" in app_css
+    assert ".source-readonly-heading {\n  display: flex;" in app_css
+    assert ".config-diff .source-readonly-full pre code .token {\n  color: #0f172a;" in app_css
     assert ".source-option-grid {\n  display: grid;" in app_css
     assert ".source-editor-footer {\n  display: flex;" in app_css
     assert "class=\"source-validation-state\"" in grouped_page.text
