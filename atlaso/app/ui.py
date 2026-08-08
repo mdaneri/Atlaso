@@ -28,7 +28,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPExcepti
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import String, cast, desc, func, or_, select
+from sqlalchemy import String, and_, cast, desc, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -6113,6 +6113,22 @@ def _appliance_update_task_label(mode: str) -> str:
     }.get(mode, "Appliance Update")
 
 
+APPLIANCE_UPDATE_TASK_MODES_BY_LABEL = {
+    _appliance_update_task_label(mode).lower(): mode for mode in ("check", "run", "source_sync")
+}
+
+
+def _appliance_update_mode_filter_clause(mode: str) -> Any:
+    mode_patterns = (f'"mode":"{mode}"', f'"mode": "{mode}"')
+    return and_(
+        Job.type == "appliance-update",
+        or_(
+            *(func.lower(Job.task_config_json).contains(pattern) for pattern in mode_patterns),
+            *(func.lower(Job.result).contains(pattern) for pattern in mode_patterns),
+        ),
+    )
+
+
 def _task_row_type_label(job: Job, result: dict[str, Any]) -> str:
     if job.type != "appliance-update":
         return _task_type_label(job.type)
@@ -6272,11 +6288,17 @@ def _task_filter_clauses(raw_filters: str) -> list[Any]:
             clauses.append(func.lower(Job.status) == normalized)
         elif field == "id":
             type_value = normalized.replace(" ", "-")
+            appliance_update_mode = APPLIANCE_UPDATE_TASK_MODES_BY_LABEL.get(normalized)
             clauses.append(
                 or_(
                     func.lower(Job.id).contains(normalized),
                     func.lower(Job.type).contains(normalized),
                     func.lower(Job.type).contains(type_value),
+                    *(
+                        [_appliance_update_mode_filter_clause(appliance_update_mode)]
+                        if appliance_update_mode
+                        else []
+                    ),
                     Job.steps.any(
                         or_(
                             func.lower(JobStep.label).contains(normalized),
@@ -6298,6 +6320,8 @@ def _task_component_filter_options(db: Session) -> list[str]:
         select(JobStep.label).where(JobStep.label.is_not(None), JobStep.label != "").distinct().order_by(JobStep.label)
     ).scalars().all()
     options = {_task_type_label(task_type) for task_type in task_types if task_type}
+    if "appliance-update" in task_types:
+        options.update(_appliance_update_task_label(mode) for mode in ("check", "run", "source_sync"))
     options.update(label for label in component_labels if label)
     return sorted(options, key=str.lower)
 

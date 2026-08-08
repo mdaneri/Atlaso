@@ -585,8 +585,10 @@ def test_tasks_page_lists_redacts_logs_and_cancels(client):
                 status=JobStatus.SUCCEEDED.value,
                 created_by="admin",
                 progress_percent=100,
+                task_config_json=json.dumps({"mode": "check"}),
                 result=json.dumps(
                     {
+                        "mode": "check",
                         "state": "succeeded",
                         "stdout": (
                             '{"action":"run","args":["script.ps1"],"dry_run":false,'
@@ -622,6 +624,9 @@ def test_tasks_page_lists_redacts_logs_and_cancels(client):
     assert 'class="language-atlaso-log" data-task-log-content' in page.text
     assert "task-grid-shell" in page.text
     assert "data-task-component-options" in page.text
+    assert "Appliance Update check" in page.text
+    assert "Appliance Update install" in page.text
+    assert "Appliance Update repository sync" in page.text
     assert 'data-selected-task-id="job_taskgrid001"' in page.text
     plain_page = client.get("/tasks")
     assert plain_page.status_code == 200
@@ -700,6 +705,16 @@ def test_tasks_page_lists_redacts_logs_and_cancels(client):
     assert [row["id"] for row in component_payload["tasks"]] == ["job_taskgrid001"]
     assert component_payload["filtered_count"] == 1
     assert component_payload["total_count"] == 2
+
+    appliance_update_mode_filter = client.get(
+        "/tasks/status",
+        params={"filters": json.dumps([{"field": "id", "type": "like", "value": "Appliance Update check"}])},
+    )
+    assert appliance_update_mode_filter.status_code == 200
+    appliance_update_mode_payload = appliance_update_mode_filter.json()
+    assert [row["id"] for row in appliance_update_mode_payload["tasks"]] == ["job_taskgrid_leaf"]
+    assert appliance_update_mode_payload["filtered_count"] == 1
+    assert appliance_update_mode_payload["total_count"] == 2
 
     status_filter = client.get(
         "/tasks/status",
