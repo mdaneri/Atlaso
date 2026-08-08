@@ -109,8 +109,10 @@ row menu, and detail behavior. Because the embedded endpoint is already scoped t
 column is fixed there; the full Tasks page retains its editable component filter. The grid expands through the remaining
 Update Streams workspace height rather than using a compact fixed-height embed. This table replaces the former Last
 Update rail and submission-result cards. Checks and installations submit asynchronously: only grid data refreshes, the
-new task is highlighted, and both action buttons remain disabled until that task succeeds, fails, or is cancelled. The
-stream actions use explicit **Check for updates** and **Install updates** labels, with distinct search and install cues
+new task is highlighted, expanded stream rows stay expanded, and both action buttons remain disabled until that task
+succeeds, fails, or is cancelled. Parent rows identify **Appliance Update check**, **Appliance Update install**, or
+**Appliance Update repository sync** so read-only checks are distinct from package-changing work. The stream actions use
+explicit **Check for updates** and **Install updates** labels, with distinct search and install cues
 and visible copy that identifies the check as read-only. The same header links recurring maintenance to the Automation
 Schedules workspace, where operators can schedule Appliance Update checks or installations. The Update Info rail card
 reports whether durable updater evidence is available and opens the full JSON through the shared preview modal, matching

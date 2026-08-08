@@ -12338,6 +12338,23 @@ function applyTasksStatusPayload(payload, { reopen = false } = {}) {
   return atlasoTasks;
 }
 
+function expandedTaskRowIds(table) {
+  if (!table || typeof table.getRows !== "function") {
+    return [];
+  }
+  return table.getRows()
+    .filter((row) => row.getTreeChildren().length > 0 && row.isTreeExpanded())
+    .map((row) => row.getData().id)
+    .filter(Boolean);
+}
+
+function restoreExpandedTaskRows(table, rowIds) {
+  if (!table || typeof table.getRow !== "function") {
+    return;
+  }
+  rowIds.forEach((rowId) => table.getRow(rowId)?.treeExpand());
+}
+
 async function refreshTasksPage({ reopen = false } = {}) {
   const page = document.querySelector("[data-tasks-page]");
   if (!(page instanceof HTMLElement)) {
@@ -12345,7 +12362,9 @@ async function refreshTasksPage({ reopen = false } = {}) {
   }
   if (atlasoTasksTable) {
     atlasoTasksReopenSelected = reopen;
+    const expandedRowIds = expandedTaskRowIds(atlasoTasksTable);
     await atlasoTasksTable.replaceData();
+    restoreExpandedTaskRows(atlasoTasksTable, expandedRowIds);
     return;
   }
   const queryId = atlasoSelectedTaskId || page.dataset.selectedTaskId || "";

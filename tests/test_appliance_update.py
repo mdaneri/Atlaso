@@ -126,6 +126,8 @@ def test_appliance_update_page_and_dry_run_job(client):
     ]
     assert set(payload["stream_results"]) == {"atlaso_release", "photon_os"}
     task_payload = client.get(f"/tasks/{job.id}/status").json()["task"]
+    assert task_payload["type_label"] == "Appliance Update install"
+    assert task_payload["result"]["label"] == "Appliance Update install"
     assert all(step["type"] == "appliance-update-step" for step in task_payload["_children"])
     assert all(step["type_label"] == "Update stream" for step in task_payload["_children"])
     command_lines = [" ".join(command["command"]) for command in payload["commands"]]
@@ -203,6 +205,14 @@ def test_appliance_update_real_helper_failure_is_logged(client, monkeypatch, cap
     assert "appliance-update-task-card" not in response.text
     assert "manifest refused connection" in caplog.text
     assert "completed status=failed mode=check streams=photon_os" in caplog.text
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    with SessionLocal() as db:
+        job = db.execute(select(Job).where(Job.type == "appliance-update")).scalar_one()
+        task_payload = client.get(f"/tasks/{job.id}/status").json()["task"]
+    assert task_payload["type_label"] == "Appliance Update check"
+    assert task_payload["result"]["label"] == "Appliance Update check"
 
 
 def test_appliance_update_staging_exception_records_failed_job_and_logs(client, monkeypatch, caplog):

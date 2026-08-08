@@ -6105,6 +6105,28 @@ def _task_type_label(job_type: str) -> str:
     return labels.get(job_type, job_type.replace("-", " ").title())
 
 
+def _appliance_update_task_label(mode: str) -> str:
+    return {
+        "check": "Appliance Update check",
+        "run": "Appliance Update install",
+        "source_sync": "Appliance Update repository sync",
+    }.get(mode, "Appliance Update")
+
+
+def _task_row_type_label(job: Job, result: dict[str, Any]) -> str:
+    if job.type != "appliance-update":
+        return _task_type_label(job.type)
+    mode = str(result.get("mode") or "")
+    if not mode:
+        try:
+            task_config = json.loads(job.task_config_json or "{}")
+        except (json.JSONDecodeError, TypeError):
+            task_config = {}
+        if isinstance(task_config, dict):
+            mode = str(task_config.get("mode") or "")
+    return _appliance_update_task_label(mode)
+
+
 def _task_time_label(value: datetime | None) -> str:
     if not value:
         return ""
@@ -6161,7 +6183,7 @@ def _task_row(job: Job, identity: Identity | None = None) -> dict[str, Any]:
     row = {
         "id": job.id,
         "type": job.type,
-        "type_label": _task_type_label(job.type),
+        "type_label": _task_row_type_label(job, raw_result),
         "status": status_value,
         "status_pill": _task_status_pill(status_value),
         "state": state,
@@ -8999,7 +9021,7 @@ def aggregate_appliance_update_results(
     )
     return {
         "unit_id": "appliance_update",
-        "label": "Appliance Update",
+        "label": _appliance_update_task_label(mode),
         "mode": mode,
         "selected_streams": selected,
         "selected_labels": [UPDATE_STREAM_LABELS[stream] for stream in selected],
@@ -10729,7 +10751,7 @@ def submit_appliance_update(
     task_config = {"selected_streams": selected, "settings": settings, "mode": mode}
     update_result = {
         "unit_id": "appliance_update",
-        "label": "Appliance Update",
+        "label": _appliance_update_task_label(mode),
         "mode": mode,
         "selected_streams": selected,
         "selected_labels": [UPDATE_STREAM_LABELS[stream] for stream in selected],
