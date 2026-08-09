@@ -162,7 +162,9 @@ def test_managed_script_wizard_reports_a_malformed_bash_shebang(client):
     )
 
     assert response.status_code == 422
-    assert response.json()["detail"] == "Managed script source is invalid. Review the interpreter and source, then try again."
+    assert response.json()["detail"] == (
+        "A Bash shebang must start with #!; add the missing # or remove the shebang line."
+    )
     with SessionLocal() as db:
         assert db.execute(
             select(AutomationScript).where(AutomationScript.name == "malformed-shebang")
