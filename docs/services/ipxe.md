@@ -24,6 +24,10 @@ This verified appliance view provides visual orientation before you begin.
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+Public boot scripts, reports, and media under `/pxe` are Network Boot protocol routes documented in this guide. They
+remain operational and are intentionally absent from Swagger; administrative Network Boot operations under `/api/v1`
+remain part of the generated REST contract.
+
 ## Operate Network Boot
 
 Open **Network Boot** at `/network-boot`. The former `/esxi-pxe` browser route

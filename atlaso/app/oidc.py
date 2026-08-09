@@ -6,9 +6,10 @@ from datetime import datetime, timezone
 from html import escape
 from secrets import token_urlsafe
 from time import monotonic
+from typing import Annotated
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import select
@@ -24,6 +25,7 @@ from atlaso.app.models import (
     OidcSigningKey,
     utcnow,
 )
+from atlaso.app.openapi import DocumentedAPIRoute
 from atlaso.app.services.identity_credentials import verify_credentials
 from atlaso.app.services.appliance_settings import normalize_fqdn
 from atlaso.app.schemas import (
@@ -87,7 +89,11 @@ from atlaso.app.services.dnsmasq import join_interfaces, split_addresses, split_
 
 
 public_router = APIRouter(prefix="/identity", tags=["OpenID Connect"])
-admin_router = APIRouter(prefix="/api/v1/oidc", tags=["OIDC Provider"])
+admin_router = APIRouter(
+    prefix="/api/v1/oidc",
+    tags=["OIDC Provider"],
+    route_class=DocumentedAPIRoute,
+)
 
 
 def _public_configuration_error(exc: OidcConfigurationError) -> HTTPException:
@@ -732,6 +738,10 @@ def get_oidc_provider_settings(
     _identity: Identity = Depends(require_scope("admin:all")),
     db: Session = Depends(get_db),
 ) -> OidcProviderSettingsResponse:
+    """Get desired OIDC provider settings and readiness state.
+
+    Requires the `admin:all` API scope. This read-only operation does not change saved desired state
+    or appliance runtime state."""
     return _provider_response(db)
 
 
@@ -742,6 +752,10 @@ def update_oidc_provider_settings(
     identity: Identity = Depends(require_scope("admin:all")),
     db: Session = Depends(get_db),
 ) -> OidcProviderSettingsResponse:
+    """Update desired OIDC provider settings after readiness validation.
+
+    Requires the `admin:all` API scope. The operation updates saved Atlaso state and does not bypass
+    the documented global Appliance Apply or service lifecycle boundary."""
     if payload.enabled and not OIDC_AUTHORIZATION_FLOW_AVAILABLE:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -802,6 +816,10 @@ def get_oidc_signing_keys(
     _identity: Identity = Depends(require_scope("admin:all")),
     db: Session = Depends(get_db),
 ) -> list[OidcSigningKeyResponse]:
+    """List active and overlap-published OIDC signing keys.
+
+    Requires the `admin:all` API scope. This read-only operation does not change saved desired state
+    or appliance runtime state."""
     rows = db.execute(select(OidcSigningKey).order_by(OidcSigningKey.created_at.desc())).scalars().all()
     return [OidcSigningKeyResponse(**signing_key_to_dict(row)) for row in rows]
 
@@ -816,6 +834,11 @@ def create_oidc_signing_key(
     identity: Identity = Depends(require_scope("admin:all")),
     db: Session = Depends(get_db),
 ) -> OidcSigningKeyResponse:
+    """Create the initial active OIDC signing key.
+
+    Requires the `admin:all` API scope. The operation changes saved Atlaso application state; any
+    appliance host enforcement remains subject to the documented apply or task boundary for the
+    resource."""
     try:
         row, _previous = generate_signing_key(db, rotate=False)
     except OidcConflictError as exc:
@@ -838,6 +861,11 @@ def rotate_oidc_signing_key(
     identity: Identity = Depends(require_scope("admin:all")),
     db: Session = Depends(get_db),
 ) -> OidcSigningKeyResponse:
+    """Rotate the active OIDC signing key with bounded overlap.
+
+    Requires the `admin:all` API scope. The operation changes saved Atlaso application state; any
+    appliance host enforcement remains subject to the documented apply or task boundary for the
+    resource."""
     row, previous = generate_signing_key(db, rotate=True)
     action = "rotate_oidc_signing_key" if previous is not None else "generate_oidc_signing_key"
     detail = f"kid={row.kid}; algorithm={row.algorithm}"
@@ -861,11 +889,15 @@ def rotate_oidc_signing_key(
     operation_id="deleteRetiredOidcSigningKey",
 )
 def delete_oidc_signing_key(
-    key_id: int,
+    key_id: Annotated[int, Path(description='Unique identifier of the key record addressed by this operation.')],
     request: Request,
     identity: Identity = Depends(require_scope("admin:all")),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Delete Retired Oidc Signing Key.
+
+    Requires the `admin:all` API scope. Removal or revocation takes effect in Atlaso application
+    state; appliance host changes remain subject to the documented apply boundary for the resource."""
     row = db.get(OidcSigningKey, key_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="OIDC signing key not found.")
@@ -891,6 +923,10 @@ def get_oidc_clients(
     _identity: Identity = Depends(require_scope("admin:all")),
     db: Session = Depends(get_db),
 ) -> list[OidcClientResponse]:
+    """List configured confidential OIDC clients without their secrets.
+
+    Requires the `admin:all` API scope. This read-only operation does not change saved desired state
+    or appliance runtime state."""
     return [OidcClientResponse(**oidc_client_to_dict(row)) for row in list_clients(db)]
 
 
@@ -903,6 +939,10 @@ def get_oidc_group_mappings(
     _identity: Identity = Depends(require_scope("admin:all")),
     db: Session = Depends(get_db),
 ) -> list[OidcGroupMappingResponse]:
+    """List Oidc Group Mappings.
+
+    Requires the `admin:all` API scope. This read-only operation does not change saved desired state
+    or appliance runtime state."""
     return [
         OidcGroupMappingResponse(**group_mapping_to_dict(row))
         for row in list_group_mappings(db)
@@ -921,6 +961,11 @@ def create_oidc_group_mapping(
     identity: Identity = Depends(require_scope("admin:all")),
     db: Session = Depends(get_db),
 ) -> OidcGroupMappingResponse:
+    """Create Oidc Group Mapping.
+
+    Requires the `admin:all` API scope. The operation changes saved Atlaso application state; any
+    appliance host enforcement remains subject to the documented apply or task boundary for the
+    resource."""
     try:
         row = create_group_mapping(
             db,
@@ -960,12 +1005,16 @@ def create_oidc_group_mapping(
     operation_id="updateOidcGroupMapping",
 )
 def update_oidc_group_mapping(
-    mapping_id: int,
+    mapping_id: Annotated[int, Path(description='Unique identifier of the mapping record addressed by this operation.')],
     payload: OidcGroupMappingUpdate,
     request: Request,
     identity: Identity = Depends(require_scope("admin:all")),
     db: Session = Depends(get_db),
 ) -> OidcGroupMappingResponse:
+    """Update Oidc Group Mapping.
+
+    Requires the `admin:all` API scope. The operation updates saved Atlaso state and does not bypass
+    the documented global Appliance Apply or service lifecycle boundary."""
     row = db.get(OidcGroupMapping, mapping_id)
     if row is None:
         raise HTTPException(
@@ -1009,11 +1058,15 @@ def update_oidc_group_mapping(
     operation_id="deleteOidcGroupMapping",
 )
 def delete_oidc_group_mapping(
-    mapping_id: int,
+    mapping_id: Annotated[int, Path(description='Unique identifier of the mapping record addressed by this operation.')],
     request: Request,
     identity: Identity = Depends(require_scope("admin:all")),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Delete Oidc Group Mapping.
+
+    Requires the `admin:all` API scope. Removal or revocation takes effect in Atlaso application
+    state; appliance host changes remain subject to the documented apply boundary for the resource."""
     row = db.get(OidcGroupMapping, mapping_id)
     if row is None:
         raise HTTPException(
@@ -1053,6 +1106,10 @@ def get_oidc_subjects(
     _identity: Identity = Depends(require_scope("admin:all")),
     db: Session = Depends(get_db),
 ) -> list[OidcSubjectResponse]:
+    """List stable OIDC subjects and their configured identity sources.
+
+    Requires the `admin:all` API scope. This read-only operation does not change saved desired state
+    or appliance runtime state."""
     return [OidcSubjectResponse(**row) for row in list_subjects(db)]
 
 
@@ -1067,6 +1124,11 @@ def create_oidc_client(
     identity: Identity = Depends(require_scope("admin:all")),
     db: Session = Depends(get_db),
 ) -> OidcClientCreated:
+    """Create a confidential OIDC client and return its secret once.
+
+    Requires the `admin:all` API scope. The operation changes saved Atlaso application state; any
+    appliance host enforcement remains subject to the documented apply or task boundary for the
+    resource."""
     try:
         row, raw_secret = create_client(
             db,
@@ -1105,12 +1167,16 @@ def create_oidc_client(
     operation_id="updateOidcClient",
 )
 def update_oidc_client(
-    client_record_id: int,
+    client_record_id: Annotated[int, Path(description='Unique identifier of the client record record addressed by this operation.')],
     payload: OidcClientUpdate,
     request: Request,
     identity: Identity = Depends(require_scope("admin:all")),
     db: Session = Depends(get_db),
 ) -> OidcClientResponse:
+    """Update Oidc Client.
+
+    Requires the `admin:all` API scope. The operation updates saved Atlaso state and does not bypass
+    the documented global Appliance Apply or service lifecycle boundary."""
     try:
         row = get_client(db, client_record_id)
         row = update_client(
@@ -1154,11 +1220,15 @@ def update_oidc_client(
     operation_id="exportOidcClientIntegration",
 )
 def export_oidc_client_integration(
-    client_record_id: int,
+    client_record_id: Annotated[int, Path(description='Unique identifier of the client record record addressed by this operation.')],
     request: Request,
     identity: Identity = Depends(require_scope("admin:all")),
     db: Session = Depends(get_db),
 ) -> OidcIntegrationExport:
+    """Export Oidc Client Integration.
+
+    Requires the `admin:all` API scope. This read-only operation does not change saved desired state
+    or appliance runtime state."""
     try:
         row = get_client(db, client_record_id)
     except OidcConfigurationError as exc:
@@ -1180,11 +1250,16 @@ def export_oidc_client_integration(
     response_model=OidcClientSecretRotated,
 )
 def rotate_oidc_client_secret(
-    client_record_id: int,
+    client_record_id: Annotated[int, Path(description='Unique identifier of the client record record addressed by this operation.')],
     request: Request,
     identity: Identity = Depends(require_scope("admin:all")),
     db: Session = Depends(get_db),
 ) -> OidcClientSecretRotated:
+    """Rotate an OIDC client secret and return the replacement once.
+
+    Requires the `admin:all` API scope. The operation changes saved Atlaso application state; any
+    appliance host enforcement remains subject to the documented apply or task boundary for the
+    resource."""
     try:
         row = get_client(db, client_record_id)
     except OidcConfigurationError as exc:
@@ -1204,12 +1279,16 @@ def rotate_oidc_client_secret(
 
 @admin_router.patch("/clients/{client_record_id}/enabled", response_model=OidcClientResponse)
 def set_oidc_client_enabled(
-    client_record_id: int,
+    client_record_id: Annotated[int, Path(description='Unique identifier of the client record record addressed by this operation.')],
     payload: OidcClientEnabledUpdate,
     request: Request,
     identity: Identity = Depends(require_scope("admin:all")),
     db: Session = Depends(get_db),
 ) -> OidcClientResponse:
+    """Enable or disable a configured OIDC client.
+
+    Requires the `admin:all` API scope. The operation updates saved Atlaso state and does not bypass
+    the documented global Appliance Apply or service lifecycle boundary."""
     try:
         row = get_client(db, client_record_id)
     except OidcConfigurationError as exc:
@@ -1232,11 +1311,15 @@ def set_oidc_client_enabled(
 
 @admin_router.delete("/clients/{client_record_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_oidc_client(
-    client_record_id: int,
+    client_record_id: Annotated[int, Path(description='Unique identifier of the client record record addressed by this operation.')],
     request: Request,
     identity: Identity = Depends(require_scope("admin:all")),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Delete an OIDC client and revoke its future protocol access.
+
+    Requires the `admin:all` API scope. Removal or revocation takes effect in Atlaso application
+    state; appliance host changes remain subject to the documented apply boundary for the resource."""
     try:
         row = get_client(db, client_record_id)
     except OidcConfigurationError as exc:

@@ -25,6 +25,10 @@ This verified appliance view provides visual orientation before you begin.
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+OIDC discovery, authorization, token, user-info, and key endpoints under `/identity` are protocol routes documented in
+this guide. They remain operational and are intentionally absent from Swagger; only OIDC administration operations
+under `/api/v1` belong to the generated REST contract.
+
 ## Architecture and trust boundaries
 
 The canonical issuer is derived as `https://<oidc-hostname>[:port]/identity`; the default hostname is
