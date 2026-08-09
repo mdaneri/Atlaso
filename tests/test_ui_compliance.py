@@ -96,6 +96,9 @@ def test_ui_compliance_remediation_keeps_explicit_actions_and_focus_return():
     assert "accountTrigger.focus({ preventScroll: true });" in app_js
     assert not re.search(r"\b(?:window\.)?(?:confirm|prompt|alert)\s*\(", app_js)
     assert 'toast.setAttribute("role", error ? "alert" : "status");' in app_js
+    assert 'dismiss.className = "grid-status-toast-dismiss";' in app_js
+    assert 'dismiss.textContent = "Dismiss";' in app_js
+    assert "if (error) {\n    return;" in app_js
     assert 'const submitter = event.submitter;' in app_js
     assert 'submitter.matches("[data-confirm-modal]")' in app_js
     assert "form.requestSubmit(submitter instanceof HTMLElement ? submitter : undefined);" in app_js
@@ -115,6 +118,12 @@ def test_automation_collections_have_truthful_server_fallbacks():
     assert '<dialog id="monitor-chart-modal"' in (
         TEMPLATES / "monitor.html"
     ).read_text(encoding="utf-8")
+
+    assert "#automation-executions-panel[hidden], #scripts[hidden]" in source
+    assert "Schedules, executions, and managed scripts are shown" in source
+    executions = source.split('id="automation-executions-fallback"', 1)[1].split("</table>", 1)[0]
+    assert "<th>Status</th>" in executions
+    assert "{{ execution.status }}" in executions
 
 
 def test_every_autosave_form_has_a_nearby_status_target():

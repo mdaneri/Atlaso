@@ -1089,9 +1089,23 @@ function showTransientGridStatus(message, { error = false } = {}) {
   toast.setAttribute("role", error ? "alert" : "status");
   toast.setAttribute("aria-live", error ? "assertive" : "polite");
   toast.classList.toggle("error", error);
-  toast.textContent = message;
-  toast.classList.add("visible");
   window.clearTimeout(showTransientGridStatus.timeoutId);
+  if (error) {
+    const text = document.createElement("span");
+    text.textContent = message;
+    const dismiss = document.createElement("button");
+    dismiss.type = "button";
+    dismiss.className = "grid-status-toast-dismiss";
+    dismiss.textContent = "Dismiss";
+    dismiss.addEventListener("click", () => toast.classList.remove("visible"), { once: true });
+    toast.replaceChildren(text, dismiss);
+  } else {
+    toast.textContent = message;
+  }
+  toast.classList.add("visible");
+  if (error) {
+    return;
+  }
   showTransientGridStatus.timeoutId = window.setTimeout(() => {
     toast.classList.remove("visible");
   }, 1400);

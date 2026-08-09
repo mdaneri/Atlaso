@@ -8,6 +8,13 @@
     <button class="tab-button" type="button" role="tab" data-tab-target="automation-executions-panel" aria-controls="automation-executions-panel" aria-selected="false">Executions</button>
     <button class="tab-button" type="button" role="tab" data-tab-target="scripts" aria-controls="scripts" aria-selected="false">Managed Scripts</button>
   </div>
+  <noscript>
+    <style>
+      #automation-workspace > .tab-buttons { display: none !important; }
+      #automation-executions-panel[hidden], #scripts[hidden] { display: block !important; }
+    </style>
+    <p class="muted">JavaScript is disabled. Schedules, executions, and managed scripts are shown as consecutive read-only sections.</p>
+  </noscript>
   {% if automation_error %}<div class="alert error">{{ automation_error }}</div>{% endif %}
   <div class="tab-panels">
     <div id="automation-schedules-panel" class="tab-panel active" role="tabpanel">
@@ -138,12 +145,12 @@
   </div>
   <div id="automation-executions-table" class="tabulator-grid compact-grid automation-fill-grid" data-fallback-id="automation-executions-fallback"></div>
   <table id="automation-executions-fallback" class="data-table compact automation-executions-fallback">
-    <thead><tr><th>Schedule</th><th>Workflow</th><th>Trigger</th><th>Planned</th><th>Started</th><th>Finished</th><th>Associated task</th></tr></thead>
+    <thead><tr><th>Schedule</th><th>Workflow</th><th>Trigger</th><th>Status</th><th>Planned</th><th>Started</th><th>Finished</th><th>Associated task</th></tr></thead>
     <tbody>
       {% for execution in automation_execution_rows %}
-        <tr><td>{{ execution.schedule_name or 'removed schedule' }}</td><td>{{ execution.task_label }}</td><td>{{ execution.trigger_label }}</td><td>{{ execution.planned_for or 'not recorded' }}</td><td>{{ execution.started_at or 'not started' }}</td><td>{{ execution.finished_at or 'not finished' }}</td><td><a href="{{ execution.task_url }}"><code>{{ execution.id }}</code></a></td></tr>
+        <tr><td>{{ execution.schedule_name or 'removed schedule' }}</td><td>{{ execution.task_label }}</td><td>{{ execution.trigger_label }}</td><td>{{ execution.status }}</td><td>{{ execution.planned_for or 'not recorded' }}</td><td>{{ execution.started_at or 'not started' }}</td><td>{{ execution.finished_at or 'not finished' }}</td><td><a href="{{ execution.task_url }}"><code>{{ execution.id }}</code></a></td></tr>
       {% else %}
-        <tr><td colspan="7" class="muted">No schedule executions have been recorded yet.</td></tr>
+        <tr><td colspan="8" class="muted">No schedule executions have been recorded yet.</td></tr>
       {% endfor %}
     </tbody>
   </table>
