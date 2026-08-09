@@ -1,3 +1,5 @@
+"""Implement settings archive service behavior."""
+
 from __future__ import annotations
 
 import json
@@ -185,10 +187,12 @@ RESTORE_DELETE_MODELS = [
 
 
 def _utc_iso() -> str:
+    """Return utc iso."""
     return datetime.now(timezone.utc).isoformat()
 
 
 def _row_to_dict(row: object, *, exclude: set[str] | None = None) -> dict[str, Any]:
+    """Return row to dict."""
     excluded = {"id", "created_at", "updated_at", *(exclude or set())}
     payload: dict[str, Any] = {}
     for column in row.__table__.columns:
@@ -199,11 +203,25 @@ def _row_to_dict(row: object, *, exclude: set[str] | None = None) -> dict[str, A
 
 
 def _settings_rows(db: Session) -> list[dict[str, str]]:
+    """Return settings rows.
+
+    Args:
+        db: Active database session.
+    """
     rows = db.execute(select(Setting).where(Setting.key.in_(SAFE_SETTING_KEYS)).order_by(Setting.key)).scalars().all()
     return [_row_to_dict(row) for row in rows]
 
 
 def export_settings_archive(db: Session, *, actor: str) -> dict[str, Any]:
+    """Serialize settings archive.
+
+    Args:
+        db: Active database session.
+        actor: Authenticated identity attributed to the audit record.
+
+    Returns:
+        The export settings archive result.
+    """
     payload: dict[str, Any] = {
         "kind": ARCHIVE_KIND,
         "schema_version": ARCHIVE_SCHEMA_VERSION,
@@ -270,6 +288,11 @@ def export_settings_archive(db: Session, *, actor: str) -> dict[str, Any]:
 
 
 def _routes_to_archive(db: Session) -> list[dict[str, Any]]:
+    """Return routes to archive.
+
+    Args:
+        db: Active database session.
+    """
     policies = {policy.id: policy.name for policy in db.execute(select(WanPolicy)).scalars().all()}
     rows = []
     for route in db.execute(select(Route)).scalars().all():
@@ -280,6 +303,11 @@ def _routes_to_archive(db: Session) -> list[dict[str, Any]]:
 
 
 def _dhcp_options_to_archive(db: Session) -> list[dict[str, Any]]:
+    """Return dhcp options to archive.
+
+    Args:
+        db: Active database session.
+    """
     scopes = {scope.id: scope.name for scope in db.execute(select(DhcpScope)).scalars().all()}
     rows = []
     for option in db.execute(select(DhcpOption)).scalars().all():
@@ -290,6 +318,11 @@ def _dhcp_options_to_archive(db: Session) -> list[dict[str, Any]]:
 
 
 def _ca_certificates_to_archive(db: Session) -> list[dict[str, Any]]:
+    """Return ca certificates to archive.
+
+    Args:
+        db: Active database session.
+    """
     profiles = {profile.id: profile.name for profile in db.execute(select(CaProfile)).scalars().all()}
     rows = []
     for certificate in db.execute(select(CaCertificate)).scalars().all():
@@ -300,6 +333,11 @@ def _ca_certificates_to_archive(db: Session) -> list[dict[str, Any]]:
 
 
 def _kms_keys_to_archive(db: Session) -> list[dict[str, Any]]:
+    """Return kms keys to archive.
+
+    Args:
+        db: Active database session.
+    """
     clients = {client.id: client.name for client in db.execute(select(KmsClient)).scalars().all()}
     rows = []
     for key in db.execute(select(KmsKey)).scalars().all():
@@ -310,6 +348,11 @@ def _kms_keys_to_archive(db: Session) -> list[dict[str, Any]]:
 
 
 def _ldap_organizations_to_archive(db: Session) -> list[dict[str, Any]]:
+    """Return ldap organizations to archive.
+
+    Args:
+        db: Active database session.
+    """
     return [
         _row_to_dict(row, exclude={"bind_password_encrypted"})
         for row in db.execute(select(LdapOrganization).order_by(LdapOrganization.name)).scalars().all()
@@ -317,6 +360,11 @@ def _ldap_organizations_to_archive(db: Session) -> list[dict[str, Any]]:
 
 
 def _ldap_users_to_archive(db: Session) -> list[dict[str, Any]]:
+    """Return ldap users to archive.
+
+    Args:
+        db: Active database session.
+    """
     organizations = {row.id: row.slug for row in db.execute(select(LdapOrganization)).scalars().all()}
     rows: list[dict[str, Any]] = []
     for user in db.execute(select(LdapUser).order_by(LdapUser.uid)).scalars().all():
@@ -328,6 +376,11 @@ def _ldap_users_to_archive(db: Session) -> list[dict[str, Any]]:
 
 
 def _ldap_groups_to_archive(db: Session) -> list[dict[str, Any]]:
+    """Return ldap groups to archive.
+
+    Args:
+        db: Active database session.
+    """
     organizations = {row.id: row.slug for row in db.execute(select(LdapOrganization)).scalars().all()}
     rows: list[dict[str, Any]] = []
     for group in db.execute(select(LdapGroup).order_by(LdapGroup.name)).scalars().all():
@@ -338,6 +391,11 @@ def _ldap_groups_to_archive(db: Session) -> list[dict[str, Any]]:
 
 
 def _ldap_group_memberships_to_archive(db: Session) -> list[dict[str, Any]]:
+    """Return ldap group memberships to archive.
+
+    Args:
+        db: Active database session.
+    """
     users = {row.id: row.uid for row in db.execute(select(LdapUser)).scalars().all()}
     groups = {row.id: row for row in db.execute(select(LdapGroup)).scalars().all()}
     organizations = {row.id: row.slug for row in db.execute(select(LdapOrganization)).scalars().all()}
@@ -358,6 +416,11 @@ def _ldap_group_memberships_to_archive(db: Session) -> list[dict[str, Any]]:
 
 
 def _oidc_clients_to_archive(db: Session) -> list[dict[str, Any]]:
+    """Return oidc clients to archive.
+
+    Args:
+        db: Active database session.
+    """
     organizations = {row.id: row.slug for row in db.execute(select(LdapOrganization)).scalars().all()}
     rows: list[dict[str, Any]] = []
     for client in db.execute(select(OidcClient).order_by(OidcClient.name)).scalars().all():
@@ -368,6 +431,11 @@ def _oidc_clients_to_archive(db: Session) -> list[dict[str, Any]]:
 
 
 def _oidc_subjects_to_archive(db: Session) -> list[dict[str, Any]]:
+    """Return oidc subjects to archive.
+
+    Args:
+        db: Active database session.
+    """
     local_users = {row.id: row.username for row in db.execute(select(User)).scalars().all()}
     ldap_users = {
         row.id: (row.organization.slug, row.uid)
@@ -387,6 +455,11 @@ def _oidc_subjects_to_archive(db: Session) -> list[dict[str, Any]]:
 
 
 def _oidc_client_redirect_uris_to_archive(db: Session) -> list[dict[str, Any]]:
+    """Return oidc client redirect uris to archive.
+
+    Args:
+        db: Active database session.
+    """
     clients = {row.id: row.client_id for row in db.execute(select(OidcClient)).scalars().all()}
     rows: list[dict[str, Any]] = []
     for redirect in db.execute(
@@ -403,6 +476,11 @@ def _oidc_client_redirect_uris_to_archive(db: Session) -> list[dict[str, Any]]:
 
 
 def _oidc_group_mappings_to_archive(db: Session) -> list[dict[str, Any]]:
+    """Return oidc group mappings to archive.
+
+    Args:
+        db: Active database session.
+    """
     organizations = {
         row.id: row.slug
         for row in db.execute(select(LdapOrganization)).scalars().all()
@@ -433,6 +511,11 @@ def _oidc_group_mappings_to_archive(db: Session) -> list[dict[str, Any]]:
 
 
 def _vcf_backup_settings_to_archive(db: Session) -> list[dict[str, Any]]:
+    """Return vcf backup settings to archive.
+
+    Args:
+        db: Active database session.
+    """
     users = {user.id: user.username for user in db.execute(select(User)).scalars().all()}
     rows = []
     for settings in db.execute(select(VcfBackupSettings)).scalars().all():
@@ -443,6 +526,11 @@ def _vcf_backup_settings_to_archive(db: Session) -> list[dict[str, Any]]:
 
 
 def _vcf_offline_depot_settings_to_archive(db: Session) -> list[dict[str, Any]]:
+    """Return vcf offline depot settings to archive.
+
+    Args:
+        db: Active database session.
+    """
     users = {user.id: user.username for user in db.execute(select(User)).scalars().all()}
     rows = []
     for settings in db.execute(select(VcfOfflineDepotSettings)).scalars().all():
@@ -453,6 +541,11 @@ def _vcf_offline_depot_settings_to_archive(db: Session) -> list[dict[str, Any]]:
 
 
 def _esxi_pxe_hosts_to_archive(db: Session) -> list[dict[str, Any]]:
+    """Return esxi pxe hosts to archive.
+
+    Args:
+        db: Active database session.
+    """
     kickstarts = {row.id: row.name for row in db.execute(select(EsxiKickstart)).scalars().all()}
     rows = []
     for host in db.execute(select(EsxiPxeHost)).scalars().all():
@@ -464,6 +557,14 @@ def _esxi_pxe_hosts_to_archive(db: Session) -> list[dict[str, Any]]:
 
 
 def _update_sources_to_archive(db: Session) -> list[dict[str, Any]]:
+    """Update sources to archive.
+
+    Args:
+        db: Active database session.
+
+    Returns:
+        The update sources to archive result.
+    """
     rows: list[dict[str, Any]] = []
     for source in db.execute(select(UpdateSource).order_by(UpdateSource.kind, UpdateSource.priority, UpdateSource.name)).scalars().all():
         payload = _row_to_dict(source, exclude={"credential_encrypted", "validation_status", "validation_message"})
@@ -473,6 +574,11 @@ def _update_sources_to_archive(db: Session) -> list[dict[str, Any]]:
 
 
 def _managed_packages_to_archive(db: Session) -> list[dict[str, Any]]:
+    """Return managed packages to archive.
+
+    Args:
+        db: Active database session.
+    """
     sources = {source.id: source for source in db.execute(select(UpdateSource)).scalars().all()}
     rows: list[dict[str, Any]] = []
     for package in db.execute(select(ManagedPackage).order_by(ManagedPackage.ecosystem, ManagedPackage.name)).scalars().all():
@@ -485,6 +591,11 @@ def _managed_packages_to_archive(db: Session) -> list[dict[str, Any]]:
 
 
 def _automation_scripts_to_archive(db: Session) -> list[dict[str, Any]]:
+    """Return automation scripts to archive.
+
+    Args:
+        db: Active database session.
+    """
     rows: list[dict[str, Any]] = []
     for script in db.execute(select(AutomationScript).order_by(AutomationScript.name)).scalars().all():
         payload = _row_to_dict(script)
@@ -501,6 +612,11 @@ def _automation_scripts_to_archive(db: Session) -> list[dict[str, Any]]:
 
 
 def _schedules_to_archive(db: Session) -> list[dict[str, Any]]:
+    """Return schedules to archive.
+
+    Args:
+        db: Active database session.
+    """
     profiles = {profile.id: profile.name for profile in db.execute(select(VcfDepotDownloadProfile)).scalars().all()}
     revisions = {revision.id: revision for revision in db.execute(select(AutomationScriptRevision)).scalars().all()}
     scripts = {script.id: script.name for script in db.execute(select(AutomationScript)).scalars().all()}
@@ -525,6 +641,12 @@ def _schedules_to_archive(db: Session) -> list[dict[str, Any]]:
 
 
 def restore_settings_archive(db: Session, archive: dict[str, Any]) -> dict[str, int]:
+    """Return restore settings archive.
+
+    Args:
+        db: Active database session.
+        archive: Archive payload or path to process.
+    """
     from atlaso.app.services.network_boot import ensure_environment_rows
 
     _validate_archive(archive)
@@ -640,6 +762,11 @@ def restore_settings_archive(db: Session, archive: dict[str, Any]) -> dict[str, 
 
 
 def factory_reset_desired_state(db: Session) -> dict[str, int]:
+    """Return factory reset desired state.
+
+    Args:
+        db: Active database session.
+    """
     from atlaso.app.services.network_boot import ensure_environment_rows
 
     _clear_desired_state(db)
@@ -656,6 +783,11 @@ def factory_reset_desired_state(db: Session) -> dict[str, int]:
 
 
 def desired_state_counts(db: Session) -> dict[str, int]:
+    """Return desired state counts.
+
+    Args:
+        db: Active database session.
+    """
     counts = {key: len(db.execute(select(model)).scalars().all()) for key, model in SCALAR_TABLES.items()}
     counts["routes"] = len(db.execute(select(Route)).scalars().all())
     counts["routing_rules"] = len(db.execute(select(RoutingRule)).scalars().all())
@@ -687,6 +819,7 @@ def desired_state_counts(db: Session) -> dict[str, int]:
 
 
 def archive_summary(archive: dict[str, Any]) -> dict[str, Any]:
+    """Return archive summary."""
     _validate_archive(archive)
     data = archive["data"]
     table_counts = {key: len(value) for key, value in data.items() if isinstance(value, list)}
@@ -700,6 +833,11 @@ def archive_summary(archive: dict[str, Any]) -> dict[str, Any]:
 
 
 def _clear_desired_state(db: Session) -> None:
+    """Remove desired state.
+
+    Args:
+        db: Active database session.
+    """
     recovery_archives = db.execute(select(LdapRecoveryArchive)).scalars().all()
     for recovery_archive in recovery_archives:
         clear_ldap_recovery_payload(recovery_archive)
@@ -713,6 +851,11 @@ def _clear_desired_state(db: Session) -> None:
 
 
 def _force_services_stopped_unconfigured(db: Session) -> None:
+    """Handle force services stopped unconfigured.
+
+    Args:
+        db: Active database session.
+    """
     service_rows = db.execute(select(ServiceState)).scalars().all()
     for service in service_rows:
         service.running = False
@@ -724,6 +867,11 @@ def _force_services_stopped_unconfigured(db: Session) -> None:
 
 
 def _disable_startup_example_seed(db: Session) -> None:
+    """Handle disable startup example seed.
+
+    Args:
+        db: Active database session.
+    """
     existing = db.execute(select(Setting).where(Setting.key == SEED_EXAMPLES_SETTING_KEY)).scalar_one_or_none()
     if existing is None:
         db.add(Setting(key=SEED_EXAMPLES_SETTING_KEY, value="false"))
@@ -733,6 +881,11 @@ def _disable_startup_example_seed(db: Session) -> None:
 
 
 def _validate_archive(archive: dict[str, Any]) -> None:
+    """Validate archive.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     if archive.get("kind") != ARCHIVE_KIND:
         raise ValueError("Upload a Atlaso settings archive.")
     if archive.get("schema_version") != ARCHIVE_SCHEMA_VERSION:
@@ -742,6 +895,16 @@ def _validate_archive(archive: dict[str, Any]) -> None:
 
 
 def _insert_rows(db: Session, model: type, rows: list[dict[str, Any]]) -> int:
+    """Create rows.
+
+    Args:
+        db: Active database session.
+        model: Model supplied by the caller.
+        rows: Database or collection rows to process.
+
+    Returns:
+        The insert rows result.
+    """
     for row in rows:
         db.add(model(**_model_kwargs(model, row)))
     db.flush()
@@ -749,6 +912,12 @@ def _insert_rows(db: Session, model: type, rows: list[dict[str, Any]]) -> int:
 
 
 def _restore_update_sources(db: Session, rows: list[dict[str, Any]]) -> int:
+    """Return restore update sources.
+
+    Args:
+        db: Active database session.
+        rows: Database or collection rows to process.
+    """
     rows = [row for row in rows if str(row.get("kind") or "") in UPDATE_SOURCE_KINDS]
     if not rows:
         seed_update_sources(db)
@@ -773,6 +942,12 @@ def _restore_update_sources(db: Session, rows: list[dict[str, Any]]) -> int:
 
 
 def _restore_managed_packages(db: Session, rows: list[dict[str, Any]]) -> int:
+    """Return restore managed packages.
+
+    Args:
+        db: Active database session.
+        rows: Database or collection rows to process.
+    """
     if not rows:
         return len(db.execute(select(ManagedPackage)).scalars().all())
     sources = {
@@ -788,6 +963,12 @@ def _restore_managed_packages(db: Session, rows: list[dict[str, Any]]) -> int:
 
 
 def _restore_automation_scripts(db: Session, rows: list[dict[str, Any]]) -> int:
+    """Return restore automation scripts.
+
+    Args:
+        db: Active database session.
+        rows: Database or collection rows to process.
+    """
     for row in rows:
         script = AutomationScript(**_model_kwargs(AutomationScript, row))
         db.add(script)
@@ -803,6 +984,12 @@ def _restore_automation_scripts(db: Session, rows: list[dict[str, Any]]) -> int:
 
 
 def _restore_schedules(db: Session, rows: list[dict[str, Any]]) -> int:
+    """Return restore schedules.
+
+    Args:
+        db: Active database session.
+        rows: Database or collection rows to process.
+    """
     profiles = {profile.name: profile.id for profile in db.execute(select(VcfDepotDownloadProfile)).scalars().all()}
     scripts = {script.name: script.id for script in db.execute(select(AutomationScript)).scalars().all()}
     revisions = {
@@ -850,12 +1037,19 @@ def _restore_schedules(db: Session, rows: list[dict[str, Any]]) -> int:
 
 
 def _model_kwargs(model: type, row: dict[str, Any], *, exclude: set[str] | None = None) -> dict[str, Any]:
+    """Return model kwargs."""
     excluded = {"id", "created_at", "updated_at", *(exclude or set())}
     column_names = {column.name for column in model.__table__.columns if not isinstance(column.type, SqlDateTime)}
     return {key: value for key, value in row.items() if key in column_names and key not in excluded}
 
 
 def _restore_routes(db: Session, rows: list[dict[str, Any]]) -> int:
+    """Return restore routes.
+
+    Args:
+        db: Active database session.
+        rows: Database or collection rows to process.
+    """
     policies = {policy.name: policy.id for policy in db.execute(select(WanPolicy)).scalars().all()}
     for row in rows:
         payload = _model_kwargs(Route, row, exclude={"wan_policy_id"})
@@ -867,6 +1061,12 @@ def _restore_routes(db: Session, rows: list[dict[str, Any]]) -> int:
 
 
 def _restore_dhcp_options(db: Session, rows: list[dict[str, Any]]) -> int:
+    """Return restore dhcp options.
+
+    Args:
+        db: Active database session.
+        rows: Database or collection rows to process.
+    """
     scopes = {scope.name: scope.id for scope in db.execute(select(DhcpScope)).scalars().all()}
     for row in rows:
         payload = _model_kwargs(DhcpOption, row, exclude={"scope_id"})
@@ -878,6 +1078,12 @@ def _restore_dhcp_options(db: Session, rows: list[dict[str, Any]]) -> int:
 
 
 def _restore_ca_certificates(db: Session, rows: list[dict[str, Any]]) -> int:
+    """Return restore ca certificates.
+
+    Args:
+        db: Active database session.
+        rows: Database or collection rows to process.
+    """
     profiles = {profile.name: profile.id for profile in db.execute(select(CaProfile)).scalars().all()}
     for row in rows:
         payload = _model_kwargs(CaCertificate, row, exclude={"profile_id", "issued_at", "expires_at"})
@@ -889,6 +1095,12 @@ def _restore_ca_certificates(db: Session, rows: list[dict[str, Any]]) -> int:
 
 
 def _restore_kms_keys(db: Session, rows: list[dict[str, Any]]) -> int:
+    """Return restore kms keys.
+
+    Args:
+        db: Active database session.
+        rows: Database or collection rows to process.
+    """
     clients = {client.name: client.id for client in db.execute(select(KmsClient)).scalars().all()}
     for row in rows:
         payload = _model_kwargs(KmsKey, row, exclude={"owner_client_id"})
@@ -900,6 +1112,12 @@ def _restore_kms_keys(db: Session, rows: list[dict[str, Any]]) -> int:
 
 
 def _restore_ldap_organizations(db: Session, rows: list[dict[str, Any]]) -> int:
+    """Return restore ldap organizations.
+
+    Args:
+        db: Active database session.
+        rows: Database or collection rows to process.
+    """
     for row in rows:
         payload = _model_kwargs(LdapOrganization, row, exclude={"bind_password_encrypted"})
         organization = LdapOrganization(**payload)
@@ -910,6 +1128,12 @@ def _restore_ldap_organizations(db: Session, rows: list[dict[str, Any]]) -> int:
 
 
 def _restore_ldap_users(db: Session, rows: list[dict[str, Any]]) -> int:
+    """Return restore ldap users.
+
+    Args:
+        db: Active database session.
+        rows: Database or collection rows to process.
+    """
     organizations = {row.slug: row.id for row in db.execute(select(LdapOrganization)).scalars().all()}
     for row in rows:
         payload = _model_kwargs(LdapUser, row, exclude={"organization_id", "unlock_requested_at"})
@@ -922,6 +1146,12 @@ def _restore_ldap_users(db: Session, rows: list[dict[str, Any]]) -> int:
 
 
 def _restore_oidc_subjects(db: Session, rows: list[dict[str, Any]]) -> int:
+    """Return restore oidc subjects.
+
+    Args:
+        db: Active database session.
+        rows: Database or collection rows to process.
+    """
     local_users = {row.username: row.id for row in db.execute(select(User)).scalars().all()}
     organizations = {row.slug: row.id for row in db.execute(select(LdapOrganization)).scalars().all()}
     ldap_users = {
@@ -949,6 +1179,12 @@ def _restore_oidc_subjects(db: Session, rows: list[dict[str, Any]]) -> int:
 
 
 def _restore_oidc_clients(db: Session, rows: list[dict[str, Any]]) -> int:
+    """Return restore oidc clients.
+
+    Args:
+        db: Active database session.
+        rows: Database or collection rows to process.
+    """
     organizations = {row.slug: row.id for row in db.execute(select(LdapOrganization)).scalars().all()}
     restored = 0
     for row in rows:
@@ -964,6 +1200,12 @@ def _restore_oidc_clients(db: Session, rows: list[dict[str, Any]]) -> int:
 
 
 def _restore_oidc_client_redirect_uris(db: Session, rows: list[dict[str, Any]]) -> int:
+    """Return restore oidc client redirect uris.
+
+    Args:
+        db: Active database session.
+        rows: Database or collection rows to process.
+    """
     clients = {row.client_id: row.id for row in db.execute(select(OidcClient)).scalars().all()}
     restored = 0
     for row in rows:
@@ -979,6 +1221,12 @@ def _restore_oidc_client_redirect_uris(db: Session, rows: list[dict[str, Any]]) 
 
 
 def _restore_oidc_group_mappings(db: Session, rows: list[dict[str, Any]]) -> int:
+    """Return restore oidc group mappings.
+
+    Args:
+        db: Active database session.
+        rows: Database or collection rows to process.
+    """
     from atlaso.app.services.oidc import (
         create_group_mapping,
         validate_all_mapping_contexts,
@@ -1034,6 +1282,12 @@ def _restore_oidc_group_mappings(db: Session, rows: list[dict[str, Any]]) -> int
 
 
 def _restore_ldap_groups(db: Session, rows: list[dict[str, Any]]) -> int:
+    """Return restore ldap groups.
+
+    Args:
+        db: Active database session.
+        rows: Database or collection rows to process.
+    """
     organizations = {row.slug: row.id for row in db.execute(select(LdapOrganization)).scalars().all()}
     for row in rows:
         payload = _model_kwargs(LdapGroup, row, exclude={"organization_id"})
@@ -1045,6 +1299,12 @@ def _restore_ldap_groups(db: Session, rows: list[dict[str, Any]]) -> int:
 
 
 def _restore_ldap_group_memberships(db: Session, rows: list[dict[str, Any]]) -> int:
+    """Return restore ldap group memberships.
+
+    Args:
+        db: Active database session.
+        rows: Database or collection rows to process.
+    """
     organizations = {row.slug: row.id for row in db.execute(select(LdapOrganization)).scalars().all()}
     users = {(row.organization_id, row.uid): row.id for row in db.execute(select(LdapUser)).scalars().all()}
     groups = {(row.organization_id, row.name): row.id for row in db.execute(select(LdapGroup)).scalars().all()}
@@ -1071,6 +1331,12 @@ def _restore_ldap_group_memberships(db: Session, rows: list[dict[str, Any]]) -> 
 
 
 def _restore_vcf_backup_settings(db: Session, rows: list[dict[str, Any]]) -> int:
+    """Return restore vcf backup settings.
+
+    Args:
+        db: Active database session.
+        rows: Database or collection rows to process.
+    """
     users = {user.username: user.id for user in db.execute(select(User)).scalars().all()}
     for row in rows:
         payload = _model_kwargs(VcfBackupSettings, row, exclude={"sftp_user_id"})
@@ -1087,6 +1353,12 @@ def _restore_vcf_backup_settings(db: Session, rows: list[dict[str, Any]]) -> int
 
 
 def _restore_vcf_offline_depot_settings(db: Session, rows: list[dict[str, Any]]) -> int:
+    """Return restore vcf offline depot settings.
+
+    Args:
+        db: Active database session.
+        rows: Database or collection rows to process.
+    """
     users = {user.username: user.id for user in db.execute(select(User)).scalars().all()}
     for row in rows:
         payload = _model_kwargs(VcfOfflineDepotSettings, row, exclude={"http_user_id"})
@@ -1098,6 +1370,12 @@ def _restore_vcf_offline_depot_settings(db: Session, rows: list[dict[str, Any]])
 
 
 def _restore_esxi_pxe_hosts(db: Session, rows: list[dict[str, Any]]) -> int:
+    """Return restore esxi pxe hosts.
+
+    Args:
+        db: Active database session.
+        rows: Database or collection rows to process.
+    """
     kickstarts = {row.name: row.id for row in db.execute(select(EsxiKickstart)).scalars().all()}
     for row in rows:
         payload = _model_kwargs(EsxiPxeHost, row, exclude={"kickstart_id"})
@@ -1111,6 +1389,12 @@ def _restore_esxi_pxe_hosts(db: Session, rows: list[dict[str, Any]]) -> int:
 
 
 def _restore_esx_storage_volumes(db: Session, rows: list[dict[str, Any]]) -> int:
+    """Return restore esx storage volumes.
+
+    Args:
+        db: Active database session.
+        rows: Database or collection rows to process.
+    """
     for row in rows:
         payload = _model_kwargs(EsxStorageVolume, row, exclude={"applied", "state"})
         payload["applied"] = False
@@ -1121,6 +1405,12 @@ def _restore_esx_storage_volumes(db: Session, rows: list[dict[str, Any]]) -> int
 
 
 def _restore_esx_nfs_shares(db: Session, rows: list[dict[str, Any]]) -> int:
+    """Return restore esx nfs shares.
+
+    Args:
+        db: Active database session.
+        rows: Database or collection rows to process.
+    """
     volumes = {row.name: row.id for row in db.execute(select(EsxStorageVolume)).scalars().all()}
     restored = 0
     for row in rows:

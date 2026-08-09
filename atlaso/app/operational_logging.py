@@ -1,3 +1,5 @@
+"""Configure redacted file and syslog output for operational events."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -47,6 +49,17 @@ OIDC_QUERY_SECRET_PATTERN = re.compile(
 
 @dataclass(frozen=True)
 class LoggingPreferences:
+    """Represent logging preferences.
+
+    Attributes:
+        level: Level maintained by this loggingpreferences.
+        syslog_enabled: Whether syslog is enabled.
+        syslog_host: Syslog host maintained by this loggingpreferences.
+        syslog_port: Network port used for syslog.
+        syslog_protocol: Syslog protocol maintained by this loggingpreferences.
+        syslog_facility: Syslog facility maintained by this loggingpreferences.
+        syslog_level: Syslog level maintained by this loggingpreferences.
+    """
     level: str = "INFO"
     syslog_enabled: bool = False
     syslog_host: str = ""
@@ -57,15 +70,30 @@ class LoggingPreferences:
 
 
 def _normalize_level(value: str | None, *, default: str = "INFO") -> str:
+    """Normalize level.
+
+    Returns:
+        The normalize level result.
+    """
     normalized = (value or default).strip().upper()
     return normalized if normalized in LOG_LEVELS else default
 
 
 def _normalize_bool(value: str | None) -> bool:
+    """Normalize bool.
+
+    Returns:
+        The normalize bool result.
+    """
     return (value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _normalize_port(value: str | int | None) -> int:
+    """Normalize port.
+
+    Returns:
+        The normalize port result.
+    """
     try:
         port = int(value or 514)
     except (TypeError, ValueError):
@@ -74,16 +102,31 @@ def _normalize_port(value: str | int | None) -> int:
 
 
 def _normalize_protocol(value: str | None) -> str:
+    """Normalize protocol.
+
+    Returns:
+        The normalize protocol result.
+    """
     protocol = (value or "udp").strip().lower()
     return protocol if protocol in SYSLOG_PROTOCOLS else "udp"
 
 
 def _normalize_facility(value: str | None) -> str:
+    """Normalize facility.
+
+    Returns:
+        The normalize facility result.
+    """
     facility = (value or "local0").strip().lower()
     return facility if facility in SYSLOG_FACILITIES else "local0"
 
 
 def _setting_map(db: Session | None) -> dict[str, str]:
+    """Return setting map.
+
+    Args:
+        db: Active database session.
+    """
     if db is None:
         return {}
     try:
@@ -102,6 +145,11 @@ def _setting_map(db: Session | None) -> dict[str, str]:
 
 
 def logging_preferences_from_db(db: Session | None) -> LoggingPreferences:
+    """Return logging preferences from db.
+
+    Args:
+        db: Active database session.
+    """
     values = _setting_map(db)
     return LoggingPreferences(
         level=_normalize_level(values.get(LOGGING_LEVEL_KEY)),
@@ -115,6 +163,16 @@ def logging_preferences_from_db(db: Session | None) -> LoggingPreferences:
 
 
 def _set_setting(db: Session, key: str, value: str) -> Setting:
+    """Update setting.
+
+    Args:
+        db: Active database session.
+        key: Stable setting, vault, or mapping key.
+        value: Value to process.
+
+    Returns:
+        The set setting result.
+    """
     setting = db.execute(select(Setting).where(Setting.key == key)).scalar_one_or_none()
     if setting is None:
         setting = Setting(key=key, value=value)
@@ -136,6 +194,24 @@ def save_logging_preferences(
     syslog_facility: str,
     syslog_level: str,
 ) -> LoggingPreferences:
+    """Persist logging preferences.
+
+    Args:
+        db: Active database session.
+        level: Level supplied by the caller.
+        syslog_enabled: Syslog enabled supplied by the caller.
+        syslog_host: Syslog host supplied by the caller.
+        syslog_port: Syslog port supplied by the caller.
+        syslog_protocol: Syslog protocol supplied by the caller.
+        syslog_facility: Syslog facility supplied by the caller.
+        syslog_level: Syslog level supplied by the caller.
+
+    Returns:
+        The save logging preferences result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     preferences = LoggingPreferences(
         level=_normalize_level(level),
         syslog_enabled=bool(syslog_enabled),
@@ -162,6 +238,7 @@ def save_logging_preferences(
 
 
 def logging_preferences_to_dict(preferences: LoggingPreferences) -> dict[str, Any]:
+    """Return logging preferences to dict."""
     return {
         "level": preferences.level,
         "levels": LOG_LEVELS,
@@ -177,14 +254,17 @@ def logging_preferences_to_dict(preferences: LoggingPreferences) -> dict[str, An
 
 
 def _handler_is_file(handler: logging.Handler) -> bool:
+    """Return handler is file."""
     return bool(getattr(handler, "_atlaso_file_handler", False))
 
 
 def _handler_is_syslog(handler: logging.Handler) -> bool:
+    """Return handler is syslog."""
     return bool(getattr(handler, "_atlaso_syslog_handler", False))
 
 
 def _remove_handlers(predicate) -> None:
+    """Remove handlers."""
     root_logger = logging.getLogger()
     for handler in list(root_logger.handlers):
         if not predicate(handler):
@@ -194,10 +274,12 @@ def _remove_handlers(predicate) -> None:
 
 
 def _level_number(level: str) -> int:
+    """Return level number."""
     return int(getattr(logging, _normalize_level(level), logging.INFO))
 
 
 def _ensure_file_handler(log_path: Path, level: int) -> None:
+    """Ensure file handler."""
     root_logger = logging.getLogger()
     for handler in list(root_logger.handlers):
         if not _handler_is_file(handler):
@@ -216,6 +298,11 @@ def _ensure_file_handler(log_path: Path, level: int) -> None:
 
 
 def _ensure_syslog_handler(preferences: LoggingPreferences) -> bool:
+    """Ensure syslog handler.
+
+    Returns:
+        The ensure syslog handler result.
+    """
     _remove_handlers(_handler_is_syslog)
     if not preferences.syslog_enabled or not preferences.syslog_host:
         return False
@@ -230,6 +317,14 @@ def _ensure_syslog_handler(preferences: LoggingPreferences) -> bool:
 
 
 def configure_operational_logging(db: Session | None = None) -> LoggingPreferences:
+    """Update operational logging.
+
+    Args:
+        db: Active database session.
+
+    Returns:
+        The configure operational logging result.
+    """
     settings = get_settings()
     preferences = logging_preferences_from_db(db)
     root_logger = logging.getLogger()
@@ -256,6 +351,7 @@ def configure_operational_logging(db: Session | None = None) -> LoggingPreferenc
 
 
 def redact_operational_text(value: str | None) -> str:
+    """Return redact operational text."""
     lines: list[str] = []
     in_private_key = False
     for line in (value or "").splitlines():
@@ -286,6 +382,7 @@ def redact_operational_text(value: str | None) -> str:
 
 
 def log_audit_event(event: Any) -> None:
+    """Handle log audit event."""
     detail = redact_operational_text(getattr(event, "detail", "") or "").replace("\n", " | ")
     resource_id = getattr(event, "resource_id", None) or ""
     request_id = getattr(event, "request_id", None) or ""

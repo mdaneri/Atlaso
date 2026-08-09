@@ -1,3 +1,5 @@
+"""Implement ntp service behavior."""
+
 from __future__ import annotations
 
 import json
@@ -96,6 +98,14 @@ BRACKETED_SOURCE_PATTERN = re.compile(r"^\[([^\]]+)\](?::(\d+))?$")
 
 
 def parse_ntp_source(value: str) -> tuple[str, int | None, bool]:
+    """Parse ntp source.
+
+    Returns:
+        The parsed ntp source.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     source = str(value or "").strip()
     if not source:
         raise ValueError("source is empty")
@@ -139,12 +149,18 @@ def parse_ntp_source(value: str) -> tuple[str, int | None, bool]:
 
 
 def normalize_ntp_source(value: str) -> str:
+    """Normalize ntp source.
+
+    Returns:
+        The normalize ntp source result.
+    """
     host, port, is_ip = parse_ntp_source(value)
     rendered_host = f"[{host}]" if is_ip and ip_address(host).version == 6 else host
     return f"{rendered_host}:{port}" if port is not None else rendered_host
 
 
 def duplicate_ntp_upstream_source(sources: list[dict[str, object]]) -> str | None:
+    """Return duplicate ntp upstream source."""
     seen: set[str] = set()
     for item in sources:
         source = str(item.get("source") or "").strip()
@@ -161,6 +177,7 @@ def duplicate_ntp_upstream_source(sources: list[dict[str, object]]) -> str | Non
 
 
 def ntp_upstream_sources(settings: NtpSettings) -> list[dict[str, object]]:
+    """Return ntp upstream sources."""
     raw_sources = (settings.upstream_sources_json or "").strip()
     sources: list[dict[str, object]] = []
     if raw_sources:
@@ -195,6 +212,7 @@ def ntp_upstream_sources(settings: NtpSettings) -> list[dict[str, object]]:
 
 
 def dump_ntp_upstream_sources(sources: list[dict[str, object]]) -> str:
+    """Return dump ntp upstream sources."""
     normalized: list[dict[str, object]] = []
     for index, item in enumerate(sources, start=1):
         source = str(item.get("source") or "").strip()
@@ -215,6 +233,7 @@ NTP_DEFAULT_UPSTREAM_SOURCES_JSON = dump_ntp_upstream_sources(NTP_DEFAULT_UPSTRE
 
 
 def default_ntp_upstream_fields(raw_servers: str | None = None) -> dict[str, str]:
+    """Return default ntp upstream fields."""
     servers = split_servers(raw_servers or "")
     if not servers:
         return {"upstream_servers": NTP_DEFAULT_UPSTREAM_SERVERS, "upstream_sources_json": NTP_DEFAULT_UPSTREAM_SOURCES_JSON}
@@ -222,10 +241,12 @@ def default_ntp_upstream_fields(raw_servers: str | None = None) -> dict[str, str
 
 
 def enabled_ntp_sources(settings: NtpSettings) -> list[dict[str, object]]:
+    """Return enabled ntp sources."""
     return [source for source in ntp_upstream_sources(settings) if bool(source.get("enabled", True))]
 
 
 def split_allow_clients(value: str | None) -> list[str]:
+    """Return split allow clients."""
     entries: list[str] = []
     for item in str(value or "").replace(",", "\n").splitlines():
         normalized = item.strip().lower()
@@ -235,15 +256,22 @@ def split_allow_clients(value: str | None) -> list[str]:
 
 
 def join_allow_clients(values: list[str]) -> str:
+    """Return join allow clients."""
     entries = split_allow_clients("\n".join(values))
     return "\n".join(entries) if entries else "any"
 
 
 def normalize_hostname(value: str | None) -> str:
+    """Normalize hostname.
+
+    Returns:
+        The normalize hostname result.
+    """
     return str(value or "").strip().strip(".").lower()
 
 
 def ntp_settings_to_dict(settings: NtpSettings) -> dict:
+    """Return ntp settings to dict."""
     return {
         "id": settings.id,
         "enabled": settings.enabled,
@@ -268,6 +296,11 @@ def ntp_settings_to_dict(settings: NtpSettings) -> dict:
 
 
 def validate_ntp_state(settings: NtpSettings, available_interfaces: set[str]) -> list[str]:
+    """Validate ntp state.
+
+    Returns:
+        The validate ntp state result.
+    """
     errors: list[str] = []
     hostname = normalize_hostname(settings.hostname)
     if not hostname or not HOSTNAME_PATTERN.fullmatch(hostname):
@@ -334,11 +367,17 @@ def validate_ntp_state(settings: NtpSettings, available_interfaces: set[str]) ->
 
 
 def _restrict_line(entry: str) -> str:
+    """Return restrict line."""
     network = ip_network(entry, strict=False)
     return f"restrict {network.network_address} mask {network.netmask} kod limited nomodify noquery"
 
 
 def render_ntp_config(settings: NtpSettings) -> str:
+    """Render ntp config.
+
+    Returns:
+        The rendered ntp config.
+    """
     sources = enabled_ntp_sources(settings)
     listen_addresses = split_addresses(settings.listen_address)
     allow_entries = split_allow_clients(settings.allow_clients) or ["any"]

@@ -1,3 +1,5 @@
+"""Implement appliance settings service behavior."""
+
 import json
 import re
 import subprocess
@@ -30,6 +32,7 @@ HOSTNAME_PATTERN = re.compile(r"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9
 
 
 def appliance_settings_to_dict(settings: ApplianceSettings) -> dict[str, Any]:
+    """Return appliance settings to dict."""
     return {
         "id": settings.id,
         "fqdn": settings.fqdn,
@@ -46,6 +49,7 @@ def appliance_settings_to_dict(settings: ApplianceSettings) -> dict[str, Any]:
 
 
 def web_terminal_interfaces_from_json(value: str | None) -> list[str]:
+    """Return web terminal interfaces from json."""
     try:
         parsed = json.loads(value or "[]")
     except json.JSONDecodeError:
@@ -61,6 +65,7 @@ def web_terminal_interfaces_from_json(value: str | None) -> list[str]:
 
 
 def web_terminal_interfaces_to_json(values: list[str]) -> str:
+    """Return web terminal interfaces to json."""
     normalized: list[str] = []
     for value in values:
         name = str(value or "").strip()
@@ -73,6 +78,7 @@ def web_terminal_interface_options(
     interfaces: list[PhysicalInterface],
     vlans: list[VlanInterface],
 ) -> list[dict[str, Any]]:
+    """Return web terminal interface options."""
     options: list[dict[str, Any]] = []
     parents = {interface.name: interface for interface in interfaces}
     management_name = management_interface_context(interfaces).get("name", "")
@@ -120,6 +126,7 @@ def web_terminal_interface_options(
 
 
 def normalized_web_terminal_interfaces(settings: ApplianceSettings, management_interface: dict[str, str]) -> list[str]:
+    """Return normalized web terminal interfaces."""
     selected = web_terminal_interfaces_from_json(settings.web_terminal_interfaces_json)
     management_name = str(management_interface.get("name") or "")
     if settings.web_terminal_enabled and management_name:
@@ -128,6 +135,7 @@ def normalized_web_terminal_interfaces(settings: ApplianceSettings, management_i
 
 
 def web_terminal_addresses(selected: list[str], options: list[dict[str, Any]]) -> list[str]:
+    """Return web terminal addresses."""
     by_name = {str(option["name"]): option for option in options}
     addresses: list[str] = []
     for name in selected:
@@ -141,6 +149,7 @@ def web_terminal_listener_interfaces(
     selected: list[str],
     options: list[dict[str, Any]],
 ) -> list[str]:
+    """Return web terminal listener interfaces."""
     by_name = {str(option.get("name") or ""): option for option in options}
     return [
         name
@@ -150,6 +159,7 @@ def web_terminal_listener_interfaces(
 
 
 def _interface_addresses(ipv4_cidr: str | None, ipv6_cidr: str | None) -> list[str]:
+    """Return interface addresses."""
     result: list[str] = []
     for value in (ipv4_cidr, ipv6_cidr):
         if not value:
@@ -164,14 +174,29 @@ def _interface_addresses(ipv4_cidr: str | None, ipv6_cidr: str | None) -> list[s
 
 
 def normalize_fqdn(value: str) -> str:
+    """Normalize fqdn.
+
+    Returns:
+        The normalize fqdn result.
+    """
     return value.strip().strip(".").lower()
 
 
 def normalize_multiline_values(value: str) -> str:
+    """Normalize multiline values.
+
+    Returns:
+        The normalize multiline values result.
+    """
     return "\n".join(split_servers(value))
 
 
 def normalize_service_dns_target_naming(value: str | None) -> str:
+    """Normalize service dns target naming.
+
+    Returns:
+        The normalize service dns target naming result.
+    """
     normalized = (value or "").strip().lower().replace("_", "-")
     if normalized in SERVICE_DNS_TARGET_NAMING_CHOICES:
         return normalized
@@ -179,6 +204,7 @@ def normalize_service_dns_target_naming(value: str | None) -> str:
 
 
 def is_app_owned_appliance_dns_record(description: str | None) -> bool:
+    """Return whether app owned appliance dns record."""
     return APPLIANCE_DNS_RECORD_DESCRIPTION in (description or "")
 
 
@@ -188,6 +214,7 @@ def resolver_mode_for_settings(
     management_interface: dict[str, str],
     external_servers: list[str],
 ) -> str:
+    """Return resolver mode for settings."""
     if local_dns_enabled:
         return RESOLVER_MODE_LOCAL_DNS
     if not external_servers and management_interface.get("ipv4_method") == "dhcp":
@@ -196,6 +223,11 @@ def resolver_mode_for_settings(
 
 
 def parse_resolvectl_dns_servers(output: str) -> list[str]:
+    """Parse resolvectl dns servers.
+
+    Returns:
+        The parsed resolvectl dns servers.
+    """
     servers: list[str] = []
     seen: set[str] = set()
     for line in output.splitlines():
@@ -219,6 +251,11 @@ def parse_resolvectl_dns_servers(output: str) -> list[str]:
 
 
 def parse_networkd_dhcp_dns_payload(output: str, interface_name: str) -> list[str]:
+    """Parse networkd dhcp dns payload.
+
+    Returns:
+        The parsed networkd dhcp dns payload.
+    """
     for line in reversed(output.splitlines()):
         try:
             payload = json.loads(line)
@@ -234,6 +271,7 @@ def parse_networkd_dhcp_dns_payload(output: str, interface_name: str) -> list[st
 
 
 def observed_management_dhcp_dns_servers(interface_name: str) -> list[str]:
+    """Return observed management dhcp dns servers."""
     if not interface_name:
         return []
     try:
@@ -260,6 +298,7 @@ def observed_management_dhcp_dns_servers(interface_name: str) -> list[str]:
 
 
 def management_dhcp_dns_context(interfaces: list[PhysicalInterface]) -> tuple[dict[str, str], list[str]]:
+    """Return management dhcp dns context."""
     management = management_interface_context(interfaces)
     if management.get("ipv4_method") != "dhcp":
         return management, []
@@ -281,6 +320,7 @@ def management_dhcp_dns_context(interfaces: list[PhysicalInterface]) -> tuple[di
 
 
 def management_interface_context(interfaces: list[PhysicalInterface]) -> dict[str, Any]:
+    """Return management interface context."""
     candidates = [interface for interface in interfaces if interface.role == "management"] + [
         interface for interface in interfaces if interface.name == "eth0"
     ]
@@ -328,6 +368,20 @@ def validate_appliance_settings(
     management_https_cert_available: bool = False,
     web_terminal_options: list[dict[str, Any]] | None = None,
 ) -> tuple[list[str], list[str]]:
+    """Validate appliance settings.
+
+    Args:
+        settings: Desired or runtime settings consumed by the operation.
+        local_dns_enabled: Local dns enabled supplied by the caller.
+        management_interface: Management interface supplied by the caller.
+        dns_record_conflict: Dns record conflict supplied by the caller.
+        ca_enabled: Ca enabled supplied by the caller.
+        management_https_cert_available: Management https cert available supplied by the caller.
+        web_terminal_options: Web terminal options supplied by the caller.
+
+    Returns:
+        The validate appliance settings result.
+    """
     errors: list[str] = []
     warnings: list[str] = []
     fqdn = normalize_fqdn(settings.fqdn)
@@ -401,6 +455,16 @@ def appliance_settings_preview_payload(
     management_https_key_path: str = "",
     web_terminal_options: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    """Return appliance settings preview payload.
+
+    Args:
+        settings: Desired or runtime settings consumed by the operation.
+        local_dns_enabled: Local dns enabled supplied by the caller.
+        management_interface: Management interface supplied by the caller.
+        management_https_cert_path: Filesystem path for the management https cert.
+        management_https_key_path: Filesystem path for the management https key.
+        web_terminal_options: Web terminal options supplied by the caller.
+    """
     external_servers = split_servers(settings.external_dns_servers)
     resolver_mode = resolver_mode_for_settings(
         local_dns_enabled=local_dns_enabled,
@@ -444,6 +508,19 @@ def render_appliance_settings_config(
     management_https_key_path: str = "",
     web_terminal_options: list[dict[str, Any]] | None = None,
 ) -> str:
+    """Render appliance settings config.
+
+    Args:
+        settings: Desired or runtime settings consumed by the operation.
+        local_dns_enabled: Local dns enabled supplied by the caller.
+        management_interface: Management interface supplied by the caller.
+        management_https_cert_path: Filesystem path for the management https cert.
+        management_https_key_path: Filesystem path for the management https key.
+        web_terminal_options: Web terminal options supplied by the caller.
+
+    Returns:
+        The rendered appliance settings config.
+    """
     payload = appliance_settings_preview_payload(
         settings,
         local_dns_enabled=local_dns_enabled,

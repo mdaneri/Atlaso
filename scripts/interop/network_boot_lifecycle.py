@@ -25,6 +25,19 @@ def request_json(
     token: str = "",
     payload: dict | None = None,
 ) -> dict | list:
+    """Return request json.
+
+    Args:
+        opener: Opener supplied by the caller.
+        base_url: URL for the base.
+        method: HTTP or protocol method to invoke.
+        path: Filesystem or URL path to read, validate, or update.
+        token: Token supplied by the caller.
+        payload: Validated request or operation payload.
+
+    Raises:
+        RuntimeError: If the operation cannot be completed safely.
+    """
     body = json.dumps(payload).encode() if payload is not None else None
     headers = {"Accept": "application/json"}
     if body is not None:
@@ -53,6 +66,15 @@ def request_form(
     *,
     expect_json: bool = False,
 ) -> dict | str:
+    """Return request form.
+
+    Args:
+        opener: Opener supplied by the caller.
+        base_url: URL for the base.
+        path: Filesystem or URL path to read, validate, or update.
+        payload: Validated request or operation payload.
+        expect_json: Expect json supplied by the caller.
+    """
     request = urllib.request.Request(
         f"{base_url.rstrip('/')}{path}",
         data=urllib.parse.urlencode(payload).encode(),
@@ -69,6 +91,11 @@ def request_form(
 
 
 def csrf_from_page(page: str) -> str:
+    """Return csrf from page.
+
+    Raises:
+        RuntimeError: If the operation cannot be completed safely.
+    """
     match = re.search(r'name="csrf"\s+value="([^"]+)"', page)
     if not match:
         raise RuntimeError("Atlaso page did not contain a CSRF token.")
@@ -76,6 +103,14 @@ def csrf_from_page(page: str) -> str:
 
 
 def main() -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        The main result.
+
+    Raises:
+        RuntimeError: If the operation cannot be completed safely.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--appliance-url", required=True)
     parser.add_argument("--username", required=True)
@@ -120,6 +155,7 @@ def main() -> int:
     token = str(token_result["raw_token"])
     token_id = int(token_result["resource"]["id"])
     def revoke_temporary_token() -> None:
+        """Handle revoke temporary token."""
         request_form(
             opener,
             args.appliance_url,

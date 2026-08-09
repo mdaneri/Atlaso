@@ -1,3 +1,5 @@
+"""Test ldap behavior."""
+
 import io
 import json
 import tarfile
@@ -19,6 +21,7 @@ from atlaso.app.services.ldap import (
 
 
 def api_token(client, scopes: list[str]) -> str:
+    """Return api token."""
     response = client.post(
         "/api/v1/auth/login?username=admin&password=atlaso-admin",
         json={"name": "LDAP tests", "scopes": scopes},
@@ -28,6 +31,7 @@ def api_token(client, scopes: list[str]) -> str:
 
 
 def test_ldap_api_manages_isolated_organizations_users_groups_and_vcf_mapping(client):
+    """Verify that ldap api manages isolated organizations users groups and vcf mapping."""
     token = api_token(client, ["read:ldap", "write:ldap"])
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -100,6 +104,7 @@ def test_ldap_api_manages_isolated_organizations_users_groups_and_vcf_mapping(cl
 
 
 def test_ldap_api_rejects_cross_organization_membership_and_nested_cycle(client):
+    """Verify that ldap api rejects cross organization membership and nested cycle."""
     token = api_token(client, ["read:ldap", "write:ldap"])
     headers = {"Authorization": f"Bearer {token}"}
     org_a = client.post("/api/v1/ldap/organizations", headers=headers, json={"name": "Cycle A"}).json()
@@ -138,6 +143,7 @@ def test_ldap_api_rejects_cross_organization_membership_and_nested_cycle(client)
 
 
 def test_ldap_uid_change_marks_applied_password_not_staged(client):
+    """Verify that ldap uid change marks applied password not staged."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -172,6 +178,7 @@ def test_ldap_uid_change_marks_applied_password_not_staged(client):
 
 
 def test_ldap_password_policy_and_renderer_never_expose_unstaged_hashes():
+    """Verify that ldap password policy and renderer never expose unstaged hashes."""
     settings = LdapSettings()
     assert validate_ldap_password("short", "operator", settings)
     assert validate_ldap_password("VeryStrong1!Directory", "operator", settings) == []
@@ -214,6 +221,7 @@ def test_ldap_password_policy_and_renderer_never_expose_unstaged_hashes():
 
 
 def test_ldap_nested_group_cycle_detection():
+    """Verify that ldap nested group cycle detection."""
     organization = LdapOrganization(id=1, name="Org", slug="org", suffix_dn="dc=org,dc=example")
     first = LdapGroup(id=1, organization=organization, organization_id=1, name="First")
     second = LdapGroup(id=2, organization=organization, organization_id=1, name="Second")
@@ -223,6 +231,7 @@ def test_ldap_nested_group_cycle_detection():
 
 
 def test_plaintext_only_ldap_does_not_require_ca_but_requires_one_external_protocol():
+    """Verify that plaintext only ldap does not require ca but requires one external protocol."""
     settings = LdapSettings(
         enabled=True,
         hostname="ldap.atlaso.internal",
@@ -267,6 +276,7 @@ def test_plaintext_only_ldap_does_not_require_ca_but_requires_one_external_proto
 
 
 def test_ldap_validation_aggregates_users_with_missing_staged_passwords():
+    """Verify that ldap validation aggregates users with missing staged passwords."""
     settings = LdapSettings(
         enabled=False,
         hostname="ldap.atlaso.internal",
@@ -308,6 +318,7 @@ def test_ldap_validation_aggregates_users_with_missing_staged_passwords():
 
 
 def test_ldap_recovery_envelope_and_manifest_validation():
+    """Verify that ldap recovery envelope and manifest validation."""
     payload_buffer = io.BytesIO()
     with tarfile.open(fileobj=payload_buffer, mode="w:gz") as archive:
         manifest = json.dumps(
@@ -332,6 +343,7 @@ def test_ldap_recovery_envelope_and_manifest_validation():
 
 
 def test_ldap_api_settings_reject_management_and_accept_addressed_access_interface(client):
+    """Verify that ldap api settings reject management and accept addressed access interface."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -398,6 +410,7 @@ def test_ldap_api_settings_reject_management_and_accept_addressed_access_interfa
 
 
 def test_ldap_dns_reconciliation_does_not_change_ldap_snapshot_timestamp(client):
+    """Verify that ldap dns reconciliation does not change ldap snapshot timestamp."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal

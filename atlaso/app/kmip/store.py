@@ -50,6 +50,18 @@ class KeyStateError(KeyStoreError):
 
 @dataclass(frozen=True)
 class StoredKey:
+    """Represent stored key.
+
+    Attributes:
+        provider_id: Identifier of the associated provider.
+        key_id: Identifier of the associated key.
+        algorithm: Algorithm maintained by this storedkey.
+        length: Length maintained by this storedkey.
+        name: Operator-facing name of the resource.
+        state: Current lifecycle state.
+        created_at: UTC timestamp when the resource was created.
+        activated_at: UTC timestamp associated with activated.
+    """
     provider_id: str
     key_id: str
     algorithm: str
@@ -62,6 +74,15 @@ class StoredKey:
 
 @dataclass(frozen=True)
 class _KekEnvelope:
+    """Represent kek envelope.
+
+    Attributes:
+        kek: Kek maintained by this kekenvelope.
+        generation: Generation maintained by this kekenvelope.
+        commitment: Commitment maintained by this kekenvelope.
+        pending_generation: Pending generation maintained by this kekenvelope.
+        pending_commitment: Pending commitment maintained by this kekenvelope.
+    """
     kek: bytes
     generation: int
     commitment: str
@@ -70,6 +91,11 @@ class _KekEnvelope:
 
 
 def _validated_uuid(value: str, *, label: str) -> str:
+    """Return validated uuid.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     try:
         return str(uuid.UUID(value))
     except (AttributeError, TypeError, ValueError) as exc:
@@ -77,6 +103,7 @@ def _validated_uuid(value: str, *, label: str) -> str:
 
 
 def _canonical_aad(metadata: StoredKey) -> bytes:
+    """Return canonical aad."""
     document = {
         "schema_version": STORE_SCHEMA_VERSION,
         "provider_id": metadata.provider_id,
@@ -93,12 +120,25 @@ def _canonical_aad(metadata: StoredKey) -> bytes:
 
 
 def _master_key(secrets_key: str) -> bytes:
+    """Return master key.
+
+    Raises:
+        KeyStoreError: If the operation encounters an invalid state.
+    """
     if not secrets_key:
         raise KeyStoreError("ATLASO_SECRETS_KEY is required for the KMIP operational store.")
     return sha256(b"atlaso-kmip-master-v1\0" + secrets_key.encode("utf-8")).digest()
 
 
 def _decode_envelope_value(envelope: dict[str, object], field: str) -> bytes:
+    """Deserialize envelope value.
+
+    Returns:
+        The decode envelope value result.
+
+    Raises:
+        KeyStoreError: If the operation encounters an invalid state.
+    """
     value = envelope.get(field)
     if not isinstance(value, str):
         raise KeyStoreError("KMIP KEK envelope is invalid.")
@@ -114,6 +154,13 @@ def _write_kek_envelope(
     master_key: bytes,
     envelope: _KekEnvelope,
 ) -> None:
+    """Persist kek envelope.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        master_key: Master key supplied by the caller.
+        envelope: Envelope supplied by the caller.
+    """
     plaintext = json.dumps(
         {
             "kek": base64.b64encode(envelope.kek).decode("ascii"),
@@ -157,6 +204,15 @@ def _load_or_create_kek(
     *,
     secrets_key: str,
 ) -> tuple[bytes, _KekEnvelope]:
+    """Return or create kek.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        secrets_key: Secrets key supplied by the caller.
+
+    Raises:
+        KeyStoreError: If the operation encounters an invalid state.
+    """
     master = AESGCM(_master_key(secrets_key))
     if path.exists():
         try:
@@ -226,6 +282,11 @@ def _load_or_create_kek(
 
 
 def _store_commitment(connection: sqlite3.Connection) -> str:
+    """Persist commitment.
+
+    Returns:
+        The store commitment result.
+    """
     document = {
         "format": STORE_COMMITMENT_FORMAT,
         "metadata": [
@@ -264,9 +325,19 @@ def _store_commitment(connection: sqlite3.Connection) -> str:
 
 
 class WrappedKeyStore:
-    """SQLite metadata store whose only key material is AES-GCM wrapped."""
+    """SQLite metadata store whose only key material is AES-GCM wrapped.
+
+    Attributes:
+        database_path: Filesystem path used for database.
+        kek_path: Filesystem path used for kek.
+    """
 
     def __init__(self, database_path: Path, kek_path: Path, *, secrets_key: str) -> None:
+        """Initialize the wrapped key store.
+
+        Raises:
+            KeyStoreError: If the operation encounters an invalid state.
+        """
         self.database_path = database_path
         self.kek_path = kek_path
         self._lock = threading.RLock()
@@ -286,6 +357,7 @@ class WrappedKeyStore:
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
+        """Return connect."""
         connection = sqlite3.connect(self.database_path, timeout=10)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
@@ -293,6 +365,11 @@ class WrappedKeyStore:
         return connection
 
     def _initialize(self) -> None:
+        """Handle initialize.
+
+        Raises:
+            KeyStoreError: If the operation encounters an invalid state.
+        """
         with self._lock, self._connect() as connection:
             connection.executescript(
                 """
@@ -332,6 +409,7 @@ class WrappedKeyStore:
         os.chmod(self.database_path, 0o600)
 
     def _write_envelope(self, envelope: _KekEnvelope) -> None:
+        """Persist envelope."""
         _write_kek_envelope(
             self.kek_path,
             master_key=bytes(self._master_key),
@@ -340,6 +418,11 @@ class WrappedKeyStore:
         self._envelope = envelope
 
     def _verify_store_commitment(self, connection: sqlite3.Connection) -> None:
+        """Validate store commitment.
+
+        Raises:
+            KeyStoreError: If the operation encounters an invalid state.
+        """
         observed = _store_commitment(connection)
         if not self._envelope.commitment:
             self._write_envelope(
@@ -375,6 +458,7 @@ class WrappedKeyStore:
         )
 
     def _commit_mutation(self, connection: sqlite3.Connection) -> None:
+        """Handle commit mutation."""
         pending = _KekEnvelope(
             kek=bytes(self._kek),
             generation=self._envelope.generation,
@@ -404,6 +488,14 @@ class WrappedKeyStore:
         )
 
     def create_key(self, provider_id: str, *, name: str | None = None) -> StoredKey:
+        """Create key.
+
+        Returns:
+            The created key.
+
+        Raises:
+            ValueError: If an input value is invalid.
+        """
         normalized_provider = _validated_uuid(provider_id, label="provider_id")
         if name is not None and (
             not isinstance(name, str) or not 1 <= len(name) <= 256
@@ -460,6 +552,11 @@ class WrappedKeyStore:
         provider_id: str,
         key_id: str,
     ) -> sqlite3.Row:
+        """Return row.
+
+        Raises:
+            KeyNotFoundError: If the operation encounters an invalid state.
+        """
         normalized_provider = _validated_uuid(provider_id, label="provider_id")
         normalized_key = _validated_uuid(key_id, label="key_id")
         row = connection.execute(
@@ -477,6 +574,7 @@ class WrappedKeyStore:
 
     @staticmethod
     def _metadata(row: sqlite3.Row) -> StoredKey:
+        """Return metadata."""
         return StoredKey(
             provider_id=row["provider_id"],
             key_id=row["key_id"],
@@ -489,6 +587,11 @@ class WrappedKeyStore:
         )
 
     def _decrypt_row(self, row: sqlite3.Row) -> tuple[StoredKey, bytes]:
+        """Return decrypt row.
+
+        Raises:
+            KeyStoreError: If the operation encounters an invalid state.
+        """
         metadata = self._metadata(row)
         expected_aad = _canonical_aad(metadata)
         if row["aad_json"].encode("utf-8") != expected_aad:
@@ -506,12 +609,14 @@ class WrappedKeyStore:
         return metadata, plaintext
 
     def get_key(self, provider_id: str, key_id: str) -> tuple[StoredKey, bytes]:
+        """Return key."""
         with self._lock, self._connect() as connection:
             self._verify_store_commitment(connection)
             row = self._row(connection, provider_id, key_id)
             return self._decrypt_row(row)
 
     def get_metadata(self, provider_id: str, key_id: str) -> StoredKey:
+        """Return metadata."""
         with self._lock, self._connect() as connection:
             self._verify_store_commitment(connection)
             row = self._row(connection, provider_id, key_id)
@@ -521,6 +626,11 @@ class WrappedKeyStore:
             return metadata
 
     def activate_key(self, provider_id: str, key_id: str) -> StoredKey:
+        """Return activate key.
+
+        Raises:
+            KeyStateError: If the operation encounters an invalid state.
+        """
         with self._lock, self._connect() as connection:
             self._verify_store_commitment(connection)
             row = self._row(connection, provider_id, key_id)
@@ -577,6 +687,11 @@ class WrappedKeyStore:
         name: str | None = None,
         limit: int = 1024,
     ) -> list[str]:
+        """Return locate keys.
+
+        Raises:
+            ValueError: If an input value is invalid.
+        """
         normalized_provider = _validated_uuid(provider_id, label="provider_id")
         if state not in {None, "Pre-Active", "Active"}:
             raise ValueError("state is outside the supported KMIP lifecycle.")
@@ -599,6 +714,7 @@ class WrappedKeyStore:
             return [row["key_id"] for row in connection.execute(sql, parameters).fetchall()]
 
     def close(self) -> None:
+        """Handle close."""
         self._master_key[:] = b"\0" * len(self._master_key)
         self._master_key = bytearray()
         self._kek[:] = b"\0" * len(self._kek)

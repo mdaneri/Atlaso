@@ -1,3 +1,5 @@
+"""Test appliance console behavior."""
+
 import importlib.machinery
 import importlib.util
 import json
@@ -27,6 +29,7 @@ HELPER_PATH = Path(__file__).resolve().parents[1] / "scripts" / "appliance" / "a
 
 
 def load_helper_module():
+    """Return helper module."""
     loader = importlib.machinery.SourceFileLoader("atlaso_helper_console", str(HELPER_PATH))
     spec = importlib.util.spec_from_loader("atlaso_helper_console", loader)
     assert spec is not None
@@ -36,6 +39,7 @@ def load_helper_module():
 
 
 def test_console_management_validation_limits_dhcp_and_static_values():
+    """Verify that console management validation limits dhcp and static values."""
     assert validate_management_values("dhcp", "", "") == ("dhcp", "", "")
     assert validate_management_values("static", "192.168.49.1/24", "192.168.49.254") == (
         "static",
@@ -53,16 +57,19 @@ def test_console_management_validation_limits_dhcp_and_static_values():
     [("x86_64", "amd64"), ("AMD64", "amd64"), ("aarch64", "arm64"), ("armv7l", "armv7"), ("riscv64", "riscv64"), ("", "unknown")],
 )
 def test_console_architecture_label_normalizes_common_platform_names(reported, expected):
+    """Verify that console architecture label normalizes common platform names."""
     assert appliance_console._architecture_label(reported) == expected
 
 
 def test_console_dns_validation_accepts_compact_lists():
+    """Verify that console dns validation accepts compact lists."""
     assert validate_dns_servers("1.1.1.1, 9.9.9.9") == ["1.1.1.1", "9.9.9.9"]
     with pytest.raises(ConsoleOperationError, match="DNS server"):
         validate_dns_servers("resolver.example.com")
 
 
 def test_console_ipv6_management_validation_supports_independent_modes_and_gateways():
+    """Verify that console ipv6 management validation supports independent modes and gateways."""
     assert validate_ipv6_management_values("disabled", "", "") == ("disabled", "", "")
     assert validate_ipv6_management_values("automatic", "", "") == ("automatic", "", "")
     assert validate_ipv6_management_values("static", "2001:db8:49::10/64", "2001:db8:49::1") == (
@@ -88,6 +95,7 @@ def test_console_ipv6_management_validation_supports_independent_modes_and_gatew
 
 
 def test_console_management_urls_bracket_ipv6_and_ignore_link_local_addresses():
+    """Verify that console management urls bracket ipv6 and ignore link local addresses."""
     assert management_urls("appliance.atlaso.internal", "192.168.49.10/24", "2001:db8:49::10/64") == (
         "https://appliance.atlaso.internal/",
         "https://192.168.49.10/",
@@ -107,6 +115,7 @@ def test_console_management_urls_bracket_ipv6_and_ignore_link_local_addresses():
 
 
 def test_console_load_summary_uses_one_five_and_fifteen_minute_averages(monkeypatch):
+    """Verify that console load summary uses one five and fifteen minute averages."""
     monkeypatch.setattr(appliance_console.os, "getloadavg", lambda: (0.125, 1.5, 12.345), raising=False)
 
     assert appliance_console._load_summary() == "1 min 0.12 | 5 min 1.50 | 15 min 12.35"
@@ -123,6 +132,7 @@ def test_console_load_summary_uses_one_five_and_fifteen_minute_averages(monkeypa
     ],
 )
 def test_console_load_status_scales_warning_and_critical_thresholds_by_cpu_count(values, cpu_count, expected):
+    """Verify that console load status scales warning and critical thresholds by cpu count."""
     summary, severity = appliance_console._load_status(values, cpu_count)
 
     assert summary.startswith("1 min ")
@@ -130,6 +140,7 @@ def test_console_load_status_scales_warning_and_critical_thresholds_by_cpu_count
 
 
 def test_console_load_colors_use_header_safe_warning_and_critical_pairs():
+    """Verify that console load colors use header safe warning and critical pairs."""
     console = CursesConsole.__new__(CursesConsole)
     console.curses = SimpleNamespace(A_BOLD=0x100, color_pair=lambda value: value)
 
@@ -139,16 +150,19 @@ def test_console_load_colors_use_header_safe_warning_and_critical_pairs():
 
 
 def test_console_release_summary_drops_embedded_photon_metadata_lines():
+    """Verify that console release summary drops embedded photon metadata lines."""
     release = "VMware Photon OS 5.0\nPHOTON_BUILD_NUMBER=12345\n"
 
     assert appliance_console._first_display_line(release, "Linux") == "VMware Photon OS 5.0"
 
 
 def test_console_uses_bounded_recovery_redraws_after_service_activity():
+    """Verify that console uses bounded recovery redraws after service activity."""
     assert CursesConsole._recovery_redraws(10.0) == [11.0, 13.0, 18.0]
 
 
 def test_console_refresh_interval_defaults_to_five_seconds_and_is_bounded(monkeypatch):
+    """Verify that console refresh interval defaults to five seconds and is bounded."""
     monkeypatch.delenv(appliance_console.CONSOLE_REFRESH_ENV, raising=False)
     assert appliance_console._console_refresh_seconds() == 5
     monkeypatch.setenv(appliance_console.CONSOLE_REFRESH_ENV, "15")
@@ -162,6 +176,7 @@ def test_console_refresh_interval_defaults_to_five_seconds_and_is_bounded(monkey
 
 
 def test_console_missing_network_inventory_is_initializing_only_during_startup_grace():
+    """Verify that console missing network inventory is initializing only during startup grace."""
     error = appliance_console.ConsoleNetworkInventoryUnavailable("No management interface is available.")
 
     assert appliance_console._console_status_failure(error, started_at=100.0, now=100.0) == (
@@ -179,8 +194,15 @@ def test_console_missing_network_inventory_is_initializing_only_during_startup_g
 
 
 def test_console_uninitialized_physical_interface_table_is_network_initialization(monkeypatch):
+    """Verify that console uninitialized physical interface table is network initialization."""
     class UninitializedDatabase:
+        """Represent uninitialized database."""
         def __enter__(self):
+            """Enter the managed context.
+
+            Raises:
+                SQLAlchemyOperationalError: If the operation encounters an invalid state.
+            """
             raise SQLAlchemyOperationalError(
                 "SELECT * FROM physical_interfaces",
                 {},
@@ -188,6 +210,11 @@ def test_console_uninitialized_physical_interface_table_is_network_initializatio
             )
 
         def __exit__(self, *_args):
+            """Exit the managed context without suppressing exceptions.
+
+            Returns:
+                The exit result.
+            """
             return False
 
     monkeypatch.setattr(appliance_console, "SessionLocal", UninitializedDatabase)
@@ -200,6 +227,7 @@ def test_console_uninitialized_physical_interface_table_is_network_initializatio
 
 
 def test_console_does_not_hide_unrelated_database_errors(monkeypatch):
+    """Verify that console does not hide unrelated database errors."""
     error = SQLAlchemyOperationalError(
         "SELECT * FROM settings",
         {},
@@ -207,10 +235,21 @@ def test_console_does_not_hide_unrelated_database_errors(monkeypatch):
     )
 
     class BrokenDatabase:
+        """Represent broken database."""
         def __enter__(self):
+            """Enter the managed context.
+
+            Raises:
+                SQLAlchemyOperationalError: Always, to exercise database-error propagation.
+            """
             raise error
 
         def __exit__(self, *_args):
+            """Exit the managed context without suppressing exceptions.
+
+            Returns:
+                The exit result.
+            """
             return False
 
     monkeypatch.setattr(appliance_console, "SessionLocal", BrokenDatabase)
@@ -222,6 +261,7 @@ def test_console_does_not_hide_unrelated_database_errors(monkeypatch):
 
 
 def test_console_unrelated_status_failures_are_not_hidden_during_startup():
+    """Verify that console unrelated status failures are not hidden during startup."""
     error = RuntimeError("database unavailable")
 
     assert appliance_console._console_status_failure(error, started_at=100.0, now=100.0) == (
@@ -231,27 +271,47 @@ def test_console_unrelated_status_failures_are_not_hidden_during_startup():
 
 
 def test_console_draws_initializing_network_message_during_startup(monkeypatch):
+    """Verify that console draws initializing network message during startup."""
     class FakeCurses:
+        """Represent fake curses.
+
+        Attributes:
+            A_BOLD: Symbolic value representing 256.
+        """
         A_BOLD = 0x100
 
         @staticmethod
         def color_pair(value):
+            """Return color pair."""
             return value
 
     class FakeScreen:
+        """Represent fake screen."""
         @staticmethod
         def getmaxyx():
+            """Return getmaxyx."""
             return (30, 80)
 
         @staticmethod
         def clear():
+            """Remove operation.
+
+            Returns:
+                The clear result.
+            """
             return None
 
         @staticmethod
         def erase():
+            """Return erase."""
             return None
 
     def fail_status_load():
+        """Handle fail status load.
+
+        Raises:
+            ConsoleNetworkInventoryUnavailable: If the operation encounters an invalid state.
+        """
         raise appliance_console.ConsoleNetworkInventoryUnavailable("No management interface is available.")
 
     rendered: list[tuple[int, int, str, int]] = []
@@ -273,7 +333,18 @@ def test_console_draws_initializing_network_message_during_startup(monkeypatch):
 
 
 def test_console_text_editor_supports_cursor_navigation_insertion_and_deletion():
+    """Verify that console text editor supports cursor navigation insertion and deletion."""
     class FakeCurses:
+        """Represent fake curses.
+
+        Attributes:
+            KEY_LEFT: Symbolic value representing 1.
+            KEY_RIGHT: Symbolic value representing 2.
+            KEY_HOME: Symbolic value representing 3.
+            KEY_END: Symbolic value representing 4.
+            KEY_BACKSPACE: Symbolic value representing 5.
+            KEY_DC: Symbolic value representing 6.
+        """
         KEY_LEFT = 1
         KEY_RIGHT = 2
         KEY_HOME = 3
@@ -296,34 +367,60 @@ def test_console_text_editor_supports_cursor_navigation_insertion_and_deletion()
 
 
 def test_console_management_form_uses_field_navigation_and_cursor_editing():
+    """Verify that console management form uses field navigation and cursor editing."""
     keys = [2, 1, ord("9"), 9, 9, 9, 9, 9, 9, 10]
 
     class FakeWindow:
+        """Represent fake window."""
         def keypad(self, _enabled):
+            """Return keypad."""
             return None
 
         def erase(self):
+            """Return erase."""
             return None
 
         def bkgd(self, *_args):
+            """Return bkgd."""
             return None
 
         def box(self):
+            """Return box."""
             return None
 
         def addnstr(self, *_args):
+            """Return addnstr."""
             return None
 
         def move(self, *_args):
+            """Return move."""
             return None
 
         def refresh(self):
+            """Return refresh."""
             return None
 
         def getch(self):
+            """Return getch."""
             return keys.pop(0)
 
     class FakeCurses:
+        """Represent fake curses.
+
+        Attributes:
+            A_BOLD: Symbolic value representing 1.
+            A_REVERSE: Symbolic value representing 2.
+            KEY_LEFT: Symbolic value representing 1.
+            KEY_DOWN: Symbolic value representing 2.
+            KEY_RIGHT: Symbolic value representing 3.
+            KEY_HOME: Symbolic value representing 4.
+            KEY_END: Symbolic value representing 5.
+            KEY_BACKSPACE: Symbolic value representing 6.
+            KEY_DC: Symbolic value representing 7.
+            KEY_UP: Symbolic value representing 8.
+            KEY_BTAB: Symbolic value representing 353.
+            KEY_ENTER: Symbolic value representing 343.
+        """
         A_BOLD = 1
         A_REVERSE = 2
         KEY_LEFT = 1
@@ -339,14 +436,17 @@ def test_console_management_form_uses_field_navigation_and_cursor_editing():
 
         @staticmethod
         def color_pair(value):
+            """Return color pair."""
             return value
 
         @staticmethod
         def curs_set(_value):
+            """Return curs set."""
             return None
 
         @staticmethod
         def newwin(*_args):
+            """Return newwin."""
             return FakeWindow()
 
     console = CursesConsole.__new__(CursesConsole)
@@ -376,22 +476,28 @@ def test_console_management_form_uses_field_navigation_and_cursor_editing():
 
 
 def test_console_top_temporarily_leaves_and_restores_curses(monkeypatch):
+    """Verify that console top temporarily leaves and restores curses."""
     events: list[str] = []
 
     class FakeCurses:
+        """Represent fake curses."""
         class error(Exception):
+            """Represent error."""
             pass
 
         @staticmethod
         def def_prog_mode():
+            """Handle def prog mode."""
             events.append("save")
 
         @staticmethod
         def endwin():
+            """Handle endwin."""
             events.append("end")
 
         @staticmethod
         def reset_prog_mode():
+            """Remove prog mode."""
             events.append("restore")
 
     console = CursesConsole.__new__(CursesConsole)
@@ -420,6 +526,7 @@ def test_console_top_temporarily_leaves_and_restores_curses(monkeypatch):
 
 @pytest.mark.parametrize(("authenticated", "expected_calls"), [(True, 1), (False, 0)])
 def test_console_top_requires_fresh_root_authentication(authenticated, expected_calls):
+    """Verify that console top requires fresh root authentication."""
     console = CursesConsole.__new__(CursesConsole)
     calls: list[str] = []
     console._require_authentication = lambda: authenticated
@@ -431,6 +538,7 @@ def test_console_top_requires_fresh_root_authentication(authenticated, expected_
 
 
 def test_console_top_authentication_cancel_does_not_check_password(monkeypatch):
+    """Verify that console top authentication cancel does not check password."""
     console = CursesConsole.__new__(CursesConsole)
     console._prompt = lambda *args, **kwargs: None
     console.message = ""
@@ -443,36 +551,64 @@ def test_console_top_authentication_cancel_does_not_check_password(monkeypatch):
 
 
 def test_console_password_prompt_uses_light_network_field_style():
+    """Verify that console password prompt uses light network field style."""
     field_attributes: list[int] = []
     rendered_text: list[str] = []
     rendered_rows: list[tuple[int, str]] = []
 
     class FakeWindow:
+        """Represent fake window."""
         def keypad(self, _enabled):
+            """Return keypad."""
             return None
 
         def bkgd(self, *_args):
+            """Return bkgd."""
             return None
 
         def box(self):
+            """Return box."""
             return None
 
         def addnstr(self, row, _column, value, _length, attribute):
+            """Handle addnstr.
+
+            Args:
+                row: Database or collection row to process.
+                _column:  column supplied by the caller.
+                value: Value to process.
+                _length:  length supplied by the caller.
+                attribute: Attribute supplied by the caller.
+            """
             rendered_text.append(value)
             rendered_rows.append((row, value))
             if row == 3:
                 field_attributes.append(attribute)
 
         def move(self, *_args):
+            """Return move."""
             return None
 
         def refresh(self):
+            """Return refresh."""
             return None
 
         def get_wch(self):
+            """Return wch."""
             return "\x1b"
 
     class FakeCurses:
+        """Represent fake curses.
+
+        Attributes:
+            A_BOLD: Symbolic value representing 1.
+            KEY_LEFT: Symbolic value representing 1.
+            KEY_RIGHT: Symbolic value representing 2.
+            KEY_UP: Symbolic value representing 3.
+            KEY_DOWN: Symbolic value representing 4.
+            KEY_BTAB: Symbolic value representing 353.
+            KEY_ENTER: Symbolic value representing 343.
+        """
         A_BOLD = 1
         KEY_LEFT = 1
         KEY_RIGHT = 2
@@ -483,14 +619,17 @@ def test_console_password_prompt_uses_light_network_field_style():
 
         @staticmethod
         def color_pair(value):
+            """Return color pair."""
             return value
 
         @staticmethod
         def curs_set(_value):
+            """Return curs set."""
             return None
 
         @staticmethod
         def newwin(*_args):
+            """Return newwin."""
             return FakeWindow()
 
     console = CursesConsole.__new__(CursesConsole)
@@ -505,31 +644,51 @@ def test_console_password_prompt_uses_light_network_field_style():
 
 
 def test_console_password_prompt_preserves_literal_root_password_characters():
+    """Verify that console password prompt preserves literal root password characters."""
     keys = iter([*"VMware01!", "\n"])
 
     class FakeWindow:
+        """Represent fake window."""
         def keypad(self, _enabled):
+            """Return keypad."""
             return None
 
         def bkgd(self, *_args):
+            """Return bkgd."""
             return None
 
         def box(self):
+            """Return box."""
             return None
 
         def addnstr(self, *_args):
+            """Return addnstr."""
             return None
 
         def move(self, *_args):
+            """Return move."""
             return None
 
         def refresh(self):
+            """Return refresh."""
             return None
 
         def get_wch(self):
+            """Return wch."""
             return next(keys)
 
     class FakeCurses:
+        """Represent fake curses.
+
+        Attributes:
+            A_BOLD: Symbolic value representing 1.
+            KEY_LEFT: Symbolic value representing 1.
+            KEY_RIGHT: Symbolic value representing 2.
+            KEY_UP: Symbolic value representing 3.
+            KEY_DOWN: Symbolic value representing 4.
+            KEY_BTAB: Symbolic value representing 353.
+            KEY_ENTER: Symbolic value representing 343.
+        """
         A_BOLD = 1
         KEY_LEFT = 1
         KEY_RIGHT = 2
@@ -540,14 +699,17 @@ def test_console_password_prompt_preserves_literal_root_password_characters():
 
         @staticmethod
         def color_pair(value):
+            """Return color pair."""
             return value
 
         @staticmethod
         def curs_set(_value):
+            """Return curs set."""
             return None
 
         @staticmethod
         def newwin(*_args):
+            """Return newwin."""
             return FakeWindow()
 
     console = CursesConsole.__new__(CursesConsole)
@@ -558,6 +720,7 @@ def test_console_password_prompt_preserves_literal_root_password_characters():
 
 
 def test_console_top_authentication_failure_is_visible(monkeypatch):
+    """Verify that console top authentication failure is visible."""
     console = CursesConsole.__new__(CursesConsole)
     console._prompt = lambda *args, **kwargs: "incorrect"
     console.message = "Previous message"
@@ -573,6 +736,7 @@ def test_console_top_authentication_failure_is_visible(monkeypatch):
 
 
 def test_console_shell_is_audited_and_returns_to_curses(monkeypatch):
+    """Verify that console shell is audited and returns to curses."""
     console = CursesConsole.__new__(CursesConsole)
     events: list[object] = []
     console.message = ""
@@ -586,6 +750,7 @@ def test_console_shell_is_audited_and_returns_to_curses(monkeypatch):
 
 
 def test_console_management_rows_use_stable_table_columns():
+    """Verify that console management rows use stable table columns."""
     ipv4 = CursesConsole._network_table_row(
         "IPv4", "192.168.167.219/24", 128, gateway="192.168.167.2", mode="dhcp"
     )
@@ -600,6 +765,7 @@ def test_console_management_rows_use_stable_table_columns():
 
 
 def test_console_help_pages_cover_status_keys_navigation_and_safety():
+    """Verify that console help pages cover status keys navigation and safety."""
     titles = [title for title, _lines in appliance_console.HELP_PAGES]
     help_text = "\n".join(line for _title, lines in appliance_console.HELP_PAGES for line in lines)
 
@@ -613,33 +779,57 @@ def test_console_help_pages_cover_status_keys_navigation_and_safety():
 
 
 def test_console_help_modal_pages_forward_and_closes():
+    """Verify that console help modal pages forward and closes."""
     keys = iter([343, 343, 343, 343, 343])
     framed_titles: list[str] = []
 
     class FakeWindow:
+        """Represent fake window."""
         def keypad(self, _enabled):
+            """Return keypad."""
             return None
 
         def erase(self):
+            """Return erase."""
             return None
 
         def bkgd(self, *_args):
+            """Return bkgd."""
             return None
 
         def box(self):
+            """Return box."""
             return None
 
         def addnstr(self, row, _column, value, *_args):
+            """Handle addnstr."""
             if row == 0:
                 framed_titles.append(value)
 
         def refresh(self):
+            """Return refresh."""
             return None
 
         def getch(self):
+            """Return getch."""
             return next(keys)
 
     class FakeCurses:
+        """Represent fake curses.
+
+        Attributes:
+            A_BOLD: Symbolic value representing 1.
+            KEY_F1: Symbolic value representing 265.
+            KEY_RESIZE: Symbolic value representing 410.
+            KEY_LEFT: Symbolic value representing 260.
+            KEY_RIGHT: Symbolic value representing 261.
+            KEY_UP: Symbolic value representing 259.
+            KEY_DOWN: Symbolic value representing 258.
+            KEY_PPAGE: Symbolic value representing 339.
+            KEY_NPAGE: Symbolic value representing 338.
+            KEY_BTAB: Symbolic value representing 353.
+            KEY_ENTER: Symbolic value representing 343.
+        """
         A_BOLD = 1
         KEY_F1 = 265
         KEY_RESIZE = 410
@@ -654,10 +844,12 @@ def test_console_help_modal_pages_forward_and_closes():
 
         @staticmethod
         def color_pair(value):
+            """Return color pair."""
             return value
 
         @staticmethod
         def newwin(*_args):
+            """Return newwin."""
             return FakeWindow()
 
     console = CursesConsole.__new__(CursesConsole)
@@ -672,6 +864,7 @@ def test_console_help_modal_pages_forward_and_closes():
 
 
 def test_console_footer_includes_help_and_compact_power_label():
+    """Verify that console footer includes help and compact power label."""
     rendered: list[tuple[int, str]] = []
     console = CursesConsole.__new__(CursesConsole)
     console.curses = SimpleNamespace(A_BOLD=1, color_pair=lambda value: value)
@@ -690,6 +883,7 @@ def test_console_footer_includes_help_and_compact_power_label():
 
 
 def test_console_appliance_services_use_full_catalog_and_optional_units(monkeypatch):
+    """Verify that console appliance services use full catalog and optional units."""
     from atlaso.app import ui
 
     rows = [
@@ -723,6 +917,7 @@ def test_console_appliance_services_use_full_catalog_and_optional_units(monkeypa
 
 
 def test_console_enabled_optional_service_without_unit_is_unavailable(monkeypatch):
+    """Verify that console enabled optional service without unit is unavailable."""
     from atlaso.app import ui
 
     rows = [
@@ -738,6 +933,7 @@ def test_console_enabled_optional_service_without_unit_is_unavailable(monkeypatc
 
 
 def test_console_service_rows_fit_normal_tty_and_compact_summary_reports_exceptions():
+    """Verify that console service rows fit normal tty and compact summary reports exceptions."""
     services = (
         ServiceStatus("Atlaso", "atlaso.service", "loaded", "enabled", "active"),
         ServiceStatus("LDAP", "slapd.service", "loaded", "enabled", "failed"),
@@ -767,6 +963,7 @@ def test_console_service_rows_fit_normal_tty_and_compact_summary_reports_excepti
 
 
 def test_console_has_no_dedicated_time_service_surface():
+    """Verify that console has no dedicated time service surface."""
     source = Path(appliance_console.__file__).read_text(encoding="utf-8")
     for forbidden in ("NtpSettings", "validate_ntp_servers", "configure_ntp", '"NTP servers"'):
         assert forbidden not in source
@@ -774,6 +971,7 @@ def test_console_has_no_dedicated_time_service_surface():
 
 
 def test_console_restores_main_surface_before_reopening_parent_menu():
+    """Verify that console restores main surface before reopening parent menu."""
     console = CursesConsole.__new__(CursesConsole)
     console._force_clear = False
     draws: list[bool] = []
@@ -785,6 +983,7 @@ def test_console_restores_main_surface_before_reopening_parent_menu():
 
 
 def test_console_authentication_is_requested_for_each_menu_entry(monkeypatch):
+    """Verify that console authentication is requested for each menu entry."""
     console = CursesConsole.__new__(CursesConsole)
     prompts = iter(["first-password", "second-password"])
     console._prompt = lambda *args, **kwargs: next(prompts)
@@ -799,6 +998,7 @@ def test_console_authentication_is_requested_for_each_menu_entry(monkeypatch):
 
 
 def test_console_firewall_toggle_persists_desired_state_and_selects_only_firewall(client, monkeypatch):
+    """Verify that console firewall toggle persists desired state and selects only firewall."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -816,12 +1016,14 @@ def test_console_firewall_toggle_persists_desired_state_and_selects_only_firewal
 
 
 def test_console_power_task_is_committed_before_real_helper_invocation(client, monkeypatch):
+    """Verify that console power task is committed before real helper invocation."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus
 
     observed: list[tuple[list[str], str, str]] = []
 
     def fake_run(command, **kwargs):
+        """Return fake run."""
         with SessionLocal() as db:
             job = db.query(Job).filter(Job.type == "appliance-reboot").one()
             observed.append((command, job.status, job.created_by))
@@ -839,6 +1041,7 @@ def test_console_power_task_is_committed_before_real_helper_invocation(client, m
 
 
 def test_forced_real_apply_seam_rejects_non_console_jobs(client):
+    """Verify that forced real apply seam rejects non console jobs."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus
     from atlaso.app.ui import run_appliance_apply_job
@@ -852,6 +1055,7 @@ def test_forced_real_apply_seam_rejects_non_console_jobs(client):
 
 
 def test_console_desired_state_edit_is_rejected_before_commit_when_apply_is_active(client):
+    """Verify that console desired state edit is rejected before commit when apply is active."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -874,6 +1078,7 @@ def test_console_desired_state_edit_is_rejected_before_commit_when_apply_is_acti
 
 
 def test_console_systemd_unit_replaces_only_tty1():
+    """Verify that console systemd unit replaces only tty1."""
     unit = Path("image/common/systemd/atlaso-console.service").read_text(encoding="utf-8")
     provision = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
     manager = Path("image/common/systemd/atlaso-console-manager.conf").read_text(encoding="utf-8")
@@ -898,6 +1103,7 @@ def test_console_systemd_unit_replaces_only_tty1():
 
 
 def test_console_service_isolation_preserves_console_network_and_firewall(monkeypatch, tmp_path, capsys):
+    """Verify that console service isolation preserves console network and firewall."""
     helper = load_helper_module()
     state_dir = tmp_path / "console"
     state_path = state_dir / "services.json"
@@ -911,6 +1117,7 @@ def test_console_service_isolation_preserves_console_network_and_firewall(monkey
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -928,6 +1135,7 @@ def test_console_service_isolation_preserves_console_network_and_firewall(monkey
 
 
 def test_console_service_restore_uses_saved_enable_and_active_state(monkeypatch, tmp_path):
+    """Verify that console service restore uses saved enable and active state."""
     helper = load_helper_module()
     state_dir = tmp_path / "console"
     state_dir.mkdir()
@@ -957,6 +1165,7 @@ def test_console_service_restore_uses_saved_enable_and_active_state(monkeypatch,
 
 
 def test_console_service_restore_keeps_snapshot_when_restoration_is_incomplete(monkeypatch, tmp_path):
+    """Verify that console service restore keeps snapshot when restoration is incomplete."""
     helper = load_helper_module()
     state_dir = tmp_path / "console"
     state_dir.mkdir()

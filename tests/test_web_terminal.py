@@ -1,3 +1,5 @@
+"""Test web terminal behavior."""
+
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -13,6 +15,7 @@ from atlaso.app import web_terminal
 
 
 def test_web_terminal_interface_options_require_addressed_non_trunk_interfaces():
+    """Verify that web terminal interface options require addressed non trunk interfaces."""
     interfaces = [
         PhysicalInterface(
             name="eth0",
@@ -97,6 +100,7 @@ def test_web_terminal_interface_options_require_addressed_non_trunk_interfaces()
 
 
 def test_web_terminal_validation_forces_management_and_rejects_unavailable_selection():
+    """Verify that web terminal validation forces management and rejects unavailable selection."""
     settings = ApplianceSettings(
         fqdn="core.atlaso.internal",
         management_https_enabled=True,
@@ -125,6 +129,7 @@ def test_web_terminal_validation_forces_management_and_rejects_unavailable_selec
 
 
 def test_terminal_ticket_is_one_use_and_bound_to_session_identity():
+    """Verify that terminal ticket is one use and bound to session identity."""
     raw = "one-use-ticket"
     digest = web_terminal._ticket_digest(raw)
     web_terminal._tickets[digest] = web_terminal.TerminalTicket(
@@ -141,12 +146,14 @@ def test_terminal_ticket_is_one_use_and_bound_to_session_identity():
 
 
 def test_terminal_replay_removes_historic_cursor_position_queries():
+    """Verify that terminal replay removes historic cursor position queries."""
     output = bytearray(b"prompt\x1b[6n middle\x1b[?6n end")
 
     assert web_terminal._terminal_replay_output(output) == b"prompt middle end"
 
 
 def test_selected_listener_header_is_accepted_only_from_loopback_proxy(monkeypatch):
+    """Verify that selected listener header is accepted only from loopback proxy."""
     monkeypatch.setattr(web_terminal, "get_settings", lambda: SimpleNamespace(environment="appliance"))
     headers = {"x-atlaso-listener-address": "192.168.87.32"}
 

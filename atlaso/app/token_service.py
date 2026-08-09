@@ -1,3 +1,5 @@
+"""Implement token service behavior."""
+
 from sqlalchemy.orm import Session
 
 from atlaso.app.audit import record_audit
@@ -20,6 +22,7 @@ from uuid import uuid4
 
 
 def token_to_response(token: ApiToken) -> ApiTokenResponse:
+    """Return token to response."""
     return ApiTokenResponse(
         id=token.id,
         jti=token.jti,
@@ -49,6 +52,21 @@ def create_token_for_user(
     settings: Settings,
     actor: str,
 ) -> ApiTokenCreated:
+    """Create token for user.
+
+    Args:
+        db: Active database session.
+        user: Local or directory user affected by the operation.
+        create: Create supplied by the caller.
+        settings: Desired or runtime settings consumed by the operation.
+        actor: Authenticated identity attributed to the audit record.
+
+    Returns:
+        The created token for user.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     requested = set(create.scopes)
     unknown_scopes = requested - ALL_SCOPES
     if unknown_scopes:

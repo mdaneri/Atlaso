@@ -73,6 +73,13 @@ class ConfigurationError(ValueError):
 
 @dataclass(frozen=True)
 class Provider:
+    """Represent provider.
+
+    Attributes:
+        id: Unique database identifier for the resource.
+        name: Operator-facing name of the resource.
+        client_fingerprints: Client fingerprints maintained by this provider.
+    """
     id: str
     name: str
     client_fingerprints: tuple[str, ...]
@@ -80,6 +87,14 @@ class Provider:
 
 @dataclass(frozen=True)
 class ServiceLimits:
+    """Represent service limits.
+
+    Attributes:
+        max_request_bytes: Max request size in bytes.
+        max_connections: Maximum accepted connections.
+        idle_timeout_seconds: Idle timeout duration in seconds.
+        max_requests_per_connection: Maximum accepted requests per connection.
+    """
     max_request_bytes: int = MAX_MESSAGE_BYTES
     max_connections: int = 32
     idle_timeout_seconds: int = 30
@@ -88,6 +103,22 @@ class ServiceLimits:
 
 @dataclass(frozen=True)
 class ServiceConfig:
+    """Represent service config.
+
+    Attributes:
+        enabled: Whether the resource is enabled.
+        host: Host maintained by this serviceconfig.
+        port: Port maintained by this serviceconfig.
+        certificate_path: Filesystem path used for certificate.
+        private_key_path: Filesystem path used for private key.
+        ca_path: Filesystem path used for ca.
+        database_path: Filesystem path used for database.
+        kek_path: Filesystem path used for kek.
+        limits: Limits maintained by this serviceconfig.
+        providers: Providers maintained by this serviceconfig.
+        interop_trace_path: Filesystem path used for interop trace.
+        fingerprint_providers: Return fingerprint providers.
+    """
     enabled: bool
     host: str
     port: int
@@ -102,6 +133,7 @@ class ServiceConfig:
 
     @property
     def fingerprint_providers(self) -> dict[str, str]:
+        """Return fingerprint providers."""
         return {
             fingerprint: provider.id
             for provider in self.providers
@@ -110,6 +142,14 @@ class ServiceConfig:
 
 
 def certificate_sha256(path: Path) -> str:
+    """Return certificate sha256.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+
+    Raises:
+        ConfigurationError: If the operation encounters an invalid state.
+    """
     try:
         certificate = x509.load_pem_x509_certificate(path.read_bytes())
     except (OSError, ValueError) as exc:
@@ -119,6 +159,11 @@ def certificate_sha256(path: Path) -> str:
 
 
 def _fingerprint(value: object) -> str:
+    """Return fingerprint.
+
+    Raises:
+        ConfigurationError: If the operation encounters an invalid state.
+    """
     if not isinstance(value, str):
         raise ConfigurationError("KMIP client fingerprint must be a string.")
     normalized = value.replace(":", "").strip().casefold()
@@ -128,6 +173,11 @@ def _fingerprint(value: object) -> str:
 
 
 def _exact_fields(value: dict[str, Any], expected: set[str], *, label: str) -> None:
+    """Handle exact fields.
+
+    Raises:
+        ConfigurationError: If the operation encounters an invalid state.
+    """
     missing = sorted(expected - value.keys())
     extra = sorted(value.keys() - expected)
     if missing or extra:
@@ -140,6 +190,11 @@ def _exact_fields(value: dict[str, Any], expected: set[str], *, label: str) -> N
 
 
 def _path(value: object, *, label: str) -> Path:
+    """Return path.
+
+    Raises:
+        ConfigurationError: If the operation encounters an invalid state.
+    """
     if not isinstance(value, str) or not value.strip():
         raise ConfigurationError(f"{label} must be a nonempty absolute path.")
     path = Path(value)
@@ -149,12 +204,22 @@ def _path(value: object, *, label: str) -> Path:
 
 
 def _integer(value: object, *, label: str) -> int:
+    """Return integer.
+
+    Raises:
+        ConfigurationError: If the operation encounters an invalid state.
+    """
     if isinstance(value, bool) or not isinstance(value, int):
         raise ConfigurationError(f"{label} must be an integer.")
     return value
 
 
 def _provider(value: object) -> Provider:
+    """Return provider.
+
+    Raises:
+        ConfigurationError: If the operation encounters an invalid state.
+    """
     if not isinstance(value, dict):
         raise ConfigurationError("KMIP provider must be an object.")
     _exact_fields(value, PROVIDER_FIELDS, label="KMIP provider")
@@ -187,6 +252,14 @@ def _provider(value: object) -> Provider:
 
 
 def parse_config(document: object) -> ServiceConfig:
+    """Parse config.
+
+    Returns:
+        The parsed config.
+
+    Raises:
+        ConfigurationError: If the operation encounters an invalid state.
+    """
     if not isinstance(document, dict):
         raise ConfigurationError("KMIP configuration must be an object.")
     _exact_fields(document, CONFIG_FIELDS, label="KMIP configuration")
@@ -290,6 +363,14 @@ def parse_config(document: object) -> ServiceConfig:
 
 
 def load_config(path: Path) -> ServiceConfig:
+    """Return config.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+
+    Raises:
+        ConfigurationError: If the operation encounters an invalid state.
+    """
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -298,6 +379,11 @@ def load_config(path: Path) -> ServiceConfig:
 
 
 def tls_context(config: ServiceConfig) -> ssl.SSLContext:
+    """Return tls context.
+
+    Raises:
+        ConfigurationError: If the operation encounters an invalid state.
+    """
     for path, label in (
         (config.certificate_path, "KMIP server certificate"),
         (config.private_key_path, "KMIP server private key"),
@@ -314,15 +400,25 @@ def tls_context(config: ServiceConfig) -> ssl.SSLContext:
 
 
 class InteropTraceWriter:
-    """Append exact-schema, metadata-only events for an explicitly enabled acceptance run."""
+    """Append exact-schema, metadata-only events for an explicitly enabled acceptance run.
+
+    Attributes:
+        path: Path maintained by this interoptracewriter.
+    """
 
     def __init__(self, path: Path) -> None:
+        """Initialize the interop trace writer.
+
+        Args:
+            path: Filesystem or URL path to read, validate, or update.
+        """
         self.path = path
         self._lock = threading.Lock()
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
     def _operation(item: Ttlv) -> tuple[str, int]:
+        """Return operation."""
         node = item.child(Tag.OPERATION, required=False)
         value = node.value if node is not None else 0
         if isinstance(value, bool) or not isinstance(value, int):
@@ -335,6 +431,7 @@ class InteropTraceWriter:
 
     @staticmethod
     def _object_type(item: Ttlv) -> str | None:
+        """Return object type."""
         stack = [item]
         while stack:
             node = stack.pop()
@@ -346,6 +443,7 @@ class InteropTraceWriter:
 
     @staticmethod
     def _attribute_names(item: Ttlv) -> list[str]:
+        """Return attribute names."""
         names: set[str] = set()
         stack = [item]
         while stack:
@@ -362,6 +460,7 @@ class InteropTraceWriter:
         item: Ttlv,
         operation: str,
     ) -> tuple[str | None, int | None, str | None]:
+        """Return cryptographic parameters."""
         if operation != "Create":
             return None, None, None
         values: dict[str, object] = {}
@@ -396,6 +495,16 @@ class InteropTraceWriter:
         response: Ttlv,
         request_bytes: bytes,
     ) -> None:
+        """Persist operation.
+
+        Args:
+            connection_id: Identifier of the connection.
+            client_cert_sha256: Client cert sha256 supplied by the caller.
+            provider_id: Identifier of the provider.
+            request: Incoming HTTP request.
+            response: HTTP response being constructed.
+            request_bytes: Request bytes supplied by the caller.
+        """
         request_items = request.children(Tag.BATCH_ITEM)
         response_items = response.children(Tag.BATCH_ITEM)
         events: list[str] = []
@@ -454,6 +563,11 @@ class InteropTraceWriter:
 
 
 def _receive_exact(sock: ssl.SSLSocket, size: int) -> bytes:
+    """Return receive exact.
+
+    Raises:
+        TtlvError: If the operation encounters an invalid state.
+    """
     result = bytearray()
     while len(result) < size:
         chunk = sock.recv(size - len(result))
@@ -466,10 +580,21 @@ def _receive_exact(sock: ssl.SSLSocket, size: int) -> bytes:
 
 
 class KmipRequestHandler(socketserver.BaseRequestHandler):
+    """Represent kmip request handler.
+
+    Attributes:
+        server: Server maintained by this kmiprequesthandler.
+        request: Request maintained by this kmiprequesthandler.
+    """
     server: "KmipTcpServer"
     request: ssl.SSLSocket
 
     def handle(self) -> None:
+        """Handle handle.
+
+        Raises:
+            TtlvError: If the operation encounters an invalid state.
+        """
         try:
             self.request.do_handshake()
             peer_der = self.request.getpeercert(binary_form=True)
@@ -520,6 +645,17 @@ class KmipRequestHandler(socketserver.BaseRequestHandler):
 
 
 class KmipTcpServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    """Represent kmip tcp server.
+
+    Attributes:
+        allow_reuse_address: Whether reuse address is permitted.
+        daemon_threads: Daemon threads maintained by this kmiptcpserver.
+        config: Config maintained by this kmiptcpserver.
+        dispatcher: Dispatcher maintained by this kmiptcpserver.
+        context: Context maintained by this kmiptcpserver.
+        trace_writer: Trace writer maintained by this kmiptcpserver.
+        address_family: Address family maintained by this kmiptcpserver.
+    """
     allow_reuse_address = True
     daemon_threads = False
 
@@ -529,6 +665,7 @@ class KmipTcpServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
         dispatcher: KmipDispatcher,
         context: ssl.SSLContext,
     ) -> None:
+        """Initialize the kmip tcp server."""
         self.config = config
         self.dispatcher = dispatcher
         self.context = context
@@ -542,6 +679,11 @@ class KmipTcpServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
         super().__init__((config.host, config.port), KmipRequestHandler)
 
     def get_request(self) -> tuple[ssl.SSLSocket, Any]:
+        """Return request.
+
+        Raises:
+            ConnectionAbortedError: If the operation encounters an invalid state.
+        """
         raw_socket, address = super().get_request()
         if not self._connection_slots.acquire(blocking=False):
             raw_socket.close()
@@ -560,6 +702,12 @@ class KmipTcpServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
             raise
 
     def process_request(self, request: Any, client_address: Any) -> None:
+        """Run request.
+
+        Args:
+            request: Incoming HTTP request.
+            client_address: Client address supplied by the caller.
+        """
         try:
             super().process_request(request, client_address)
         except Exception:
@@ -567,15 +715,28 @@ class KmipTcpServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
             raise
 
     def process_request_thread(self, request: Any, client_address: Any) -> None:
+        """Run request thread.
+
+        Args:
+            request: Incoming HTTP request.
+            client_address: Client address supplied by the caller.
+        """
         try:
             super().process_request_thread(request, client_address)
         finally:
             self._connection_slots.release()
 
     def handle_error(self, request: Any, client_address: Any) -> None:
+        """Handle handle error.
+
+        Args:
+            request: Incoming HTTP request.
+            client_address: Client address supplied by the caller.
+        """
         LOGGER.error("KMIP request failed unexpectedly; connection closed.")
 
     def server_close(self) -> None:
+        """Handle server close."""
         try:
             super().server_close()
         finally:
@@ -583,6 +744,11 @@ class KmipTcpServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 
 def build_server(config: ServiceConfig, *, secrets_key: str) -> KmipTcpServer:
+    """Build server.
+
+    Returns:
+        The built server.
+    """
     context = tls_context(config)
     store = WrappedKeyStore(
         config.database_path,
@@ -593,6 +759,11 @@ def build_server(config: ServiceConfig, *, secrets_key: str) -> KmipTcpServer:
 
 
 def check_config(config: ServiceConfig, *, secrets_key: str) -> None:
+    """Check config.
+
+    Raises:
+        ConfigurationError: If the operation encounters an invalid state.
+    """
     tls_context(config)
     database_exists = config.database_path.exists()
     kek_exists = config.kek_path.exists()
@@ -608,6 +779,11 @@ def check_config(config: ServiceConfig, *, secrets_key: str) -> None:
 
 
 def _load_secrets_key() -> str:
+    """Return secrets key.
+
+    Raises:
+        ConfigurationError: If the operation encounters an invalid state.
+    """
     credential_path = os.environ.get("ATLASO_SECRETS_KEY_FILE", "").strip()
     if not credential_path:
         return os.environ.get("ATLASO_SECRETS_KEY", "")
@@ -618,6 +794,14 @@ def _load_secrets_key() -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        The main result.
+
+    Raises:
+        ConfigurationError: If the operation encounters an invalid state.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--check", action="store_true", help="Validate TLS, identity, and store configuration.")

@@ -1,3 +1,5 @@
+"""Implement release updates service behavior."""
+
 from __future__ import annotations
 
 import base64
@@ -35,10 +37,16 @@ class ReleaseManifestError(ValueError):
 
 
 def current_python_abi() -> str:
+    """Return current python abi."""
     return f"cp{sys.version_info.major}{sys.version_info.minor}"
 
 
 def _required_text(payload: dict[str, Any], key: str) -> str:
+    """Return required text.
+
+    Raises:
+        ReleaseManifestError: If the operation encounters an invalid state.
+    """
     value = str(payload.get(key) or "").strip()
     if not value:
         raise ReleaseManifestError(f"Manifest field {key} is required.")
@@ -46,6 +54,11 @@ def _required_text(payload: dict[str, Any], key: str) -> str:
 
 
 def _https_url(payload: dict[str, Any], key: str) -> str:
+    """Return https url.
+
+    Raises:
+        ReleaseManifestError: If the operation encounters an invalid state.
+    """
     value = _required_text(payload, key)
     parsed = urlparse(value)
     if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
@@ -54,6 +67,11 @@ def _https_url(payload: dict[str, Any], key: str) -> str:
 
 
 def _sha256(payload: dict[str, Any], key: str) -> str:
+    """Return sha256.
+
+    Raises:
+        ReleaseManifestError: If the operation encounters an invalid state.
+    """
     value = _required_text(payload, key).lower()
     if SHA256_RE.fullmatch(value) is None:
         raise ReleaseManifestError(f"Manifest field {key} must be a SHA256 digest.")
@@ -61,6 +79,11 @@ def _sha256(payload: dict[str, Any], key: str) -> str:
 
 
 def _timestamp(payload: dict[str, Any], key: str) -> str:
+    """Return timestamp.
+
+    Raises:
+        ReleaseManifestError: If the operation encounters an invalid state.
+    """
     value = _required_text(payload, key)
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -72,6 +95,14 @@ def _timestamp(payload: dict[str, Any], key: str) -> str:
 
 
 def validate_channel_manifest(payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate channel manifest.
+
+    Returns:
+        The validate channel manifest result.
+
+    Raises:
+        ReleaseManifestError: If the operation encounters an invalid state.
+    """
     if payload.get("schema_version") != CHANNEL_MANIFEST_SCHEMA or payload.get("kind") != "atlaso-channel":
         raise ReleaseManifestError("Unsupported Atlaso channel manifest.")
     channel = _required_text(payload, "channel")
@@ -91,6 +122,14 @@ def validate_channel_manifest(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def validate_release_manifest(payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate release manifest.
+
+    Returns:
+        The validate release manifest result.
+
+    Raises:
+        ReleaseManifestError: If the operation encounters an invalid state.
+    """
     if payload.get("schema_version") != RELEASE_MANIFEST_SCHEMA or payload.get("kind") != "atlaso-release":
         raise ReleaseManifestError("Unsupported Atlaso release manifest.")
     updater_protocol = payload.get("updater_protocol")
@@ -146,6 +185,11 @@ def validate_release_manifest(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def inventory_version_tuple(value: str) -> tuple[int, int, int, int]:
+    """Return inventory version tuple.
+
+    Raises:
+        ReleaseManifestError: If the operation encounters an invalid state.
+    """
     if INVENTORY_VERSION_RE.fullmatch(value) is None:
         raise ReleaseManifestError("Inventory Linux version must use X.Y.Z+revision versioning.")
     release, revision = value.split("+", 1)
@@ -153,6 +197,14 @@ def inventory_version_tuple(value: str) -> tuple[int, int, int, int]:
 
 
 def validate_inventory_release_manifest(payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate inventory release manifest.
+
+    Returns:
+        The validate inventory release manifest result.
+
+    Raises:
+        ReleaseManifestError: If the operation encounters an invalid state.
+    """
     if (
         payload.get("schema_version") != INVENTORY_RELEASE_MANIFEST_SCHEMA
         or payload.get("kind") != "atlaso-inventory-linux-release"
@@ -204,6 +256,11 @@ def validate_inventory_release_manifest(payload: dict[str, Any]) -> dict[str, An
 
 
 def signature_document(raw_signature: bytes) -> dict[str, str]:
+    """Return signature document.
+
+    Raises:
+        ReleaseManifestError: If the operation encounters an invalid state.
+    """
     try:
         payload = json.loads(raw_signature.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -230,6 +287,15 @@ def verify_signed_json(
     trust_dir: Path = UPDATE_TRUST_DIR,
     document_kind: str,
 ) -> dict[str, Any]:
+    """Validate signed json.
+
+    Returns:
+        The verify signed json result.
+
+    Raises:
+        ReleaseManifestError: If the operation encounters an invalid state.
+        ValueError: If an input value is invalid.
+    """
     signature = signature_document(raw_signature)
     public_key_path = trust_dir / f"{signature['key_id']}.pem"
     try:

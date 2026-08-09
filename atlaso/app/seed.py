@@ -1,3 +1,5 @@
+"""Implement seed behavior."""
+
 from ipaddress import ip_interface
 
 from sqlalchemy import select, text
@@ -81,6 +83,12 @@ NTP_NTS_CANONICAL_DEFAULTS = {
 
 
 def restore_canonical_nts_defaults_once(db: Session, settings: NtpSettings) -> bool:
+    """Return restore canonical nts defaults once.
+
+    Args:
+        db: Active database session.
+        settings: Desired or runtime settings consumed by the operation.
+    """
     marker = db.execute(
         select(Setting).where(Setting.key == NTP_NTS_RESTORATION_SETTING_KEY)
     ).scalar_one_or_none()
@@ -122,6 +130,13 @@ def restore_canonical_nts_defaults_once(db: Session, settings: NtpSettings) -> b
 
 
 def seed_initial_data(db: Session, *, include_examples: bool = True, appliance_mode: bool = False) -> None:
+    """Handle seed initial data.
+
+    Args:
+        db: Active database session.
+        include_examples: Include examples supplied by the caller.
+        appliance_mode: Appliance mode supplied by the caller.
+    """
     ntp_defaults_restored = False
     ensure_appliance_instance_id(db)
     if include_examples:
@@ -603,6 +618,11 @@ def seed_initial_data(db: Session, *, include_examples: bool = True, appliance_m
 
 
 def seed_update_sources(db: Session) -> None:
+    """Handle seed update sources.
+
+    Args:
+        db: Active database session.
+    """
     photon_source = db.execute(select(UpdateSource).where(UpdateSource.kind == "photon")).scalars().first()
     if photon_source is None:
         photon_source = UpdateSource(
@@ -651,17 +671,24 @@ def seed_update_sources(db: Session) -> None:
 
 
 def _domain_from_fqdn(fqdn: str) -> str:
+    """Return domain from fqdn."""
     normalized = normalize_fqdn(fqdn)
     parts = normalized.split(".", 1)
     return parts[1] if len(parts) == 2 else ""
 
 
 def _settings_lines(value: str) -> str:
+    """Return settings lines."""
     parts = [part.strip() for part in value.replace(",", "\n").replace(";", "\n").splitlines() if part.strip()]
     return "\n".join(parts)
 
 
 def _management_ip(db: Session) -> str:
+    """Return management ip.
+
+    Args:
+        db: Active database session.
+    """
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     candidates = [interface for interface in interfaces if interface.role == "management"] + [
         interface for interface in interfaces if interface.name == "eth0"
@@ -682,6 +709,12 @@ def _management_ip(db: Session) -> str:
 
 
 def _ensure_appliance_dns_record(db: Session, appliance_settings: ApplianceSettings) -> None:
+    """Ensure appliance dns record.
+
+    Args:
+        db: Active database session.
+        appliance_settings: Appliance settings supplied by the caller.
+    """
     fqdn = normalize_fqdn(appliance_settings.fqdn)
     address = _management_ip(db)
     if not fqdn or not address:

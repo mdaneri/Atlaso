@@ -1,3 +1,5 @@
+"""Implement vcf private registry service behavior."""
+
 from __future__ import annotations
 
 import re
@@ -21,6 +23,7 @@ STATUS_VALUES = {"planned", "ready", "relocated", "blocked"}
 
 
 def vcf_registry_endpoint(settings: VcfPrivateRegistrySettings) -> str:
+    """Return vcf registry endpoint."""
     port = settings.port or 443
     if port == 443:
         return settings.hostname.strip()
@@ -28,6 +31,7 @@ def vcf_registry_endpoint(settings: VcfPrivateRegistrySettings) -> str:
 
 
 def default_target_reference(settings: VcfPrivateRegistrySettings, source_reference: str) -> str:
+    """Return default target reference."""
     source = source_reference.strip()
     if not source:
         return ""
@@ -37,6 +41,7 @@ def default_target_reference(settings: VcfPrivateRegistrySettings, source_refere
 
 
 def vcf_registry_settings_to_dict(settings: VcfPrivateRegistrySettings) -> dict[str, object]:
+    """Return vcf registry settings to dict."""
     return {
         "id": settings.id,
         "enabled": settings.enabled,
@@ -57,6 +62,7 @@ def vcf_registry_settings_to_dict(settings: VcfPrivateRegistrySettings) -> dict[
 
 
 def vcf_registry_bundle_to_dict(bundle: VcfRegistryBundle) -> dict[str, object]:
+    """Return vcf registry bundle to dict."""
     return {
         "id": bundle.id,
         "name": bundle.name,
@@ -71,6 +77,11 @@ def vcf_registry_bundle_to_dict(bundle: VcfRegistryBundle) -> dict[str, object]:
 
 
 def render_harbor_config(settings: VcfPrivateRegistrySettings) -> str:
+    """Render harbor config.
+
+    Returns:
+        The rendered harbor config.
+    """
     storage_path = settings.storage_path or VCF_REGISTRY_DEFAULT_STORAGE_PATH
     config_port = settings.port or 443
     certificate_name = settings.server_certificate or settings.hostname or VCF_REGISTRY_DEFAULT_HOSTNAME
@@ -104,6 +115,11 @@ def render_harbor_config(settings: VcfPrivateRegistrySettings) -> str:
 
 
 def render_imgpkg_relocation_preview(settings: VcfPrivateRegistrySettings, bundles: list[VcfRegistryBundle]) -> str:
+    """Render imgpkg relocation preview.
+
+    Returns:
+        The rendered imgpkg relocation preview.
+    """
     enabled_bundles = [bundle for bundle in bundles if bundle.enabled]
     if not enabled_bundles:
         return "# No enabled Supervisor Service bundles are staged for relocation.\n"
@@ -134,6 +150,19 @@ def validate_vcf_registry_state(
     ca_bundle_source: str = "local-ca",
     ca_bundle_available: bool = True,
 ) -> tuple[list[str], list[str]]:
+    """Validate vcf registry state.
+
+    Args:
+        settings: Desired or runtime settings consumed by the operation.
+        bundles: Bundles supplied by the caller.
+        interface_names: Interface names supplied by the caller.
+        managed_dns_names: Managed dns names supplied by the caller.
+        ca_bundle_source: Ca bundle source supplied by the caller.
+        ca_bundle_available: Ca bundle available supplied by the caller.
+
+    Returns:
+        The validate vcf registry state result.
+    """
     errors: list[str] = []
     warnings: list[str] = []
 

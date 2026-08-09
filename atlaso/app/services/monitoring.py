@@ -1,3 +1,5 @@
+"""Implement monitoring service behavior."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -47,12 +49,25 @@ VIRTUAL_FILESYSTEMS = {
 
 @dataclass(frozen=True)
 class CpuCounters:
+    """Represent cpu counters.
+
+    Attributes:
+        total: Total maintained by this cpucounters.
+        idle: Idle maintained by this cpucounters.
+    """
     total: int
     idle: int
 
 
 @dataclass(frozen=True)
 class CpuCoreCounters:
+    """Represent cpu core counters.
+
+    Attributes:
+        name: Operator-facing name of the resource.
+        total: Total maintained by this cpucorecounters.
+        idle: Idle maintained by this cpucorecounters.
+    """
     name: str
     total: int
     idle: int
@@ -60,6 +75,20 @@ class CpuCoreCounters:
 
 @dataclass(frozen=True)
 class NetworkCounters:
+    """Represent network counters.
+
+    Attributes:
+        name: Operator-facing name of the resource.
+        rx_bytes: Rx size in bytes.
+        tx_bytes: Tx size in bytes.
+        rx_packets: Rx packets maintained by this networkcounters.
+        tx_packets: Tx packets maintained by this networkcounters.
+        rx_errors: Rx errors maintained by this networkcounters.
+        tx_errors: Tx errors maintained by this networkcounters.
+        rx_dropped: Rx dropped maintained by this networkcounters.
+        tx_dropped: Tx dropped maintained by this networkcounters.
+        oper_state: Oper state maintained by this networkcounters.
+    """
     name: str
     rx_bytes: int
     tx_bytes: int
@@ -74,6 +103,13 @@ class NetworkCounters:
 
 @dataclass(frozen=True)
 class DiskCounters:
+    """Represent disk counters.
+
+    Attributes:
+        device: Device maintained by this diskcounters.
+        read_bytes: Read size in bytes.
+        write_bytes: Write size in bytes.
+    """
     device: str
     read_bytes: int
     write_bytes: int
@@ -81,6 +117,19 @@ class DiskCounters:
 
 @dataclass(frozen=True)
 class DiskUsage:
+    """Represent disk usage.
+
+    Attributes:
+        mount_point: Mount point maintained by this diskusage.
+        device: Device maintained by this diskusage.
+        filesystem: Filesystem maintained by this diskusage.
+        total_bytes: Total size in bytes.
+        used_bytes: Used size in bytes.
+        free_bytes: Free size in bytes.
+        used_percent: Used expressed as a percentage.
+        read_bytes: Read size in bytes.
+        write_bytes: Write size in bytes.
+    """
     mount_point: str
     device: str
     filesystem: str
@@ -94,6 +143,22 @@ class DiskUsage:
 
 @dataclass(frozen=True)
 class MonitorSnapshot:
+    """Represent monitor snapshot.
+
+    Attributes:
+        sampled_at: UTC timestamp associated with sampled.
+        cpu: Cpu maintained by this monitorsnapshot.
+        cpus: Cpus maintained by this monitorsnapshot.
+        cpu_count: Number of cpu items.
+        load: Load maintained by this monitorsnapshot.
+        memory_total_bytes: Memory total size in bytes.
+        memory_available_bytes: Memory available size in bytes.
+        memory_used_percent: Memory used expressed as a percentage.
+        swap_total_bytes: Swap total size in bytes.
+        swap_used_bytes: Swap used size in bytes.
+        networks: Networks maintained by this monitorsnapshot.
+        disks: Disks maintained by this monitorsnapshot.
+    """
     sampled_at: datetime
     cpu: CpuCounters | None = None
     cpus: list[CpuCoreCounters] = field(default_factory=list)
@@ -109,12 +174,22 @@ class MonitorSnapshot:
 
 
 def ensure_aware(value: datetime) -> datetime:
+    """Ensure aware.
+
+    Returns:
+        The ensure aware result.
+    """
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value
 
 
 def parse_proc_stat_cpu(text: str) -> CpuCounters | None:
+    """Parse proc stat cpu.
+
+    Returns:
+        The parsed proc stat cpu.
+    """
     for line in text.splitlines():
         if not line.startswith("cpu "):
             continue
@@ -128,6 +203,11 @@ def parse_proc_stat_cpu(text: str) -> CpuCounters | None:
 
 
 def parse_proc_stat_cpus(text: str) -> list[CpuCoreCounters]:
+    """Parse proc stat cpus.
+
+    Returns:
+        The parsed proc stat cpus.
+    """
     cpus: list[CpuCoreCounters] = []
     for line in text.splitlines():
         parts = line.split()
@@ -146,6 +226,7 @@ def parse_proc_stat_cpus(text: str) -> list[CpuCoreCounters]:
 
 
 def cpu_percent(previous: CpuCounters | None, current: CpuCounters | None) -> float | None:
+    """Return cpu percent."""
     if previous is None or current is None:
         return None
     total_delta = current.total - previous.total
@@ -156,6 +237,11 @@ def cpu_percent(previous: CpuCounters | None, current: CpuCounters | None) -> fl
 
 
 def parse_loadavg(text: str) -> tuple[float | None, float | None, float | None]:
+    """Parse loadavg.
+
+    Returns:
+        The parsed loadavg.
+    """
     parts = text.split()
     values: list[float | None] = []
     for raw in parts[:3]:
@@ -169,6 +255,11 @@ def parse_loadavg(text: str) -> tuple[float | None, float | None, float | None]:
 
 
 def parse_meminfo(text: str) -> dict[str, int]:
+    """Parse meminfo.
+
+    Returns:
+        The parsed meminfo.
+    """
     values: dict[str, int] = {}
     for line in text.splitlines():
         if ":" not in line:
@@ -186,6 +277,11 @@ def parse_meminfo(text: str) -> dict[str, int]:
 
 
 def parse_net_dev(text: str) -> list[NetworkCounters]:
+    """Parse net dev.
+
+    Returns:
+        The parsed net dev.
+    """
     rows: list[NetworkCounters] = []
     for line in text.splitlines():
         if ":" not in line:
@@ -214,6 +310,11 @@ def parse_net_dev(text: str) -> list[NetworkCounters]:
 
 
 def parse_diskstats(text: str) -> dict[str, DiskCounters]:
+    """Parse diskstats.
+
+    Returns:
+        The parsed diskstats.
+    """
     counters: dict[str, DiskCounters] = {}
     for line in text.splitlines():
         parts = line.split()
@@ -234,18 +335,28 @@ def parse_diskstats(text: str) -> dict[str, DiskCounters]:
 
 
 def rate_per_second(previous_value: int, current_value: int, elapsed_seconds: float) -> float | None:
+    """Return rate per second."""
     if elapsed_seconds <= 0 or current_value < previous_value:
         return None
     return round((current_value - previous_value) / elapsed_seconds, 2)
 
 
 class SystemMetricsCollector:
+    """Represent system metrics collector.
+
+    Attributes:
+        proc_path: Filesystem path used for proc.
+        sys_path: Filesystem path used for sys.
+        settings: Settings maintained by this systemmetricscollector.
+    """
     def __init__(self, *, proc_path: Path | None = None, sys_path: Path | None = None, settings: Settings | None = None) -> None:
+        """Initialize the system metrics collector."""
         self.proc_path = proc_path or Path("/proc")
         self.sys_path = sys_path or Path("/sys")
         self.settings = settings or get_settings()
 
     def collect(self, sampled_at: datetime | None = None) -> MonitorSnapshot:
+        """Return collect."""
         sampled_at = sampled_at or utcnow()
         cpu, cpus = self._read_cpu()
         memory = self._read_memory()
@@ -265,6 +376,7 @@ class SystemMetricsCollector:
         )
 
     def collect_virtualization(self) -> dict[str, Any]:
+        """Return collect virtualization."""
         dmi_root = self.sys_path / "class" / "dmi" / "id"
         dmi = {
             key: self._read_text(dmi_root / key)
@@ -288,16 +400,19 @@ class SystemMetricsCollector:
         }
 
     def _read_cpu(self) -> tuple[CpuCounters | None, list[CpuCoreCounters]]:
+        """Return cpu."""
         text = self._read_text(self.proc_path / "stat")
         if not text:
             return None, []
         return parse_proc_stat_cpu(text), parse_proc_stat_cpus(text)
 
     def _read_load(self) -> tuple[float | None, float | None, float | None]:
+        """Return load."""
         text = self._read_text(self.proc_path / "loadavg")
         return parse_loadavg(text) if text else (None, None, None)
 
     def _read_memory(self) -> dict[str, int | float | None]:
+        """Return memory."""
         text = self._read_text(self.proc_path / "meminfo")
         values = parse_meminfo(text) if text else {}
         total = int(values.get("MemTotal", 0))
@@ -314,6 +429,7 @@ class SystemMetricsCollector:
         }
 
     def _read_networks(self) -> list[NetworkCounters]:
+        """Return networks."""
         text = self._read_text(self.proc_path / "net" / "dev")
         rows = parse_net_dev(text) if text else []
         with_state: list[NetworkCounters] = []
@@ -338,6 +454,7 @@ class SystemMetricsCollector:
         return with_state
 
     def _read_disks(self) -> list[DiskUsage]:
+        """Return disks."""
         diskstats = parse_diskstats(self._read_text(self.proc_path / "diskstats") or "")
         mounts = self._read_mounts()
         rows: list[DiskUsage] = []
@@ -369,6 +486,7 @@ class SystemMetricsCollector:
         return rows
 
     def _read_mounts(self) -> list[tuple[str, str, str]]:
+        """Return mounts."""
         text = self._read_text(self.proc_path / "mounts")
         mounts: list[tuple[str, str, str]] = []
         if text:
@@ -393,6 +511,11 @@ class SystemMetricsCollector:
 
     @staticmethod
     def _read_text(path: Path) -> str:
+        """Return text.
+
+        Args:
+            path: Filesystem or URL path to read, validate, or update.
+        """
         try:
             return path.read_text(encoding="utf-8").strip()
         except OSError:
@@ -400,6 +523,11 @@ class SystemMetricsCollector:
 
     @staticmethod
     def _run_text(command: list[str]) -> str:
+        """Run text.
+
+        Returns:
+            The run text result.
+        """
         try:
             completed = subprocess.run(command, check=False, capture_output=True, text=True, timeout=2)
         except (OSError, subprocess.SubprocessError):
@@ -410,6 +538,16 @@ class SystemMetricsCollector:
 
 
 def record_monitor_sample(db: Session, *, collector: SystemMetricsCollector | None = None, sampled_at: datetime | None = None) -> MonitorSample:
+    """Persist monitor sample.
+
+    Args:
+        db: Active database session.
+        collector: Collector supplied by the caller.
+        sampled_at: Sampled at supplied by the caller.
+
+    Returns:
+        The record monitor sample result.
+    """
     settings = get_settings()
     collector = collector or SystemMetricsCollector(settings=settings)
     snapshot = collector.collect(sampled_at=sampled_at)
@@ -492,6 +630,12 @@ def record_monitor_sample(db: Session, *, collector: SystemMetricsCollector | No
 
 
 def prune_monitor_samples(db: Session, *, retention_hours: int) -> int:
+    """Return prune monitor samples.
+
+    Args:
+        db: Active database session.
+        retention_hours: Retention hours supplied by the caller.
+    """
     cutoff = utcnow() - timedelta(hours=max(1, retention_hours))
     old_ids = list(db.execute(select(MonitorSample.id).where(MonitorSample.sampled_at < cutoff)).scalars().all())
     if not old_ids:
@@ -504,6 +648,15 @@ def prune_monitor_samples(db: Session, *, retention_hours: int) -> int:
 
 
 def ensure_recent_monitor_sample(db: Session, *, collector: SystemMetricsCollector | None = None) -> MonitorSample:
+    """Ensure recent monitor sample.
+
+    Args:
+        db: Active database session.
+        collector: Collector supplied by the caller.
+
+    Returns:
+        The ensure recent monitor sample result.
+    """
     settings = get_settings()
     latest = db.execute(select(MonitorSample).order_by(desc(MonitorSample.sampled_at), desc(MonitorSample.id))).scalars().first()
     if latest is None:
@@ -515,6 +668,13 @@ def ensure_recent_monitor_sample(db: Session, *, collector: SystemMetricsCollect
 
 
 def monitor_payload(db: Session, *, hours: int = 6, collector: SystemMetricsCollector | None = None) -> dict[str, Any]:
+    """Return monitor payload.
+
+    Args:
+        db: Active database session.
+        hours: Hours supplied by the caller.
+        collector: Collector supplied by the caller.
+    """
     settings = get_settings()
     hours = max(1, min(24, int(hours)))
     if settings.monitor_enabled:
@@ -566,6 +726,7 @@ def monitor_payload(db: Session, *, hours: int = 6, collector: SystemMetricsColl
 
 
 def _cpu_cores(samples: list[MonitorSample]) -> list[dict[str, Any]]:
+    """Return cpu cores."""
     by_name: dict[str, list[MonitorCpuSample]] = {}
     for sample in samples:
         for row in sample.cpu_samples:
@@ -584,6 +745,7 @@ def _cpu_cores(samples: list[MonitorSample]) -> list[dict[str, Any]]:
 
 
 def _summary(samples: list[MonitorSample]) -> dict[str, Any]:
+    """Return summary."""
     latest = samples[-1] if samples else None
     latest_networks = latest.network_samples if latest else []
     latest_disks = latest.disk_samples if latest else []
@@ -623,6 +785,7 @@ def _summary(samples: list[MonitorSample]) -> dict[str, Any]:
 
 
 def _network_totals(samples: list[MonitorSample]) -> list[dict[str, Any]]:
+    """Return network totals."""
     rows: list[dict[str, Any]] = []
     for sample in samples:
         rows.append(
@@ -636,6 +799,7 @@ def _network_totals(samples: list[MonitorSample]) -> list[dict[str, Any]]:
 
 
 def _networks(samples: list[MonitorSample]) -> list[dict[str, Any]]:
+    """Return networks."""
     by_name: dict[str, list[MonitorNetworkSample]] = {}
     for sample in samples:
         for row in sample.network_samples:
@@ -668,6 +832,7 @@ def _networks(samples: list[MonitorSample]) -> list[dict[str, Any]]:
 
 
 def _disk_totals(samples: list[MonitorSample]) -> list[dict[str, Any]]:
+    """Return disk totals."""
     rows: list[dict[str, Any]] = []
     for sample in samples:
         devices = _disk_rates_by_device(sample)
@@ -682,6 +847,7 @@ def _disk_totals(samples: list[MonitorSample]) -> list[dict[str, Any]]:
 
 
 def _disk_rates_by_device(sample: MonitorSample) -> dict[str, dict[str, float | None]]:
+    """Return disk rates by device."""
     devices: dict[str, dict[str, float | None]] = {}
     for row in sorted(sample.disk_samples, key=lambda item: (item.device, item.mount_point)):
         if row.filesystem in VIRTUAL_FILESYSTEMS:
@@ -698,6 +864,7 @@ def _disk_rates_by_device(sample: MonitorSample) -> dict[str, dict[str, float | 
 
 
 def _disk_devices(samples: list[MonitorSample]) -> list[dict[str, Any]]:
+    """Return disk devices."""
     by_device: dict[str, list[dict[str, Any]]] = {}
     for sample in samples:
         for device, rates in _disk_rates_by_device(sample).items():
@@ -723,6 +890,7 @@ def _disk_devices(samples: list[MonitorSample]) -> list[dict[str, Any]]:
 
 
 def _disks(samples: list[MonitorSample]) -> list[dict[str, Any]]:
+    """Return disks."""
     by_mount: dict[str, list[MonitorDiskSample]] = {}
     for sample in samples:
         for row in sample.disk_samples:
@@ -759,24 +927,33 @@ def _disks(samples: list[MonitorSample]) -> list[dict[str, Any]]:
 
 
 class MonitorSampler:
+    """Represent monitor sampler.
+
+    Attributes:
+        interval_seconds: Interval duration in seconds.
+    """
     def __init__(self, *, interval_seconds: int | None = None) -> None:
+        """Initialize the monitor sampler."""
         settings = get_settings()
         self.interval_seconds = max(5, interval_seconds or settings.monitor_sample_interval_seconds)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
+        """Handle start."""
         if self._thread and self._thread.is_alive():
             return
         self._thread = threading.Thread(target=self._run, name="atlaso-monitor-sampler", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
+        """Handle stop."""
         self._stop.set()
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2)
 
     def _run(self) -> None:
+        """Run operation."""
         while not self._stop.is_set():
             try:
                 with SessionLocal() as db:
@@ -787,6 +964,7 @@ class MonitorSampler:
 
 
 def start_monitor_sampler() -> MonitorSampler | None:
+    """Return start monitor sampler."""
     settings = get_settings()
     if not settings.monitor_enabled:
         return None

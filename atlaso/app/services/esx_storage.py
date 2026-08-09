@@ -29,6 +29,13 @@ NFS_VERSIONS = ("3", "4.1")
 
 @dataclass(frozen=True)
 class StorageInterface:
+    """Represent storage interface.
+
+    Attributes:
+        name: Operator-facing name of the resource.
+        ipv4: Ipv4 maintained by this storageinterface.
+        ipv6: Ipv6 maintained by this storageinterface.
+    """
     name: str
     ipv4: tuple[str, ...] = ()
     ipv6: tuple[str, ...] = ()
@@ -36,11 +43,11 @@ class StorageInterface:
 
 def rpcbind_required(shares: Iterable[EsxNfsShare]) -> bool:
     """Return whether an enabled NFS 3 share requires rpcbind at runtime."""
-
     return any(share.enabled is not False and share.preferred_nfs_version == "3" for share in shares)
 
 
 def split_lines(value: str | Iterable[str] | None) -> list[str]:
+    """Return split lines."""
     if value is None:
         return []
     values = value if not isinstance(value, str) else value.replace(",", "\n").splitlines()
@@ -48,6 +55,11 @@ def split_lines(value: str | Iterable[str] | None) -> list[str]:
 
 
 def storage_slug(value: str) -> str:
+    """Return storage slug.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     slug = re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-")
     if not slug:
         raise ValueError("A name must contain at least one letter or number.")
@@ -55,6 +67,14 @@ def storage_slug(value: str) -> str:
 
 
 def normalize_relative_path(value: str) -> str:
+    """Normalize relative path.
+
+    Returns:
+        The normalize relative path result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     raw = value.strip().replace("\\", "/").strip("/")
     if not raw:
         raise ValueError("Share path is required and cannot be the volume root.")
@@ -65,6 +85,7 @@ def normalize_relative_path(value: str) -> str:
 
 
 def share_paths_overlap(left: str, right: str) -> bool:
+    """Return share paths overlap."""
     left_parts = PurePosixPath(normalize_relative_path(left)).parts
     right_parts = PurePosixPath(normalize_relative_path(right)).parts
     common = min(len(left_parts), len(right_parts))
@@ -73,7 +94,6 @@ def share_paths_overlap(left: str, right: str) -> bool:
 
 def reserved_mount_owner(value: str) -> str:
     """Return the appliance service that exclusively owns a mounted path."""
-
     raw = value.strip()
     if not raw.startswith("/"):
         return ""
@@ -87,7 +107,6 @@ def reserved_mount_owner(value: str) -> str:
 
 def validate_mounted_volume_path(value: str) -> str:
     """Validate an existing ext4 mount before it can be claimed by ESX Storage."""
-
     mount_path = value.strip()
     if not PurePosixPath(mount_path or ".").is_absolute():
         raise ValueError("An existing ext4 volume requires its absolute mount path.")
@@ -98,6 +117,14 @@ def validate_mounted_volume_path(value: str) -> str:
 
 
 def normalize_families(value: str | Iterable[str]) -> list[str]:
+    """Normalize families.
+
+    Returns:
+        The normalize families result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     families = split_lines(value)
     invalid = [family for family in families if family not in ADDRESS_FAMILIES]
     if invalid:
@@ -106,6 +133,14 @@ def normalize_families(value: str | Iterable[str]) -> list[str]:
 
 
 def validate_clients(values: str | Iterable[str], family: str) -> list[str]:
+    """Validate clients.
+
+    Returns:
+        The validate clients result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     expected_version = 4 if family == "ipv4" else 6
     clients: list[str] = []
     for value in split_lines(values):
@@ -120,6 +155,7 @@ def validate_clients(values: str | Iterable[str], family: str) -> list[str]:
 
 
 def valid_clients_or_empty(values: str | Iterable[str], family: str) -> list[str]:
+    """Return valid clients or empty."""
     try:
         return validate_clients(values, family)
     except ValueError:
@@ -132,6 +168,7 @@ def effective_clients(values: str | Iterable[str], family: str) -> list[str]:
 
 
 def interface_addresses(interface: StorageInterface, family: str) -> list[str]:
+    """Return interface addresses."""
     values = interface.ipv4 if family == "ipv4" else interface.ipv6
     result: list[str] = []
     for value in values:
@@ -143,6 +180,7 @@ def interface_addresses(interface: StorageInterface, family: str) -> list[str]:
 
 
 def target_token(address: str, naming_mode: str, interface_name: str) -> str:
+    """Return target token."""
     if naming_mode == "interface":
         return storage_slug(interface_name)
     parsed = ip_address(address)
@@ -152,6 +190,11 @@ def target_token(address: str, naming_mode: str, interface_name: str) -> str:
 
 
 def target_hostname(service_hostname: str, token: str) -> str:
+    """Return target hostname.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     hostname = service_hostname.strip().lower().rstrip(".")
     if "." not in hostname:
         raise ValueError("ESX Storage hostname must be a fully qualified DNS name.")
@@ -166,19 +209,27 @@ def target_hostname(service_hostname: str, token: str) -> str:
 
 
 def share_remote_path(share: EsxNfsShare | dict[str, Any]) -> str:
+    """Return share remote path."""
     version = share.preferred_nfs_version if isinstance(share, EsxNfsShare) else str(share["preferred_nfs_version"])
     slug = storage_slug(share.datastore_name if isinstance(share, EsxNfsShare) else str(share["datastore_name"]))
     return f"/{slug}" if version == "4.1" else f"{ESX_STORAGE_EXPORT_ROOT}/{slug}"
 
 
 def connection_command(*, version: str, hostname: str, remote_path: str, datastore_name: str) -> str:
+    """Return connection command."""
     if version == "4.1":
         return f"esxcli storage nfs41 add --hosts={hostname} --share={remote_path} --volume-name={datastore_name}"
     return f"esxcli storage nfs add --host={hostname} --share={remote_path} --volume-name={datastore_name}"
 
 
 def powercli_connection_command(*, version: str, hostname: str, remote_path: str, datastore_name: str) -> str:
+    """Return powercli connection command.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     def quote(value: str) -> str:
+        """Return quote."""
         return "'" + value.replace("'", "''") + "'"
 
     file_system_version = {"3": "NFS", "4.1": "NFS41"}.get(version)
@@ -199,6 +250,18 @@ def validate_storage_state(
     *,
     dns_enabled: bool,
 ) -> tuple[list[str], list[str]]:
+    """Validate storage state.
+
+    Args:
+        settings: Desired or runtime settings consumed by the operation.
+        volumes: Volumes supplied by the caller.
+        shares: Shares supplied by the caller.
+        interfaces: Interfaces available to or selected by the operation.
+        dns_enabled: Dns enabled supplied by the caller.
+
+    Returns:
+        The validate storage state result.
+    """
     errors: list[str] = []
     warnings: list[str] = []
     if settings.enabled and not dns_enabled:
@@ -279,6 +342,19 @@ def render_manifest(
     dns_enabled: bool,
     dns_naming_mode: str = "ip",
 ) -> dict[str, Any]:
+    """Render manifest.
+
+    Args:
+        settings: Desired or runtime settings consumed by the operation.
+        volumes: Volumes supplied by the caller.
+        shares: Shares supplied by the caller.
+        interfaces: Interfaces available to or selected by the operation.
+        dns_enabled: Dns enabled supplied by the caller.
+        dns_naming_mode: Dns naming mode supplied by the caller.
+
+    Returns:
+        The rendered manifest.
+    """
     errors, warnings = validate_storage_state(settings, volumes, shares, interfaces, dns_enabled=dns_enabled)
     volume_by_id = {volume.id: volume for volume in volumes}
     rendered_shares: list[dict[str, Any]] = []
@@ -379,14 +455,24 @@ def render_manifest(
 
 
 def manifest_json(manifest: dict[str, Any]) -> str:
+    """Return manifest json."""
     return json.dumps(manifest, indent=2, sort_keys=True) + "\n"
 
 
 def manifest_hash(manifest: dict[str, Any]) -> str:
+    """Return manifest hash."""
     return sha256(json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 def format_authorization(*, job_id: str, manifest: dict[str, Any], volume: dict[str, Any], confirmation: str) -> dict[str, str]:
+    """Render authorization.
+
+    Returns:
+        The format authorization result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     expected = f"{ESX_STORAGE_FORMAT_CONFIRMATION_PREFIX} {volume['name']}"
     if confirmation != expected:
         raise ValueError(f"Formatting {volume['name']} requires the exact confirmation {expected!r}.")
@@ -401,6 +487,7 @@ def format_authorization(*, job_id: str, manifest: dict[str, Any], volume: dict[
 
 
 def desired_dns_records(manifest: dict[str, Any]) -> list[dict[str, str]]:
+    """Return desired dns records."""
     target_records: list[dict[str, str]] = []
     canonical_records: list[dict[str, str]] = []
     for share in manifest.get("shares", []):
@@ -419,6 +506,7 @@ def desired_dns_records(manifest: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def firewall_rule_specs(manifest: dict[str, Any]) -> list[dict[str, str]]:
+    """Return firewall rule specs."""
     rules: list[dict[str, str]] = []
     for share in manifest.get("shares", []):
         if not share.get("enabled"):
@@ -441,6 +529,11 @@ def firewall_rule_specs(manifest: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def normalize_disk_inventory_entry(entry: dict[str, Any], *, claimed_ids: set[str] | None = None) -> dict[str, Any]:
+    """Normalize disk inventory entry.
+
+    Returns:
+        The normalize disk inventory entry result.
+    """
     filesystem_uuid = str(entry.get("filesystem_uuid") or "")
     stable_id = str(entry.get("stable_device_id") or entry.get("by_id") or (f"UUID={filesystem_uuid}" if filesystem_uuid else ""))
     reasons: list[str] = []

@@ -1,3 +1,5 @@
+"""Test vcf trust behavior."""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -14,6 +16,7 @@ from atlaso.app.services import vcf_trust
 
 
 def root_ca() -> tuple[CaSettings, vcf_trust.RootCaInfo]:
+    """Return root ca."""
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Atlaso Test Root")])
     now = datetime.now(timezone.utc)
@@ -34,6 +37,7 @@ def root_ca() -> tuple[CaSettings, vcf_trust.RootCaInfo]:
 
 
 def test_root_ca_info_validates_and_fingerprints_public_root():
+    """Verify that root ca info validates and fingerprints public root."""
     _settings, info = root_ca()
 
     assert info.subject == "CN=Atlaso Test Root"
@@ -42,6 +46,7 @@ def test_root_ca_info_validates_and_fingerprints_public_root():
 
 
 def test_root_ca_info_rejects_disabled_ca():
+    """Verify that root ca info rejects disabled ca."""
     settings, _info = root_ca()
     settings.enabled = False
 
@@ -50,22 +55,37 @@ def test_root_ca_info_rejects_disabled_ca():
 
 
 def test_execute_vcf_trust_is_idempotent_without_restart(monkeypatch):
+    """Verify that execute vcf trust is idempotent without restart."""
     _settings, ca = root_ca()
 
     class FakeApi:
+        """Represent fake api."""
         def __init__(self, *_args, **_kwargs):
+            """Initialize the fake api."""
             pass
 
         def __enter__(self):
+            """Enter the managed context.
+
+            Returns:
+                The enter result.
+            """
             return self
 
         def __exit__(self, *_args):
+            """Exit the managed context without suppressing exceptions.
+
+            Returns:
+                The exit result.
+            """
             return None
 
         def appliance_info(self):
+            """Return appliance info."""
             return {"role": "VcfInstaller", "version": "9.0.1.0"}
 
         def trusted_certificates(self):
+            """Return trusted certificates."""
             return [{"certificate": ca.pem}]
 
     monkeypatch.setattr(vcf_trust, "VcfApiClient", FakeApi)
@@ -82,26 +102,42 @@ def test_execute_vcf_trust_is_idempotent_without_restart(monkeypatch):
 
 
 def test_execute_vcf_trust_imports_and_verifies_sddc_manager_without_ssh(monkeypatch):
+    """Verify that execute vcf trust imports and verifies sddc manager without ssh."""
     _settings, ca = root_ca()
     certificates: list[dict[str, str]] = []
 
     class FakeApi:
+        """Represent fake api."""
         def __init__(self, *_args, **_kwargs):
+            """Initialize the fake api."""
             pass
 
         def __enter__(self):
+            """Enter the managed context.
+
+            Returns:
+                The enter result.
+            """
             return self
 
         def __exit__(self, *_args):
+            """Exit the managed context without suppressing exceptions.
+
+            Returns:
+                The exit result.
+            """
             return None
 
         def appliance_info(self):
+            """Return appliance info."""
             return {"role": "SddcManager", "version": "9.0.1.0"}
 
         def trusted_certificates(self):
+            """Return trusted certificates."""
             return certificates
 
         def add_trusted_certificate(self, pem):
+            """Create trusted certificate."""
             certificates.append({"certificate": pem})
 
     monkeypatch.setattr(vcf_trust, "VcfApiClient", FakeApi)
@@ -124,26 +160,42 @@ def test_execute_vcf_trust_imports_and_verifies_sddc_manager_without_ssh(monkeyp
 
 
 def test_execute_vcf_trust_installer_import_does_not_restart(monkeypatch):
+    """Verify that execute vcf trust installer import does not restart."""
     _settings, ca = root_ca()
     certificates: list[dict[str, str]] = []
 
     class FakeApi:
+        """Represent fake api."""
         def __init__(self, *_args, **_kwargs):
+            """Initialize the fake api."""
             pass
 
         def __enter__(self):
+            """Enter the managed context.
+
+            Returns:
+                The enter result.
+            """
             return self
 
         def __exit__(self, *_args):
+            """Exit the managed context without suppressing exceptions.
+
+            Returns:
+                The exit result.
+            """
             return None
 
         def appliance_info(self):
+            """Return appliance info."""
             return {"role": "VcfInstaller", "version": "9.1.0.0"}
 
         def trusted_certificates(self):
+            """Return trusted certificates."""
             return certificates
 
         def add_trusted_certificate(self, pem):
+            """Create trusted certificate."""
             certificates.append({"certificate": pem})
 
     monkeypatch.setattr(vcf_trust, "VcfApiClient", FakeApi)
@@ -160,6 +212,7 @@ def test_execute_vcf_trust_installer_import_does_not_restart(monkeypatch):
 
 
 def test_sanitized_result_contains_no_credentials():
+    """Verify that sanitized result contains no credentials."""
     _settings, ca = root_ca()
     result = vcf_trust.sanitized_result(address="10.0.0.5", port=443, ca=ca, state="queued")
 
@@ -169,9 +222,15 @@ def test_sanitized_result_contains_no_credentials():
 
 
 def test_vcf_api_client_uses_vcf9_token_info_and_trust_endpoints():
+    """Verify that vcf api client uses vcf9 token info and trust endpoints."""
     seen: list[tuple[str, str]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
+        """Return handler.
+
+        Args:
+            request: Incoming HTTP request.
+        """
         seen.append((request.method, request.url.path))
         if request.url.path == "/v1/tokens":
             return httpx.Response(201, json={"accessToken": "temporary-token"})
@@ -199,6 +258,7 @@ def test_vcf_api_client_uses_vcf9_token_info_and_trust_endpoints():
 
 
 def test_vcf_api_client_brackets_ipv6_literal():
+    """Verify that vcf api client brackets ipv6 literal."""
     api = vcf_trust.VcfApiClient("2001:db8::10", "admin", "secret")
     try:
         assert api.base_url == "https://[2001:db8::10]"
@@ -207,6 +267,7 @@ def test_vcf_api_client_brackets_ipv6_literal():
 
 
 def test_vcf_api_client_rejects_changed_tls_fingerprint(monkeypatch):
+    """Verify that vcf api client rejects changed tls fingerprint."""
     monkeypatch.setattr(vcf_trust, "tls_sha256_fingerprint", lambda _address, _port: "AA:BB")
 
     with pytest.raises(vcf_trust.VcfTrustError, match="TLS certificate changed"):

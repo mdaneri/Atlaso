@@ -12,6 +12,7 @@ class DocumentedAPIRoute(APIRoute):
     """Use an endpoint's explicit documentation as its success-response summary."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialize the documented apiroute."""
         endpoint = kwargs.get("endpoint")
         endpoint_doc = getdoc(endpoint) if endpoint is not None else None
         if kwargs.get("response_description", "Successful Response") == "Successful Response" and endpoint_doc:

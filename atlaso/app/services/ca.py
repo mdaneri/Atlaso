@@ -1,3 +1,5 @@
+"""Implement ca service behavior."""
+
 from __future__ import annotations
 
 import json
@@ -29,6 +31,19 @@ SAFE_NAME_PATTERN = re.compile(r"[^A-Za-z0-9_.-]+")
 
 @dataclass(frozen=True)
 class ManagedCertificateSpec:
+    """Represent managed certificate spec.
+
+    Attributes:
+        owner: Owner maintained by this managedcertificatespec.
+        common_name: Common name maintained by this managedcertificatespec.
+        dns_names: Dns names maintained by this managedcertificatespec.
+        ip_addresses: Ip addresses maintained by this managedcertificatespec.
+        profile_name: Profile name maintained by this managedcertificatespec.
+        description: Operator-facing purpose or context for the resource.
+        cert_path: Filesystem path used for cert.
+        key_path: Filesystem path used for key.
+        chain_path: Filesystem path used for chain.
+    """
     owner: str
     common_name: str
     dns_names: list[str]
@@ -41,6 +56,7 @@ class ManagedCertificateSpec:
 
 
 def split_multiline(value: str | None) -> list[str]:
+    """Return split multiline."""
     if not value:
         return []
     items: list[str] = []
@@ -58,7 +74,6 @@ def managed_certificate_for_owner(db: Session, owner: str) -> CaCertificate | No
     canonical so read-only status and preview paths remain available while the
     managed-certificate reconciliation converges the desired state.
     """
-
     return db.execute(
         select(CaCertificate)
         .where(CaCertificate.managed_owner == owner)
@@ -67,10 +82,12 @@ def managed_certificate_for_owner(db: Session, owner: str) -> CaCertificate | No
 
 
 def join_multiline(values: list[str]) -> str:
+    """Return join multiline."""
     return "\n".join(split_multiline("\n".join(values)))
 
 
 def ca_service_state(settings: CaSettings) -> dict[str, object]:
+    """Return ca service state."""
     desired_enabled = bool(settings.enabled)
     has_material = bool(settings.root_certificate_pem and settings.root_private_key_encrypted)
     running = desired_enabled and has_material
@@ -96,15 +113,18 @@ def ca_service_state(settings: CaSettings) -> dict[str, object]:
 
 
 def safe_certificate_name(value: str) -> str:
+    """Return safe certificate name."""
     safe = SAFE_NAME_PATTERN.sub("-", value.strip()).strip("-")
     return safe or "certificate"
 
 
 def _hash_algorithm(name: str) -> hashes.HashAlgorithm:
+    """Return hash algorithm."""
     return {"sha384": hashes.SHA384(), "sha512": hashes.SHA512()}.get(name.lower(), hashes.SHA256())
 
 
 def _private_key(algorithm: str, key_size: int):
+    """Return private key."""
     if algorithm.upper() == "ECDSA":
         curve = ec.SECP521R1() if key_size >= 521 else ec.SECP384R1() if key_size >= 384 else ec.SECP256R1()
         return ec.generate_private_key(curve)
@@ -120,6 +140,16 @@ def _subject(
     state: str = "",
     locality: str = "",
 ) -> x509.Name:
+    """Return subject.
+
+    Args:
+        common_name: Certificate subject common name.
+        organization: Managed identity organization affected by the operation.
+        organizational_unit: Organizational unit supplied by the caller.
+        country: Country supplied by the caller.
+        state: Lifecycle or job state to persist.
+        locality: Locality supplied by the caller.
+    """
     parts = [
         x509.NameAttribute(NameOID.COMMON_NAME, common_name),
         x509.NameAttribute(NameOID.ORGANIZATION_NAME, organization or "Atlaso"),
@@ -136,6 +166,7 @@ def _subject(
 
 
 def _pem_private_key(private_key) -> str:
+    """Return pem private key."""
     return private_key.private_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PrivateFormat.PKCS8,
@@ -144,14 +175,21 @@ def _pem_private_key(private_key) -> str:
 
 
 def _pem_public_cert(certificate: x509.Certificate) -> str:
+    """Return pem public cert."""
     return certificate.public_bytes(serialization.Encoding.PEM).decode("utf-8")
 
 
 def _fingerprint(certificate: x509.Certificate) -> str:
+    """Return fingerprint."""
     return certificate.fingerprint(hashes.SHA256()).hex()
 
 
 def _load_root(settings: CaSettings) -> tuple[x509.Certificate, object]:
+    """Return root.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     if not settings.root_certificate_pem or not settings.root_private_key_encrypted:
         raise ValueError("Atlaso root CA material is not available.")
     certificate = x509.load_pem_x509_certificate(settings.root_certificate_pem.encode("utf-8"))
@@ -161,6 +199,11 @@ def _load_root(settings: CaSettings) -> tuple[x509.Certificate, object]:
 
 
 def generate_crl_pem(settings: CaSettings, certificates: list[CaCertificate]) -> str:
+    """Build crl pem.
+
+    Returns:
+        The generate crl pem result.
+    """
     revoked_certificates = [
         certificate
         for certificate in certificates
@@ -189,6 +232,14 @@ def generate_crl_pem(settings: CaSettings, certificates: list[CaCertificate]) ->
 
 
 def ensure_default_ca_profiles(db: Session) -> bool:
+    """Ensure default ca profiles.
+
+    Args:
+        db: Active database session.
+
+    Returns:
+        The ensure default ca profiles result.
+    """
     changed = False
     existing = {profile.name for profile in db.execute(select(CaProfile)).scalars().all()}
     if CA_SERVER_PROFILE_NAME not in existing:
@@ -227,6 +278,11 @@ def ensure_default_ca_profiles(db: Session) -> bool:
 
 
 def ensure_root_ca_material(settings: CaSettings) -> bool:
+    """Ensure root ca material.
+
+    Returns:
+        The ensure root ca material result.
+    """
     if settings.root_certificate_pem and settings.root_private_key_encrypted:
         return False
 
@@ -277,10 +333,12 @@ def ensure_root_ca_material(settings: CaSettings) -> bool:
 
 
 def _certificate_profile(profiles: list[CaProfile], certificate: CaCertificate) -> CaProfile | None:
+    """Return certificate profile."""
     return next((profile for profile in profiles if profile.id == certificate.profile_id), None)
 
 
 def _extended_key_usage(value: str) -> x509.ExtendedKeyUsage | None:
+    """Return extended key usage."""
     usages = []
     for item in split_multiline(value):
         normalized = item.strip()
@@ -292,6 +350,7 @@ def _extended_key_usage(value: str) -> x509.ExtendedKeyUsage | None:
 
 
 def _key_usage(value: str) -> x509.KeyUsage:
+    """Return key usage."""
     usages = {item.strip() for item in split_multiline(value)}
     return x509.KeyUsage(
         digital_signature="digitalSignature" in usages,
@@ -307,6 +366,7 @@ def _key_usage(value: str) -> x509.KeyUsage:
 
 
 def certificate_needs_issue(certificate: CaCertificate) -> bool:
+    """Return certificate needs issue."""
     if certificate.status != "issued":
         return True
     if not certificate.certificate_pem:
@@ -318,12 +378,18 @@ def certificate_needs_issue(certificate: CaCertificate) -> bool:
 
 
 def ensure_aware(value: datetime) -> datetime:
+    """Ensure aware.
+
+    Returns:
+        The ensure aware result.
+    """
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value
 
 
 def issue_certificate(settings: CaSettings, profiles: list[CaProfile], certificate: CaCertificate) -> bool:
+    """Return issue certificate."""
     if not certificate.enabled or certificate.status == "revoked" or not certificate_needs_issue(certificate):
         return False
     profile = _certificate_profile(profiles, certificate)
@@ -391,6 +457,17 @@ def ensure_managed_certificate_rows(
     profiles: list[CaProfile],
     specs: list[ManagedCertificateSpec],
 ) -> bool:
+    """Ensure managed certificate rows.
+
+    Args:
+        db: Active database session.
+        settings: Desired or runtime settings consumed by the operation.
+        profiles: Profiles supplied by the caller.
+        specs: Specs supplied by the caller.
+
+    Returns:
+        The ensure managed certificate rows result.
+    """
     if not settings.enabled:
         return False
     changed = False
@@ -441,6 +518,17 @@ def ensure_ca_issued_state(
     profiles: list[CaProfile],
     certificates: list[CaCertificate],
 ) -> bool:
+    """Ensure ca issued state.
+
+    Args:
+        db: Active database session.
+        settings: Desired or runtime settings consumed by the operation.
+        profiles: Profiles supplied by the caller.
+        certificates: Certificates supplied by the caller.
+
+    Returns:
+        The ensure ca issued state result.
+    """
     changed = ensure_root_ca_material(settings)
     if settings.enabled:
         for certificate in certificates:
@@ -451,6 +539,7 @@ def ensure_ca_issued_state(
 
 
 def ca_profile_to_dict(profile: CaProfile) -> dict:
+    """Return ca profile to dict."""
     return {
         "id": profile.id,
         "name": profile.name,
@@ -467,10 +556,12 @@ def ca_profile_to_dict(profile: CaProfile) -> dict:
 
 
 def ca_certificate_can_edit(certificate: CaCertificate) -> bool:
+    """Return ca certificate can edit."""
     return not certificate.managed_owner and certificate.status == "planned" and not certificate.certificate_pem
 
 
 def ca_certificate_can_delete(certificate: CaCertificate) -> bool:
+    """Return ca certificate can delete."""
     return not certificate.managed_owner
 
 
@@ -481,6 +572,11 @@ def validate_ca_certificate_request(
     subject_alt_names: str,
     ip_addresses: str,
 ) -> list[str]:
+    """Validate ca certificate request.
+
+    Returns:
+        The validate ca certificate request result.
+    """
     errors: list[str] = []
     normalized_common_name = common_name.strip()
     if not normalized_common_name:
@@ -501,6 +597,7 @@ def validate_ca_certificate_request(
 
 
 def ca_certificate_to_dict(certificate: CaCertificate) -> dict:
+    """Return ca certificate to dict."""
     can_export_certificate = certificate.status == "issued" and bool(certificate.certificate_pem)
     return {
         "id": certificate.id,
@@ -535,6 +632,11 @@ def render_ca_config(
     profiles: list[CaProfile],
     certificates: list[CaCertificate],
 ) -> str:
+    """Render ca config.
+
+    Returns:
+        The rendered ca config.
+    """
     payload = {
         "managed_by": "Atlaso",
         "enabled": settings.enabled,
@@ -578,6 +680,11 @@ def render_ca_config(
 
 
 def render_ca_apply_payload(settings: CaSettings, certificates: list[CaCertificate], *, include_private_keys: bool) -> str:
+    """Render ca apply payload.
+
+    Returns:
+        The rendered ca apply payload.
+    """
     root_cert_path = str(PurePosixPath(settings.storage_path) / "root-ca.pem")
     legacy_root_path = str(PurePosixPath(settings.storage_path) / "root.crt")
     bundle_path = str(PurePosixPath(settings.storage_path) / "ca-bundle.pem")
@@ -635,6 +742,11 @@ def validate_ca_state(
     profiles: list[CaProfile],
     certificates: list[CaCertificate],
 ) -> list[str]:
+    """Validate ca state.
+
+    Returns:
+        The validate ca state result.
+    """
     errors: list[str] = []
     if settings.enabled and not secret_key_status(get_settings()).dedicated and get_settings().environment not in {"development", "test"}:
         errors.append("ATLASO_SECRETS_KEY is required before enabling the CA outside development.")

@@ -1,8 +1,11 @@
+"""Test public services behavior."""
+
 from atlaso.app.models import CaSettings, OidcProviderSettings, PhysicalInterface, VcfOfflineDepotSettings, VcfPrivateRegistrySettings
 from atlaso.app.services.public_services import public_service_entries, render_public_services_nginx_config
 
 
 def test_public_service_entries_scope_services_to_matching_address():
+    """Verify that public service entries scope services to matching address."""
     interfaces = [
         PhysicalInterface(name="eth0", role="management", mode="access", ip_cidr="192.168.167.10/24"),
         PhysicalInterface(name="eth2", role="access", mode="access", ip_cidr="192.168.87.32/24"),
@@ -60,6 +63,7 @@ def test_public_service_entries_scope_services_to_matching_address():
 
 
 def test_enabled_ca_without_listen_address_is_not_publicly_exposed():
+    """Verify that enabled ca without listen address is not publicly exposed."""
     entries = public_service_entries(
         interfaces=[PhysicalInterface(name="eth2", role="access", mode="access", ip_cidr="192.168.87.32/24")],
         vlans=[],
@@ -73,6 +77,7 @@ def test_enabled_ca_without_listen_address_is_not_publicly_exposed():
 
 
 def test_public_services_nginx_config_contains_per_ip_scoped_locations():
+    """Verify that public services nginx config contains per ip scoped locations."""
     config = render_public_services_nginx_config(
         [
             {
@@ -156,6 +161,7 @@ def test_public_services_nginx_config_contains_per_ip_scoped_locations():
 
 
 def test_oidc_public_service_uses_dedicated_hostname_port_and_closed_routes():
+    """Verify that oidc public service uses dedicated hostname port and closed routes."""
     entries = public_service_entries(
         interfaces=[
             PhysicalInterface(
@@ -205,6 +211,7 @@ def test_oidc_public_service_uses_dedicated_hostname_port_and_closed_routes():
 
 
 def test_public_services_nginx_config_brackets_ipv6_https_and_http_listeners():
+    """Verify that public services nginx config brackets ipv6 https and http listeners."""
     config = render_public_services_nginx_config(
         [
             {
@@ -233,6 +240,7 @@ def test_public_services_nginx_config_brackets_ipv6_https_and_http_listeners():
 
 
 def test_public_services_nginx_config_skips_non_pxe_http_services():
+    """Verify that public services nginx config skips non pxe http services."""
     config = render_public_services_nginx_config(
         [
             {
@@ -251,6 +259,7 @@ def test_public_services_nginx_config_skips_non_pxe_http_services():
 
 
 def test_public_services_nginx_config_omits_ip_depot_routes_when_depot_uses_different_port():
+    """Verify that public services nginx config omits ip depot routes when depot uses different port."""
     config = render_public_services_nginx_config(
         [
             {
@@ -275,6 +284,7 @@ def test_public_services_nginx_config_omits_ip_depot_routes_when_depot_uses_diff
 
 
 def test_public_services_nginx_config_can_expose_terminal_only_on_selected_address():
+    """Verify that public services nginx config can expose terminal only on selected address."""
     config = render_public_services_nginx_config(
         [
             {
@@ -305,6 +315,7 @@ def test_public_services_nginx_config_can_expose_terminal_only_on_selected_addre
 
 
 def test_public_services_nginx_config_merges_terminal_without_duplicate_static_location():
+    """Verify that public services nginx config merges terminal without duplicate static location."""
     config = render_public_services_nginx_config(
         [
             {

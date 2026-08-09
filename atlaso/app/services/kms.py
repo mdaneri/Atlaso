@@ -1,3 +1,5 @@
+"""Implement kms service behavior."""
+
 from __future__ import annotations
 
 import json
@@ -34,6 +36,7 @@ KMS_DNS_RECORD_DESCRIPTION = "Atlaso app-owned KMS/KMIP endpoint record."
 
 
 def split_csv(value: str | None) -> list[str]:
+    """Return split csv."""
     if not value:
         return []
     items: list[str] = []
@@ -45,10 +48,12 @@ def split_csv(value: str | None) -> list[str]:
 
 
 def join_csv(values: list[str]) -> str:
+    """Return join csv."""
     return ",".join(split_csv(",".join(values)))
 
 
 def kms_client_fingerprints(value: str | None) -> list[str]:
+    """Return kms client fingerprints."""
     fingerprints: list[str] = []
     for item in split_csv(value):
         normalized = item.casefold()
@@ -58,6 +63,11 @@ def kms_client_fingerprints(value: str | None) -> list[str]:
 
 
 def ensure_kms_provider_id(settings: KmsSettings) -> bool:
+    """Ensure kms provider id.
+
+    Returns:
+        The ensure kms provider id result.
+    """
     try:
         normalized = str(UUID(settings.provider_id))
     except (AttributeError, TypeError, ValueError):
@@ -68,6 +78,7 @@ def ensure_kms_provider_id(settings: KmsSettings) -> bool:
 
 
 def kms_client_to_dict(client: KmsClient) -> dict:
+    """Return kms client to dict."""
     fingerprints = kms_client_fingerprints(client.certificate_fingerprint)
     return {
         "id": client.id,
@@ -84,6 +95,7 @@ def kms_client_to_dict(client: KmsClient) -> dict:
 
 
 def kms_key_to_dict(key: KmsKey) -> dict:
+    """Return kms key to dict."""
     return {
         "id": key.id,
         "name": key.name,
@@ -105,6 +117,11 @@ def render_kms_config(
     clients: list[KmsClient],
     keys: list[KmsKey],
 ) -> str:
+    """Render kms config.
+
+    Returns:
+        The rendered kms config.
+    """
     ensure_kms_provider_id(settings)
     certificate_name = safe_certificate_name(settings.server_certificate or settings.hostname)
     listen_addresses = split_addresses(settings.listen_address)
@@ -159,6 +176,11 @@ def validate_kms_state(
     clients: list[KmsClient],
     keys: list[KmsKey],
 ) -> list[str]:
+    """Validate kms state.
+
+    Returns:
+        The validate kms state result.
+    """
     errors: list[str] = []
     if settings.backend not in KMS_BACKENDS:
         errors.append("KMS backend must be atlaso-kmip.")

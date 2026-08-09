@@ -1,3 +1,5 @@
+"""Test pull request automation behavior."""
+
 from pathlib import Path
 
 
@@ -5,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_ci_separates_approval_gated_bot_checks_from_required_contexts() -> None:
+    """Verify that ci separates approval gated bot checks from required contexts."""
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
         encoding="utf-8"
     )
@@ -17,6 +20,7 @@ def test_ci_separates_approval_gated_bot_checks_from_required_contexts() -> None
 
 
 def test_auto_merge_branch_updates_are_explicit_and_race_safe() -> None:
+    """Verify that auto merge branch updates are explicit and race safe."""
     workflow = (
         ROOT / ".github" / "workflows" / "update-auto-merge-prs.yml"
     ).read_text(encoding="utf-8")
@@ -43,6 +47,7 @@ def test_auto_merge_branch_updates_are_explicit_and_race_safe() -> None:
 
 
 def test_trusted_version_refresh_validates_repository_dispatch_payload() -> None:
+    """Verify that trusted version refresh validates repository dispatch payload."""
     workflow = (
         ROOT / ".github" / "workflows" / "version-bump.yml"
     ).read_text(encoding="utf-8")

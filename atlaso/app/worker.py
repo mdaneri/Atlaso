@@ -1,3 +1,5 @@
+"""Claim and execute durable background jobs outside the web process."""
+
 from __future__ import annotations
 
 import json
@@ -43,15 +45,22 @@ _stop_requested = False
 
 
 def _request_stop(_signum: int, _frame: object) -> None:
+    """Handle request stop."""
     global _stop_requested
     _stop_requested = True
 
 
 def _job_config(job: Job) -> dict[str, Any]:
+    """Return job config."""
     return json_object(job.task_config_json, label="Job configuration")
 
 
 def claim_next_job(db: Session) -> Job | None:
+    """Return claim next job.
+
+    Args:
+        db: Active database session.
+    """
     job = db.execute(
         select(Job)
         .where(Job.status == JobStatus.PENDING.value, Job.type.in_(WORKER_JOB_TYPES))
@@ -68,6 +77,7 @@ def claim_next_job(db: Session) -> Job | None:
 
 
 def _release_finalizer() -> dict[str, Any]:
+    """Return release finalizer."""
     try:
         payload = json.loads(Path(APPLIANCE_UPDATE_FINALIZER_PATH).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -76,6 +86,11 @@ def _release_finalizer() -> dict[str, Any]:
 
 
 def recover_interrupted_worker_jobs(db: Session) -> int:
+    """Return recover interrupted worker jobs.
+
+    Args:
+        db: Active database session.
+    """
     media_swaps = recover_interrupted_network_boot_media_swaps(db)
     if media_swaps:
         LOGGER.warning(
@@ -193,6 +208,13 @@ def recover_interrupted_worker_jobs(db: Session) -> int:
 
 
 def _fail_job(db: Session, job: Job, exc: Exception) -> None:
+    """Handle fail job.
+
+    Args:
+        db: Active database session.
+        job: Job being processed.
+        exc: Exception that caused the operation to fail.
+    """
     job.status = JobStatus.FAILED.value
     job.finished_at = utcnow()
     job.progress_percent = 100
@@ -208,6 +230,7 @@ def _fail_job(db: Session, job: Job, exc: Exception) -> None:
 
 
 def _appliance_update_result_error(result: dict[str, Any]) -> str:
+    """Return appliance update result error."""
     explicit = str(result.get("error") or "").strip()
     if explicit:
         return explicit
@@ -221,6 +244,7 @@ def _appliance_update_result_error(result: dict[str, Any]) -> str:
 
 
 def _set_appliance_update_step_running(job_id: str, stream: str, *, completed: int, total: int) -> None:
+    """Update appliance update step running."""
     with SessionLocal() as db:
         job = db.get(Job, job_id)
         step = db.get(JobStep, f"{job_id}:{stream}")
@@ -244,6 +268,15 @@ def _complete_appliance_update_step(
     completed: int,
     total: int,
 ) -> None:
+    """Handle complete appliance update step.
+
+    Args:
+        job_id: Identifier of the job.
+        stream: Stream supplied by the caller.
+        result: Operation result to summarize, validate, or persist.
+        completed: Completed supplied by the caller.
+        total: Total supplied by the caller.
+    """
     with SessionLocal() as db:
         job = db.get(Job, job_id)
         step = db.get(JobStep, f"{job_id}:{stream}")
@@ -262,6 +295,7 @@ def _complete_appliance_update_step(
 
 
 def _run_appliance_update(job_id: str) -> None:
+    """Run appliance update."""
     from atlaso.app.ui import (
         aggregate_appliance_update_results,
         appliance_update_exception_result,
@@ -377,6 +411,7 @@ def _run_appliance_update(job_id: str) -> None:
 
 
 def _automation_stage_path(job_id: str, interpreter: str) -> Path:
+    """Return automation stage path."""
     suffix = {"bash": ".sh", "python": ".py", "powershell": ".ps1"}[interpreter]
     if get_settings().environment != "appliance":
         return Path("data") / "automation" / "scripts" / f"{job_id}{suffix}"
@@ -384,12 +419,22 @@ def _automation_stage_path(job_id: str, interpreter: str) -> Path:
 
 
 def _automation_vault_stage_path(job_id: str) -> Path:
+    """Return automation vault stage path."""
     if get_settings().environment != "appliance":
         return Path("data") / "automation" / "vaults" / f"{job_id}.json"
     return AUTOMATION_VAULT_STAGE_DIR / f"{job_id}.json"
 
 
 def _run_managed_script(db: Session, job: Job) -> None:
+    """Run managed script.
+
+    Args:
+        db: Active database session.
+        job: Job being processed.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     config = _job_config(job)
     revision_id = int(config.get("revision_id") or 0)
     revision = db.get(AutomationScriptRevision, revision_id)
@@ -468,6 +513,16 @@ def _run_managed_script(db: Session, job: Job) -> None:
 
 
 def _run_pxe_media_sync(db: Session, job: Job) -> None:
+    """Run pxe media sync.
+
+    Args:
+        db: Active database session.
+        job: Job being processed.
+
+    Raises:
+        NetworkBootMediaSyncCancelled: If the operation encounters an invalid state.
+        RuntimeError: If the operation cannot be completed safely.
+    """
     from atlaso.app.services.network_boot import (
         DeferredNetworkBootMediaSync,
         NetworkBootMediaSyncCancelled,
@@ -537,6 +592,7 @@ def _run_pxe_media_sync(db: Session, job: Job) -> None:
         return
 
     def cancelled() -> bool:
+        """Return cancelled."""
         status = db.execute(
             select(Job.status).where(Job.id == job.id)
         ).scalar_one()
@@ -616,6 +672,14 @@ def _run_pxe_media_sync(db: Session, job: Job) -> None:
 
 
 def run_worker_once() -> str | None:
+    """Run worker once.
+
+    Returns:
+        The run worker once result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     with SessionLocal() as db:
         enqueue_due_schedules(db)
         job = claim_next_job(db)
@@ -660,6 +724,11 @@ def run_worker_once() -> str | None:
 
 
 def main() -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        The main result.
+    """
     global _stop_requested
     _stop_requested = False
     signal.signal(signal.SIGTERM, _request_stop)

@@ -23,15 +23,29 @@ INVENTORY_VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+\+[0-9]+$")
 
 
 def canonical_json(payload: dict) -> bytes:
+    """Return canonical json."""
     return (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 
 def sha256(path: Path) -> str:
+    """Return sha256.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+    """
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def load_signing_key(path: Path) -> Ed25519PrivateKey:
+    """Return signing key.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     key = serialization.load_pem_private_key(path.read_bytes(), password=None)
     if not isinstance(key, Ed25519PrivateKey):
         raise SystemExit("release signing key must be an Ed25519 private key")
@@ -39,6 +53,14 @@ def load_signing_key(path: Path) -> Ed25519PrivateKey:
 
 
 def package_version(path: Path) -> str:
+    """Return package version.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     try:
         with zipfile.ZipFile(path) as archive:
             payload = json.loads(archive.read("manifest.json"))
@@ -58,6 +80,14 @@ def package_version(path: Path) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        The main result.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--package", type=Path, required=True)
     parser.add_argument("--output", type=Path, default=ROOT / "dist/inventory-linux-release")

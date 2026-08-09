@@ -1,3 +1,5 @@
+"""Test firewall behavior."""
+
 from atlaso.app.models import (
     DhcpScope,
     DhcpSettings,
@@ -26,6 +28,7 @@ from atlaso.app.services.firewall import (
 
 
 def test_dhcp_firewall_rules_follow_scope_interface_and_replace_legacy_rule():
+    """Verify that dhcp firewall rules follow scope interface and replace legacy rule."""
     settings = FirewallSettings(enabled=True, default_input_policy="drop", default_forward_policy="drop", default_output_policy="accept")
     legacy_rule = FirewallRule(
         name="sitea-dns-dhcp",
@@ -58,6 +61,7 @@ def test_dhcp_firewall_rules_follow_scope_interface_and_replace_legacy_rule():
 
 
 def test_dhcp_firewall_rules_use_dhcpv6_port_for_ipv6_zones():
+    """Verify that dhcp firewall rules use dhcpv6 port for ipv6 zones."""
     settings = FirewallSettings(enabled=True, default_input_policy="drop", default_forward_policy="drop", default_output_policy="accept")
     scopes = [
         DhcpScope(
@@ -79,6 +83,7 @@ def test_dhcp_firewall_rules_use_dhcpv6_port_for_ipv6_zones():
 
 
 def test_disabled_dhcp_removes_atlaso_managed_dns_dhcp_rule():
+    """Verify that disabled dhcp removes atlaso managed dns dhcp rule."""
     settings = FirewallSettings(enabled=True, default_input_policy="drop", default_forward_policy="drop", default_output_policy="accept")
     legacy_rule = FirewallRule(
         name="sitea-dns-dhcp",
@@ -102,6 +107,7 @@ def test_disabled_dhcp_removes_atlaso_managed_dns_dhcp_rule():
 
 
 def test_default_management_firewall_source_cidr_can_follow_image_network():
+    """Verify that default management firewall source cidr can follow image network."""
     settings = FirewallSettings(enabled=True, default_input_policy="drop")
 
     config = render_nftables_config(settings, [], management_source_cidr="192.168.167.0/24")
@@ -111,6 +117,7 @@ def test_default_management_firewall_source_cidr_can_follow_image_network():
 
 
 def test_ca_portal_firewall_interfaces_include_non_management_addresses_only():
+    """Verify that ca portal firewall interfaces include non management addresses only."""
     interfaces = [
         PhysicalInterface(name="eth0", role="management", ip_cidr="192.168.167.10/24", mac_address="00:50:56:00:00:10"),
         PhysicalInterface(name="eth1", role="access", ip_cidr="192.168.65.1/24", mac_address="00:50:56:00:00:11"),
@@ -137,6 +144,7 @@ def test_ca_portal_firewall_interfaces_include_non_management_addresses_only():
 
 
 def test_ca_portal_firewall_interfaces_exclude_trunk_parents():
+    """Verify that ca portal firewall interfaces exclude trunk parents."""
     interfaces = [
         PhysicalInterface(name="eth1", role="access", mode="trunk", ip_cidr="192.168.65.1/24", mac_address="00:50:56:00:00:11"),
         PhysicalInterface(name="eth2", role="access", mode="access", ip_cidr="192.168.87.32/24", mac_address="00:50:56:00:00:12"),
@@ -159,6 +167,7 @@ def test_ca_portal_firewall_interfaces_exclude_trunk_parents():
 
 
 def test_managed_routing_firewall_rules_isolate_management_and_allow_route_role_pairs():
+    """Verify that managed routing firewall rules isolate management and allow route role pairs."""
     settings = FirewallSettings(enabled=True, default_input_policy="drop", default_forward_policy="drop", default_output_policy="accept")
     interfaces = [
         PhysicalInterface(name="eth0", role="management", mode="access", ip_cidr="192.168.49.1/24", mac_address="00:50:56:00:00:10"),
@@ -177,6 +186,7 @@ def test_managed_routing_firewall_rules_isolate_management_and_allow_route_role_
 
 
 def test_managed_service_firewall_rules_include_all_enabled_service_listeners():
+    """Verify that managed service firewall rules include all enabled service listeners."""
     rules = managed_service_firewall_rules(
         dns_settings=DnsSettings(enabled=True, listen_interface="eth2.50"),
         dhcp_settings=DhcpSettings(enabled=True),
@@ -250,6 +260,7 @@ def test_managed_service_firewall_rules_include_all_enabled_service_listeners():
 
 
 def test_managed_service_firewall_rules_skip_ca_portal_when_ca_disabled():
+    """Verify that managed service firewall rules skip ca portal when ca disabled."""
     rules = managed_service_firewall_rules(
         dns_settings=DnsSettings(enabled=False),
         dhcp_settings=DhcpSettings(enabled=False),
@@ -268,6 +279,7 @@ def test_managed_service_firewall_rules_skip_ca_portal_when_ca_disabled():
 
 
 def test_managed_service_firewall_rules_add_https_for_extra_terminal_interfaces():
+    """Verify that managed service firewall rules add https for extra terminal interfaces."""
     rules = managed_service_firewall_rules(
         dns_settings=DnsSettings(enabled=False),
         dhcp_settings=DhcpSettings(enabled=False),
@@ -292,6 +304,7 @@ def test_managed_service_firewall_rules_add_https_for_extra_terminal_interfaces(
 
 
 def test_managed_service_firewall_rules_use_assigned_source_group():
+    """Verify that managed service firewall rules use assigned source group."""
     rules = managed_service_firewall_rules(
         dns_settings=DnsSettings(enabled=False),
         dhcp_settings=DhcpSettings(enabled=False),
@@ -317,6 +330,7 @@ def test_managed_service_firewall_rules_use_assigned_source_group():
 
 
 def test_custom_firewall_rules_resolve_source_and_destination_groups():
+    """Verify that custom firewall rules resolve source and destination groups."""
     settings = FirewallSettings(enabled=True, default_input_policy="drop")
     rule = FirewallRule(
         name="custom-grouped",
@@ -342,6 +356,7 @@ def test_custom_firewall_rules_resolve_source_and_destination_groups():
 
 
 def test_firewall_rules_split_mixed_family_source_groups():
+    """Verify that firewall rules split mixed family source groups."""
     settings = FirewallSettings(enabled=True, default_input_policy="drop", default_forward_policy="drop", default_output_policy="accept")
     rule = FirewallRule(
         name="dual-stack-service",

@@ -1,3 +1,5 @@
+"""Serve the admin portal and orchestrate its desired-state workflows."""
+
 import csv
 import difflib
 import hashlib
@@ -670,6 +672,11 @@ router = APIRouter()
 
 
 def csrf_token(request: Request) -> str:
+    """Return csrf token.
+
+    Args:
+        request: Incoming HTTP request.
+    """
     token = request.session.get("csrf_token")
     if not token:
         token = token_urlsafe(24)
@@ -678,11 +685,31 @@ def csrf_token(request: Request) -> str:
 
 
 def verify_csrf(request: Request, token: str) -> None:
+    """Validate csrf.
+
+    Args:
+        request: Incoming HTTP request.
+        token: Token supplied by the caller.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if not token or token != request.session.get("csrf_token"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid CSRF token")
 
 
 def render(request: Request, template: str, context: dict, status_code: int = 200) -> HTMLResponse:
+    """Render operation.
+
+    Args:
+        request: Incoming HTTP request.
+        template: Template supplied by the caller.
+        context: Runtime or protocol context for the operation.
+        status_code: HTTP status code for the response.
+
+    Returns:
+        The render result.
+    """
     context = dict(context)
     identity = context.pop("identity", None)
     if identity and "sidebar_pending_apply_count" not in context:
@@ -709,6 +736,11 @@ def render(request: Request, template: str, context: dict, status_code: int = 20
 
 
 def grid_request(request: Request) -> bool:
+    """Return grid request.
+
+    Args:
+        request: Incoming HTTP request.
+    """
     return request.headers.get("X-Atlaso-Grid") == "1"
 
 
@@ -720,6 +752,15 @@ def grid_saved_response(
     resource: dict[str, Any],
     extra: dict[str, Any] | None = None,
 ) -> RedirectResponse | JSONResponse:
+    """Return grid saved response.
+
+    Args:
+        request: Incoming HTTP request.
+        redirect_url: URL for the redirect.
+        resource_name: Resource name supplied by the caller.
+        resource: Resource supplied by the caller.
+        extra: Extra supplied by the caller.
+    """
     if grid_request(request):
         return JSONResponse(
             jsonable_encoder(
@@ -740,27 +781,61 @@ def grid_error_response(
     template_name: str,
     context: dict[str, Any],
 ) -> HTMLResponse | JSONResponse:
+    """Return grid error response.
+
+    Args:
+        request: Incoming HTTP request.
+        detail: Detail supplied by the caller.
+        status_code: HTTP status code for the response.
+        template_name: Template name supplied by the caller.
+        context: Runtime or protocol context for the operation.
+    """
     if grid_request(request):
         return JSONResponse({"detail": detail}, status_code=status_code)
     return render(request, template_name, context, status_code=status_code)
 
 
 def require_admin_identity(identity: Identity) -> None:
+    """Handle require admin identity.
+
+    Args:
+        identity: Authenticated identity authorizing the request.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if not identity.has_role("admin"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Administrator role required")
 
 
 def require_certificate_workflow_identity(identity: Identity) -> None:
+    """Handle require certificate workflow identity.
+
+    Args:
+        identity: Authenticated identity authorizing the request.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if not (identity.has_role(Role.ADMIN.value) or identity.has_role(Role.CERTIFICATE_OPERATOR.value)):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Certificate operator role required")
 
 
 def require_vcf_helper_write(identity: Identity) -> None:
+    """Handle require vcf helper write.
+
+    Args:
+        identity: Authenticated identity authorizing the request.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if not (identity.has_role(Role.ADMIN.value) or identity.has_role(Role.SERVICE_ADMIN.value)):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Service administrator role required")
 
 
 def roles_from_form(primary_role_value: str = "", roles: list[str] | None = None, roles_text: str = "") -> list[str]:
+    """Return roles from form."""
     values: list[str] = []
     if roles_text.strip():
         values.extend(roles_text.replace(",", "\n").splitlines())
@@ -773,11 +848,20 @@ def roles_from_form(primary_role_value: str = "", roles: list[str] | None = None
 
 
 def require_monitoring_read(identity: Identity) -> None:
+    """Handle require monitoring read.
+
+    Args:
+        identity: Authenticated identity authorizing the request.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if not identity.can("read:monitoring"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Monitoring read permission required")
 
 
 def local_user_os_statuses(users: list[User], policy: dict[str, bool | int]) -> dict[str, dict[str, Any]]:
+    """Return local user os statuses."""
     statuses: dict[str, dict[str, Any]] = {}
     adapter = SystemAdapter()
     if adapter.dry_run or not hasattr(adapter, "local_users_status"):
@@ -817,6 +901,7 @@ def local_user_os_statuses(users: list[User], policy: dict[str, bool | int]) -> 
 
 
 def user_to_dict(user: User, current_user_id: int | None = None, os_status: dict[str, Any] | None = None) -> dict:
+    """Return user to dict."""
     os_state = str((os_status or {}).get("state") or "status unavailable")
     os_detail = str((os_status or {}).get("detail") or "")
     return {
@@ -845,10 +930,21 @@ def user_to_dict(user: User, current_user_id: int | None = None, os_status: dict
 
 
 def local_users_password_policy(db: Session) -> dict[str, bool | int]:
+    """Return local users password policy.
+
+    Args:
+        db: Active database session.
+    """
     return password_policy_from_json(setting_value(db, LOCAL_USERS_PASSWORD_POLICY_KEY))
 
 
 def users_context(db: Session, identity: Identity) -> dict:
+    """Return users context.
+
+    Args:
+        db: Active database session.
+        identity: Authenticated identity authorizing the request.
+    """
     users = db.execute(select(User).order_by(User.username)).scalars().all()
     policy = local_users_password_policy(db)
     os_statuses = local_user_os_statuses(users, policy)
@@ -865,11 +961,27 @@ def users_context(db: Session, identity: Identity) -> dict:
 
 
 def enabled_admin_count(db: Session) -> int:
+    """Return enabled admin count.
+
+    Args:
+        db: Active database session.
+    """
     users = db.execute(select(User).where(User.enabled.is_(True))).scalars().all()
     return len([user for user in users if Role.ADMIN.value in user_roles(user)])
 
 
 def protect_last_admin(db: Session, user: User, *, next_roles: list[str] | None = None, next_enabled: bool | None = None) -> None:
+    """Handle protect last admin.
+
+    Args:
+        db: Active database session.
+        user: Local or directory user affected by the operation.
+        next_roles: Next roles supplied by the caller.
+        next_enabled: Next enabled supplied by the caller.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     roles = normalize_roles(next_roles) if next_roles is not None else user_roles(user)
     enabled = next_enabled if next_enabled is not None else user.enabled
     if Role.ADMIN.value in user_roles(user) and user.enabled and (Role.ADMIN.value not in roles or not enabled) and enabled_admin_count(db) <= 1:
@@ -877,6 +989,13 @@ def protect_last_admin(db: Session, user: User, *, next_roles: list[str] | None 
 
 
 def revoke_user_tokens(db: Session, user: User, actor: str) -> None:
+    """Handle revoke user tokens.
+
+    Args:
+        db: Active database session.
+        user: Local or directory user affected by the operation.
+        actor: Authenticated identity attributed to the audit record.
+    """
     tokens = db.execute(
         select(ApiToken).where(ApiToken.owner_user_id == user.id, ApiToken.revoked_at.is_(None), ApiToken.enabled.is_(True))
     ).scalars().all()
@@ -888,6 +1007,13 @@ def revoke_user_tokens(db: Session, user: User, actor: str) -> None:
 
 
 def disable_default_vcf_backup_user_when_service_off(db: Session, settings: VcfBackupSettings, *, actor: str | None = None) -> bool:
+    """Return disable default vcf backup user when service off.
+
+    Args:
+        db: Active database session.
+        settings: Desired or runtime settings consumed by the operation.
+        actor: Authenticated identity attributed to the audit record.
+    """
     if settings.enabled or not settings.sftp_user_id:
         return False
     user = db.get(User, settings.sftp_user_id)
@@ -903,6 +1029,13 @@ def disable_default_vcf_backup_user_when_service_off(db: Session, settings: VcfB
 
 
 def disable_default_vcf_depot_user_when_service_off(db: Session, settings: VcfOfflineDepotSettings, *, actor: str | None = None) -> bool:
+    """Return disable default vcf depot user when service off.
+
+    Args:
+        db: Active database session.
+        settings: Desired or runtime settings consumed by the operation.
+        actor: Authenticated identity attributed to the audit record.
+    """
     if settings.enabled or not settings.http_user_id:
         return False
     user = db.get(User, settings.http_user_id)
@@ -918,6 +1051,11 @@ def disable_default_vcf_depot_user_when_service_off(db: Session, settings: VcfOf
 
 
 def get_dns_settings_row(db: Session) -> DnsSettings:
+    """Return dns settings row.
+
+    Args:
+        db: Active database session.
+    """
     settings = db.execute(select(DnsSettings)).scalar_one_or_none()
     if settings is None:
         settings = DnsSettings()
@@ -931,6 +1069,11 @@ def get_dns_settings_row(db: Session) -> DnsSettings:
 
 
 def get_appliance_settings_row(db: Session) -> ApplianceSettings:
+    """Return appliance settings row.
+
+    Args:
+        db: Active database session.
+    """
     settings = db.execute(select(ApplianceSettings)).scalar_one_or_none()
     if settings is None:
         settings = ApplianceSettings()
@@ -944,6 +1087,11 @@ def get_appliance_settings_row(db: Session) -> ApplianceSettings:
 
 
 def get_dhcp_settings_row(db: Session) -> DhcpSettings:
+    """Return dhcp settings row.
+
+    Args:
+        db: Active database session.
+    """
     settings = db.execute(select(DhcpSettings)).scalar_one_or_none()
     if settings is None:
         settings = DhcpSettings()
@@ -954,6 +1102,11 @@ def get_dhcp_settings_row(db: Session) -> DhcpSettings:
 
 
 def get_ca_settings_row(db: Session) -> CaSettings:
+    """Return ca settings row.
+
+    Args:
+        db: Active database session.
+    """
     settings = db.execute(select(CaSettings)).scalar_one_or_none()
     if settings is None:
         settings = CaSettings()
@@ -964,17 +1117,27 @@ def get_ca_settings_row(db: Session) -> CaSettings:
 
 
 def ca_service_cert_paths(service_dir: str, certificate_name: str) -> tuple[str, str, str]:
+    """Return ca service cert paths."""
     safe_name = safe_certificate_name(certificate_name)
     base = f"/etc/atlaso/{service_dir}/certs/{safe_name}"
     return f"{base}.crt", f"{base}.key", f"{base}-chain.pem"
 
 
 def ntp_nts_certificate_paths(settings: NtpSettings) -> tuple[str, str, str]:
+    """Return ntp nts certificate paths."""
     hostname = normalize_dns_hostname(settings.hostname or NTP_DEFAULT_HOSTNAME)
     return ca_service_cert_paths("ntp", hostname)
 
 
 def remove_ntp_nts_certificate_rows(db: Session) -> int:
+    """Remove ntp nts certificate rows.
+
+    Args:
+        db: Active database session.
+
+    Returns:
+        The remove ntp nts certificate rows result.
+    """
     certificates = db.execute(
         select(CaCertificate).where(CaCertificate.managed_owner == "ntp:nts")
     ).scalars().all()
@@ -984,11 +1147,17 @@ def remove_ntp_nts_certificate_rows(db: Session) -> int:
 
 
 def kms_client_common_name(client: KmsClient) -> str:
+    """Return kms client common name."""
     match = re.search(r"(?:^|,)CN=([^,]+)", client.certificate_subject or "")
     return match.group(1).strip() if match else client.name
 
 
 def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
+    """Return managed ca certificate specs.
+
+    Args:
+        db: Active database session.
+    """
     specs: list[ManagedCertificateSpec] = []
     appliance = get_appliance_settings_row(db)
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
@@ -1162,11 +1331,23 @@ def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
 
 
 def ca_certificate_available(db: Session, owner: str) -> bool:
+    """Return ca certificate available.
+
+    Args:
+        db: Active database session.
+        owner: Owner supplied by the caller.
+    """
     certificate = managed_certificate_for_owner(db, owner)
     return bool(certificate and certificate.status == "issued" and certificate.certificate_pem and certificate.private_key_encrypted)
 
 
 def ca_managed_certificate_paths(db: Session, owner: str) -> tuple[str, str, str]:
+    """Return ca managed certificate paths.
+
+    Args:
+        db: Active database session.
+        owner: Owner supplied by the caller.
+    """
     certificate = managed_certificate_for_owner(db, owner)
     if certificate is None or certificate.status != "issued":
         return "", "", ""
@@ -1174,6 +1355,14 @@ def ca_managed_certificate_paths(db: Session, owner: str) -> tuple[str, str, str
 
 
 def ensure_ca_state(db: Session) -> list[str]:
+    """Ensure ca state.
+
+    Args:
+        db: Active database session.
+
+    Returns:
+        The ensure ca state result.
+    """
     settings = get_ca_settings_row(db)
     errors: list[str] = []
     try:
@@ -1204,6 +1393,11 @@ def ensure_ca_state(db: Session) -> list[str]:
 
 
 def get_kms_settings_row(db: Session) -> KmsSettings:
+    """Return kms settings row.
+
+    Args:
+        db: Active database session.
+    """
     settings = db.execute(select(KmsSettings)).scalar_one_or_none()
     if settings is None:
         settings = KmsSettings()
@@ -1216,6 +1410,11 @@ def get_kms_settings_row(db: Session) -> KmsSettings:
 
 
 def get_ldap_settings_row(db: Session) -> LdapSettings:
+    """Return ldap settings row.
+
+    Args:
+        db: Active database session.
+    """
     settings = db.execute(select(LdapSettings)).scalar_one_or_none()
     if settings is None:
         settings = LdapSettings(
@@ -1230,6 +1429,11 @@ def get_ldap_settings_row(db: Session) -> LdapSettings:
 
 
 def get_ntp_settings_row(db: Session) -> NtpSettings:
+    """Return ntp settings row.
+
+    Args:
+        db: Active database session.
+    """
     settings = db.execute(select(NtpSettings)).scalar_one_or_none()
     if settings is None:
         ntp_upstreams = default_ntp_upstream_fields()
@@ -1246,6 +1450,11 @@ def get_ntp_settings_row(db: Session) -> NtpSettings:
 
 
 def get_firewall_settings_row(db: Session) -> FirewallSettings:
+    """Return firewall settings row.
+
+    Args:
+        db: Active database session.
+    """
     settings = db.execute(select(FirewallSettings)).scalar_one_or_none()
     if settings is None:
         settings = FirewallSettings()
@@ -1256,6 +1465,12 @@ def get_firewall_settings_row(db: Session) -> FirewallSettings:
 
 
 def get_vcf_backup_settings_row(db: Session, *, reconcile_default_user: bool = True) -> VcfBackupSettings:
+    """Return vcf backup settings row.
+
+    Args:
+        db: Active database session.
+        reconcile_default_user: Reconcile default user supplied by the caller.
+    """
     settings = db.execute(select(VcfBackupSettings).options(selectinload(VcfBackupSettings.sftp_user))).scalar_one_or_none()
     if settings is None:
         first_admin = db.execute(select(User).where(User.role == Role.ADMIN.value, User.enabled.is_(True)).order_by(User.username)).scalar_one_or_none()
@@ -1267,6 +1482,12 @@ def get_vcf_backup_settings_row(db: Session, *, reconcile_default_user: bool = T
 
 
 def get_vcf_private_registry_settings_row(db: Session, *, reconcile: bool = True) -> VcfPrivateRegistrySettings:
+    """Return vcf private registry settings row.
+
+    Args:
+        db: Active database session.
+        reconcile: Whether dependent desired state should be reconciled.
+    """
     settings = db.execute(select(VcfPrivateRegistrySettings)).scalar_one_or_none()
     if settings is None:
         settings = VcfPrivateRegistrySettings()
@@ -1283,6 +1504,13 @@ def get_vcf_offline_depot_settings_row(
     reconcile_default_user: bool = True,
     reconcile: bool = True,
 ) -> VcfOfflineDepotSettings:
+    """Return vcf offline depot settings row.
+
+    Args:
+        db: Active database session.
+        reconcile_default_user: Reconcile default user supplied by the caller.
+        reconcile: Whether dependent desired state should be reconciled.
+    """
     settings = db.execute(select(VcfOfflineDepotSettings).options(selectinload(VcfOfflineDepotSettings.http_user))).scalar_one_or_none()
     default_user = db.execute(select(User).where(User.username == VCF_DEPOT_DEFAULT_USERNAME).order_by(User.username)).scalar_one_or_none()
     if settings is None:
@@ -1342,6 +1570,7 @@ def get_vcf_offline_depot_settings_row(
 
 
 def address_from_cidr(value: str | None) -> str:
+    """Return address from cidr."""
     if not value:
         return ""
     try:
@@ -1351,6 +1580,7 @@ def address_from_cidr(value: str | None) -> str:
 
 
 def prefix_from_cidr(value: str | None) -> int | None:
+    """Return prefix from cidr."""
     if not value:
         return None
     try:
@@ -1360,6 +1590,7 @@ def prefix_from_cidr(value: str | None) -> int | None:
 
 
 def cidr_for_family(value: str, version: int, label: str) -> Response | str:
+    """Return cidr for family."""
     candidate = value.strip()
     if not candidate:
         return ""
@@ -1374,6 +1605,7 @@ def cidr_for_family(value: str, version: int, label: str) -> Response | str:
 
 
 def interface_addresses_from_cidrs(ipv4_cidr: str | None, ipv6_cidr: str | None) -> list[str]:
+    """Return interface addresses from cidrs."""
     addresses: list[str] = []
     for cidr in (ipv4_cidr, ipv6_cidr):
         address = address_from_cidr(cidr)
@@ -1383,6 +1615,11 @@ def interface_addresses_from_cidrs(ipv4_cidr: str | None, ipv6_cidr: str | None)
 
 
 def service_bind_options(db: Session) -> list[dict]:
+    """Return service bind options.
+
+    Args:
+        db: Active database session.
+    """
     physical_interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     vlan_interfaces = db.execute(
         select(VlanInterface).where(VlanInterface.enabled.is_(True)).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)
@@ -1437,6 +1674,11 @@ def service_bind_options(db: Session) -> list[dict]:
 
 
 def ldap_service_bind_options(db: Session) -> list[dict[str, Any]]:
+    """Return ldap service bind options.
+
+    Args:
+        db: Active database session.
+    """
     physical_interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     vlan_interfaces = db.execute(
         select(VlanInterface).where(VlanInterface.enabled.is_(True)).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)
@@ -1485,6 +1727,14 @@ def resolve_ldap_bind_targets(
     current_interface: str = "",
     listen_interfaces_present: str | None = None,
 ) -> tuple[str, str]:
+    """Return ldap bind targets.
+
+    Args:
+        db: Active database session.
+        listen_interfaces: Interfaces on which the service should listen.
+        current_interface: Current interface supplied by the caller.
+        listen_interfaces_present: Whether the caller supplied listen interfaces.
+    """
     options = ldap_service_bind_options(db)
     options_by_name = {option["name"]: option for option in options}
     selected = split_interfaces(join_interfaces(listen_interfaces))
@@ -1500,10 +1750,16 @@ def resolve_ldap_bind_targets(
 
 
 def vcf_depot_service_bind_options(db: Session) -> list[dict[str, Any]]:
+    """Return vcf depot service bind options.
+
+    Args:
+        db: Active database session.
+    """
     return service_bind_options(db)
 
 
 def _network_from_cidr(value: str | None):
+    """Return network from cidr."""
     if not value:
         return None
     try:
@@ -1513,14 +1769,21 @@ def _network_from_cidr(value: str | None):
 
 
 def _address_family_from_scope(scope: DhcpScope) -> int:
+    """Return address family from scope."""
     return 6 if str(scope.address_family or "").strip().lower() == "ipv6" else 4
 
 
 def _interface_option_by_name(db: Session) -> dict[str, dict[str, Any]]:
+    """Return interface option by name.
+
+    Args:
+        db: Active database session.
+    """
     return {str(option.get("name")): option for option in service_bind_options(db)}
 
 
 def _derive_addresses_for_interfaces(selected_interfaces: list[str], options_by_name: dict[str, dict[str, Any]]) -> str:
+    """Return derive addresses for interfaces."""
     derived: list[str] = []
     for interface_name in selected_interfaces:
         option = options_by_name.get(interface_name)
@@ -1533,6 +1796,7 @@ def _derive_addresses_for_interfaces(selected_interfaces: list[str], options_by_
 
 
 def _replace_interface_selection(raw_value: str | None, old_name: str, new_name: str) -> str:
+    """Return replace interface selection."""
     interfaces = split_interfaces(raw_value)
     if old_name != new_name:
         interfaces = [new_name if item == old_name else item for item in interfaces]
@@ -1540,6 +1804,7 @@ def _replace_interface_selection(raw_value: str | None, old_name: str, new_name:
 
 
 def _rebase_address_in_network(value: str, old_network, new_network) -> str:
+    """Return rebase address in network."""
     if not value or old_network is None or new_network is None or old_network.version != new_network.version:
         return value
     try:
@@ -1555,6 +1820,7 @@ def _rebase_address_in_network(value: str, old_network, new_network) -> str:
 
 
 def _address_in_network(value: str | None, network) -> bool:
+    """Return address in network."""
     if not value or network is None:
         return False
     try:
@@ -1572,6 +1838,16 @@ def refresh_interface_dependent_addresses(
     old_ipv6_cidr: str | None,
     actor: str | None = None,
 ) -> list[str]:
+    """Return refresh interface dependent addresses.
+
+    Args:
+        db: Active database session.
+        old_name: Old name supplied by the caller.
+        new_name: New name supplied by the caller.
+        old_ip_cidr: Old ip cidr supplied by the caller.
+        old_ipv6_cidr: Old ipv6 cidr supplied by the caller.
+        actor: Authenticated identity attributed to the audit record.
+    """
     options_by_name = _interface_option_by_name(db)
     previous_esxi_boot = esxi_pxe_boot_settings(db)
     raw_esxi_listen_interface = db.execute(select(Setting).where(Setting.key == ESXI_PXE_LISTEN_INTERFACE_KEY)).scalar_one_or_none()
@@ -1594,6 +1870,7 @@ def refresh_interface_dependent_addresses(
     changed: list[str] = []
 
     def update_listener_rows(model, label: str) -> None:
+        """Update listener rows."""
         for row in db.execute(select(model)).scalars().all():
             selected = split_interfaces(getattr(row, "listen_interface", ""))
             if old_name not in selected and new_name not in selected:
@@ -1627,6 +1904,7 @@ def refresh_interface_dependent_addresses(
     ntp_bound = bool(ntp_settings and ntp_settings.enabled and new_name in split_interfaces(ntp_settings.listen_interface))
 
     def update_dhcp_scope(scope: DhcpScope | DhcpSettings, label: str) -> None:
+        """Update dhcp scope."""
         if getattr(scope, "interface_name", "") != old_name:
             return
         family = _address_family_from_scope(scope) if isinstance(scope, DhcpScope) else 4
@@ -1749,6 +2027,13 @@ def refresh_interface_dependent_addresses(
 
 
 def resolve_single_service_bind(db: Session, listen_interface: str, listen_address: str) -> tuple[str, str]:
+    """Return single service bind.
+
+    Args:
+        db: Active database session.
+        listen_interface: Interface on which the service should listen.
+        listen_address: Address on which the service should listen.
+    """
     options = service_bind_options(db)
     options_by_name = {option["name"]: option for option in options}
     selected_interface = listen_interface.strip()
@@ -1763,6 +2048,15 @@ def resolve_single_service_bind(db: Session, listen_interface: str, listen_addre
 
 
 def normalize_service_bind_settings(db: Session, settings: Any) -> bool:
+    """Normalize service bind settings.
+
+    Args:
+        db: Active database session.
+        settings: Desired or runtime settings consumed by the operation.
+
+    Returns:
+        The normalize service bind settings result.
+    """
     selected_interfaces, selected_addresses = resolve_service_bind_targets(
         db,
         [],
@@ -1793,6 +2087,17 @@ def resolve_service_bind_targets(
     listen_interfaces_present: str | None = None,
     listen_addresses_present: str | None = None,
 ) -> tuple[str, str]:
+    """Return service bind targets.
+
+    Args:
+        db: Active database session.
+        listen_interfaces: Interfaces on which the service should listen.
+        listen_addresses: Addresses on which the service should listen.
+        current_interface: Current interface supplied by the caller.
+        current_address: Current address supplied by the caller.
+        listen_interfaces_present: Whether the caller supplied listen interfaces.
+        listen_addresses_present: Whether the caller supplied listen addresses.
+    """
     options = service_bind_options(db)
     options_by_name = {option["name"]: option for option in options}
 
@@ -1815,16 +2120,19 @@ def resolve_service_bind_targets(
 
 
 def primary_listen_address(raw_address: str | None) -> str:
+    """Return primary listen address."""
     addresses = split_addresses(raw_address)
     return addresses[0] if addresses else ""
 
 
 def primary_listen_interface(raw_interface: str | None) -> str:
+    """Return primary listen interface."""
     interfaces = split_interfaces(raw_interface)
     return interfaces[0] if interfaces else ""
 
 
 def service_bind_label(raw_interface: str | None, raw_address: str | None) -> str:
+    """Return service bind label."""
     interfaces = split_interfaces(raw_interface)
     addresses = split_addresses(raw_address)
     if not interfaces and not addresses:
@@ -1835,6 +2143,7 @@ def service_bind_label(raw_interface: str | None, raw_address: str | None) -> st
 
 
 def backing_systemd_unit_active(unit: str) -> bool | None:
+    """Return backing systemd unit active."""
     if get_settings().dry_run_system_adapters:
         return None
     result = SystemAdapter().service_status(unit)
@@ -1851,6 +2160,12 @@ def backing_systemd_unit_active(unit: str) -> bool | None:
 
 
 def vcf_backup_context(db: Session, *, reconcile: bool = True) -> dict:
+    """Return vcf backup context.
+
+    Args:
+        db: Active database session.
+        reconcile: Whether dependent desired state should be reconciled.
+    """
     settings = get_vcf_backup_settings_row(db, reconcile_default_user=reconcile)
     if reconcile and normalize_service_bind_settings(db, settings):
         db.commit()
@@ -1877,6 +2192,7 @@ def vcf_backup_context(db: Session, *, reconcile: bool = True) -> dict:
 
 
 def ntpd_capabilities_payload(result: AdapterResult) -> dict[str, Any]:
+    """Return ntpd capabilities payload."""
     if result.returncode != 0:
         return {}
     text = result.stdout or ""
@@ -1898,6 +2214,13 @@ def ntpd_capabilities_payload(result: AdapterResult) -> dict[str, Any]:
 
 
 def ntp_context(db: Session, *, include_runtime_health: bool = False, reconcile: bool = True) -> dict:
+    """Return ntp context.
+
+    Args:
+        db: Active database session.
+        include_runtime_health: Include runtime health supplied by the caller.
+        reconcile: Whether dependent desired state should be reconciled.
+    """
     settings = get_ntp_settings_row(db)
     if reconcile and normalize_service_bind_settings(db, settings):
         db.commit()
@@ -1994,6 +2317,11 @@ def ntp_context(db: Session, *, include_runtime_health: bool = False, reconcile:
 
 
 def managed_dns_fqdns(db: Session) -> set[str]:
+    """Return managed dns fqdns.
+
+    Args:
+        db: Active database session.
+    """
     records = db.execute(select(DnsRecord)).scalars().all()
     names: set[str] = set()
     for record in records:
@@ -2004,11 +2332,27 @@ def managed_dns_fqdns(db: Session) -> set[str]:
 
 
 def setting_value(db: Session, key: str) -> str:
+    """Return setting value.
+
+    Args:
+        db: Active database session.
+        key: Stable setting, vault, or mapping key.
+    """
     setting = db.execute(select(Setting).where(Setting.key == key)).scalar_one_or_none()
     return setting.value if setting else ""
 
 
 def set_setting_value(db: Session, key: str, value: str) -> Setting:
+    """Update setting value.
+
+    Args:
+        db: Active database session.
+        key: Stable setting, vault, or mapping key.
+        value: Value to process.
+
+    Returns:
+        The set setting value result.
+    """
     setting = db.execute(select(Setting).where(Setting.key == key)).scalar_one_or_none()
     if setting is None:
         setting = Setting(key=key, value=value)
@@ -2021,11 +2365,22 @@ def set_setting_value(db: Session, key: str, value: str) -> Setting:
 
 
 def appliance_settings_management_context(db: Session) -> dict[str, str]:
+    """Return appliance settings management context.
+
+    Args:
+        db: Active database session.
+    """
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     return management_interface_context(interfaces)
 
 
 def appliance_dns_record_conflict(db: Session, fqdn: str) -> bool:
+    """Return appliance dns record conflict.
+
+    Args:
+        db: Active database session.
+        fqdn: Fully qualified domain name to validate or use.
+    """
     normalized = normalize_fqdn(fqdn)
     if not normalized:
         return False
@@ -2039,12 +2394,18 @@ def appliance_dns_record_conflict(db: Session, fqdn: str) -> bool:
 
 
 def appliance_domain_from_fqdn(fqdn: str) -> str:
+    """Return appliance domain from fqdn."""
     normalized = normalize_fqdn(fqdn)
     parts = normalized.split(".", 1)
     return parts[1] if len(parts) == 2 else ""
 
 
 def ensure_dns_domain_for_appliance_settings(dns_settings: DnsSettings, fqdn: str) -> bool:
+    """Ensure dns domain for appliance settings.
+
+    Returns:
+        The ensure dns domain for appliance settings result.
+    """
     domain = appliance_domain_from_fqdn(fqdn)
     if not domain:
         return False
@@ -2063,6 +2424,17 @@ def ensure_dns_for_appliance_settings(
     previous_fqdn: str,
     actor: str | None,
 ) -> str | None:
+    """Ensure dns for appliance settings.
+
+    Args:
+        db: Active database session.
+        settings: Desired or runtime settings consumed by the operation.
+        previous_fqdn: Previous fqdn supplied by the caller.
+        actor: Authenticated identity attributed to the audit record.
+
+    Returns:
+        The ensure dns for appliance settings result.
+    """
     dns_settings = get_dns_settings_row(db)
     ensure_dns_domain_for_appliance_settings(dns_settings, settings.fqdn)
     fqdn = normalize_fqdn(settings.fqdn)
@@ -2182,6 +2554,12 @@ def ensure_dns_for_appliance_settings(
 
 
 def appliance_settings_context(db: Session, *, reconcile_dns: bool = True) -> dict[str, Any]:
+    """Return appliance settings context.
+
+    Args:
+        db: Active database session.
+        reconcile_dns: Reconcile dns supplied by the caller.
+    """
     settings = get_appliance_settings_row(db)
     dns_settings = get_dns_settings_row(db)
     if reconcile_dns and ensure_dns_for_appliance_settings(db, settings, previous_fqdn=settings.fqdn, actor=None):
@@ -2242,12 +2620,30 @@ def appliance_settings_context(db: Session, *, reconcile_dns: bool = True) -> di
 
 
 def uploaded_vcf_registry_ca_bundle(db: Session) -> dict[str, object]:
+    """Return uploaded vcf registry ca bundle.
+
+    Args:
+        db: Active database session.
+    """
     name = setting_value(db, VCF_REGISTRY_UPLOADED_CA_BUNDLE_NAME_KEY)
     pem = setting_value(db, VCF_REGISTRY_UPLOADED_CA_BUNDLE_PEM_KEY)
     return {"name": name, "present": bool(pem.strip())}
 
 
 def store_uploaded_vcf_registry_ca_bundle(db: Session, ca_bundle_file: UploadFile | None, actor: str) -> str | None:
+    """Persist uploaded vcf registry ca bundle.
+
+    Args:
+        db: Active database session.
+        ca_bundle_file: Ca bundle file supplied by the caller.
+        actor: Authenticated identity attributed to the audit record.
+
+    Returns:
+        The store uploaded vcf registry ca bundle result.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if ca_bundle_file is None or not ca_bundle_file.filename:
         return None
     content = ca_bundle_file.file.read()
@@ -2284,6 +2680,23 @@ def store_uploaded_vcf_depot_secret(
     action: str,
     pending_audits: list[AuditEvent] | None = None,
 ) -> str | None:
+    """Persist uploaded vcf depot secret.
+
+    Args:
+        db: Active database session.
+        upload: Upload supplied by the caller.
+        name_key: Name key supplied by the caller.
+        value_key: Value key supplied by the caller.
+        actor: Authenticated identity attributed to the audit record.
+        action: Operation to perform on the target resource.
+        pending_audits: Pending audits supplied by the caller.
+
+    Returns:
+        The store uploaded vcf depot secret result.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if upload is None or not upload.filename:
         return None
     content = upload.file.read()
@@ -2332,6 +2745,24 @@ def store_pasted_vcf_depot_secret(
     action: str,
     pending_audits: list[AuditEvent] | None = None,
 ) -> str:
+    """Persist pasted vcf depot secret.
+
+    Args:
+        db: Active database session.
+        value: Value to process.
+        name_key: Name key supplied by the caller.
+        value_key: Value key supplied by the caller.
+        display_name: Display name supplied by the caller.
+        actor: Authenticated identity attributed to the audit record.
+        action: Operation to perform on the target resource.
+        pending_audits: Pending audits supplied by the caller.
+
+    Returns:
+        The store pasted vcf depot secret result.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if len(value.encode("utf-8")) > 128 * 1024:
         raise HTTPException(status_code=400, detail="VCFDT credential text must be 128 KB or smaller.")
     if not value.strip():
@@ -2361,6 +2792,14 @@ def store_pasted_vcf_depot_secret(
 
 
 def store_uploaded_vcf_depot_archive(settings: VcfOfflineDepotSettings, archive_file: UploadFile | None) -> str | None:
+    """Persist uploaded vcf depot archive.
+
+    Returns:
+        The store uploaded vcf depot archive result.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if archive_file is None or not archive_file.filename:
         return None
     try:
@@ -2388,6 +2827,12 @@ def store_uploaded_vcf_depot_archive(settings: VcfOfflineDepotSettings, archive_
 
 
 def reset_vcf_depot_tool_staging(db: Session, settings: VcfOfflineDepotSettings) -> None:
+    """Remove vcf depot tool staging.
+
+    Args:
+        db: Active database session.
+        settings: Desired or runtime settings consumed by the operation.
+    """
     archive_path = Path(settings.tool_archive_path) if settings.tool_archive_path else None
     if archive_path is not None:
         try:
@@ -2424,6 +2869,11 @@ def reset_vcf_depot_tool_staging(db: Session, settings: VcfOfflineDepotSettings)
 
 
 def clear_vcf_depot_credentials(db: Session) -> None:
+    """Remove vcf depot credentials.
+
+    Args:
+        db: Active database session.
+    """
     credential_keys = [
         VCF_DEPOT_TOKEN_NAME_KEY,
         VCF_DEPOT_TOKEN_VALUE_KEY,
@@ -2435,6 +2885,12 @@ def clear_vcf_depot_credentials(db: Session) -> None:
 
 
 def invalidate_vcf_depot_software_depot_identity(db: Session, error: str) -> None:
+    """Handle invalidate vcf depot software depot identity.
+
+    Args:
+        db: Active database session.
+        error: Public-safe error detail to record or return.
+    """
     for key in [VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY, VCF_DEPOT_SOFTWARE_DEPOT_ID_GENERATED_AT_KEY]:
         setting = db.execute(select(Setting).where(Setting.key == key)).scalar_one_or_none()
         if setting is not None:
@@ -2444,6 +2900,11 @@ def invalidate_vcf_depot_software_depot_identity(db: Session, error: str) -> Non
 
 
 def vcf_depot_software_depot_id_context(db: Session) -> dict[str, str]:
+    """Return vcf depot software depot id context.
+
+    Args:
+        db: Active database session.
+    """
     software_id = db.execute(select(Setting).where(Setting.key == VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY)).scalar_one_or_none()
     generated_at = db.execute(select(Setting).where(Setting.key == VCF_DEPOT_SOFTWARE_DEPOT_ID_GENERATED_AT_KEY)).scalar_one_or_none()
     error = db.execute(select(Setting).where(Setting.key == VCF_DEPOT_SOFTWARE_DEPOT_ID_ERROR_KEY)).scalar_one_or_none()
@@ -2455,6 +2916,15 @@ def vcf_depot_software_depot_id_context(db: Session) -> dict[str, str]:
 
 
 def generate_and_store_vcf_software_depot_id(db: Session, settings: VcfOfflineDepotSettings) -> dict[str, str]:
+    """Build and store vcf software depot id.
+
+    Args:
+        db: Active database session.
+        settings: Desired or runtime settings consumed by the operation.
+
+    Returns:
+        The generate and store vcf software depot id result.
+    """
     result = generate_vcf_software_depot_id(settings.tool_archive_path)
     if result.success:
         generated_at = utcnow().isoformat()
@@ -2468,6 +2938,7 @@ def generate_and_store_vcf_software_depot_id(db: Session, settings: VcfOfflineDe
 
 
 def helper_json_payloads(output: str) -> list[dict[str, Any]]:
+    """Return helper json payloads."""
     payloads: list[dict[str, Any]] = []
     decoder = json.JSONDecoder()
     text = output or ""
@@ -2492,6 +2963,7 @@ def helper_json_payloads(output: str) -> list[dict[str, Any]]:
 
 
 def helper_json_payload_with_key(output: str, key: str) -> dict[str, Any]:
+    """Return helper json payload with key."""
     for payload in reversed(helper_json_payloads(output)):
         if key in payload:
             return payload
@@ -2499,6 +2971,12 @@ def helper_json_payload_with_key(output: str, key: str) -> dict[str, Any]:
 
 
 def persist_vcf_depot_metadata_from_apply(db: Session, unit_results: list[dict[str, Any]]) -> None:
+    """Persist vcf depot metadata from apply.
+
+    Args:
+        db: Active database session.
+        unit_results: Unit results supplied by the caller.
+    """
     for result in unit_results:
         if result.get("unit_id") != "vcf_offline_depot":
             continue
@@ -2551,6 +3029,11 @@ def persist_vcf_depot_metadata_from_apply(db: Session, unit_results: list[dict[s
 
 
 def vcf_depot_secret_context(db: Session) -> dict[str, object]:
+    """Return vcf depot secret context.
+
+    Args:
+        db: Active database session.
+    """
     token_name = db.execute(select(Setting).where(Setting.key == VCF_DEPOT_TOKEN_NAME_KEY)).scalar_one_or_none()
     token_value = db.execute(select(Setting).where(Setting.key == VCF_DEPOT_TOKEN_VALUE_KEY)).scalar_one_or_none()
     activation_name = db.execute(select(Setting).where(Setting.key == VCF_DEPOT_ACTIVATION_NAME_KEY)).scalar_one_or_none()
@@ -2572,6 +3055,12 @@ def vcf_depot_secret_context(db: Session) -> dict[str, object]:
 
 
 def vcf_depot_application_properties_context(db: Session, settings: VcfOfflineDepotSettings) -> dict[str, str | bool]:
+    """Return vcf depot application properties context.
+
+    Args:
+        db: Active database session.
+        settings: Desired or runtime settings consumed by the operation.
+    """
     content_setting = db.execute(select(Setting).where(Setting.key == VCF_DEPOT_APPLICATION_PROPERTIES_CONTENT_KEY)).scalar_one_or_none()
     if content_setting and content_setting.value.strip():
         source = setting_value(db, VCF_DEPOT_APPLICATION_PROPERTIES_SOURCE_KEY) or "operator saved"
@@ -2603,6 +3092,13 @@ def vcf_depot_download_job_rows(
     page: int = 1,
     page_size: int = 10,
 ) -> tuple[list[dict[str, str]], int]:
+    """Return vcf depot download job rows.
+
+    Args:
+        db: Active database session.
+        page: Page supplied by the caller.
+        page_size: Page size supplied by the caller.
+    """
     total = int(
         db.scalar(select(func.count()).select_from(Job).where(Job.type == "vcf-depot-download")) or 0
     )
@@ -2644,10 +3140,20 @@ def vcf_depot_download_job_rows(
 
 
 def vcf_depot_active_download_job(db: Session) -> Job | None:
+    """Return vcf depot active download job.
+
+    Args:
+        db: Active database session.
+    """
     return active_vcf_depot_download_job(db)
 
 
 def recover_interrupted_vcf_depot_download_jobs(db: Session) -> int:
+    """Return recover interrupted vcf depot download jobs.
+
+    Args:
+        db: Active database session.
+    """
     jobs = db.scalars(
         select(Job).where(
             Job.type == "vcf-depot-download",
@@ -2675,6 +3181,11 @@ def recover_interrupted_vcf_depot_download_jobs(db: Session) -> int:
 
 
 def recover_interrupted_vcf_depot_software_id_jobs(db: Session) -> int:
+    """Return recover interrupted vcf depot software id jobs.
+
+    Args:
+        db: Active database session.
+    """
     jobs = db.scalars(
         select(Job).options(selectinload(Job.steps)).where(
             Job.type == "vcf-depot-software-id",
@@ -2733,6 +3244,11 @@ def recover_interrupted_vcf_depot_software_id_jobs(db: Session) -> int:
 
 
 def recover_interrupted_appliance_apply_jobs(db: Session) -> int:
+    """Return recover interrupted appliance apply jobs.
+
+    Args:
+        db: Active database session.
+    """
     jobs = db.scalars(
         select(Job)
         .options(selectinload(Job.steps))
@@ -2773,6 +3289,11 @@ def recover_interrupted_appliance_apply_jobs(db: Session) -> int:
 
 
 def recover_interrupted_vcf_helper_jobs(db: Session) -> int:
+    """Return recover interrupted vcf helper jobs.
+
+    Args:
+        db: Active database session.
+    """
     jobs = db.scalars(
         select(Job).where(
             Job.type.in_(["vcf-sddc-manager-deploy", "vcf-offline-depot-target-config"]),
@@ -2796,6 +3317,11 @@ def recover_interrupted_vcf_helper_jobs(db: Session) -> int:
 
 
 def vcf_registry_ca_bundle_context(db: Session) -> dict[str, object]:
+    """Return vcf registry ca bundle context.
+
+    Args:
+        db: Active database session.
+    """
     ca_settings = get_ca_settings_row(db)
     uploaded_bundle = uploaded_vcf_registry_ca_bundle(db)
     if ca_settings.enabled:
@@ -2818,6 +3344,12 @@ def vcf_registry_ca_bundle_context(db: Session) -> dict[str, object]:
 
 
 def vcf_private_registry_context(db: Session, *, reconcile: bool = True) -> dict:
+    """Return vcf private registry context.
+
+    Args:
+        db: Active database session.
+        reconcile: Whether dependent desired state should be reconciled.
+    """
     settings = get_vcf_private_registry_settings_row(db, reconcile=reconcile)
     if reconcile and normalize_service_bind_settings(db, settings):
         db.commit()
@@ -2864,6 +3396,7 @@ def vcf_private_registry_context(db: Session, *, reconcile: bool = True) -> dict
 
 
 def vcf_depot_tool_installed(settings: VcfOfflineDepotSettings) -> bool:
+    """Return vcf depot tool installed."""
     if get_settings().environment == "appliance":
         runtime_home = filesystem_path(VCF_DEPOT_RUNTIME_TOOL_DIR)
         return bool(settings.tool_archive_path) and any(
@@ -2874,6 +3407,12 @@ def vcf_depot_tool_installed(settings: VcfOfflineDepotSettings) -> bool:
 
 
 def vcf_offline_depot_context(db: Session, *, reconcile: bool = True) -> dict:
+    """Return vcf offline depot context.
+
+    Args:
+        db: Active database session.
+        reconcile: Whether dependent desired state should be reconciled.
+    """
     settings = get_vcf_offline_depot_settings_row(db, reconcile_default_user=reconcile, reconcile=reconcile)
     appliance_settings = get_appliance_settings_row(db)
     if reconcile and normalize_service_bind_settings(db, settings):
@@ -3007,6 +3546,7 @@ def vcf_offline_depot_context(db: Session, *, reconcile: bool = True) -> dict:
 
 
 def vcf_depot_secret_snapshot(context: dict[str, Any]) -> str:
+    """Return vcf depot secret snapshot."""
     token_state = context["vcf_depot_download_token"]
     activation_state = context["vcf_depot_activation_code"]
     return "\n".join(
@@ -3022,6 +3562,7 @@ def vcf_depot_secret_snapshot(context: dict[str, Any]) -> str:
 
 
 def vcf_depot_tool_snapshot(context: dict[str, Any]) -> str:
+    """Return vcf depot tool snapshot."""
     settings = context["vcf_depot_settings"]
     archive_path = Path(settings.tool_archive_path) if settings.tool_archive_path else None
     archive_name = archive_path.name if archive_path else "not staged"
@@ -3049,6 +3590,7 @@ def vcf_depot_tool_snapshot(context: dict[str, Any]) -> str:
 
 
 def vcf_depot_application_properties_snapshot(context: dict[str, Any]) -> str:
+    """Return vcf depot application properties snapshot."""
     properties = context["vcf_depot_application_properties"]
     content = str(properties.get("content") or "").strip()
     if not content:
@@ -3065,6 +3607,7 @@ def vcf_depot_application_properties_snapshot(context: dict[str, Any]) -> str:
 
 
 def vcf_depot_command_entry(command: list[str], *, dry_run: bool) -> dict[str, Any]:
+    """Return vcf depot command entry."""
     resolved = [
         f"{VCF_DEPOT_RUNTIME_TOOL_DIR}/bin/vcf-download-tool" if value == "vcf-download-tool" else value
         for value in command
@@ -3080,11 +3623,13 @@ def vcf_depot_command_entry(command: list[str], *, dry_run: bool) -> dict[str, A
 
 
 def vcf_depot_runtime_secret_path(staged_path: str) -> Path:
+    """Return vcf depot runtime secret path."""
     name = Path(staged_path).name
     return filesystem_path(VCF_DEPOT_VDT_LOG_PATH.parent.parent / "secrets" / name)
 
 
 def vcf_depot_runtime_command(command: list[str], tool_path: Path) -> list[str]:
+    """Return vcf depot runtime command."""
     runtime_command: list[str] = []
     for arg in command:
         if arg == "vcf-download-tool":
@@ -3099,6 +3644,11 @@ def vcf_depot_runtime_command(command: list[str], tool_path: Path) -> list[str]:
 
 
 def resolve_vcf_download_tool(settings: VcfOfflineDepotSettings) -> Path:
+    """Return vcf download tool.
+
+    Raises:
+        FileNotFoundError: If a required file does not exist.
+    """
     archive = Path(settings.tool_archive_path)
     if VCF_DEPOT_EXTRACT_DIR.exists():
         try:
@@ -3115,16 +3665,30 @@ def resolve_vcf_download_tool(settings: VcfOfflineDepotSettings) -> Path:
 
 
 def vcf_download_tool_home(tool_path: Path) -> Path:
+    """Return vcf download tool home."""
     return tool_path.parent.parent if tool_path.parent.name == "bin" else tool_path.parent
 
 
 def write_vcf_depot_runtime_file(path: Path, value: str) -> None:
+    """Persist vcf depot runtime file.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        value: Value to process.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(value, encoding="utf-8")
     path.chmod(0o600)
 
 
 def stage_vcf_depot_runtime_application_properties(db: Session, settings: VcfOfflineDepotSettings, tool_home: Path) -> None:
+    """Handle stage vcf depot runtime application properties.
+
+    Args:
+        db: Active database session.
+        settings: Desired or runtime settings consumed by the operation.
+        tool_home: Tool home supplied by the caller.
+    """
     properties = vcf_depot_application_properties_context(db, settings)
     content = str(properties.get("content") or "")
     if content.strip():
@@ -3132,6 +3696,11 @@ def stage_vcf_depot_runtime_application_properties(db: Session, settings: VcfOff
 
 
 def stage_vcf_depot_runtime_secrets(db: Session) -> None:
+    """Handle stage vcf depot runtime secrets.
+
+    Args:
+        db: Active database session.
+    """
     token = setting_value(db, VCF_DEPOT_TOKEN_VALUE_KEY)
     if token.strip():
         write_vcf_depot_runtime_file(vcf_depot_runtime_secret_path(VCF_DEPOT_STAGED_TOKEN_FILE), token)
@@ -3141,6 +3710,14 @@ def stage_vcf_depot_runtime_secrets(db: Session) -> None:
 
 
 def stage_vcf_depot_runtime_secrets_after_upload(db: Session) -> None:
+    """Handle stage vcf depot runtime secrets after upload.
+
+    Args:
+        db: Active database session.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     try:
         stage_vcf_depot_runtime_secrets(db)
     except OSError as exc:
@@ -3152,6 +3729,12 @@ def stage_vcf_depot_runtime_secrets_after_upload(db: Session) -> None:
 
 
 def prepare_vcf_depot_runtime(settings: VcfOfflineDepotSettings, db: Session) -> Path:
+    """Return prepare vcf depot runtime.
+
+    Args:
+        settings: Desired or runtime settings consumed by the operation.
+        db: Active database session.
+    """
     tool_path = resolve_vcf_download_tool(settings)
     tool_home = vcf_download_tool_home(tool_path)
     vdt_log_path = filesystem_path(VCF_DEPOT_VDT_LOG_PATH)
@@ -3168,6 +3751,7 @@ def prepare_vcf_depot_runtime(settings: VcfOfflineDepotSettings, db: Session) ->
 
 
 def append_vcf_depot_log(text: str) -> None:
+    """Handle append vcf depot log."""
     vdt_log_path = filesystem_path(VCF_DEPOT_VDT_LOG_PATH)
     vdt_log_path.parent.mkdir(parents=True, exist_ok=True)
     with vdt_log_path.open("a", encoding="utf-8", errors="replace") as handle:
@@ -3177,14 +3761,21 @@ def append_vcf_depot_log(text: str) -> None:
 
 
 def vcf_depot_task_log_path(job_id: str, profile_name: str = "") -> Path:
+    """Return vcf depot task log path."""
     return filesystem_path(vcf_depot_task_log_reference(job_id, profile_name))
 
 
 def append_vcf_depot_task_log(job_id: str, profile_name: str, text: str) -> None:
+    """Handle append vcf depot task log."""
     append_vcf_depot_log(text)
 
 
 def resolve_vcf_depot_download_mode_flags(*flags: str | None) -> tuple[bool, bool, bool]:
+    """Return vcf depot download mode flags.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     selected = tuple(flag == "on" for flag in flags)
     if sum(selected) > 1:
         raise HTTPException(
@@ -3198,6 +3789,15 @@ def vcf_depot_download_preflight(
     db: Session,
     profile: VcfDepotDownloadProfile,
 ) -> tuple[VcfOfflineDepotSettings, list[list[str]], list[str]]:
+    """Return vcf depot download preflight.
+
+    Args:
+        db: Active database session.
+        profile: Profile supplied by the caller.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     settings = get_vcf_offline_depot_settings_row(db)
     secrets = vcf_depot_secret_context(db)
     start_blocker = vcf_depot_profile_start_blocker(
@@ -3239,6 +3839,7 @@ def vcf_depot_download_preflight(
 
 
 def archive_vcf_depot_task_log(job_id: str, profile_name: str) -> Path:
+    """Return archive vcf depot task log."""
     active_log_path = filesystem_path(VCF_DEPOT_VDT_LOG_PATH)
     task_log_path = vcf_depot_task_log_path(job_id, profile_name)
     task_log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -3248,6 +3849,12 @@ def archive_vcf_depot_task_log(job_id: str, profile_name: str) -> Path:
 
 
 def run_vcf_depot_download_job(job_id: str, profile_id: int) -> None:
+    """Run vcf depot download job.
+
+    Raises:
+        RuntimeError: If the operation cannot be completed safely.
+        ValueError: If an input value is invalid.
+    """
     with SessionLocal() as db:
         job = db.get(Job, job_id)
         profile = db.get(VcfDepotDownloadProfile, profile_id)
@@ -3406,6 +4013,12 @@ def run_vcf_depot_download_job(job_id: str, profile_id: int) -> None:
 
 
 def firewall_context(db: Session, *, reconcile: bool = True) -> dict:
+    """Return firewall context.
+
+    Args:
+        db: Active database session.
+        reconcile: Whether dependent desired state should be reconciled.
+    """
     settings = get_firewall_settings_row(db)
     rules = db.execute(select(FirewallRule).order_by(FirewallRule.priority, FirewallRule.name)).scalars().all()
     dns_settings = get_dns_settings_row(db)
@@ -3503,6 +4116,7 @@ def managed_firewall_rule_rows(
     source_groups: list[dict] | None = None,
     assignments: dict[str, str] | None = None,
 ) -> list[dict]:
+    """Return managed firewall rule rows."""
     rows: list[dict] = []
     replaced_by_name: dict[str, list[FirewallRule]] = {}
     source_groups_by_id = {str(group["id"]): group for group in source_groups or []}
@@ -3538,6 +4152,7 @@ def managed_firewall_rule_rows(
 
 
 def managed_replaced_firewall_rule_row(rule: FirewallRule) -> dict:
+    """Return managed replaced firewall rule row."""
     return {
         **firewall_rule_to_dict(rule),
         "id": f"replaced:{rule.id or rule.name}",
@@ -3551,6 +4166,12 @@ def managed_replaced_firewall_rule_row(rule: FirewallRule) -> dict:
 
 
 def ca_context(db: Session, *, reconcile: bool = True) -> dict:
+    """Return ca context.
+
+    Args:
+        db: Active database session.
+        reconcile: Whether dependent desired state should be reconciled.
+    """
     state_errors = ensure_ca_state(db) if reconcile else []
     settings = get_ca_settings_row(db)
     if reconcile and normalize_service_bind_settings(db, settings):
@@ -3622,6 +4243,12 @@ def ca_context(db: Session, *, reconcile: bool = True) -> dict:
 
 
 def public_services_context(db: Session, *, reconcile: bool = True) -> dict[str, Any]:
+    """Return public services context.
+
+    Args:
+        db: Active database session.
+        reconcile: Whether dependent desired state should be reconciled.
+    """
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     vlans = db.execute(select(VlanInterface).where(VlanInterface.enabled.is_(True)).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
     ca_settings = get_ca_settings_row(db)
@@ -3717,6 +4344,11 @@ def public_services_context(db: Session, *, reconcile: bool = True) -> dict[str,
 
 
 def public_ca_context(db: Session) -> dict:
+    """Return public ca context.
+
+    Args:
+        db: Active database session.
+    """
     settings = get_ca_settings_row(db)
     return {
         "ca_settings": settings,
@@ -3730,6 +4362,11 @@ def public_ca_context(db: Session) -> dict:
 
 
 def public_portal_links_context(db: Session) -> dict[str, str]:
+    """Return public portal links context.
+
+    Args:
+        db: Active database session.
+    """
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     management = management_interface_context(interfaces)
     settings = get_appliance_settings_row(db)
@@ -3745,6 +4382,7 @@ def public_portal_links_context(db: Session) -> dict[str, str]:
 
 
 def _url_host(value: str) -> str:
+    """Return url host."""
     host = (value or "").strip().strip(".")
     if not host:
         return ""
@@ -3756,6 +4394,14 @@ def _url_host(value: str) -> str:
 
 
 def _absolute_public_url(scheme: str, host: str, path: str, *, port: int | None = None) -> str:
+    """Return absolute public url.
+
+    Args:
+        scheme: Scheme supplied by the caller.
+        host: Host targeted by the operation.
+        path: Filesystem or URL path to read, validate, or update.
+        port: TCP or UDP port of the target service.
+    """
     normalized_host = _url_host(host)
     if not normalized_host:
         return path
@@ -3766,6 +4412,7 @@ def _absolute_public_url(scheme: str, host: str, path: str, *, port: int | None 
 
 
 def _public_service_hostname(service: dict[str, Any]) -> str:
+    """Return public service hostname."""
     for value in service.get("dns_names") or []:
         candidate = str(value or "").strip().strip(".")
         if candidate:
@@ -3774,6 +4421,7 @@ def _public_service_hostname(service: dict[str, Any]) -> str:
 
 
 def public_service_link_variants(service: dict[str, Any], binding: dict[str, str], *, esxi_pxe_boot: dict[str, Any]) -> dict[str, str]:
+    """Return public service link variants."""
     service_id = str(service.get("id") or "")
     address = str(binding.get("address") or "")
     hostname = _public_service_hostname(service) or address
@@ -3804,6 +4452,7 @@ def public_service_link_variants(service: dict[str, Any], binding: dict[str, str
 
 
 def safe_login_next(value: str | None) -> str:
+    """Return safe login next."""
     target = (value or "").strip()
     if not target.startswith("/") or target.startswith("//") or "\\" in target:
         return "/"
@@ -3813,6 +4462,11 @@ def safe_login_next(value: str | None) -> str:
 
 
 def request_host_name(request: Request) -> str:
+    """Return request host name.
+
+    Args:
+        request: Incoming HTTP request.
+    """
     raw_host = (request.headers.get("host") or "").strip().lower()
     if raw_host.startswith("["):
         closing_bracket = raw_host.find("]")
@@ -3822,6 +4476,7 @@ def request_host_name(request: Request) -> str:
 
 
 def interface_address(raw_cidr: str | None) -> str:
+    """Return interface address."""
     if not raw_cidr:
         return ""
     try:
@@ -3831,6 +4486,12 @@ def interface_address(raw_cidr: str | None) -> str:
 
 
 def request_host_interface_role(request_host: str, db: Session) -> str:
+    """Return request host interface role.
+
+    Args:
+        request_host: Request host supplied by the caller.
+        db: Active database session.
+    """
     if not request_host:
         return ""
     for interface in db.execute(select(PhysicalInterface)).scalars().all():
@@ -3850,6 +4511,12 @@ def request_host_interface_role(request_host: str, db: Session) -> str:
 
 
 def request_host_interface_binding(request_host: str, db: Session) -> dict[str, str] | None:
+    """Return request host interface binding.
+
+    Args:
+        request_host: Request host supplied by the caller.
+        db: Active database session.
+    """
     if not request_host:
         return None
     entries = public_service_interface_entries(
@@ -3908,6 +4575,12 @@ def request_host_interface_binding(request_host: str, db: Session) -> dict[str, 
 
 
 def public_service_directory_context(db: Session, binding: dict[str, str]) -> dict[str, Any]:
+    """Return public service directory context.
+
+    Args:
+        db: Active database session.
+        binding: Binding supplied by the caller.
+    """
     ca_settings = get_ca_settings_row(db)
     depot_settings = get_vcf_offline_depot_settings_row(db)
     registry_settings = get_vcf_private_registry_settings_row(db)
@@ -3962,6 +4635,13 @@ def public_service_directory_context(db: Session, binding: dict[str, str]) -> di
 
 
 def request_allows_public_service(db: Session, request: Request, service_id: str) -> bool:
+    """Return request allows public service.
+
+    Args:
+        db: Active database session.
+        request: Incoming HTTP request.
+        service_id: Identifier of the service.
+    """
     binding = request_host_interface_binding(request_host_name(request), db)
     if not binding or binding.get("role") == "management":
         return False
@@ -3970,6 +4650,13 @@ def request_allows_public_service(db: Session, request: Request, service_id: str
 
 
 def request_public_service_route_allowed(db: Session, request: Request, service_id: str) -> bool:
+    """Return request public service route allowed.
+
+    Args:
+        db: Active database session.
+        request: Incoming HTTP request.
+        service_id: Identifier of the service.
+    """
     binding = request_host_interface_binding(request_host_name(request), db)
     if not binding or binding.get("role") == "management":
         return True
@@ -3978,6 +4665,12 @@ def request_public_service_route_allowed(db: Session, request: Request, service_
 
 
 def is_ca_portal_host(request: Request, db: Session) -> bool:
+    """Return whether ca portal host.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session.
+    """
     settings = get_ca_settings_row(db)
     request_host = request_host_name(request)
     portal_hostname = normalize_dns_hostname(settings.portal_hostname or CA_DEFAULT_PORTAL_HOSTNAME)
@@ -3993,6 +4686,7 @@ def is_ca_portal_host(request: Request, db: Session) -> bool:
 
 
 def ca_request_to_dict(certificate: CaCertificate) -> dict[str, Any]:
+    """Return ca request to dict."""
     return {
         "id": certificate.id,
         "common_name": certificate.common_name,
@@ -4005,6 +4699,11 @@ def ca_request_to_dict(certificate: CaCertificate) -> dict[str, Any]:
 
 
 def ca_request_context(db: Session) -> dict:
+    """Return ca request context.
+
+    Args:
+        db: Active database session.
+    """
     if ensure_default_ca_profiles(db):
         db.commit()
     profiles = db.execute(select(CaProfile).order_by(CaProfile.name)).scalars().all()
@@ -4022,6 +4721,12 @@ def ca_request_context(db: Session) -> dict:
 
 
 def kms_context(db: Session, *, reconcile: bool = True) -> dict:
+    """Return kms context.
+
+    Args:
+        db: Active database session.
+        reconcile: Whether dependent desired state should be reconciled.
+    """
     settings = get_kms_settings_row(db)
     available_interfaces = service_bind_options(db)
     changed = False
@@ -4113,6 +4818,11 @@ def kms_context(db: Session, *, reconcile: bool = True) -> dict:
 
 
 def ldap_organizations_query(db: Session) -> list[LdapOrganization]:
+    """Return ldap organizations query.
+
+    Args:
+        db: Active database session.
+    """
     return (
         db.execute(
             select(LdapOrganization)
@@ -4130,6 +4840,13 @@ def ldap_organizations_query(db: Session) -> list[LdapOrganization]:
 
 
 def ldap_context(db: Session, *, reconcile: bool = True, selected_organization_id: int | None = None) -> dict[str, Any]:
+    """Return ldap context.
+
+    Args:
+        db: Active database session.
+        reconcile: Whether dependent desired state should be reconciled.
+        selected_organization_id: Identifier of the selected organization.
+    """
     settings = get_ldap_settings_row(db)
     available_interfaces = ldap_service_bind_options(db)
     available_by_name = {option["name"]: option for option in available_interfaces}
@@ -4229,6 +4946,11 @@ def ldap_context(db: Session, *, reconcile: bool = True, selected_organization_i
 
 
 def network_context(db: Session) -> dict:
+    """Return network context.
+
+    Args:
+        db: Active database session.
+    """
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     vlans = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
     interfaces_by_name = {interface.name: interface for interface in interfaces}
@@ -4268,10 +4990,20 @@ def network_context(db: Session) -> dict:
 
 
 def wan_route_targets(db: Session) -> list[dict[str, str]]:
+    """Return wan route targets.
+
+    Args:
+        db: Active database session.
+    """
     return [target for target in wan_routing_targets(db) if target["routing_domain"] == "lab"]
 
 
 def wan_routing_targets(db: Session) -> list[dict[str, str]]:
+    """Return wan routing targets.
+
+    Args:
+        db: Active database session.
+    """
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     vlans = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
     targets: list[dict[str, str]] = []
@@ -4325,10 +5057,16 @@ def wan_routing_targets(db: Session) -> list[dict[str, str]]:
 
 
 def wan_nat_targets_from_route_targets(targets: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Return wan nat targets from route targets."""
     return [target for target in targets if target.get("ip_cidr")]
 
 
 def routes_wan_context(db: Session) -> dict:
+    """Return routes wan context.
+
+    Args:
+        db: Active database session.
+    """
     routes = db.execute(select(Route).options(selectinload(Route.wan_policy)).order_by(Route.destination_cidr)).scalars().all()
     policies = db.execute(select(WanPolicy).order_by(WanPolicy.name)).scalars().all()
     nat_rules = db.execute(select(NatRule).order_by(NatRule.priority, NatRule.name)).scalars().all()
@@ -4382,6 +5120,12 @@ def routes_wan_context(db: Session) -> dict:
 
 
 def dnsmasq_context(db: Session, *, reconcile: bool = True) -> dict:
+    """Return dnsmasq context.
+
+    Args:
+        db: Active database session.
+        reconcile: Whether dependent desired state should be reconciled.
+    """
     dns_settings = get_dns_settings_row(db)
     if reconcile and normalize_service_bind_settings(db, dns_settings):
         db.commit()
@@ -4511,6 +5255,15 @@ def dhcp_scope_grid_defaults(
     dhcp_scopes: list[DhcpScope],
     dns_domains: list[str],
 ) -> dict[str, Any]:
+    """Return dhcp scope grid defaults.
+
+    Args:
+        available_interfaces: Available interfaces supplied by the caller.
+        dns_settings: DNS service settings that constrain the operation.
+        ntp_settings: Ntp settings supplied by the caller.
+        dhcp_scopes: Dhcp scopes supplied by the caller.
+        dns_domains: Dns domains supplied by the caller.
+    """
     dns_interfaces = set(split_interfaces(dns_settings.listen_interface)) if dns_settings.enabled else set()
     ntp_interfaces = set(split_interfaces(ntp_settings.listen_interface)) if ntp_settings.enabled else set()
     dns_addresses = set(split_addresses(dns_settings.listen_address)) if dns_settings.enabled else set()
@@ -4551,6 +5304,7 @@ def dhcp_scope_grid_defaults(
 
 
 def lease_matches_current_dhcp_scope(lease: dict[str, Any], scopes: list[DhcpScope]) -> bool:
+    """Return lease matches current dhcp scope."""
     try:
         lease_address = ip_address(str(lease.get("ip_address") or ""))
     except ValueError:
@@ -4565,10 +5319,12 @@ def lease_matches_current_dhcp_scope(lease: dict[str, Any], scopes: list[DhcpSco
 
 
 def filter_current_dhcp_leases(leases: list[dict[str, Any]], scopes: list[DhcpScope]) -> list[dict[str, Any]]:
+    """Return filter current dhcp leases."""
     return [lease for lease in leases if lease_matches_current_dhcp_scope(lease, scopes)]
 
 
 def generated_esxi_pxe_dhcp_options(esxi_boot: dict[str, Any], scopes: list[DhcpScope]) -> list[dict[str, str]]:
+    """Return generated esxi pxe dhcp options."""
     if not esxi_boot or not esxi_boot.get("enabled"):
         return []
     rows: list[dict[str, str]] = []
@@ -4604,9 +5360,11 @@ def generated_esxi_pxe_dhcp_options(esxi_boot: dict[str, Any], scopes: list[Dhcp
 
     host_bootfiles = list(esxi_boot.get("host_bootfiles") or [])
     def add(applies_to: str, flow: str, line: str, note: str) -> None:
+        """Create operation."""
         rows.append({"applies_to": applies_to, "flow": flow, "line": line, "note": note})
 
     def scope_http_base(address: str) -> str:
+        """Return scope http base."""
         if not address:
             return ""
         host = f"[{address}]" if ":" in address and not address.startswith("[") else address
@@ -4648,6 +5406,7 @@ def generated_esxi_pxe_dhcp_options(esxi_boot: dict[str, Any], scopes: list[Dhcp
 
 
 def dhcp_scope_network_any(scope: DhcpScope):
+    """Return dhcp scope network any."""
     try:
         return ip_network(f"{scope.site_address}/{scope.prefix_length}", strict=False)
     except ValueError:
@@ -4655,6 +5414,7 @@ def dhcp_scope_network_any(scope: DhcpScope):
 
 
 def dhcp_scope_name_for_ip(value: str | None, scopes: list[DhcpScope]) -> str:
+    """Return dhcp scope name for ip."""
     try:
         address = ip_address(str(value or "").strip())
     except ValueError:
@@ -4667,6 +5427,7 @@ def dhcp_scope_name_for_ip(value: str | None, scopes: list[DhcpScope]) -> str:
 
 
 def dhcp_reservation_payload(reservation: DhcpReservation, scopes: list[DhcpScope] | None = None) -> dict:
+    """Return dhcp reservation payload."""
     return {
         "id": reservation.id,
         "hostname": reservation.hostname,
@@ -4679,6 +5440,7 @@ def dhcp_reservation_payload(reservation: DhcpReservation, scopes: list[DhcpScop
 
 
 def dhcp_lease_payload(lease: dict[str, Any], scopes: list[DhcpScope] | None = None) -> dict[str, str]:
+    """Return dhcp lease payload."""
     expires_at = lease.get("expires_at")
     ip_address_value = str(lease.get("ip_address") or "")
     return {
@@ -4693,16 +5455,29 @@ def dhcp_lease_payload(lease: dict[str, Any], scopes: list[DhcpScope] | None = N
 
 
 def dhcp_option_scope_choices(scopes: list[DhcpScope]) -> list[dict]:
+    """Return dhcp option scope choices."""
     return [{"id": "__global__", "label": "Global defaults"}, *[{"id": scope.id, "label": scope.name} for scope in scopes]]
 
 
 def parse_dhcp_option_scope_id(raw_value: str) -> int | None:
+    """Parse dhcp option scope id.
+
+    Returns:
+        The parsed dhcp option scope id.
+    """
     if raw_value in {"", "__global__", "global", "None"}:
         return None
     return int(raw_value)
 
 
 def ensure_dns_for_dhcp_reservation(db: Session, reservation: DhcpReservation, actor: str) -> None:
+    """Ensure dns for dhcp reservation.
+
+    Args:
+        db: Active database session.
+        reservation: Reservation supplied by the caller.
+        actor: Authenticated identity attributed to the audit record.
+    """
     scopes = db.execute(select(DhcpScope).order_by(DhcpScope.name)).scalars().all()
     record_values = reservation_dns_record(reservation, scopes)
     if record_values is None:
@@ -4730,6 +5505,7 @@ def ensure_dns_for_dhcp_reservation(db: Session, reservation: DhcpReservation, a
 
 
 def desired_dns_records_for_listen_addresses(raw_addresses: str | None) -> dict[str, str]:
+    """Return desired dns records for listen addresses."""
     desired: dict[str, str] = {}
     for selected_address in split_addresses(raw_addresses):
         try:
@@ -4747,6 +5523,7 @@ CA_PORTAL_DNS_DESCRIPTION = "Created from Certificate Authority portal endpoint.
 
 
 def service_dns_target_token(strategy: str, interface_name: str, address: str) -> str:
+    """Return service dns target token."""
     if strategy == "ip":
         try:
             parsed = ip_address(address)
@@ -4760,6 +5537,7 @@ def service_dns_target_token(strategy: str, interface_name: str, address: str) -
 
 
 def service_target_hostname(hostname: str, target_token: str) -> str:
+    """Return service target hostname."""
     normalized = normalize_dns_hostname(hostname)
     if "." not in normalized:
         return normalized
@@ -4787,6 +5565,15 @@ def service_interface_dns_targets(
     listen_address: str | None,
     bind_options: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, str]]:
+    """Return service interface dns targets.
+
+    Args:
+        db: Active database session.
+        hostname: DNS hostname of the target resource.
+        listen_interface: Interface on which the service should listen.
+        listen_address: Address on which the service should listen.
+        bind_options: Bind options supplied by the caller.
+    """
     selected_addresses = split_addresses(listen_address)
     if not selected_addresses:
         return []
@@ -4818,6 +5605,7 @@ def service_interface_dns_targets(
 
 
 def summarize_dns_actions(actions: list[str]) -> str | None:
+    """Return summarize dns actions."""
     if not actions:
         return None
     if "conflict" in actions:
@@ -4845,6 +5633,23 @@ def ensure_interface_dns_alias(
     enabled: bool = True,
     bind_options: list[dict[str, Any]] | None = None,
 ) -> str | None:
+    """Ensure interface dns alias.
+
+    Args:
+        db: Active database session.
+        hostname: DNS hostname of the target resource.
+        listen_interface: Interface on which the service should listen.
+        listen_address: Address on which the service should listen.
+        description: Human-readable description of the resource.
+        actor: Authenticated identity attributed to the audit record.
+        audit_prefix: Audit prefix supplied by the caller.
+        previous_hostname: Hostname previously owned by the resource.
+        enabled: Whether the requested behavior is enabled.
+        bind_options: Bind options supplied by the caller.
+
+    Returns:
+        The ensure interface dns alias result.
+    """
     normalized_hostname = normalize_dns_hostname(hostname)
     if not enabled:
         return remove_interface_dns_alias(db, hostname=previous_hostname or normalized_hostname, description=description, actor=actor, audit_prefix=audit_prefix)
@@ -4962,6 +5767,18 @@ def remove_interface_dns_alias(
     actor: str | None,
     audit_prefix: str,
 ) -> str | None:
+    """Remove interface dns alias.
+
+    Args:
+        db: Active database session.
+        hostname: DNS hostname of the target resource.
+        description: Human-readable description of the resource.
+        actor: Authenticated identity attributed to the audit record.
+        audit_prefix: Audit prefix supplied by the caller.
+
+    Returns:
+        The remove interface dns alias result.
+    """
     normalized_hostname = normalize_dns_hostname(hostname)
     if not normalized_hostname:
         return None
@@ -4982,6 +5799,17 @@ def remove_interface_dns_alias(
 
 
 def ensure_dns_for_vcf_registry(db: Session, settings: VcfPrivateRegistrySettings, actor: str, *, previous_hostname: str | None = None) -> str | None:
+    """Ensure dns for vcf registry.
+
+    Args:
+        db: Active database session.
+        settings: Desired or runtime settings consumed by the operation.
+        actor: Authenticated identity attributed to the audit record.
+        previous_hostname: Hostname previously owned by the resource.
+
+    Returns:
+        The ensure dns for vcf registry result.
+    """
     hostname = normalize_dns_hostname(settings.hostname)
     if not hostname:
         return None
@@ -5000,6 +5828,17 @@ def ensure_dns_for_vcf_registry(db: Session, settings: VcfPrivateRegistrySetting
 
 
 def ensure_dns_for_vcf_offline_depot(db: Session, settings: VcfOfflineDepotSettings, actor: str, *, previous_hostname: str | None = None) -> str | None:
+    """Ensure dns for vcf offline depot.
+
+    Args:
+        db: Active database session.
+        settings: Desired or runtime settings consumed by the operation.
+        actor: Authenticated identity attributed to the audit record.
+        previous_hostname: Hostname previously owned by the resource.
+
+    Returns:
+        The ensure dns for vcf offline depot result.
+    """
     hostname = normalize_dns_hostname(settings.hostname)
     if not hostname:
         return None
@@ -5019,6 +5858,17 @@ def ensure_dns_for_vcf_offline_depot(db: Session, settings: VcfOfflineDepotSetti
 
 
 def ensure_dns_for_ca_portal(db: Session, settings: CaSettings, actor: str | None, *, previous_hostname: str | None = None) -> str | None:
+    """Ensure dns for ca portal.
+
+    Args:
+        db: Active database session.
+        settings: Desired or runtime settings consumed by the operation.
+        actor: Authenticated identity attributed to the audit record.
+        previous_hostname: Hostname previously owned by the resource.
+
+    Returns:
+        The ensure dns for ca portal result.
+    """
     hostname = normalize_dns_hostname(settings.portal_hostname or CA_DEFAULT_PORTAL_HOSTNAME)
     if not hostname:
         return None
@@ -5037,6 +5887,12 @@ def ensure_dns_for_ca_portal(db: Session, settings: CaSettings, actor: str | Non
 
 
 def kms_dns_record_conflict(db: Session, hostname: str) -> bool:
+    """Return kms dns record conflict.
+
+    Args:
+        db: Active database session.
+        hostname: DNS hostname of the target resource.
+    """
     normalized = normalize_dns_hostname(hostname)
     if not normalized:
         return False
@@ -5050,6 +5906,17 @@ def kms_dns_record_conflict(db: Session, hostname: str) -> bool:
 
 
 def ensure_dns_for_kms(db: Session, settings: KmsSettings, actor: str | None, *, previous_hostname: str | None = None) -> str | None:
+    """Ensure dns for kms.
+
+    Args:
+        db: Active database session.
+        settings: Desired or runtime settings consumed by the operation.
+        actor: Authenticated identity attributed to the audit record.
+        previous_hostname: Hostname previously owned by the resource.
+
+    Returns:
+        The ensure dns for kms result.
+    """
     hostname = normalize_dns_hostname(settings.hostname)
     if not hostname:
         return None
@@ -5068,6 +5935,12 @@ def ensure_dns_for_kms(db: Session, settings: KmsSettings, actor: str | None, *,
 
 
 def ldap_dns_record_conflict(db: Session, hostname: str) -> bool:
+    """Return ldap dns record conflict.
+
+    Args:
+        db: Active database session.
+        hostname: DNS hostname of the target resource.
+    """
     normalized = normalize_dns_hostname(hostname)
     if not normalized:
         return False
@@ -5081,6 +5954,17 @@ def ldap_dns_record_conflict(db: Session, hostname: str) -> bool:
 
 
 def ensure_dns_for_ldap(db: Session, settings: LdapSettings, actor: str | None, *, previous_hostname: str | None = None) -> str | None:
+    """Ensure dns for ldap.
+
+    Args:
+        db: Active database session.
+        settings: Desired or runtime settings consumed by the operation.
+        actor: Authenticated identity attributed to the audit record.
+        previous_hostname: Hostname previously owned by the resource.
+
+    Returns:
+        The ensure dns for ldap result.
+    """
     hostname = normalize_dns_hostname(settings.hostname)
     if not hostname:
         return None
@@ -5106,6 +5990,17 @@ def ensure_dns_for_oidc(
     *,
     previous_hostname: str | None = None,
 ) -> str | None:
+    """Ensure dns for oidc.
+
+    Args:
+        db: Active database session.
+        settings: Desired or runtime settings consumed by the operation.
+        actor: Authenticated identity attributed to the audit record.
+        previous_hostname: Hostname previously owned by the resource.
+
+    Returns:
+        The ensure dns for oidc result.
+    """
     hostname = normalize_dns_hostname(settings.hostname or OIDC_DEFAULT_HOSTNAME)
     settings.hostname = hostname
     return ensure_interface_dns_alias(
@@ -5123,6 +6018,16 @@ def ensure_dns_for_oidc(
 
 
 def remove_dns_for_vcf_offline_depot_hostname(db: Session, hostname: str, actor: str) -> str | None:
+    """Remove dns for vcf offline depot hostname.
+
+    Args:
+        db: Active database session.
+        hostname: DNS hostname of the target resource.
+        actor: Authenticated identity attributed to the audit record.
+
+    Returns:
+        The remove dns for vcf offline depot hostname result.
+    """
     return remove_interface_dns_alias(
         db,
         hostname=hostname,
@@ -5133,6 +6038,12 @@ def remove_dns_for_vcf_offline_depot_hostname(db: Session, hostname: str, actor:
 
 
 def esxi_pxe_dns_record_conflict(db: Session, hostname: str) -> bool:
+    """Return esxi pxe dns record conflict.
+
+    Args:
+        db: Active database session.
+        hostname: DNS hostname of the target resource.
+    """
     normalized = normalize_dns_hostname(hostname)
     if not normalized:
         return False
@@ -5146,6 +6057,16 @@ def esxi_pxe_dns_record_conflict(db: Session, hostname: str) -> bool:
 
 
 def remove_dns_for_esxi_pxe_hostname(db: Session, hostname: str, actor: str | None) -> str | None:
+    """Remove dns for esxi pxe hostname.
+
+    Args:
+        db: Active database session.
+        hostname: DNS hostname of the target resource.
+        actor: Authenticated identity attributed to the audit record.
+
+    Returns:
+        The remove dns for esxi pxe hostname result.
+    """
     return remove_interface_dns_alias(
         db,
         hostname=hostname,
@@ -5156,6 +6077,17 @@ def remove_dns_for_esxi_pxe_hostname(db: Session, hostname: str, actor: str | No
 
 
 def ensure_dns_for_esxi_pxe(db: Session, boot: dict[str, Any], actor: str | None, *, previous_hostname: str | None = None) -> str | None:
+    """Ensure dns for esxi pxe.
+
+    Args:
+        db: Active database session.
+        boot: Boot supplied by the caller.
+        actor: Authenticated identity attributed to the audit record.
+        previous_hostname: Hostname previously owned by the resource.
+
+    Returns:
+        The ensure dns for esxi pxe result.
+    """
     hostname = normalize_dns_hostname(str(boot.get("hostname") or ESXI_PXE_DEFAULT_HOSTNAME))
     if not bool(boot.get("enabled")):
         return remove_dns_for_esxi_pxe_hostname(db, previous_hostname or hostname, actor)
@@ -5175,6 +6107,11 @@ def ensure_dns_for_esxi_pxe(db: Session, boot: dict[str, Any], actor: str | None
 
 
 def get_esx_storage_settings_row(db: Session) -> EsxStorageSettings:
+    """Return esx storage settings row.
+
+    Args:
+        db: Active database session.
+    """
     settings = db.execute(select(EsxStorageSettings).order_by(EsxStorageSettings.id)).scalars().first()
     if settings is None:
         dns = db.execute(select(DnsSettings).order_by(DnsSettings.id)).scalars().first()
@@ -5186,6 +6123,12 @@ def get_esx_storage_settings_row(db: Session) -> EsxStorageSettings:
 
 
 def esx_storage_bind_state(db: Session, shares: list[EsxNfsShare] | None = None) -> tuple[str, str, dict[str, StorageInterface]]:
+    """Return esx storage bind state.
+
+    Args:
+        db: Active database session.
+        shares: Shares supplied by the caller.
+    """
     options = service_bind_options(db)
     by_name = {str(option["name"]): option for option in options}
     interfaces = {
@@ -5217,6 +6160,16 @@ def esx_storage_bind_state(db: Session, shares: list[EsxNfsShare] | None = None)
 
 
 def ensure_dns_for_esx_storage(db: Session, actor: str | None, *, previous_hostname: str | None = None) -> str | None:
+    """Ensure dns for esx storage.
+
+    Args:
+        db: Active database session.
+        actor: Authenticated identity attributed to the audit record.
+        previous_hostname: Hostname previously owned by the resource.
+
+    Returns:
+        The ensure dns for esx storage result.
+    """
     settings = get_esx_storage_settings_row(db)
     settings.hostname = normalize_dns_hostname(settings.hostname)
     volumes = db.execute(select(EsxStorageVolume).order_by(EsxStorageVolume.name)).scalars().all()
@@ -5294,6 +6247,12 @@ def ensure_dns_for_esx_storage(db: Session, actor: str | None, *, previous_hostn
 
 
 def reconcile_service_dns_aliases(db: Session, actor: str | None = None) -> list[str]:
+    """Return reconcile service dns aliases.
+
+    Args:
+        db: Active database session.
+        actor: Authenticated identity attributed to the audit record.
+    """
     changed: list[str] = []
     kms_settings = db.execute(select(KmsSettings)).scalar_one_or_none()
     if kms_settings and ensure_dns_for_kms(db, kms_settings, actor=actor, previous_hostname=kms_settings.hostname):
@@ -5322,10 +6281,12 @@ def available_dns_listen_addresses(
     listen_options: list[dict[str, str]],
     vlan_interfaces: list[VlanInterface],
 ) -> list[dict[str, str]]:
+    """Return available dns listen addresses."""
     choices: list[dict[str, str]] = []
     seen: set[str] = set()
 
     def add(address: str | None, source: str) -> None:
+        """Create operation."""
         for item in split_addresses(address):
             if item not in seen:
                 seen.add(item)
@@ -5347,10 +6308,12 @@ def available_dns_listen_addresses(
 
 
 def available_service_listen_addresses(current_addresses: str | None, listen_options: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Return available service listen addresses."""
     choices: list[dict[str, str]] = []
     seen: set[str] = set()
 
     def add(address: str | None, source: str) -> None:
+        """Create operation."""
         for item in split_addresses(address):
             if item not in seen:
                 seen.add(item)
@@ -5364,6 +6327,7 @@ def available_service_listen_addresses(current_addresses: str | None, listen_opt
 
 
 def dns_records_by_domain(records: list[DnsRecord], domains: list[str], dns_settings: DnsSettings | None = None) -> list[dict]:
+    """Return dns records by domain."""
     groups = [{"domain": domain, "records": []} for domain in domains]
     group_map = {group["domain"]: group for group in groups}
     for record in records:
@@ -5378,6 +6342,7 @@ def dns_records_by_domain(records: list[DnsRecord], domains: list[str], dns_sett
 
 
 def ipv4_address_or_none(value: str | None) -> IPv4Address | None:
+    """Return ipv4 address or none."""
     try:
         address = ip_address((value or "").strip())
     except ValueError:
@@ -5386,6 +6351,7 @@ def ipv4_address_or_none(value: str | None) -> IPv4Address | None:
 
 
 def ip_address_or_none(value: str | None) -> IPv4Address | IPv6Address | None:
+    """Return ip address or none."""
     try:
         return ip_address((value or "").strip())
     except ValueError:
@@ -5393,6 +6359,7 @@ def ip_address_or_none(value: str | None) -> IPv4Address | IPv6Address | None:
 
 
 def ipv4_range(start: str | None, end: str | None) -> set[IPv4Address]:
+    """Return ipv4 range."""
     start_address = ipv4_address_or_none(start)
     end_address = ipv4_address_or_none(end)
     if not start_address or not end_address:
@@ -5405,6 +6372,7 @@ def ipv4_range(start: str | None, end: str | None) -> set[IPv4Address]:
 
 
 def dhcp_scope_network(scope: DhcpScope) -> IPv4Network | None:
+    """Return dhcp scope network."""
     site_address = ipv4_address_or_none(scope.site_address)
     if not site_address:
         return None
@@ -5415,6 +6383,7 @@ def dhcp_scope_network(scope: DhcpScope) -> IPv4Network | None:
 
 
 def dns_record_suggested_ipv4(records: list[DnsRecord], domain: str, dhcp_scopes: list[DhcpScope], dhcp_reservations: list[DhcpReservation]) -> str:
+    """Return dns record suggested ipv4."""
     domain_records = [record for record in records if matching_domain(record.hostname, [domain]) == domain]
     used_addresses = {
         address
@@ -5467,6 +6436,7 @@ def dns_record_suggested_ipv4(records: list[DnsRecord], domain: str, dhcp_scopes
 
 
 def vcf_sddc_dhcp_assignment_scope(scope: DhcpScope, records: list[DnsRecord], reservations: list[DhcpReservation]) -> dict[str, Any] | None:
+    """Return vcf sddc dhcp assignment scope."""
     if not scope.enabled or scope.address_family.strip().lower() != "ipv4":
         return None
     network = dhcp_scope_network(scope)
@@ -5510,6 +6480,11 @@ def vcf_sddc_dhcp_assignment_scope(scope: DhcpScope, records: list[DnsRecord], r
 
 
 def vcf_sddc_dhcp_assignment_context(db: Session) -> dict[str, Any]:
+    """Return vcf sddc dhcp assignment context.
+
+    Args:
+        db: Active database session.
+    """
     settings = get_dhcp_settings_row(db)
     if not settings.enabled:
         return {"available": False, "reasons": ["Enable DHCP desired state."], "scopes": []}
@@ -5530,6 +6505,19 @@ def validate_vlan_form_values(
     enabled: bool,
     db: Session,
 ) -> tuple[str, int, str, str, bool] | Response:
+    """Validate vlan form values.
+
+    Args:
+        parent_interface: Parent interface supplied by the caller.
+        vlan_id: Identifier of the vlan.
+        ip_cidr: Ip cidr supplied by the caller.
+        ipv6_cidr: IPv6 network or address in CIDR notation.
+        enabled: Whether the requested behavior is enabled.
+        db: Active database session.
+
+    Returns:
+        The validate vlan form values result.
+    """
     parent_name = parent_interface.strip()
     if not parent_name:
         return Response("VLAN parent interface is required.", status_code=409, media_type="text/plain")
@@ -5570,6 +6558,7 @@ def validate_vlan_form_values(
 
 
 def reverse_records_by_zone(records: list[dict[str, str]]) -> list[dict]:
+    """Return reverse records by zone."""
     groups: dict[str, dict] = {}
     for record in records:
         group = groups.setdefault(record["zone"], {"zone": record["zone"], "records": []})
@@ -5578,6 +6567,7 @@ def reverse_records_by_zone(records: list[dict[str, str]]) -> list[dict]:
 
 
 def matching_domain(hostname: str, domains: list[str]) -> str | None:
+    """Return matching domain."""
     normalized = hostname.strip().strip(".").lower()
     for domain in sorted(domains, key=len, reverse=True):
         if normalized == domain or normalized.endswith(f".{domain}"):
@@ -5586,6 +6576,7 @@ def matching_domain(hostname: str, domains: list[str]) -> str | None:
 
 
 def dns_record_payload(record: DnsRecord, domain: str) -> dict:
+    """Return dns record payload."""
     hostname = record.hostname.strip().strip(".").lower()
     suffix = f".{domain}"
     if hostname == domain:
@@ -5609,6 +6600,7 @@ def dns_record_payload(record: DnsRecord, domain: str) -> dict:
 
 
 def dns_record_reverse_status(record: DnsRecord) -> dict[str, str]:
+    """Return dns record reverse status."""
     record_type = record.record_type.strip().upper()
     if record_type not in {"A", "AAAA"}:
         return {
@@ -5642,6 +6634,11 @@ def dns_record_reverse_status(record: DnsRecord) -> dict[str, str]:
 
 
 def normalize_dns_hostname(hostname: str, domain: str | None = None) -> str:
+    """Normalize dns hostname.
+
+    Returns:
+        The normalize dns hostname result.
+    """
     normalized = hostname.strip().strip(".").lower()
     zone = (domain or "").strip().strip(".").lower()
     if zone and normalized == "@":
@@ -5652,11 +6649,13 @@ def normalize_dns_hostname(hostname: str, domain: str | None = None) -> str:
 
 
 def dns_domains_for_settings(settings: DnsSettings) -> list[str]:
+    """Return dns domains for settings."""
     active = split_domains(settings.domain) or ["atlaso.internal"]
     return split_domains("\n".join([*active, *split_domains(settings.disabled_domains)]))
 
 
 def dns_domain_descriptions(settings: DnsSettings) -> dict[str, str]:
+    """Return dns domain descriptions."""
     try:
         payload = json.loads(settings.domain_descriptions_json or "{}")
     except (json.JSONDecodeError, TypeError):
@@ -5671,6 +6670,7 @@ def dns_domain_descriptions(settings: DnsSettings) -> dict[str, str]:
 
 
 def save_dns_domain_description(settings: DnsSettings, domain: str, description: str) -> None:
+    """Persist dns domain description."""
     descriptions = dns_domain_descriptions(settings)
     normalized_domain = domain.strip().strip(".").lower()
     normalized_description = description.strip()
@@ -5686,14 +6686,22 @@ def save_dns_domain_description(settings: DnsSettings, domain: str, description:
 
 
 def save_dns_domains(settings: DnsSettings, domains: list[str]) -> None:
+    """Persist dns domains."""
     settings.domain = join_domains(domains) or "atlaso.internal"
 
 
 def save_disabled_dns_domains(settings: DnsSettings, domains: list[str]) -> None:
+    """Persist disabled dns domains."""
     settings.disabled_domains = join_domains(domains)
 
 
 def records_for_domain(db: Session, domain: str) -> list[DnsRecord]:
+    """Return records for domain.
+
+    Args:
+        db: Active database session.
+        domain: Managed DNS domain affected by the operation.
+    """
     records = db.execute(select(DnsRecord).order_by(DnsRecord.hostname)).scalars().all()
     return [record for record in records if matching_domain(record.hostname, [domain]) == domain]
 
@@ -5728,10 +6736,16 @@ VCF_HELPER_DEFAULT_TARGET = "vcf-9.1"
 
 
 def normalize_vcf_helper_target(target: str) -> str:
+    """Normalize vcf helper target.
+
+    Returns:
+        The normalize vcf helper target result.
+    """
     return target.strip().lower() or VCF_HELPER_DEFAULT_TARGET
 
 
 def vcf_helper_target_components(target: str) -> list[dict[str, str]]:
+    """Return vcf helper target components."""
     normalized_target = normalize_vcf_helper_target(target)
     hosts = VCF_HELPER_TARGET_HOSTS.get(normalized_target)
     if hosts is None:
@@ -5740,14 +6754,17 @@ def vcf_helper_target_components(target: str) -> list[dict[str, str]]:
 
 
 def vcf_helper_target_component_map() -> dict[str, list[dict[str, str]]]:
+    """Return vcf helper target component map."""
     return {target["value"]: vcf_helper_target_components(target["value"]) for target in VCF_HELPER_TARGET_OPTIONS}
 
 
 def vcf_generated_host_label(base_host: str, prefix: str, suffix: str) -> str:
+    """Return vcf generated host label."""
     return f"{prefix.strip().lower()}{base_host}{suffix.strip().lower()}"
 
 
 def vcf_generated_fqdn_preview(domain: str, prefix: str = "", suffix: str = "", target: str = VCF_HELPER_DEFAULT_TARGET) -> list[dict[str, str]]:
+    """Return vcf generated fqdn preview."""
     return [
         {
             "host": component["host"],
@@ -5760,6 +6777,12 @@ def vcf_generated_fqdn_preview(domain: str, prefix: str = "", suffix: str = "", 
 
 
 def occupied_vcf_helper_addresses(record_type: str, db: Session) -> set[IPv4Address | IPv6Address]:
+    """Return occupied vcf helper addresses.
+
+    Args:
+        record_type: Record type supplied by the caller.
+        db: Active database session.
+    """
     normalized_type = record_type.strip().upper()
     occupied: set[IPv4Address | IPv6Address] = set()
     for record in db.execute(select(DnsRecord).where(func.upper(DnsRecord.record_type) == normalized_type)).scalars().all():
@@ -5781,6 +6804,7 @@ def occupied_vcf_helper_addresses(record_type: str, db: Session) -> set[IPv4Addr
 
 
 def vcf_helper_existing_address_records(records: list[DnsRecord]) -> dict[str, list[str]]:
+    """Return vcf helper existing address records."""
     addresses: dict[str, list[str]] = {}
     for record in records:
         if record.record_type.strip().upper() not in {"A", "AAAA"}:
@@ -5797,6 +6821,7 @@ def vcf_helper_start_network(
     start_ipv4: str,
     network_prefix: str = "",
 ) -> tuple[IPv4Address | IPv6Address | None, IPv4Network | IPv6Network | None, str | None]:
+    """Return vcf helper start network."""
     candidate = start_ipv4.strip()
     if "/" not in candidate and network_prefix.strip():
         candidate = f"{candidate}/{network_prefix.strip().removeprefix('/')}"
@@ -5826,6 +6851,7 @@ def next_available_vcf_address(
     occupied: set[IPv4Address | IPv6Address],
     network: IPv4Network | IPv6Network,
 ) -> IPv4Address | IPv6Address | None:
+    """Return next available vcf address."""
     current = int(candidate)
     last_host = int(network.broadcast_address) - 1 if isinstance(candidate, IPv4Address) else int(network.broadcast_address)
     while current <= last_host:
@@ -5846,6 +6872,17 @@ def allocate_vcf_generated_records(
     start_ipv4: str,
     network_prefix: str,
 ) -> tuple[list[dict[str, str]], list[dict[str, str]], list[str]]:
+    """Return allocate vcf generated records.
+
+    Args:
+        db: Active database session.
+        target: Resource targeted by the operation.
+        domain: Managed DNS domain affected by the operation.
+        prefix: Prefix supplied by the caller.
+        suffix: Suffix supplied by the caller.
+        start_ipv4: Start ipv4 supplied by the caller.
+        network_prefix: Network prefix supplied by the caller.
+    """
     domains = dns_domains_for_settings(get_dns_settings_row(db))
     normalized_domain = domain.strip().strip(".").lower()
     if normalized_domain not in domains:
@@ -5912,6 +6949,21 @@ def create_vcf_generated_dns_records(
     network_prefix: str,
     actor: str,
 ) -> tuple[list[dict[str, str]], list[dict[str, str]], list[str]]:
+    """Create vcf generated dns records.
+
+    Args:
+        db: Active database session.
+        target: Resource targeted by the operation.
+        domain: Managed DNS domain affected by the operation.
+        prefix: Prefix supplied by the caller.
+        suffix: Suffix supplied by the caller.
+        start_ipv4: Start ipv4 supplied by the caller.
+        network_prefix: Network prefix supplied by the caller.
+        actor: Authenticated identity attributed to the audit record.
+
+    Returns:
+        The created vcf generated dns records.
+    """
     created, skipped, errors = allocate_vcf_generated_records(
         db,
         target=target,
@@ -5963,6 +7015,19 @@ def delete_vcf_generated_dns_records(
     suffix: str,
     actor: str,
 ) -> tuple[list[dict[str, str]], list[dict[str, str]], list[str]]:
+    """Remove vcf generated dns records.
+
+    Args:
+        db: Active database session.
+        target: Resource targeted by the operation.
+        domain: Managed DNS domain affected by the operation.
+        prefix: Prefix supplied by the caller.
+        suffix: Suffix supplied by the caller.
+        actor: Authenticated identity attributed to the audit record.
+
+    Returns:
+        The delete vcf generated dns records result.
+    """
     domains = dns_domains_for_settings(get_dns_settings_row(db))
     normalized_domain = domain.strip().strip(".").lower()
     if normalized_domain not in domains:
@@ -6006,6 +7071,11 @@ def delete_vcf_generated_dns_records(
 
 
 def vcf_helper_context(db: Session) -> dict[str, Any]:
+    """Return vcf helper context.
+
+    Args:
+        db: Active database session.
+    """
     domains = dns_domains_for_settings(get_dns_settings_row(db))
     default_domain = domains[0] if domains else "atlaso.internal"
     records = db.execute(select(DnsRecord).order_by(DnsRecord.hostname)).scalars().all()
@@ -6027,6 +7097,12 @@ def vcf_helper_context(db: Session) -> dict[str, Any]:
 
 
 def vcf_ldap_helper_context(db: Session, *, selected_organization_id: int | None = None) -> dict[str, Any]:
+    """Return vcf ldap helper context.
+
+    Args:
+        db: Active database session.
+        selected_organization_id: Identifier of the selected organization.
+    """
     organizations = ldap_organizations_query(db)
     selected_organization = next((row for row in organizations if row.id == selected_organization_id), None)
     if selected_organization is None and organizations:
@@ -6051,6 +7127,11 @@ def vcf_ldap_helper_context(db: Session, *, selected_organization_id: int | None
 
 
 def local_vcf_depot_target_context(db: Session) -> dict[str, Any]:
+    """Return local vcf depot target context.
+
+    Args:
+        db: Active database session.
+    """
     settings = get_vcf_offline_depot_settings_row(db)
     software_depot = vcf_depot_software_depot_id_context(db)
     apply_state = appliance_apply_status(db, "vcf_offline_depot")
@@ -6083,6 +7164,11 @@ def local_vcf_depot_target_context(db: Session) -> dict[str, Any]:
 
 
 def vcf_sddc_helper_context(db: Session) -> dict[str, Any]:
+    """Return vcf sddc helper context.
+
+    Args:
+        db: Active database session.
+    """
     try:
         inventory = ova_inventory()
         inventory_error = ""
@@ -6109,6 +7195,7 @@ def vcf_sddc_helper_context(db: Session) -> dict[str, Any]:
 
 
 def _job_payload(job: Job) -> dict[str, Any]:
+    """Return job payload."""
     try:
         return dict(json.loads(job.result or "{}"))
     except (json.JSONDecodeError, TypeError, ValueError):
@@ -6116,6 +7203,7 @@ def _job_payload(job: Job) -> dict[str, Any]:
 
 
 class JobCancelled(RuntimeError):
+    """Represent job cancelled."""
     pass
 
 
@@ -6137,12 +7225,30 @@ TASK_INLINE_SECRET_RE = re.compile(
 
 
 def _raise_if_job_cancelled(job: Job, db: Session) -> None:
+    """Handle raise if job cancelled.
+
+    Args:
+        job: Job being processed.
+        db: Active database session.
+
+    Raises:
+        JobCancelled: If the operation encounters an invalid state.
+    """
     db.refresh(job)
     if job.status == JobStatus.CANCELLED.value:
         raise JobCancelled("Task was cancelled by an operator.")
 
 
 def _update_job(job: Job, db: Session, percent: int, state: str, **values: Any) -> None:
+    """Update job.
+
+    Args:
+        job: Job being processed.
+        db: Active database session.
+        percent: Completion percentage to record for the job.
+        state: Lifecycle or job state to persist.
+        values: Values to normalize, validate, or persist.
+    """
     payload = _job_payload(job)
     payload.update(values)
     payload["state"] = state
@@ -6152,11 +7258,21 @@ def _update_job(job: Job, db: Session, percent: int, state: str, **values: Any) 
 
 
 def _update_cancelable_job(job: Job, db: Session, percent: int, state: str, **values: Any) -> None:
+    """Update cancelable job.
+
+    Args:
+        job: Job being processed.
+        db: Active database session.
+        percent: Completion percentage to record for the job.
+        state: Lifecycle or job state to persist.
+        values: Values to normalize, validate, or persist.
+    """
     _raise_if_job_cancelled(job, db)
     _update_job(job, db, percent, state, **values)
 
 
 def _redact_task_value(value: Any, *, key: str = "") -> Any:
+    """Return redact task value."""
     if key and TASK_SECRET_KEY_RE.search(key):
         return "[redacted]"
     if isinstance(value, dict):
@@ -6171,10 +7287,12 @@ def _redact_task_value(value: Any, *, key: str = "") -> Any:
 
 
 def _task_failure_messages(value: Any) -> list[str]:
+    """Return task failure messages."""
     messages: list[str] = []
     message_keys = {"error", "errors", "detail", "message", "reason", "stderr"}
 
     def add_message(candidate: Any) -> None:
+        """Create message."""
         if isinstance(candidate, str):
             message = candidate.strip()
             if message and message not in messages:
@@ -6184,6 +7302,7 @@ def _task_failure_messages(value: Any) -> list[str]:
                 add_message(item)
 
     def collect(candidate: Any) -> None:
+        """Handle collect."""
         if isinstance(candidate, dict):
             successful_command = candidate.get("returncode") == 0 or candidate.get("success") is True
             for item_key, item_value in candidate.items():
@@ -6201,6 +7320,7 @@ def _task_failure_messages(value: Any) -> list[str]:
 
 
 def _task_status_pill(status_value: str) -> str:
+    """Return task status pill."""
     if status_value in {JobStatus.SUCCEEDED.value, "no-op"}:
         return "good"
     if status_value in FAILED_JOB_STATUSES:
@@ -6213,6 +7333,7 @@ def _task_status_pill(status_value: str) -> str:
 
 
 def _task_console_output(result: dict[str, Any]) -> str:
+    """Return task console output."""
     stdout, stderr = _task_console_streams(result)
     sections: list[str] = []
     if stdout:
@@ -6223,6 +7344,7 @@ def _task_console_output(result: dict[str, Any]) -> str:
 
 
 def _task_console_streams(result: dict[str, Any]) -> tuple[str, str]:
+    """Return task console streams."""
     return (
         _strip_task_action_metadata(result.get("stdout")),
         _strip_task_action_metadata(result.get("stderr")),
@@ -6245,6 +7367,7 @@ def _strip_task_action_metadata(value: Any) -> str:
 
 
 def _task_type_label(job_type: str) -> str:
+    """Return task type label."""
     labels = {
         "appliance-apply": "Appliance Apply",
         "appliance-reboot": "Appliance Reboot",
@@ -6261,6 +7384,7 @@ def _task_type_label(job_type: str) -> str:
 
 
 def _appliance_update_task_label(mode: str) -> str:
+    """Return appliance update task label."""
     return {
         "check": "Appliance Update check",
         "run": "Appliance Update install",
@@ -6274,6 +7398,7 @@ APPLIANCE_UPDATE_TASK_MODES_BY_LABEL = {
 
 
 def _appliance_update_mode_filter_clause(mode: str) -> Any:
+    """Return appliance update mode filter clause."""
     mode_patterns = (f'"mode":"{mode}"', f'"mode": "{mode}"')
     return and_(
         Job.type == "appliance-update",
@@ -6285,6 +7410,7 @@ def _appliance_update_mode_filter_clause(mode: str) -> Any:
 
 
 def _task_row_type_label(job: Job, result: dict[str, Any]) -> str:
+    """Return task row type label."""
     if job.type != "appliance-update":
         return _task_type_label(job.type)
     mode = str(result.get("mode") or "")
@@ -6299,12 +7425,19 @@ def _task_row_type_label(job: Job, result: dict[str, Any]) -> str:
 
 
 def _task_time_label(value: datetime | None) -> str:
+    """Return task time label."""
     if not value:
         return ""
     return value.isoformat()
 
 
 def _can_cancel_task(job: Job, identity: Identity | None = None) -> bool:
+    """Return whether cancel task.
+
+    Args:
+        job: Job being processed.
+        identity: Authenticated identity authorizing the request.
+    """
     if job.status not in ACTIVE_JOB_STATUSES:
         return False
     if job.type == "pxe-media-sync" and job.status == JobStatus.RUNNING.value:
@@ -6326,6 +7459,7 @@ def _can_cancel_task(job: Job, identity: Identity | None = None) -> bool:
 
 
 def _job_step_payload(step: JobStep) -> dict[str, Any]:
+    """Return job step payload."""
     if not step.result:
         return {}
     try:
@@ -6336,6 +7470,12 @@ def _job_step_payload(step: JobStep) -> dict[str, Any]:
 
 
 def _task_row(job: Job, identity: Identity | None = None) -> dict[str, Any]:
+    """Return task row.
+
+    Args:
+        job: Job being processed.
+        identity: Authenticated identity authorizing the request.
+    """
     raw_result = _job_payload(job)
     result = _redact_task_value(raw_result)
     status_value = str(job.status or "")
@@ -6382,6 +7522,7 @@ def _task_row(job: Job, identity: Identity | None = None) -> dict[str, Any]:
 
 
 def _job_step_row(step: JobStep) -> dict[str, Any]:
+    """Return job step row."""
     result = _redact_task_value(_job_step_payload(step))
     error = _redact_task_value(step.error or "")
     error_messages = _task_failure_messages(result)
@@ -6420,6 +7561,11 @@ def _job_step_row(step: JobStep) -> dict[str, Any]:
 
 
 def _task_filter_clauses(raw_filters: str) -> list[Any]:
+    """Return task filter clauses.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     try:
         filters = json.loads(raw_filters or "[]")
     except json.JSONDecodeError as exc:
@@ -6470,6 +7616,11 @@ def _task_filter_clauses(raw_filters: str) -> list[Any]:
 
 
 def _task_component_filter_options(db: Session) -> list[str]:
+    """Return task component filter options.
+
+    Args:
+        db: Active database session.
+    """
     task_types = db.execute(select(Job.type).where(Job.type.is_not(None)).distinct().order_by(Job.type)).scalars().all()
     component_labels = db.execute(
         select(JobStep.label).where(JobStep.label.is_not(None), JobStep.label != "").distinct().order_by(JobStep.label)
@@ -6482,6 +7633,12 @@ def _task_component_filter_options(db: Session) -> list[str]:
 
 
 def _task_log_lines(job: Job, db: Session) -> list[str]:
+    """Return task log lines.
+
+    Args:
+        job: Job being processed.
+        db: Active database session.
+    """
     row = _task_row(job)
     lines = [
         f"Job: {row['id']}",
@@ -6522,6 +7679,14 @@ def _task_log_lines(job: Job, db: Session) -> list[str]:
 
 
 def _local_depot_endpoint(db: Session) -> LocalDepotEndpoint:
+    """Return local depot endpoint.
+
+    Args:
+        db: Active database session.
+
+    Raises:
+        VcfDepotTargetError: If the operation encounters an invalid state.
+    """
     context = local_vcf_depot_target_context(db)
     if not context["available"]:
         raise VcfDepotTargetError(" ".join(context["reasons"]))
@@ -6544,6 +7709,18 @@ def run_vcf_target_depot_job(
     replace_existing: bool,
     expected_fingerprint: str,
 ) -> None:
+    """Run vcf target depot job.
+
+    Args:
+        job_id: Identifier of the job.
+        address: Network address of the target service or interface.
+        port: TCP or UDP port of the target service.
+        api_username: Api username supplied by the caller.
+        api_password: Api password supplied by the caller.
+        depot_password: Depot password supplied by the caller.
+        replace_existing: Replace existing supplied by the caller.
+        expected_fingerprint: Certificate fingerprint explicitly confirmed by the operator.
+    """
     with SessionLocal() as db:
         configure_operational_logging(db)
         job = db.get(Job, job_id)
@@ -6556,6 +7733,7 @@ def run_vcf_target_depot_job(
             local = _local_depot_endpoint(db)
 
             def update(percent: int, state: str) -> None:
+                """Update operation."""
                 _update_cancelable_job(job, db, percent, state)
 
             outcome = configure_target_depot(
@@ -6605,6 +7783,7 @@ def run_vcf_target_depot_job(
 
 
 def queue_vcf_target_depot_job(job_id: str, **kwargs: Any) -> None:
+    """Handle queue vcf target depot job."""
     threading.Thread(
         target=run_vcf_target_depot_job,
         kwargs={"job_id": job_id, **kwargs},
@@ -6614,6 +7793,17 @@ def queue_vcf_target_depot_job(job_id: str, **kwargs: Any) -> None:
 
 
 def _add_deployed_vcf_dns(db: Session, fqdn: str, addresses: list[str], *, job_id: str) -> dict[str, Any]:
+    """Create deployed vcf dns.
+
+    Args:
+        db: Active database session.
+        fqdn: Fully qualified domain name to validate or use.
+        addresses: Addresses supplied by the caller.
+        job_id: Identifier of the job.
+
+    Returns:
+        The add deployed vcf dns result.
+    """
     settings = get_dns_settings_row(db)
     normalized = fqdn.strip().strip(".").lower()
     domains = [item.lower() for item in dns_domains_for_settings(settings)]
@@ -6656,6 +7846,19 @@ def _add_deployed_vcf_dns(db: Session, fqdn: str, addresses: list[str], *, job_i
 
 
 def _wait_for_vcf_api(address: str, username: str, password: str, *, timeout: float = 5400.0, cancelled: Callable[[], bool] | None = None) -> dict[str, str]:
+    """Return wait for vcf api.
+
+    Args:
+        address: Network address of the target service or interface.
+        username: Account name used for authentication or lookup.
+        password: Password supplied for the immediate authenticated operation.
+        timeout: Maximum time to wait for completion.
+        cancelled: Callback that reports whether cancellation was requested.
+
+    Raises:
+        JobCancelled: If the operation encounters an invalid state.
+        VcfSddcDeploymentError: If the operation encounters an invalid state.
+    """
     started = time.monotonic()
     last_error: Exception | None = None
     while time.monotonic() - started < timeout:
@@ -6681,9 +7884,22 @@ def _configure_deployed_target_depot(
     local_password: str,
     depot_password: str,
 ) -> dict[str, Any]:
+    """Update deployed target depot.
+
+    Args:
+        db: Active database session.
+        job: Job being processed.
+        address: Network address of the target service or interface.
+        local_password: Local password supplied by the caller.
+        depot_password: Depot password supplied by the caller.
+
+    Returns:
+        The configure deployed target depot result.
+    """
     local = _local_depot_endpoint(db)
 
     def update(percent: int, state: str) -> None:
+        """Update operation."""
         _update_cancelable_job(job, db, min(99, 90 + int(percent / 10)), f"depot-{state}")
 
     return configure_target_depot(
@@ -6705,6 +7921,18 @@ def _execute_deployed_target_trust(
     ca: RootCaInfo,
     progress: Callable[[int, str], None] | None = None,
 ) -> dict[str, Any]:
+    """Run deployed target trust.
+
+    Args:
+        address: Network address of the target service or interface.
+        local_password: Local password supplied by the caller.
+        expected_tls_fingerprint: Expected tls fingerprint supplied by the caller.
+        ca: Ca supplied by the caller.
+        progress: Progress supplied by the caller.
+
+    Returns:
+        The execute deployed target trust result.
+    """
     return execute_vcf_trust(
         address=address,
         port=443,
@@ -6736,6 +7964,28 @@ def run_vcf_sddc_deployment_job(
     configure_offline_depot: bool,
     depot_password: str,
 ) -> None:
+    """Run vcf sddc deployment job.
+
+    Args:
+        job_id: Identifier of the job.
+        ova_path: Filesystem path for the ova.
+        endpoint: Endpoint supplied by the caller.
+        endpoint_username: Endpoint username supplied by the caller.
+        endpoint_password: Endpoint password supplied by the caller.
+        endpoint_fingerprint: Endpoint fingerprint supplied by the caller.
+        destination: Destination path, address, or resource.
+        vm_name: Vm name supplied by the caller.
+        disk_provisioning: Disk provisioning supplied by the caller.
+        power_on: Power on supplied by the caller.
+        property_values: Property values supplied by the caller.
+        add_dns: Add dns supplied by the caller.
+        apply_trust: Apply trust supplied by the caller.
+        configure_offline_depot: Configure offline depot supplied by the caller.
+        depot_password: Depot password supplied by the caller.
+
+    Raises:
+        VcfSddcDeploymentError: If the operation encounters an invalid state.
+    """
     with SessionLocal() as db:
         configure_operational_logging(db)
         job = db.get(Job, job_id)
@@ -6746,9 +7996,11 @@ def run_vcf_sddc_deployment_job(
         db.commit()
 
         def update(percent: int, state: str) -> None:
+            """Update operation."""
             _update_cancelable_job(job, db, percent, state)
 
         def cancelled() -> bool:
+            """Return cancelled."""
             db.refresh(job)
             return job.status == JobStatus.CANCELLED.value
 
@@ -6812,6 +8064,7 @@ def run_vcf_sddc_deployment_job(
                 tls_fingerprint = tls_sha256_fingerprint(target_address, 443)
 
                 def trust_update(percent: int, state: str) -> None:
+                    """Handle trust update."""
                     _update_cancelable_job(job, db, 90 + int(percent / 12), f"trust-{state}")
 
                 trust_result = _execute_deployed_target_trust(
@@ -6876,6 +8129,7 @@ def run_vcf_sddc_deployment_job(
 
 
 def queue_vcf_sddc_deployment_job(job_id: str, **kwargs: Any) -> None:
+    """Handle queue vcf sddc deployment job."""
     threading.Thread(
         target=run_vcf_sddc_deployment_job,
         kwargs={"job_id": job_id, **kwargs},
@@ -6885,6 +8139,11 @@ def queue_vcf_sddc_deployment_job(job_id: str, **kwargs: Any) -> None:
 
 
 def vcf_trust_context(db: Session) -> dict[str, Any]:
+    """Return vcf trust context.
+
+    Args:
+        db: Active database session.
+    """
     try:
         trust_ca = root_ca_info(get_ca_settings_row(db))
         trust_ca_error = ""
@@ -6908,6 +8167,13 @@ def vcf_trust_context(db: Session) -> dict[str, Any]:
 
 
 def _vcf_trust_target(db: Session, address: str, port: int) -> VcfTrustTarget:
+    """Return vcf trust target.
+
+    Args:
+        db: Active database session.
+        address: Network address of the target service or interface.
+        port: TCP or UDP port of the target service.
+    """
     target = db.execute(
         select(VcfTrustTarget).where(VcfTrustTarget.address == address, VcfTrustTarget.api_port == port)
     ).scalar_one_or_none()
@@ -6919,6 +8185,14 @@ def _vcf_trust_target(db: Session, address: str, port: int) -> VcfTrustTarget:
 
 
 def run_vcf_trust_job(job_id: str, target_id: int, credentials: VcfTrustCredentials, ca: RootCaInfo) -> None:
+    """Run vcf trust job.
+
+    Args:
+        job_id: Identifier of the job.
+        target_id: Identifier of the target.
+        credentials: Credential bundle used for the immediate external request.
+        ca: Ca supplied by the caller.
+    """
     with SessionLocal() as db:
         job = db.get(Job, job_id)
         target = db.get(VcfTrustTarget, target_id)
@@ -6933,6 +8207,7 @@ def run_vcf_trust_job(job_id: str, target_id: int, credentials: VcfTrustCredenti
         db.commit()
 
         def update(percent: int, state: str) -> None:
+            """Update operation."""
             _raise_if_job_cancelled(job, db)
             job.progress_percent = percent
             job.result = sanitized_result(
@@ -7024,6 +8299,14 @@ def run_vcf_trust_job(job_id: str, target_id: int, credentials: VcfTrustCredenti
 
 
 def queue_vcf_trust_job(job_id: str, target_id: int, credentials: VcfTrustCredentials, ca: RootCaInfo) -> None:
+    """Handle queue vcf trust job.
+
+    Args:
+        job_id: Identifier of the job.
+        target_id: Identifier of the target.
+        credentials: Credential bundle used for the immediate external request.
+        ca: Ca supplied by the caller.
+    """
     threading.Thread(
         target=run_vcf_trust_job,
         args=(job_id, target_id, credentials, ca),
@@ -7033,6 +8316,11 @@ def queue_vcf_trust_job(job_id: str, target_id: int, credentials: VcfTrustCreden
 
 
 def _normalize_vcf_trust_address(address: str) -> tuple[str, list[str]]:
+    """Normalize vcf trust address.
+
+    Returns:
+        The normalize vcf trust address result.
+    """
     normalized_address = address.strip()
     errors: list[str] = []
     if not normalized_address or any(character.isspace() for character in normalized_address):
@@ -7074,6 +8362,11 @@ JSON_SECRET_FIELD_PATTERN = re.compile(r'^(\s*"[^"]+"\s*:\s*)(.*?)(,?)\s*$')
 
 
 def redact_config_preview(config_preview: str) -> str:
+    """Return redact config preview.
+
+    Args:
+        config_preview: Rendered configuration text approved for staging.
+    """
     lines: list[str] = []
     in_private_key = False
     for line in (config_preview or "").splitlines():
@@ -7102,6 +8395,11 @@ def redact_config_preview(config_preview: str) -> str:
 
 
 def load_appliance_apply_baselines(db: Session) -> dict[str, dict[str, Any]]:
+    """Return appliance apply baselines.
+
+    Args:
+        db: Active database session.
+    """
     raw_value = setting_value(db, APPLIANCE_APPLY_BASELINES_KEY)
     if not raw_value:
         return {}
@@ -7116,15 +8414,23 @@ def load_appliance_apply_baselines(db: Session) -> dict[str, dict[str, Any]]:
 
 
 def save_appliance_apply_baselines(db: Session, baselines: dict[str, dict[str, Any]]) -> None:
+    """Persist appliance apply baselines.
+
+    Args:
+        db: Active database session.
+        baselines: Baselines supplied by the caller.
+    """
     set_setting_value(db, APPLIANCE_APPLY_BASELINES_KEY, json.dumps(baselines, indent=2, sort_keys=True))
 
 
 def appliance_snapshot_hash(payload: dict[str, Any]) -> str:
+    """Return appliance snapshot hash."""
     encoded = json.dumps(payload, sort_keys=True, default=str, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
 def config_diff_for_unit(unit_id: str, current_preview: str, baseline: dict[str, Any] | None) -> str:
+    """Return config diff for unit."""
     if not baseline or not baseline.get("config_preview"):
         return ""
     previous_preview = str(baseline.get("config_preview") or "")
@@ -7142,6 +8448,11 @@ def config_diff_for_unit(unit_id: str, current_preview: str, baseline: dict[str,
 
 
 def network_management_signature(config_preview: str) -> dict[str, str]:
+    """Return network management signature.
+
+    Args:
+        config_preview: Rendered configuration text approved for staging.
+    """
     interfaces: list[dict[str, str]] = []
     current_section = ""
     current: dict[str, str] | None = None
@@ -7177,6 +8488,7 @@ def network_management_signature(config_preview: str) -> dict[str, str]:
 
 
 def management_address_label(signature: dict[str, str]) -> str:
+    """Return management address label."""
     if signature.get("ip_cidr"):
         return signature["ip_cidr"]
     if signature.get("ipv4_method") == "dhcp":
@@ -7187,6 +8499,11 @@ def management_address_label(signature: dict[str, str]) -> str:
 
 
 def json_config_object(config_preview: str) -> dict[str, Any]:
+    """Return json config object.
+
+    Args:
+        config_preview: Rendered configuration text approved for staging.
+    """
     try:
         payload = json.loads(config_preview or "")
     except json.JSONDecodeError:
@@ -7195,6 +8512,11 @@ def json_config_object(config_preview: str) -> dict[str, Any]:
 
 
 def management_tls_binding_signature(config_preview: str) -> dict[str, Any]:
+    """Return management tls binding signature.
+
+    Args:
+        config_preview: Rendered configuration text approved for staging.
+    """
     payload = json_config_object(config_preview)
     if not payload:
         return {}
@@ -7206,6 +8528,11 @@ def management_tls_binding_signature(config_preview: str) -> dict[str, Any]:
 
 
 def management_certificate_signature(config_preview: str) -> dict[str, str]:
+    """Return management certificate signature.
+
+    Args:
+        config_preview: Rendered configuration text approved for staging.
+    """
     payload = json_config_object(config_preview)
     for certificate in payload.get("certificates", []):
         if not isinstance(certificate, dict) or certificate.get("managed_owner") != "appliance:https":
@@ -7226,6 +8553,7 @@ def appliance_apply_connection_warnings(
     current_preview: str,
     baseline: dict[str, Any] | None,
 ) -> list[str]:
+    """Return appliance apply connection warnings."""
     previous_preview = str((baseline or {}).get("config_preview") or "")
     if not previous_preview:
         return []
@@ -7262,6 +8590,11 @@ def appliance_apply_connection_warnings(
 
 
 def network_vlan_entries_from_config(config_preview: str) -> list[dict[str, str]]:
+    """Return network vlan entries from config.
+
+    Args:
+        config_preview: Rendered configuration text approved for staging.
+    """
     vlan_entries: list[dict[str, str]] = []
     current_section = ""
     current: dict[str, str] | None = None
@@ -7286,6 +8619,12 @@ def network_vlan_entries_from_config(config_preview: str) -> list[dict[str, str]
 
 
 def successful_network_apply_vlan_entries(db: Session, baseline: dict[str, Any] | None) -> list[dict[str, str]]:
+    """Return successful network apply vlan entries.
+
+    Args:
+        db: Active database session.
+        baseline: Baseline supplied by the caller.
+    """
     applied_by_name: dict[str, dict[str, str]] = {}
     baseline_preview = str((baseline or {}).get("config_preview") or "")
     for entry in network_vlan_entries_from_config(baseline_preview):
@@ -7320,6 +8659,7 @@ def successful_network_apply_vlan_entries(db: Session, baseline: dict[str, Any] 
 
 
 def removed_network_vlan_entries(current_preview: str, applied_entries: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Return removed network vlan entries."""
     current_names = {entry.get("name", "") for entry in network_vlan_entries_from_config(current_preview)}
     removed: list[dict[str, str]] = []
     for entry in applied_entries:
@@ -7336,6 +8676,11 @@ def removed_network_vlan_entries(current_preview: str, applied_entries: list[dic
 
 
 def local_usernames_from_config(config_preview: str) -> list[str]:
+    """Return local usernames from config.
+
+    Args:
+        config_preview: Rendered configuration text approved for staging.
+    """
     try:
         payload = json.loads(config_preview or "")
     except json.JSONDecodeError:
@@ -7353,12 +8698,19 @@ def local_usernames_from_config(config_preview: str) -> list[str]:
 
 
 def removed_local_usernames(users: list[User], baseline: dict[str, Any] | None) -> list[str]:
+    """Return removed local usernames."""
     current = {user.username.strip().lower() for user in users}
     previous = local_usernames_from_config(str((baseline or {}).get("config_preview") or ""))
     return [username for username in previous if username not in current]
 
 
 def network_config_with_removed_vlans(config_preview: str, removed_vlans: list[dict[str, str]]) -> str:
+    """Return network config with removed vlans.
+
+    Args:
+        config_preview: Rendered configuration text approved for staging.
+        removed_vlans: Removed vlans supplied by the caller.
+    """
     if not removed_vlans:
         return config_preview
     lines = [config_preview.rstrip(), "", "[removed_vlan_interfaces]"]
@@ -7374,6 +8726,11 @@ def network_config_with_removed_vlans(config_preview: str, removed_vlans: list[d
 
 
 def wan_route_entries_from_config(config_preview: str) -> list[dict[str, str]]:
+    """Return wan route entries from config.
+
+    Args:
+        config_preview: Rendered configuration text approved for staging.
+    """
     entries: list[dict[str, str]] = []
     current_section = ""
     current: dict[str, str] | None = None
@@ -7398,6 +8755,7 @@ def wan_route_entries_from_config(config_preview: str) -> list[dict[str, str]]:
 
 
 def removed_wan_route_entries(current_preview: str, baseline: dict[str, Any] | None) -> list[dict[str, str]]:
+    """Return removed wan route entries."""
     baseline_preview = str((baseline or {}).get("config_preview") or "")
     current_keys = {
         (entry.get("destination_cidr", ""), entry.get("interface", ""))
@@ -7433,6 +8791,25 @@ def make_appliance_apply_unit(
     raw_config_preview: str | None = None,
     snapshot_marker: Any = None,
 ) -> dict[str, Any]:
+    """Build appliance apply unit.
+
+    Args:
+        unit_id: Identifier of the unit.
+        label: Human-readable label used in validation output.
+        page_url: URL for the page.
+        context: Runtime or protocol context for the operation.
+        summary: Summary supplied by the caller.
+        validation_errors: Validation errors supplied by the caller.
+        validation_warnings: Validation warnings supplied by the caller.
+        config_path: Filesystem path for the config.
+        config_preview: Rendered configuration text approved for staging.
+        baseline: Baseline supplied by the caller.
+        raw_config_preview: Raw config preview supplied by the caller.
+        snapshot_marker: Snapshot marker supplied by the caller.
+
+    Returns:
+        The make appliance apply unit result.
+    """
     redacted_preview = redact_config_preview(config_preview)
     snapshot_payload = {
         "unit_id": unit_id,
@@ -7464,6 +8841,12 @@ def make_appliance_apply_unit(
 
 
 def local_users_apply_context(db: Session, baseline: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Return local users apply context.
+
+    Args:
+        db: Active database session.
+        baseline: Baseline supplied by the caller.
+    """
     users = db.execute(select(User).order_by(User.username)).scalars().all()
     validation_errors = validate_local_usernames(users)
     policy = local_users_password_policy(db)
@@ -7486,6 +8869,11 @@ def local_users_apply_context(db: Session, baseline: dict[str, Any] | None = Non
 
 
 def esxi_pxe_context(db: Session) -> dict[str, Any]:
+    """Return esxi pxe context.
+
+    Args:
+        db: Active database session.
+    """
     from atlaso.app.services.network_boot import desired_environment_manifest_rows
 
     kickstarts = db.execute(select(EsxiKickstart).order_by(EsxiKickstart.name)).scalars().all()
@@ -7631,6 +9019,12 @@ def esxi_pxe_context(db: Session) -> dict[str, Any]:
 
 
 def annotate_esxi_installer_iso_sources(db: Session, installer_isos: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return annotate esxi installer iso sources.
+
+    Args:
+        db: Active database session.
+        installer_isos: Installer isos supplied by the caller.
+    """
     upload_events = {
         row.resource_id: row
         for row in db.execute(
@@ -7659,6 +9053,19 @@ def annotate_esxi_installer_iso_sources(db: Session, installer_isos: list[dict[s
 
 
 def parse_optional_esxi_kickstart_id(db: Session, kickstart_id: str, *, label: str = "Kickstart") -> int | None:
+    """Parse optional esxi kickstart id.
+
+    Args:
+        db: Active database session.
+        kickstart_id: Identifier of the kickstart.
+        label: Human-readable label used in validation output.
+
+    Returns:
+        The parsed optional esxi kickstart id.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     value = str(kickstart_id or "").strip()
     if not value:
         return None
@@ -7671,6 +9078,12 @@ def parse_optional_esxi_kickstart_id(db: Session, kickstart_id: str, *, label: s
 
 
 def esx_storage_context(db: Session, *, reconcile: bool = True) -> dict[str, Any]:
+    """Return esx storage context.
+
+    Args:
+        db: Active database session.
+        reconcile: Whether dependent desired state should be reconciled.
+    """
     settings = get_esx_storage_settings_row(db)
     volumes = db.execute(select(EsxStorageVolume).order_by(EsxStorageVolume.name)).scalars().all()
     shares = db.execute(select(EsxNfsShare).order_by(EsxNfsShare.datastore_name)).scalars().all()
@@ -7787,6 +9200,12 @@ def esx_storage_context(db: Session, *, reconcile: bool = True) -> dict[str, Any
 
 
 def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[str, Any]]:
+    """Return appliance apply units.
+
+    Args:
+        db: Active database session.
+        reconcile: Whether dependent desired state should be reconciled.
+    """
     baselines = load_appliance_apply_baselines(db)
     local_users = local_users_apply_context(db, baselines.get("local_users"))
     appliance_settings = appliance_settings_context(db, reconcile_dns=reconcile)
@@ -8116,6 +9535,12 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
 
 
 def appliance_apply_status(db: Session, unit_id: str) -> dict[str, Any]:
+    """Return appliance apply status.
+
+    Args:
+        db: Active database session.
+        unit_id: Identifier of the unit.
+    """
     units = appliance_apply_units(db)
     sidebar_count = len([unit for unit in units if unit["changed"]])
     for unit in units:
@@ -8125,6 +9550,7 @@ def appliance_apply_status(db: Session, unit_id: str) -> dict[str, Any]:
 
 
 def appliance_apply_status_from_unit(unit: dict[str, Any], *, sidebar_pending_apply_count: int | None = None) -> dict[str, Any]:
+    """Return appliance apply status from unit."""
     if unit["validation_errors"]:
         state = "needs attention"
         pill = "warn"
@@ -8152,6 +9578,12 @@ def appliance_apply_client_status(status: dict[str, Any]) -> dict[str, Any]:
 
 
 def dnsmasq_apply_status(db: Session, dnsmasq: dict[str, Any]) -> dict[str, Any]:
+    """Return dnsmasq apply status.
+
+    Args:
+        db: Active database session.
+        dnsmasq: Dnsmasq supplied by the caller.
+    """
     baselines = load_appliance_apply_baselines(db)
     unit = make_appliance_apply_unit(
         unit_id="dnsmasq",
@@ -8181,6 +9613,12 @@ def dnsmasq_apply_status(db: Session, dnsmasq: dict[str, Any]) -> dict[str, Any]
 
 
 def ntpd_apply_status(db: Session, ntp: dict[str, Any]) -> dict[str, Any]:
+    """Return ntpd apply status.
+
+    Args:
+        db: Active database session.
+        ntp: Ntp supplied by the caller.
+    """
     baselines = load_appliance_apply_baselines(db)
     unit = make_appliance_apply_unit(
         unit_id="ntpd",
@@ -8201,6 +9639,12 @@ def ntpd_apply_status(db: Session, ntp: dict[str, Any]) -> dict[str, Any]:
 
 
 def service_runtime_status(db: Session, service_id: str) -> dict[str, Any]:
+    """Return service runtime status.
+
+    Args:
+        db: Active database session.
+        service_id: Identifier of the service.
+    """
     row = db.execute(select(ServiceState).where(ServiceState.service == service_id)).scalar_one_or_none()
     if row is None:
         return {"label": "unknown", "pill": "muted", "running": False, "enabled": False, "health": "unknown", "detail": ""}
@@ -8230,6 +9674,11 @@ def service_runtime_status(db: Session, service_id: str) -> dict[str, Any]:
 
 
 def appliance_apply_context(db: Session) -> dict[str, Any]:
+    """Return appliance apply context.
+
+    Args:
+        db: Active database session.
+    """
     units = appliance_apply_units(db)
     submitted_ids = active_appliance_apply_submitted_unit_ids(db)
     changed_units = [unit for unit in units if unit["changed"] and unit["id"] not in submitted_ids]
@@ -8248,6 +9697,7 @@ def dashboard_appliance_apply_units(db: Session) -> list[dict[str, Any]]:
 
 
 def _dashboard_iso(value: datetime | None) -> str:
+    """Return dashboard iso."""
     if value is None:
         return ""
     if value.tzinfo is None:
@@ -8256,6 +9706,7 @@ def _dashboard_iso(value: datetime | None) -> str:
 
 
 def _dashboard_activity_outcome(status_value: str) -> tuple[str, str]:
+    """Return dashboard activity outcome."""
     normalized = str(status_value or "").strip().lower()
     if normalized in {JobStatus.SUCCEEDED.value, "success"}:
         return "Succeeded", "good"
@@ -8269,6 +9720,7 @@ def _dashboard_activity_outcome(status_value: str) -> tuple[str, str]:
 
 
 def _appliance_apply_selected_unit_ids(job: Job) -> set[str]:
+    """Return appliance apply selected unit ids."""
     payload = _job_payload(job)
     selected = {str(unit_id) for unit_id in payload.get("selected_units", []) if str(unit_id)}
     if selected:
@@ -8281,6 +9733,7 @@ def _appliance_apply_selected_unit_ids(job: Job) -> set[str]:
 
 
 def _appliance_apply_unresolved_unit_ids(job: Job) -> set[str]:
+    """Return appliance apply unresolved unit ids."""
     payload = _job_payload(job)
     selected = _appliance_apply_selected_unit_ids(job)
     succeeded = {
@@ -8292,6 +9745,7 @@ def _appliance_apply_unresolved_unit_ids(job: Job) -> set[str]:
 
 
 def _appliance_apply_failure_is_resolved(job: Job, successful_applies: list[Job]) -> bool:
+    """Return appliance apply failure is resolved."""
     unresolved_units = _appliance_apply_unresolved_unit_ids(job)
     if not unresolved_units:
         return False
@@ -8585,6 +10039,11 @@ def dashboard_snapshot(db: Session) -> dict[str, Any]:
 
 
 def appliance_update_settings(db: Session) -> dict[str, Any]:
+    """Return appliance update settings.
+
+    Args:
+        db: Active database session.
+    """
     stored = update_settings_from_json(setting_value(db, APPLIANCE_UPDATE_SETTINGS_KEY))
     settings = effective_update_settings(db, stored=stored)
     settings["vmware_ceip_enabled"] = bool(get_appliance_settings_row(db).vmware_ceip_enabled)
@@ -8592,6 +10051,11 @@ def appliance_update_settings(db: Session) -> dict[str, Any]:
 
 
 def appliance_update_context(db: Session) -> dict[str, Any]:
+    """Return appliance update context.
+
+    Args:
+        db: Active database session.
+    """
     settings = appliance_update_settings(db)
     recent_jobs = db.execute(
         select(Job)
@@ -8664,6 +10128,11 @@ def appliance_update_context(db: Session) -> dict[str, Any]:
 
 
 def vaults_context(db: Session) -> dict[str, Any]:
+    """Return vaults context.
+
+    Args:
+        db: Active database session.
+    """
     return {
         "vaults": [
             {
@@ -8685,6 +10154,15 @@ def _vaults_render_error(
     *,
     status_code: int = 422,
 ) -> HTMLResponse:
+    """Return vaults render error.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+        message: Public-safe status or error message.
+        status_code: HTTP status code for the response.
+    """
     return render(
         request,
         "vaults.html",
@@ -8699,6 +10177,16 @@ def vaults_page(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the vaults page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     require_admin_identity(identity)
     return render(request, "vaults.html", {"identity": identity, **vaults_context(db)})
 
@@ -8712,6 +10200,19 @@ def create_vault_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the create vault from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        name: Name of the target object.
+        description: Human-readable description of the resource.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     try:
@@ -8748,6 +10249,29 @@ def create_vault_entry_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the create vault entry from ui endpoint.
+
+    Args:
+        vault_id: Identifier of the vault.
+        request: Incoming HTTP request.
+        key: Stable setting, vault, or mapping key.
+        value: Value to process.
+        description: Human-readable description of the resource.
+        username: Account name used for authentication or lookup.
+        resource_name: Resource name supplied by the caller.
+        uris_json: Uris json supplied by the caller.
+        copy_entry_id: Identifier of the copy entry.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+        ValueError: If an input value is invalid.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     vault = db.get(Vault, vault_id)
@@ -8816,6 +10340,28 @@ def edit_vault_entry_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the edit vault entry from ui endpoint.
+
+    Args:
+        vault_id: Identifier of the vault.
+        entry_id: Identifier of the entry.
+        request: Incoming HTTP request.
+        key: Stable setting, vault, or mapping key.
+        value: Value to process.
+        description: Human-readable description of the resource.
+        username: Account name used for authentication or lookup.
+        resource_name: Resource name supplied by the caller.
+        uris_json: Uris json supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     entry = db.get(VaultEntry, entry_id)
@@ -8860,6 +10406,22 @@ def reveal_vault_entry_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    """Handle the reveal vault entry from ui endpoint.
+
+    Args:
+        vault_id: Identifier of the vault.
+        entry_id: Identifier of the entry.
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     entry = db.get(VaultEntry, entry_id)
@@ -8892,6 +10454,22 @@ def delete_vault_entry_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the delete vault entry from ui endpoint.
+
+    Args:
+        vault_id: Identifier of the vault.
+        entry_id: Identifier of the entry.
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     entry = db.get(VaultEntry, entry_id)
@@ -8919,6 +10497,21 @@ def delete_vault_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the delete vault from ui endpoint.
+
+    Args:
+        vault_id: Identifier of the vault.
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     vault = db.get(Vault, vault_id)
@@ -8970,6 +10563,11 @@ def delete_vault_from_ui(
 
 
 def automation_context(db: Session) -> dict[str, Any]:
+    """Return automation context.
+
+    Args:
+        db: Active database session.
+    """
     schedules = db.execute(select(Schedule).order_by(Schedule.name)).scalars().all()
     scripts = db.execute(
         select(AutomationScript).options(selectinload(AutomationScript.revisions)).order_by(AutomationScript.name)
@@ -9122,6 +10720,19 @@ def execute_appliance_update_job(
     job_id: str = "",
     credentials: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, Any]:
+    """Run appliance update job.
+
+    Args:
+        selected_stream_ids: Selected stream ids supplied by the caller.
+        settings: Desired or runtime settings consumed by the operation.
+        actor: Authenticated identity attributed to the audit record.
+        mode: Operating mode selected for the workflow.
+        job_id: Identifier of the job.
+        credentials: Credential bundle used for the immediate external request.
+
+    Returns:
+        The execute appliance update job result.
+    """
     adapter = SystemAdapter()
     manifest_preview = render_update_manifest(
         selected_streams=selected_stream_ids,
@@ -9220,6 +10831,16 @@ def aggregate_appliance_update_results(
     stream_results: list[dict[str, Any]],
     job_id: str = "",
 ) -> dict[str, Any]:
+    """Return aggregate appliance update results.
+
+    Args:
+        selected_stream_ids: Selected stream ids supplied by the caller.
+        settings: Desired or runtime settings consumed by the operation.
+        actor: Authenticated identity attributed to the audit record.
+        mode: Operating mode selected for the workflow.
+        stream_results: Stream results supplied by the caller.
+        job_id: Identifier of the job.
+    """
     selected = selected_update_streams(selected_stream_ids)
     results_by_stream = {
         str(result.get("unit_id") or ""): result
@@ -9274,6 +10895,13 @@ def aggregate_appliance_update_results(
 
 
 def complete_appliance_update_task(db: Session, *, job: Job, update_result: dict[str, Any]) -> Job:
+    """Return complete appliance update task.
+
+    Args:
+        db: Active database session.
+        job: Job being processed.
+        update_result: Update result supplied by the caller.
+    """
     now = utcnow()
     if update_result.get("mode") == "source_sync":
         reported_results = {
@@ -9350,6 +10978,7 @@ def complete_appliance_update_task(db: Session, *, job: Job, update_result: dict
 
 
 def appliance_update_failure_message(update_result: dict[str, Any]) -> str:
+    """Handle appliance update failure message."""
     explicit = str(update_result.get("error") or "").strip()
     if explicit:
         return apply_output_excerpt(explicit, limit=2000)
@@ -9370,6 +10999,15 @@ def appliance_update_exception_result(
     mode: str,
     exc: Exception,
 ) -> dict[str, Any]:
+    """Return appliance update exception result.
+
+    Args:
+        selected_stream_ids: Selected stream ids supplied by the caller.
+        settings: Desired or runtime settings consumed by the operation.
+        actor: Authenticated identity attributed to the audit record.
+        mode: Operating mode selected for the workflow.
+        exc: Exception that caused the operation to fail.
+    """
     manifest_preview = render_update_manifest(selected_streams=selected_stream_ids, settings=settings, actor=actor)
     unit_id = selected_stream_ids[0] if len(selected_stream_ids) == 1 else "appliance_update"
     label = UPDATE_STREAM_LABELS[unit_id] if unit_id in UPDATE_STREAM_LABELS else "Appliance Update"
@@ -9401,6 +11039,7 @@ def appliance_update_exception_result(
 
 
 def adapter_result_to_payload(result: Any) -> dict[str, Any]:
+    """Return adapter result to payload."""
     return {
         "command": result.command,
         "command_line": " ".join(result.command),
@@ -9412,6 +11051,11 @@ def adapter_result_to_payload(result: Any) -> dict[str, Any]:
 
 
 def apply_output_excerpt(value: str, *, limit: int = 2400) -> str:
+    """Update output excerpt.
+
+    Returns:
+        The apply output excerpt result.
+    """
     redacted = redact_config_preview(value or "").strip()
     if len(redacted) <= limit:
         return redacted
@@ -9419,6 +11063,7 @@ def apply_output_excerpt(value: str, *, limit: int = 2400) -> str:
 
 
 def log_appliance_update_failures(job_id: str, update_result: dict[str, Any]) -> None:
+    """Handle log appliance update failures."""
     for command in update_result.get("commands", []):
         if int(command.get("returncode") or 0) == 0:
             continue
@@ -9435,6 +11080,7 @@ def log_appliance_update_failures(job_id: str, update_result: dict[str, Any]) ->
 
 
 def log_appliance_update_submission(job_id: str, update_result: dict[str, Any]) -> None:
+    """Handle log appliance update submission."""
     APPLIANCE_UPDATE_LOGGER.info(
         "Appliance update task %s completed status=%s mode=%s streams=%s dry_run=%s config_path=%s",
         job_id,
@@ -9455,6 +11101,11 @@ def log_appliance_update_submission(job_id: str, update_result: dict[str, Any]) 
 
 
 def filesystem_path(path: Path | PurePosixPath) -> Path:
+    """Return filesystem path.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+    """
     return path if isinstance(path, Path) else Path(path)
 
 
@@ -9462,10 +11113,18 @@ LOG_LINE_OPTIONS = {100, 200, 500}
 
 
 def normalized_log_line_count(value: int) -> int:
+    """Return normalized log line count."""
     return value if value in LOG_LINE_OPTIONS else 100
 
 
 def tail_fixed_log_file(path: Path | PurePosixPath, *, max_bytes: int = 256 * 1024, max_lines: int = 100) -> dict[str, Any]:
+    """Return tail fixed log file.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        max_bytes: Maximum accepted payload size in bytes.
+        max_lines: Max lines supplied by the caller.
+    """
     read_path = filesystem_path(path)
     try:
         if not read_path.exists():
@@ -9505,6 +11164,17 @@ def journal_log_source(
     line_filter: Callable[[str], bool] | None = None,
     path_label: str | None = None,
 ) -> dict[str, Any]:
+    """Return journal log source.
+
+    Args:
+        source_id: Identifier of the source.
+        label: Human-readable label used in validation output.
+        unit: Appliance Apply unit being processed.
+        result: Operation result to summarize, validate, or persist.
+        max_lines: Max lines supplied by the caller.
+        line_filter: Line filter supplied by the caller.
+        path_label: Path label supplied by the caller.
+    """
     available = result.returncode == 0 and not result.dry_run
     text = redact_config_preview(result.stdout or "") if available else ""
     all_lines = text.splitlines()
@@ -9524,6 +11194,7 @@ def journal_log_source(
 
 
 def dnsmasq_log_category(line: str) -> str:
+    """Return dnsmasq log category."""
     if re.search(r"\bdnsmasq-dhcp(?:\[\d+\])?:", line):
         return "dhcp"
     if re.search(r"\bdnsmasq-tftp(?:\[\d+\])?:", line):
@@ -9532,6 +11203,7 @@ def dnsmasq_log_category(line: str) -> str:
 
 
 def log_sources_context(*, max_lines: int = 100) -> list[dict[str, Any]]:
+    """Return log sources context."""
     line_count = normalized_log_line_count(max_lines)
     adapter = SystemAdapter()
     dnsmasq_logs = adapter.read_dnsmasq_logs()
@@ -9604,6 +11276,12 @@ def log_sources_context(*, max_lines: int = 100) -> list[dict[str, Any]]:
 
 
 def logs_context(db: Session, *, max_lines: int = 100) -> dict[str, Any]:
+    """Return logs context.
+
+    Args:
+        db: Active database session.
+        max_lines: Max lines supplied by the caller.
+    """
     line_count = normalized_log_line_count(max_lines)
     return {
         "log_sources": log_sources_context(max_lines=line_count),
@@ -9612,6 +11290,12 @@ def logs_context(db: Session, *, max_lines: int = 100) -> dict[str, Any]:
 
 
 def audit_event_rows_context(db: Session, *, limit: int = 500) -> list[dict[str, Any]]:
+    """Return audit event rows context.
+
+    Args:
+        db: Active database session.
+        limit: Limit supplied by the caller.
+    """
     events = db.execute(select(AuditEvent).order_by(desc(AuditEvent.created_at)).limit(limit)).scalars().all()
     return [
         {
@@ -9628,6 +11312,7 @@ def audit_event_rows_context(db: Session, *, limit: int = 500) -> list[dict[str,
 
 
 def appliance_apply_failure_summaries(unit_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return appliance apply failure summaries."""
     summaries: list[dict[str, Any]] = []
     for unit in unit_results:
         failed_commands = []
@@ -9654,6 +11339,7 @@ def appliance_apply_failure_summaries(unit_results: list[dict[str, Any]]) -> lis
 
 
 def log_appliance_apply_failures(job_id: str, unit_results: list[dict[str, Any]]) -> None:
+    """Handle log appliance apply failures."""
     for failure in appliance_apply_failure_summaries(unit_results):
         for command in failure["commands"]:
             APPLY_LOGGER.error(
@@ -9675,6 +11361,15 @@ def log_appliance_apply_submission(
     unit_results: list[dict[str, Any]],
     succeeded: bool,
 ) -> None:
+    """Handle log appliance apply submission.
+
+    Args:
+        job_id: Identifier of the job.
+        selected_units: Selected units supplied by the caller.
+        skipped_changed_units: Skipped changed units supplied by the caller.
+        unit_results: Unit results supplied by the caller.
+        succeeded: Succeeded supplied by the caller.
+    """
     APPLY_LOGGER.info(
         "Appliance apply task %s completed status=%s selected_units=%s skipped_changed_units=%s dry_run=%s",
         job_id,
@@ -9707,6 +11402,12 @@ def log_appliance_apply_submission(
 
 
 def _write_staged_config_file(path: Path, config_preview: str) -> None:
+    """Persist staged config file.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        config_preview: Rendered configuration text approved for staging.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
     file_descriptor = -1
@@ -9730,6 +11431,15 @@ def _write_staged_config_file(path: Path, config_preview: str) -> None:
 
 
 def stage_appliance_apply_config(config_path: str, config_preview: str) -> str:
+    """Return stage appliance apply config.
+
+    Args:
+        config_path: Filesystem path for the config.
+        config_preview: Rendered configuration text approved for staging.
+
+    Raises:
+        PermissionError: If the operation lacks the required permission.
+    """
     path = Path(config_path)
     try:
         _write_staged_config_file(path, config_preview)
@@ -9743,6 +11453,11 @@ def stage_appliance_apply_config(config_path: str, config_preview: str) -> str:
 
 
 def cleanup_transient_secret_staging_files() -> None:
+    """Remove transient secret staging files.
+
+    Raises:
+        PermissionError: If the operation lacks the required permission.
+    """
     adapter = SystemAdapter()
     for path_value in (LOCAL_USERS_STAGED_CONFIG_PATH, CA_STAGED_CONFIG_PATH, LDAP_STAGED_CONFIG_PATH):
         staged_path = Path(path_value)
@@ -9766,11 +11481,24 @@ def cleanup_transient_secret_staging_files() -> None:
 
 
 def execute_appliance_apply_unit(unit: dict[str, Any], *, adapter: SystemAdapter | None = None) -> dict[str, Any]:
+    """Run appliance apply unit.
+
+    Returns:
+        The execute appliance apply unit result.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     context = unit["context"]
     adapter = adapter or SystemAdapter()
     unit_id = unit["id"]
 
     def run_adapter_steps(steps: list[Any]) -> list[Any]:
+        """Run adapter steps.
+
+        Returns:
+            The run adapter steps result.
+        """
         results = []
         for step in steps:
             result = step()
@@ -9784,6 +11512,16 @@ def execute_appliance_apply_unit(unit: dict[str, Any], *, adapter: SystemAdapter
         config_preview: str,
         steps_for_path: Any,
     ) -> list[Any]:
+        """Run secret config steps.
+
+        Args:
+            staged_path: Filesystem path for the staged.
+            config_preview: Rendered configuration text approved for staging.
+            steps_for_path: Filesystem path for the steps for.
+
+        Returns:
+            The run secret config steps result.
+        """
         if adapter.dry_run:
             return run_adapter_steps(steps_for_path(staged_path))
         try:
@@ -10032,6 +11770,13 @@ def execute_appliance_apply_unit(unit: dict[str, Any], *, adapter: SystemAdapter
 
 
 def update_appliance_apply_baselines(db: Session, units: list[dict[str, Any]], selected_ids: set[str]) -> None:
+    """Update appliance apply baselines.
+
+    Args:
+        db: Active database session.
+        units: Units supplied by the caller.
+        selected_ids: Selected ids supplied by the caller.
+    """
     baselines = load_appliance_apply_baselines(db)
     applied_at = utcnow().isoformat()
     for unit in units:
@@ -10052,12 +11797,22 @@ def update_appliance_apply_baselines(db: Session, units: list[dict[str, Any]], s
 
 
 def _has_operator_appliance_activity(db: Session) -> bool:
+    """Return whether operator appliance activity.
+
+    Args:
+        db: Active database session.
+    """
     if db.execute(select(Job.id).where(Job.type == "appliance-apply").limit(1)).first() is not None:
         return True
     return db.execute(select(AuditEvent.id).where(AuditEvent.resource_type != "auth").limit(1)).first() is not None
 
 
 def _mark_provisioned_bootstrap_admin_applied(db: Session) -> None:
+    """Handle mark provisioned bootstrap admin applied.
+
+    Args:
+        db: Active database session.
+    """
     settings = get_settings()
     bootstrap_user = db.execute(select(User).where(User.username == settings.bootstrap_admin_username)).scalar_one_or_none()
     if bootstrap_user is None or not bootstrap_user.enabled:
@@ -10073,6 +11828,11 @@ def _mark_provisioned_bootstrap_admin_applied(db: Session) -> None:
 
 
 def initialize_factory_appliance_apply_baseline(db: Session) -> bool:
+    """Return initialize factory appliance apply baseline.
+
+    Args:
+        db: Active database session.
+    """
     settings = get_settings()
     if settings.environment != "appliance":
         return False
@@ -10097,11 +11857,21 @@ def initialize_factory_appliance_apply_baseline(db: Session) -> bool:
 
 @router.get("/favicon.ico", response_model=None)
 def favicon() -> FileResponse:
+    """Handle the favicon endpoint.
+
+    Returns:
+        The endpoint response.
+    """
     return FileResponse(STATIC_DIR / "brand" / "favicon.ico", media_type="image/x-icon")
 
 
 @router.get("/manifest.webmanifest", response_model=None)
 def webmanifest() -> FileResponse:
+    """Handle the webmanifest endpoint.
+
+    Returns:
+        The endpoint response.
+    """
     return FileResponse(
         STATIC_DIR / "manifest.webmanifest",
         media_type="application/manifest+json",
@@ -10111,6 +11881,11 @@ def webmanifest() -> FileResponse:
 
 @router.get("/service-worker.js", response_model=None)
 def service_worker() -> FileResponse:
+    """Handle the service worker endpoint.
+
+    Returns:
+        The endpoint response.
+    """
     return FileResponse(
         STATIC_DIR / "service-worker.js",
         media_type="application/javascript",
@@ -10127,6 +11902,16 @@ def root(
     identity: Identity | None = Depends(get_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse | RedirectResponse | JSONResponse:
+    """Handle the root endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     binding = request_host_interface_binding(request_host_name(request), db)
     if binding and binding.get("role") != "management":
         return render(request, "public_service_home.html", {"identity": identity, **public_service_directory_context(db, binding)})
@@ -10136,6 +11921,11 @@ def root(
 
 
 def _format_file_size(size: int) -> str:
+    """Render file size.
+
+    Returns:
+        The format file size result.
+    """
     value = float(size)
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if value < 1024 or unit == "TB":
@@ -10145,12 +11935,26 @@ def _format_file_size(size: int) -> str:
 
 
 def _format_byte_rate(value: float | int | None) -> str:
+    """Render byte rate.
+
+    Returns:
+        The format byte rate result.
+    """
     if value is None:
         return "--"
     return f"{_format_file_size(max(0, int(value)))}/s"
 
 
 def _depot_browser_context(db: Session, depot_path: str = "") -> dict[str, Any]:
+    """Return depot browser context.
+
+    Args:
+        db: Active database session.
+        depot_path: Filesystem path for the depot.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     settings = get_vcf_offline_depot_settings_row(db)
     root = (Path(settings.depot_store_path) / "PROD").resolve(strict=False)
     relative_parts = [part for part in PurePosixPath(depot_path or "").parts if part not in {"", "."}]
@@ -10201,10 +12005,16 @@ def _depot_browser_context(db: Session, depot_path: str = "") -> dict[str, Any]:
 
 @router.get("/PROD", response_model=None)
 def public_depot_redirect() -> RedirectResponse:
+    """Handle the public depot redirect endpoint.
+
+    Returns:
+        The endpoint response.
+    """
     return RedirectResponse("/PROD/", status_code=301)
 
 
 def safe_depot_login_next(value: str | None) -> str:
+    """Return safe depot login next."""
     target = (value or "").strip()
     if target == "/PROD" or target.startswith("/PROD/"):
         return target
@@ -10212,6 +12022,15 @@ def safe_depot_login_next(value: str | None) -> str:
 
 
 def depot_login_response(request: Request, *, return_to: str = "/PROD/", error: str | None = None, status_code: int = 200, db: Session | None = None) -> HTMLResponse:
+    """Return depot login response.
+
+    Args:
+        request: Incoming HTTP request.
+        return_to: Return to supplied by the caller.
+        error: Public-safe error detail to record or return.
+        status_code: HTTP status code for the response.
+        db: Active database session.
+    """
     return render(
         request,
         "ca_request_login.html",
@@ -10236,6 +12055,20 @@ def depot_login_page(
     identity: Identity | None = Depends(get_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse | RedirectResponse:
+    """Handle the depot login page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        next: Relative destination requested after authentication.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if not request_allows_public_service(db, request, "vcf_offline_depot"):
         raise HTTPException(status_code=404, detail="VCF Offline Depot is not available on this interface")
     return_to = safe_depot_login_next(next)
@@ -10253,6 +12086,22 @@ def depot_login(
     next: str = Form("/PROD/"),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse:
+    """Handle the depot login endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        username: Account name used for authentication or lookup.
+        password: Password supplied for the immediate authenticated operation.
+        csrf: Validated CSRF token authorizing the request.
+        next: Relative destination requested after authentication.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if not request_allows_public_service(db, request, "vcf_offline_depot"):
         raise HTTPException(status_code=404, detail="VCF Offline Depot is not available on this interface")
     return_to = safe_depot_login_next(next)
@@ -10276,6 +12125,16 @@ def depot_login(
 
 @router.post("/PROD/logout", response_model=None)
 def depot_logout(request: Request, csrf: str = Form(...), next: str = Form("/")) -> RedirectResponse:
+    """Handle the depot logout endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        next: Relative destination requested after authentication.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     request.session.clear()
     return RedirectResponse(next if next in {"/", "/PROD/"} else "/", status_code=303)
@@ -10287,6 +12146,16 @@ def depot_auth_check(
     identity: Identity | None = Depends(get_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the depot auth check endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     if not request_allows_public_service(db, request, "vcf_offline_depot"):
         return Response(status_code=401)
     settings = get_vcf_offline_depot_settings_row(db)
@@ -10298,6 +12167,15 @@ def depot_auth_check(
 @router.get("/PROD/auth-failure", response_model=None)
 @router.head("/PROD/auth-failure", response_model=None)
 def depot_auth_failure(request: Request, db: Session = Depends(get_db)) -> Response:
+    """Handle the depot auth failure endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     if not request_allows_public_service(db, request, "vcf_offline_depot"):
         return Response(status_code=401)
     if "text/html" in request.headers.get("accept", "").lower():
@@ -10316,6 +12194,20 @@ def public_depot_browser(
     identity: Identity | None = Depends(get_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse | RedirectResponse:
+    """Handle the public depot browser endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        depot_path: Filesystem path for the depot.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if not request_allows_public_service(db, request, "vcf_offline_depot"):
         raise HTTPException(status_code=404, detail="Depot path not found")
     if depot_path and not depot_path.endswith("/"):
@@ -10341,6 +12233,14 @@ def public_terminal_login_response(
     status_code: int = 200,
     db: Session,
 ) -> HTMLResponse:
+    """Return public terminal login response.
+
+    Args:
+        request: Incoming HTTP request.
+        error: Public-safe error detail to record or return.
+        status_code: HTTP status code for the response.
+        db: Active database session.
+    """
     return render(
         request,
         "ca_request_login.html",
@@ -10360,6 +12260,7 @@ def public_terminal_login_response(
 
 
 def local_user_has_web_terminal_access(user: User | None) -> bool:
+    """Return local user has web terminal access."""
     return bool(
         user
         and user.enabled
@@ -10376,6 +12277,17 @@ def login_page(
     identity: Identity | None = Depends(get_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse | RedirectResponse:
+    """Handle the login page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        next: Relative destination requested after authentication.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     return_to = safe_login_next(next)
     if identity:
         return RedirectResponse(return_to, status_code=303)
@@ -10393,6 +12305,19 @@ def login(
     csrf: str = Form(...),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse | JSONResponse:
+    """Handle the login endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        username: Account name used for authentication or lookup.
+        password: Password supplied for the immediate authenticated operation.
+        next: Relative destination requested after authentication.
+        csrf: Validated CSRF token authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     return_to = safe_login_next(next)
     public_terminal_login = return_to == "/terminal" and request_allows_public_service(db, request, "web_terminal")
@@ -10416,6 +12341,16 @@ def login(
 
 @router.post("/logout", response_model=None)
 def logout(request: Request, csrf: str = Form(...), next: str = Form("")) -> RedirectResponse:
+    """Handle the logout endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        next: Relative destination requested after authentication.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     request.session.clear()
     if next == "/terminal":
@@ -10431,6 +12366,21 @@ def appliance_power_action(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the appliance power action endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        action: Operation to perform on the target resource.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     if action not in {"reboot", "shutdown"}:
@@ -10509,6 +12459,16 @@ def dashboard(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the dashboard endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     snapshot = dashboard_snapshot(db)
     return render(
         request,
@@ -10526,6 +12486,15 @@ def dashboard_data(
     _identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    """Handle the dashboard data endpoint.
+
+    Args:
+        _identity: Authenticated identity supplied by the dependency layer.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     return JSONResponse(dashboard_snapshot(db))
 
 
@@ -10535,6 +12504,16 @@ def monitor_page(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the monitor page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     require_monitoring_read(identity)
     initial_payload = monitor_payload(db, hours=6)
     network_rows = [
@@ -10573,12 +12552,30 @@ def monitor_data(
     db: Session = Depends(get_db),
     hours: int = Query(default=6, ge=1, le=24),
 ) -> JSONResponse:
+    """Handle the monitor data endpoint.
+
+    Args:
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+        hours: Hours supplied by the caller.
+
+    Returns:
+        The endpoint response.
+    """
     require_monitoring_read(identity)
     return JSONResponse(monitor_payload(db, hours=hours))
 
 
 @router.get("/server-time", response_class=JSONResponse, response_model=None)
 def server_time(_identity: Identity = Depends(require_session_identity)) -> JSONResponse:
+    """Handle the server time endpoint.
+
+    Args:
+        _identity: Authenticated identity supplied by the dependency layer.
+
+    Returns:
+        The endpoint response.
+    """
     now = utcnow()
     return JSONResponse(
         {
@@ -10594,6 +12591,16 @@ def appliance_update_page(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the appliance update page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     return render(request, "appliance_update.html", {"identity": identity, **appliance_update_context(db)})
 
 
@@ -10606,6 +12613,19 @@ def update_appliance_update_settings(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the update appliance update settings endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        photon_source: Photon source supplied by the caller.
+        atlaso_manifest_url: URL for the atlaso manifest.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     settings = {
@@ -10658,6 +12678,35 @@ def update_appliance_update_source(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the update appliance update source endpoint.
+
+    Args:
+        source_id: Identifier of the source.
+        request: Incoming HTTP request.
+        name: Name of the target object.
+        url: URL of the target resource or service.
+        priority: Ordering priority assigned to the item.
+        enabled: Whether the requested behavior is enabled.
+        enabled_present: Enabled present supplied by the caller.
+        trusted: Trusted supplied by the caller.
+        channel: Channel supplied by the caller.
+        managed: Managed supplied by the caller.
+        gpgcheck: Gpgcheck supplied by the caller.
+        gpgkey: Gpgkey supplied by the caller.
+        tls_verify: Tls verify supplied by the caller.
+        credential_username: Credential username supplied by the caller.
+        credential_secret: Credential secret supplied by the caller.
+        clear_credential: Clear credential supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     wizard_request = request.headers.get("X-Atlaso-Wizard") == "1"
@@ -10746,6 +12795,28 @@ def create_appliance_update_source(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the create appliance update source endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        kind: Kind supplied by the caller.
+        name: Name of the target object.
+        url: URL of the target resource or service.
+        priority: Ordering priority assigned to the item.
+        enabled: Whether the requested behavior is enabled.
+        trusted: Trusted supplied by the caller.
+        channel: Channel supplied by the caller.
+        managed: Managed supplied by the caller.
+        gpgcheck: Gpgcheck supplied by the caller.
+        gpgkey: Gpgkey supplied by the caller.
+        tls_verify: Tls verify supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     wizard_request = request.headers.get("X-Atlaso-Wizard") == "1"
@@ -10802,6 +12873,21 @@ def delete_appliance_update_source(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the delete appliance update source endpoint.
+
+    Args:
+        source_id: Identifier of the source.
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     source = db.get(UpdateSource, source_id)
@@ -10829,6 +12915,17 @@ def _managed_package_from_form(
     enabled: bool,
     db: Session,
 ) -> list[str]:
+    """Return managed package from form.
+
+    Args:
+        package: Package supplied by the caller.
+        name: Name of the target object.
+        source_id: Identifier of the source.
+        policy: Policy values to validate or enforce.
+        target_version: Target version supplied by the caller.
+        enabled: Whether the requested behavior is enabled.
+        db: Active database session.
+    """
     package.ecosystem = "powershell"
     package.name = name.strip()
     package.source_id = source_id
@@ -10852,6 +12949,22 @@ def create_managed_update_package(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the create managed update package endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        name: Name of the target object.
+        source_id: Identifier of the source.
+        policy: Policy values to validate or enforce.
+        target_version: Target version supplied by the caller.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     wizard_request = request.headers.get("X-Atlaso-Wizard") == "1"
@@ -10890,6 +13003,27 @@ def update_managed_update_package(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the update managed update package endpoint.
+
+    Args:
+        package_id: Identifier of the package.
+        request: Incoming HTTP request.
+        name: Name of the target object.
+        source_id: Identifier of the source.
+        policy: Policy values to validate or enforce.
+        target_version: Target version supplied by the caller.
+        enabled: Whether the requested behavior is enabled.
+        enabled_present: Enabled present supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     wizard_request = request.headers.get("X-Atlaso-Wizard") == "1"
@@ -10931,6 +13065,21 @@ def delete_managed_update_package(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the delete managed update package endpoint.
+
+    Args:
+        package_id: Identifier of the package.
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     package = db.get(ManagedPackage, package_id)
@@ -10950,6 +13099,17 @@ def sync_appliance_update_sources(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse | JSONResponse:
+    """Handle the sync appliance update sources endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     wants_json = "application/json" in request.headers.get("accept", "")
@@ -11011,6 +13171,16 @@ def submit_appliance_update(
     db: Session,
     mode: str,
 ) -> HTMLResponse | JSONResponse:
+    """Return submit appliance update.
+
+    Args:
+        request: Incoming HTTP request.
+        selected_streams: Update streams selected for the job.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+        mode: Operating mode selected for the workflow.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     wants_json = "application/json" in request.headers.get("accept", "")
@@ -11134,6 +13304,18 @@ def check_appliance_update(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse | JSONResponse:
+    """Handle the check appliance update endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        selected_streams: Update streams selected for the job.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     return submit_appliance_update(
         request=request,
         selected_streams=selected_streams,
@@ -11152,6 +13334,18 @@ def run_appliance_update(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse | JSONResponse:
+    """Handle the run appliance update endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        selected_streams: Update streams selected for the job.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     return submit_appliance_update(
         request=request,
         selected_streams=selected_streams,
@@ -11168,11 +13362,30 @@ def automation_page(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the automation page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     require_admin_identity(identity)
     return render(request, "automation.html", {"identity": identity, **automation_context(db)})
 
 
 def _automation_render_error(request: Request, identity: Identity, db: Session, message: str, *, status_code: int = 422) -> HTMLResponse:
+    """Return automation render error.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+        message: Public-safe status or error message.
+        status_code: HTTP status code for the response.
+    """
     return render(
         request,
         "automation.html",
@@ -11182,6 +13395,13 @@ def _automation_render_error(request: Request, identity: Identity, db: Session, 
 
 
 def _automation_script_validation_message(interpreter: str, content: str, timeout_seconds: int) -> str | None:
+    """Return automation script validation message.
+
+    Args:
+        interpreter: Interpreter supplied by the caller.
+        content: Document or file content to process.
+        timeout_seconds: Maximum time to wait, in seconds.
+    """
     if interpreter not in SCRIPT_INTERPRETERS:
         return "Interpreter must be bash, python, or powershell."
     first_line = (
@@ -11212,6 +13432,17 @@ def _automation_task_config(
     vault_id: int | None,
     script_arguments: str,
 ) -> tuple[dict[str, Any], str]:
+    """Return automation task config.
+
+    Args:
+        db: Active database session.
+        task_type: Task type supplied by the caller.
+        selected_streams: Update streams selected for the job.
+        vcf_profile_id: Identifier of the vcf profile.
+        revision_id: Identifier of the revision.
+        vault_id: Identifier of the vault.
+        script_arguments: Script arguments supplied by the caller.
+    """
     if task_type in {"appliance_update_check", "appliance_update_install"}:
         return {"selected_streams": selected_update_streams(selected_streams)}, ""
     if task_type == "vcf_depot_download":
@@ -11257,6 +13488,29 @@ def create_automation_schedule(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the create automation schedule endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        name: Name of the target object.
+        task_type: Task type supplied by the caller.
+        selected_streams: Update streams selected for the job.
+        vcf_profile_id: Identifier of the vcf profile.
+        revision_id: Identifier of the revision.
+        vault_id: Identifier of the vault.
+        script_arguments: Script arguments supplied by the caller.
+        schedule_kind: Schedule kind supplied by the caller.
+        cron_expression: Cron expression supplied by the caller.
+        run_once_at: Run once at supplied by the caller.
+        timezone_name: Timezone name supplied by the caller.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     parsed_once: datetime | None = None
@@ -11340,6 +13594,33 @@ def edit_automation_schedule(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the edit automation schedule endpoint.
+
+    Args:
+        schedule_id: Identifier of the schedule.
+        request: Incoming HTTP request.
+        name: Name of the target object.
+        task_type: Task type supplied by the caller.
+        selected_streams: Update streams selected for the job.
+        vcf_profile_id: Identifier of the vcf profile.
+        revision_id: Identifier of the revision.
+        vault_id: Identifier of the vault.
+        script_arguments: Script arguments supplied by the caller.
+        schedule_kind: Schedule kind supplied by the caller.
+        cron_expression: Cron expression supplied by the caller.
+        run_once_at: Run once at supplied by the caller.
+        timezone_name: Timezone name supplied by the caller.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     schedule = db.get(Schedule, schedule_id)
@@ -11413,6 +13694,21 @@ def run_automation_schedule_now(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the run automation schedule now endpoint.
+
+    Args:
+        schedule_id: Identifier of the schedule.
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     schedule = db.get(Schedule, schedule_id)
@@ -11448,6 +13744,21 @@ def toggle_automation_schedule(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the toggle automation schedule endpoint.
+
+    Args:
+        schedule_id: Identifier of the schedule.
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     schedule = db.get(Schedule, schedule_id)
@@ -11491,6 +13802,21 @@ def delete_automation_schedule(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the delete automation schedule endpoint.
+
+    Args:
+        schedule_id: Identifier of the schedule.
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     schedule = db.get(Schedule, schedule_id)
@@ -11518,6 +13844,22 @@ def create_automation_script_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the create automation script from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        name: Name of the target object.
+        description: Human-readable description of the resource.
+        interpreter: Interpreter supplied by the caller.
+        content: Document or file content to process.
+        timeout_seconds: Maximum time to wait, in seconds.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     wizard_request = request.headers.get("X-Atlaso-Wizard") == "1"
@@ -11568,6 +13910,24 @@ def create_automation_script_revision_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the create automation script revision from ui endpoint.
+
+    Args:
+        script_id: Identifier of the script.
+        request: Incoming HTTP request.
+        interpreter: Interpreter supplied by the caller.
+        content: Document or file content to process.
+        timeout_seconds: Maximum time to wait, in seconds.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     script = db.get(AutomationScript, script_id)
@@ -11598,6 +13958,23 @@ def edit_automation_script_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the edit automation script from ui endpoint.
+
+    Args:
+        script_id: Identifier of the script.
+        request: Incoming HTTP request.
+        name: Name of the target object.
+        description: Human-readable description of the resource.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     script = db.get(AutomationScript, script_id)
@@ -11627,6 +14004,21 @@ def delete_automation_script_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the delete automation script from ui endpoint.
+
+    Args:
+        script_id: Identifier of the script.
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     script = db.execute(
@@ -11666,6 +14058,21 @@ def toggle_automation_script_revision(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the toggle automation script revision endpoint.
+
+    Args:
+        revision_id: Identifier of the revision.
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     revision = db.get(AutomationScriptRevision, revision_id)
@@ -11705,6 +14112,23 @@ def run_automation_script_revision(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the run automation script revision endpoint.
+
+    Args:
+        revision_id: Identifier of the revision.
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        script_arguments: Script arguments supplied by the caller.
+        vault_id: Identifier of the vault.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     revision = db.get(AutomationScriptRevision, revision_id)
@@ -11742,6 +14166,14 @@ def run_automation_script_revision(
 def appliance_apply_page(
     _identity: Identity = Depends(require_session_identity),
 ) -> RedirectResponse:
+    """Handle the appliance apply page endpoint.
+
+    Args:
+        _identity: Authenticated identity supplied by the dependency layer.
+
+    Returns:
+        The endpoint response.
+    """
     return RedirectResponse("/dashboard#appliance-apply-review", status_code=303)
 
 
@@ -11750,6 +14182,15 @@ def appliance_apply_review(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    """Handle the appliance apply review endpoint.
+
+    Args:
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     context = appliance_apply_context(db)
     units = [
         {
@@ -11795,6 +14236,15 @@ def appliance_apply_status_api(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    """Handle the appliance apply status api endpoint.
+
+    Args:
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     context = appliance_apply_context(db)
     pending_count = context["changed_apply_unit_count"]
     active_job = active_appliance_apply_job(db)
@@ -11826,6 +14276,11 @@ VCF_DEPOT_SUBMIT_LOCK = threading.Lock()
 
 
 def active_appliance_apply_job(db: Session) -> Job | None:
+    """Return active appliance apply job.
+
+    Args:
+        db: Active database session.
+    """
     return db.scalars(
         select(Job)
         .options(selectinload(Job.steps))
@@ -11839,6 +14294,11 @@ def active_appliance_apply_job(db: Session) -> Job | None:
 
 
 def active_appliance_apply_submitted_unit_ids(db: Session) -> set[str]:
+    """Return active appliance apply submitted unit ids.
+
+    Args:
+        db: Active database session.
+    """
     job = active_appliance_apply_job(db)
     if job is None:
         return set()
@@ -11848,10 +14308,16 @@ def active_appliance_apply_submitted_unit_ids(db: Session) -> set[str]:
 
 
 def active_vcf_depot_execution_job(db: Session) -> Job | None:
+    """Return active vcf depot execution job.
+
+    Args:
+        db: Active database session.
+    """
     return active_vcf_depot_operation_job(db)
 
 
 def vcf_depot_execution_conflict_detail(job: Job) -> str:
+    """Return vcf depot execution conflict detail."""
     return (
         f"{_task_type_label(job.type)} task {job.id} is already {job.status}. "
         "Wait for it to finish before starting another VCFDT operation."
@@ -11859,6 +14325,12 @@ def vcf_depot_execution_conflict_detail(job: Job) -> str:
 
 
 def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
+    """Run appliance apply job.
+
+    Raises:
+        ApplianceApplyJobError: If the operation encounters an invalid state.
+        ValueError: If an input value is invalid.
+    """
     with SessionLocal() as db:
         job = db.scalar(select(Job).options(selectinload(Job.steps)).where(Job.id == job_id))
         if job is None or job.status != JobStatus.PENDING.value:
@@ -12135,6 +14607,15 @@ VCF_DEPOT_SOFTWARE_ID_TASK_STEPS = (
 
 
 def ensure_vcf_depot_software_id_task_steps(db: Session, job: Job) -> list[JobStep]:
+    """Ensure vcf depot software id task steps.
+
+    Args:
+        db: Active database session.
+        job: Job being processed.
+
+    Returns:
+        The ensure vcf depot software id task steps result.
+    """
     existing = {step.component_key: step for step in job.steps}
     for position, (component_key, label) in enumerate(VCF_DEPOT_SOFTWARE_ID_TASK_STEPS, start=1):
         if component_key in existing:
@@ -12156,6 +14637,7 @@ def ensure_vcf_depot_software_id_task_steps(db: Session, job: Job) -> list[JobSt
 
 
 def run_vcf_depot_software_id_job(job_id: str) -> None:
+    """Run vcf depot software id job."""
     with SessionLocal() as db:
         job = db.scalar(select(Job).options(selectinload(Job.steps)).where(Job.id == job_id))
         if job is None or job.type != "vcf-depot-software-id" or job.status != JobStatus.PENDING.value:
@@ -12305,6 +14787,21 @@ def submit_appliance_apply(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the submit appliance apply endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        background_tasks: Background tasks supplied by the caller.
+        selected_units: Selected units supplied by the caller.
+        format_confirmations: Format confirmations supplied by the caller.
+        refresh_vcf_depot_software_depot_id: Identifier of the refresh vcf depot software depot.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     wants_json = "application/json" in request.headers.get("accept", "")
     units = appliance_apply_units(db)
@@ -12517,10 +15014,25 @@ def routes_wan(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the routes wan endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     return render(request, "routes_wan.html", {"identity": identity, **routes_wan_context(db), "appliance_apply_status": appliance_apply_status(db, "wan")})
 
 
 def parse_int_form_value(value: str, field_label: str, *, default: int = 0, minimum: int | None = None) -> int | Response:
+    """Parse int form value.
+
+    Returns:
+        The parsed int form value.
+    """
     if value == "":
         parsed = default
     else:
@@ -12534,12 +15046,29 @@ def parse_int_form_value(value: str, field_label: str, *, default: int = 0, mini
 
 
 def parse_optional_int_form_value(value: str, field_label: str, *, minimum: int | None = None) -> int | None | Response:
+    """Parse optional int form value.
+
+    Returns:
+        The parsed optional int form value.
+    """
     if value == "":
         return None
     return parse_int_form_value(value, field_label, minimum=minimum or None)
 
 
 def parse_float_form_value(value: str, field_label: str, *, default: float = 0.0, minimum: float | None = None, maximum: float | None = None) -> float | Response:
+    """Parse float form value.
+
+    Args:
+        value: Value to process.
+        field_label: Field label supplied by the caller.
+        default: Default supplied by the caller.
+        minimum: Minimum supplied by the caller.
+        maximum: Maximum supplied by the caller.
+
+    Returns:
+        The parsed float form value.
+    """
     if value == "":
         parsed = default
     else:
@@ -12563,6 +15092,20 @@ def validate_route_form_values(
     wan_mode: str,
     db: Session,
 ) -> tuple[str, str | None, str, int, int | None, str] | Response:
+    """Validate route form values.
+
+    Args:
+        destination_cidr: Destination cidr supplied by the caller.
+        gateway: Gateway supplied by the caller.
+        interface_name: Linux interface name of the network target.
+        metric: Metric supplied by the caller.
+        wan_policy_id: Identifier of the wan policy.
+        wan_mode: Wan mode supplied by the caller.
+        db: Active database session.
+
+    Returns:
+        The validate route form values result.
+    """
     destination = destination_cidr.strip()
     if not destination:
         return Response("Destination CIDR is required.", status_code=422, media_type="text/plain")
@@ -12610,6 +15153,21 @@ def validate_wan_policy_form_values(
     duplicate_percent: str,
     reorder_percent: str,
 ) -> tuple[str, int, int, float, int | None, float, float, float] | Response:
+    """Validate wan policy form values.
+
+    Args:
+        name: Name of the target object.
+        latency_ms: Latency ms supplied by the caller.
+        jitter_ms: Jitter ms supplied by the caller.
+        packet_loss_percent: Packet loss percent supplied by the caller.
+        bandwidth_mbit: Bandwidth mbit supplied by the caller.
+        corrupt_percent: Corrupt percent supplied by the caller.
+        duplicate_percent: Duplicate percent supplied by the caller.
+        reorder_percent: Reorder percent supplied by the caller.
+
+    Returns:
+        The validate wan policy form values result.
+    """
     name_value = name.strip()
     if not name_value:
         return Response("WAN policy name is required.", status_code=422, media_type="text/plain")
@@ -12634,6 +15192,19 @@ def validate_nat_rule_form_values(
     masquerade: str | None,
     db: Session,
 ) -> tuple[str, str, str, bool, int] | Response:
+    """Validate nat rule form values.
+
+    Args:
+        name: Name of the target object.
+        source: Source path, address, or record to process.
+        outbound_interface: Outbound interface supplied by the caller.
+        priority: Ordering priority assigned to the item.
+        masquerade: Masquerade supplied by the caller.
+        db: Active database session.
+
+    Returns:
+        The validate nat rule form values result.
+    """
     name_value = name.strip()
     if not name_value:
         return Response("NAT rule name is required.", status_code=422, media_type="text/plain")
@@ -12662,6 +15233,18 @@ def validate_routing_rule_form_values(
     priority: str,
     db: Session,
 ) -> tuple[str, str, str, int] | Response:
+    """Validate routing rule form values.
+
+    Args:
+        name: Name of the target object.
+        source_interface: Source interface supplied by the caller.
+        destination_interface: Destination interface supplied by the caller.
+        priority: Ordering priority assigned to the item.
+        db: Active database session.
+
+    Returns:
+        The validate routing rule form values result.
+    """
     name_value = name.strip()
     if not name_value:
         return Response("Routing rule name is required.", status_code=422, media_type="text/plain")
@@ -12694,6 +15277,24 @@ def create_route_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | Response:
+    """Handle the create route from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        destination_cidr: Destination cidr supplied by the caller.
+        gateway: Gateway supplied by the caller.
+        interface_name: Linux interface name of the network target.
+        metric: Metric supplied by the caller.
+        wan_policy_id: Identifier of the wan policy.
+        wan_mode: Wan mode supplied by the caller.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     parsed = validate_route_form_values(destination_cidr, gateway, interface_name, metric, wan_policy_id, wan_mode, db)
     if isinstance(parsed, Response):
@@ -12729,6 +15330,28 @@ def edit_route_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | Response:
+    """Handle the edit route from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        route_id: Identifier of the route.
+        destination_cidr: Destination cidr supplied by the caller.
+        gateway: Gateway supplied by the caller.
+        interface_name: Linux interface name of the network target.
+        metric: Metric supplied by the caller.
+        wan_policy_id: Identifier of the wan policy.
+        wan_mode: Wan mode supplied by the caller.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     route = db.get(Route, route_id)
     if not route:
@@ -12758,6 +15381,21 @@ def delete_route_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | Response:
+    """Handle the delete route from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        route_id: Identifier of the route.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     route = db.get(Route, route_id)
     if not route:
@@ -12781,6 +15419,23 @@ def create_routing_rule_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | Response:
+    """Handle the create routing rule from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        name: Name of the target object.
+        source_interface: Source interface supplied by the caller.
+        destination_interface: Destination interface supplied by the caller.
+        priority: Ordering priority assigned to the item.
+        description: Human-readable description of the resource.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     parsed = validate_routing_rule_form_values(name, source_interface, destination_interface, priority, db)
     if isinstance(parsed, Response):
@@ -12818,6 +15473,27 @@ def edit_routing_rule_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | Response:
+    """Handle the edit routing rule from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        rule_id: Identifier of the rule.
+        name: Name of the target object.
+        source_interface: Source interface supplied by the caller.
+        destination_interface: Destination interface supplied by the caller.
+        priority: Ordering priority assigned to the item.
+        description: Human-readable description of the resource.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     rule = db.get(RoutingRule, rule_id)
     if not rule:
@@ -12850,6 +15526,21 @@ def delete_routing_rule_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | Response:
+    """Handle the delete routing rule from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        rule_id: Identifier of the rule.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     rule = db.get(RoutingRule, rule_id)
     if not rule:
@@ -12874,6 +15565,24 @@ def create_nat_rule_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | Response:
+    """Handle the create nat rule from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        name: Name of the target object.
+        source: Source path, address, or record to process.
+        outbound_interface: Outbound interface supplied by the caller.
+        masquerade: Masquerade supplied by the caller.
+        priority: Ordering priority assigned to the item.
+        description: Human-readable description of the resource.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     parsed = validate_nat_rule_form_values(name, source, outbound_interface, priority, masquerade, db)
     if isinstance(parsed, Response):
@@ -12913,6 +15622,28 @@ def edit_nat_rule_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | Response:
+    """Handle the edit nat rule from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        rule_id: Identifier of the rule.
+        name: Name of the target object.
+        source: Source path, address, or record to process.
+        outbound_interface: Outbound interface supplied by the caller.
+        masquerade: Masquerade supplied by the caller.
+        priority: Ordering priority assigned to the item.
+        description: Human-readable description of the resource.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     rule = db.get(NatRule, rule_id)
     if not rule:
@@ -12946,6 +15677,21 @@ def delete_nat_rule_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the delete nat rule from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        rule_id: Identifier of the rule.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     rule = db.get(NatRule, rule_id)
     if not rule:
@@ -12973,6 +15719,27 @@ def create_policy_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | Response:
+    """Handle the create policy from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        name: Name of the target object.
+        description: Human-readable description of the resource.
+        latency_ms: Latency ms supplied by the caller.
+        jitter_ms: Jitter ms supplied by the caller.
+        packet_loss_percent: Packet loss percent supplied by the caller.
+        bandwidth_mbit: Bandwidth mbit supplied by the caller.
+        corrupt_percent: Corrupt percent supplied by the caller.
+        duplicate_percent: Duplicate percent supplied by the caller.
+        reorder_percent: Reorder percent supplied by the caller.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     parsed = validate_wan_policy_form_values(
         name,
@@ -13027,6 +15794,31 @@ def edit_policy_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | Response:
+    """Handle the edit policy from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        policy_id: Identifier of the policy.
+        name: Name of the target object.
+        description: Human-readable description of the resource.
+        latency_ms: Latency ms supplied by the caller.
+        jitter_ms: Jitter ms supplied by the caller.
+        packet_loss_percent: Packet loss percent supplied by the caller.
+        bandwidth_mbit: Bandwidth mbit supplied by the caller.
+        corrupt_percent: Corrupt percent supplied by the caller.
+        duplicate_percent: Duplicate percent supplied by the caller.
+        reorder_percent: Reorder percent supplied by the caller.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     policy = db.get(WanPolicy, policy_id)
     if not policy:
@@ -13072,6 +15864,21 @@ def delete_policy_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the delete policy from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        policy_id: Identifier of the policy.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     policy = db.get(WanPolicy, policy_id)
     if not policy:
@@ -13091,6 +15898,16 @@ def firewall(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the firewall endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     return render(request, "firewall.html", {"identity": identity, **firewall_context(db), "appliance_apply_status": appliance_apply_status(db, "firewall")})
 
 
@@ -13109,6 +15926,25 @@ def update_firewall_settings(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the update firewall settings endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        enabled: Whether the requested behavior is enabled.
+        default_input_policy: Default input policy supplied by the caller.
+        default_forward_policy: Default forward policy supplied by the caller.
+        default_output_policy: Default output policy supplied by the caller.
+        allow_established: Allow established supplied by the caller.
+        allow_loopback: Allow loopback supplied by the caller.
+        allow_icmp: Allow icmp supplied by the caller.
+        log_dropped: Log dropped supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     settings = get_firewall_settings_row(db)
     settings.enabled = enabled == "on"
@@ -13141,6 +15977,11 @@ def update_firewall_settings(
 
 
 def firewall_source_group_state_for_db(db: Session) -> dict:
+    """Return firewall source group state for db.
+
+    Args:
+        db: Active database session.
+    """
     physical_interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     vlan_interfaces = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
     interface_networks = firewall_interface_networks(physical_interfaces, vlan_interfaces)
@@ -13148,15 +15989,23 @@ def firewall_source_group_state_for_db(db: Session) -> dict:
 
 
 def persist_firewall_source_group_state(db: Session, state: dict) -> None:
+    """Persist firewall source group state.
+
+    Args:
+        db: Active database session.
+        state: Lifecycle or job state to persist.
+    """
     set_setting_value(db, FIREWALL_SOURCE_GROUPS_SETTING_KEY, json.dumps(state, indent=2, sort_keys=True))
 
 
 def _source_group_entries_from_form(form) -> list[str]:
+    """Return source group entries from form."""
     values = [str(item).strip() for item in form.getlist("group_entries") if str(item).strip()]
     return values or ["any"]
 
 
 def _firewall_source_group_id(name: str, groups: list[dict]) -> str:
+    """Return firewall source group id."""
     base = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-") or "group"
     existing = {str(group.get("id", "")) for group in groups}
     candidate = f"custom:{base}"
@@ -13168,6 +16017,7 @@ def _firewall_source_group_id(name: str, groups: list[dict]) -> str:
 
 
 def _normalized_firewall_source_group(group: dict) -> dict:
+    """Return normalized firewall source group."""
     entries = [str(item).strip() for item in (group.get("entries") or group.get("sources") or []) if str(item).strip()] or ["any"]
     normalized_entries = []
     for entry in entries:
@@ -13188,6 +16038,7 @@ def _normalized_firewall_source_group(group: dict) -> dict:
 
 
 def _strip_deleted_source_group_references(groups: list[dict], deleted_group_id: str, deleted_group_name: str) -> list[dict]:
+    """Return strip deleted source group references."""
     stripped: list[dict] = []
     deleted_ref = f"{FIREWALL_SOURCE_GROUP_REFERENCE_PREFIX}{deleted_group_id}"
     deleted_name_ref = f"@{deleted_group_name}".strip().lower()
@@ -13203,6 +16054,12 @@ def _strip_deleted_source_group_references(groups: list[dict], deleted_group_id:
 
 
 def _firewall_source_group_response(db: Session, updated_at: str) -> JSONResponse:
+    """Return firewall source group response.
+
+    Args:
+        db: Active database session.
+        updated_at: Updated at supplied by the caller.
+    """
     context = firewall_context(db)
     return JSONResponse(
         {
@@ -13222,6 +16079,19 @@ async def update_firewall_source_groups(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the update firewall source groups endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     form = await request.form()
     verify_csrf(request, str(form.get("csrf", "")))
     state = firewall_source_group_state_for_db(db)
@@ -13318,6 +16188,22 @@ def update_managed_firewall_rule_source_group(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    """Handle the update managed firewall rule source group endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        rule_name: Rule name supplied by the caller.
+        source_group_id: Identifier of the source group.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     context = firewall_context(db)
     valid_rule_names = {
@@ -13353,6 +16239,22 @@ def _assign_firewall_rule(
     enabled: bool,
     description: str,
 ) -> FirewallRule:
+    """Return assign firewall rule.
+
+    Args:
+        rule: Firewall, routing, or validation rule to process.
+        name: Name of the target object.
+        direction: Direction supplied by the caller.
+        action: Operation to perform on the target resource.
+        protocol: Protocol supplied by the caller.
+        source: Source path, address, or record to process.
+        destination: Destination path, address, or resource.
+        destination_port: Destination port supplied by the caller.
+        interface_name: Linux interface name of the network target.
+        priority: Ordering priority assigned to the item.
+        enabled: Whether the requested behavior is enabled.
+        description: Human-readable description of the resource.
+    """
     rule.name = name.strip()
     rule.direction = direction
     rule.action = action
@@ -13386,6 +16288,31 @@ def create_firewall_rule(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the create firewall rule endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        name: Name of the target object.
+        direction: Direction supplied by the caller.
+        action: Operation to perform on the target resource.
+        protocol: Protocol supplied by the caller.
+        source: Source path, address, or record to process.
+        destination: Destination path, address, or resource.
+        destination_port: Destination port supplied by the caller.
+        interface_name: Linux interface name of the network target.
+        priority: Ordering priority assigned to the item.
+        enabled: Whether the requested behavior is enabled.
+        description: Human-readable description of the resource.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     rule = _assign_firewall_rule(
         FirewallRule(),
@@ -13439,6 +16366,32 @@ def update_firewall_rule(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the update firewall rule endpoint.
+
+    Args:
+        rule_id: Identifier of the rule.
+        request: Incoming HTTP request.
+        name: Name of the target object.
+        direction: Direction supplied by the caller.
+        action: Operation to perform on the target resource.
+        protocol: Protocol supplied by the caller.
+        source: Source path, address, or record to process.
+        destination: Destination path, address, or resource.
+        destination_port: Destination port supplied by the caller.
+        interface_name: Linux interface name of the network target.
+        priority: Ordering priority assigned to the item.
+        enabled: Whether the requested behavior is enabled.
+        description: Human-readable description of the resource.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     rule = db.get(FirewallRule, rule_id)
     if not rule:
@@ -13484,6 +16437,21 @@ def delete_firewall_rule(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | Response:
+    """Handle the delete firewall rule endpoint.
+
+    Args:
+        rule_id: Identifier of the rule.
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     rule = db.get(FirewallRule, rule_id)
     if not rule:
@@ -13502,6 +16470,16 @@ def physical_interfaces_page(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the physical interfaces page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     return render(request, "physical_interfaces.html", {"identity": identity, **network_context(db), "appliance_apply_status": appliance_apply_status(db, "network")})
 
 
@@ -13512,6 +16490,17 @@ def refresh_physical_interfaces_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the refresh physical interfaces from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     _interfaces, discovered_count = sync_host_physical_interfaces(db)
     record_audit(
@@ -13532,6 +16521,15 @@ def preserve_management_dhcp_dns_on_static_conversion(
     old_ipv4_method: str,
     new_ipv4_method: str,
 ) -> list[str]:
+    """Return preserve management dhcp dns on static conversion.
+
+    Args:
+        db: Active database session.
+        interface: Interface supplied by the caller.
+        new_role: New role supplied by the caller.
+        old_ipv4_method: Old ipv4 method supplied by the caller.
+        new_ipv4_method: New ipv4 method supplied by the caller.
+    """
     if new_role != "management" or old_ipv4_method != "dhcp" or new_ipv4_method != "static":
         return []
     _management, observed_servers = management_dhcp_dns_context([interface])
@@ -13571,6 +16569,31 @@ def edit_physical_interface_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the edit physical interface from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        interface_id: Identifier of the interface.
+        role: Atlaso role used for authorization.
+        mode: Operating mode selected for the workflow.
+        ipv4_method: Ipv4 method supplied by the caller.
+        ip_cidr: Ip cidr supplied by the caller.
+        gateway: Gateway supplied by the caller.
+        ipv6_enabled: Ipv6 enabled supplied by the caller.
+        ipv6_cidr: IPv6 network or address in CIDR notation.
+        ipv6_gateway: Ipv6 gateway supplied by the caller.
+        mtu: Mtu supplied by the caller.
+        admin_state: Admin state supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     interface = db.get(PhysicalInterface, interface_id)
     if not interface:
@@ -13700,6 +16723,21 @@ def forget_missing_physical_interface_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | Response:
+    """Handle the forget missing physical interface from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        interface_id: Identifier of the interface.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     interface = db.get(PhysicalInterface, interface_id)
     if not interface:
@@ -13742,6 +16780,16 @@ def vlan_interfaces_page(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the vlan interfaces page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     return render(request, "vlan_interfaces.html", {"identity": identity, **network_context(db), "appliance_apply_status": appliance_apply_status(db, "network")})
 
 
@@ -13759,6 +16807,24 @@ def create_vlan_interface_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse | JSONResponse:
+    """Handle the create vlan interface from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        parent_interface: Parent interface supplied by the caller.
+        vlan_id: Identifier of the vlan.
+        ip_cidr: Ip cidr supplied by the caller.
+        ipv6_cidr: IPv6 network or address in CIDR notation.
+        mtu: Mtu supplied by the caller.
+        role: Atlaso role used for authorization.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     requested_enabled = enabled == "on"
     parsed = validate_vlan_form_values(parent_interface, vlan_id, ip_cidr, ipv6_cidr, requested_enabled, db)
@@ -13805,6 +16871,28 @@ def edit_vlan_interface_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse | JSONResponse:
+    """Handle the edit vlan interface from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        vlan_id: Identifier of the vlan.
+        parent_interface: Parent interface supplied by the caller.
+        vlan_id_value: Vlan id value supplied by the caller.
+        ip_cidr: Ip cidr supplied by the caller.
+        ipv6_cidr: IPv6 network or address in CIDR notation.
+        mtu: Mtu supplied by the caller.
+        role: Atlaso role used for authorization.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     vlan = db.get(VlanInterface, vlan_id)
     if not vlan:
@@ -13856,6 +16944,21 @@ def delete_vlan_interface_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the delete vlan interface from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        vlan_id: Identifier of the vlan.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     vlan = db.get(VlanInterface, vlan_id)
     if not vlan:
@@ -13887,6 +16990,16 @@ def dns_page(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the dns page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     context = dnsmasq_context(db)
     return render(request, "dns.html", {"identity": identity, **context, "appliance_apply_status": dnsmasq_apply_status(db, context)})
 
@@ -13919,6 +17032,38 @@ def update_dns_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the update dns from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        enabled: Whether the requested behavior is enabled.
+        listen_interfaces: Interfaces on which the service should listen.
+        listen_addresses: Addresses on which the service should listen.
+        listen_interfaces_present: Whether the caller supplied listen interfaces.
+        listen_addresses_present: Whether the caller supplied listen addresses.
+        domains: Domains supplied by the caller.
+        upstream_servers: Upstream servers supplied by the caller.
+        conditional_forwarders: Conditional forwarders supplied by the caller.
+        cache_size: Cache size supplied by the caller.
+        expand_hosts: Expand hosts supplied by the caller.
+        authoritative: Authoritative supplied by the caller.
+        authoritative_server: Authoritative server supplied by the caller.
+        authoritative_contact: Authoritative contact supplied by the caller.
+        authoritative_ttl: Authoritative ttl supplied by the caller.
+        authoritative_refresh: Authoritative refresh supplied by the caller.
+        authoritative_retry: Authoritative retry supplied by the caller.
+        authoritative_expire: Authoritative expire supplied by the caller.
+        dnssec_enabled: Dnssec enabled supplied by the caller.
+        rebind_protection_enabled: Rebind protection enabled supplied by the caller.
+        rebind_domain_exemptions: Rebind domain exemptions supplied by the caller.
+        query_logging_mode: Query logging mode supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     settings = get_dns_settings_row(db)
     available_options = service_bind_options(db)
@@ -14016,6 +17161,21 @@ def create_dns_zone_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse:
+    """Handle the create dns zone from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        domain: Managed DNS domain affected by the operation.
+        description: Human-readable description of the resource.
+        enabled: Whether the requested behavior is enabled.
+        enabled_present: Enabled present supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     settings = get_dns_settings_row(db)
     existing_domains = dns_domains_for_settings(settings)
@@ -14068,6 +17228,22 @@ def set_dns_zone_enabled_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the set dns zone enabled from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        domain: Managed DNS domain affected by the operation.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     settings = get_dns_settings_row(db)
     normalized_domain = split_domains(domain)
@@ -14108,6 +17284,18 @@ def delete_dns_zone_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse:
+    """Handle the delete dns zone from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        domain: Managed DNS domain affected by the operation.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     settings = get_dns_settings_row(db)
     existing_domains = dns_domains_for_settings(settings)
@@ -14159,6 +17347,23 @@ def create_dns_record_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the create dns record from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        hostname: DNS hostname of the target resource.
+        domain: Managed DNS domain affected by the operation.
+        record_type: Record type supplied by the caller.
+        address: Network address of the target service or interface.
+        description: Human-readable description of the resource.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     hostname = normalize_dns_hostname(hostname, domain)
     record_type = record_type.strip().upper()
@@ -14230,6 +17435,21 @@ def delete_dns_record_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the delete dns record from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        record_id: Identifier of the record.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     record = db.get(DnsRecord, record_id)
     if not record:
@@ -14254,6 +17474,27 @@ def edit_dns_record_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse:
+    """Handle the edit dns record from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        record_id: Identifier of the record.
+        hostname: DNS hostname of the target resource.
+        domain: Managed DNS domain affected by the operation.
+        record_type: Record type supplied by the caller.
+        address: Network address of the target service or interface.
+        description: Human-readable description of the resource.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     record = db.get(DnsRecord, record_id)
     if not record:
@@ -14328,6 +17569,20 @@ def import_dns_hosts_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse:
+    """Handle the import dns hosts from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        hosts_text: Hosts text supplied by the caller.
+        domain: Managed DNS domain affected by the operation.
+        replace_existing: Replace existing supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     parsed_records, errors = parse_hosts_records(hosts_text)
     if errors:
@@ -14426,6 +17681,20 @@ def import_dns_zone_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse:
+    """Handle the import dns zone from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        domain: Managed DNS domain affected by the operation.
+        zone_text: Zone text supplied by the caller.
+        replace_existing: Replace existing supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     scoped_domain = domain.strip().strip(".").lower()
     parsed_records, errors = parse_zone_records(zone_text, scoped_domain, get_dns_settings_row(db))
@@ -14498,6 +17767,16 @@ def dhcp_page(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the dhcp page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     context = dnsmasq_context(db)
     return render(request, "dhcp.html", {"identity": identity, **context, "appliance_apply_status": dnsmasq_apply_status(db, context)})
 
@@ -14517,6 +17796,25 @@ def update_dhcp_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the update dhcp from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        enabled: Whether the requested behavior is enabled.
+        interface_name: Linux interface name of the network target.
+        site_address: Site address supplied by the caller.
+        prefix_length: Prefix length supplied by the caller.
+        lease_time: Lease time supplied by the caller.
+        domain_name: Domain name supplied by the caller.
+        dns_server: Dns server supplied by the caller.
+        authoritative: Authoritative supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     settings = get_dhcp_settings_row(db)
     settings.enabled = enabled == "on"
@@ -14569,6 +17867,29 @@ def create_dhcp_scope_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse | JSONResponse:
+    """Handle the create dhcp scope from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        name: Name of the target object.
+        address_family: Address family supplied by the caller.
+        interface_name: Linux interface name of the network target.
+        site_address: Site address supplied by the caller.
+        prefix_length: Prefix length supplied by the caller.
+        range_expression: Range expression supplied by the caller.
+        lease_time: Lease time supplied by the caller.
+        domain_name: Domain name supplied by the caller.
+        dns_server: Dns server supplied by the caller.
+        ntp_server: Ntp server supplied by the caller.
+        description: Human-readable description of the resource.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     scope = DhcpScope(
         name=name.strip(),
@@ -14630,6 +17951,33 @@ def edit_dhcp_scope_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse | JSONResponse:
+    """Handle the edit dhcp scope from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        scope_id: Identifier of the scope.
+        name: Name of the target object.
+        address_family: Address family supplied by the caller.
+        interface_name: Linux interface name of the network target.
+        site_address: Site address supplied by the caller.
+        prefix_length: Prefix length supplied by the caller.
+        range_expression: Range expression supplied by the caller.
+        lease_time: Lease time supplied by the caller.
+        domain_name: Domain name supplied by the caller.
+        dns_server: Dns server supplied by the caller.
+        ntp_server: Ntp server supplied by the caller.
+        description: Human-readable description of the resource.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     scope = db.get(DhcpScope, scope_id)
     if not scope:
@@ -14693,6 +18041,21 @@ def delete_dhcp_scope_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | Response:
+    """Handle the delete dhcp scope from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        scope_id: Identifier of the scope.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     scope = db.get(DhcpScope, scope_id)
     if not scope:
@@ -14719,6 +18082,22 @@ def create_dhcp_option_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the create dhcp option from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        scope_id: Identifier of the scope.
+        option_code: Option code supplied by the caller.
+        value: Value to process.
+        description: Human-readable description of the resource.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     option = DhcpOption(
         scope_id=parse_dhcp_option_scope_id(scope_id),
@@ -14752,6 +18131,26 @@ def edit_dhcp_option_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the edit dhcp option from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        option_id: Identifier of the option.
+        scope_id: Identifier of the scope.
+        option_code: Option code supplied by the caller.
+        value: Value to process.
+        description: Human-readable description of the resource.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     option = db.get(DhcpOption, option_id)
     if not option:
@@ -14781,6 +18180,21 @@ def delete_dhcp_option_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | Response:
+    """Handle the delete dhcp option from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        option_id: Identifier of the option.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     option = db.get(DhcpOption, option_id)
     if not option:
@@ -14805,6 +18219,22 @@ def create_dhcp_reservation_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse:
+    """Handle the create dhcp reservation from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        hostname: DNS hostname of the target resource.
+        mac_address: MAC address identifying the host or interface.
+        ip_address: Ip address supplied by the caller.
+        description: Human-readable description of the resource.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     reservation = DhcpReservation(
         hostname=hostname.strip(),
@@ -14835,6 +18265,7 @@ def create_dhcp_reservation_from_ui(
 
 
 def _lease_hostname_or_default(hostname: str, mac_address: str, *, prefix: str = "lease") -> str:
+    """Return lease hostname or default."""
     normalized = hostname.strip().strip(".").lower()
     if normalized and normalized != "-":
         return normalized
@@ -14852,6 +18283,23 @@ def create_esxi_pxe_host_from_dhcp_lease(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the create esxi pxe host from dhcp lease endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        hostname: DNS hostname of the target resource.
+        mac_address: MAC address identifying the host or interface.
+        ip_address: Ip address supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     require_esxi_pxe_write(identity)
     verify_csrf(request, csrf)
     normalized_mac = mac_address.strip().lower()
@@ -14902,6 +18350,23 @@ def deny_dhcp_lease_mac_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the deny dhcp lease mac from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        hostname: DNS hostname of the target resource.
+        mac_address: MAC address identifying the host or interface.
+        ip_address: Ip address supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     normalized_mac = mac_address.strip().lower()
     reservation = db.execute(select(DhcpReservation).where(DhcpReservation.mac_address == normalized_mac)).scalar_one_or_none()
@@ -14942,6 +18407,26 @@ def edit_dhcp_reservation_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse:
+    """Handle the edit dhcp reservation from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        reservation_id: Identifier of the reservation.
+        hostname: DNS hostname of the target resource.
+        mac_address: MAC address identifying the host or interface.
+        ip_address: Ip address supplied by the caller.
+        description: Human-readable description of the resource.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     reservation = db.get(DhcpReservation, reservation_id)
     if not reservation:
@@ -14978,6 +18463,21 @@ def delete_dhcp_reservation_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the delete dhcp reservation from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        reservation_id: Identifier of the reservation.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     reservation = db.get(DhcpReservation, reservation_id)
     if not reservation:
@@ -14994,6 +18494,16 @@ def certificate_authority_page(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the certificate authority page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     return render(request, "certificate_authority.html", {"identity": identity, **ca_context(db), "appliance_apply_status": appliance_apply_status(db, "ca")})
 
 
@@ -15003,12 +18513,33 @@ def public_ca_page(
     identity: Identity | None = Depends(get_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the public ca page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if not request_public_service_route_allowed(db, request, "ca"):
         raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
     return render(request, "ca_public.html", {"identity": identity, **public_ca_context(db)})
 
 
 def ca_public_login_response(request: Request, *, error: str | None = None, status_code: int = 200, db: Session | None = None) -> HTMLResponse:
+    """Return ca public login response.
+
+    Args:
+        request: Incoming HTTP request.
+        error: Public-safe error detail to record or return.
+        status_code: HTTP status code for the response.
+        db: Active database session.
+    """
     return render(
         request,
         "ca_request_login.html",
@@ -15036,6 +18567,17 @@ def authenticate_ca_portal_session(
     next_path: str,
     failure_response,
 ) -> RedirectResponse | HTMLResponse:
+    """Return authenticate ca portal session.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session.
+        username: Account name used for authentication or lookup.
+        password: Password supplied for the immediate authenticated operation.
+        csrf: Validated CSRF token authorizing the request.
+        next_path: Filesystem path for the next.
+        failure_response: Failure response supplied by the caller.
+    """
     verify_csrf(request, csrf)
     user = authenticate_user(db, username, password)
     if not user:
@@ -15049,6 +18591,18 @@ def authenticate_ca_portal_session(
 
 @router.get("/ca/login", response_class=HTMLResponse, response_model=None)
 def ca_public_login_page(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
+    """Handle the ca public login page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if not request_public_service_route_allowed(db, request, "ca"):
         raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
     return ca_public_login_response(request, db=db)
@@ -15063,6 +18617,22 @@ def ca_public_login(
     next: str = Form("/ca"),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse:
+    """Handle the ca public login endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        username: Account name used for authentication or lookup.
+        password: Password supplied for the immediate authenticated operation.
+        csrf: Validated CSRF token authorizing the request.
+        next: Relative destination requested after authentication.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if not request_public_service_route_allowed(db, request, "ca"):
         raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
     return authenticate_ca_portal_session(
@@ -15082,6 +18652,15 @@ def ca_public_login(
 
 
 def public_root_ca_response(db: Session, *, bundle: bool = False) -> Response:
+    """Return public root ca response.
+
+    Args:
+        db: Active database session.
+        bundle: Bundle supplied by the caller.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     settings = get_ca_settings_row(db)
     if not settings.root_certificate_pem:
         raise HTTPException(status_code=404, detail="Root CA certificate is not available")
@@ -15098,6 +18677,18 @@ def download_public_root_ca(
     request: Request,
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the download public root ca endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if not request_public_service_route_allowed(db, request, "ca"):
         raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
     return public_root_ca_response(db)
@@ -15108,6 +18699,18 @@ def download_public_ca_bundle(
     request: Request,
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the download public ca bundle endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if not request_public_service_route_allowed(db, request, "ca"):
         raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
     return public_root_ca_response(db, bundle=True)
@@ -15119,11 +18722,29 @@ def ca_requests_page(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the ca requests page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     require_certificate_workflow_identity(identity)
     return render(request, "ca_requests.html", {"identity": identity, **ca_request_context(db)})
 
 
 def ca_request_portal_login_response(request: Request, *, error: str | None = None, status_code: int = 200, db: Session | None = None) -> HTMLResponse:
+    """Return ca request portal login response.
+
+    Args:
+        request: Incoming HTTP request.
+        error: Public-safe error detail to record or return.
+        status_code: HTTP status code for the response.
+        db: Active database session.
+    """
     return render(
         request,
         "ca_request_login.html",
@@ -15142,6 +18763,19 @@ def ca_portal_requests_page(
     identity: Identity | None = Depends(get_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the ca portal requests page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if not request_public_service_route_allowed(db, request, "ca"):
         raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
     if identity is None:
@@ -15159,6 +18793,22 @@ def ca_request_portal_login(
     next: str = Form("/requests"),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse:
+    """Handle the ca request portal login endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        username: Account name used for authentication or lookup.
+        password: Password supplied for the immediate authenticated operation.
+        csrf: Validated CSRF token authorizing the request.
+        next: Relative destination requested after authentication.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if not request_public_service_route_allowed(db, request, "ca"):
         raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
     return authenticate_ca_portal_session(
@@ -15179,6 +18829,16 @@ def ca_request_portal_login(
 
 @router.post("/requests/logout", response_model=None)
 def ca_request_portal_logout(request: Request, csrf: str = Form(...), next: str = Form("/requests")) -> RedirectResponse:
+    """Handle the ca request portal logout endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        next: Relative destination requested after authentication.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     request.session.clear()
     return RedirectResponse(next if next in {"/", "/ca"} else "/requests", status_code=303)
@@ -15194,6 +18854,17 @@ def _stage_ca_certificate_request(
     description: str,
     csr_text: str,
 ) -> CaCertificate:
+    """Return stage ca certificate request.
+
+    Args:
+        db: Active database session.
+        common_name: Certificate subject common name.
+        profile_id: Identifier of the profile.
+        subject_alt_names: Subject alt names supplied by the caller.
+        ip_addresses: Ip addresses supplied by the caller.
+        description: Human-readable description of the resource.
+        csr_text: Csr text supplied by the caller.
+    """
     certificate = CaCertificate(
         common_name=common_name.strip(),
         profile_id=parse_ca_profile_id(profile_id),
@@ -15210,6 +18881,17 @@ def _stage_ca_certificate_request(
 
 
 def _revoke_ca_certificate(db: Session, *, certificate_id: int, actor: str, reason: str) -> CaCertificate:
+    """Return revoke ca certificate.
+
+    Args:
+        db: Active database session.
+        certificate_id: Identifier of the certificate.
+        actor: Authenticated identity attributed to the audit record.
+        reason: Reason supplied by the caller.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     certificate = db.get(CaCertificate, certificate_id)
     if not certificate:
         raise HTTPException(status_code=404, detail="CA certificate not found")
@@ -15237,6 +18919,23 @@ def submit_ca_request_from_portal(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse:
+    """Handle the submit ca request from portal endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        common_name: Certificate subject common name.
+        profile_id: Identifier of the profile.
+        subject_alt_names: Subject alt names supplied by the caller.
+        ip_addresses: Ip addresses supplied by the caller.
+        description: Human-readable description of the resource.
+        csr_text: Csr text supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     require_certificate_workflow_identity(identity)
     verify_csrf(request, csrf)
     if not common_name.strip():
@@ -15272,6 +18971,26 @@ def submit_ca_request_from_portal_alias(
     identity: Identity | None = Depends(get_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse:
+    """Handle the submit ca request from portal alias endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        common_name: Certificate subject common name.
+        profile_id: Identifier of the profile.
+        subject_alt_names: Subject alt names supplied by the caller.
+        ip_addresses: Ip addresses supplied by the caller.
+        description: Human-readable description of the resource.
+        csr_text: Csr text supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if not request_public_service_route_allowed(db, request, "ca"):
         raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
     if identity is None:
@@ -15307,6 +19026,19 @@ def revoke_ca_certificate_from_portal(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the revoke ca certificate from portal endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        certificate_id: Identifier of the certificate.
+        reason: Reason supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     require_certificate_workflow_identity(identity)
     verify_csrf(request, csrf)
     certificate = _revoke_ca_certificate(db, certificate_id=certificate_id, actor=identity.username, reason=reason)
@@ -15324,6 +19056,22 @@ def revoke_ca_certificate_from_portal_alias(
     identity: Identity | None = Depends(get_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse:
+    """Handle the revoke ca certificate from portal alias endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        certificate_id: Identifier of the certificate.
+        reason: Reason supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if not request_public_service_route_allowed(db, request, "ca"):
         raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
     if identity is None:
@@ -15340,6 +19088,15 @@ def download_root_ca(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the download root ca endpoint.
+
+    Args:
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     ensure_ca_state(db)
     settings = get_ca_settings_row(db)
     if not settings.root_certificate_pem:
@@ -15359,6 +19116,15 @@ def download_ca_bundle(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the download ca bundle endpoint.
+
+    Args:
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     ensure_ca_state(db)
     settings = get_ca_settings_row(db)
     if not settings.root_certificate_pem:
@@ -15374,6 +19140,15 @@ def download_ca_bundle(
 
 
 def get_exportable_ca_certificate(db: Session, certificate_id: int) -> CaCertificate:
+    """Return exportable ca certificate.
+
+    Args:
+        db: Active database session.
+        certificate_id: Identifier of the certificate.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     ensure_ca_state(db)
     certificate = db.get(CaCertificate, certificate_id)
     if not certificate:
@@ -15389,6 +19164,16 @@ def download_ca_certificate(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the download ca certificate endpoint.
+
+    Args:
+        certificate_id: Identifier of the certificate.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     certificate = get_exportable_ca_certificate(db, certificate_id)
     record_audit(db, actor=identity.username, action="download_ca_certificate", resource_type="ca_certificate", resource_id=str(certificate.id))
     filename = f"{safe_certificate_name(certificate.common_name)}.crt"
@@ -15405,6 +19190,16 @@ def download_ca_certificate_chain(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the download ca certificate chain endpoint.
+
+    Args:
+        certificate_id: Identifier of the certificate.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     certificate = get_exportable_ca_certificate(db, certificate_id)
     chain = certificate.chain_pem or certificate.certificate_pem
     record_audit(db, actor=identity.username, action="download_ca_certificate_chain", resource_type="ca_certificate", resource_id=str(certificate.id))
@@ -15422,6 +19217,19 @@ def download_ca_certificate_private_key(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the download ca certificate private key endpoint.
+
+    Args:
+        certificate_id: Identifier of the certificate.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     certificate = get_exportable_ca_certificate(db, certificate_id)
     if not certificate.private_key_encrypted:
         raise HTTPException(status_code=404, detail="No Atlaso-generated private key is available for this certificate")
@@ -15461,6 +19269,36 @@ def update_ca_settings_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the update ca settings from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        enabled: Whether the requested behavior is enabled.
+        portal_hostname: Portal hostname supplied by the caller.
+        listen_interfaces: Interfaces on which the service should listen.
+        listen_addresses: Addresses on which the service should listen.
+        listen_interfaces_present: Whether the caller supplied listen interfaces.
+        listen_addresses_present: Whether the caller supplied listen addresses.
+        root_common_name: Root common name supplied by the caller.
+        organization: Managed identity organization affected by the operation.
+        organizational_unit: Organizational unit supplied by the caller.
+        country: Country supplied by the caller.
+        state: Lifecycle or job state to persist.
+        locality: Locality supplied by the caller.
+        key_algorithm: Key algorithm supplied by the caller.
+        key_size: Key size supplied by the caller.
+        digest_algorithm: Digest algorithm supplied by the caller.
+        root_valid_days: Root valid days supplied by the caller.
+        intermediate_valid_days: Intermediate valid days supplied by the caller.
+        publish_crl: Publish crl supplied by the caller.
+        ocsp_enabled: Ocsp enabled supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     settings = get_ca_settings_row(db)
     previous_portal_hostname = settings.portal_hostname
@@ -15515,6 +19353,11 @@ def update_ca_settings_from_ui(
 
 
 def parse_ca_profile_id(raw_value: str | int | None) -> int | None:
+    """Parse ca profile id.
+
+    Returns:
+        The parsed ca profile id.
+    """
     if raw_value in {None, "", "None", "unassigned"}:
         return None
     return int(raw_value)
@@ -15537,6 +19380,27 @@ def create_ca_profile_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse | JSONResponse:
+    """Handle the create ca profile from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        name: Name of the target object.
+        certificate_type: Certificate type supplied by the caller.
+        validity_days: Validity days supplied by the caller.
+        key_algorithm: Key algorithm supplied by the caller.
+        key_size: Key size supplied by the caller.
+        key_usage: Key usage supplied by the caller.
+        extended_key_usage: Extended key usage supplied by the caller.
+        san_required: San required supplied by the caller.
+        description: Human-readable description of the resource.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     profile = CaProfile(
         name=name.strip(),
@@ -15590,6 +19454,31 @@ def edit_ca_profile_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse | JSONResponse:
+    """Handle the edit ca profile from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        profile_id: Identifier of the profile.
+        name: Name of the target object.
+        certificate_type: Certificate type supplied by the caller.
+        validity_days: Validity days supplied by the caller.
+        key_algorithm: Key algorithm supplied by the caller.
+        key_size: Key size supplied by the caller.
+        key_usage: Key usage supplied by the caller.
+        extended_key_usage: Extended key usage supplied by the caller.
+        san_required: San required supplied by the caller.
+        description: Human-readable description of the resource.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     profile = db.get(CaProfile, profile_id)
     if not profile:
@@ -15634,6 +19523,21 @@ def delete_ca_profile_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | Response:
+    """Handle the delete ca profile from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        profile_id: Identifier of the profile.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     profile = db.get(CaProfile, profile_id)
     if not profile:
@@ -15662,6 +19566,27 @@ def create_ca_certificate_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the create ca certificate from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        common_name: Certificate subject common name.
+        profile_id: Identifier of the profile.
+        subject_alt_names: Subject alt names supplied by the caller.
+        ip_addresses: Ip addresses supplied by the caller.
+        description: Human-readable description of the resource.
+        csr_text: Csr text supplied by the caller.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     try:
         parsed_profile_id = parse_ca_profile_id(profile_id)
@@ -15713,6 +19638,27 @@ def edit_ca_certificate_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the edit ca certificate from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        certificate_id: Identifier of the certificate.
+        common_name: Certificate subject common name.
+        profile_id: Identifier of the profile.
+        subject_alt_names: Subject alt names supplied by the caller.
+        ip_addresses: Ip addresses supplied by the caller.
+        description: Human-readable description of the resource.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     certificate = db.get(CaCertificate, certificate_id)
     if not certificate:
@@ -15757,6 +19703,21 @@ def delete_ca_certificate_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | Response:
+    """Handle the delete ca certificate from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        certificate_id: Identifier of the certificate.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     certificate = db.get(CaCertificate, certificate_id)
     if not certificate:
@@ -15778,6 +19739,17 @@ def ldap_page(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the ldap page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        organization_id: Identifier of the organization.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     return render(
         request,
         "ldap.html",
@@ -15815,6 +19787,36 @@ def update_ldap_settings_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the update ldap settings from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        enabled: Whether the requested behavior is enabled.
+        hostname: DNS hostname of the target resource.
+        listen_interfaces: Interfaces on which the service should listen.
+        listen_interfaces_present: Whether the caller supplied listen interfaces.
+        ldaps_enabled: Ldaps enabled supplied by the caller.
+        port: TCP or UDP port of the target service.
+        ldap_enabled: Ldap enabled supplied by the caller.
+        ldap_port: Ldap port supplied by the caller.
+        min_password_length: Min password length supplied by the caller.
+        require_uppercase: Require uppercase supplied by the caller.
+        require_lowercase: Require lowercase supplied by the caller.
+        require_number: Require number supplied by the caller.
+        require_special: Require special supplied by the caller.
+        disallow_username: Disallow username supplied by the caller.
+        max_failures: Max failures supplied by the caller.
+        lockout_minutes: Lockout minutes supplied by the caller.
+        failure_window_minutes: Failure window minutes supplied by the caller.
+        password_history: Password history supplied by the caller.
+        password_max_age_days: Password max age days supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     settings = get_ldap_settings_row(db)
     previous_hostname = settings.hostname
@@ -15876,6 +19878,25 @@ def create_ldap_organization_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the create ldap organization from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        name: Name of the target object.
+        description: Human-readable description of the resource.
+        slug: Slug supplied by the caller.
+        suffix_dn: Suffix dn supplied by the caller.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     verify_csrf(request, csrf)
     try:
         normalized_slug = normalize_ldap_slug(slug or name)
@@ -15937,6 +19958,21 @@ def delete_ldap_organization_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the delete ldap organization from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        organization_id: Identifier of the organization.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     organization = db.get(LdapOrganization, organization_id)
     if organization is None:
@@ -15955,6 +19991,21 @@ def rotate_ldap_bind_credential_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the rotate ldap bind credential from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        organization_id: Identifier of the organization.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     organization = db.get(LdapOrganization, organization_id)
     if organization is None:
@@ -15990,6 +20041,7 @@ LDAP_SYNTHETIC_GROUPS = (
 
 
 def _unique_ldap_synthetic_name(base: str, existing: set[str]) -> str:
+    """Return unique ldap synthetic name."""
     candidate = base
     suffix = 2
     while candidate.lower() in existing:
@@ -16000,11 +20052,17 @@ def _unique_ldap_synthetic_name(base: str, existing: set[str]) -> str:
 
 
 def _synthetic_ldap_password(settings: LdapSettings) -> str:
+    """Return synthetic ldap password."""
     length = max(14, settings.min_password_length)
     return ("Aa1!" + (uuid4().hex * 8))[:length]
 
 
 def _ldap_credentials_csv(credentials: list[dict[str, str]]) -> str:
+    """Return ldap credentials csv.
+
+    Args:
+        credentials: Credential bundle used for the immediate external request.
+    """
     credential_buffer = io.StringIO(newline="")
     credential_writer = csv.DictWriter(
         credential_buffer,
@@ -16027,6 +20085,25 @@ def generate_ldap_directory_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the generate ldap directory from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        organization_id: Identifier of the organization.
+        user_count: User count supplied by the caller.
+        group_count: Group count supplied by the caller.
+        action: Operation to perform on the target resource.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+        ValueError: If an input value is invalid.
+    """
     verify_csrf(request, csrf)
     organization = db.get(LdapOrganization, organization_id)
     if organization is None:
@@ -16190,6 +20267,31 @@ def create_ldap_user_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the create ldap user from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        organization_id: Identifier of the organization.
+        uid: Uid supplied by the caller.
+        given_name: Given name supplied by the caller.
+        surname: Surname supplied by the caller.
+        display_name: Display name supplied by the caller.
+        email: Email supplied by the caller.
+        telephone: Telephone supplied by the caller.
+        password: Password supplied for the immediate authenticated operation.
+        confirm_password: Confirm password supplied by the caller.
+        password_confirmation_present: Password confirmation present supplied by the caller.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     organization = db.get(LdapOrganization, organization_id)
     if organization is None:
@@ -16242,6 +20344,31 @@ def edit_ldap_user_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the edit ldap user from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        user_id: Identifier of the user.
+        uid: Uid supplied by the caller.
+        given_name: Given name supplied by the caller.
+        surname: Surname supplied by the caller.
+        display_name: Display name supplied by the caller.
+        email: Email supplied by the caller.
+        telephone: Telephone supplied by the caller.
+        password: Password supplied for the immediate authenticated operation.
+        confirm_password: Confirm password supplied by the caller.
+        password_confirmation_present: Password confirmation present supplied by the caller.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     user = db.get(LdapUser, user_id)
     if user is None:
@@ -16283,6 +20410,22 @@ def reset_ldap_user_password_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the reset ldap user password from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        user_id: Identifier of the user.
+        password: Password supplied for the immediate authenticated operation.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     user = db.get(LdapUser, user_id)
     if user is None:
@@ -16304,6 +20447,21 @@ def unlock_ldap_user_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the unlock ldap user from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        user_id: Identifier of the user.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     user = db.get(LdapUser, user_id)
     if user is None:
@@ -16323,6 +20481,22 @@ def set_ldap_user_enabled_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the set ldap user enabled from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        user_id: Identifier of the user.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     user = db.get(LdapUser, user_id)
     if user is None:
@@ -16342,6 +20516,21 @@ def delete_ldap_user_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the delete ldap user from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        user_id: Identifier of the user.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     user = db.get(LdapUser, user_id)
     if user is None:
@@ -16355,6 +20544,16 @@ def delete_ldap_user_from_ui(
 
 
 def ldap_group_members_from_form(db: Session, organization_id: int, member_values: list[str]) -> list[LdapGroupMembership]:
+    """Return ldap group members from form.
+
+    Args:
+        db: Active database session.
+        organization_id: Identifier of the organization.
+        member_values: Member values supplied by the caller.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     memberships: list[LdapGroupMembership] = []
     for raw_value in dict.fromkeys(member_values):
         member_type, separator, raw_id = raw_value.partition(":")
@@ -16388,6 +20587,26 @@ def create_ldap_group_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the create ldap group from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        organization_id: Identifier of the organization.
+        name: Name of the target object.
+        description: Human-readable description of the resource.
+        members: Members supplied by the caller.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+        ValueError: If an input value is invalid.
+    """
     verify_csrf(request, csrf)
     organization = db.get(LdapOrganization, organization_id)
     if organization is None:
@@ -16427,6 +20646,27 @@ def edit_ldap_group_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the edit ldap group from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        group_id: Identifier of the group.
+        name: Name of the target object.
+        description: Human-readable description of the resource.
+        members: Members supplied by the caller.
+        members_present: Members present supplied by the caller.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+        ValueError: If an input value is invalid.
+    """
     verify_csrf(request, csrf)
     group = db.get(LdapGroup, group_id)
     if group is None:
@@ -16469,6 +20709,23 @@ def update_ldap_group_members_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the update ldap group members from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        group_id: Identifier of the group.
+        members: Members supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+        ValueError: If an input value is invalid.
+    """
     verify_csrf(request, csrf)
     group = db.get(LdapGroup, group_id)
     if group is None:
@@ -16498,6 +20755,21 @@ def delete_ldap_group_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the delete ldap group from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        group_id: Identifier of the group.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     group = db.get(LdapGroup, group_id)
     if group is None:
@@ -16518,6 +20790,22 @@ def set_ldap_group_enabled_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the set ldap group enabled from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        group_id: Identifier of the group.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     group = db.get(LdapGroup, group_id)
     if group is None:
@@ -16535,6 +20823,19 @@ def download_ldap_vcf_bundle(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the download ldap vcf bundle endpoint.
+
+    Args:
+        organization_id: Identifier of the organization.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     organization = db.get(LdapOrganization, organization_id)
     if organization is None:
         raise HTTPException(status_code=404, detail="LDAP organization not found")
@@ -16570,6 +20871,29 @@ def inspect_ldap_vcf_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the inspect ldap vcf from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        organization_id: Identifier of the organization.
+        target_url: URL for the target.
+        vcf_organization_id: Identifier of the vcf organization.
+        vcf_organization_name: Vcf organization name supplied by the caller.
+        username: Account name used for authentication or lookup.
+        password: Password supplied for the immediate authenticated operation.
+        credential_vault_id: Identifier of the credential vault.
+        credential_entry_id: Identifier of the credential entry.
+        confirmed_tls_fingerprint: Confirmed tls fingerprint supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     username, password = _resolve_vcf_helper_credentials(
         db,
@@ -16647,6 +20971,31 @@ def configure_ldap_vcf_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the configure ldap vcf from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        organization_id: Identifier of the organization.
+        target_url: URL for the target.
+        vcf_organization_id: Identifier of the vcf organization.
+        vcf_organization_name: Vcf organization name supplied by the caller.
+        username: Account name used for authentication or lookup.
+        password: Password supplied for the immediate authenticated operation.
+        credential_vault_id: Identifier of the credential vault.
+        credential_entry_id: Identifier of the credential entry.
+        confirmed_tls_fingerprint: Confirmed tls fingerprint supplied by the caller.
+        replace_existing: Replace existing supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+        VcfLdapError: If the operation encounters an invalid state.
+    """
     verify_csrf(request, csrf)
     username, password = _resolve_vcf_helper_credentials(
         db,
@@ -16731,6 +21080,21 @@ def export_ldap_recovery_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the export ldap recovery from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        passphrase: Passphrase supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     require_admin_identity(identity)
     verify_csrf(request, csrf)
     timestamp = utcnow().strftime("%Y%m%dT%H%M%SZ")
@@ -16762,6 +21126,22 @@ async def import_ldap_recovery_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the import ldap recovery from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        archive: Archive payload or path to process.
+        passphrase: Passphrase supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     require_admin_identity(identity)
     verify_csrf(request, csrf)
     encrypted = await archive.read()
@@ -16799,6 +21179,16 @@ def kms_page(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the kms page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     return render(request, "kms.html", {"identity": identity, **kms_context(db), "appliance_apply_status": appliance_apply_status(db, "kms")})
 
 
@@ -16823,6 +21213,31 @@ def update_kms_settings_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the update kms settings from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        enabled: Whether the requested behavior is enabled.
+        backend: Backend supplied by the caller.
+        listen_interfaces: Interfaces on which the service should listen.
+        listen_addresses: Addresses on which the service should listen.
+        listen_interfaces_present: Whether the caller supplied listen interfaces.
+        listen_addresses_present: Whether the caller supplied listen addresses.
+        listen_interface: Interface on which the service should listen.
+        listen_address: Address on which the service should listen.
+        port: TCP or UDP port of the target service.
+        hostname: DNS hostname of the target resource.
+        server_certificate: Server certificate supplied by the caller.
+        require_client_cert: Require client cert supplied by the caller.
+        allow_register: Allow register supplied by the caller.
+        allow_destroy: Allow destroy supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     settings = get_kms_settings_row(db)
     previous_hostname = settings.hostname
@@ -16884,12 +21299,30 @@ def ntp_page(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the ntp page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     context = ntp_context(db)
     return render(request, "ntp.html", {"identity": identity, **context, "appliance_apply_status": ntpd_apply_status(db, context)})
 
 
 @router.get("/ntp/source-health", response_class=JSONResponse, response_model=None)
 def ntp_source_health(identity: Identity = Depends(require_session_identity)) -> JSONResponse:
+    """Handle the ntp source health endpoint.
+
+    Args:
+        identity: Authenticated identity authorizing the request.
+
+    Returns:
+        The endpoint response.
+    """
     result = SystemAdapter().read_ntpd_status()
     parsed_status: dict[str, Any] = {}
     if result.stdout:
@@ -16938,6 +21371,40 @@ def update_ntp_settings_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the update ntp settings from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        enabled: Whether the requested behavior is enabled.
+        hostname: DNS hostname of the target resource.
+        listen_interfaces: Interfaces on which the service should listen.
+        listen_addresses: Addresses on which the service should listen.
+        listen_interfaces_present: Whether the caller supplied listen interfaces.
+        listen_addresses_present: Whether the caller supplied listen addresses.
+        listen_interface: Interface on which the service should listen.
+        listen_address: Address on which the service should listen.
+        port: TCP or UDP port of the target service.
+        upstream_servers: Upstream servers supplied by the caller.
+        upstream_source: Upstream source supplied by the caller.
+        upstream_sources_json: Upstream sources json supplied by the caller.
+        upstream_enabled: Upstream enabled supplied by the caller.
+        upstream_use_nts: Upstream use nts supplied by the caller.
+        upstream_description: Upstream description supplied by the caller.
+        allow_clients: Allow clients supplied by the caller.
+        nts_server_enabled: Nts server enabled supplied by the caller.
+        nts_server_cert_path: Filesystem path for the nts server cert.
+        nts_server_key_path: Filesystem path for the nts server key.
+        minsources: Minsources supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     settings = get_ntp_settings_row(db)
     capability_result = SystemAdapter().read_ntpd_capabilities()
@@ -17074,6 +21541,11 @@ def update_ntp_settings_from_ui(
 
 
 def parse_kms_owner_client_id(raw_value: str | int | None) -> int | None:
+    """Parse kms owner client id.
+
+    Returns:
+        The parsed kms owner client id.
+    """
     if raw_value in {None, "", "None", "unassigned"}:
         return None
     return int(raw_value)
@@ -17094,6 +21566,23 @@ def create_kms_client_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse | JSONResponse:
+    """Handle the create kms client from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        name: Name of the target object.
+        certificate_subject: Certificate subject supplied by the caller.
+        role: Atlaso role used for authorization.
+        allowed_operations: Allowed operations supplied by the caller.
+        description: Human-readable description of the resource.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     client = KmsClient(
         name=name.strip(),
@@ -17141,6 +21630,27 @@ def edit_kms_client_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse | JSONResponse:
+    """Handle the edit kms client from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        client_id: Identifier of the client.
+        name: Name of the target object.
+        certificate_subject: Certificate subject supplied by the caller.
+        role: Atlaso role used for authorization.
+        allowed_operations: Allowed operations supplied by the caller.
+        description: Human-readable description of the resource.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     client = db.get(KmsClient, client_id)
     if not client:
@@ -17181,6 +21691,21 @@ def retire_previous_kms_client_certificate(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    """Handle the retire previous kms client certificate endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        client_id: Identifier of the client.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     client = db.get(KmsClient, client_id)
     if not client:
@@ -17229,6 +21754,21 @@ def delete_kms_client_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | Response:
+    """Handle the delete kms client from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        client_id: Identifier of the client.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     client = db.get(KmsClient, client_id)
     if not client:
@@ -17259,6 +21799,26 @@ def create_kms_key_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse | JSONResponse:
+    """Handle the create kms key from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        name: Name of the target object.
+        algorithm: Algorithm supplied by the caller.
+        length: Length supplied by the caller.
+        usage: Usage supplied by the caller.
+        state: Lifecycle or job state to persist.
+        owner_client_id: Identifier of the owner client.
+        exportable: Exportable supplied by the caller.
+        description: Human-readable description of the resource.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     key = KmsKey(
         name=name.strip(),
@@ -17311,6 +21871,30 @@ def edit_kms_key_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse | JSONResponse:
+    """Handle the edit kms key from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        key_id: Identifier of the key.
+        name: Name of the target object.
+        algorithm: Algorithm supplied by the caller.
+        length: Length supplied by the caller.
+        usage: Usage supplied by the caller.
+        state: Lifecycle or job state to persist.
+        owner_client_id: Identifier of the owner client.
+        exportable: Exportable supplied by the caller.
+        description: Human-readable description of the resource.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     key = db.get(KmsKey, key_id)
     if not key:
@@ -17355,6 +21939,21 @@ def delete_kms_key_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | Response:
+    """Handle the delete kms key from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        key_id: Identifier of the key.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     key = db.get(KmsKey, key_id)
     if not key:
@@ -17369,6 +21968,14 @@ def delete_kms_key_from_ui(
 
 @router.get("/https-repository", response_model=None)
 def legacy_https_repository_redirect(identity: Identity = Depends(require_session_identity)) -> RedirectResponse:
+    """Handle the legacy https repository redirect endpoint.
+
+    Args:
+        identity: Authenticated identity authorizing the request.
+
+    Returns:
+        The endpoint response.
+    """
     return RedirectResponse("/vcf-offline-depot", status_code=307)
 
 
@@ -17379,6 +21986,17 @@ def vcf_helper_page(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the vcf helper page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        ldap_organization_id: Identifier of the ldap organization.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     return render(
         request,
         "vcf_helper.html",
@@ -17402,6 +22020,17 @@ def vcf_helper_page_context(
     vcf_trust_auto_open: bool = False,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """Return vcf helper page context.
+
+    Args:
+        db: Active database session.
+        identity: Authenticated identity authorizing the request.
+        selected_ldap_organization_id: Identifier of the selected ldap organization.
+        ldap_vcf_auto_open: Ldap vcf auto open supplied by the caller.
+        ldap_generate_auto_open: Ldap generate auto open supplied by the caller.
+        vcf_trust_auto_open: Vcf trust auto open supplied by the caller.
+        extra: Extra supplied by the caller.
+    """
     dns_context = dnsmasq_context(db)
     vcf_vaults = db.execute(
         select(Vault).options(selectinload(Vault.entries)).order_by(Vault.name)
@@ -17446,6 +22075,14 @@ def vcf_helper_page_context(
 
 
 async def _vcf_helper_json(request: Request) -> dict[str, Any]:
+    """Return vcf helper json.
+
+    Args:
+        request: Incoming HTTP request.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     try:
         payload = await request.json()
     except (ValueError, json.JSONDecodeError) as exc:
@@ -17457,6 +22094,11 @@ async def _vcf_helper_json(request: Request) -> dict[str, Any]:
 
 
 def _confirmed_tls_fingerprint(address: str, port: int, confirmed: str) -> tuple[str, JSONResponse | None]:
+    """Return confirmed tls fingerprint.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     try:
         fingerprint = tls_sha256_fingerprint(address, port)
     except (OSError, ssl.SSLError) as exc:
@@ -17475,6 +22117,11 @@ def _confirmed_tls_fingerprint(address: str, port: int, confirmed: str) -> tuple
 
 
 def _split_vcf_endpoint_address_port(raw_address: Any, raw_port: Any = None) -> tuple[str, int]:
+    """Return split vcf endpoint address port.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     endpoint = str(raw_address or "").strip()
     port = 443
     if raw_port not in (None, ""):
@@ -17520,6 +22167,19 @@ def _resolve_vcf_helper_credentials(
     password_field: str,
     purpose: str,
 ) -> tuple[str, str]:
+    """Return vcf helper credentials.
+
+    Args:
+        db: Active database session.
+        identity: Authenticated identity authorizing the request.
+        values: Values to normalize, validate, or persist.
+        username_field: Username field supplied by the caller.
+        password_field: Password field supplied by the caller.
+        purpose: Purpose supplied by the caller.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     raw_vault_id = values.get("credential_vault_id")
     raw_entry_id = values.get("credential_entry_id")
     if raw_vault_id in (None, "") and raw_entry_id in (None, ""):
@@ -17556,6 +22216,19 @@ async def inspect_vcf_vault_import(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    """Handle the inspect vcf vault import endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     require_admin_identity(identity)
     payload = await _vcf_helper_json(request)
     address, port = _split_vcf_endpoint_address_port(payload.get("address"), payload.get("port"))
@@ -17602,6 +22275,20 @@ async def import_vcf_passwords_to_vault(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    """Handle the import vcf passwords to vault endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+        VcfDepotTargetError: If the operation encounters an invalid state.
+    """
     require_admin_identity(identity)
     payload = await _vcf_helper_json(request)
     try:
@@ -17694,6 +22381,11 @@ async def import_vcf_passwords_to_vault(
 
 
 def _validate_vcf_sddc_property_values(descriptor: Any, values: dict[str, str]) -> list[str]:
+    """Validate vcf sddc property values.
+
+    Returns:
+        The validate vcf sddc property values result.
+    """
     properties = {item.key: item for item in descriptor.properties}
     required = {"ROOT_PASSWORD", "LOCAL_USER_PASSWORD", "vami.hostname"}
     address_version = values.get("ip_address_version", properties.get("ip_address_version").default if properties.get("ip_address_version") else "IPv4")
@@ -17723,6 +22415,19 @@ async def vcf_sddc_manager_inventory(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    """Handle the vcf sddc manager inventory endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     require_vcf_helper_write(identity)
     payload = await _vcf_helper_json(request)
     address, port = _split_vcf_endpoint_address_port(payload.get("address"), payload.get("port"))
@@ -17758,6 +22463,19 @@ async def deploy_vcf_sddc_manager_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    """Handle the deploy vcf sddc manager from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     require_vcf_helper_write(identity)
     payload = await _vcf_helper_json(request)
     address, port = _split_vcf_endpoint_address_port(payload.get("address"), payload.get("port"))
@@ -17871,6 +22589,19 @@ def vcf_sddc_manager_task_status(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    """Handle the vcf sddc manager task status endpoint.
+
+    Args:
+        job_id: Identifier of the job.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     require_vcf_helper_write(identity)
     job = db.get(Job, job_id)
     if not job or job.type != "vcf-sddc-manager-deploy":
@@ -17884,6 +22615,19 @@ async def inspect_vcf_offline_depot_target_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    """Handle the inspect vcf offline depot target from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If authorization, target validation, or target inspection fails.
+    """
     require_vcf_helper_write(identity)
     payload = await _vcf_helper_json(request)
     local = local_vcf_depot_target_context(db)
@@ -17927,6 +22671,19 @@ async def configure_vcf_offline_depot_target_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    """Handle the configure vcf offline depot target from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If authorization, target validation, or target configuration fails.
+    """
     require_vcf_helper_write(identity)
     payload = await _vcf_helper_json(request)
     local = local_vcf_depot_target_context(db)
@@ -17996,6 +22753,19 @@ def vcf_offline_depot_target_task_status(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    """Handle the vcf offline depot target task status endpoint.
+
+    Args:
+        job_id: Identifier of the job.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     require_vcf_helper_write(identity)
     job = db.get(Job, job_id)
     if not job or job.type != "vcf-offline-depot-target-config":
@@ -18009,6 +22779,16 @@ def vcf_trust_page(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the vcf trust page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     return RedirectResponse("/vcf-helper?vcf_trust=1", status_code=307)
 
 
@@ -18018,6 +22798,16 @@ async def inspect_vcf_trust_target_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    """Handle the inspect vcf trust target from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     require_vcf_helper_write(identity)
     payload = await _vcf_helper_json(request)
     try:
@@ -18075,6 +22865,24 @@ def trust_vcf_root_ca_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse | RedirectResponse | JSONResponse:
+    """Handle the trust vcf root ca from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        address: Network address of the target service or interface.
+        api_username: Api username supplied by the caller.
+        api_password: Api password supplied by the caller.
+        credential_vault_id: Identifier of the credential vault.
+        credential_entry_id: Identifier of the credential entry.
+        confirmed_tls_fingerprint: Confirmed tls fingerprint supplied by the caller.
+        awaiting_job_id: Identifier of the awaiting job.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     require_vcf_helper_write(identity)
     verify_csrf(request, csrf)
     try:
@@ -18180,6 +22988,23 @@ def generate_vcf_fqdns_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse | JSONResponse:
+    """Handle the generate vcf fqdns from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        target: Resource targeted by the operation.
+        domain: Managed DNS domain affected by the operation.
+        prefix: Prefix supplied by the caller.
+        suffix: Suffix supplied by the caller.
+        start_ipv4: Start ipv4 supplied by the caller.
+        network_prefix: Network prefix supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     created, skipped, errors = create_vcf_generated_dns_records(
         db,
@@ -18218,6 +23043,21 @@ def delete_vcf_fqdns_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse | JSONResponse:
+    """Handle the delete vcf fqdns from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        target: Resource targeted by the operation.
+        domain: Managed DNS domain affected by the operation.
+        prefix: Prefix supplied by the caller.
+        suffix: Suffix supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     deleted, preserved, errors = delete_vcf_generated_dns_records(
         db,
@@ -18249,6 +23089,16 @@ def vcf_offline_depot_page(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the vcf offline depot page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     jobs = db.execute(
         select(Job)
         .options(selectinload(Job.steps))
@@ -18276,6 +23126,20 @@ def vcf_offline_depot_task_log_page(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the vcf offline depot task log page endpoint.
+
+    Args:
+        job_id: Identifier of the job.
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     job = db.get(Job, job_id)
     if job is None or job.type != "vcf-depot-download":
         raise HTTPException(status_code=404, detail="VCFDT task not found.")
@@ -18319,6 +23183,17 @@ def vcf_offline_depot_task_status(
     _identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    """Handle the vcf offline depot task status endpoint.
+
+    Args:
+        page: Page supplied by the caller.
+        size: Size supplied by the caller.
+        _identity: Authenticated identity supplied by the dependency layer.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     tasks, total = vcf_depot_download_job_rows(db, page=page, page_size=size)
     active_job = vcf_depot_active_download_job(db)
     last_page = max(1, (total + size - 1) // size)
@@ -18356,6 +23231,35 @@ def update_vcf_offline_depot_settings_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the update vcf offline depot settings from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        enabled: Whether the requested behavior is enabled.
+        hostname: DNS hostname of the target resource.
+        listen_interfaces: Interfaces on which the service should listen.
+        listen_addresses: Addresses on which the service should listen.
+        listen_interfaces_present: Whether the caller supplied listen interfaces.
+        listen_addresses_present: Whether the caller supplied listen addresses.
+        listen_interface: Interface on which the service should listen.
+        listen_address: Address on which the service should listen.
+        port: TCP or UDP port of the target service.
+        http_user_id: Identifier of the http user.
+        allow_unauthenticated_access: Allow unauthenticated access supplied by the caller.
+        server_certificate: Server certificate supplied by the caller.
+        tool_archive_file: Tool archive file supplied by the caller.
+        download_token_file: Download token file supplied by the caller.
+        activation_code_file: Activation code file supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     settings = get_vcf_offline_depot_settings_row(db, reconcile_default_user=False)
     previous_hostname = settings.hostname
@@ -18482,6 +23386,21 @@ def upload_vcf_depot_tool_package_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    """Handle the upload vcf depot tool package from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        tool_archive_file: Tool archive file supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     settings = get_vcf_offline_depot_settings_row(db)
     uploaded_archive_name = store_uploaded_vcf_depot_archive(settings, tool_archive_file)
@@ -18533,6 +23452,17 @@ def reset_vcf_depot_tool_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the reset vcf depot tool from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     settings = get_vcf_offline_depot_settings_row(db)
     reset_vcf_depot_tool_staging(db, settings)
@@ -18557,6 +23487,22 @@ def _store_vcf_depot_credential_from_ui(
     actor: str,
     pending_audits: list[AuditEvent] | None = None,
 ) -> str:
+    """Persist vcf depot credential from ui.
+
+    Args:
+        db: Active database session.
+        credential_type: Credential type supplied by the caller.
+        credential_text: Credential text supplied by the caller.
+        credential_file: Credential file supplied by the caller.
+        actor: Authenticated identity attributed to the audit record.
+        pending_audits: Pending audits supplied by the caller.
+
+    Returns:
+        The store vcf depot credential from ui result.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if credential_type == "activation_code":
         display_name = store_uploaded_vcf_depot_secret(
             db,
@@ -18611,6 +23557,17 @@ def _save_vcf_depot_application_properties(
     actor: str,
     pending_audits: list[AuditEvent] | None = None,
 ) -> None:
+    """Persist vcf depot application properties.
+
+    Args:
+        db: Active database session.
+        application_properties: Application properties supplied by the caller.
+        actor: Authenticated identity attributed to the audit record.
+        pending_audits: Pending audits supplied by the caller.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     content = application_properties.replace("\r\n", "\n").replace("\r", "\n")
     if len(content.encode("utf-8")) > 512 * 1024:
         raise HTTPException(status_code=400, detail="application-prodv2.properties must be 512 KB or smaller.")
@@ -18642,6 +23599,11 @@ def _save_vcf_depot_application_properties(
 
 
 def _vcf_depot_tool_configuration_response(db: Session) -> dict[str, Any]:
+    """Return vcf depot tool configuration response.
+
+    Args:
+        db: Active database session.
+    """
     context = vcf_offline_depot_context(db)
     token_state = context["vcf_depot_download_token"]
     activation_state = context["vcf_depot_activation_code"]
@@ -18684,6 +23646,20 @@ def paste_vcf_depot_credential_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the paste vcf depot credential from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        credential_type: Credential type supplied by the caller.
+        credential_text: Credential text supplied by the caller.
+        credential_file: Credential file supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     display_name = _store_vcf_depot_credential_from_ui(
         db,
@@ -18731,6 +23707,19 @@ def paste_vcf_depot_download_token_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the paste vcf depot download token from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        download_token_text: Download token text supplied by the caller.
+        download_token_file: Download token file supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     display_name = store_uploaded_vcf_depot_secret(
         db,
@@ -18783,6 +23772,19 @@ def paste_vcf_depot_activation_code_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the paste vcf depot activation code from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        activation_code_text: Activation code text supplied by the caller.
+        activation_code_file: Activation code file supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     display_name = store_uploaded_vcf_depot_secret(
         db,
@@ -18840,6 +23842,27 @@ def save_vcf_depot_tool_configuration_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the save vcf depot tool configuration from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        application_properties: Application properties supplied by the caller.
+        replace_download_token: Replace download token supplied by the caller.
+        download_token_text: Download token text supplied by the caller.
+        download_token_file: Download token file supplied by the caller.
+        replace_activation_code: Replace activation code supplied by the caller.
+        activation_code_text: Activation code text supplied by the caller.
+        activation_code_file: Activation code file supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     if replace_download_token == "on" and replace_activation_code == "on":
         raise HTTPException(status_code=400, detail="Replace only one Broadcom credential per VCFDT configuration save.")
@@ -18893,6 +23916,18 @@ def save_vcf_depot_application_properties_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the save vcf depot application properties from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        application_properties: Application properties supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     _save_vcf_depot_application_properties(
         db,
@@ -18931,6 +23966,21 @@ def generate_vcf_depot_software_depot_id_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the generate vcf depot software depot id from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        background_tasks: Background tasks supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     settings = get_vcf_offline_depot_settings_row(db)
     if not settings.tool_archive_path:
@@ -19004,6 +24054,19 @@ def preview_vcf_depot_profile_from_ui(
     _identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    """Handle the preview vcf depot profile from ui endpoint.
+
+    Args:
+        profile_id: Identifier of the profile.
+        _identity: Authenticated identity supplied by the dependency layer.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     profile = db.get(VcfDepotDownloadProfile, profile_id)
     if profile is None:
         raise HTTPException(status_code=404, detail="VCFDT download profile not found")
@@ -19043,6 +24106,34 @@ def create_vcf_depot_profile_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the create vcf depot profile from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        name: Name of the target object.
+        profile_type: Profile type supplied by the caller.
+        sku: Sku supplied by the caller.
+        vcf_version: Vcf version supplied by the caller.
+        binary_type: Binary type supplied by the caller.
+        automated_install: Automated install supplied by the caller.
+        upgrades_only: Upgrades only supplied by the caller.
+        patches_only: Patches only supplied by the caller.
+        component: Component supplied by the caller.
+        component_version: Component version supplied by the caller.
+        disabled_platforms: Disabled platforms supplied by the caller.
+        enabled: Whether the requested behavior is enabled.
+        status: Status supplied by the caller.
+        notes: Notes supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     automated_install_selected, upgrades_only_selected, patches_only_selected = resolve_vcf_depot_download_mode_flags(
         automated_install, upgrades_only, patches_only
@@ -19107,6 +24198,35 @@ def edit_vcf_depot_profile_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the edit vcf depot profile from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        profile_id: Identifier of the profile.
+        name: Name of the target object.
+        profile_type: Profile type supplied by the caller.
+        sku: Sku supplied by the caller.
+        vcf_version: Vcf version supplied by the caller.
+        binary_type: Binary type supplied by the caller.
+        automated_install: Automated install supplied by the caller.
+        upgrades_only: Upgrades only supplied by the caller.
+        patches_only: Patches only supplied by the caller.
+        component: Component supplied by the caller.
+        component_version: Component version supplied by the caller.
+        disabled_platforms: Disabled platforms supplied by the caller.
+        enabled: Whether the requested behavior is enabled.
+        status: Status supplied by the caller.
+        notes: Notes supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     automated_install_selected, upgrades_only_selected, patches_only_selected = resolve_vcf_depot_download_mode_flags(
         automated_install, upgrades_only, patches_only
@@ -19175,6 +24295,21 @@ def start_vcf_depot_profile_download_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the start vcf depot profile download from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        profile_id: Identifier of the profile.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     profile = db.get(VcfDepotDownloadProfile, profile_id)
     if not profile:
@@ -19252,6 +24387,21 @@ def delete_vcf_depot_profile_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | Response:
+    """Handle the delete vcf depot profile from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        profile_id: Identifier of the profile.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     profile = db.get(VcfDepotDownloadProfile, profile_id)
     if not profile:
@@ -19288,6 +24438,16 @@ def vcf_private_registry_page(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the vcf private registry page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     return render(request, "vcf_private_registry.html", {"identity": identity, **vcf_private_registry_context(db), "appliance_apply_status": appliance_apply_status(db, "vcf_private_registry")})
 
 
@@ -19312,6 +24472,31 @@ def update_vcf_private_registry_settings_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the update vcf private registry settings from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        enabled: Whether the requested behavior is enabled.
+        hostname: DNS hostname of the target resource.
+        listen_interfaces: Interfaces on which the service should listen.
+        listen_addresses: Addresses on which the service should listen.
+        listen_interfaces_present: Whether the caller supplied listen interfaces.
+        listen_addresses_present: Whether the caller supplied listen addresses.
+        listen_interface: Interface on which the service should listen.
+        listen_address: Address on which the service should listen.
+        port: TCP or UDP port of the target service.
+        harbor_project: Harbor project supplied by the caller.
+        server_certificate: Server certificate supplied by the caller.
+        robot_account: Robot account supplied by the caller.
+        relocation_dry_run: Relocation dry run supplied by the caller.
+        ca_bundle_file: Ca bundle file supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     settings = get_vcf_private_registry_settings_row(db)
     previous_hostname = settings.hostname
@@ -19393,6 +24578,26 @@ def create_vcf_registry_bundle_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the create vcf registry bundle from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        name: Name of the target object.
+        source_reference: Source reference supplied by the caller.
+        target_reference: Target reference supplied by the caller.
+        enabled: Whether the requested behavior is enabled.
+        status: Status supplied by the caller.
+        notes: Notes supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     settings = get_vcf_private_registry_settings_row(db)
     bundle = VcfRegistryBundle(
@@ -19433,6 +24638,27 @@ def edit_vcf_registry_bundle_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the edit vcf registry bundle from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        bundle_id: Identifier of the bundle.
+        name: Name of the target object.
+        source_reference: Source reference supplied by the caller.
+        target_reference: Target reference supplied by the caller.
+        enabled: Whether the requested behavior is enabled.
+        status: Status supplied by the caller.
+        notes: Notes supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     settings = get_vcf_private_registry_settings_row(db)
     bundle = db.get(VcfRegistryBundle, bundle_id)
@@ -19468,6 +24694,21 @@ def delete_vcf_registry_bundle_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | Response:
+    """Handle the delete vcf registry bundle from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        bundle_id: Identifier of the bundle.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     bundle = db.get(VcfRegistryBundle, bundle_id)
     if not bundle:
@@ -19486,6 +24727,16 @@ def vcf_backups_page(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the vcf backups page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     return render(request, "vcf_backups.html", {"identity": identity, **vcf_backup_context(db), "appliance_apply_status": appliance_apply_status(db, "vcf_backups")})
 
 
@@ -19509,6 +24760,33 @@ def update_vcf_backup_settings_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the update vcf backup settings from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        enabled: Whether the requested behavior is enabled.
+        listen_interfaces: Interfaces on which the service should listen.
+        listen_addresses: Addresses on which the service should listen.
+        listen_interfaces_present: Whether the caller supplied listen interfaces.
+        listen_addresses_present: Whether the caller supplied listen addresses.
+        listen_interface: Interface on which the service should listen.
+        listen_address: Address on which the service should listen.
+        port: TCP or UDP port of the target service.
+        sftp_user_id: Identifier of the sftp user.
+        chroot_enabled: Chroot enabled supplied by the caller.
+        allow_password_auth: Allow password auth supplied by the caller.
+        allow_public_key_auth: Allow public key auth supplied by the caller.
+        max_sessions: Max sessions supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     settings = get_vcf_backup_settings_row(db, reconcile_default_user=False)
     user_id = int(sftp_user_id) if str(sftp_user_id).strip() else None
@@ -19593,6 +24871,14 @@ def update_vcf_backup_settings_from_ui(
 
 
 def require_esx_storage_write(identity: Identity) -> None:
+    """Handle require esx storage write.
+
+    Args:
+        identity: Authenticated identity authorizing the request.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if not identity.can("write:esx-storage"):
         raise HTTPException(status_code=403, detail="ESX Storage write permission is required.")
 
@@ -19603,6 +24889,16 @@ def esx_storage_page(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the esx storage page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     context = esx_storage_context(db)
     return render(
         request,
@@ -19625,6 +24921,22 @@ def update_esx_storage_settings_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the update esx storage settings from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        enabled: Whether the requested behavior is enabled.
+        hostname: DNS hostname of the target resource.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     require_esx_storage_write(identity)
     settings = get_esx_storage_settings_row(db)
@@ -19672,6 +24984,30 @@ def create_esx_storage_volume_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the create esx storage volume from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        name: Name of the target object.
+        source_type: Source type supplied by the caller.
+        stable_device_id: Identifier of the stable device.
+        mount_path: Filesystem path for the mount.
+        device_model: Device model supplied by the caller.
+        device_serial: Device serial supplied by the caller.
+        device_wwn: Device wwn supplied by the caller.
+        capacity_bytes: Capacity bytes supplied by the caller.
+        filesystem_uuid: Filesystem uuid supplied by the caller.
+        filesystem_label: Filesystem label supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     require_esx_storage_write(identity)
     normalized_name = name.strip()
@@ -19743,6 +25079,29 @@ def create_esx_nfs_share_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the create esx nfs share from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        datastore_name: Datastore name supplied by the caller.
+        volume_id: Identifier of the volume.
+        relative_path: Filesystem path for the relative.
+        preferred_nfs_version: Preferred nfs version supplied by the caller.
+        interface_name: Linux interface name of the network target.
+        address_families: Address families supplied by the caller.
+        ipv4_clients: Ipv4 clients supplied by the caller.
+        ipv6_clients: Ipv6 clients supplied by the caller.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     require_esx_storage_write(identity)
     if db.get(EsxStorageVolume, volume_id) is None:
@@ -19792,6 +25151,30 @@ def update_esx_nfs_share_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the update esx nfs share from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        share_id: Identifier of the share.
+        datastore_name: Datastore name supplied by the caller.
+        volume_id: Identifier of the volume.
+        relative_path: Filesystem path for the relative.
+        preferred_nfs_version: Preferred nfs version supplied by the caller.
+        interface_name: Linux interface name of the network target.
+        address_families: Address families supplied by the caller.
+        ipv4_clients: Ipv4 clients supplied by the caller.
+        ipv6_clients: Ipv6 clients supplied by the caller.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     require_esx_storage_write(identity)
     row = db.get(EsxNfsShare, share_id)
@@ -19833,6 +25216,21 @@ def delete_esx_nfs_share_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the delete esx nfs share from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        share_id: Identifier of the share.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     require_esx_storage_write(identity)
     row = db.get(EsxNfsShare, share_id)
@@ -19853,6 +25251,16 @@ def authentication(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the authentication endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     return render(
         request,
         "authentication.html",
@@ -19866,6 +25274,16 @@ def openid_connect(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the openid connect endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     require_admin_identity(identity)
     return render(
         request,
@@ -19875,6 +25293,7 @@ def openid_connect(
 
 
 def api_token_grid_row(token: ApiToken) -> dict[str, Any]:
+    """Return api token grid row."""
     active = bool(token.enabled and not token.revoked_at)
     return {
         "id": token.id,
@@ -19900,6 +25319,17 @@ def authentication_context(
     oidc_error: str | None = None,
     oidc_page: bool = False,
 ) -> dict[str, Any]:
+    """Return authentication context.
+
+    Args:
+        db: Active database session.
+        identity: Authenticated identity authorizing the request.
+        raw_token: Raw token supplied by the caller.
+        oidc_client_secret: Oidc client secret supplied by the caller.
+        oidc_client_id: Identifier of the oidc client.
+        oidc_error: Oidc error supplied by the caller.
+        oidc_page: Oidc page supplied by the caller.
+    """
     query = select(ApiToken).order_by(desc(ApiToken.created_at))
     if not identity.has_role(Role.ADMIN.value):
         query = query.where(ApiToken.owner_user_id == identity.user_id)
@@ -20042,6 +25472,31 @@ def update_oidc_provider_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the update oidc provider from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        enabled: Whether the requested behavior is enabled.
+        hostname: DNS hostname of the target resource.
+        listen_interfaces: Interfaces on which the service should listen.
+        listen_interfaces_present: Whether the caller supplied listen interfaces.
+        port: TCP or UDP port of the target service.
+        access_token_lifetime_seconds: Access token lifetime seconds supplied by the caller.
+        id_token_lifetime_seconds: Id token lifetime seconds supplied by the caller.
+        authorization_code_lifetime_seconds: Authorization code lifetime seconds supplied by the caller.
+        clock_skew_seconds: Clock skew seconds supplied by the caller.
+        signing_key_overlap_seconds: Signing key overlap seconds supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+        OidcConfigurationError: If the operation encounters an invalid state.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     provider = ensure_oidc_provider_settings(db)
@@ -20140,6 +25595,29 @@ def create_oidc_client_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the create oidc client from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        name: Name of the target object.
+        description: Human-readable description of the resource.
+        organization_id: Identifier of the organization.
+        redirect_uris: Redirect uris supplied by the caller.
+        post_logout_redirect_uris: Post logout redirect uris supplied by the caller.
+        preset: Preset supplied by the caller.
+        allowed_scopes: Allowed scopes supplied by the caller.
+        allow_loopback_redirects: Allow loopback redirects supplied by the caller.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        OidcConfigurationError: If the operation encounters an invalid state.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     try:
@@ -20225,6 +25703,29 @@ def update_oidc_client_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the update oidc client from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        client_record_id: Identifier of the client record.
+        name: Name of the target object.
+        description: Human-readable description of the resource.
+        organization_id: Identifier of the organization.
+        redirect_uris: Redirect uris supplied by the caller.
+        post_logout_redirect_uris: Post logout redirect uris supplied by the caller.
+        allowed_scopes: Allowed scopes supplied by the caller.
+        allow_loopback_redirects: Allow loopback redirects supplied by the caller.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     try:
@@ -20277,6 +25778,20 @@ def export_oidc_client_integration_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    """Handle the export oidc client integration from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        client_record_id: Identifier of the client record.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     require_admin_identity(identity)
     try:
         row = get_oidc_client(db, client_record_id)
@@ -20313,6 +25828,22 @@ def create_oidc_group_mapping_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the create oidc group mapping from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        source_type: Source type supplied by the caller.
+        local_role: Local role supplied by the caller.
+        ldap_group_id: Identifier of the ldap group.
+        oidc_client_id: Identifier of the oidc client.
+        external_group_name: External group name supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     try:
@@ -20393,6 +25924,20 @@ def update_oidc_group_mapping_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the update oidc group mapping from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        mapping_id: Identifier of the mapping.
+        oidc_client_id: Identifier of the oidc client.
+        external_group_name: External group name supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     row = db.get(OidcGroupMapping, mapping_id)
@@ -20447,6 +25992,21 @@ def delete_oidc_group_mapping_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the delete oidc group mapping from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        mapping_id: Identifier of the mapping.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     row = db.get(OidcGroupMapping, mapping_id)
@@ -20503,6 +26063,21 @@ def rotate_oidc_client_secret_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the rotate oidc client secret from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        client_record_id: Identifier of the client record.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     try:
@@ -20542,6 +26117,21 @@ def delete_oidc_client_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the delete oidc client from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        client_record_id: Identifier of the client record.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     try:
@@ -20572,6 +26162,21 @@ def create_oidc_signing_key_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the create oidc signing key from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        rotate: Rotate supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     try:
@@ -20612,6 +26217,21 @@ def delete_retired_oidc_signing_key_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the delete retired oidc signing key from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        key_id: Identifier of the key.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     row = db.get(OidcSigningKey, key_id)
@@ -20650,6 +26270,23 @@ def create_token_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse | JSONResponse:
+    """Handle the create token from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        name: Name of the target object.
+        description: Human-readable description of the resource.
+        scopes: Permission scopes to evaluate or grant.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     user = db.get(User, identity.user_id)
     if not user:
@@ -20687,6 +26324,21 @@ def revoke_token_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the revoke token from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        token_id: Identifier of the token.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     token = db.get(ApiToken, token_id)
     if not token or (not identity.has_role(Role.ADMIN.value) and token.owner_user_id != identity.user_id):
@@ -20710,6 +26362,16 @@ def users_page(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the users page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     require_admin_identity(identity)
     return render(
         request,
@@ -20731,6 +26393,26 @@ def update_users_password_policy(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    """Handle the update users password policy endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        min_length: Min length supplied by the caller.
+        require_uppercase: Require uppercase supplied by the caller.
+        require_lowercase: Require lowercase supplied by the caller.
+        require_number: Require number supplied by the caller.
+        require_special: Require special supplied by the caller.
+        disallow_username: Disallow username supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     require_admin_identity(identity)
     verify_csrf(request, csrf)
     try:
@@ -20775,6 +26457,31 @@ def create_user_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the create user from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        username: Account name used for authentication or lookup.
+        description: Human-readable description of the resource.
+        role: Atlaso role used for authorization.
+        roles: Atlaso roles used for authorization.
+        roles_text: Roles text supplied by the caller.
+        shell: Shell supplied by the caller.
+        web_terminal_access: Web terminal access supplied by the caller.
+        password: Password supplied for the immediate authenticated operation.
+        confirm_password: Confirm password supplied by the caller.
+        enabled: Whether the requested behavior is enabled.
+        enabled_present: Enabled present supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     require_admin_identity(identity)
     verify_csrf(request, csrf)
     username = username.strip().lower()
@@ -20839,6 +26546,32 @@ def update_user_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    """Handle the update user from ui endpoint.
+
+    Args:
+        user_id: Identifier of the user.
+        request: Incoming HTTP request.
+        username: Account name used for authentication or lookup.
+        description: Human-readable description of the resource.
+        role: Atlaso role used for authorization.
+        roles: Atlaso roles used for authorization.
+        roles_text: Roles text supplied by the caller.
+        shell: Shell supplied by the caller.
+        web_terminal_access: Web terminal access supplied by the caller.
+        password: Password supplied for the immediate authenticated operation.
+        confirm_password: Confirm password supplied by the caller.
+        enabled: Whether the requested behavior is enabled.
+        enabled_present: Enabled present supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     require_admin_identity(identity)
     verify_csrf(request, csrf)
     user = db.get(User, user_id)
@@ -20920,6 +26653,21 @@ def disable_user_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    """Handle the disable user from ui endpoint.
+
+    Args:
+        user_id: Identifier of the user.
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     require_admin_identity(identity)
     verify_csrf(request, csrf)
     user = db.get(User, user_id)
@@ -20953,6 +26701,21 @@ def request_user_os_unlock_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    """Handle the request user os unlock from ui endpoint.
+
+    Args:
+        user_id: Identifier of the user.
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     require_admin_identity(identity)
     verify_csrf(request, csrf)
     user = db.get(User, user_id)
@@ -20977,6 +26740,21 @@ def delete_user_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the delete user from ui endpoint.
+
+    Args:
+        user_id: Identifier of the user.
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     require_admin_identity(identity)
     verify_csrf(request, csrf)
     user = db.get(User, user_id)
@@ -21009,6 +26787,23 @@ def reset_user_password_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the reset user password from ui endpoint.
+
+    Args:
+        user_id: Identifier of the user.
+        request: Incoming HTTP request.
+        password: Password supplied for the immediate authenticated operation.
+        confirm_password: Confirm password supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     require_admin_identity(identity)
     verify_csrf(request, csrf)
     user = db.get(User, user_id)
@@ -21030,10 +26825,16 @@ def reset_user_password_from_ui(
 
 @router.get("/ldap-users", response_model=None)
 def legacy_ldap_users_redirect() -> RedirectResponse:
+    """Handle the legacy ldap users redirect endpoint.
+
+    Returns:
+        The endpoint response.
+    """
     return RedirectResponse("/ldap", status_code=303)
 
 
 def service_state_status_row(service: ServiceState) -> dict[str, object]:
+    """Return service state status row."""
     row = {
         "id": service.id,
         "service": service.service,
@@ -21067,12 +26868,14 @@ def service_state_status_row(service: ServiceState) -> dict[str, object]:
 
 
 def service_state_to_grid_row(service: ServiceState) -> dict[str, object]:
+    """Return service state to grid row."""
     row = service_state_status_row(service)
     row.pop("health", None)
     return row
 
 
 def dnsmasq_backed_service_grid_row(service: ServiceState, enabled: bool) -> dict[str, object]:
+    """Return dnsmasq backed service grid row."""
     row = service_state_to_grid_row(service)
     if not get_settings().dry_run_system_adapters:
         active = backing_systemd_unit_active("dnsmasq.service")
@@ -21084,6 +26887,12 @@ def dnsmasq_backed_service_grid_row(service: ServiceState, enabled: bool) -> dic
 
 
 def esxi_pxe_service_grid_row(service: ServiceState, db: Session) -> dict[str, object]:
+    """Return esxi pxe service grid row.
+
+    Args:
+        service: Atlaso service affected by the operation.
+        db: Active database session.
+    """
     row = service_state_to_grid_row(service)
     row.update(esxi_pxe_service_state_from_boot(esxi_pxe_boot_settings(db)))
     row.pop("health", None)
@@ -21092,6 +26901,12 @@ def esxi_pxe_service_grid_row(service: ServiceState, db: Session) -> dict[str, o
 
 
 def ca_service_grid_row(service: ServiceState, db: Session) -> dict[str, object]:
+    """Return ca service grid row.
+
+    Args:
+        service: Atlaso service affected by the operation.
+        db: Active database session.
+    """
     row = service_state_to_grid_row(service)
     row.update(ca_service_state(get_ca_settings_row(db)))
     row.pop("health", None)
@@ -21100,6 +26915,12 @@ def ca_service_grid_row(service: ServiceState, db: Session) -> dict[str, object]
 
 
 def vcf_backup_service_grid_row(service: ServiceState, db: Session) -> dict[str, object]:
+    """Return vcf backup service grid row.
+
+    Args:
+        service: Atlaso service affected by the operation.
+        db: Active database session.
+    """
     row = service_state_to_grid_row(service)
     settings = get_vcf_backup_settings_row(db)
     row.update(vcf_backup_service_state(settings, sshd_active=backing_systemd_unit_active("sshd.service")))
@@ -21109,6 +26930,12 @@ def vcf_backup_service_grid_row(service: ServiceState, db: Session) -> dict[str,
 
 
 def vcf_depot_service_grid_row(service: ServiceState, db: Session) -> dict[str, object]:
+    """Return vcf depot service grid row.
+
+    Args:
+        service: Atlaso service affected by the operation.
+        db: Active database session.
+    """
     row = service_state_to_grid_row(service)
     settings = get_vcf_offline_depot_settings_row(db)
     row.update(vcf_depot_service_state(settings, nginx_active=backing_systemd_unit_active("nginx.service")))
@@ -21118,6 +26945,12 @@ def vcf_depot_service_grid_row(service: ServiceState, db: Session) -> dict[str, 
 
 
 def esx_storage_service_grid_row(service: ServiceState, db: Session) -> dict[str, object]:
+    """Return esx storage service grid row.
+
+    Args:
+        service: Atlaso service affected by the operation.
+        db: Active database session.
+    """
     row = service_state_status_row(service)
     settings = get_esx_storage_settings_row(db)
     shares = db.execute(select(EsxNfsShare).where(EsxNfsShare.enabled.is_(True))).scalars().all()
@@ -21139,6 +26972,14 @@ def esx_storage_service_grid_row(service: ServiceState, db: Session) -> dict[str
 
 
 def service_grid_row(service: ServiceState, db: Session, dns_enabled: bool, dhcp_enabled: bool) -> dict[str, object]:
+    """Return service grid row.
+
+    Args:
+        service: Atlaso service affected by the operation.
+        db: Active database session.
+        dns_enabled: Dns enabled supplied by the caller.
+        dhcp_enabled: Dhcp enabled supplied by the caller.
+    """
     if service.service == "dns":
         return dnsmasq_backed_service_grid_row(service, dns_enabled)
     if service.service == "dhcp":
@@ -21157,6 +26998,11 @@ def service_grid_row(service: ServiceState, db: Session, dns_enabled: bool, dhcp
 
 
 def services_template_context(db: Session) -> dict[str, object]:
+    """Return services template context.
+
+    Args:
+        db: Active database session.
+    """
     dns_settings = get_dns_settings_row(db)
     dhcp_settings = get_dhcp_settings_row(db)
     rows = db.execute(select(ServiceState).where(ServiceState.service.in_(SERVICE_STATE_IDS)).order_by(ServiceState.display_name)).scalars().all()
@@ -21172,6 +27018,13 @@ def services_template_context(db: Session) -> dict[str, object]:
 
 
 def backup_restore_context(db: Session, result: dict[str, Any] | None = None, error: str | None = None) -> dict[str, Any]:
+    """Return backup restore context.
+
+    Args:
+        db: Active database session.
+        result: Operation result to summarize, validate, or persist.
+        error: Public-safe error detail to record or return.
+    """
     counts = desired_state_counts(db)
     ldap_recovery_archive = db.execute(
         select(LdapRecoveryArchive)
@@ -21191,11 +27044,25 @@ def backup_restore_context(db: Session, result: dict[str, Any] | None = None, er
 
 
 def require_esxi_pxe_write(identity: Identity) -> None:
+    """Handle require esxi pxe write.
+
+    Args:
+        identity: Authenticated identity authorizing the request.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if not identity.can("write:esxi-pxe"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="ESXi PXE write permission required")
 
 
 def next_kickstart_copy_name(db: Session, base_name: str) -> str:
+    """Return next kickstart copy name.
+
+    Args:
+        db: Active database session.
+        base_name: Base name supplied by the caller.
+    """
     names = {row.name.lower() for row in db.execute(select(EsxiKickstart)).scalars().all()}
     candidate = f"{base_name} Copy"
     if candidate.lower() not in names:
@@ -21216,6 +27083,15 @@ def esxi_pxe_page_context(
     result: dict[str, Any] | None = None,
     error: str | None = None,
 ) -> dict[str, Any]:
+    """Return esxi pxe page context.
+
+    Args:
+        db: Active database session.
+        identity: Authenticated identity authorizing the request.
+        selected_id: Identifier of the selected.
+        result: Operation result to summarize, validate, or persist.
+        error: Public-safe error detail to record or return.
+    """
     from atlaso.app.models import NetworkBootDiscoveredHost
     from atlaso.app.services.network_boot import (
         catalog_rows,
@@ -21268,6 +27144,7 @@ def esxi_pxe_page_context(
 
 
 def esxi_kickstart_grid_payload(kickstart: EsxiKickstart, *, include_content: bool) -> dict[str, Any]:
+    """Return esxi kickstart grid payload."""
     payload = kickstart_to_dict(kickstart, include_content=include_content)
     for field in ("created_at", "updated_at", "last_rendered_at", "last_applied_at"):
         value = payload[field]
@@ -21284,6 +27161,22 @@ def service_action_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the service action from ui endpoint.
+
+    Args:
+        service: Atlaso service affected by the operation.
+        action: Operation to perform on the target resource.
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     if service not in SERVICE_STATE_IDS:
         raise HTTPException(status_code=404, detail="Service is not approved for control")
@@ -21342,6 +27235,20 @@ def service_logs_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the service logs from ui endpoint.
+
+    Args:
+        service: Atlaso service affected by the operation.
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if service not in SERVICE_STATE_IDS:
         raise HTTPException(status_code=404, detail="Log source is not approved")
     row = db.execute(select(ServiceState).where(ServiceState.service == service)).scalar_one_or_none()
@@ -21367,6 +27274,16 @@ def services(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the services endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     return render(request, "services.html", {"identity": identity, **services_template_context(db)})
 
 
@@ -21377,6 +27294,17 @@ def logs_page(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the logs page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        lines: Lines supplied by the caller.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     return render(
         request,
         "logs.html",
@@ -21392,6 +27320,15 @@ def logs_data(
     lines: int = Query(100),
     _identity: Identity = Depends(require_session_identity),
 ) -> JSONResponse:
+    """Handle the logs data endpoint.
+
+    Args:
+        lines: Lines supplied by the caller.
+        _identity: Authenticated identity supplied by the dependency layer.
+
+    Returns:
+        The endpoint response.
+    """
     line_count = normalized_log_line_count(lines)
     return JSONResponse(
         {
@@ -21409,6 +27346,17 @@ def tasks_page(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the tasks page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        job_id: Identifier of the job.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     jobs = db.execute(select(Job).options(selectinload(Job.steps)).order_by(desc(Job.created_at)).limit(500)).scalars().all()
     task_rows = [_task_row(job, identity) for job in jobs]
     selected_job_id = job_id if any(row["id"] == job_id for row in task_rows) else ""
@@ -21434,6 +27382,23 @@ def tasks_status(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    """Handle the tasks status endpoint.
+
+    Args:
+        job_id: Identifier of the job.
+        task_type: Task type supplied by the caller.
+        filters: Filters supplied by the caller.
+        page: Page supplied by the caller.
+        size: Size supplied by the caller.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     normalized_task_type = task_type.strip()
     if len(normalized_task_type) > 100:
         raise HTTPException(status_code=400, detail="Task type filter is too long.")
@@ -21481,6 +27446,19 @@ def task_status(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    """Handle the task status endpoint.
+
+    Args:
+        job_id: Identifier of the job.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     job = db.scalar(select(Job).options(selectinload(Job.steps)).where(Job.id == job_id))
     if job is None:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -21493,6 +27471,19 @@ def task_log(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    """Handle the task log endpoint.
+
+    Args:
+        job_id: Identifier of the job.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     job = db.get(Job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -21515,6 +27506,21 @@ def cancel_task_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    """Handle the cancel task from ui endpoint.
+
+    Args:
+        job_id: Identifier of the job.
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     job = db.get(Job, job_id)
     if not job:
@@ -21598,6 +27604,16 @@ def audit_log(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the audit log endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     return render(
         request,
         "audit.html",
@@ -21610,6 +27626,19 @@ def audit_log(
 
 @router.get("/pxe/esxi/ks/{kickstart_file}", response_model=None)
 def serve_esxi_kickstart_file(kickstart_file: str, mac: str = "", db: Session = Depends(get_db)) -> Response:
+    """Handle the serve esxi kickstart file endpoint.
+
+    Args:
+        kickstart_file: Kickstart file supplied by the caller.
+        mac: Mac supplied by the caller.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if not kickstart_file.endswith(".cfg"):
         raise HTTPException(status_code=404, detail="Kickstart not found")
     mac_key = normalize_pxe_mac(mac) if mac else ""
@@ -21678,6 +27707,14 @@ def serve_esxi_kickstart_file(kickstart_file: str, mac: str = "", db: Session = 
 
 @router.get("/pxe/esxi/boot.ipxe", response_model=None)
 def serve_esxi_http_ipxe_script() -> FileResponse:
+    """Handle the serve esxi http ipxe script endpoint.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if not ESXI_IPXE_HTTP_SCRIPT_PATH.is_file():
         raise HTTPException(status_code=404, detail="ESXi iPXE boot script is not enabled")
     return FileResponse(ESXI_IPXE_HTTP_SCRIPT_PATH, media_type="text/plain; charset=utf-8")
@@ -21688,6 +27725,15 @@ def esxi_pxe_page(
     request: Request,
     identity: Identity = Depends(require_session_identity),
 ) -> RedirectResponse:
+    """Handle the esxi pxe page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+
+    Returns:
+        The endpoint response.
+    """
     query = f"?{request.url.query}" if request.url.query else ""
     fragment = request.url.fragment
     suffix = f"#{fragment}" if fragment else ""
@@ -21701,6 +27747,17 @@ def network_boot_page(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the network boot page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        kickstart_id: Identifier of the kickstart.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     return render(
         request,
         "esxi_pxe.html",
@@ -21735,6 +27792,33 @@ def update_esxi_pxe_boot_settings_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse:
+    """Handle the update esxi pxe boot settings from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        enabled: Whether the requested behavior is enabled.
+        hostname: DNS hostname of the target resource.
+        dhcp_scope_id: Identifier of the dhcp scope.
+        dhcp_scope_ids: Dhcp scope ids supplied by the caller.
+        listen_interfaces: Interfaces on which the service should listen.
+        listen_addresses: Addresses on which the service should listen.
+        listen_interfaces_present: Whether the caller supplied listen interfaces.
+        listen_addresses_present: Whether the caller supplied listen addresses.
+        listen_interface: Interface on which the service should listen.
+        listen_address: Address on which the service should listen.
+        tftp_root: Tftp root supplied by the caller.
+        http_port: Http port supplied by the caller.
+        bios_bootfile: Bios bootfile supplied by the caller.
+        uefi_bootfile: Uefi bootfile supplied by the caller.
+        native_uefi_http_enabled: Native uefi http enabled supplied by the caller.
+        native_uefi_http_url: URL for the native uefi http.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     require_esxi_pxe_write(identity)
     verify_csrf(request, csrf)
     previous_boot = esxi_pxe_boot_settings(db)
@@ -21814,6 +27898,21 @@ def create_esxi_kickstart_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse:
+    """Handle the create esxi kickstart from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        name: Name of the target object.
+        description: Human-readable description of the resource.
+        content: Document or file content to process.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     require_esxi_pxe_write(identity)
     verify_csrf(request, csrf)
     try:
@@ -21860,6 +27959,21 @@ async def upload_esxi_kickstart_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse:
+    """Handle the upload esxi kickstart from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        kickstart_file: Kickstart file supplied by the caller.
+        name: Name of the target object.
+        description: Human-readable description of the resource.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     require_esxi_pxe_write(identity)
     verify_csrf(request, csrf)
     try:
@@ -21906,6 +28020,25 @@ def update_esxi_kickstart_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse | JSONResponse:
+    """Handle the update esxi kickstart from ui endpoint.
+
+    Args:
+        kickstart_id: Identifier of the kickstart.
+        request: Incoming HTTP request.
+        name: Name of the target object.
+        description: Human-readable description of the resource.
+        content: Document or file content to process.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     require_esxi_pxe_write(identity)
     verify_csrf(request, csrf)
     kickstart = db.get(EsxiKickstart, kickstart_id)
@@ -21953,6 +28086,21 @@ def duplicate_esxi_kickstart_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the duplicate esxi kickstart from ui endpoint.
+
+    Args:
+        kickstart_id: Identifier of the kickstart.
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     require_esxi_pxe_write(identity)
     verify_csrf(request, csrf)
     source = db.get(EsxiKickstart, kickstart_id)
@@ -21982,6 +28130,21 @@ def delete_esxi_kickstart_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the delete esxi kickstart from ui endpoint.
+
+    Args:
+        kickstart_id: Identifier of the kickstart.
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     require_esxi_pxe_write(identity)
     verify_csrf(request, csrf)
     kickstart = db.get(EsxiKickstart, kickstart_id)
@@ -22005,6 +28168,21 @@ def validate_esxi_kickstart_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the validate esxi kickstart from ui endpoint.
+
+    Args:
+        kickstart_id: Identifier of the kickstart.
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     verify_csrf(request, csrf)
     kickstart = db.get(EsxiKickstart, kickstart_id)
     if not kickstart:
@@ -22038,6 +28216,19 @@ def download_esxi_kickstart_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the download esxi kickstart from ui endpoint.
+
+    Args:
+        kickstart_id: Identifier of the kickstart.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     require_esxi_pxe_write(identity)
     kickstart = db.get(EsxiKickstart, kickstart_id)
     if not kickstart:
@@ -22056,6 +28247,20 @@ def create_esxi_custom_variable_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the create esxi custom variable from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        name: Name of the target object.
+        description: Human-readable description of the resource.
+        default_value: Default value supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     require_esxi_pxe_write(identity)
     verify_csrf(request, csrf)
     try:
@@ -22094,6 +28299,24 @@ def update_esxi_custom_variable_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the update esxi custom variable from ui endpoint.
+
+    Args:
+        variable_name: Variable name supplied by the caller.
+        request: Incoming HTTP request.
+        name: Name of the target object.
+        description: Human-readable description of the resource.
+        default_value: Default value supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     require_esxi_pxe_write(identity)
     verify_csrf(request, csrf)
     if variable_name not in {item["name"] for item in custom_variable_definitions(db)}:
@@ -22132,6 +28355,21 @@ def delete_esxi_custom_variable_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the delete esxi custom variable from ui endpoint.
+
+    Args:
+        variable_name: Variable name supplied by the caller.
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     require_esxi_pxe_write(identity)
     verify_csrf(request, csrf)
     if not delete_custom_variable_definition(db, variable_name):
@@ -22158,6 +28396,18 @@ async def upload_esxi_installer_iso_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse:
+    """Handle the upload esxi installer iso from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        iso_file: Iso file supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     require_esxi_pxe_write(identity)
     verify_csrf(request, csrf)
     wants_json = request.headers.get("X-Atlaso-Upload") == "1"
@@ -22199,6 +28449,21 @@ def delete_esxi_installer_iso_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the delete esxi installer iso from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        installer_iso_path: Filesystem path for the installer iso.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     require_esxi_pxe_write(identity)
     verify_csrf(request, csrf)
     try:
@@ -22245,6 +28510,21 @@ def import_esxi_kickstart_filesystem_copy(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the import esxi kickstart filesystem copy endpoint.
+
+    Args:
+        kickstart_id: Identifier of the kickstart.
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     require_esxi_pxe_write(identity)
     verify_csrf(request, csrf)
     kickstart = db.get(EsxiKickstart, kickstart_id)
@@ -22274,6 +28554,28 @@ def create_esxi_pxe_host_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the create esxi pxe host from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        hostname: DNS hostname of the target resource.
+        mac_address: MAC address identifying the host or interface.
+        ip_address: Ip address supplied by the caller.
+        kickstart_id: Identifier of the kickstart.
+        installer_iso_path: Filesystem path for the installer iso.
+        variables: Variables supplied by the caller.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+        ValueError: If an input value is invalid.
+    """
     require_esxi_pxe_write(identity)
     verify_csrf(request, csrf)
     normalized_kickstart_id = parse_optional_esxi_kickstart_id(db, kickstart_id)
@@ -22329,6 +28631,29 @@ def update_esxi_pxe_host_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the update esxi pxe host from ui endpoint.
+
+    Args:
+        host_id: Identifier of the host.
+        request: Incoming HTTP request.
+        hostname: DNS hostname of the target resource.
+        mac_address: MAC address identifying the host or interface.
+        ip_address: Ip address supplied by the caller.
+        kickstart_id: Identifier of the kickstart.
+        installer_iso_path: Filesystem path for the installer iso.
+        variables: Variables supplied by the caller.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+        ValueError: If an input value is invalid.
+    """
     require_esxi_pxe_write(identity)
     verify_csrf(request, csrf)
     host = db.get(EsxiPxeHost, host_id)
@@ -22381,6 +28706,23 @@ def update_esxi_pxe_default_host_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the update esxi pxe default host from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        kickstart_id: Identifier of the kickstart.
+        installer_iso_path: Filesystem path for the installer iso.
+        enabled: Whether the requested behavior is enabled.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     require_esxi_pxe_write(identity)
     verify_csrf(request, csrf)
     try:
@@ -22408,6 +28750,21 @@ def delete_esxi_pxe_host_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    """Handle the delete esxi pxe host from ui endpoint.
+
+    Args:
+        host_id: Identifier of the host.
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     require_esxi_pxe_write(identity)
     verify_csrf(request, csrf)
     host = db.get(EsxiPxeHost, host_id)
@@ -22428,6 +28785,16 @@ def backup_restore_page(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the backup restore page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     require_admin_identity(identity)
     return render(request, "backup_restore.html", {"identity": identity, **backup_restore_context(db)})
 
@@ -22439,6 +28806,17 @@ def export_backup_restore_archive(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the export backup restore archive endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     require_admin_identity(identity)
     verify_csrf(request, csrf)
     archive = export_settings_archive(db, actor=identity.username)
@@ -22466,6 +28844,18 @@ async def restore_backup_restore_archive(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the restore backup restore archive endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        archive_file: Archive file supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     require_admin_identity(identity)
     verify_csrf(request, csrf)
     raw_archive = await archive_file.read()
@@ -22520,6 +28910,17 @@ def factory_reset_backup_restore(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the factory reset backup restore endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     require_admin_identity(identity)
     verify_csrf(request, csrf)
     counts = factory_reset_desired_state(db)
@@ -22554,6 +28955,16 @@ def settings_page(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Handle the settings page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     return render(
         request,
         "settings.html",
@@ -22576,6 +28987,25 @@ def update_settings_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the update settings from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        fqdn: Fully qualified domain name to validate or use.
+        management_https_enabled: Management https enabled supplied by the caller.
+        web_terminal_enabled: Web terminal enabled supplied by the caller.
+        web_terminal_interfaces: Web terminal interfaces supplied by the caller.
+        web_terminal_interfaces_present: Web terminal interfaces present supplied by the caller.
+        root_ssh_enabled: Root ssh enabled supplied by the caller.
+        service_dns_target_naming: Service dns target naming supplied by the caller.
+        external_dns_servers: External dns servers supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     settings = get_appliance_settings_row(db)
     previous_fqdn = settings.fqdn
@@ -22671,6 +29101,18 @@ def update_vmware_ceip_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the update vmware ceip from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        vmware_ceip_enabled: Vmware ceip enabled supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     settings = get_appliance_settings_row(db)
     settings.vmware_ceip_enabled = bool(vmware_ceip_enabled)
@@ -22732,6 +29174,24 @@ def update_logging_settings_from_ui(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | JSONResponse:
+    """Handle the update logging settings from ui endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        level: Level supplied by the caller.
+        syslog_enabled: Syslog enabled supplied by the caller.
+        syslog_host: Syslog host supplied by the caller.
+        syslog_port: Syslog port supplied by the caller.
+        syslog_protocol: Syslog protocol supplied by the caller.
+        syslog_facility: Syslog facility supplied by the caller.
+        syslog_level: Syslog level supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     verify_csrf(request, csrf)
     try:
         preferences = save_logging_preferences(
@@ -22779,6 +29239,19 @@ def update_logging_settings_from_ui(
 
 @router.get("/{page}", response_class=HTMLResponse, response_model=None)
 def placeholder_page(page: str, request: Request, identity: Identity = Depends(require_session_identity)) -> HTMLResponse:
+    """Handle the placeholder page endpoint.
+
+    Args:
+        page: Page supplied by the caller.
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     known = {
         "physical-interfaces": "Physical Interfaces",
         "vlan-interfaces": "VLAN Interfaces",

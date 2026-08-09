@@ -1,3 +1,5 @@
+"""Test ca behavior."""
+
 import pytest
 
 from atlaso.app.config import Settings
@@ -7,6 +9,7 @@ from atlaso.app.services.ca import ca_certificate_to_dict, ensure_root_ca_materi
 
 
 def test_encrypted_secret_round_trip_and_wrong_key_failure():
+    """Verify that encrypted secret round trip and wrong key failure."""
     first = Settings(secret_key="test-secret-key-with-enough-length", secrets_key="first-ca-secrets-key")
     second = Settings(secret_key="test-secret-key-with-enough-length", secrets_key="second-ca-secrets-key")
 
@@ -20,6 +23,7 @@ def test_encrypted_secret_round_trip_and_wrong_key_failure():
 
 
 def test_ca_apply_payload_includes_crl_for_revoked_certificates():
+    """Verify that ca apply payload includes crl for revoked certificates."""
     import json
 
     settings = CaSettings(
@@ -52,6 +56,7 @@ def test_ca_apply_payload_includes_crl_for_revoked_certificates():
 
 
 def test_existing_root_ca_material_is_not_rotated_by_identity_edits():
+    """Verify that existing root ca material is not rotated by identity edits."""
     settings = CaSettings(
         enabled=True,
         root_common_name="Original Atlaso Root",
@@ -77,6 +82,7 @@ def test_existing_root_ca_material_is_not_rotated_by_identity_edits():
 
 
 def test_ca_certificate_row_capabilities_follow_lifecycle_and_ownership():
+    """Verify that ca certificate row capabilities follow lifecycle and ownership."""
     planned = ca_certificate_to_dict(CaCertificate(common_name="planned.example.test", status="planned"))
     csr_issued = ca_certificate_to_dict(
         CaCertificate(
@@ -109,6 +115,7 @@ def test_ca_certificate_row_capabilities_follow_lifecycle_and_ownership():
 
 
 def test_managed_ca_specs_include_portal_https_certificate(client):
+    """Verify that managed ca specs include portal https certificate."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal

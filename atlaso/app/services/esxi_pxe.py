@@ -1,3 +1,5 @@
+"""Implement esxi pxe service behavior."""
+
 from __future__ import annotations
 
 import hashlib
@@ -89,6 +91,14 @@ SAFE_ISO_UPLOAD_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]*\.iso$", re.I
 
 
 def normalize_kickstart_name(value: str) -> str:
+    """Normalize kickstart name.
+
+    Returns:
+        The normalize kickstart name result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     name = re.sub(r"\s+", " ", (value or "").strip())
     if not name:
         raise ValueError("Kickstart name is required.")
@@ -98,6 +108,18 @@ def normalize_kickstart_name(value: str) -> str:
 
 
 def normalize_kickstart_content(value: str, *, max_bytes: int) -> str:
+    """Normalize kickstart content.
+
+    Args:
+        value: Value to process.
+        max_bytes: Maximum accepted payload size in bytes.
+
+    Returns:
+        The normalize kickstart content result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     text = (value or "").replace("\r\n", "\n").replace("\r", "\n")
     if text.startswith("\ufeff"):
         text = text[1:]
@@ -112,6 +134,18 @@ def normalize_kickstart_content(value: str, *, max_bytes: int) -> str:
 
 
 def decode_kickstart_upload(raw: bytes, *, max_bytes: int) -> str:
+    """Deserialize kickstart upload.
+
+    Args:
+        raw: Untrusted raw value to normalize or validate.
+        max_bytes: Maximum accepted payload size in bytes.
+
+    Returns:
+        The decode kickstart upload result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     if len(raw) > max_bytes:
         raise ValueError(f"Kickstart upload is too large. Limit is {max_bytes} bytes.")
     try:
@@ -122,10 +156,12 @@ def decode_kickstart_upload(raw: bytes, *, max_bytes: int) -> str:
 
 
 def content_hash(content: str) -> str:
+    """Return content hash."""
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 def kickstart_http_stem(kickstart_id: int, content_hash_value: str | None = None) -> str:
+    """Return kickstart http stem."""
     normalized_hash = (content_hash_value or "").strip().lower()
     if re.fullmatch(r"[0-9a-f]{12,}", normalized_hash):
         return normalized_hash[:ESXI_KICKSTART_HASH_PATH_LENGTH]
@@ -133,14 +169,17 @@ def kickstart_http_stem(kickstart_id: int, content_hash_value: str | None = None
 
 
 def canonical_http_path(kickstart_id: int, content_hash_value: str | None = None) -> str:
+    """Return canonical http path."""
     return f"{ESXI_KICKSTART_HTTP_PREFIX}/{kickstart_http_stem(kickstart_id, content_hash_value)}.cfg"
 
 
 def generated_kickstart_path(kickstart_id: int, content_hash_value: str | None = None) -> Path:
+    """Return generated kickstart path."""
     return ESXI_KICKSTART_HTTP_ROOT / f"{kickstart_http_stem(kickstart_id, content_hash_value)}.cfg"
 
 
 def kickstart_url(base_url: str, http_path: str) -> str:
+    """Return kickstart url."""
     if not base_url or not http_path:
         return ""
     filename = Path(http_path).name
@@ -150,16 +189,26 @@ def kickstart_url(base_url: str, http_path: str) -> str:
 
 
 def host_kickstart_url(base_url: str, http_path: str, mac_key: str) -> str:
+    """Return host kickstart url."""
     url = kickstart_url(base_url, http_path)
     return f"{url}?mac={mac_key}" if url and mac_key and mac_key != "default" else url
 
 
 def kickstart_requires_host_context(content: str) -> bool:
+    """Return kickstart requires host context."""
     names, invalid = kickstart_template_variables(content)
     return bool(names or invalid)
 
 
 def normalize_host_variables(value: Any) -> dict[str, str]:
+    """Normalize host variables.
+
+    Returns:
+        The normalize host variables result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     if value in (None, ""):
         return {}
     if isinstance(value, str):
@@ -197,10 +246,12 @@ def normalize_host_variables(value: Any) -> dict[str, str]:
 
 
 def host_variables_json(value: Any) -> str:
+    """Return host variables json."""
     return json.dumps(normalize_host_variables(value), sort_keys=True)
 
 
 def host_variables(host: EsxiPxeHost) -> dict[str, str]:
+    """Return host variables."""
     try:
         return normalize_host_variables(host.variables_json or "{}")
     except ValueError:
@@ -208,6 +259,14 @@ def host_variables(host: EsxiPxeHost) -> dict[str, str]:
 
 
 def normalize_custom_variable_definition(name: str, description: str = "", default_value: str = "") -> dict[str, str]:
+    """Normalize custom variable definition.
+
+    Returns:
+        The normalize custom variable definition result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     normalized_name = (name or "").strip()
     if not CUSTOM_VARIABLE_NAME_PATTERN.fullmatch(normalized_name):
         raise ValueError("Custom variable name must start with a letter or underscore and use only letters, numbers, and underscores.")
@@ -228,6 +287,11 @@ def normalize_custom_variable_definition(name: str, description: str = "", defau
 
 
 def custom_variable_definitions(db: Session) -> list[dict[str, str]]:
+    """Return custom variable definitions.
+
+    Args:
+        db: Active database session.
+    """
     row = db.execute(select(Setting).where(Setting.key == ESXI_PXE_CUSTOM_VARIABLES_KEY)).scalar_one_or_none()
     if row is None:
         return []
@@ -255,6 +319,11 @@ def custom_variable_definitions(db: Session) -> list[dict[str, str]]:
 
 
 def custom_variable_defaults(db: Session) -> dict[str, str]:
+    """Return custom variable defaults.
+
+    Args:
+        db: Active database session.
+    """
     return {item["name"]: item["default_value"] for item in custom_variable_definitions(db)}
 
 
@@ -266,6 +335,21 @@ def save_custom_variable_definition(
     default_value: str = "",
     original_name: str | None = None,
 ) -> dict[str, str]:
+    """Persist custom variable definition.
+
+    Args:
+        db: Active database session.
+        name: Name of the target object.
+        description: Human-readable description of the resource.
+        default_value: Default value supplied by the caller.
+        original_name: Original name supplied by the caller.
+
+    Returns:
+        The save custom variable definition result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     definition = normalize_custom_variable_definition(name, description, default_value)
     definitions = custom_variable_definitions(db)
     original = (original_name or "").strip()
@@ -288,6 +372,15 @@ def save_custom_variable_definition(
 
 
 def delete_custom_variable_definition(db: Session, name: str) -> bool:
+    """Remove custom variable definition.
+
+    Args:
+        db: Active database session.
+        name: Name of the target object.
+
+    Returns:
+        The delete custom variable definition result.
+    """
     normalized_name = (name or "").strip()
     definitions = custom_variable_definitions(db)
     updated = [item for item in definitions if item["name"] != normalized_name]
@@ -303,6 +396,7 @@ def delete_custom_variable_definition(db: Session, name: str) -> bool:
 
 
 def kickstart_template_markers(content: str) -> tuple[list[tuple[int, int, str]], list[str]]:
+    """Return kickstart template markers."""
     source = content or ""
     markers: list[tuple[int, int, str]] = []
     invalid: list[str] = []
@@ -330,12 +424,22 @@ def kickstart_template_markers(content: str) -> tuple[list[tuple[int, int, str]]
 
 
 def kickstart_template_variables(content: str) -> tuple[set[str], list[str]]:
+    """Return kickstart template variables."""
     markers, invalid = kickstart_template_markers(content)
     names = {name for _start, _end, name in markers}
     return names, invalid
 
 
 def validate_kickstart_vault_references(db: Session, content: str) -> None:
+    """Validate kickstart vault references.
+
+    Args:
+        db: Active database session.
+        content: Document or file content to process.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     names, invalid = kickstart_template_variables(content)
     if invalid:
         raise ValueError(f"Kickstart contains invalid variable marker: {invalid[0]}")
@@ -343,6 +447,15 @@ def validate_kickstart_vault_references(db: Session, content: str) -> None:
 
 
 def validate_kickstart_custom_references(db: Session, content: str) -> None:
+    """Validate kickstart custom references.
+
+    Args:
+        db: Active database session.
+        content: Document or file content to process.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     names, invalid = kickstart_template_variables(content)
     if invalid:
         raise ValueError(f"Kickstart contains invalid variable marker: {invalid[0]}")
@@ -357,20 +470,28 @@ def validate_kickstart_custom_references(db: Session, content: str) -> None:
 
 
 def kickstart_has_variables(content: str) -> bool:
+    """Return kickstart has variables."""
     names, invalid = kickstart_template_variables(content)
     return bool(names or invalid)
 
 
 def ensure_installer_iso_root() -> Path:
+    """Ensure installer iso root.
+
+    Returns:
+        The ensure installer iso root result.
+    """
     ESXI_INSTALLER_ISO_ROOT.mkdir(parents=True, exist_ok=True)
     return ESXI_INSTALLER_ISO_ROOT
 
 
 def installer_iso_root_path() -> str:
+    """Return installer iso root path."""
     return str(ESXI_INSTALLER_ISO_ROOT)
 
 
 def default_ipxe_script() -> str:
+    """Return default ipxe script."""
     return "\n".join(
         [
             "#!ipxe",
@@ -383,6 +504,7 @@ def default_ipxe_script() -> str:
 
 
 def tftp_ipxe_chain_script() -> str:
+    """Return tftp ipxe chain script."""
     return "\n".join(
         [
             "#!ipxe",
@@ -394,6 +516,7 @@ def tftp_ipxe_chain_script() -> str:
 
 
 def _ordered_unique(values) -> list[str]:
+    """Return ordered unique."""
     result: list[str] = []
     for value in values:
         if value and value not in result:
@@ -402,6 +525,7 @@ def _ordered_unique(values) -> list[str]:
 
 
 def primary_boot_address(boot: dict[str, Any]) -> str:
+    """Return primary boot address."""
     for line in str(boot.get("listen_address") or "").replace(",", "\n").splitlines():
         address = line.strip()
         if address:
@@ -410,6 +534,7 @@ def primary_boot_address(boot: dict[str, Any]) -> str:
 
 
 def esxi_http_base_url(boot: dict[str, Any]) -> str:
+    """Return esxi http base url."""
     address = primary_boot_address(boot)
     port = int(boot.get("http_port") or ESXI_PXE_HTTP_PORT)
     host = f"[{address}]" if ":" in address and not address.startswith("[") else address
@@ -417,11 +542,13 @@ def esxi_http_base_url(boot: dict[str, Any]) -> str:
 
 
 def effective_native_uefi_http_url(boot: dict[str, Any]) -> str:
+    """Return effective native uefi http url."""
     base_url = esxi_http_base_url(boot)
     return f"{base_url}/{ESXI_PXE_UEFI_BOOTFILE}" if base_url else ""
 
 
 def esxi_pxe_service_state_from_boot(boot: dict[str, Any]) -> dict[str, Any]:
+    """Return esxi pxe service state from boot."""
     enabled = bool(boot.get("enabled"))
     has_scope = bool(boot.get("dhcp_scope_ids") or boot.get("dhcp_scope_id"))
     has_address = bool(primary_boot_address(boot))
@@ -448,6 +575,7 @@ def esxi_pxe_service_state_from_boot(boot: dict[str, Any]) -> dict[str, Any]:
 
 
 def selected_dhcp_scope_payload(scope: DhcpScope) -> dict[str, Any]:
+    """Return selected dhcp scope payload."""
     return {
         "id": scope.id,
         "name": scope.name,
@@ -463,6 +591,7 @@ def selected_dhcp_scope_payload(scope: DhcpScope) -> dict[str, Any]:
 
 
 def _scope_network(scope: dict[str, Any]) -> Any:
+    """Return scope network."""
     try:
         return ip_network(f"{scope.get('site_address')}/{scope.get('prefix_length')}", strict=False)
     except ValueError:
@@ -470,6 +599,7 @@ def _scope_network(scope: dict[str, Any]) -> Any:
 
 
 def _dhcp_scope_for_host(host: EsxiPxeHost, boot_settings: dict[str, Any]) -> dict[str, Any]:
+    """Return dhcp scope for host."""
     scopes = [scope for scope in boot_settings.get("dhcp_scopes") or [] if isinstance(scope, dict)]
     host_ip = str(host.ip_address or "").strip()
     if host_ip:
@@ -491,6 +621,7 @@ def kickstart_variable_values(
     vault_values: dict[str, str] | None = None,
     custom_defaults: dict[str, str] | None = None,
 ) -> dict[str, str]:
+    """Return kickstart variable values."""
     mac_key = normalize_pxe_mac(host.mac_address)
     scope = _dhcp_scope_for_host(host, boot_settings)
     network = _scope_network(scope)
@@ -525,6 +656,21 @@ def render_kickstart_for_host(
     vault_values: dict[str, str] | None = None,
     custom_defaults: dict[str, str] | None = None,
 ) -> str:
+    """Render kickstart for host.
+
+    Args:
+        content: Document or file content to process.
+        host: Host targeted by the operation.
+        boot_settings: Network Boot settings that constrain the operation.
+        vault_values: Vault values supplied by the caller.
+        custom_defaults: Custom defaults supplied by the caller.
+
+    Returns:
+        The rendered kickstart for host.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     names, invalid = kickstart_template_variables(content)
     if invalid:
         raise ValueError(f"Kickstart contains invalid variable marker: {invalid[0]}")
@@ -550,6 +696,15 @@ def kickstart_template_validation_errors(
     default_host: dict[str, Any] | None = None,
     custom_defaults: dict[str, str] | None = None,
 ) -> list[str]:
+    """Return kickstart template validation errors.
+
+    Args:
+        kickstarts: Kickstarts supplied by the caller.
+        hosts: Hosts supplied by the caller.
+        boot_settings: Network Boot settings that constrain the operation.
+        default_host: Default host supplied by the caller.
+        custom_defaults: Custom defaults supplied by the caller.
+    """
     errors: list[str] = []
     kickstart_by_id = {row.id: row for row in kickstarts if row.id is not None}
     for row in kickstarts:
@@ -584,6 +739,11 @@ def kickstart_template_validation_errors(
 
 
 def esxi_pxe_boot_settings(db: Session) -> dict[str, Any]:
+    """Return esxi pxe boot settings.
+
+    Args:
+        db: Active database session.
+    """
     rows = {row.key: row.value for row in db.execute(select(Setting).where(Setting.key.like("esxi_pxe.boot.%"))).scalars().all()}
     enabled = rows.get(ESXI_PXE_BOOT_ENABLED_KEY, "false").strip().lower() in {"1", "true", "yes", "on"}
     native_uefi_http_enabled = rows.get(ESXI_PXE_NATIVE_UEFI_HTTP_ENABLED_KEY, "true").strip().lower() in {"1", "true", "yes", "on"}
@@ -658,6 +818,27 @@ def save_esxi_pxe_boot_settings(
     native_uefi_http_enabled: bool = False,
     native_uefi_http_url: str = "",
 ) -> dict[str, Any]:
+    """Persist esxi pxe boot settings.
+
+    Args:
+        db: Active database session.
+        enabled: Whether the requested behavior is enabled.
+        hostname: DNS hostname of the target resource.
+        listen_interface: Interface on which the service should listen.
+        listen_address: Address on which the service should listen.
+        tftp_root: Tftp root supplied by the caller.
+        bios_bootfile: Bios bootfile supplied by the caller.
+        uefi_bootfile: Uefi bootfile supplied by the caller.
+        dhcp_scope_id: Identifier of the dhcp scope.
+        dhcp_scope_ids: Dhcp scope ids supplied by the caller.
+        http_port: Http port supplied by the caller.
+        ipxe_script: Ipxe script supplied by the caller.
+        native_uefi_http_enabled: Native uefi http enabled supplied by the caller.
+        native_uefi_http_url: URL for the native uefi http.
+
+    Returns:
+        The save esxi pxe boot settings result.
+    """
     normalized_scopes = _normalize_dhcp_scope_selections(db, dhcp_scope_ids if dhcp_scope_ids is not None else [dhcp_scope_id] if dhcp_scope_id else [])
     if normalized_scopes:
         listen_interface = "\n".join(_ordered_unique(scope.interface_name.strip() for scope in normalized_scopes if scope.interface_name.strip()))
@@ -691,6 +872,14 @@ def save_esxi_pxe_boot_settings(
 
 
 def _selected_dhcp_scope(db: Session, raw_scope_id: str | None, listen_interface: str, listen_address: str) -> DhcpScope | None:
+    """Return selected dhcp scope.
+
+    Args:
+        db: Active database session.
+        raw_scope_id: Identifier of the raw scope.
+        listen_interface: Interface on which the service should listen.
+        listen_address: Address on which the service should listen.
+    """
     scope_id = (raw_scope_id or "").strip()
     if scope_id.isdigit():
         scope = db.get(DhcpScope, int(scope_id))
@@ -721,6 +910,15 @@ def _selected_dhcp_scopes(
     listen_interface: str,
     listen_address: str,
 ) -> list[DhcpScope]:
+    """Return selected dhcp scopes.
+
+    Args:
+        db: Active database session.
+        raw_scope_ids: Raw scope ids supplied by the caller.
+        raw_scope_id: Identifier of the raw scope.
+        listen_interface: Interface on which the service should listen.
+        listen_address: Address on which the service should listen.
+    """
     try:
         scopes = _normalize_dhcp_scope_selections(db, (raw_scope_ids or "").replace(",", "\n").splitlines(), allow_empty=True)
     except ValueError:
@@ -732,6 +930,18 @@ def _selected_dhcp_scopes(
 
 
 def _normalize_dhcp_scope_selection(db: Session, raw_scope_id: int | str | None) -> tuple[int | None, str, str]:
+    """Normalize dhcp scope selection.
+
+    Args:
+        db: Active database session.
+        raw_scope_id: Identifier of the raw scope.
+
+    Returns:
+        The normalize dhcp scope selection result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     value = str(raw_scope_id or "").strip()
     if not value:
         return None, "", ""
@@ -746,6 +956,19 @@ def _normalize_dhcp_scope_selection(db: Session, raw_scope_id: int | str | None)
 
 
 def _normalize_dhcp_scope_selections(db: Session, raw_scope_ids: list[int | str] | tuple[int | str, ...], *, allow_empty: bool = False) -> list[DhcpScope]:
+    """Normalize dhcp scope selections.
+
+    Args:
+        db: Active database session.
+        raw_scope_ids: Raw scope ids supplied by the caller.
+        allow_empty: Allow empty supplied by the caller.
+
+    Returns:
+        The normalize dhcp scope selections result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     scopes: list[DhcpScope] = []
     seen: set[int] = set()
     for raw_scope_id in raw_scope_ids:
@@ -768,6 +991,7 @@ def _normalize_dhcp_scope_selections(db: Session, raw_scope_ids: list[int | str]
 
 
 def _dhcp_scope_address_family(scope: DhcpScope) -> str:
+    """Return dhcp scope address family."""
     family = str(getattr(scope, "address_family", "") or "").strip().lower()
     if family in {"ipv4", "ipv6"}:
         return family
@@ -778,6 +1002,14 @@ def _dhcp_scope_address_family(scope: DhcpScope) -> str:
 
 
 def _normalize_hostname(value: str) -> str:
+    """Normalize hostname.
+
+    Returns:
+        The normalize hostname result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     hostname = (value or "").strip().strip(".").lower() or ESXI_PXE_DEFAULT_HOSTNAME
     if len(hostname) > 253 or "." not in hostname:
         raise ValueError("ESXi PXE hostname must be a fully qualified DNS name.")
@@ -787,6 +1019,11 @@ def _normalize_hostname(value: str) -> str:
 
 
 def _normalize_multiline_values(value: str) -> str:
+    """Normalize multiline values.
+
+    Returns:
+        The normalize multiline values result.
+    """
     values = []
     for item in (value or "").replace(",", "\n").splitlines():
         normalized = item.strip()
@@ -796,6 +1033,14 @@ def _normalize_multiline_values(value: str) -> str:
 
 
 def _normalize_tftp_root(value: str) -> str:
+    """Normalize tftp root.
+
+    Returns:
+        The normalize tftp root result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     root = ((value or "").strip() or ESXI_TFTP_ROOT.as_posix()).replace("\\", "/")
     if not root.startswith("/"):
         raise ValueError("TFTP root must be an absolute path.")
@@ -803,6 +1048,14 @@ def _normalize_tftp_root(value: str) -> str:
 
 
 def _normalize_http_port(value: int | str | None) -> int:
+    """Normalize http port.
+
+    Returns:
+        The normalize http port result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     try:
         port = int(value or ESXI_PXE_HTTP_PORT)
     except (TypeError, ValueError) as exc:
@@ -813,6 +1066,7 @@ def _normalize_http_port(value: int | str | None) -> int:
 
 
 def _bootfile_setting(value: str | None, *, default: str, legacy_defaults: set[str]) -> str:
+    """Return bootfile setting."""
     name = (value or "").strip()
     if not name or name.lower() in {item.lower() for item in legacy_defaults}:
         return default
@@ -820,6 +1074,14 @@ def _bootfile_setting(value: str | None, *, default: str, legacy_defaults: set[s
 
 
 def _normalize_bootfile(value: str, *, default: str) -> str:
+    """Normalize bootfile.
+
+    Returns:
+        The normalize bootfile result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     name = (value or "").strip() or default
     if "/" in name or "\\" in name or name.startswith(".") or not re.fullmatch(r"[A-Za-z0-9._-]+", name):
         raise ValueError("PXE boot filenames must be simple filenames.")
@@ -827,6 +1089,14 @@ def _normalize_bootfile(value: str, *, default: str) -> str:
 
 
 def _normalize_native_uefi_http_url(value: str) -> str:
+    """Normalize native uefi http url.
+
+    Returns:
+        The normalize native uefi http url result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     url = (value or "").strip()
     if not url:
         return ""
@@ -836,14 +1106,22 @@ def _normalize_native_uefi_http_url(value: str) -> str:
 
 
 def _managed_host_description(host_id: int) -> str:
+    """Return managed host description."""
     return f"{ESXI_PXE_HOST_MANAGED_DESCRIPTION_PREFIX}{host_id}."
 
 
 def _is_managed_by_esxi_host(row: DhcpReservation | DnsRecord, host_id: int) -> bool:
+    """Return whether managed by esxi host."""
     return (row.description or "").strip() == _managed_host_description(host_id)
 
 
 def _remove_managed_esxi_host_network_records(db: Session, host_id: int) -> None:
+    """Remove managed esxi host network records.
+
+    Args:
+        db: Active database session.
+        host_id: Identifier of the host.
+    """
     marker = _managed_host_description(host_id)
     for reservation in db.execute(select(DhcpReservation).where(DhcpReservation.description == marker)).scalars().all():
         db.delete(reservation)
@@ -852,6 +1130,16 @@ def _remove_managed_esxi_host_network_records(db: Session, host_id: int) -> None
 
 
 def sync_esxi_pxe_host_network_records(db: Session, host: EsxiPxeHost, boot_settings: dict[str, Any]) -> None:
+    """Handle sync esxi pxe host network records.
+
+    Args:
+        db: Active database session.
+        host: Host targeted by the operation.
+        boot_settings: Network Boot settings that constrain the operation.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     if host.id is None:
         db.flush()
     if host.id is None:
@@ -933,6 +1221,14 @@ def sync_esxi_pxe_host_network_records(db: Session, host: EsxiPxeHost, boot_sett
 
 
 def _normalize_ipxe_script(value: str) -> str:
+    """Normalize ipxe script.
+
+    Returns:
+        The normalize ipxe script result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     script = (value or "").replace("\r\n", "\n").replace("\r", "\n")
     if not script.strip():
         script = default_ipxe_script()
@@ -944,6 +1240,11 @@ def _normalize_ipxe_script(value: str) -> str:
 
 
 def normalize_pxe_mac(value: str) -> str:
+    """Normalize pxe mac.
+
+    Returns:
+        The normalize pxe mac result.
+    """
     raw = (value or "").strip().lower().replace("-", ":")
     if re.fullmatch(r"01:(?:[0-9a-f]{2}:){5}[0-9a-f]{2}", raw):
         raw = raw[3:]
@@ -965,6 +1266,11 @@ def normalize_pxe_mac(value: str) -> str:
 
 
 def normalize_host_mac(value: str) -> str:
+    """Normalize host mac.
+
+    Returns:
+        The normalize host mac result.
+    """
     mac_key = normalize_pxe_mac(value)
     if not mac_key:
         return ""
@@ -972,6 +1278,7 @@ def normalize_host_mac(value: str) -> str:
 
 
 def dnsmasq_host_tag_for_pxe_mac(value: str) -> str:
+    """Return dnsmasq host tag for pxe mac."""
     mac_key = normalize_pxe_mac(value)
     if not mac_key:
         return ""
@@ -979,6 +1286,11 @@ def dnsmasq_host_tag_for_pxe_mac(value: str) -> str:
 
 
 def installer_image_key(path: str) -> str:
+    """Return installer image key.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+    """
     selected = Path(path)
     stem = selected.stem or "esx-installer"
     slug = re.sub(r"[^A-Za-z0-9._-]+", "-", stem).strip("-._").lower() or "esx-installer"
@@ -987,6 +1299,11 @@ def installer_image_key(path: str) -> str:
 
 
 def safe_installer_iso_name(filename: str) -> str:
+    """Return safe installer iso name.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     name = Path(filename or "").name.strip()
     if not SAFE_ISO_UPLOAD_PATTERN.fullmatch(name):
         raise ValueError("Upload an ESXi installer ISO with a safe .iso filename.")
@@ -1007,6 +1324,12 @@ def esx_installer_identity_from_filename(filename: str) -> tuple[str, str]:
 
 
 def _installer_iso_inventory_row(path: Path, root: Path) -> dict[str, Any]:
+    """Return installer iso inventory row.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        root: Root directory that bounds filesystem access.
+    """
     stat = path.stat()
     esx_version, esx_build = esx_installer_identity_from_filename(path.name)
     return {
@@ -1021,6 +1344,7 @@ def _installer_iso_inventory_row(path: Path, root: Path) -> dict[str, Any]:
 
 
 def installer_iso_inventory() -> list[dict[str, Any]]:
+    """Return installer iso inventory."""
     root = ensure_installer_iso_root()
     rows: list[dict[str, Any]] = []
     for path in sorted(root.rglob("*.iso"), key=lambda item: str(item).lower()):
@@ -1031,6 +1355,14 @@ def installer_iso_inventory() -> list[dict[str, Any]]:
 
 
 def normalize_installer_iso_path(value: str) -> str:
+    """Normalize installer iso path.
+
+    Returns:
+        The normalize installer iso path result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     raw = (value or "").strip()
     if not raw:
         return ""
@@ -1049,6 +1381,18 @@ def normalize_installer_iso_path(value: str) -> str:
 
 
 async def store_installer_iso_upload(upload_file: Any, *, max_bytes: int) -> dict[str, Any]:
+    """Persist installer iso upload.
+
+    Args:
+        upload_file: Upload file supplied by the caller.
+        max_bytes: Maximum accepted payload size in bytes.
+
+    Returns:
+        The store installer iso upload result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     root = ensure_installer_iso_root()
     filename = safe_installer_iso_name(upload_file.filename or "")
     destination = root / filename
@@ -1075,6 +1419,13 @@ async def store_installer_iso_upload(upload_file: Any, *, max_bytes: int) -> dic
 
 
 def assign_kickstart_content(kickstart: EsxiKickstart, content: str, *, max_bytes: int) -> None:
+    """Handle assign kickstart content.
+
+    Args:
+        kickstart: Kickstart supplied by the caller.
+        content: Document or file content to process.
+        max_bytes: Maximum accepted payload size in bytes.
+    """
     normalized = normalize_kickstart_content(content, max_bytes=max_bytes)
     kickstart.content = normalized
     kickstart.content_hash = content_hash(normalized)
@@ -1084,6 +1435,7 @@ def assign_kickstart_content(kickstart: EsxiKickstart, content: str, *, max_byte
 
 
 def redacted_kickstart_preview(content: str) -> str:
+    """Return redacted kickstart preview."""
     lines: list[str] = []
     for raw_line in (content or "").splitlines():
         line = raw_line.rstrip("\n")
@@ -1106,10 +1458,18 @@ def redacted_kickstart_preview(content: str) -> str:
 
 
 def redacted_host_variables(values: dict[str, str]) -> dict[str, str]:
+    """Return redacted host variables."""
     return {key: "[redacted]" if SECRET_KEYWORD_PATTERN.search(key) else value for key, value in values.items()}
 
 
 def kickstart_validation(content: str, *, strict: bool, max_bytes: int) -> tuple[list[str], list[str]]:
+    """Return kickstart validation.
+
+    Args:
+        content: Document or file content to process.
+        strict: Strict supplied by the caller.
+        max_bytes: Maximum accepted payload size in bytes.
+    """
     errors: list[str] = []
     warnings: list[str] = []
     try:
@@ -1151,11 +1511,21 @@ def kickstart_validation(content: str, *, strict: bool, max_bytes: int) -> tuple
 
 
 def strict_validation_enabled(db: Session) -> bool:
+    """Return strict validation enabled.
+
+    Args:
+        db: Active database session.
+    """
     row = db.execute(select(Setting).where(Setting.key == ESXI_PXE_STRICT_VALIDATION_KEY)).scalar_one_or_none()
     return bool(row and row.value.strip().lower() in {"1", "true", "yes", "on"})
 
 
 def filesystem_hash(path: Path) -> str | None:
+    """Return filesystem hash.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+    """
     try:
         if not path.is_file():
             return None
@@ -1165,6 +1535,7 @@ def filesystem_hash(path: Path) -> str | None:
 
 
 def kickstart_drift_state(kickstart: EsxiKickstart) -> str:
+    """Return kickstart drift state."""
     path = generated_kickstart_path(kickstart.id, kickstart.content_hash)
     disk_hash = filesystem_hash(path)
     if not kickstart.rendered_hash and disk_hash is None:
@@ -1179,6 +1550,7 @@ def kickstart_drift_state(kickstart: EsxiKickstart) -> str:
 
 
 def kickstart_to_dict(kickstart: EsxiKickstart, *, include_content: bool = False) -> dict[str, Any]:
+    """Return kickstart to dict."""
     payload = {
         "id": kickstart.id,
         "name": kickstart.name,
@@ -1200,6 +1572,7 @@ def kickstart_to_dict(kickstart: EsxiKickstart, *, include_content: bool = False
 
 
 def host_to_dict(host: EsxiPxeHost) -> dict[str, Any]:
+    """Return host to dict."""
     iso_path = host.installer_iso_path or ""
     return {
         "id": host.id,
@@ -1219,6 +1592,11 @@ def host_to_dict(host: EsxiPxeHost) -> dict[str, Any]:
 
 
 def esxi_pxe_default_host_settings(db: Session) -> dict[str, Any]:
+    """Return esxi pxe default host settings.
+
+    Args:
+        db: Active database session.
+    """
     rows = {row.key: row.value for row in db.execute(select(Setting).where(Setting.key.like("esxi_pxe.default_host.%"))).scalars().all()}
     kickstart_id = rows.get(ESXI_PXE_DEFAULT_HOST_KICKSTART_ID_KEY, "").strip()
     kickstart = db.get(EsxiKickstart, int(kickstart_id)) if kickstart_id.isdigit() else None
@@ -1240,6 +1618,20 @@ def save_esxi_pxe_default_host_settings(
     kickstart_id: int | str | None = None,
     installer_iso_path: str = "",
 ) -> dict[str, Any]:
+    """Persist esxi pxe default host settings.
+
+    Args:
+        db: Active database session.
+        enabled: Whether the requested behavior is enabled.
+        kickstart_id: Identifier of the kickstart.
+        installer_iso_path: Filesystem path for the installer iso.
+
+    Returns:
+        The save esxi pxe default host settings result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     kickstart_value = str(kickstart_id or "").strip()
     if kickstart_value and not kickstart_value.isdigit():
         raise ValueError("Default ESXi PXE Kickstart is invalid.")
@@ -1264,6 +1656,7 @@ def save_esxi_pxe_default_host_settings(
 
 
 def default_host_to_dict(default_host: dict[str, Any]) -> dict[str, Any]:
+    """Return default host to dict."""
     return {
         "id": "default",
         "hostname": "Default / undefined MACs",
@@ -1293,6 +1686,21 @@ def _esxi_pxe_artifact(
     kickstart_host_context_required: bool = True,
     is_default: bool = False,
 ) -> dict[str, Any]:
+    """Return esxi pxe artifact.
+
+    Args:
+        host_id: Identifier of the host.
+        hostname: DNS hostname of the target resource.
+        mac_address: MAC address identifying the host or interface.
+        ip_address: Ip address supplied by the caller.
+        mac_key: Mac key supplied by the caller.
+        iso_path: Filesystem path for the iso.
+        kickstart_id: Identifier of the kickstart.
+        boot_settings: Network Boot settings that constrain the operation.
+        kickstart_http_path: Filesystem path for the kickstart http.
+        kickstart_host_context_required: Kickstart host context required supplied by the caller.
+        is_default: Whether is default.
+    """
     base_url = esxi_http_base_url(boot_settings)
     image_key = installer_image_key(iso_path)
     image_http_path = f"{ESXI_PXE_IMAGE_HTTP_PREFIX}/{image_key}"
@@ -1333,6 +1741,7 @@ def esxi_pxe_host_artifacts(
     default_host: dict[str, Any] | None = None,
     kickstart_paths: dict[int, str] | None = None,
 ) -> list[dict[str, Any]]:
+    """Return esxi pxe host artifacts."""
     artifacts: list[dict[str, Any]] = []
     paths = kickstart_paths or {}
     if default_host and default_host.get("enabled") and default_host.get("installer_iso_path"):
@@ -1390,6 +1799,19 @@ def render_esxi_pxe_manifest(
     custom_variables: list[dict[str, str]] | None = None,
     network_boot_environments: list[dict[str, Any]] | None = None,
 ) -> str:
+    """Render esxi pxe manifest.
+
+    Args:
+        kickstarts: Kickstarts supplied by the caller.
+        hosts: Hosts supplied by the caller.
+        boot_settings: Network Boot settings that constrain the operation.
+        default_host: Default host supplied by the caller.
+        custom_variables: Custom variables supplied by the caller.
+        network_boot_environments: Network boot environments supplied by the caller.
+
+    Returns:
+        The rendered esxi pxe manifest.
+    """
     iso_error = ""
     try:
         installer_isos = installer_iso_inventory()
@@ -1518,6 +1940,19 @@ def render_esxi_pxe_preview(
     custom_variables: list[dict[str, str]] | None = None,
     network_boot_environments: list[dict[str, Any]] | None = None,
 ) -> str:
+    """Render esxi pxe preview.
+
+    Args:
+        kickstarts: Kickstarts supplied by the caller.
+        hosts: Hosts supplied by the caller.
+        boot_settings: Network Boot settings that constrain the operation.
+        default_host: Default host supplied by the caller.
+        custom_variables: Custom variables supplied by the caller.
+        network_boot_environments: Network boot environments supplied by the caller.
+
+    Returns:
+        The rendered esxi pxe preview.
+    """
     payload = json.loads(
         render_esxi_pxe_manifest(
             kickstarts,
@@ -1541,6 +1976,7 @@ def render_esxi_pxe_preview(
 
 
 def mark_kickstarts_applied(kickstarts: list[EsxiKickstart]) -> None:
+    """Handle mark kickstarts applied."""
     timestamp = utcnow()
     for row in kickstarts:
         rendered = row.rendered_content if row.rendered_content is not None else row.content

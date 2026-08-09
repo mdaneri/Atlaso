@@ -1,3 +1,5 @@
+"""Implement vcf vault import service behavior."""
+
 from __future__ import annotations
 
 import re
@@ -9,6 +11,17 @@ from atlaso.app.services.vcf_depot_target import VcfDepotApiClient, VcfDepotTarg
 
 @dataclass(frozen=True)
 class VcfPasswordCandidate:
+    """Represent vcf password candidate.
+
+    Attributes:
+        candidate_id: Identifier of the associated candidate.
+        key: Key maintained by this vcfpasswordcandidate.
+        description: Operator-facing purpose or context for the resource.
+        secret_type: Secret type maintained by this vcfpasswordcandidate.
+        username: Username maintained by this vcfpasswordcandidate.
+        resource_name: Resource name maintained by this vcfpasswordcandidate.
+        value: Value maintained by this vcfpasswordcandidate.
+    """
     candidate_id: str
     key: str
     description: str
@@ -18,6 +31,7 @@ class VcfPasswordCandidate:
     value: str
 
     def sanitized(self) -> dict[str, str]:
+        """Return sanitized."""
         return {
             "candidate_id": self.candidate_id,
             "key": self.key,
@@ -29,6 +43,7 @@ class VcfPasswordCandidate:
 
 
 def _segment(value: object, fallback: str = "password") -> str:
+    """Return segment."""
     normalized = re.sub(r"[^a-z0-9_]+", "_", str(value or "").strip().lower()).strip("_")
     if not normalized:
         normalized = fallback
@@ -38,6 +53,7 @@ def _segment(value: object, fallback: str = "password") -> str:
 
 
 def _usable_password(value: object) -> str:
+    """Return usable password."""
     password = str(value or "")
     if not password or re.fullmatch(r"[*xX•]+", password):
         return ""
@@ -45,6 +61,11 @@ def _usable_password(value: object) -> str:
 
 
 def _sddc_manager_candidates(api: VcfDepotApiClient) -> list[VcfPasswordCandidate]:
+    """Return sddc manager candidates.
+
+    Raises:
+        VcfDepotTargetError: If the operation encounters an invalid state.
+    """
     response = api.client.get("/v1/credentials", params={"pageSize": 0})
     api._raise(response, "Could not read SDDC Manager credentials")
     payload = response.json()
@@ -81,6 +102,12 @@ def _sddc_manager_candidates(api: VcfDepotApiClient) -> list[VcfPasswordCandidat
 
 
 def _installer_password_nodes(value: object, path: tuple[str, ...] = ()) -> list[tuple[tuple[str, ...], str]]:
+    """Return installer password nodes.
+
+    Args:
+        value: Value to process.
+        path: Filesystem or URL path to read, validate, or update.
+    """
     result: list[tuple[tuple[str, ...], str]] = []
     if isinstance(value, dict):
         for key, child in value.items():
@@ -107,6 +134,11 @@ def _installer_password_nodes(value: object, path: tuple[str, ...] = ()) -> list
 
 
 def _vcf_installer_candidates(api: VcfDepotApiClient) -> list[VcfPasswordCandidate]:
+    """Return vcf installer candidates.
+
+    Raises:
+        VcfDepotTargetError: If the operation encounters an invalid state.
+    """
     latest_response = api.client.get("/v1/sddcs/latest")
     api._raise(latest_response, "Could not find the latest VCF Installer deployment")
     latest = latest_response.json()
@@ -148,6 +180,19 @@ def discover_vcf_passwords(
     password: str,
     expected_fingerprint: str,
 ) -> list[VcfPasswordCandidate]:
+    """Return discover vcf passwords.
+
+    Args:
+        source_type: Source type supplied by the caller.
+        address: Network address of the target service or interface.
+        port: TCP or UDP port of the target service.
+        username: Account name used for authentication or lookup.
+        password: Password supplied for the immediate authenticated operation.
+        expected_fingerprint: Certificate fingerprint explicitly confirmed by the operator.
+
+    Raises:
+        VcfDepotTargetError: If the operation encounters an invalid state.
+    """
     expected_role = {"sddc_manager": "SddcManager", "vcf_installer": "VcfInstaller"}.get(source_type)
     if expected_role is None:
         raise VcfDepotTargetError("Choose SDDC Manager or VCF Installer.")

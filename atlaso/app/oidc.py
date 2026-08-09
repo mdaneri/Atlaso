@@ -1,3 +1,5 @@
+"""Implement Atlaso's constrained OpenID Connect provider endpoints."""
+
 from __future__ import annotations
 
 from base64 import b64decode
@@ -97,10 +99,12 @@ admin_router = APIRouter(
 
 
 def _public_configuration_error(exc: OidcConfigurationError) -> HTTPException:
+    """Return public configuration error."""
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
 
 def _group_mapping_error_detail() -> str:
+    """Return group mapping error detail."""
     return (
         "Review the group source, client scope, and external name; "
         "the mapping is not valid in its effective context."
@@ -111,6 +115,18 @@ def _group_mapping_error_detail() -> str:
 def get_openid_configuration(
     request: Request, db: Session = Depends(get_db)
 ) -> JSONResponse:
+    """Handle the get openid configuration endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If OIDC is not configured or the request does not use HTTPS.
+    """
     try:
         document = discovery_document(db)
     except OidcConfigurationError as exc:
@@ -122,6 +138,18 @@ def get_openid_configuration(
 
 @public_router.get("/jwks", response_model=None)
 def get_oidc_jwks(request: Request, db: Session = Depends(get_db)) -> JSONResponse:
+    """Handle the get oidc jwks endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If OIDC is not configured or the request does not use HTTPS.
+    """
     try:
         document = jwks_document(db)
     except OidcConfigurationError as exc:
@@ -155,12 +183,14 @@ def _identity_https(request: Request, db: Session | None = None) -> bool:
 
 
 def _no_store(response: Response) -> Response:
+    """Return no store."""
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
     return response
 
 
 def _oidc_error(redirect_uri: str | None, error: str, state_value: str = "") -> Response:
+    """Return oidc error."""
     if redirect_uri:
         query = urlencode({"error": error, **({"state": state_value} if state_value else {})})
         return _no_store(
@@ -173,10 +203,16 @@ def _oidc_error(redirect_uri: str | None, error: str, state_value: str = "") -> 
 
 
 def _session_serializer() -> URLSafeTimedSerializer:
+    """Return session serializer."""
     return URLSafeTimedSerializer(get_settings().secret_key, salt="atlaso-oidc-browser-v1")
 
 
 def _load_oidc_session(request: Request) -> dict[str, object] | None:
+    """Return oidc session.
+
+    Args:
+        request: Incoming HTTP request.
+    """
     value = request.cookies.get(OIDC_SESSION_COOKIE, "")
     if not value:
         return None
@@ -190,10 +226,17 @@ def _load_oidc_session(request: Request) -> dict[str, object] | None:
 
 
 def _anonymous_oidc_session() -> dict[str, object]:
+    """Return anonymous oidc session."""
     return {"sid": token_urlsafe(32), "csrf": token_urlsafe(32)}
 
 
 def _set_oidc_cookie(response: Response, session: dict[str, object]) -> None:
+    """Update oidc cookie.
+
+    Args:
+        response: HTTP response being constructed.
+        session: Active database or protocol session.
+    """
     response.set_cookie(
         OIDC_SESSION_COOKIE,
         _session_serializer().dumps(session),
@@ -206,6 +249,7 @@ def _set_oidc_cookie(response: Response, session: dict[str, object]) -> None:
 
 
 def _clear_oidc_cookie(response: Response) -> None:
+    """Remove oidc cookie."""
     response.delete_cookie(
         OIDC_SESSION_COOKIE,
         path="/identity",
@@ -218,12 +262,14 @@ def _clear_oidc_cookie(response: Response) -> None:
 def _login_bucket_key(
     *, client_id: str, source: str, organization_id: int | None, username: str
 ) -> str:
+    """Return login bucket key."""
     return f"{client_id}:{source}:{organization_id or 0}:{username.strip().casefold()}"
 
 
 def _login_throttled(
     *, client_id: str, source: str, organization_id: int | None, username: str
 ) -> bool:
+    """Return login throttled."""
     now = monotonic()
     key = _login_bucket_key(
         client_id=client_id,
@@ -243,6 +289,7 @@ def _login_throttled(
 def _record_login_failure(
     *, client_id: str, source: str, organization_id: int | None, username: str
 ) -> None:
+    """Persist login failure."""
     now = monotonic()
     key = _login_bucket_key(
         client_id=client_id,
@@ -260,6 +307,12 @@ def _record_login_failure(
 
 
 def _session_identity(db: Session, session: dict[str, object]):
+    """Return session identity.
+
+    Args:
+        db: Active database session.
+        session: Active database or protocol session.
+    """
     source = session.get("source")
     source_record_id = session.get("source_id")
     organization_id = session.get("organization_id")
@@ -278,6 +331,13 @@ def _session_identity(db: Session, session: dict[str, object]):
 def _registered_error_target(
     db: Session, client_id: str, redirect_uri: str
 ) -> tuple[str | None, OidcClient | None]:
+    """Return registered error target.
+
+    Args:
+        db: Active database session.
+        client_id: Identifier of the client.
+        redirect_uri: Redirect uri supplied by the caller.
+    """
     client = client_by_public_id(db, client_id)
     if client is None or not client.enabled:
         return None, None
@@ -288,6 +348,13 @@ def _registered_error_target(
 def _authorize_request(
     request: Request, db: Session, params: dict[str, str]
 ) -> OidcAuthorizationTransaction | Response:
+    """Return authorize request.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session.
+        params: Params supplied by the caller.
+    """
     if not _identity_https(request, db):
         return _oidc_error(None, "invalid_request")
     redirect_uri, _client = _registered_error_target(
@@ -336,6 +403,16 @@ def _authorize_login_page(
     status_code: int = 200,
     selected_source: str = "",
 ) -> HTMLResponse:
+    """Return authorize login page.
+
+    Args:
+        db: Active database session.
+        transaction: Transaction supplied by the caller.
+        session: Active database or protocol session.
+        error: Public-safe error detail to record or return.
+        status_code: HTTP status code for the response.
+        selected_source: Selected source supplied by the caller.
+    """
     client = db.get(OidcClient, transaction.oidc_client_id)
     if client is None:
         return _no_store(HTMLResponse("Authorization request unavailable.", status_code=400))
@@ -393,6 +470,15 @@ def _authorize_login_page(
 
 @public_router.get("/authorize", response_model=None, operation_id="oidcAuthorizeGet")
 async def authorize_get(request: Request, db: Session = Depends(get_db)) -> Response:
+    """Handle the authorize get endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     outcome = _authorize_request(request, db, dict(request.query_params))
     if isinstance(outcome, Response):
         return outcome
@@ -440,6 +526,15 @@ async def authorize_get(request: Request, db: Session = Depends(get_db)) -> Resp
 
 @public_router.post("/authorize", response_model=None, operation_id="oidcAuthorizePost")
 async def authorize_post(request: Request, db: Session = Depends(get_db)) -> Response:
+    """Handle the authorize post endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     if not _identity_https(request, db):
         return _oidc_error(None, "invalid_request")
     form = await request.form()
@@ -546,6 +641,12 @@ async def authorize_post(request: Request, db: Session = Depends(get_db)) -> Res
 
 
 def _basic_client(request: Request, db: Session) -> OidcClient | None:
+    """Return basic client.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session.
+    """
     header = request.headers.get("authorization", "")
     if not header.startswith("Basic "):
         return None
@@ -568,6 +669,15 @@ def _basic_client(request: Request, db: Session) -> OidcClient | None:
 
 @public_router.post("/token", response_model=None, operation_id="oidcToken")
 async def token(request: Request, db: Session = Depends(get_db)) -> Response:
+    """Handle the token endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     if not _identity_https(request, db):
         return _oidc_error(None, "invalid_request")
     client = _basic_client(request, db)
@@ -603,11 +713,25 @@ async def token(request: Request, db: Session = Depends(get_db)) -> Response:
 
 
 def _bearer_value(request: Request) -> str:
+    """Return bearer value.
+
+    Args:
+        request: Incoming HTTP request.
+    """
     header = request.headers.get("authorization", "")
     return header[7:] if header.startswith("Bearer ") else ""
 
 
 async def _userinfo_response(request: Request, db: Session) -> Response:
+    """Return userinfo response.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session.
+
+    Raises:
+        OidcConfigurationError: If the operation encounters an invalid state.
+    """
     if not _identity_https(request, db):
         return _oidc_error(None, "invalid_request")
     try:
@@ -635,15 +759,39 @@ async def _userinfo_response(request: Request, db: Session) -> Response:
 
 @public_router.get("/userinfo", response_model=None, operation_id="oidcUserInfoGet")
 async def userinfo_get(request: Request, db: Session = Depends(get_db)) -> Response:
+    """Handle the userinfo get endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     return await _userinfo_response(request, db)
 
 
 @public_router.post("/userinfo", response_model=None, operation_id="oidcUserInfoPost")
 async def userinfo_post(request: Request, db: Session = Depends(get_db)) -> Response:
+    """Handle the userinfo post endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     return await _userinfo_response(request, db)
 
 
 async def _logout_response(request: Request, db: Session) -> Response:
+    """Return logout response.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session.
+    """
     if not _identity_https(request, db):
         return _oidc_error(None, "invalid_request")
     params = dict(request.query_params)
@@ -687,15 +835,38 @@ async def _logout_response(request: Request, db: Session) -> Response:
 
 @public_router.get("/logout", response_model=None, operation_id="oidcLogoutGet")
 async def logout_get(request: Request, db: Session = Depends(get_db)) -> Response:
+    """Handle the logout get endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     return await _logout_response(request, db)
 
 
 @public_router.post("/logout", response_model=None, operation_id="oidcLogoutPost")
 async def logout_post(request: Request, db: Session = Depends(get_db)) -> Response:
+    """Handle the logout post endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     return await _logout_response(request, db)
 
 
 def _provider_response(db: Session) -> OidcProviderSettingsResponse:
+    """Return provider response.
+
+    Args:
+        db: Active database session.
+    """
     provider = ensure_provider_settings(db)
     errors = provider_validation_errors(db, provider)
     try:
@@ -741,7 +912,8 @@ def get_oidc_provider_settings(
     """Get desired OIDC provider settings and readiness state.
 
     Requires the `admin:all` API scope. This read-only operation does not change saved desired state
-    or appliance runtime state."""
+    or appliance runtime state.
+    """
     return _provider_response(db)
 
 
@@ -755,7 +927,8 @@ def update_oidc_provider_settings(
     """Update desired OIDC provider settings after readiness validation.
 
     Requires the `admin:all` API scope. The operation updates saved Atlaso state and does not bypass
-    the documented global Appliance Apply or service lifecycle boundary."""
+    the documented global Appliance Apply or service lifecycle boundary.
+    """
     if payload.enabled and not OIDC_AUTHORIZATION_FLOW_AVAILABLE:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -819,7 +992,8 @@ def get_oidc_signing_keys(
     """List active and overlap-published OIDC signing keys.
 
     Requires the `admin:all` API scope. This read-only operation does not change saved desired state
-    or appliance runtime state."""
+    or appliance runtime state.
+    """
     rows = db.execute(select(OidcSigningKey).order_by(OidcSigningKey.created_at.desc())).scalars().all()
     return [OidcSigningKeyResponse(**signing_key_to_dict(row)) for row in rows]
 
@@ -838,7 +1012,8 @@ def create_oidc_signing_key(
 
     Requires the `admin:all` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
-    resource."""
+    resource.
+    """
     try:
         row, _previous = generate_signing_key(db, rotate=False)
     except OidcConflictError as exc:
@@ -865,7 +1040,8 @@ def rotate_oidc_signing_key(
 
     Requires the `admin:all` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
-    resource."""
+    resource.
+    """
     row, previous = generate_signing_key(db, rotate=True)
     action = "rotate_oidc_signing_key" if previous is not None else "generate_oidc_signing_key"
     detail = f"kid={row.kid}; algorithm={row.algorithm}"
@@ -897,7 +1073,8 @@ def delete_oidc_signing_key(
     """Delete Retired Oidc Signing Key.
 
     Requires the `admin:all` API scope. Removal or revocation takes effect in Atlaso application
-    state; appliance host changes remain subject to the documented apply boundary for the resource."""
+    state; appliance host changes remain subject to the documented apply boundary for the resource.
+    """
     row = db.get(OidcSigningKey, key_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="OIDC signing key not found.")
@@ -926,7 +1103,8 @@ def get_oidc_clients(
     """List configured confidential OIDC clients without their secrets.
 
     Requires the `admin:all` API scope. This read-only operation does not change saved desired state
-    or appliance runtime state."""
+    or appliance runtime state.
+    """
     return [OidcClientResponse(**oidc_client_to_dict(row)) for row in list_clients(db)]
 
 
@@ -942,7 +1120,8 @@ def get_oidc_group_mappings(
     """List Oidc Group Mappings.
 
     Requires the `admin:all` API scope. This read-only operation does not change saved desired state
-    or appliance runtime state."""
+    or appliance runtime state.
+    """
     return [
         OidcGroupMappingResponse(**group_mapping_to_dict(row))
         for row in list_group_mappings(db)
@@ -965,7 +1144,8 @@ def create_oidc_group_mapping(
 
     Requires the `admin:all` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
-    resource."""
+    resource.
+    """
     try:
         row = create_group_mapping(
             db,
@@ -1014,7 +1194,8 @@ def update_oidc_group_mapping(
     """Update Oidc Group Mapping.
 
     Requires the `admin:all` API scope. The operation updates saved Atlaso state and does not bypass
-    the documented global Appliance Apply or service lifecycle boundary."""
+    the documented global Appliance Apply or service lifecycle boundary.
+    """
     row = db.get(OidcGroupMapping, mapping_id)
     if row is None:
         raise HTTPException(
@@ -1066,7 +1247,8 @@ def delete_oidc_group_mapping(
     """Delete Oidc Group Mapping.
 
     Requires the `admin:all` API scope. Removal or revocation takes effect in Atlaso application
-    state; appliance host changes remain subject to the documented apply boundary for the resource."""
+    state; appliance host changes remain subject to the documented apply boundary for the resource.
+    """
     row = db.get(OidcGroupMapping, mapping_id)
     if row is None:
         raise HTTPException(
@@ -1109,7 +1291,8 @@ def get_oidc_subjects(
     """List stable OIDC subjects and their configured identity sources.
 
     Requires the `admin:all` API scope. This read-only operation does not change saved desired state
-    or appliance runtime state."""
+    or appliance runtime state.
+    """
     return [OidcSubjectResponse(**row) for row in list_subjects(db)]
 
 
@@ -1128,7 +1311,8 @@ def create_oidc_client(
 
     Requires the `admin:all` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
-    resource."""
+    resource.
+    """
     try:
         row, raw_secret = create_client(
             db,
@@ -1176,7 +1360,8 @@ def update_oidc_client(
     """Update Oidc Client.
 
     Requires the `admin:all` API scope. The operation updates saved Atlaso state and does not bypass
-    the documented global Appliance Apply or service lifecycle boundary."""
+    the documented global Appliance Apply or service lifecycle boundary.
+    """
     try:
         row = get_client(db, client_record_id)
         row = update_client(
@@ -1228,7 +1413,8 @@ def export_oidc_client_integration(
     """Export Oidc Client Integration.
 
     Requires the `admin:all` API scope. This read-only operation does not change saved desired state
-    or appliance runtime state."""
+    or appliance runtime state.
+    """
     try:
         row = get_client(db, client_record_id)
     except OidcConfigurationError as exc:
@@ -1259,7 +1445,8 @@ def rotate_oidc_client_secret(
 
     Requires the `admin:all` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
-    resource."""
+    resource.
+    """
     try:
         row = get_client(db, client_record_id)
     except OidcConfigurationError as exc:
@@ -1288,7 +1475,8 @@ def set_oidc_client_enabled(
     """Enable or disable a configured OIDC client.
 
     Requires the `admin:all` API scope. The operation updates saved Atlaso state and does not bypass
-    the documented global Appliance Apply or service lifecycle boundary."""
+    the documented global Appliance Apply or service lifecycle boundary.
+    """
     try:
         row = get_client(db, client_record_id)
     except OidcConfigurationError as exc:
@@ -1319,7 +1507,8 @@ def delete_oidc_client(
     """Delete an OIDC client and revoke its future protocol access.
 
     Requires the `admin:all` API scope. Removal or revocation takes effect in Atlaso application
-    state; appliance host changes remain subject to the documented apply boundary for the resource."""
+    state; appliance host changes remain subject to the documented apply boundary for the resource.
+    """
     try:
         row = get_client(db, client_record_id)
     except OidcConfigurationError as exc:

@@ -1,3 +1,5 @@
+"""Implement vcf depot downloads service behavior."""
+
 from __future__ import annotations
 
 import json
@@ -18,7 +20,13 @@ VCF_DEPOT_TASK_LOG_DIR = "/var/lib/atlaso/vcfDownloadTool/task-logs"
 
 
 class ActiveVcfDepotDownloadError(ValueError):
+    """Report a active vcf depot download error.
+
+    Attributes:
+        active_job_id: Identifier of the associated active job.
+    """
     def __init__(self, active_job_id: str) -> None:
+        """Initialize the active vcf depot download error."""
         self.active_job_id = active_job_id
         super().__init__(
             f"VCFDT task {active_job_id} is already active. Wait for it to finish before starting another VCFDT operation."
@@ -26,6 +34,7 @@ class ActiveVcfDepotDownloadError(ValueError):
 
 
 def vcf_depot_profile_id(task_config_json: str) -> int:
+    """Return vcf depot profile id."""
     try:
         config = json.loads(task_config_json or "{}")
     except json.JSONDecodeError:
@@ -39,6 +48,12 @@ def vcf_depot_profile_id(task_config_json: str) -> int:
 
 
 def vcf_depot_schedules_for_profile(db: Session, profile_id: int) -> list[Schedule]:
+    """Return vcf depot schedules for profile.
+
+    Args:
+        db: Active database session.
+        profile_id: Identifier of the profile.
+    """
     return [
         schedule
         for schedule in db.execute(
@@ -51,6 +66,12 @@ def vcf_depot_schedules_for_profile(db: Session, profile_id: int) -> list[Schedu
 
 
 def disable_vcf_depot_profile_schedules(db: Session, profile_id: int) -> list[Schedule]:
+    """Return disable vcf depot profile schedules.
+
+    Args:
+        db: Active database session.
+        profile_id: Identifier of the profile.
+    """
     disabled: list[Schedule] = []
     now = utcnow()
     for schedule in vcf_depot_schedules_for_profile(db, profile_id):
@@ -64,6 +85,11 @@ def disable_vcf_depot_profile_schedules(db: Session, profile_id: int) -> list[Sc
 
 
 def active_vcf_depot_operation_job(db: Session) -> Job | None:
+    """Return active vcf depot operation job.
+
+    Args:
+        db: Active database session.
+    """
     return db.scalars(
         select(Job)
         .where(
@@ -76,6 +102,11 @@ def active_vcf_depot_operation_job(db: Session) -> Job | None:
 
 
 def active_vcf_depot_download_job(db: Session) -> Job | None:
+    """Return active vcf depot download job.
+
+    Args:
+        db: Active database session.
+    """
     return db.scalars(
         select(Job)
         .where(Job.type == VCF_DEPOT_JOB_TYPE, Job.status.in_(ACTIVE_VCF_DEPOT_JOB_STATUSES))
@@ -85,6 +116,7 @@ def active_vcf_depot_download_job(db: Session) -> Job | None:
 
 
 def vcf_depot_task_log_reference(job_id: str, _profile_name: str = "") -> str:
+    """Return vcf depot task log reference."""
     return f"{VCF_DEPOT_TASK_LOG_DIR}/{job_id}.log"
 
 
@@ -96,6 +128,15 @@ def vcf_depot_initial_job_result(
     schedule: Schedule | None,
     planned_for: datetime | None,
 ) -> dict[str, Any]:
+    """Return vcf depot initial job result.
+
+    Args:
+        job_id: Identifier of the job.
+        profile: Profile supplied by the caller.
+        trigger: Trigger supplied by the caller.
+        schedule: Schedule supplied by the caller.
+        planned_for: Planned for supplied by the caller.
+    """
     return {
         "profile_id": profile.id,
         "profile_name": profile.name,
@@ -118,6 +159,20 @@ def enqueue_vcf_depot_download(
     planned_for: datetime | None = None,
     job_id: str | None = None,
 ) -> Job:
+    """Return enqueue vcf depot download.
+
+    Args:
+        db: Active database session.
+        profile: Profile supplied by the caller.
+        actor: Authenticated identity attributed to the audit record.
+        trigger: Trigger supplied by the caller.
+        schedule: Schedule supplied by the caller.
+        planned_for: Planned for supplied by the caller.
+        job_id: Identifier of the job.
+
+    Raises:
+        ActiveVcfDepotDownloadError: If the operation encounters an invalid state.
+    """
     identifier = job_id or f"job_{uuid4().hex[:12]}"
     job = Job(
         id=identifier,

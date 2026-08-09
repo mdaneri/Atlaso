@@ -1,3 +1,5 @@
+"""Test vmware ovf customization behavior."""
+
 from pathlib import Path
 import importlib.util
 import sys
@@ -6,6 +8,7 @@ import pytest
 
 
 def load_customizer():
+    """Return customizer."""
     path = Path("scripts/appliance/atlaso-vmware-ovf-customize.py")
     spec = importlib.util.spec_from_file_location("atlaso_vmware_ovf_customize", path)
     assert spec and spec.loader
@@ -33,6 +36,7 @@ OVF_ENV = """<?xml version="1.0" encoding="UTF-8"?>
 
 
 def test_vmware_ovf_customizer_parses_and_validates_properties_without_logging_secrets():
+    """Verify that vmware ovf customizer parses and validates properties without logging secrets."""
     customizer = load_customizer()
 
     properties = customizer.parse_ovf_environment(OVF_ENV)
@@ -52,6 +56,7 @@ def test_vmware_ovf_customizer_parses_and_validates_properties_without_logging_s
 
 
 def test_vmware_ovf_customizer_supports_dhcp_management_by_default():
+    """Verify that vmware ovf customizer supports dhcp management by default."""
     customizer = load_customizer()
     properties = customizer.parse_ovf_environment(OVF_ENV)
     properties.pop("atlaso.management_mode")
@@ -69,6 +74,11 @@ def test_vmware_ovf_customizer_supports_dhcp_management_by_default():
 
 
 def test_vmware_ovf_customizer_rejects_empty_or_whitespace_passwords():
+    """Verify that vmware ovf customizer rejects empty or whitespace passwords.
+
+    Raises:
+        AssertionError: If an expected invariant is not satisfied.
+    """
     customizer = load_customizer()
 
     for key, value in (
@@ -91,6 +101,7 @@ def test_vmware_ovf_customizer_rejects_empty_or_whitespace_passwords():
 
 
 def test_vmware_ovf_customizer_ignores_legacy_mode_and_derives_ipv4_from_cidr():
+    """Verify that vmware ovf customizer ignores legacy mode and derives ipv4 from cidr."""
     customizer = load_customizer()
     properties = customizer.parse_ovf_environment(OVF_ENV)
     properties["atlaso.management_mode"] = "dhcp"
@@ -104,6 +115,11 @@ def test_vmware_ovf_customizer_ignores_legacy_mode_and_derives_ipv4_from_cidr():
 
 
 def test_vmware_ovf_customizer_rejects_incomplete_ipv4_pairs():
+    """Verify that vmware ovf customizer rejects incomplete ipv4 pairs.
+
+    Raises:
+        AssertionError: If an expected invariant is not satisfied.
+    """
     customizer = load_customizer()
     properties = customizer.parse_ovf_environment(OVF_ENV)
     properties.pop("atlaso.gateway")
@@ -125,6 +141,7 @@ def test_vmware_ovf_customizer_rejects_incomplete_ipv4_pairs():
 
 
 def test_vmware_ovf_customizer_supports_disabled_auto_and_static_ipv6(tmp_path):
+    """Verify that vmware ovf customizer supports disabled auto and static ipv6."""
     customizer = load_customizer()
     customizer.NETWORKD_PATH = tmp_path / "management.network"
     properties = customizer.parse_ovf_environment(OVF_ENV)
@@ -158,6 +175,11 @@ def test_vmware_ovf_customizer_supports_disabled_auto_and_static_ipv6(tmp_path):
 
 
 def test_vmware_ovf_customizer_rejects_contradictory_or_incomplete_ipv6():
+    """Verify that vmware ovf customizer rejects contradictory or incomplete ipv6.
+
+    Raises:
+        AssertionError: If an expected invariant is not satisfied.
+    """
     customizer = load_customizer()
     properties = customizer.parse_ovf_environment(OVF_ENV)
     properties["atlaso.ipv6_cidr"] = "fd00:10::10/64"
@@ -182,6 +204,7 @@ def test_vmware_ovf_customizer_rejects_contradictory_or_incomplete_ipv6():
 
 
 def test_vmware_ovf_customizer_renders_family_specific_management_firewall(tmp_path):
+    """Verify that vmware ovf customizer renders family specific management firewall."""
     customizer = load_customizer()
     customizer.FIREWALL_CONFIG_PATH = tmp_path / "atlaso.nft"
     properties = customizer.parse_ovf_environment(OVF_ENV)
@@ -197,11 +220,13 @@ def test_vmware_ovf_customizer_renders_family_specific_management_firewall(tmp_p
 
 
 def test_vmware_ovf_customizer_configures_and_validates_root_ssh(tmp_path, monkeypatch):
+    """Verify that vmware ovf customizer configures and validates root ssh."""
     customizer = load_customizer()
     customizer.SSHD_ROOT_LOGIN_CONFIG_PATH = tmp_path / "sshd_config.d" / "atlaso-root-login.conf"
     commands = []
 
     def fake_run(command, **kwargs):
+        """Return fake run."""
         commands.append(command)
         return type("Result", (), {"returncode": 0})()
 
@@ -217,6 +242,11 @@ def test_vmware_ovf_customizer_configures_and_validates_root_ssh(tmp_path, monke
 
 
 def test_vmware_ovf_customizer_requires_static_network_properties_only_for_static_mode():
+    """Verify that vmware ovf customizer requires static network properties only for static mode.
+
+    Raises:
+        AssertionError: If an expected invariant is not satisfied.
+    """
     customizer = load_customizer()
     properties = customizer.parse_ovf_environment(OVF_ENV)
 
@@ -230,6 +260,7 @@ def test_vmware_ovf_customizer_requires_static_network_properties_only_for_stati
 
 
 def test_vmware_ovf_customizer_renders_initial_firewall_for_ovf_subnet(tmp_path):
+    """Verify that vmware ovf customizer renders initial firewall for ovf subnet."""
     customizer = load_customizer()
     firewall_path = tmp_path / "atlaso.nft"
     customizer.FIREWALL_CONFIG_PATH = firewall_path
@@ -246,6 +277,7 @@ def test_vmware_ovf_customizer_renders_initial_firewall_for_ovf_subnet(tmp_path)
 
 
 def test_vmware_ovf_customizer_renders_dhcp_network_and_interface_scoped_firewall(tmp_path):
+    """Verify that vmware ovf customizer renders dhcp network and interface scoped firewall."""
     customizer = load_customizer()
     customizer.NETWORKD_PATH = tmp_path / "00-atlaso-mgmt.network"
     customizer.FIREWALL_CONFIG_PATH = tmp_path / "atlaso.nft"
@@ -266,6 +298,7 @@ def test_vmware_ovf_customizer_renders_dhcp_network_and_interface_scoped_firewal
 
 
 def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path):
+    """Verify that vmware ovf customizer rotates clone specific env secrets."""
     customizer = load_customizer()
     customizer.ENV_PATH = tmp_path / "atlaso.env"
     customizer.NETWORKD_PATH = tmp_path / "00-atlaso-mgmt.network"
@@ -309,6 +342,7 @@ def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path):
 
 
 def test_vmware_ovf_export_and_image_plumbing_are_present():
+    """Verify that vmware ovf export and image plumbing are present."""
     export_script = Path("scripts/windows/vmware/export-ovf.ps1").read_text(encoding="utf-8")
     packer_template = Path("image/vmware-workstation/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
     provision_script = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")

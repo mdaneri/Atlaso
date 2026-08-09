@@ -1,3 +1,5 @@
+"""Test kmip store behavior."""
+
 from __future__ import annotations
 
 import os
@@ -12,6 +14,11 @@ from atlaso.app.kmip.store import KeyNotFoundError, KeyStoreError, WrappedKeySto
 
 
 def store(tmp_path: Path, *, secret: str = "appliance-secrets-key") -> WrappedKeyStore:
+    """Persist operation.
+
+    Returns:
+        The store result.
+    """
     return WrappedKeyStore(
         tmp_path / "store.db",
         tmp_path / "kek.json",
@@ -20,6 +27,7 @@ def store(tmp_path: Path, *, secret: str = "appliance-secrets-key") -> WrappedKe
 
 
 def test_wrapped_store_survives_restart_without_persisting_plaintext(tmp_path: Path) -> None:
+    """Verify that wrapped store survives restart without persisting plaintext."""
     provider_id = str(uuid.uuid4())
     first = store(tmp_path)
     metadata = first.create_key(provider_id)
@@ -39,6 +47,7 @@ def test_wrapped_store_survives_restart_without_persisting_plaintext(tmp_path: P
 
 
 def test_provider_namespace_isolation_fails_closed(tmp_path: Path) -> None:
+    """Verify that provider namespace isolation fails closed."""
     provider_id = str(uuid.uuid4())
     other_provider_id = str(uuid.uuid4())
     operational_store = store(tmp_path)
@@ -51,6 +60,7 @@ def test_provider_namespace_isolation_fails_closed(tmp_path: Path) -> None:
 
 
 def test_activation_rewraps_key_and_preserves_material(tmp_path: Path) -> None:
+    """Verify that activation rewraps key and preserves material."""
     provider_id = str(uuid.uuid4())
     operational_store = store(tmp_path)
     metadata = operational_store.create_key(provider_id)
@@ -77,6 +87,7 @@ def test_activation_rewraps_key_and_preserves_material(tmp_path: Path) -> None:
 
 
 def test_concurrent_activation_is_idempotent(tmp_path: Path) -> None:
+    """Verify that concurrent activation is idempotent."""
     provider_id = str(uuid.uuid4())
     operational_store = store(tmp_path)
     metadata = operational_store.create_key(provider_id)
@@ -97,6 +108,7 @@ def test_concurrent_activation_is_idempotent(tmp_path: Path) -> None:
 
 
 def test_wrong_appliance_secrets_key_cannot_open_kek(tmp_path: Path) -> None:
+    """Verify that wrong appliance secrets key cannot open kek."""
     first = store(tmp_path)
     first.close()
 
@@ -105,6 +117,7 @@ def test_wrong_appliance_secrets_key_cannot_open_kek(tmp_path: Path) -> None:
 
 
 def test_store_and_kek_must_exist_as_a_pair(tmp_path: Path) -> None:
+    """Verify that store and kek must exist as a pair."""
     (tmp_path / "store.db").write_bytes(b"orphan")
 
     with pytest.raises(KeyStoreError, match="must exist together"):
@@ -112,6 +125,7 @@ def test_store_and_kek_must_exist_as_a_pair(tmp_path: Path) -> None:
 
 
 def test_wrapped_key_tamper_is_detected_without_secret_output(tmp_path: Path) -> None:
+    """Verify that wrapped key tamper is detected without secret output."""
     provider_id = str(uuid.uuid4())
     operational_store = store(tmp_path)
     metadata = operational_store.create_key(provider_id)
@@ -136,6 +150,7 @@ def test_wrapped_key_tamper_is_detected_without_secret_output(tmp_path: Path) ->
 
 
 def test_metadata_only_read_authenticates_wrapped_key_and_metadata(tmp_path: Path) -> None:
+    """Verify that metadata only read authenticates wrapped key and metadata."""
     provider_id = str(uuid.uuid4())
     operational_store = store(tmp_path)
     metadata = operational_store.create_key(provider_id, name="vcenter-key")
@@ -153,6 +168,7 @@ def test_metadata_only_read_authenticates_wrapped_key_and_metadata(tmp_path: Pat
 def test_earlier_authenticated_row_cannot_be_restored_after_activation(
     tmp_path: Path,
 ) -> None:
+    """Verify that earlier authenticated row cannot be restored after activation."""
     provider_id = str(uuid.uuid4())
     operational_store = store(tmp_path)
     metadata = operational_store.create_key(provider_id)
@@ -184,6 +200,7 @@ def test_earlier_authenticated_row_cannot_be_restored_after_activation(
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX mode bits are enforced on the Photon appliance")
 def test_kek_and_store_require_service_only_permissions(tmp_path: Path) -> None:
+    """Verify that kek and store require service only permissions."""
     store(tmp_path)
 
     assert (tmp_path / "store.db").stat().st_mode & 0o777 == 0o600

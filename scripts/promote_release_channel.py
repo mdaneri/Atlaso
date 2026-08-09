@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Provide the promote release channel repository utility."""
+
 from __future__ import annotations
 
 import argparse
@@ -20,10 +22,19 @@ from atlaso.app.services.release_updates import validate_release_manifest, verif
 
 
 def canonical_json(payload: dict) -> bytes:
+    """Return canonical json."""
     return (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 
 def main() -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        The main result.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     parser = argparse.ArgumentParser(description="Promote an immutable Atlaso release into a signed Pages channel.")
     parser.add_argument("--channel", required=True, choices=("stable", "preview", "development"))
     parser.add_argument("--release-manifest-url", required=True)

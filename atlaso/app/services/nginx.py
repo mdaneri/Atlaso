@@ -1,3 +1,5 @@
+"""Implement nginx service behavior."""
+
 from __future__ import annotations
 
 from ipaddress import ip_address

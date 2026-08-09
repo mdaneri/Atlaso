@@ -1,3 +1,5 @@
+"""Implement local users service behavior."""
+
 from __future__ import annotations
 
 import json
@@ -50,16 +52,19 @@ _PENDING_OS_PASSWORDS: dict[str, tuple[str, datetime]] = {}
 
 
 def _pending_key(user: User | str) -> str:
+    """Return pending key."""
     if isinstance(user, User):
         return user.username.strip().lower()
     return str(user).strip().lower()
 
 
 def has_pending_os_password(user: User) -> bool:
+    """Return whether pending os password."""
     return _pending_key(user) in _PENDING_OS_PASSWORDS
 
 
 def pending_os_password_since(user: User) -> datetime | None:
+    """Return pending os password since."""
     pending = _PENDING_OS_PASSWORDS.get(_pending_key(user))
     if pending:
         return pending[1]
@@ -67,21 +72,25 @@ def pending_os_password_since(user: User) -> datetime | None:
 
 
 def pending_os_password_count(users: list[User]) -> int:
+    """Return pending os password count."""
     keys = {_pending_key(user) for user in users}
     return sum(1 for key in keys if key in _PENDING_OS_PASSWORDS)
 
 
 def clear_pending_os_password(user: User | str) -> None:
+    """Remove pending os password."""
     _PENDING_OS_PASSWORDS.pop(_pending_key(user), None)
 
 
 def rename_pending_os_password(old_username: str, new_username: str) -> None:
+    """Handle rename pending os password."""
     pending = _PENDING_OS_PASSWORDS.pop(_pending_key(old_username), None)
     if pending:
         _PENDING_OS_PASSWORDS[_pending_key(new_username)] = pending
 
 
 def password_policy_from_json(raw_value: str | None) -> dict[str, bool | int]:
+    """Return password policy from json."""
     policy = dict(DEFAULT_PASSWORD_POLICY)
     if raw_value:
         try:
@@ -101,11 +110,13 @@ def password_policy_from_json(raw_value: str | None) -> dict[str, bool | int]:
 
 
 def password_policy_to_json(policy: dict[str, bool | int]) -> str:
+    """Return password policy to json."""
     normalized = password_policy_from_json(json.dumps(policy))
     return json.dumps(normalized, indent=2, sort_keys=True)
 
 
 def password_policy_summary(policy: dict[str, bool | int]) -> str:
+    """Return password policy summary."""
     parts = [f"minimum {int(policy['min_length'])} characters"]
     if policy.get("require_uppercase"):
         parts.append("uppercase")
@@ -121,6 +132,16 @@ def password_policy_summary(policy: dict[str, bool | int]) -> str:
 
 
 def validate_password(password: str, username: str, policy: dict[str, bool | int]) -> list[str]:
+    """Validate password.
+
+    Args:
+        password: Password supplied for the immediate authenticated operation.
+        username: Account name used for authentication or lookup.
+        policy: Policy values to validate or enforce.
+
+    Returns:
+        The validate password result.
+    """
     errors: list[str] = []
     min_length = int(policy.get("min_length") or DEFAULT_PASSWORD_POLICY["min_length"])
     if len(password) < min_length:
@@ -140,6 +161,11 @@ def validate_password(password: str, username: str, policy: dict[str, bool | int
 
 
 def validate_local_usernames(users: list[User]) -> list[str]:
+    """Validate local usernames.
+
+    Returns:
+        The validate local usernames result.
+    """
     errors: list[str] = []
     seen: set[str] = set()
     for user in users:
@@ -157,15 +183,22 @@ def validate_local_usernames(users: list[User]) -> list[str]:
 
 
 def is_valid_user_shell(shell: str | None) -> bool:
+    """Return whether valid user shell."""
     return (shell or DEFAULT_LOCAL_USER_SHELL).strip() in LOCAL_USER_SHELLS
 
 
 def normalize_user_shell(shell: str | None) -> str:
+    """Normalize user shell.
+
+    Returns:
+        The normalize user shell result.
+    """
     value = (shell or DEFAULT_LOCAL_USER_SHELL).strip()
     return value if value in LOCAL_USER_SHELLS else DEFAULT_LOCAL_USER_SHELL
 
 
 def os_sync_status_label(user: User) -> str:
+    """Return os sync status label."""
     if has_pending_os_password(user):
         return "password staged"
     if user.os_password_applied_at:
@@ -176,6 +209,7 @@ def os_sync_status_label(user: User) -> str:
 
 
 def local_user_sync_rows(users: list[User]) -> list[dict[str, Any]]:
+    """Return local user sync rows."""
     rows: list[dict[str, Any]] = []
     for user in users:
         rows.append(
@@ -198,6 +232,7 @@ def local_user_sync_rows(users: list[User]) -> list[dict[str, Any]]:
 
 
 def _normalized_removed_users(removed_users: list[str] | None = None) -> list[str]:
+    """Return normalized removed users."""
     normalized: list[str] = []
     for username in removed_users or []:
         value = username.strip().lower()
@@ -213,6 +248,7 @@ def local_users_payload(
     removed_users: list[str] | None = None,
     include_passwords: bool = False,
 ) -> dict[str, Any]:
+    """Return local users payload."""
     rows = local_user_sync_rows(users)
     payload = {
         "managed_by": "Atlaso",
@@ -251,6 +287,11 @@ def render_local_users_preview(
     password_policy: dict[str, bool | int] | None = None,
     removed_users: list[str] | None = None,
 ) -> str:
+    """Render local users preview.
+
+    Returns:
+        The rendered local users preview.
+    """
     return json.dumps(
         local_users_payload(users, password_policy=password_policy, removed_users=removed_users, include_passwords=False),
         indent=2,
@@ -264,6 +305,11 @@ def render_local_users_apply_config(
     password_policy: dict[str, bool | int] | None = None,
     removed_users: list[str] | None = None,
 ) -> str:
+    """Render local users apply config.
+
+    Returns:
+        The rendered local users apply config.
+    """
     payload = local_users_payload(
         users,
         password_policy=password_policy,
@@ -274,12 +320,19 @@ def render_local_users_apply_config(
 
 
 def stage_user_os_password(user: User, password: str) -> None:
+    """Handle stage user os password.
+
+    Args:
+        user: Local or directory user affected by the operation.
+        password: Password supplied for the immediate authenticated operation.
+    """
     _PENDING_OS_PASSWORDS[_pending_key(user)] = (password, utcnow())
     user.os_sync_status = "pending"
     user.os_sync_error = None
 
 
 def mark_local_users_applied(users: list[User], *, applied_at: datetime | None = None) -> None:
+    """Handle mark local users applied."""
     timestamp = applied_at or utcnow()
     for user in users:
         password_was_pending = has_pending_os_password(user)
@@ -296,6 +349,7 @@ def mark_local_users_applied(users: list[User], *, applied_at: datetime | None =
 
 
 def mark_local_users_failed(users: list[User], error: str) -> None:
+    """Handle mark local users failed."""
     for user in users:
         user.os_sync_status = "failed"
         user.os_sync_error = error[:1000]

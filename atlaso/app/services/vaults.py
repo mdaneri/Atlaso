@@ -1,3 +1,5 @@
+"""Implement vaults service behavior."""
+
 from __future__ import annotations
 
 import json
@@ -23,6 +25,20 @@ VAULT_URI_LIMIT = 9
 
 @dataclass(frozen=True)
 class VaultEntryInput:
+    """Represent vault entry input.
+
+    Attributes:
+        key: Key maintained by this vaultentryinput.
+        secret_type: Secret type maintained by this vaultentryinput.
+        value: Value maintained by this vaultentryinput.
+        description: Operator-facing purpose or context for the resource.
+        username: Username maintained by this vaultentryinput.
+        resource_name: Resource name maintained by this vaultentryinput.
+        source_type: Source type maintained by this vaultentryinput.
+        source_endpoint: Source endpoint maintained by this vaultentryinput.
+        uris: Uris maintained by this vaultentryinput.
+        imported_at: UTC timestamp associated with imported.
+    """
     key: str
     secret_type: str
     value: str
@@ -46,6 +62,14 @@ def vault_scope_identity(vault: Vault) -> str:
 
 
 def normalize_vault_key(value: str) -> str:
+    """Normalize vault key.
+
+    Returns:
+        The normalize vault key result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     key = value.strip().lower()
     if not VAULT_KEY_PATTERN.fullmatch(key):
         raise ValueError(
@@ -57,6 +81,11 @@ def normalize_vault_key(value: str) -> str:
 
 
 def vault_marker_name(value: str) -> str:
+    """Return vault marker name.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     marker = re.sub(r"[^a-z0-9_]+", "_", value.strip().lower()).strip("_")
     if not marker:
         raise ValueError("Vault names must contain at least one letter or number.")
@@ -66,6 +95,14 @@ def vault_marker_name(value: str) -> str:
 
 
 def normalize_vault_uris(values: list[str] | tuple[str, ...]) -> tuple[str, ...]:
+    """Normalize vault uris.
+
+    Returns:
+        The normalize vault uris result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     if len(values) > VAULT_URI_LIMIT:
         raise ValueError("Vault entries support at most 9 URIs.")
     normalized: list[str] = []
@@ -95,6 +132,7 @@ def normalize_vault_uris(values: list[str] | tuple[str, ...]) -> tuple[str, ...]
 
 
 def vault_entry_uris(entry: VaultEntry) -> tuple[str, ...]:
+    """Return vault entry uris."""
     try:
         values = json.loads(entry.uris_json or "[]")
     except json.JSONDecodeError:
@@ -108,6 +146,14 @@ def vault_entry_uris(entry: VaultEntry) -> tuple[str, ...]:
 
 
 def parse_vault_uris_json(value: str) -> tuple[str, ...]:
+    """Parse vault uris json.
+
+    Returns:
+        The parsed vault uris json.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     try:
         values = json.loads(value or "[]")
     except json.JSONDecodeError as exc:
@@ -118,6 +164,14 @@ def parse_vault_uris_json(value: str) -> tuple[str, ...]:
 
 
 def validate_entry_input(entry: VaultEntryInput, *, require_value: bool = True) -> VaultEntryInput:
+    """Validate entry input.
+
+    Returns:
+        The validate entry input result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     key = normalize_vault_key(entry.key)
     secret_type = entry.secret_type.strip().lower()
     if secret_type not in VAULT_SECRET_TYPES:
@@ -142,6 +196,11 @@ def validate_entry_input(entry: VaultEntryInput, *, require_value: bool = True) 
 
 
 def list_vaults(db: Session) -> list[Vault]:
+    """Return vaults.
+
+    Args:
+        db: Active database session.
+    """
     return list(
         db.execute(
             select(Vault).options(selectinload(Vault.entries)).order_by(Vault.name)
@@ -152,6 +211,20 @@ def list_vaults(db: Session) -> list[Vault]:
 
 
 def create_vault(db: Session, *, name: str, description: str, actor: str) -> Vault:
+    """Create vault.
+
+    Args:
+        db: Active database session.
+        name: Name of the target object.
+        description: Human-readable description of the resource.
+        actor: Authenticated identity attributed to the audit record.
+
+    Returns:
+        The created vault.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     normalized_name = name.strip()
     if not normalized_name:
         raise ValueError("Enter a vault name.")
@@ -175,6 +248,14 @@ def upsert_vault_entry(
     entry: VaultEntryInput,
     actor: str,
 ) -> tuple[VaultEntry, bool]:
+    """Return upsert vault entry.
+
+    Args:
+        db: Active database session.
+        vault: Vault supplied by the caller.
+        entry: Vault, configuration, or collection entry to process.
+        actor: Authenticated identity attributed to the audit record.
+    """
     normalized = validate_entry_input(entry)
     current = db.execute(
         select(VaultEntry).where(
@@ -220,6 +301,18 @@ def update_vault_entry(
     description: str,
     uris: tuple[str, ...],
 ) -> None:
+    """Update vault entry.
+
+    Args:
+        entry: Vault, configuration, or collection entry to process.
+        key: Stable setting, vault, or mapping key.
+        secret_type: Secret type supplied by the caller.
+        value: Value to process.
+        username: Account name used for authentication or lookup.
+        resource_name: Resource name supplied by the caller.
+        description: Human-readable description of the resource.
+        uris: Uris supplied by the caller.
+    """
     normalized = validate_entry_input(
         VaultEntryInput(
             key=key,
@@ -247,6 +340,12 @@ def update_vault_entry(
 
 
 def decrypted_vault_values(db: Session, vault_id: int) -> dict[str, str]:
+    """Return decrypted vault values.
+
+    Args:
+        db: Active database session.
+        vault_id: Identifier of the vault.
+    """
     entries = db.execute(
         select(VaultEntry).where(VaultEntry.vault_id == vault_id).order_by(VaultEntry.key)
     ).scalars()
@@ -256,6 +355,11 @@ def decrypted_vault_values(db: Session, vault_id: int) -> dict[str, str]:
 def _kickstart_vault_marker_sources(
     db: Session,
 ) -> tuple[dict[str, tuple[VaultEntry, str, str, str]], set[str]]:
+    """Return kickstart vault marker sources.
+
+    Args:
+        db: Active database session.
+    """
     available: dict[str, tuple[VaultEntry, str, str, str]] = {}
     ambiguous: set[str] = set()
     for vault in list_vaults(db):
@@ -279,6 +383,15 @@ def _kickstart_vault_marker_sources(
 
 
 def validate_kickstart_vault_markers(db: Session, marker_names: set[str]) -> None:
+    """Validate kickstart vault markers.
+
+    Args:
+        db: Active database session.
+        marker_names: Marker names supplied by the caller.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     requested = {name for name in marker_names if name.startswith("vault.")}
     if not requested:
         return
@@ -292,6 +405,11 @@ def validate_kickstart_vault_markers(db: Session, marker_names: set[str]) -> Non
 
 
 def kickstart_vault_marker_catalog(db: Session) -> list[list[str]]:
+    """Return kickstart vault marker catalog.
+
+    Args:
+        db: Active database session.
+    """
     available, ambiguous = _kickstart_vault_marker_sources(db)
     return [
         [marker, source[3]]
@@ -301,6 +419,12 @@ def kickstart_vault_marker_catalog(db: Session) -> list[list[str]]:
 
 
 def kickstart_vault_values_for_markers(db: Session, marker_names: set[str]) -> dict[str, str]:
+    """Return kickstart vault values for markers.
+
+    Args:
+        db: Active database session.
+        marker_names: Marker names supplied by the caller.
+    """
     requested = {name for name in marker_names if name.startswith("vault.")}
     validate_kickstart_vault_markers(db, requested)
     available, _ambiguous = _kickstart_vault_marker_sources(db)
@@ -318,6 +442,7 @@ def kickstart_vault_values_for_markers(db: Session, marker_names: set[str]) -> d
 
 
 def vault_entry_metadata(entry: VaultEntry) -> dict[str, object]:
+    """Return vault entry metadata."""
     return {
         "id": entry.id,
         "key": entry.key,
@@ -335,6 +460,7 @@ def vault_entry_metadata(entry: VaultEntry) -> dict[str, object]:
 
 
 def redact_secret_values(text: str, values: dict[str, str] | list[str]) -> str:
+    """Return redact secret values."""
     result = text
     candidates = values.values() if isinstance(values, dict) else values
     for value in sorted({item for item in candidates if item}, key=len, reverse=True):

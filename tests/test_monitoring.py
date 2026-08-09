@@ -1,3 +1,5 @@
+"""Test monitoring behavior."""
+
 from datetime import timedelta
 
 from atlaso.app.models import utcnow
@@ -23,15 +25,27 @@ from atlaso.app.services.monitoring import (
 
 
 class FakeMonitorCollector:
+    """Represent fake monitor collector.
+
+    Attributes:
+        snapshots: Snapshots captured or supplied by this test helper.
+    """
     def __init__(self, snapshots):
+        """Initialize the fake monitor collector."""
         self.snapshots = list(snapshots)
 
     def collect(self, sampled_at=None):
+        """Return collect.
+
+        Raises:
+            AssertionError: If an expected invariant is not satisfied.
+        """
         if self.snapshots:
             return self.snapshots.pop(0)
         raise AssertionError("Unexpected monitor collection")
 
     def collect_virtualization(self):
+        """Return collect virtualization."""
         return {
             "detected": "vmware",
             "sys_vendor": "VMware, Inc.",
@@ -43,6 +57,7 @@ class FakeMonitorCollector:
 
 
 def test_monitor_parsers_handle_linux_proc_shapes():
+    """Verify that monitor parsers handle linux proc shapes."""
     proc_stat = "cpu  100 0 50 850 25 0 0 0\ncpu0 10 0 5 85 0 0 0 0\ncpu1 20 0 10 70 0 0 0 0\n"
     cpu = parse_proc_stat_cpu(proc_stat)
     assert cpu == CpuCounters(total=1025, idle=875)
@@ -67,6 +82,7 @@ def test_monitor_parsers_handle_linux_proc_shapes():
 
 
 def test_monitor_samples_persist_rates_and_payload(client, monkeypatch):
+    """Verify that monitor samples persist rates and payload."""
     from atlaso.app.database import SessionLocal
 
     now = utcnow()
@@ -143,6 +159,7 @@ def test_monitor_samples_persist_rates_and_payload(client, monkeypatch):
 
 
 def test_monitor_payload_disabled_does_not_collect_or_write(client):
+    """Verify that monitor payload disabled does not collect or write."""
     from atlaso.app.database import SessionLocal
 
     with SessionLocal() as db:

@@ -1,3 +1,5 @@
+"""Test ui behavior."""
+
 import json
 import os
 import re
@@ -7,6 +9,7 @@ import pytest
 
 
 def login(client):
+    """Handle login."""
     page = client.get("/login")
     assert page.status_code == 200
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -19,6 +22,7 @@ def login(client):
 
 
 def assert_apply_redirect(response):
+    """Check apply redirect."""
     assert response.status_code == 200
     assert response.url.path == "/tasks"
     assert response.history
@@ -28,6 +32,11 @@ def assert_apply_redirect(response):
 
 
 def create_api_token(client, scopes):
+    """Create api token.
+
+    Returns:
+        The created api token.
+    """
     response = client.post(
         "/api/v1/auth/login?username=admin&password=atlaso-admin",
         json={"name": "test token", "scopes": scopes},
@@ -37,6 +46,7 @@ def create_api_token(client, scopes):
 
 
 def test_login_and_dashboard_render(client):
+    """Verify that login and dashboard render."""
     from pathlib import Path
 
     login(client)
@@ -141,6 +151,7 @@ def test_login_and_dashboard_render(client):
 
 
 def test_web_terminal_requires_login_and_renders_admin_only_unavailable_state(client):
+    """Verify that web terminal requires login and renders admin only unavailable state."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -178,6 +189,7 @@ def test_web_terminal_requires_login_and_renders_admin_only_unavailable_state(cl
 
 
 def test_disabled_web_terminal_page_accepts_only_management_listener(client, monkeypatch):
+    """Verify that disabled web terminal page accepts only management listener."""
     from types import SimpleNamespace
 
     from atlaso.app import web_terminal
@@ -185,6 +197,7 @@ def test_disabled_web_terminal_page_accepts_only_management_listener(client, mon
     allowed_addresses = []
 
     def capture_listener(_headers, _client_host, addresses):
+        """Return capture listener."""
         allowed_addresses.extend(addresses)
         return addresses == ["192.168.49.1"]
 
@@ -205,6 +218,7 @@ def test_disabled_web_terminal_page_accepts_only_management_listener(client, mon
 
 
 def test_public_web_terminal_uses_public_shell_and_explicit_user_access(client, monkeypatch):
+    """Verify that public web terminal uses public shell and explicit user access."""
     from types import SimpleNamespace
 
     from sqlalchemy import select
@@ -239,9 +253,20 @@ def test_public_web_terminal_uses_public_shell_and_explicit_user_access(client, 
         user_id = user.id
 
     class LocalAuthenticationAdapter:
+        """Represent local authentication adapter.
+
+        Attributes:
+            dry_run: Dry run captured or supplied by this test helper.
+        """
         dry_run = False
 
         def authenticate_local_user(self, username: str, password: str) -> AdapterResult:
+            """Return authenticate local user.
+
+            Args:
+                username: Account name used for authentication or lookup.
+                password: Password supplied for the immediate authenticated operation.
+            """
             return AdapterResult(
                 command=["atlaso-helper", "local-users", "authenticate", username],
                 dry_run=False,
@@ -300,6 +325,7 @@ def test_public_web_terminal_uses_public_shell_and_explicit_user_access(client, 
 
 
 def test_web_terminal_uses_one_use_ticket_and_bridges_websocket_input(client, monkeypatch):
+    """Verify that web terminal uses one use ticket and bridges websocket input."""
     import threading
     from types import SimpleNamespace
 
@@ -310,13 +336,23 @@ def test_web_terminal_uses_one_use_ticket_and_bridges_websocket_input(client, mo
     from atlaso.app.models import ApplianceSettings, User
 
     class FakeChannel:
+        """Represent fake channel.
+
+        Attributes:
+            closed: Closed captured or supplied by this test helper.
+            sent: Sent captured or supplied by this test helper.
+            output_sent: Output sent captured or supplied by this test helper.
+            finished: Finished captured or supplied by this test helper.
+        """
         def __init__(self):
+            """Initialize the fake channel."""
             self.closed = False
             self.sent = []
             self.output_sent = False
             self.finished = threading.Event()
 
         def recv(self, _size):
+            """Return recv."""
             if not self.output_sent:
                 self.output_sent = True
                 return b"shell ready\r\n"
@@ -324,25 +360,31 @@ def test_web_terminal_uses_one_use_ticket_and_bridges_websocket_input(client, mo
             return b""
 
         def sendall(self, data):
+            """Handle sendall."""
             self.sent.append(data)
             self.closed = True
             self.finished.set()
 
         def resize_pty(self, **_kwargs):
+            """Return resize pty."""
             return None
 
         def close(self):
+            """Handle close."""
             self.closed = True
             self.finished.set()
 
     class FakeTransport:
+        """Represent fake transport."""
         def close(self):
+            """Return close."""
             return None
 
     channel = FakeChannel()
     open_count = 0
 
     def open_channel(*_args):
+        """Return open channel."""
         nonlocal open_count
         open_count += 1
         return FakeTransport(), channel
@@ -433,6 +475,7 @@ def test_web_terminal_uses_one_use_ticket_and_bridges_websocket_input(client, mo
 
 
 def test_appliance_power_action_creates_task_before_scheduling(client, monkeypatch):
+    """Verify that appliance power action creates task before scheduling."""
     import json
 
     from sqlalchemy import select
@@ -445,6 +488,7 @@ def test_appliance_power_action_creates_task_before_scheduling(client, monkeypat
     observed: list[tuple[str, str]] = []
 
     def fake_schedule(_self, action: str) -> AdapterResult:
+        """Return fake schedule."""
         with SessionLocal() as db:
             job = db.execute(select(Job).where(Job.type == f"appliance-{action}")).scalar_one()
             observed.append((job.status, action))
@@ -485,6 +529,7 @@ def test_appliance_power_action_creates_task_before_scheduling(client, monkeypat
 
 
 def test_account_menu_uses_defined_opaque_surface_tokens():
+    """Verify that account menu uses defined opaque surface tokens."""
     from pathlib import Path
 
     app_css = Path("atlaso/app/static/app.css").read_text(encoding="utf-8")
@@ -497,6 +542,7 @@ def test_account_menu_uses_defined_opaque_surface_tokens():
 
 
 def test_appliance_shutdown_task_reports_helper_failure(client, monkeypatch):
+    """Verify that appliance shutdown task reports helper failure."""
     import json
 
     from sqlalchemy import select
@@ -530,6 +576,7 @@ def test_appliance_shutdown_task_reports_helper_failure(client, monkeypatch):
         assert job.error == "Appliance shutdown scheduling failed."
         assert payload["scheduled"] is False
 def test_tasks_page_lists_redacts_logs_and_cancels(client):
+    """Verify that tasks page lists redacts logs and cancels."""
     import json
     from pathlib import Path
 
@@ -774,6 +821,7 @@ def test_tasks_page_lists_redacts_logs_and_cancels(client):
 
 
 def test_service_admin_task_cancellation_is_limited_to_vcf_helpers(client):
+    """Verify that service admin task cancellation is limited to vcf helpers."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -819,6 +867,7 @@ def test_service_admin_task_cancellation_is_limited_to_vcf_helpers(client):
 
 
 def test_pwa_manifest_service_worker_and_offline_shell(client):
+    """Verify that pwa manifest service worker and offline shell."""
     manifest = client.get("/manifest.webmanifest")
     assert manifest.status_code == 200
     assert manifest.headers["content-type"].startswith("application/manifest+json")
@@ -870,6 +919,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
 
 
 def test_shared_ui_pattern_shell_and_wizard_contracts(client):
+    """Verify that shared ui pattern shell and wizard contracts."""
     import re
     from pathlib import Path
 
@@ -927,6 +977,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
 
 
 def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
+    """Verify that every existing tabulator uses the shared grid foundation."""
     import re
 
     app_js = client.get("/static/app.js").text
@@ -941,6 +992,7 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     assert "atlaso-legacy-tabulator: #117" not in app_js
 
     def function_block(name):
+        """Return function block."""
         start = app_js.index(f"function {name}(")
         match = re.search(r"\n(?:async )?function ", app_js[start + 1:])
         end = len(app_js) if match is None else start + 1 + match.start()
@@ -1086,6 +1138,7 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
 
 
 def test_primary_resource_table_templates_use_shared_read_only_grids():
+    """Verify that primary resource table templates use shared read only grids."""
     from pathlib import Path
 
     templates = Path("atlaso/app/templates")
@@ -1140,6 +1193,7 @@ def test_primary_resource_table_templates_use_shared_read_only_grids():
 
 
 def test_complex_resource_wizard_grid_contracts_return_saved_rows_and_delete_without_reload(client):
+    """Verify that complex resource wizard grid contracts return saved rows and delete without reload."""
     login(client)
     page = client.get("/authentication")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -1329,6 +1383,7 @@ def test_complex_resource_wizard_grid_contracts_return_saved_rows_and_delete_wit
 
 
 def test_reported_template_accessibility_contracts():
+    """Verify that reported template accessibility contracts."""
     from pathlib import Path
 
     templates = Path("atlaso/app/templates")
@@ -1411,6 +1466,7 @@ def test_reported_template_accessibility_contracts():
 
 
 def test_monitor_page_renders_and_data_endpoint(client):
+    """Verify that monitor page renders and data endpoint."""
     login(client)
 
     page = client.get("/monitor")
@@ -1535,6 +1591,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
 
 
 def test_login_page_includes_pwa_metadata(client):
+    """Verify that login page includes pwa metadata."""
     response = client.get("/login")
     assert response.status_code == 200
     assert '<link rel="manifest" href="/manifest.webmanifest">' in response.text
@@ -1551,6 +1608,7 @@ def test_login_page_includes_pwa_metadata(client):
 
 
 def test_shared_shells_use_current_mobile_web_app_metadata(client):
+    """Verify that shared shells use current mobile web app metadata."""
     login(client)
 
     management = client.get("/dashboard")
@@ -1563,6 +1621,7 @@ def test_shared_shells_use_current_mobile_web_app_metadata(client):
 
 
 def test_unauthenticated_ui_request_redirects_to_login(client):
+    """Verify that unauthenticated ui request redirects to login."""
     response = client.get("/certificate-authority", follow_redirects=False)
 
     assert response.status_code == 303
@@ -1570,6 +1629,7 @@ def test_unauthenticated_ui_request_redirects_to_login(client):
 
 
 def test_ui_session_is_rejected_after_appliance_instance_changes(client):
+    """Verify that ui session is rejected after appliance instance changes."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Setting
     from atlaso.app.security import SESSION_APPLIANCE_INSTANCE_SETTING_KEY
@@ -1590,6 +1650,7 @@ def test_ui_session_is_rejected_after_appliance_instance_changes(client):
 
 
 def test_sidebar_appliance_apply_uses_bottom_pending_cta(client):
+    """Verify that sidebar appliance apply uses bottom pending cta."""
     login(client)
     response = client.get("/certificate-authority")
 
@@ -1607,6 +1668,7 @@ def test_sidebar_appliance_apply_uses_bottom_pending_cta(client):
 
 
 def test_dns_settings_derives_listen_addresses_from_selected_interface(client):
+    """Verify that dns settings derives listen addresses from selected interface."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import PhysicalInterface
 
@@ -1654,6 +1716,7 @@ def test_dns_settings_derives_listen_addresses_from_selected_interface(client):
 
 
 def test_dns_listen_interface_menu_has_empty_state_when_no_interfaces_available(client):
+    """Verify that dns listen interface menu has empty state when no interfaces available."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import PhysicalInterface, VlanInterface
 
@@ -1679,6 +1742,7 @@ def test_dns_listen_interface_menu_has_empty_state_when_no_interfaces_available(
 
 
 def test_forget_missing_physical_interface_deletes_only_stale_rows(client):
+    """Verify that forget missing physical interface deletes only stale rows."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import PhysicalInterface, VlanInterface
 
@@ -1722,6 +1786,7 @@ def test_forget_missing_physical_interface_deletes_only_stale_rows(client):
 
 
 def test_forget_missing_first_service_interface_moves_dns_alias_to_next_target(client):
+    """Verify that forget missing first service interface moves dns alias to next target."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -1785,6 +1850,7 @@ def test_forget_missing_first_service_interface_moves_dns_alias_to_next_target(c
 
 
 def test_service_dns_target_naming_converts_owned_records_between_ip_and_interface(client):
+    """Verify that service dns target naming converts owned records between ip and interface."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -1859,6 +1925,7 @@ def test_service_dns_target_naming_converts_owned_records_between_ip_and_interfa
 
 
 def test_stage_appliance_apply_config_repairs_staging_permission(monkeypatch, tmp_path):
+    """Verify that stage appliance apply config repairs staging permission."""
     from types import SimpleNamespace
 
     from atlaso.app import ui
@@ -1867,6 +1934,15 @@ def test_stage_appliance_apply_config_repairs_staging_permission(monkeypatch, tm
     repairs: list[str] = []
 
     def fake_write(path, config_preview):
+        """Handle fake write.
+
+        Args:
+            path: Filesystem or URL path to read, validate, or update.
+            config_preview: Rendered configuration text approved for staging.
+
+        Raises:
+            PermissionError: If the operation lacks the required permission.
+        """
         attempts["count"] += 1
         if attempts["count"] == 1:
             raise PermissionError("blocked")
@@ -1874,7 +1950,13 @@ def test_stage_appliance_apply_config_repairs_staging_permission(monkeypatch, tm
         path.write_text(config_preview, encoding="utf-8")
 
     class FakeAdapter:
+        """Represent fake adapter."""
         def prepare_apply_staging_path(self, path):
+            """Return prepare apply staging path.
+
+            Args:
+                path: Filesystem or URL path to read, validate, or update.
+            """
             repairs.append(path)
             return SimpleNamespace(returncode=0, stdout="prepared", stderr="")
 
@@ -1891,6 +1973,7 @@ def test_stage_appliance_apply_config_repairs_staging_permission(monkeypatch, tm
 
 
 def test_secret_staging_is_mode_0600_and_removed_after_adapter_failures(monkeypatch, tmp_path):
+    """Verify that secret staging is mode 0600 and removed after adapter failures."""
     import json
     import stat
     from pathlib import Path
@@ -1930,6 +2013,15 @@ def test_secret_staging_is_mode_0600_and_removed_after_adapter_failures(monkeypa
             calls: list[str] = []
 
             def run_step(phase: str, path: str) -> AdapterResult:
+                """Run step.
+
+                Args:
+                    phase: Phase supplied by the caller.
+                    path: Filesystem or URL path to read, validate, or update.
+
+                Returns:
+                    The run step result.
+                """
                 path_value = Path(path)
                 calls.append(phase)
                 assert path_value == staged_path
@@ -1977,6 +2069,7 @@ def test_secret_staging_is_mode_0600_and_removed_after_adapter_failures(monkeypa
 
 
 def test_local_user_status_uses_isolated_short_lived_staging(monkeypatch, tmp_path):
+    """Verify that local user status uses isolated short lived staging."""
     import stat
     from pathlib import Path
 
@@ -1990,9 +2083,15 @@ def test_local_user_status_uses_isolated_short_lived_staging(monkeypatch, tmp_pa
     seen_status_paths: list[Path] = []
 
     class StatusAdapter:
+        """Represent status adapter.
+
+        Attributes:
+            dry_run: Dry run captured or supplied by this test helper.
+        """
         dry_run = False
 
         def local_users_status(self, config_path: str) -> AdapterResult:
+            """Return local users status."""
             status_path = Path(config_path)
             seen_status_paths.append(status_path)
             assert status_path != active_apply_path
@@ -2016,6 +2115,7 @@ def test_local_user_status_uses_isolated_short_lived_staging(monkeypatch, tmp_pa
 
 
 def test_appliance_apply_status_tolerates_duplicate_managed_certificate_owners(client):
+    """Verify that appliance apply status tolerates duplicate managed certificate owners."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import CaCertificate
 
@@ -2046,6 +2146,7 @@ def test_appliance_apply_status_tolerates_duplicate_managed_certificate_owners(c
 
 
 def test_appliance_apply_status_api_tracks_autosaved_desired_state(client):
+    """Verify that appliance apply status api tracks autosaved desired state."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.ui import appliance_apply_units, update_appliance_apply_baselines
 
@@ -2145,6 +2246,7 @@ def test_appliance_apply_status_api_tracks_autosaved_desired_state(client):
 
 
 def test_settings_page_renders_autosave_validation_and_preview(client, monkeypatch):
+    """Verify that settings page renders autosave validation and preview."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -2208,6 +2310,7 @@ def test_settings_page_renders_autosave_validation_and_preview(client, monkeypat
 
 
 def test_vmware_ceip_autosave_updates_global_policy_and_pending_preview(client):
+    """Verify that vmware ceip autosave updates global policy and pending preview."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -2248,6 +2351,7 @@ def test_vmware_ceip_autosave_updates_global_policy_and_pending_preview(client):
 
 
 def test_settings_autosave_enables_passwordless_terminal_on_management_interface(client):
+    """Verify that settings autosave enables passwordless terminal on management interface."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -2296,6 +2400,7 @@ def test_settings_autosave_enables_passwordless_terminal_on_management_interface
 
 
 def test_web_terminal_autosave_preserves_nts_state_and_apply_selection(client):
+    """Verify that web terminal autosave preserves nts state and apply selection."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -2361,6 +2466,7 @@ def test_web_terminal_autosave_preserves_nts_state_and_apply_selection(client):
 
 
 def test_validation_rails_use_modal_config_previews(client):
+    """Verify that validation rails use modal config previews."""
     login(client)
     pages = {
         "/settings": ["data-appliance-settings-preview"],
@@ -2394,6 +2500,7 @@ def test_validation_rails_use_modal_config_previews(client):
 
 
 def test_logging_settings_autosave_updates_preferences(client):
+    """Verify that logging settings autosave updates preferences."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -2452,6 +2559,7 @@ def test_logging_settings_autosave_updates_preferences(client):
 
 
 def test_logging_settings_requires_syslog_host_when_enabled(client):
+    """Verify that logging settings requires syslog host when enabled."""
     login(client)
     page = client.get("/settings")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -2476,6 +2584,7 @@ def test_logging_settings_requires_syslog_host_when_enabled(client):
 
 
 def test_settings_page_shows_external_dns_editor_when_local_dns_is_disabled(client):
+    """Verify that settings page shows external dns editor when local dns is disabled."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -2496,6 +2605,7 @@ def test_settings_page_shows_external_dns_editor_when_local_dns_is_disabled(clie
 
 
 def test_settings_page_hides_ntp_editor_when_ntp_is_enabled(client):
+    """Verify that settings page hides ntp editor when ntp is enabled."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -2518,6 +2628,7 @@ def test_settings_page_hides_ntp_editor_when_ntp_is_enabled(client):
 
 
 def test_settings_autosave_updates_appliance_identity_dns_without_ntp(client):
+    """Verify that settings autosave updates appliance identity dns without ntp."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -2575,6 +2686,7 @@ def test_settings_autosave_updates_appliance_identity_dns_without_ntp(client):
 
 
 def test_settings_autosave_does_not_update_ntp_servers_when_ntp_is_disabled(client):
+    """Verify that settings autosave does not update ntp servers when ntp is disabled."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -2626,6 +2738,7 @@ def test_settings_autosave_does_not_update_ntp_servers_when_ntp_is_disabled(clie
 
 
 def test_ntp_page_autosave_updates_desired_state_and_preview(client, monkeypatch):
+    """Verify that ntp page autosave updates desired state and preview."""
     import json
 
     from sqlalchemy import select
@@ -2829,6 +2942,7 @@ def test_ntp_page_autosave_updates_desired_state_and_preview(client, monkeypatch
 
 
 def test_ntp_disables_and_rejects_nts_when_runtime_does_not_support_it(client, monkeypatch):
+    """Verify that ntp disables and rejects nts when runtime does not support it."""
     import json
 
     from sqlalchemy import select
@@ -2921,6 +3035,7 @@ def test_ntp_disables_and_rejects_nts_when_runtime_does_not_support_it(client, m
 
 
 def test_ntp_preserves_nts_desired_state_when_capability_check_fails(client, monkeypatch):
+    """Verify that ntp preserves nts desired state when capability check fails."""
     import json
 
     from sqlalchemy import select
@@ -3016,6 +3131,7 @@ def test_ntp_preserves_nts_desired_state_when_capability_check_fails(client, mon
 
 
 def test_disabling_nts_server_removes_certificate_record_but_preserves_nts_client(client, monkeypatch):
+    """Verify that disabling nts server removes certificate record but preserves nts client."""
     import json
 
     from sqlalchemy import select
@@ -3098,6 +3214,7 @@ def test_disabling_nts_server_removes_certificate_record_but_preserves_nts_clien
 
 
 def test_ntp_validation_rejects_enabled_service_without_bind_or_upstreams(client):
+    """Verify that ntp validation rejects enabled service without bind or upstreams."""
     login(client)
     page = client.get("/ntp")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -3123,6 +3240,7 @@ def test_ntp_validation_rejects_enabled_service_without_bind_or_upstreams(client
 
 
 def test_ntp_validation_allows_disabled_service_without_upstreams(client):
+    """Verify that ntp validation allows disabled service without upstreams."""
     login(client)
     page = client.get("/ntp")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -3151,6 +3269,7 @@ def test_ntp_validation_allows_disabled_service_without_upstreams(client):
 
 
 def test_dns_defaults_follow_appliance_fqdn_and_management_ip(client):
+    """Verify that dns defaults follow appliance fqdn and management ip."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -3174,6 +3293,7 @@ def test_dns_defaults_follow_appliance_fqdn_and_management_ip(client):
 
 
 def test_settings_fqdn_rename_removes_only_old_app_owned_record(client):
+    """Verify that settings fqdn rename removes only old app owned record."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -3227,6 +3347,7 @@ def test_settings_fqdn_rename_removes_only_old_app_owned_record(client):
 
 
 def test_settings_local_dns_disabled_requires_external_dns_without_dns_registration(client):
+    """Verify that settings local dns disabled requires external dns without dns registration."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -3262,6 +3383,7 @@ def test_settings_local_dns_disabled_requires_external_dns_without_dns_registrat
 
 
 def test_parse_resolvectl_dns_servers_handles_systemd_output():
+    """Verify that parse resolvectl dns servers handles systemd output."""
     from atlaso.app.services.appliance_settings import parse_resolvectl_dns_servers
 
     output = """
@@ -3273,6 +3395,7 @@ Link 2 (eth0): 127.0.0.1 ::1 192.168.167.2 2001:4860:4860::8888 fe80::1%eth0 192
 
 
 def test_management_dhcp_dns_falls_back_to_exact_networkd_lease_after_local_dns(monkeypatch):
+    """Verify that management dhcp dns falls back to exact networkd lease after local dns."""
     import subprocess
 
     from atlaso.app.adapters.system import AdapterResult, SystemAdapter
@@ -3288,6 +3411,7 @@ def test_management_dhcp_dns_falls_back_to_exact_networkd_lease_after_local_dns(
     calls: list[str] = []
 
     def fake_read_networkd_dhcp_dns(_self, interface_name: str) -> AdapterResult:
+        """Return fake read networkd dhcp dns."""
         calls.append(interface_name)
         return AdapterResult(
             command=["atlaso-helper", "network", "dhcp-dns", interface_name],
@@ -3310,6 +3434,7 @@ def test_management_dhcp_dns_falls_back_to_exact_networkd_lease_after_local_dns(
 
 
 def test_settings_management_dhcp_allows_empty_external_dns(client, monkeypatch):
+    """Verify that settings management dhcp allows empty external dns."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -3360,6 +3485,7 @@ def test_settings_management_dhcp_allows_empty_external_dns(client, monkeypatch)
 
 
 def test_dns_page_uses_management_dhcp_dns_when_upstreams_are_empty(client, monkeypatch):
+    """Verify that dns page uses management dhcp dns when upstreams are empty."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -3411,6 +3537,7 @@ def test_dns_page_uses_management_dhcp_dns_when_upstreams_are_empty(client, monk
 
 
 def test_dns_page_fails_closed_when_management_dhcp_lease_has_no_upstream(client, monkeypatch):
+    """Verify that dns page fails closed when management dhcp lease has no upstream."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -3439,6 +3566,7 @@ def test_dns_page_fails_closed_when_management_dhcp_lease_has_no_upstream(client
 
 
 def test_settings_management_https_requires_ca_managed_certificate(client):
+    """Verify that settings management https requires ca managed certificate."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -3534,6 +3662,7 @@ def test_settings_management_https_requires_ca_managed_certificate(client):
 
 
 def test_appliance_settings_apply_task_records_dry_run_helper_commands(client, caplog):
+    """Verify that appliance settings apply task records dry run helper commands."""
     import logging
 
     from sqlalchemy import select
@@ -3572,6 +3701,7 @@ def test_appliance_settings_apply_task_records_dry_run_helper_commands(client, c
 
 
 def test_appliance_apply_failure_renders_command_details(client, monkeypatch):
+    """Verify that appliance apply failure renders command details."""
     import json
 
     from sqlalchemy import select
@@ -3585,13 +3715,21 @@ def test_appliance_apply_failure_renders_command_details(client, monkeypatch):
     monkeypatch.setattr(ui_module, "stage_appliance_apply_config", lambda path, _config: path)
 
     class FailingApplianceSettingsAdapter(base_system_adapter):
+        """Represent failing appliance settings adapter."""
         def __init__(self) -> None:
+            """Initialize the failing appliance settings adapter."""
             super().__init__(dry_run=False)
 
         def read_dhcp_leases(self) -> AdapterResult:
+            """Return dhcp leases."""
             return AdapterResult(command=["atlaso-helper", "dnsmasq", "leases"], dry_run=True, stdout="")
 
         def validate_appliance_settings_config(self, config_path: str) -> AdapterResult:
+            """Validate appliance settings config.
+
+            Returns:
+                The validate appliance settings config result.
+            """
             return AdapterResult(
                 command=["atlaso-helper", "appliance-settings", "validate", config_path],
                 dry_run=False,
@@ -3599,6 +3737,11 @@ def test_appliance_apply_failure_renders_command_details(client, monkeypatch):
             )
 
         def apply_appliance_settings_config(self, config_path: str) -> AdapterResult:
+            """Update appliance settings config.
+
+            Returns:
+                The apply appliance settings config result.
+            """
             return AdapterResult(
                 command=["atlaso-helper", "appliance-settings", "apply", config_path],
                 dry_run=False,
@@ -3629,6 +3772,7 @@ def test_appliance_apply_failure_renders_command_details(client, monkeypatch):
 
 
 def test_appliance_apply_stops_unit_after_validation_failure(client, monkeypatch):
+    """Verify that appliance apply stops unit after validation failure."""
     import json
 
     from sqlalchemy import select
@@ -3642,13 +3786,21 @@ def test_appliance_apply_stops_unit_after_validation_failure(client, monkeypatch
     monkeypatch.setattr(ui_module, "stage_appliance_apply_config", lambda path, _config: path)
 
     class ValidationFailingApplianceSettingsAdapter(base_system_adapter):
+        """Represent validation failing appliance settings adapter."""
         def __init__(self) -> None:
+            """Initialize the validation failing appliance settings adapter."""
             super().__init__(dry_run=False)
 
         def read_dhcp_leases(self) -> AdapterResult:
+            """Return dhcp leases."""
             return AdapterResult(command=["atlaso-helper", "dnsmasq", "leases"], dry_run=True, stdout="")
 
         def validate_appliance_settings_config(self, config_path: str) -> AdapterResult:
+            """Validate appliance settings config.
+
+            Returns:
+                The validate appliance settings config result.
+            """
             return AdapterResult(
                 command=["atlaso-helper", "appliance-settings", "validate", config_path],
                 dry_run=False,
@@ -3657,6 +3809,14 @@ def test_appliance_apply_stops_unit_after_validation_failure(client, monkeypatch
             )
 
         def apply_appliance_settings_config(self, config_path: str) -> AdapterResult:
+            """Update appliance settings config.
+
+            Returns:
+                The apply appliance settings config result.
+
+            Raises:
+                AssertionError: If an expected invariant is not satisfied.
+            """
             raise AssertionError("apply should not run after validation failure")
 
     monkeypatch.setattr(ui_module, "SystemAdapter", ValidationFailingApplianceSettingsAdapter)
@@ -3688,6 +3848,7 @@ def test_appliance_apply_stops_unit_after_validation_failure(client, monkeypatch
 
 
 def test_backup_restore_page_exports_settings_archive(client):
+    """Verify that backup restore page exports settings archive."""
     import json
 
     from sqlalchemy import select
@@ -3731,6 +3892,7 @@ def test_backup_restore_page_exports_settings_archive(client):
 
 
 def test_settings_archive_round_trips_management_ipv6_gateway(client):
+    """Verify that settings archive round trips management ipv6 gateway."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -3758,6 +3920,7 @@ def test_settings_archive_round_trips_management_ipv6_gateway(client):
 
 
 def test_settings_archive_round_trips_authoritative_dns_policy(client):
+    """Verify that settings archive round trips authoritative dns policy."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -3794,6 +3957,7 @@ def test_settings_archive_round_trips_authoritative_dns_policy(client):
 
 
 def test_settings_restore_and_factory_reset_clear_staged_ldap_recovery(client):
+    """Verify that settings restore and factory reset clear staged ldap recovery."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import LdapRecoveryArchive
     from atlaso.app.services.ldap import LDAP_PENDING_RECOVERY_PAYLOADS
@@ -3839,6 +4003,7 @@ def test_settings_restore_and_factory_reset_clear_staged_ldap_recovery(client):
 
 
 def test_esxi_kickstart_api_hides_raw_content_from_read_only_tokens(client):
+    """Verify that esxi kickstart api hides raw content from read only tokens."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -3879,6 +4044,7 @@ def test_esxi_kickstart_api_hides_raw_content_from_read_only_tokens(client):
 
 
 def test_esxi_custom_variable_api_supports_catalog_management(client):
+    """Verify that esxi custom variable api supports catalog management."""
     token = create_api_token(client, ["read:esxi-pxe", "write:esxi-pxe"])
     created = client.post(
         "/api/v1/esxi-pxe/custom-variables",
@@ -3944,6 +4110,7 @@ def test_esxi_custom_variable_api_supports_catalog_management(client):
 
 
 def test_esxi_pxe_ui_create_apply_and_job_redaction(client):
+    """Verify that esxi pxe ui create apply and job redaction."""
     import json
 
     from sqlalchemy import select
@@ -4110,6 +4277,7 @@ def test_esxi_pxe_ui_create_apply_and_job_redaction(client):
 
 
 def test_monaco_is_the_only_bundled_editor_and_kickstart_uses_shared_collection():
+    """Verify that monaco is the only bundled editor and kickstart uses shared collection."""
     package = Path("package.json").read_text(encoding="utf-8")
     lock = Path("package-lock.json").read_text(encoding="utf-8")
     base = Path("atlaso/app/templates/base.html").read_text(encoding="utf-8")
@@ -4171,6 +4339,7 @@ def test_monaco_is_the_only_bundled_editor_and_kickstart_uses_shared_collection(
 
 
 def test_esxi_custom_variable_collection_drives_kickstart_completion_and_validation(client):
+    """Verify that esxi custom variable collection drives kickstart completion and validation."""
     login(client)
     page = client.get("/esxi-pxe")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -4235,6 +4404,7 @@ def test_esxi_custom_variable_collection_drives_kickstart_completion_and_validat
 
 
 def test_esxi_custom_variable_errors_do_not_expose_exception_details(client, monkeypatch):
+    """Verify that esxi custom variable errors do not expose exception details."""
     import atlaso.app.ui as ui_module
 
     login(client)
@@ -4248,6 +4418,11 @@ def test_esxi_custom_variable_errors_do_not_expose_exception_details(client, mon
     assert created.status_code == 200
 
     def reject_definition(*_args, **_kwargs):
+        """Handle reject definition.
+
+        Raises:
+            ValueError: If an input value is invalid.
+        """
         raise ValueError("database details that must not reach the browser")
 
     monkeypatch.setattr(ui_module, "save_custom_variable_definition", reject_definition)
@@ -4271,6 +4446,7 @@ def test_esxi_custom_variable_errors_do_not_expose_exception_details(client, mon
 
 
 def test_esxi_pxe_autosave_validation_does_not_expose_exception_details(client, monkeypatch):
+    """Verify that esxi pxe autosave validation does not expose exception details."""
     import atlaso.app.ui as ui_module
 
     login(client)
@@ -4289,6 +4465,11 @@ def test_esxi_pxe_autosave_validation_does_not_expose_exception_details(client, 
     assert created.status_code == 200
 
     def reject_references(*_args, **_kwargs):
+        """Handle reject references.
+
+        Raises:
+            ValueError: If an input value is invalid.
+        """
         raise ValueError("backend details that must not reach the browser")
 
     monkeypatch.setattr(ui_module, "validate_kickstart_custom_references", reject_references)
@@ -4313,6 +4494,7 @@ def test_esxi_pxe_autosave_validation_does_not_expose_exception_details(client, 
 
 
 def test_esxi_kickstart_upload_does_not_expose_exception_details(client, monkeypatch):
+    """Verify that esxi kickstart upload does not expose exception details."""
     import atlaso.app.ui as ui_module
 
     login(client)
@@ -4320,6 +4502,11 @@ def test_esxi_kickstart_upload_does_not_expose_exception_details(client, monkeyp
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
     def reject_references(*_args, **_kwargs):
+        """Handle reject references.
+
+        Raises:
+            ValueError: If an input value is invalid.
+        """
         raise ValueError("backend upload details that must not reach the browser")
 
     monkeypatch.setattr(ui_module, "validate_kickstart_custom_references", reject_references)
@@ -4344,12 +4531,14 @@ def test_esxi_kickstart_upload_does_not_expose_exception_details(client, monkeyp
     ],
 )
 def test_esx_installer_identity_from_filename(filename, expected):
+    """Verify that esx installer identity from filename."""
     from atlaso.app.services.esxi_pxe import esx_installer_identity_from_filename
 
     assert esx_installer_identity_from_filename(filename) == expected
 
 
 def test_esxi_pxe_iso_upload_and_host_selection(client, monkeypatch, tmp_path):
+    """Verify that esxi pxe iso upload and host selection."""
     import json
     from types import SimpleNamespace
 
@@ -4513,6 +4702,7 @@ def test_esxi_pxe_iso_upload_and_host_selection(client, monkeypatch, tmp_path):
 
 
 def test_esxi_pxe_host_reference_wizard_and_grid_responses(client):
+    """Verify that esxi pxe host reference wizard and grid responses."""
     login(client)
     page = client.get("/network-boot")
     assert page.status_code == 200
@@ -4627,6 +4817,7 @@ def test_esxi_pxe_host_reference_wizard_and_grid_responses(client):
 
 
 def test_esxi_pxe_host_reference_wizard_respects_read_only_permissions(client):
+    """Verify that esxi pxe host reference wizard respects read only permissions."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -4649,6 +4840,7 @@ def test_esxi_pxe_host_reference_wizard_respects_read_only_permissions(client):
 
 
 def test_esxi_pxe_default_host_settings_update_existing_rows(client, monkeypatch, tmp_path):
+    """Verify that esxi pxe default host settings update existing rows."""
     import json
 
     from sqlalchemy import select
@@ -4714,6 +4906,7 @@ def test_esxi_pxe_default_host_settings_update_existing_rows(client, monkeypatch
 
 
 def test_esxi_pxe_default_host_edit_marks_appliance_apply_pending(client):
+    """Verify that esxi pxe default host edit marks appliance apply pending."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import EsxiKickstart
     from atlaso.app.services import esxi_pxe
@@ -4755,6 +4948,7 @@ def test_esxi_pxe_default_host_edit_marks_appliance_apply_pending(client):
 
 
 def test_network_boot_task_widget_contains_only_media_jobs(client):
+    """Verify that network boot task widget contains only media jobs."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus
 
@@ -4789,6 +4983,7 @@ def test_network_boot_task_widget_contains_only_media_jobs(client):
 
 
 def test_network_boot_host_management_report_and_print_contract(client):
+    """Verify that network boot host management report and print contract."""
     login(client)
     page = client.get("/network-boot")
     assert page.status_code == 200
@@ -4904,6 +5099,7 @@ def test_network_boot_host_management_report_and_print_contract(client):
 
 
 def test_esxi_kickstart_validation_rejects_duplicate_install_directives(client):
+    """Verify that esxi kickstart validation rejects duplicate install directives."""
     from atlaso.app.services.esxi_pxe import kickstart_validation
 
     content = "\n".join(
@@ -4925,6 +5121,7 @@ def test_esxi_kickstart_validation_rejects_duplicate_install_directives(client):
 
 
 def test_esxi_kickstart_host_variables_render_from_mac_endpoint(client):
+    """Verify that esxi kickstart host variables render from mac endpoint."""
     import json
 
     from sqlalchemy import select
@@ -5041,6 +5238,7 @@ def test_esxi_kickstart_host_variables_render_from_mac_endpoint(client):
 
 
 def test_esxi_pxe_host_variables_api_and_manifest(client):
+    """Verify that esxi pxe host variables api and manifest."""
     import json
 
     from sqlalchemy import select
@@ -5083,6 +5281,7 @@ def test_esxi_pxe_host_variables_api_and_manifest(client):
 
 
 def test_esxi_pxe_boot_settings_update_dnsmasq_and_apply_manifest(client):
+    """Verify that esxi pxe boot settings update dnsmasq and apply manifest."""
     import json
 
     from sqlalchemy import select
@@ -5213,6 +5412,7 @@ def test_esxi_pxe_boot_settings_update_dnsmasq_and_apply_manifest(client):
     assert "dhcp-boot=tag:sitea,tag:!ipxe,tag:efi-x86_64,snponly.efi,esxi-pxe.atlaso.internal,192.168.50.1" in dhcp_page.text
     assert "dhcp-boot=tag:sitea,tag:uefi-http,tag:uefi-http-x64,http://192.168.50.1:8080/pxe/esxi/snponly.efi" in dhcp_page.text
 def test_esxi_pxe_multi_zone_host_reservations_and_grid_menu(client):
+    """Verify that esxi pxe multi zone host reservations and grid menu."""
     import json
 
     from sqlalchemy import select
@@ -5360,6 +5560,7 @@ def test_esxi_pxe_multi_zone_host_reservations_and_grid_menu(client):
 
 
 def test_esxi_pxe_boot_settings_migrate_legacy_first_stage_defaults(client):
+    """Verify that esxi pxe boot settings migrate legacy first stage defaults."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -5381,6 +5582,7 @@ def test_esxi_pxe_boot_settings_migrate_legacy_first_stage_defaults(client):
 
 
 def test_esxi_kickstarts_round_trip_in_settings_archive(client):
+    """Verify that esxi kickstarts round trip in settings archive."""
     import json
 
     from sqlalchemy import select
@@ -5477,6 +5679,7 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client):
 
 
 def test_esxi_pxe_drift_detection_uses_generated_filesystem_copy(client, monkeypatch, tmp_path):
+    """Verify that esxi pxe drift detection uses generated filesystem copy."""
     from sqlalchemy import select
 
     import atlaso.app.services.esxi_pxe as esxi_pxe
@@ -5503,6 +5706,7 @@ def test_esxi_pxe_drift_detection_uses_generated_filesystem_copy(client, monkeyp
 
 
 def test_backup_restore_restore_replaces_settings_and_stops_services(client):
+    """Verify that backup restore restore replaces settings and stops services."""
     import json
 
     from sqlalchemy import select
@@ -5552,6 +5756,7 @@ def test_backup_restore_restore_replaces_settings_and_stops_services(client):
 
 
 def test_backup_restore_recreates_default_vcf_backup_user_from_settings_archive(client):
+    """Verify that backup restore recreates default vcf backup user from settings archive."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -5598,6 +5803,7 @@ def test_backup_restore_recreates_default_vcf_backup_user_from_settings_archive(
 
 
 def test_backup_restore_factory_reset_resets_desired_state_and_stops_services(client):
+    """Verify that backup restore factory reset resets desired state and stops services."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -5733,6 +5939,7 @@ def test_backup_restore_factory_reset_resets_desired_state_and_stops_services(cl
 
 
 def test_routes_wan_policy_form_renders(client):
+    """Verify that routes wan policy form renders."""
     login(client)
     response = client.get("/routes-wan")
     assert response.status_code == 200
@@ -5766,6 +5973,7 @@ def test_routes_wan_policy_form_renders(client):
 
 
 def test_routes_wan_rejects_route_wan_mode(client):
+    """Verify that routes wan rejects route wan mode."""
     login(client)
     page = client.get("/routes-wan")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -5790,6 +5998,7 @@ def test_routes_wan_rejects_route_wan_mode(client):
 
 
 def test_routes_wan_allows_ipv6_only_route_targets_but_not_nat_targets(client):
+    """Verify that routes wan allows ipv6 only route targets but not nat targets."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -5869,6 +6078,7 @@ def test_routes_wan_allows_ipv6_only_route_targets_but_not_nat_targets(client):
 
 
 def test_routes_wan_autosave_endpoints_and_apply_task(client):
+    """Verify that routes wan autosave endpoints and apply task."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -5987,6 +6197,7 @@ def test_routes_wan_autosave_endpoints_and_apply_task(client):
 
 
 def test_api_token_create_and_revoke_ui(client):
+    """Verify that api token create and revoke ui."""
     login(client)
     page = client.get("/authentication")
     token_wizard = page.text.split('id="api-token-dialog"', 1)[1].split("</dialog>", 1)[0]
@@ -6005,6 +6216,7 @@ def test_api_token_create_and_revoke_ui(client):
 
 
 def test_local_users_page_separates_ldap_authentication(client):
+    """Verify that local users page separates ldap authentication."""
     login(client)
     authentication = client.get("/authentication")
     assert authentication.status_code == 200
@@ -6165,6 +6377,7 @@ def test_local_users_page_separates_ldap_authentication(client):
 
 
 def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
+    """Verify that managed ldap page creates org user group and shows secret once."""
     login(client)
     page = client.get("/ldap")
     assert page.status_code == 200
@@ -6447,6 +6660,7 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
 
 
 def test_managed_ldap_generates_complete_synthetic_directory_once(client):
+    """Verify that managed ldap generates complete synthetic directory once."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -6556,6 +6770,7 @@ def test_managed_ldap_generates_complete_synthetic_directory_once(client):
 
 
 def test_local_user_reset_modal_endpoint_and_remove(client):
+    """Verify that local user reset modal endpoint and remove."""
     import html
     import json
 
@@ -6621,6 +6836,7 @@ def test_local_user_reset_modal_endpoint_and_remove(client):
 
 
 def test_local_user_wizard_creates_disabled_account_then_password_flow_enables_it(client):
+    """Verify that local user wizard creates disabled account then password flow enables it."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -6664,6 +6880,7 @@ def test_local_user_wizard_creates_disabled_account_then_password_flow_enables_i
 
 
 def test_existing_local_user_can_be_enabled_inline_after_password_apply(client):
+    """Verify that existing local user can be enabled inline after password apply."""
     from datetime import UTC, datetime
 
     from sqlalchemy import select
@@ -6714,6 +6931,7 @@ def test_existing_local_user_can_be_enabled_inline_after_password_apply(client):
 
 
 def test_real_local_users_apply_preserves_pending_password_for_disabled_user():
+    """Verify that real local users apply preserves pending password for disabled user."""
     from atlaso.app.models import User
     from atlaso.app.services.local_users import (
         clear_pending_os_password,
@@ -6734,6 +6952,7 @@ def test_real_local_users_apply_preserves_pending_password_for_disabled_user():
 
 
 def test_local_users_password_policy_staging_and_apply_redaction(client):
+    """Verify that local users password policy staging and apply redaction."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -6816,6 +7035,7 @@ def test_local_users_password_policy_staging_and_apply_redaction(client):
 
 
 def test_apply_status_reads_preserve_multiple_staged_service_user_passwords(client):
+    """Verify that apply status reads preserve multiple staged service user passwords."""
     import json
 
     from sqlalchemy import select
@@ -6869,6 +7089,7 @@ def test_apply_status_reads_preserve_multiple_staged_service_user_passwords(clie
 
 
 def test_real_local_users_apply_clears_pending_passwords_and_baselines_post_apply(client, monkeypatch, tmp_path):
+    """Verify that real local users apply clears pending passwords and baselines post apply."""
     from sqlalchemy import select
 
     import atlaso.app.ui as ui_module
@@ -6879,16 +7100,29 @@ def test_real_local_users_apply_clears_pending_passwords_and_baselines_post_appl
     base_system_adapter = ui_module.SystemAdapter
 
     class SuccessfulLocalUsersAdapter(base_system_adapter):
+        """Represent successful local users adapter."""
         def __init__(self) -> None:
+            """Initialize the successful local users adapter."""
             super().__init__(dry_run=False)
 
         def read_dhcp_leases(self) -> AdapterResult:
+            """Return dhcp leases."""
             return AdapterResult(command=["atlaso-helper", "dnsmasq", "leases"], dry_run=True, stdout="")
 
         def validate_local_users_config(self, config_path: str) -> AdapterResult:
+            """Validate local users config.
+
+            Returns:
+                The validate local users config result.
+            """
             return AdapterResult(command=["atlaso-helper", "local-users", "validate", config_path], dry_run=False, stdout="validation ok")
 
         def apply_local_users_config(self, config_path: str) -> AdapterResult:
+            """Update local users config.
+
+            Returns:
+                The apply local users config result.
+            """
             return AdapterResult(command=["atlaso-helper", "local-users", "apply", config_path], dry_run=False, stdout="apply complete")
 
     staged_path = tmp_path / "apply" / "local-users" / "atlaso-users.json"
@@ -6933,6 +7167,7 @@ def test_real_local_users_apply_clears_pending_passwords_and_baselines_post_appl
 
 
 def test_audit_log_renders(client):
+    """Verify that audit log renders."""
     login(client)
     response = client.get("/audit-log")
 
@@ -6969,6 +7204,7 @@ def test_audit_log_renders(client):
 
 
 def test_logs_page_shows_unavailable_state_when_every_source_is_unavailable(client, monkeypatch):
+    """Verify that logs page shows unavailable state when every source is unavailable."""
     unavailable_sources = [
         {
             "id": "app",
@@ -7015,6 +7251,7 @@ def test_logs_page_shows_unavailable_state_when_every_source_is_unavailable(clie
 
 
 def test_logs_page_renders_refreshable_fixed_source_tabs_and_redacts_logs(client, tmp_path, monkeypatch):
+    """Verify that logs page renders refreshable fixed source tabs and redacts logs."""
     from atlaso.app.adapters.system import AdapterResult
 
     app_log = tmp_path / "atlaso.log"
@@ -7210,6 +7447,7 @@ def test_logs_page_renders_refreshable_fixed_source_tabs_and_redacts_logs(client
 
 
 def test_configure_logging_writes_main_app_log(tmp_path, monkeypatch):
+    """Verify that configure logging writes main app log."""
     import logging
     from logging.handlers import RotatingFileHandler
 
@@ -7235,6 +7473,7 @@ def test_configure_logging_writes_main_app_log(tmp_path, monkeypatch):
 
 
 def test_record_audit_writes_redacted_operational_log(client, tmp_path, monkeypatch):
+    """Verify that record audit writes redacted operational log."""
     import logging
     from logging.handlers import RotatingFileHandler
 
@@ -7276,6 +7515,7 @@ def test_record_audit_writes_redacted_operational_log(client, tmp_path, monkeypa
 
 
 def test_logs_page_handles_default_pure_posix_log_path(client, monkeypatch):
+    """Verify that logs page handles default pure posix log path."""
     from pathlib import PurePosixPath
 
     from atlaso.app.adapters.system import AdapterResult
@@ -7324,6 +7564,7 @@ def test_logs_page_handles_default_pure_posix_log_path(client, monkeypatch):
 
 
 def test_dns_and_dhcp_pages_render(client):
+    """Verify that dns and dhcp pages render."""
     import html
     import json
 
@@ -7606,6 +7847,7 @@ def test_dns_and_dhcp_pages_render(client):
 
 
 def test_new_record_rows_lock_defaults_until_required_field(client):
+    """Verify that new record rows lock defaults until required field."""
     app_js = client.get("/static/app.js")
     assert app_js.status_code == 200
     app_css = client.get("/static/app.css")
@@ -7637,6 +7879,7 @@ def test_new_record_rows_lock_defaults_until_required_field(client):
     assert ".new-record-primary-cell" in app_css.text
 
     def function_block(name, next_name):
+        """Return function block."""
         start = app_js.text.index(f"function {name}()")
         end = app_js.text.index(f"function {next_name}", start)
         return app_js.text[start:end]
@@ -7667,6 +7910,7 @@ def test_new_record_rows_lock_defaults_until_required_field(client):
 
 
 def test_dhcp_zone_defaults_follow_vlan_dns_and_interface_ntp_bindings(client):
+    """Verify that dhcp zone defaults follow vlan dns and interface ntp bindings."""
     import html
     import json
 
@@ -7724,6 +7968,7 @@ def test_dhcp_zone_defaults_follow_vlan_dns_and_interface_ntp_bindings(client):
 
 
 def test_dns_new_record_row_suggests_next_available_ipv4(client):
+    """Verify that dns new record row suggests next available ipv4."""
     import html
     import json
 
@@ -7738,6 +7983,7 @@ def test_dns_new_record_row_suggests_next_available_ipv4(client):
 
 
 def test_dns_ipv4_suggestion_falls_back_to_existing_a_record_network():
+    """Verify that dns ipv4 suggestion falls back to existing a record network."""
     from atlaso.app.models import DhcpReservation, DhcpScope, DnsRecord
     from atlaso.app.ui import dhcp_scope_name_for_ip, dns_record_suggested_ipv4
 
@@ -7772,6 +8018,7 @@ def test_dns_ipv4_suggestion_falls_back_to_existing_a_record_network():
 
 
 def test_dns_settings_badge_reflects_desired_state_not_runtime_state(client):
+    """Verify that dns settings badge reflects desired state not runtime state."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -7796,6 +8043,7 @@ def test_dns_settings_badge_reflects_desired_state_not_runtime_state(client):
 
 
 def test_dhcp_leases_page_reflects_live_adapter_output(client, monkeypatch):
+    """Verify that dhcp leases page reflects live adapter output."""
     import html
     import json
 
@@ -7806,6 +8054,7 @@ def test_dhcp_leases_page_reflects_live_adapter_output(client, monkeypatch):
     from atlaso.app.models import DhcpReservation, DnsRecord, EsxiPxeHost
 
     def fake_read_dhcp_leases(self):
+        """Return fake read dhcp leases."""
         return AdapterResult(
             command=["sudo", "-n", "/opt/atlaso/bin/atlaso-helper", "dnsmasq", "leases", "--real"],
             dry_run=False,
@@ -7941,6 +8190,7 @@ def test_dhcp_leases_page_reflects_live_adapter_output(client, monkeypatch):
 
 
 def test_firewall_preview_derives_dns_dhcp_rule_from_dhcp_scope_vlan(client):
+    """Verify that firewall preview derives dns dhcp rule from dhcp scope vlan."""
     import html
     import json
     import re
@@ -8090,6 +8340,7 @@ def test_firewall_preview_derives_dns_dhcp_rule_from_dhcp_scope_vlan(client):
 
 
 def test_dns_listen_options_include_access_and_vlans_not_trunks(client):
+    """Verify that dns listen options include access and vlans not trunks."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import PhysicalInterface, VlanInterface
 
@@ -8141,6 +8392,7 @@ def test_dns_listen_options_include_access_and_vlans_not_trunks(client):
 
 
 def test_certificate_authority_page_renders(client):
+    """Verify that certificate authority page renders."""
     import re
 
     login(client)
@@ -8238,6 +8490,7 @@ def test_certificate_authority_page_renders(client):
 
 
 def test_certificate_request_creation_is_atomic_and_issues_submitted_sans(client):
+    """Verify that certificate request creation is atomic and issues submitted sans."""
     from cryptography import x509
     from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
     from sqlalchemy import select
@@ -8296,6 +8549,7 @@ def test_certificate_request_creation_is_atomic_and_issues_submitted_sans(client
 
 
 def test_certificate_request_creation_validates_profile_and_sans(client):
+    """Verify that certificate request creation validates profile and sans."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -8362,6 +8616,7 @@ def test_certificate_request_creation_validates_profile_and_sans(client):
 
 
 def test_certificate_request_editing_enforces_immutable_and_managed_boundaries(client):
+    """Verify that certificate request editing enforces immutable and managed boundaries."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -8457,6 +8712,7 @@ def test_certificate_request_editing_enforces_immutable_and_managed_boundaries(c
 
 
 def test_certificate_authority_downloads_public_pems(client):
+    """Verify that certificate authority downloads public pems."""
     login(client)
     root = client.get("/certificate-authority/downloads/root-ca.pem")
     assert root.status_code == 200
@@ -8471,6 +8727,7 @@ def test_certificate_authority_downloads_public_pems(client):
 
 
 def test_public_ca_root_page_is_unauthenticated(client):
+    """Verify that public ca root page is unauthenticated."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -8602,6 +8859,7 @@ def test_public_ca_root_page_is_unauthenticated(client):
 
 
 def test_public_services_reject_terminal_listener_without_valid_management_https_certificate(client):
+    """Verify that public services reject terminal listener without valid management https certificate."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -8638,6 +8896,7 @@ def test_public_services_reject_terminal_listener_without_valid_management_https
 
 
 def test_public_services_rejects_authenticated_depot_with_disabled_http_user(client):
+    """Verify that public services rejects authenticated depot with disabled http user."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -8662,6 +8921,7 @@ def test_public_services_rejects_authenticated_depot_with_disabled_http_user(cli
 
 
 def test_public_service_home_is_scoped_to_called_ip(client, tmp_path, monkeypatch):
+    """Verify that public service home is scoped to called ip."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -8830,9 +9090,20 @@ def test_public_service_home_is_scoped_to_called_ip(client, tmp_path, monkeypatc
     authentication_calls: list[str] = []
 
     class DepotAuthenticationAdapter:
+        """Represent depot authentication adapter.
+
+        Attributes:
+            dry_run: Dry run captured or supplied by this test helper.
+        """
         dry_run = False
 
         def authenticate_local_user(self, username: str, password: str) -> AdapterResult:
+            """Return authenticate local user.
+
+            Args:
+                username: Account name used for authentication or lookup.
+                password: Password supplied for the immediate authenticated operation.
+            """
             authentication_calls.append(username)
             return AdapterResult(
                 command=["atlaso-helper", "local-users", "authenticate", username],
@@ -8967,6 +9238,7 @@ def test_public_service_home_is_scoped_to_called_ip(client, tmp_path, monkeypatc
 
 
 def test_public_service_home_empty_state_for_non_management_ip(client):
+    """Verify that public service home empty state for non management ip."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -8988,6 +9260,7 @@ def test_public_service_home_empty_state_for_non_management_ip(client):
 
 
 def test_certificate_operator_uses_request_page_without_console_access(client):
+    """Verify that certificate operator uses request page without console access."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -9118,6 +9391,7 @@ def test_certificate_operator_uses_request_page_without_console_access(client):
 
 
 def test_certificate_operator_cannot_render_vcf_helper_dns_inventory(client):
+    """Verify that certificate operator cannot render vcf helper dns inventory."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -9137,6 +9411,7 @@ def test_certificate_operator_cannot_render_vcf_helper_dns_inventory(client):
 
 
 def test_ca_apply_payload_leaves_csr_private_key_empty():
+    """Verify that ca apply payload leaves csr private key empty."""
     import json
 
     from atlaso.app.models import CaCertificate, CaSettings
@@ -9167,6 +9442,7 @@ def test_ca_apply_payload_leaves_csr_private_key_empty():
 
 
 def test_certificate_authority_issues_encrypted_managed_certs_and_exports(client):
+    """Verify that certificate authority issues encrypted managed certs and exports."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -9209,6 +9485,7 @@ def test_certificate_authority_issues_encrypted_managed_certs_and_exports(client
 
 
 def test_kms_page_renders(client):
+    """Verify that kms page renders."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -9288,6 +9565,7 @@ def test_kms_page_renders(client):
 
 
 def test_root_aware_initializers_do_not_receive_dom_content_loaded_event():
+    """Verify that root aware initializers do not receive dom content loaded event."""
     source = Path("atlaso/app/static/app.js").read_text(encoding="utf-8")
     initializers = (
         "initializeCaSettings",
@@ -9317,6 +9595,7 @@ def test_root_aware_initializers_do_not_receive_dom_content_loaded_event():
 
 
 def test_kms_settings_autosave_returns_json(client):
+    """Verify that kms settings autosave returns json."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -9371,6 +9650,7 @@ def test_kms_settings_autosave_returns_json(client):
 
 
 def test_kms_settings_accept_multiple_listen_targets(client):
+    """Verify that kms settings accept multiple listen targets."""
     login(client)
     page = client.get("/kms")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -9403,6 +9683,7 @@ def test_kms_settings_accept_multiple_listen_targets(client):
 
 
 def test_kms_enable_autocreates_ca_managed_certificate_rows(client):
+    """Verify that kms enable autocreates ca managed certificate rows."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -9452,6 +9733,7 @@ def test_kms_enable_autocreates_ca_managed_certificate_rows(client):
 def test_kms_client_certificate_rotation_overlaps_then_retires_previous_fingerprint(
     client,
 ):
+    """Verify that kms client certificate rotation overlaps then retires previous fingerprint."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -9533,6 +9815,7 @@ def test_kms_client_certificate_rotation_overlaps_then_retires_previous_fingerpr
 
 
 def test_kms_apply_task_captures_current_desired_state(client):
+    """Verify that kms apply task captures current desired state."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -9554,6 +9837,7 @@ def test_kms_apply_task_captures_current_desired_state(client):
 
 
 def test_vcf_backups_page_uses_local_user_for_sftp(client):
+    """Verify that vcf backups page uses local user for sftp."""
     login(client)
     page = client.get("/vcf-backups")
     assert page.status_code == 200
@@ -9587,6 +9871,7 @@ def test_vcf_backups_page_uses_local_user_for_sftp(client):
 
 
 def test_vcf_backups_settings_badge_reflects_desired_state(client, monkeypatch):
+    """Verify that vcf backups settings badge reflects desired state."""
     from atlaso.app.config import get_settings
 
     login(client)
@@ -9602,6 +9887,7 @@ def test_vcf_backups_settings_badge_reflects_desired_state(client, monkeypatch):
 
 
 def test_vcf_private_registry_page_models_harbor_and_bundle_relocation(client):
+    """Verify that vcf private registry page models harbor and bundle relocation."""
     login(client)
     page = client.get("/vcf-private-registry")
     assert page.status_code == 200
@@ -9640,6 +9926,7 @@ def test_vcf_private_registry_page_models_harbor_and_bundle_relocation(client):
 
 
 def test_vcf_private_registry_settings_autosave_bundle_status_api_and_apply_task(client):
+    """Verify that vcf private registry settings autosave bundle status api and apply task."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -9816,6 +10103,12 @@ def test_vcf_private_registry_settings_autosave_bundle_status_api_and_apply_task
 
 
 def make_vcfdt_archive(path, version="9.1.0.0100.25429019"):
+    """Build vcfdt archive.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        version: Version identifier to validate or publish.
+    """
     import io
     import tarfile
 
@@ -9831,6 +10124,7 @@ def make_vcfdt_archive(path, version="9.1.0.0100.25429019"):
 
 
 def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_path, monkeypatch):
+    """Verify that vcf offline depot page redirect and uploads are sanitized."""
     import html
     import json
     import re
@@ -10384,6 +10678,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
 
 
 def test_vcf_offline_depot_upload_rejects_malformed_archive_before_saving(client, monkeypatch):
+    """Verify that vcf offline depot upload rejects malformed archive before saving."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -10418,6 +10713,7 @@ def test_vcf_offline_depot_upload_rejects_malformed_archive_before_saving(client
 
 
 def test_vcf_offline_depot_tool_upload_marks_apply_pending_without_profiles(client, tmp_path, monkeypatch):
+    """Verify that vcf offline depot tool upload marks apply pending without profiles."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.ui import appliance_apply_status, appliance_apply_units, update_appliance_apply_baselines
 
@@ -10463,6 +10759,7 @@ def test_vcf_offline_depot_tool_upload_marks_apply_pending_without_profiles(clie
 
 
 def test_vcf_offline_depot_generation_timestamp_does_not_reopen_apply_unit(client):
+    """Verify that vcf offline depot generation timestamp does not reopen apply unit."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.services.vcf_offline_depot import (
         VCF_DEPOT_SOFTWARE_DEPOT_ID_GENERATED_AT_KEY,
@@ -10488,6 +10785,7 @@ def test_vcf_offline_depot_generation_timestamp_does_not_reopen_apply_unit(clien
 
 
 def test_vcf_offline_depot_apply_preserves_existing_software_depot_id_unless_refresh_is_explicit(tmp_path):
+    """Verify that vcf offline depot apply preserves existing software depot id unless refresh is explicit."""
     import json
     from types import SimpleNamespace
 
@@ -10566,6 +10864,7 @@ def test_vcf_offline_depot_apply_preserves_existing_software_depot_id_unless_ref
 
 
 def test_vcf_offline_depot_apply_stages_tool_without_download_profiles(client, tmp_path, monkeypatch):
+    """Verify that vcf offline depot apply stages tool without download profiles."""
     from sqlalchemy import delete, select
 
     from atlaso.app.database import SessionLocal
@@ -10613,6 +10912,7 @@ def test_vcf_offline_depot_apply_stages_tool_without_download_profiles(client, t
 
 
 def test_vcf_offline_depot_apply_stages_vcfdt_while_https_is_disabled(client, tmp_path):
+    """Verify that vcf offline depot apply stages vcfdt while https is disabled."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -10652,6 +10952,7 @@ def test_vcf_offline_depot_apply_stages_vcfdt_while_https_is_disabled(client, tm
 
 
 def test_vcf_offline_depot_tool_package_wizard_endpoint_and_reset_clear_configuration(client, tmp_path, monkeypatch):
+    """Verify that vcf offline depot tool package wizard endpoint and reset clear configuration."""
     from pathlib import Path
 
     from sqlalchemy import select
@@ -10763,6 +11064,7 @@ def test_vcf_offline_depot_tool_package_wizard_endpoint_and_reset_clear_configur
         assert "reset-tool" in (job.result or "")
 
 def test_vcf_offline_depot_without_tool_clears_stale_credential_state(client, monkeypatch):
+    """Verify that vcf offline depot without tool clears stale credential state."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -10791,6 +11093,7 @@ def test_vcf_offline_depot_without_tool_clears_stale_credential_state(client, mo
 
 
 def test_vcf_offline_depot_profiles_cannot_enable_without_installed_tool(client, monkeypatch):
+    """Verify that vcf offline depot profiles cannot enable without installed tool."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -10814,6 +11117,7 @@ def test_vcf_offline_depot_profiles_cannot_enable_without_installed_tool(client,
 
 
 def test_vcf_offline_depot_active_log_moves_to_named_task_log(tmp_path, monkeypatch):
+    """Verify that vcf offline depot active log moves to named task log."""
     from atlaso.app import ui
     from atlaso.app.services import vcf_depot_downloads
 
@@ -10832,6 +11136,7 @@ def test_vcf_offline_depot_active_log_moves_to_named_task_log(tmp_path, monkeypa
 
 
 def test_vcf_offline_depot_appliance_requires_staged_and_active_tool(tmp_path, monkeypatch):
+    """Verify that vcf offline depot appliance requires staged and active tool."""
     from types import SimpleNamespace
 
     from atlaso.app import ui
@@ -10851,6 +11156,7 @@ def test_vcf_offline_depot_appliance_requires_staged_and_active_tool(tmp_path, m
 
 
 def test_vcf_offline_depot_accepts_pasted_download_token_and_activation_code(client, tmp_path, monkeypatch):
+    """Verify that vcf offline depot accepts pasted download token and activation code."""
     from pathlib import PurePosixPath
 
     from sqlalchemy import select
@@ -10881,6 +11187,7 @@ def test_vcf_offline_depot_accepts_pasted_download_token_and_activation_code(cli
         db.commit()
 
     def metadata_command(preview: str) -> str:
+        """Return metadata command."""
         return next(line for line in preview.splitlines() if line.startswith("vcf-download-tool metadata download"))
 
     response = client.post(
@@ -10997,6 +11304,7 @@ def test_vcf_offline_depot_accepts_pasted_download_token_and_activation_code(cli
 
 
 def test_vcf_offline_depot_tool_configuration_is_atomic_and_presence_only(client, tmp_path, monkeypatch):
+    """Verify that vcf offline depot tool configuration is atomic and presence only."""
     from pathlib import PurePosixPath
 
     from sqlalchemy import select
@@ -11161,6 +11469,7 @@ def test_vcf_offline_depot_tool_configuration_is_atomic_and_presence_only(client
 
 
 def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path):
+    """Verify that vcf offline depot manual profile download starts job."""
     import html
     import json
 
@@ -11315,6 +11624,7 @@ def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path):
 
 
 def test_vcf_offline_depot_startup_recovers_interrupted_download(client):
+    """Verify that vcf offline depot startup recovers interrupted download."""
     import json
 
     from sqlalchemy import select
@@ -11352,6 +11662,7 @@ def test_vcf_offline_depot_startup_recovers_interrupted_download(client):
 
 
 def test_vcf_offline_depot_root_runtime_wrapper_counts_as_installed(monkeypatch, tmp_path):
+    """Verify that vcf offline depot root runtime wrapper counts as installed."""
     from types import SimpleNamespace
     from pathlib import Path
 
@@ -11370,6 +11681,7 @@ def test_vcf_offline_depot_root_runtime_wrapper_counts_as_installed(monkeypatch,
 
 
 def test_vcf_offline_depot_profile_credentials_block_start_not_apply(client, tmp_path):
+    """Verify that vcf offline depot profile credentials block start not apply."""
     import html
     import json
 
@@ -11426,6 +11738,7 @@ def test_vcf_offline_depot_profile_credentials_block_start_not_apply(client, tmp
 
 
 def test_vcf_offline_depot_manual_profile_download_accepts_activation_code_without_token(client, tmp_path):
+    """Verify that vcf offline depot manual profile download accepts activation code without token."""
     import json
 
     from sqlalchemy import select
@@ -11489,6 +11802,7 @@ def test_vcf_offline_depot_manual_profile_download_accepts_activation_code_witho
 
 
 def test_vcf_offline_depot_prepare_runtime_stages_saved_application_properties(client, tmp_path, monkeypatch):
+    """Verify that vcf offline depot prepare runtime stages saved application properties."""
     import io
     import tarfile
     from pathlib import PurePosixPath
@@ -11534,6 +11848,7 @@ def test_vcf_offline_depot_prepare_runtime_stages_saved_application_properties(c
 
 
 def test_vcf_offline_depot_queues_software_depot_id_task_and_persists_safe_readback(client, tmp_path, monkeypatch):
+    """Verify that vcf offline depot queues software depot id task and persists safe readback."""
     from sqlalchemy import select
 
     from atlaso.app import ui
@@ -11639,6 +11954,7 @@ def test_vcf_offline_depot_queues_software_depot_id_task_and_persists_safe_readb
 
 
 def test_vcf_offline_depot_invalidates_stale_id_only_after_successful_generation_with_failed_readback(client):
+    """Verify that vcf offline depot invalidates stale id only after successful generation with failed readback."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -11655,6 +11971,7 @@ def test_vcf_offline_depot_invalidates_stale_id_only_after_successful_generation
     from atlaso.app.ui import persist_vcf_depot_metadata_from_apply, set_setting_value
 
     def persist_failure(*, stdout: str, stderr: str) -> None:
+        """Persist failure."""
         with SessionLocal() as db:
             persist_vcf_depot_metadata_from_apply(
                 db,
@@ -11707,6 +12024,7 @@ def test_vcf_offline_depot_invalidates_stale_id_only_after_successful_generation
 
 
 def test_vcf_offline_depot_migrates_legacy_store_path(client):
+    """Verify that vcf offline depot migrates legacy store path."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -11729,6 +12047,7 @@ def test_vcf_offline_depot_migrates_legacy_store_path(client):
 
 
 def test_vcf_private_registry_uses_local_ca_bundle_when_ca_is_enabled(client):
+    """Verify that vcf private registry uses local ca bundle when ca is enabled."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -11772,6 +12091,7 @@ def test_vcf_private_registry_uses_local_ca_bundle_when_ca_is_enabled(client):
 
 
 def test_vcf_backups_listen_interfaces_include_vlans_not_trunks(client):
+    """Verify that vcf backups listen interfaces include vlans not trunks."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import VlanInterface
 
@@ -11796,6 +12116,7 @@ def test_vcf_backups_listen_interfaces_include_vlans_not_trunks(client):
 
 
 def test_vcf_backups_settings_autosave_and_status_api(client):
+    """Verify that vcf backups settings autosave and status api."""
     import re
 
     login(client)
@@ -11851,6 +12172,7 @@ def test_vcf_backups_settings_autosave_and_status_api(client):
 
 
 def test_vcf_backups_settings_accept_multiple_listen_targets(client):
+    """Verify that vcf backups settings accept multiple listen targets."""
     import re
 
     login(client)
@@ -11885,6 +12207,7 @@ def test_vcf_backups_settings_accept_multiple_listen_targets(client):
 
 
 def test_vcf_backups_disabled_disables_default_backup_user(client):
+    """Verify that vcf backups disabled disables default backup user."""
     import re
 
     from sqlalchemy import select
@@ -11929,6 +12252,7 @@ def test_vcf_backups_disabled_disables_default_backup_user(client):
 
 
 def test_vcf_backups_apply_task_captures_sftp_config(client):
+    """Verify that vcf backups apply task captures sftp config."""
     import re
 
     from sqlalchemy import select
@@ -11974,6 +12298,7 @@ def test_vcf_backups_apply_task_captures_sftp_config(client):
 
 
 def test_appliance_apply_unit_keeps_raw_config_for_helper_staging():
+    """Verify that appliance apply unit keeps raw config for helper staging."""
     from atlaso.app.ui import make_appliance_apply_unit
 
     unit = make_appliance_apply_unit(
@@ -11994,6 +12319,7 @@ def test_appliance_apply_unit_keeps_raw_config_for_helper_staging():
 
 
 def test_appliance_apply_unit_separates_secret_staging_from_snapshot_change_marker():
+    """Verify that appliance apply unit separates secret staging from snapshot change marker."""
     from atlaso.app.ui import _redact_task_value, make_appliance_apply_unit
 
     current = make_appliance_apply_unit(
@@ -12034,6 +12360,7 @@ def test_appliance_apply_unit_separates_secret_staging_from_snapshot_change_mark
 
 
 def test_disabled_ldap_apply_keeps_staged_user_password_pending(monkeypatch, tmp_path):
+    """Verify that disabled ldap apply keeps staged user password pending."""
     from types import SimpleNamespace
 
     from atlaso.app.adapters.system import AdapterResult
@@ -12046,14 +12373,35 @@ def test_disabled_ldap_apply_keeps_staged_user_password_pending(monkeypatch, tmp
     stage_ldap_user_password(user, "VeryStrong1!Directory", settings)
 
     class SuccessfulLdapAdapter:
+        """Represent successful ldap adapter.
+
+        Attributes:
+            dry_run: Dry run captured or supplied by this test helper.
+        """
         dry_run = False
 
         @staticmethod
         def validate_ldap_config(path):
+            """Validate ldap config.
+
+            Args:
+                path: Filesystem or URL path to read, validate, or update.
+
+            Returns:
+                The validate ldap config result.
+            """
             return AdapterResult(["ldap", "validate", path], False)
 
         @staticmethod
         def apply_ldap_config(path):
+            """Update ldap config.
+
+            Args:
+                path: Filesystem or URL path to read, validate, or update.
+
+            Returns:
+                The apply ldap config result.
+            """
             return AdapterResult(["ldap", "apply", path], False)
 
     staged_path = tmp_path / "ldap" / "atlaso-ldap.json"
@@ -12081,6 +12429,7 @@ def test_disabled_ldap_apply_keeps_staged_user_password_pending(monkeypatch, tmp
 
 
 def test_physical_and_vlan_pages_render(client):
+    """Verify that physical and vlan pages render."""
     login(client)
     physical = client.get("/physical-interfaces")
     assert physical.status_code == 200
@@ -12161,6 +12510,7 @@ def test_physical_and_vlan_pages_render(client):
 
 
 def test_management_interface_dual_stack_gateways_are_saved_and_drive_main_and_table_100(client):
+    """Verify that management interface dual stack gateways are saved and drive main and table 100."""
     import html
     import json
 
@@ -12230,6 +12580,7 @@ def test_management_interface_dual_stack_gateways_are_saved_and_drive_main_and_t
 
 
 def test_physical_interface_refresh_imports_host_inventory_without_apply_job(client, monkeypatch):
+    """Verify that physical interface refresh imports host inventory without apply job."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -12239,6 +12590,7 @@ def test_physical_interface_refresh_imports_host_inventory_without_apply_job(cli
     login(client)
 
     def fake_discover():
+        """Return fake discover."""
         return [
             HostPhysicalInterface(
                 name="ens192",
@@ -12278,6 +12630,7 @@ def test_physical_interface_refresh_imports_host_inventory_without_apply_job(cli
 
 
 def test_physical_interface_edit_updates_desired_state(client):
+    """Verify that physical interface edit updates desired state."""
     import html
     import json
 
@@ -12415,6 +12768,7 @@ def test_physical_interface_edit_updates_desired_state(client):
 
 
 def test_physical_interface_edit_repairs_stale_scope_after_host_inventory_refresh(client):
+    """Verify that physical interface edit repairs stale scope after host inventory refresh."""
     import html
     import json
 
@@ -12521,6 +12875,7 @@ def test_physical_interface_edit_repairs_stale_scope_after_host_inventory_refres
 
 
 def test_physical_interface_trunk_mode_clears_non_applicable_role(client):
+    """Verify that physical interface trunk mode clears non applicable role."""
     import html
     import json
 
@@ -12552,6 +12907,7 @@ def test_physical_interface_trunk_mode_clears_non_applicable_role(client):
 
 
 def test_physical_interface_link_type_locked_when_vlans_exist(client):
+    """Verify that physical interface link type locked when vlans exist."""
     import html
     import json
 
@@ -12598,6 +12954,7 @@ def test_physical_interface_link_type_locked_when_vlans_exist(client):
 
 
 def test_physical_interface_grid_menu_actions_are_available(client):
+    """Verify that physical interface grid menu actions are available."""
     login(client)
     page = client.get("/physical-interfaces")
     assert page.status_code == 200
@@ -12615,6 +12972,7 @@ def test_physical_interface_grid_menu_actions_are_available(client):
 
 
 def test_management_dhcp_interface_can_be_saved_as_static_from_observed_addresses(client, monkeypatch):
+    """Verify that management dhcp interface can be saved as static from observed addresses."""
     import html
     import json
 
@@ -12675,6 +13033,7 @@ def test_management_dhcp_interface_can_be_saved_as_static_from_observed_addresse
 
 
 def test_management_physical_interface_cannot_be_disabled(client):
+    """Verify that management physical interface cannot be disabled."""
     import html
     import json
 
@@ -12722,6 +13081,7 @@ def test_management_physical_interface_cannot_be_disabled(client):
 
 
 def test_vlan_interface_create_edit_delete_and_apply(client):
+    """Verify that vlan interface create edit delete and apply."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -12771,6 +13131,7 @@ def test_vlan_interface_create_edit_delete_and_apply(client):
 
 
 def test_vlan_page_prefers_real_trunk_parent_when_inventory_has_eth2(client):
+    """Verify that vlan page prefers real trunk parent when inventory has eth2."""
     import html
     import json
 
@@ -12831,6 +13192,7 @@ def test_vlan_page_prefers_real_trunk_parent_when_inventory_has_eth2(client):
 
 
 def test_vlan_page_disables_missing_parent_vlan(client):
+    """Verify that vlan page disables missing parent vlan."""
     import html
     import json
 
@@ -12902,6 +13264,7 @@ def test_vlan_page_disables_missing_parent_vlan(client):
 
 
 def test_vlan_interface_rejects_non_trunk_parent(client):
+    """Verify that vlan interface rejects non trunk parent."""
     login(client)
     page = client.get("/vlan-interfaces")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -12922,6 +13285,7 @@ def test_vlan_interface_rejects_non_trunk_parent(client):
 
 
 def test_vlan_interface_requires_vlan_id_and_ip_cidr(client):
+    """Verify that vlan interface requires vlan id and ip cidr."""
     login(client)
     page = client.get("/vlan-interfaces")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -12957,6 +13321,7 @@ def test_vlan_interface_requires_vlan_id_and_ip_cidr(client):
 
 
 def test_firewall_page_create_rule_and_apply_task(client):
+    """Verify that firewall page create rule and apply task."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -13033,6 +13398,7 @@ def test_firewall_page_create_rule_and_apply_task(client):
 
 
 def test_firewall_settings_autosave_updates_desired_state_preview(client):
+    """Verify that firewall settings autosave updates desired state preview."""
     login(client)
     page = client.get("/firewall")
     assert page.status_code == 200
@@ -13089,6 +13455,7 @@ def test_firewall_settings_autosave_updates_desired_state_preview(client):
 
 
 def test_global_appliance_apply_tracks_baselines_diffs_and_skips(client):
+    """Verify that global appliance apply tracks baselines diffs and skips."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -13194,6 +13561,15 @@ def test_depot_submission_includes_only_relevant_local_user_dependency(
     depot_user_status,
     expected_units,
 ):
+    """Verify that depot submission includes only relevant local user dependency.
+
+    Args:
+        client: Client used to invoke the external or application interface.
+        monkeypatch: Pytest fixture used to replace dependencies.
+        selected_unit: Selected unit supplied by the caller.
+        depot_user_status: Depot user status supplied by the caller.
+        expected_units: Expected units supplied by the caller.
+    """
     import json
     from types import SimpleNamespace
 
@@ -13204,6 +13580,7 @@ def test_depot_submission_includes_only_relevant_local_user_dependency(
     from atlaso.app.models import Job, JobStep, User
 
     def unit(unit_id, label, *, changed, context=None):
+        """Return unit."""
         return {
             "id": unit_id,
             "label": label,
@@ -13285,6 +13662,16 @@ def test_nts_submission_includes_ca_material_dependency(
     ldap_changes_pending,
     expected_units,
 ):
+    """Verify that nts submission includes ca material dependency.
+
+    Args:
+        client: Client used to invoke the external or application interface.
+        monkeypatch: Pytest fixture used to replace dependencies.
+        nts_server_enabled: Nts server enabled supplied by the caller.
+        ca_changed: Ca changed supplied by the caller.
+        ldap_changes_pending: Ldap changes pending supplied by the caller.
+        expected_units: Expected units supplied by the caller.
+    """
     import json
     from types import SimpleNamespace
 
@@ -13295,6 +13682,7 @@ def test_nts_submission_includes_ca_material_dependency(
     from atlaso.app.models import Job, JobStep
 
     def unit(unit_id, label, *, changed, context=None):
+        """Return unit."""
         return {
             "id": unit_id,
             "label": label,
@@ -13350,6 +13738,7 @@ def test_nts_submission_includes_ca_material_dependency(
 
 
 def test_appliance_apply_connection_warnings_detect_management_address_and_certificate_changes():
+    """Verify that appliance apply connection warnings detect management address and certificate changes."""
     import json
 
     from atlaso.app.ui import (
@@ -13425,6 +13814,7 @@ def test_appliance_apply_connection_warnings_detect_management_address_and_certi
 
 
 def test_appliance_apply_review_returns_management_address_connection_warning(client):
+    """Verify that appliance apply review returns management address connection warning."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -13449,6 +13839,7 @@ def test_appliance_apply_review_returns_management_address_connection_warning(cl
 
 
 def test_appliance_apply_json_submission_returns_master_with_live_child_status(client):
+    """Verify that appliance apply json submission returns master with live child status."""
     login(client)
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -13474,6 +13865,7 @@ def test_appliance_apply_json_submission_returns_master_with_live_child_status(c
 
 
 def test_appliance_apply_carries_explicit_vcf_depot_id_refresh_intent_to_execution(client, monkeypatch):
+    """Verify that appliance apply carries explicit vcf depot id refresh intent to execution."""
     import json
 
     from atlaso.app import ui
@@ -13505,6 +13897,11 @@ def test_appliance_apply_carries_explicit_vcf_depot_id_refresh_intent_to_executi
     received_refresh_intent: list[bool] = []
 
     def execute(unit, *, adapter=None):
+        """Run operation.
+
+        Returns:
+            The execute result.
+        """
         received_refresh_intent.append(bool(unit.get("refresh_vcf_depot_software_depot_id")))
         return {
             "unit_id": unit["id"],
@@ -13531,6 +13928,7 @@ def test_appliance_apply_carries_explicit_vcf_depot_id_refresh_intent_to_executi
 
 
 def test_vcf_depot_software_id_task_queues_for_immediate_execution(client, monkeypatch):
+    """Verify that vcf depot software id task queues for immediate execution."""
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job
@@ -13568,6 +13966,7 @@ def test_vcf_depot_software_id_task_queues_for_immediate_execution(client, monke
 
 
 def test_vcf_depot_software_id_submission_rejects_active_profile_download(client, monkeypatch):
+    """Verify that vcf depot software id submission rejects active profile download."""
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus
@@ -13603,6 +14002,7 @@ def test_vcf_depot_software_id_submission_rejects_active_profile_download(client
 
 
 def test_vcf_depot_appliance_apply_submission_rejects_active_software_id_task(client, monkeypatch):
+    """Verify that vcf depot appliance apply submission rejects active software id task."""
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus
@@ -13636,6 +14036,7 @@ def test_vcf_depot_appliance_apply_submission_rejects_active_software_id_task(cl
 
 
 def test_queued_vcf_depot_software_id_task_can_be_cancelled_before_start(client, monkeypatch):
+    """Verify that queued vcf depot software id task can be cancelled before start."""
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.ui import get_vcf_offline_depot_settings_row
@@ -13664,6 +14065,7 @@ def test_queued_vcf_depot_software_id_task_can_be_cancelled_before_start(client,
 
 
 def test_running_vcf_depot_software_id_task_rejects_cancellation(client, monkeypatch):
+    """Verify that running vcf depot software id task rejects cancellation."""
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus
@@ -13698,6 +14100,7 @@ def test_running_vcf_depot_software_id_task_rejects_cancellation(client, monkeyp
 
 
 def test_vcf_depot_software_id_runner_persists_raw_metadata_before_task_redaction(client, monkeypatch):
+    """Verify that vcf depot software id runner persists raw metadata before task redaction."""
     import json
 
     from atlaso.app import ui
@@ -13728,6 +14131,12 @@ def test_vcf_depot_software_id_runner_persists_raw_metadata_before_task_redactio
     monkeypatch.setattr(ui, "appliance_apply_status", lambda _db, _unit_id: {"id": "vcf_offline_depot"})
     monkeypatch.setattr(ui, "execute_appliance_apply_unit", lambda _unit: raw_result)
     def persist_readback(db, results):
+        """Persist readback.
+
+        Args:
+            db: Active database session.
+            results: Results supplied by the caller.
+        """
         persisted_commands.append(results[0]["commands"][-1]["command"])
         ui.set_setting_value(db, ui.VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY, "generated-id")
 
@@ -13758,6 +14167,7 @@ def test_vcf_depot_software_id_runner_persists_raw_metadata_before_task_redactio
 
 
 def test_vcf_depot_software_id_runner_fails_when_id_is_not_persisted(client, monkeypatch):
+    """Verify that vcf depot software id runner fails when id is not persisted."""
     import json
 
     from atlaso.app import ui
@@ -13802,6 +14212,7 @@ def test_vcf_depot_software_id_runner_fails_when_id_is_not_persisted(client, mon
 
 
 def test_vcf_depot_software_id_startup_reconciles_runtime_identity_before_failing_jobs(client, monkeypatch):
+    """Verify that vcf depot software id startup reconciles runtime identity before failing jobs."""
     import json
 
     from sqlalchemy import select
@@ -13854,6 +14265,7 @@ def test_vcf_depot_software_id_startup_reconciles_runtime_identity_before_failin
 
 
 def test_vcf_depot_software_id_startup_invalidates_unverifiable_runtime_identity(client, monkeypatch):
+    """Verify that vcf depot software id startup invalidates unverifiable runtime identity."""
     import json
 
     from sqlalchemy import select
@@ -13902,6 +14314,7 @@ def test_vcf_depot_software_id_startup_invalidates_unverifiable_runtime_identity
 
 
 def test_successful_command_stderr_is_not_reported_as_task_failure():
+    """Verify that successful command stderr is not reported as task failure."""
     from atlaso.app.ui import _task_failure_messages
 
     success = {"commands": [{"returncode": 0, "stderr": "nginx syntax is ok"}]}
@@ -13912,6 +14325,7 @@ def test_successful_command_stderr_is_not_reported_as_task_failure():
 
 
 def test_vcf_depot_software_id_metadata_survives_apply_output_redaction():
+    """Verify that vcf depot software id metadata survives apply output redaction."""
     from atlaso.app.ui import apply_output_excerpt, helper_json_payload_with_key
 
     output = json.dumps(
@@ -13929,6 +14343,7 @@ def test_vcf_depot_software_id_metadata_survives_apply_output_redaction():
 
 
 def test_appliance_apply_rejects_submission_while_another_task_is_active(client):
+    """Verify that appliance apply rejects submission while another task is active."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -13961,6 +14376,7 @@ def test_appliance_apply_rejects_submission_while_another_task_is_active(client)
 
 
 def test_recover_interrupted_appliance_apply_jobs_marks_active_tasks_failed(client):
+    """Verify that recover interrupted appliance apply jobs marks active tasks failed."""
     import json
 
     from sqlalchemy import select
@@ -14039,6 +14455,7 @@ def test_recover_interrupted_appliance_apply_jobs_marks_active_tasks_failed(clie
 
 
 def test_appliance_apply_master_steps_fail_fast_and_keep_successful_baselines(client, monkeypatch):
+    """Verify that appliance apply master steps fail fast and keep successful baselines."""
     import json
 
     from sqlalchemy import select
@@ -14098,6 +14515,11 @@ def test_appliance_apply_master_steps_fail_fast_and_keep_successful_baselines(cl
     executed = []
 
     def execute(unit, *, adapter=None):
+        """Run operation.
+
+        Returns:
+            The execute result.
+        """
         executed.append(unit["id"])
         success = unit["id"] == "network"
         return {
@@ -14138,6 +14560,7 @@ def test_appliance_apply_master_steps_fail_fast_and_keep_successful_baselines(cl
 
 
 def test_successful_appliance_apply_baseline_uses_post_apply_snapshot(client, monkeypatch):
+    """Verify that successful appliance apply baseline uses post apply snapshot."""
     import json
 
     from sqlalchemy import select
@@ -14203,9 +14626,15 @@ def test_successful_appliance_apply_baseline_uses_post_apply_snapshot(client, mo
     apply_completed = False
 
     def units(_db, **_kwargs):
+        """Return units."""
         return [after if apply_completed else before]
 
     def execute(unit, *, adapter=None):
+        """Run operation.
+
+        Returns:
+            The execute result.
+        """
         nonlocal apply_completed
         apply_completed = True
         return {
@@ -14245,6 +14674,7 @@ def test_successful_esxi_pxe_apply_marks_network_boot_state_in_job_session(
     monkeypatch,
     dry_run,
 ):
+    """Verify that successful esxi pxe apply marks network boot state in job session."""
     import json
 
     from sqlalchemy import select
@@ -14383,6 +14813,7 @@ def test_successful_esxi_pxe_apply_marks_network_boot_state_in_job_session(
 
 
 def test_appliance_apply_parent_cancel_finishes_current_step_and_skips_remaining(client, monkeypatch):
+    """Verify that appliance apply parent cancel finishes current step and skips remaining."""
     import json
 
     from sqlalchemy import select
@@ -14433,6 +14864,11 @@ def test_appliance_apply_parent_cancel_finishes_current_step_and_skips_remaining
         db.commit()
 
     def execute(unit, *, adapter=None):
+        """Run operation.
+
+        Returns:
+            The execute result.
+        """
         with SessionLocal() as other_db:
             parent = other_db.get(Job, "job_cancel_apply")
             current = json.loads(parent.result or "{}")
@@ -14471,6 +14907,7 @@ def test_appliance_apply_parent_cancel_finishes_current_step_and_skips_remaining
 
 
 def test_application_restart_removes_stale_secret_staging_inputs(client, monkeypatch, tmp_path):
+    """Verify that application restart removes stale secret staging inputs."""
     from starlette.testclient import TestClient
 
     from atlaso.app import ui
@@ -14501,6 +14938,7 @@ def test_application_restart_removes_stale_secret_staging_inputs(client, monkeyp
 
 
 def test_secret_staging_cleanup_repairs_ownership_before_unlink(monkeypatch, tmp_path):
+    """Verify that secret staging cleanup repairs ownership before unlink."""
     from atlaso.app import ui
     from atlaso.app.adapters.system import AdapterResult
 
@@ -14515,9 +14953,19 @@ def test_secret_staging_cleanup_repairs_ownership_before_unlink(monkeypatch, tmp
     repairs: list[str] = []
 
     class RepairingAdapter:
+        """Represent repairing adapter.
+
+        Attributes:
+            dry_run: Dry run captured or supplied by this test helper.
+        """
         dry_run = False
 
         def prepare_apply_staging_path(self, path: str) -> AdapterResult:
+            """Return prepare apply staging path.
+
+            Args:
+                path: Filesystem or URL path to read, validate, or update.
+            """
             repairs.append(path)
             return AdapterResult(["atlaso-helper", "staging", "prepare", path], False)
 
@@ -14533,6 +14981,7 @@ def test_secret_staging_cleanup_repairs_ownership_before_unlink(monkeypatch, tmp
 
 
 def test_appliance_startup_initializes_factory_apply_baseline(monkeypatch, tmp_path):
+    """Verify that appliance startup initializes factory apply baseline."""
     from sqlalchemy import select
     from starlette.testclient import TestClient
 
@@ -14578,6 +15027,7 @@ def test_appliance_startup_initializes_factory_apply_baseline(monkeypatch, tmp_p
 
 
 def test_factory_apply_baseline_skips_after_operator_activity(monkeypatch, tmp_path):
+    """Verify that factory apply baseline skips after operator activity."""
     from sqlalchemy import select
 
     import atlaso.app.database as database
@@ -14611,6 +15061,7 @@ def test_factory_apply_baseline_skips_after_operator_activity(monkeypatch, tmp_p
 
 
 def test_appliance_apply_runs_firewall_before_wan(client):
+    """Verify that appliance apply runs firewall before wan."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.ui import appliance_apply_units
 
@@ -14622,6 +15073,7 @@ def test_appliance_apply_runs_firewall_before_wan(client):
 
 
 def test_network_apply_config_includes_removed_vlan_targets_from_baseline():
+    """Verify that network apply config includes removed vlan targets from baseline."""
     from atlaso.app.ui import network_config_with_removed_vlans, network_vlan_entries_from_config, removed_network_vlan_entries
 
     baseline = {
@@ -14663,6 +15115,7 @@ def test_network_apply_config_includes_removed_vlan_targets_from_baseline():
 
 
 def test_network_apply_removal_targets_include_successful_apply_history(client):
+    """Verify that network apply removal targets include successful apply history."""
     import json
 
     from sqlalchemy import select
@@ -14727,6 +15180,7 @@ def test_network_apply_removal_targets_include_successful_apply_history(client):
 
 
 def test_network_apply_history_retires_successfully_removed_vlans(client):
+    """Verify that network apply history retires successfully removed vlans."""
     import json
 
     from atlaso.app.database import SessionLocal
@@ -14814,6 +15268,7 @@ def test_network_apply_history_retires_successfully_removed_vlans(client):
 
 
 def test_services_ui_records_dry_run_action(client):
+    """Verify that services ui records dry run action."""
     import html
     import json
 
@@ -14875,6 +15330,7 @@ def test_services_ui_records_dry_run_action(client):
 
 
 def test_services_and_esxi_page_show_enabled_esxi_pxe_boot_state(client):
+    """Verify that services and esxi page show enabled esxi pxe boot state."""
     import html
     import json
 
@@ -14928,6 +15384,7 @@ def test_services_and_esxi_page_show_enabled_esxi_pxe_boot_state(client):
 
 
 def test_services_and_service_pages_derive_composite_runtime_status(client, monkeypatch):
+    """Verify that services and service pages derive composite runtime status."""
     import html
     import json
 
@@ -14939,6 +15396,7 @@ def test_services_and_service_pages_derive_composite_runtime_status(client, monk
     from atlaso.app.models import CaSettings, DhcpScope, KmsSettings, VcfBackupSettings, VcfOfflineDepotSettings
 
     def fake_service_status(self, unit: str):
+        """Return fake service status."""
         return AdapterResult(
             command=["systemctl", "status", unit],
             dry_run=False,
@@ -15001,6 +15459,7 @@ def test_services_and_service_pages_derive_composite_runtime_status(client, monk
 
 
 def test_esx_storage_live_status_requires_rpcbind_only_for_nfs3(client, monkeypatch):
+    """Verify that esx storage live status requires rpcbind only for nfs3."""
     import html
     import json
 
@@ -15012,6 +15471,7 @@ def test_esx_storage_live_status_requires_rpcbind_only_for_nfs3(client, monkeypa
     from atlaso.app.models import EsxNfsShare, EsxStorageSettings, EsxStorageVolume
 
     def fake_service_status(self, unit: str):
+        """Return fake service status."""
         active = "inactive" if unit == "rpcbind.service" else "active"
         enabled = "disabled" if unit == "rpcbind.service" else "enabled"
         return AdapterResult(
@@ -15084,6 +15544,7 @@ def test_esx_storage_live_status_requires_rpcbind_only_for_nfs3(client, monkeypa
 
 
 def test_services_dns_dhcp_rows_use_desired_enabled_state(client):
+    """Verify that services dns dhcp rows use desired enabled state."""
     import html
     import json
 
@@ -15121,6 +15582,7 @@ def test_services_dns_dhcp_rows_use_desired_enabled_state(client):
 
 
 def test_services_dns_dhcp_actions_update_desired_settings(client):
+    """Verify that services dns dhcp actions update desired settings."""
     import html
     import json
 
@@ -15161,6 +15623,7 @@ def test_services_dns_dhcp_actions_update_desired_settings(client):
 
 
 def test_services_live_dns_dhcp_runtime_uses_dnsmasq_systemd(client, monkeypatch):
+    """Verify that services live dns dhcp runtime uses dnsmasq systemd."""
     import html
     import json
 
@@ -15172,6 +15635,7 @@ def test_services_live_dns_dhcp_runtime_uses_dnsmasq_systemd(client, monkeypatch
     from atlaso.app.models import DhcpSettings, DnsSettings, ServiceState
 
     def fake_service_status(self, unit: str):
+        """Return fake service status."""
         active = "active" if unit == "dnsmasq.service" else "inactive"
         enabled = "enabled" if unit == "dnsmasq.service" else "disabled"
         return AdapterResult(
@@ -15214,6 +15678,7 @@ def test_services_live_dns_dhcp_runtime_uses_dnsmasq_systemd(client, monkeypatch
 
 
 def test_services_live_ntp_status_uses_systemd(client, monkeypatch):
+    """Verify that services live ntp status uses systemd."""
     import html
     import json
 
@@ -15221,6 +15686,7 @@ def test_services_live_ntp_status_uses_systemd(client, monkeypatch):
     from atlaso.app.config import get_settings
 
     def fake_service_status(self, unit: str):
+        """Return fake service status."""
         active = "active" if unit == "ntpd.service" else "inactive"
         enabled = "enabled" if unit == "ntpd.service" else "disabled"
         return AdapterResult(
@@ -15252,6 +15718,7 @@ def test_services_live_ntp_status_uses_systemd(client, monkeypatch):
 
 
 def test_services_ui_hides_dry_run_badge_when_adapters_are_live(client, monkeypatch):
+    """Verify that services ui hides dry run badge when adapters are live."""
     from atlaso.app.config import get_settings
 
     monkeypatch.setenv("ATLASO_DRY_RUN_SYSTEM_ADAPTERS", "false")
@@ -15268,6 +15735,7 @@ def test_services_ui_hides_dry_run_badge_when_adapters_are_live(client, monkeypa
 
 
 def test_ca_settings_autosave_returns_json(client):
+    """Verify that ca settings autosave returns json."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -15317,6 +15785,7 @@ def test_ca_settings_autosave_returns_json(client):
 
 
 def test_ca_internal_material_apply_does_not_require_public_listen_interface(client):
+    """Verify that ca internal material apply does not require public listen interface."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -15341,6 +15810,7 @@ def test_ca_internal_material_apply_does_not_require_public_listen_interface(cli
 
 
 def test_ca_apply_task_captures_current_desired_state(client):
+    """Verify that ca apply task captures current desired state."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -15361,6 +15831,7 @@ def test_ca_apply_task_captures_current_desired_state(client):
 
 
 def test_ca_live_apply_stages_decrypted_private_keys_without_leaking_job_output(client, monkeypatch, tmp_path):
+    """Verify that ca live apply stages decrypted private keys without leaking job output."""
     from pathlib import Path
 
     from sqlalchemy import select
@@ -15374,10 +15845,12 @@ def test_ca_live_apply_stages_decrypted_private_keys_without_leaking_job_output(
     captured: dict[str, str] = {}
 
     def fake_validate_ca_config(self, config_path: str):
+        """Return fake validate ca config."""
         captured["validate_payload"] = Path(config_path).read_text(encoding="utf-8")
         return AdapterResult(command=["atlaso-helper", "ca", "validate", config_path], dry_run=False, stdout="validated")
 
     def fake_apply_ca_config(self, config_path: str):
+        """Return fake apply ca config."""
         captured["apply_payload"] = Path(config_path).read_text(encoding="utf-8")
         return AdapterResult(command=["atlaso-helper", "ca", "apply", config_path], dry_run=False, stdout="applied")
 
@@ -15412,6 +15885,7 @@ def test_ca_live_apply_stages_decrypted_private_keys_without_leaking_job_output(
 
 
 def test_appliance_apply_status_redacts_undecryptable_ca_private_key(client):
+    """Verify that appliance apply status redacts undecryptable ca private key."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -15431,6 +15905,7 @@ def test_appliance_apply_status_redacts_undecryptable_ca_private_key(client):
 
 
 def test_dns_settings_accept_multiple_listen_interfaces(client):
+    """Verify that dns settings accept multiple listen interfaces."""
     login(client)
     page = client.get("/dns")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -15459,6 +15934,7 @@ def test_dns_settings_accept_multiple_listen_interfaces(client):
 
 
 def test_dns_settings_autosave_returns_json(client):
+    """Verify that dns settings autosave returns json."""
     login(client)
     page = client.get("/dns")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -15494,6 +15970,7 @@ def test_dns_settings_autosave_returns_json(client):
 
 
 def test_dns_settings_autosave_filters_invalid_listen_interfaces(client):
+    """Verify that dns settings autosave filters invalid listen interfaces."""
     login(client)
     page = client.get("/dns")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -15522,6 +15999,7 @@ def test_dns_settings_autosave_filters_invalid_listen_interfaces(client):
 
 
 def test_dns_validation_requires_dhcp_only_when_esxi_pxe_boot_enabled(client):
+    """Verify that dns validation requires dhcp only when esxi pxe boot enabled."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -15545,6 +16023,7 @@ def test_dns_validation_requires_dhcp_only_when_esxi_pxe_boot_enabled(client):
 
 
 def test_dns_apply_task_captures_current_desired_state(client):
+    """Verify that dns apply task captures current desired state."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -15570,6 +16049,7 @@ def test_dns_apply_task_captures_current_desired_state(client):
 
 
 def test_dhcp_settings_autosave_returns_json(client):
+    """Verify that dhcp settings autosave returns json."""
     login(client)
     page = client.get("/dhcp")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -15594,6 +16074,7 @@ def test_dhcp_settings_autosave_returns_json(client):
 
 
 def test_dhcp_settings_autosave_allows_service_toggle_only(client):
+    """Verify that dhcp settings autosave allows service toggle only."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -15622,6 +16103,7 @@ def test_dhcp_settings_autosave_allows_service_toggle_only(client):
 
 
 def test_dhcp_settings_badge_reflects_desired_state_not_seeded_service_state(client):
+    """Verify that dhcp settings badge reflects desired state not seeded service state."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -15646,6 +16128,7 @@ def test_dhcp_settings_badge_reflects_desired_state_not_seeded_service_state(cli
 
 
 def test_dhcp_scope_edit_form_updates_ip_zone(client):
+    """Verify that dhcp scope edit form updates ip zone."""
     login(client)
     page = client.get("/dhcp")
     import html
@@ -15705,6 +16188,7 @@ def test_dhcp_scope_edit_form_updates_ip_zone(client):
 
 
 def test_dhcp_vlan_scope_can_be_created_without_dns_server(client):
+    """Verify that dhcp vlan scope can be created without dns server."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -15755,6 +16239,7 @@ def test_dhcp_vlan_scope_can_be_created_without_dns_server(client):
 
 
 def test_dhcp_scope_family_cannot_change_after_create(client):
+    """Verify that dhcp scope family cannot change after create."""
     import html
     import json
 
@@ -15798,6 +16283,7 @@ def test_dhcp_scope_family_cannot_change_after_create(client):
 
 
 def test_dhcp_page_tolerates_stale_ipv6_esxi_pxe_scope_selection(client):
+    """Verify that dhcp page tolerates stale ipv6 esxi pxe scope selection."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -15836,6 +16322,7 @@ def test_dhcp_page_tolerates_stale_ipv6_esxi_pxe_scope_selection(client):
 
 
 def test_dhcp_apply_task_captures_current_desired_state(client):
+    """Verify that dhcp apply task captures current desired state."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -15861,6 +16348,7 @@ def test_dhcp_apply_task_captures_current_desired_state(client):
 
 
 def test_dhcp_reservation_edit_form_updates_row(client):
+    """Verify that dhcp reservation edit form updates row."""
     login(client)
     page = client.get("/dhcp")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -15908,6 +16396,7 @@ def test_dhcp_reservation_edit_form_updates_row(client):
 
 
 def test_dns_zone_create_adds_domain_tab(client):
+    """Verify that dns zone create adds domain tab."""
     login(client)
     page = client.get("/dns")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -15925,6 +16414,7 @@ def test_dns_zone_create_adds_domain_tab(client):
 
 
 def test_dhcp_option_wizard_create_and_direct_enablement_edit(client):
+    """Verify that dhcp option wizard create and direct enablement edit."""
     login(client)
     page = client.get("/dhcp")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -15959,6 +16449,7 @@ def test_dhcp_option_wizard_create_and_direct_enablement_edit(client):
 
 
 def test_dns_zone_disable_keeps_database_records_but_excludes_rendered_state(client):
+    """Verify that dns zone disable keeps database records but excludes rendered state."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -16020,6 +16511,7 @@ def test_dns_zone_disable_keeps_database_records_but_excludes_rendered_state(cli
 
 
 def test_dns_reverse_zones_are_closed_native_disclosures_with_authority_summary(client):
+    """Verify that dns reverse zones are closed native disclosures with authority summary."""
     login(client)
     page = client.get("/dns")
 
@@ -16037,6 +16529,7 @@ def test_dns_reverse_zones_are_closed_native_disclosures_with_authority_summary(
 
 
 def test_dns_zone_delete_removes_domain_and_scoped_records(client):
+    """Verify that dns zone delete removes domain and scoped records."""
     login(client)
     page = client.get("/dns")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -16081,6 +16574,7 @@ def test_dns_zone_delete_removes_domain_and_scoped_records(client):
 
 
 def test_dns_zone_delete_keeps_at_least_one_domain(client):
+    """Verify that dns zone delete keeps at least one domain."""
     login(client)
     page = client.get("/dns")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -16095,6 +16589,7 @@ def test_dns_zone_delete_keeps_at_least_one_domain(client):
 
 
 def test_dns_zone_warns_for_local_domain(client):
+    """Verify that dns zone warns for local domain."""
     login(client)
     page = client.get("/dns")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -16116,6 +16611,7 @@ def test_dns_zone_warns_for_local_domain(client):
 
 
 def test_vcf_helper_page_renders_domain_dropdown(client):
+    """Verify that vcf helper page renders domain dropdown."""
     from pathlib import Path
 
     login(client)
@@ -16230,6 +16726,7 @@ def test_vcf_helper_page_renders_domain_dropdown(client):
 
 
 def test_vcf_sddc_dhcp_assignment_uses_static_address_outside_scope(client):
+    """Verify that vcf sddc dhcp assignment uses static address outside scope."""
     import html
     import json
 
@@ -16274,6 +16771,7 @@ def test_vcf_sddc_dhcp_assignment_uses_static_address_outside_scope(client):
 
 
 def test_vcf_helper_renders_certificate_trust_modal(client):
+    """Verify that vcf helper renders certificate trust modal."""
     from pathlib import Path
 
     from atlaso.app.database import SessionLocal
@@ -16322,6 +16820,7 @@ def test_vcf_helper_renders_certificate_trust_modal(client):
 
 
 def test_vcf_trust_inspects_target_tls_without_persisting_target(client, monkeypatch):
+    """Verify that vcf trust inspects target tls without persisting target."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -16336,6 +16835,7 @@ def test_vcf_trust_inspects_target_tls_without_persisting_target(client, monkeyp
     original_resolver = ui._resolve_vcf_helper_credentials
 
     def track_resolver(*args, **kwargs):
+        """Return track resolver."""
         resolved_credentials.append(True)
         return original_resolver(*args, **kwargs)
 
@@ -16380,6 +16880,7 @@ def test_vcf_trust_inspects_target_tls_without_persisting_target(client, monkeyp
 
 
 def test_vcf_trust_requires_tls_confirmation_then_queues_without_persisting_credentials(client, monkeypatch):
+    """Verify that vcf trust requires tls confirmation then queues without persisting credentials."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -16401,6 +16902,7 @@ def test_vcf_trust_requires_tls_confirmation_then_queues_without_persisting_cred
     original_resolver = ui._resolve_vcf_helper_credentials
 
     def track_resolver(*args, **kwargs):
+        """Return track resolver."""
         resolved_credentials.append(True)
         return original_resolver(*args, **kwargs)
 
@@ -16471,6 +16973,7 @@ def test_vcf_trust_requires_tls_confirmation_then_queues_without_persisting_cred
 
 
 def test_vcf_trust_rejects_mismatched_confirmed_tls_fingerprint(client, monkeypatch):
+    """Verify that vcf trust rejects mismatched confirmed tls fingerprint."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.services.ca import ensure_root_ca_material
     from atlaso.app.ui import get_ca_settings_row
@@ -16502,6 +17005,7 @@ def test_vcf_trust_rejects_mismatched_confirmed_tls_fingerprint(client, monkeypa
 
 
 def test_vcf_trust_job_preserves_cancelled_state_at_progress_checkpoint(client, monkeypatch):
+    """Verify that vcf trust job preserves cancelled state at progress checkpoint."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, VcfTrustTarget
     from atlaso.app.services.ca import ensure_root_ca_material
@@ -16523,6 +17027,11 @@ def test_vcf_trust_job_preserves_cancelled_state_at_progress_checkpoint(client, 
         target_id = target.id
 
     def fake_execute(*_args, progress, **_kwargs):
+        """Handle fake execute.
+
+        Raises:
+            AssertionError: If an expected invariant is not satisfied.
+        """
         with SessionLocal() as db:
             job = db.get(Job, "job_vcf_trust_cancel")
             job.status = JobStatus.CANCELLED.value
@@ -16549,6 +17058,7 @@ def test_vcf_trust_job_preserves_cancelled_state_at_progress_checkpoint(client, 
 
 
 def test_vcf_target_depot_job_preserves_cancelled_state_at_progress_checkpoint(client, monkeypatch):
+    """Verify that vcf target depot job preserves cancelled state at progress checkpoint."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus
     from atlaso.app.services.vcf_depot_target import LocalDepotEndpoint
@@ -16567,6 +17077,11 @@ def test_vcf_target_depot_job_preserves_cancelled_state_at_progress_checkpoint(c
     )
 
     def fake_configure(*_args, progress, **_kwargs):
+        """Handle fake configure.
+
+        Raises:
+            AssertionError: If an expected invariant is not satisfied.
+        """
         with SessionLocal() as db:
             job = db.get(Job, "job_depot_cancel")
             job.status = JobStatus.CANCELLED.value
@@ -16595,6 +17110,7 @@ def test_vcf_target_depot_job_preserves_cancelled_state_at_progress_checkpoint(c
 
 
 def test_vcf_helper_generates_dns_records_with_component_descriptions(client):
+    """Verify that vcf helper generates dns records with component descriptions."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -16638,6 +17154,7 @@ def test_vcf_helper_generates_dns_records_with_component_descriptions(client):
 
 
 def test_vcf_helper_vvf_target_generates_subset(client):
+    """Verify that vcf helper vvf target generates subset."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -16680,6 +17197,7 @@ def test_vcf_helper_vvf_target_generates_subset(client):
 
 
 def test_vcf_helper_shows_existing_address_record_addresses_in_preview(client):
+    """Verify that vcf helper shows existing address record addresses in preview."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import DnsRecord
 
@@ -16715,6 +17233,7 @@ def test_vcf_helper_shows_existing_address_record_addresses_in_preview(client):
 
 
 def test_vcf_helper_prefix_suffix_and_ip_collision_skips(client):
+    """Verify that vcf helper prefix suffix and ip collision skips."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -16757,6 +17276,7 @@ def test_vcf_helper_prefix_suffix_and_ip_collision_skips(client):
 
 
 def test_vcf_helper_ipv6_generation_creates_aaaa_records_and_skips_collisions(client):
+    """Verify that vcf helper ipv6 generation creates aaaa records and skips collisions."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -16800,6 +17320,7 @@ def test_vcf_helper_ipv6_generation_creates_aaaa_records_and_skips_collisions(cl
 
 
 def test_vcf_helper_insufficient_addresses_creates_nothing(client):
+    """Verify that vcf helper insufficient addresses creates nothing."""
     from sqlalchemy import func, select
 
     from atlaso.app.database import SessionLocal
@@ -16832,6 +17353,7 @@ def test_vcf_helper_insufficient_addresses_creates_nothing(client):
 
 
 def test_vcf_helper_insufficient_ipv6_addresses_creates_nothing(client):
+    """Verify that vcf helper insufficient ipv6 addresses creates nothing."""
     from sqlalchemy import func, select
 
     from atlaso.app.database import SessionLocal
@@ -16864,6 +17386,7 @@ def test_vcf_helper_insufficient_ipv6_addresses_creates_nothing(client):
 
 
 def test_vcf_helper_rejects_network_or_broadcast_start_address(client):
+    """Verify that vcf helper rejects network or broadcast start address."""
     from sqlalchemy import func, select
 
     from atlaso.app.database import SessionLocal
@@ -16894,6 +17417,7 @@ def test_vcf_helper_rejects_network_or_broadcast_start_address(client):
 
 
 def test_vcf_helper_delete_removes_owned_records_and_preserves_skipped_existing(client):
+    """Verify that vcf helper delete removes owned records and preserves skipped existing."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -16953,6 +17477,7 @@ def test_vcf_helper_delete_removes_owned_records_and_preserves_skipped_existing(
 
 
 def test_vcf_helper_delete_vvf_target_removes_only_subset(client):
+    """Verify that vcf helper delete vvf target removes only subset."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -16996,6 +17521,7 @@ def test_vcf_helper_delete_vvf_target_removes_only_subset(client):
 
 
 def test_vcf_helper_delete_recognizes_legacy_generated_records(client):
+    """Verify that vcf helper delete recognizes legacy generated records."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -17035,6 +17561,7 @@ def test_vcf_helper_delete_recognizes_legacy_generated_records(client):
 
 
 def test_vcf_helper_delete_removes_owned_aaaa_records(client):
+    """Verify that vcf helper delete removes owned aaaa records."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -17075,6 +17602,7 @@ def test_vcf_helper_delete_removes_owned_aaaa_records(client):
 
 
 def test_duplicate_dns_record_form_shows_conflict(client):
+    """Verify that duplicate dns record form shows conflict."""
     login(client)
     page = client.get("/dns")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -17122,6 +17650,7 @@ def test_duplicate_dns_record_form_shows_conflict(client):
 
 
 def test_dns_record_form_scopes_relative_host_to_domain(client):
+    """Verify that dns record form scopes relative host to domain."""
     login(client)
     page = client.get("/dns")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -17145,6 +17674,7 @@ def test_dns_record_form_scopes_relative_host_to_domain(client):
 
 
 def test_dns_record_form_rejects_wrong_ip_family(client):
+    """Verify that dns record form rejects wrong ip family."""
     login(client)
     page = client.get("/dns")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -17165,6 +17695,7 @@ def test_dns_record_form_rejects_wrong_ip_family(client):
 
 
 def test_dns_record_edit_form_updates_row(client):
+    """Verify that dns record edit form updates row."""
     import html
     import json
 
@@ -17209,6 +17740,7 @@ def test_dns_record_edit_form_updates_row(client):
 
 
 def test_hosts_file_editor_replaces_dns_records(client):
+    """Verify that hosts file editor replaces dns records."""
     login(client)
     page = client.get("/dns")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -17232,6 +17764,7 @@ def test_hosts_file_editor_replaces_dns_records(client):
 
 
 def test_zone_file_editor_import_replaces_domain_records(client):
+    """Verify that zone file editor import replaces domain records."""
     login(client)
     page = client.get("/dns")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -17255,6 +17788,7 @@ def test_zone_file_editor_import_replaces_domain_records(client):
 
 
 def test_zone_file_import_error_preserves_pasted_zone_text(client):
+    """Verify that zone file import error preserves pasted zone text."""
     login(client)
     page = client.get("/dns")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -17277,6 +17811,7 @@ def test_zone_file_import_error_preserves_pasted_zone_text(client):
 
 
 def test_vcf_sddc_inventory_requires_tls_confirmation_and_redacts_credentials(client, monkeypatch):
+    """Verify that vcf sddc inventory requires tls confirmation and redacts credentials."""
     from atlaso.app import ui
     from atlaso.app.services.vcf_sddc_deployment import OvaDescriptor, OvfProperty
 
@@ -17302,6 +17837,7 @@ def test_vcf_sddc_inventory_requires_tls_confirmation_and_redacts_credentials(cl
     original_resolver = ui._resolve_vcf_helper_credentials
 
     def track_resolver(*args, **kwargs):
+        """Return track resolver."""
         resolved_credentials.append(kwargs["purpose"])
         return original_resolver(*args, **kwargs)
 
@@ -17326,6 +17862,7 @@ def test_vcf_sddc_inventory_requires_tls_confirmation_and_redacts_credentials(cl
 
 
 def test_vcf_target_depot_resolves_credentials_only_after_tls_confirmation(client, monkeypatch):
+    """Verify that vcf target depot resolves credentials only after tls confirmation."""
     from atlaso.app import ui
 
     login(client)
@@ -17352,6 +17889,7 @@ def test_vcf_target_depot_resolves_credentials_only_after_tls_confirmation(clien
     original_resolver = ui._resolve_vcf_helper_credentials
 
     def track_resolver(*args, **kwargs):
+        """Return track resolver."""
         resolved_credentials.append(kwargs["purpose"])
         return original_resolver(*args, **kwargs)
 
@@ -17387,6 +17925,7 @@ def test_vcf_target_depot_resolves_credentials_only_after_tls_confirmation(clien
 
 
 def test_vcf_sddc_deploy_job_persists_no_passwords(client, monkeypatch):
+    """Verify that vcf sddc deploy job persists no passwords."""
     import json
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
@@ -17488,6 +18027,7 @@ def test_vcf_sddc_deploy_job_persists_no_passwords(client, monkeypatch):
 
 
 def test_vcf_sddc_endpoint_address_parses_inline_port():
+    """Verify that vcf sddc endpoint address parses inline port."""
     from atlaso.app import ui
 
     assert ui._split_vcf_endpoint_address_port("vc.example:8443") == ("vc.example", 8443)
@@ -17496,6 +18036,7 @@ def test_vcf_sddc_endpoint_address_parses_inline_port():
 
 
 def test_vcf_sddc_deploy_waits_on_ip_before_new_dns_name(client, monkeypatch):
+    """Verify that vcf sddc deploy waits on ip before new dns name."""
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus
@@ -17554,6 +18095,7 @@ def test_vcf_sddc_deploy_waits_on_ip_before_new_dns_name(client, monkeypatch):
 
 
 def test_vcf_sddc_deploy_requires_ipv4_ova_properties(client, monkeypatch):
+    """Verify that vcf sddc deploy requires ipv4 ova properties."""
     from atlaso.app import ui
     from atlaso.app.services.vcf_sddc_deployment import OvaDescriptor, OvfProperty
 
@@ -17615,6 +18157,7 @@ def test_vcf_sddc_deploy_requires_ipv4_ova_properties(client, monkeypatch):
 
 
 def test_recover_interrupted_vcf_helper_jobs_discards_transient_work(client):
+    """Verify that recover interrupted vcf helper jobs discards transient work."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job
     from atlaso.app.ui import recover_interrupted_vcf_helper_jobs

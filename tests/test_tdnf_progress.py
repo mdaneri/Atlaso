@@ -1,3 +1,5 @@
+"""Test tdnf progress behavior."""
+
 from __future__ import annotations
 
 import subprocess
@@ -9,6 +11,11 @@ SCRIPT = Path("scripts/run_tdnf_with_progress.py").resolve()
 
 
 def run_progress_wrapper(tmp_path: Path, child_source: str, *extra_args: str) -> subprocess.CompletedProcess[str]:
+    """Run progress wrapper.
+
+    Returns:
+        The run progress wrapper result.
+    """
     cache = tmp_path / "cache"
     cache.mkdir()
     (cache / "download.rpm").write_bytes(b"x" * 2048)
@@ -36,6 +43,7 @@ def run_progress_wrapper(tmp_path: Path, child_source: str, *extra_args: str) ->
 
 
 def test_progress_wrapper_emits_heartbeats_without_streaming_raw_output(tmp_path):
+    """Verify that progress wrapper emits heartbeats without streaming raw output."""
     result = run_progress_wrapper(
         tmp_path,
         "import time; print('raw transaction output', flush=True); time.sleep(0.14)",
@@ -51,6 +59,7 @@ def test_progress_wrapper_emits_heartbeats_without_streaming_raw_output(tmp_path
 
 
 def test_progress_wrapper_replays_bounded_normalized_tail_on_failure(tmp_path):
+    """Verify that progress wrapper replays bounded normalized tail on failure."""
     result = run_progress_wrapper(
         tmp_path,
         "import sys; "

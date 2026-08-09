@@ -1,3 +1,5 @@
+"""Test check repo policies behavior."""
+
 from pathlib import Path
 
 from scripts.check_repo import (
@@ -9,6 +11,7 @@ from scripts.check_repo import (
 
 
 def write_policy_files(root: Path) -> None:
+    """Persist policy files."""
     for relative_path, markers in REQUIRED_POLICY_MARKERS.items():
         path = root / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -16,12 +19,14 @@ def write_policy_files(root: Path) -> None:
 
 
 def test_agent_policy_gate_accepts_all_required_entry_points(tmp_path: Path) -> None:
+    """Verify that agent policy gate accepts all required entry points."""
     write_policy_files(tmp_path)
 
     assert check_agent_policy_gate(tmp_path) == []
 
 
 def test_agent_policy_gate_rejects_missing_marker(tmp_path: Path) -> None:
+    """Verify that agent policy gate rejects missing marker."""
     write_policy_files(tmp_path)
     agents_path = tmp_path / "AGENTS.md"
     agents_path.write_text(
@@ -39,6 +44,7 @@ def test_agent_policy_gate_rejects_missing_marker(tmp_path: Path) -> None:
 
 
 def test_agent_policy_gate_rejects_missing_entry_point(tmp_path: Path) -> None:
+    """Verify that agent policy gate rejects missing entry point."""
     write_policy_files(tmp_path)
     missing_path = tmp_path / ".github" / "copilot-instructions.md"
     missing_path.unlink()
@@ -53,6 +59,7 @@ def test_agent_policy_gate_rejects_missing_entry_point(tmp_path: Path) -> None:
 
 
 def test_agent_policy_gate_rejects_missing_ui_guide(tmp_path: Path) -> None:
+    """Verify that agent policy gate rejects missing ui guide."""
     write_policy_files(tmp_path)
     missing_path = tmp_path / "docs" / "contribute" / "ui-design-guide.md"
     missing_path.unlink()
@@ -67,6 +74,7 @@ def test_agent_policy_gate_rejects_missing_ui_guide(tmp_path: Path) -> None:
 
 
 def test_agent_policy_gate_rejects_missing_ui_gate(tmp_path: Path) -> None:
+    """Verify that agent policy gate rejects missing ui gate."""
     write_policy_files(tmp_path)
     agents_path = tmp_path / "AGENTS.md"
     agents_path.write_text(
@@ -87,6 +95,7 @@ def test_agent_policy_gate_rejects_missing_ui_gate(tmp_path: Path) -> None:
 
 
 def write_ui_foundation_fixture(root: Path) -> None:
+    """Persist ui foundation fixture."""
     static = root / "atlaso" / "app" / "static"
     templates = root / "atlaso" / "app" / "templates"
     static.mkdir(parents=True)
@@ -117,12 +126,14 @@ def write_ui_foundation_fixture(root: Path) -> None:
 
 
 def test_ui_pattern_foundation_accepts_shared_entry_points(tmp_path: Path) -> None:
+    """Verify that ui pattern foundation accepts shared entry points."""
     write_ui_foundation_fixture(tmp_path)
 
     assert check_ui_pattern_foundation(tmp_path) == []
 
 
 def test_ui_pattern_foundation_rejects_new_raw_tabulator(tmp_path: Path) -> None:
+    """Verify that ui pattern foundation rejects new raw tabulator."""
     write_ui_foundation_fixture(tmp_path)
     path = tmp_path / "atlaso" / "app" / "static" / "new-page.js"
     path.write_text("new window.Tabulator('#new-grid');\n", encoding="utf-8")
@@ -137,6 +148,7 @@ def test_ui_pattern_foundation_rejects_new_raw_tabulator(tmp_path: Path) -> None
 
 
 def test_ui_pattern_foundation_rejects_raw_tabulator_in_template(tmp_path: Path) -> None:
+    """Verify that ui pattern foundation rejects raw tabulator in template."""
     write_ui_foundation_fixture(tmp_path)
     path = tmp_path / "atlaso" / "app" / "templates" / "inline-grid.html"
     path.write_text(
@@ -156,6 +168,7 @@ def test_ui_pattern_foundation_rejects_raw_tabulator_in_template(tmp_path: Path)
 
 
 def test_ui_pattern_foundation_rejects_completed_legacy_marker(tmp_path: Path) -> None:
+    """Verify that ui pattern foundation rejects completed legacy marker."""
     write_ui_foundation_fixture(tmp_path)
     path = tmp_path / "atlaso" / "app" / "static" / "app.js"
     with path.open("a", encoding="utf-8") as stream:
@@ -173,6 +186,7 @@ def test_ui_pattern_foundation_rejects_completed_legacy_marker(tmp_path: Path) -
 
 
 def test_ui_pattern_foundation_rejects_wizard_without_shared_contract(tmp_path: Path) -> None:
+    """Verify that ui pattern foundation rejects wizard without shared contract."""
     write_ui_foundation_fixture(tmp_path)
     path = tmp_path / "atlaso" / "app" / "templates" / "bypass.html"
     path.write_text(
@@ -189,6 +203,7 @@ def test_ui_pattern_foundation_rejects_wizard_without_shared_contract(tmp_path: 
 
 
 def test_ui_pattern_foundation_rejects_page_step_controller(tmp_path: Path) -> None:
+    """Verify that ui pattern foundation rejects page step controller."""
     write_ui_foundation_fixture(tmp_path)
     path = tmp_path / "atlaso" / "app" / "static" / "new-wizard.js"
     path.write_text(

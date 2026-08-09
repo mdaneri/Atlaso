@@ -1,3 +1,5 @@
+"""Implement appliance console behavior."""
+
 from __future__ import annotations
 
 import json
@@ -20,6 +22,7 @@ ENV_PATH = Path("/etc/atlaso/atlaso.env")
 
 
 def _load_environment() -> None:
+    """Return environment."""
     if not ENV_PATH.exists():
         return
     try:
@@ -155,6 +158,7 @@ HELP_PAGES = (
 
 
 def _console_refresh_seconds() -> int:
+    """Return console refresh seconds."""
     try:
         value = int(os.environ.get(CONSOLE_REFRESH_ENV, "5"))
     except ValueError:
@@ -166,10 +170,12 @@ CONSOLE_REFRESH_SECONDS = _console_refresh_seconds()
 
 
 class ConsoleOperationError(RuntimeError):
+    """Report a console operation error."""
     pass
 
 
 class ConsoleNetworkInventoryUnavailable(ConsoleOperationError):
+    """Represent console network inventory unavailable."""
     pass
 
 
@@ -179,6 +185,7 @@ def _console_status_failure(
     started_at: float,
     now: float | None = None,
 ) -> tuple[str, bool]:
+    """Return console status failure."""
     current = time.monotonic() if now is None else now
     if isinstance(exc, ConsoleNetworkInventoryUnavailable) and current - started_at < CONSOLE_STARTUP_GRACE_SECONDS:
         return "Initializing appliance networking...", False
@@ -187,6 +194,19 @@ def _console_status_failure(
 
 @dataclass(frozen=True)
 class ServiceStatus:
+    """Represent service status.
+
+    Attributes:
+        label: Label maintained by this servicestatus.
+        unit: Unit maintained by this servicestatus.
+        load_state: Load state maintained by this servicestatus.
+        unit_file_state: Unit file state maintained by this servicestatus.
+        active_state: Active state maintained by this servicestatus.
+        desired_enabled: Whether desired is enabled.
+        runtime_label: Return runtime label.
+        enabled_label: Return enabled label.
+        display_label: Return display label.
+    """
     label: str
     unit: str
     load_state: str
@@ -196,6 +216,7 @@ class ServiceStatus:
 
     @property
     def runtime_label(self) -> str:
+        """Return runtime label."""
         if self.load_state != "loaded":
             return "unavailable"
         if self.active_state in {"active", "reloading", "activating"}:
@@ -206,12 +227,14 @@ class ServiceStatus:
 
     @property
     def enabled_label(self) -> str:
+        """Return enabled label."""
         if self.desired_enabled is not None:
             return "enabled" if self.desired_enabled else "disabled"
         return "enabled" if self.unit_file_state in ENABLED_UNIT_FILE_STATES else "disabled"
 
     @property
     def display_label(self) -> str:
+        """Return display label."""
         runtime = self.runtime_label
         if self.label == "Firewall" and runtime == "running":
             runtime = "ready"
@@ -224,6 +247,31 @@ class ServiceStatus:
 
 @dataclass(frozen=True)
 class ConsoleStatus:
+    """Represent console status.
+
+    Attributes:
+        hostname: Hostname maintained by this consolestatus.
+        release: Release maintained by this consolestatus.
+        architecture: Architecture maintained by this consolestatus.
+        version: Version maintained by this consolestatus.
+        kernel: Kernel maintained by this consolestatus.
+        cpu: Cpu maintained by this consolestatus.
+        memory: Memory maintained by this consolestatus.
+        load: Load maintained by this consolestatus.
+        load_severity: Load severity maintained by this consolestatus.
+        interface: Interface maintained by this consolestatus.
+        ipv4_method: Ipv4 method maintained by this consolestatus.
+        ipv4_cidr: Ipv4 cidr maintained by this consolestatus.
+        gateway: Gateway maintained by this consolestatus.
+        ipv6_mode: Ipv6 mode maintained by this consolestatus.
+        ipv6_cidr: Ipv6 cidr maintained by this consolestatus.
+        ipv6_gateway: Ipv6 gateway maintained by this consolestatus.
+        dns_servers: Dns servers maintained by this consolestatus.
+        firewall_enabled: Whether firewall is enabled.
+        maintenance_isolation: Maintenance isolation maintained by this consolestatus.
+        services: Services maintained by this consolestatus.
+        urls: Urls maintained by this consolestatus.
+    """
     hostname: str
     release: str
     architecture: str
@@ -254,6 +302,20 @@ def _run(
     timeout: float = 10,
     check: bool = False,
 ) -> subprocess.CompletedProcess[str]:
+    """Run operation.
+
+    Args:
+        command: Command and arguments to execute or validate.
+        input_text: Untrusted input text to parse or validate.
+        timeout: Maximum time to wait for completion.
+        check: Validation or readiness check to execute.
+
+    Returns:
+        The run result.
+
+    Raises:
+        ConsoleOperationError: If the operation encounters an invalid state.
+    """
     result = subprocess.run(
         command,
         input=input_text,
@@ -269,6 +331,12 @@ def _run(
 
 
 def _read_text(path: Path, fallback: str = "") -> str:
+    """Return text.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        fallback: Fallback supplied by the caller.
+    """
     try:
         return path.read_text(encoding="utf-8").strip()
     except OSError:
@@ -276,10 +344,12 @@ def _read_text(path: Path, fallback: str = "") -> str:
 
 
 def _first_display_line(value: str, fallback: str = "") -> str:
+    """Return first display line."""
     return next((line.strip() for line in value.splitlines() if line.strip()), fallback)
 
 
 def _systemd_unit_states(units: list[str]) -> dict[str, dict[str, str]]:
+    """Return systemd unit states."""
     try:
         result = _run(
             [
@@ -310,6 +380,12 @@ def _systemd_unit_states(units: list[str]) -> dict[str, dict[str, str]]:
 def _appliance_service_statuses(db: Any, *, firewall_enabled: bool) -> tuple[ServiceStatus, ...]:
     # Reuse the Services page projections so the web UI and tty describe the
     # same desired state. Systemd is only an additional runtime truth source.
+    """Return appliance service statuses.
+
+    Args:
+        db: Active database session.
+        firewall_enabled: Firewall enabled supplied by the caller.
+    """
     from atlaso.app.ui import services_template_context
 
     rows = {str(row["service"]): row for row in services_template_context(db)["service_rows"]}
@@ -345,6 +421,7 @@ def _appliance_service_statuses(db: Any, *, firewall_enabled: bool) -> tuple[Ser
 
 
 def _cpu_summary() -> str:
+    """Return cpu summary."""
     model = ""
     count = os.cpu_count() or 0
     try:
@@ -358,6 +435,7 @@ def _cpu_summary() -> str:
 
 
 def _memory_summary() -> str:
+    """Return memory summary."""
     try:
         values: dict[str, int] = {}
         for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
@@ -375,6 +453,7 @@ def _memory_summary() -> str:
 
 
 def _load_summary() -> str:
+    """Return summary."""
     return _load_status()[0]
 
 
@@ -382,6 +461,7 @@ def _load_status(
     values: tuple[float, float, float] | None = None,
     cpu_count: int | None = None,
 ) -> tuple[str, str]:
+    """Return status."""
     try:
         one, five, fifteen = values if values is not None else os.getloadavg()
     except (AttributeError, OSError):
@@ -393,6 +473,7 @@ def _load_status(
 
 
 def _package_version() -> str:
+    """Return package version."""
     try:
         return version("atlaso")
     except PackageNotFoundError:
@@ -400,6 +481,7 @@ def _package_version() -> str:
 
 
 def _architecture_label(machine: str | None = None) -> str:
+    """Return architecture label."""
     reported = (machine if machine is not None else platform.machine()).strip().lower()
     aliases = {
         "x86_64": "amd64",
@@ -418,6 +500,14 @@ def _architecture_label(machine: str | None = None) -> str:
 
 
 def _management_interface(db: Any) -> PhysicalInterface:
+    """Return management interface.
+
+    Args:
+        db: Active database session.
+
+    Raises:
+        ConsoleNetworkInventoryUnavailable: If the operation encounters an invalid state.
+    """
     interface = db.scalar(
         select(PhysicalInterface)
         .where(PhysicalInterface.role == "management")
@@ -433,6 +523,7 @@ def _management_interface(db: Any) -> PhysicalInterface:
 
 
 def _fallback_gateway(interface_name: str, version: int = 4) -> str:
+    """Return fallback gateway."""
     try:
         result = _run(["ip", "-6" if version == 6 else "-4", "route", "show", "default", "dev", interface_name], timeout=2)
     except (OSError, subprocess.TimeoutExpired):
@@ -442,6 +533,7 @@ def _fallback_gateway(interface_name: str, version: int = 4) -> str:
 
 
 def _fallback_cidr(interface_name: str, version: int = 4) -> str:
+    """Return fallback cidr."""
     try:
         result = _run(["ip", "-6" if version == 6 else "-4", "-o", "addr", "show", "dev", interface_name, "scope", "global"], timeout=2)
     except (OSError, subprocess.TimeoutExpired):
@@ -452,6 +544,7 @@ def _fallback_cidr(interface_name: str, version: int = 4) -> str:
 
 
 def _fallback_dns_servers(interface_name: str) -> tuple[str, ...]:
+    """Return fallback dns servers."""
     candidates: list[str] = []
     try:
         result = _run(["resolvectl", "dns", interface_name], timeout=2)
@@ -487,6 +580,7 @@ def management_urls(
     *,
     https_enabled: bool = True,
 ) -> tuple[str, ...]:
+    """Return management urls."""
     scheme = "https" if https_enabled else "http"
     urls: list[str] = []
     if fqdn:
@@ -505,6 +599,11 @@ def management_urls(
 
 
 def load_console_status() -> ConsoleStatus:
+    """Return console status.
+
+    Raises:
+        ConsoleNetworkInventoryUnavailable: If the operation encounters an invalid state.
+    """
     try:
         with SessionLocal() as db:
             interface = _management_interface(db)
@@ -567,6 +666,11 @@ def load_console_status() -> ConsoleStatus:
 
 
 def authenticate_root(password: str) -> bool:
+    """Return authenticate root.
+
+    Args:
+        password: Password supplied for the immediate authenticated operation.
+    """
     if not password:
         return False
     try:
@@ -581,6 +685,14 @@ def authenticate_root(password: str) -> bool:
 
 
 def validate_management_values(ipv4_method: str, ipv4_cidr: str, gateway: str) -> tuple[str, str, str]:
+    """Validate management values.
+
+    Returns:
+        The validate management values result.
+
+    Raises:
+        ConsoleOperationError: If the operation encounters an invalid state.
+    """
     method = ipv4_method.strip().lower()
     if method not in {"dhcp", "static"}:
         raise ConsoleOperationError("Management IPv4 method must be DHCP or static.")
@@ -608,6 +720,14 @@ def validate_management_values(ipv4_method: str, ipv4_cidr: str, gateway: str) -
 
 
 def validate_ipv6_management_values(ipv6_mode: str, ipv6_cidr: str, ipv6_gateway: str) -> tuple[str, str, str]:
+    """Validate ipv6 management values.
+
+    Returns:
+        The validate ipv6 management values result.
+
+    Raises:
+        ConsoleOperationError: If the operation encounters an invalid state.
+    """
     mode = ipv6_mode.strip().lower()
     if mode not in {"disabled", "automatic", "static"}:
         raise ConsoleOperationError("Management IPv6 mode must be disabled, automatic, or static.")
@@ -639,6 +759,14 @@ def validate_ipv6_management_values(ipv6_mode: str, ipv6_cidr: str, ipv6_gateway
 
 
 def validate_dns_servers(raw: str) -> list[str]:
+    """Validate dns servers.
+
+    Returns:
+        The validate dns servers result.
+
+    Raises:
+        ConsoleOperationError: If the operation encounters an invalid state.
+    """
     servers = [item for item in re.split(r"[\s,]+", raw.strip()) if item]
     if not servers:
         raise ConsoleOperationError("At least one DNS server is required.")
@@ -651,6 +779,11 @@ def validate_dns_servers(raw: str) -> list[str]:
 
 
 def _captured_apply_payload(units: list[dict[str, Any]], selected_ids: set[str]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Return captured apply payload.
+
+    Raises:
+        ConsoleOperationError: If the operation encounters an invalid state.
+    """
     selected = [unit for unit in units if unit["id"] in selected_ids]
     invalid = [unit["label"] for unit in selected if unit["validation_errors"]]
     if invalid:
@@ -686,6 +819,7 @@ def _captured_apply_payload(units: list[dict[str, Any]], selected_ids: set[str])
 
 
 def _console_unit_hashes(unit_ids: set[str]) -> dict[str, str]:
+    """Return console unit hashes."""
     from atlaso.app.ui import appliance_apply_units
 
     with SessionLocal() as db:
@@ -697,6 +831,11 @@ def _console_unit_hashes(unit_ids: set[str]) -> dict[str, str]:
 
 
 def _ensure_no_active_apply() -> None:
+    """Ensure no active apply.
+
+    Raises:
+        ConsoleOperationError: If the operation encounters an invalid state.
+    """
     from atlaso.app.ui import active_appliance_apply_job
 
     with SessionLocal() as db:
@@ -707,6 +846,11 @@ def _ensure_no_active_apply() -> None:
 
 def _submit_console_apply(required_ids: set[str], *, changed_dependents: dict[str, str] | None = None) -> str:
     # Imported lazily so read-only status remains available even if the web stack has a startup issue.
+    """Return submit console apply.
+
+    Raises:
+        ConsoleOperationError: If the operation encounters an invalid state.
+    """
     from atlaso.app.ui import (
         active_appliance_apply_job,
         active_vcf_depot_execution_job,
@@ -793,6 +937,23 @@ def configure_management(
     ipv6_gateway: str,
     raw_dns_servers: str,
 ) -> str:
+    """Update management.
+
+    Args:
+        ipv4_method: Ipv4 method supplied by the caller.
+        ipv4_cidr: Ipv4 cidr supplied by the caller.
+        gateway: Gateway supplied by the caller.
+        ipv6_mode: Ipv6 mode supplied by the caller.
+        ipv6_cidr: IPv6 network or address in CIDR notation.
+        ipv6_gateway: Ipv6 gateway supplied by the caller.
+        raw_dns_servers: Raw dns servers supplied by the caller.
+
+    Returns:
+        The configure management result.
+
+    Raises:
+        ConsoleOperationError: If the operation encounters an invalid state.
+    """
     method, cidr, gateway_value = validate_management_values(ipv4_method, ipv4_cidr, gateway)
     mode, ipv6_cidr_value, ipv6_gateway_value = validate_ipv6_management_values(ipv6_mode, ipv6_cidr, ipv6_gateway)
     dns_servers = validate_dns_servers(raw_dns_servers)
@@ -824,6 +985,14 @@ def configure_management(
 
 
 def configure_dns(raw_servers: str) -> str:
+    """Update dns.
+
+    Returns:
+        The configure dns result.
+
+    Raises:
+        ConsoleOperationError: If the operation encounters an invalid state.
+    """
     servers = validate_dns_servers(raw_servers)
     _ensure_no_active_apply()
     with SessionLocal() as db:
@@ -837,6 +1006,11 @@ def configure_dns(raw_servers: str) -> str:
 
 
 def configure_firewall(enabled: bool) -> str:
+    """Update firewall.
+
+    Returns:
+        The configure firewall result.
+    """
     _ensure_no_active_apply()
     with SessionLocal() as db:
         firewall = db.scalar(select(FirewallSettings).order_by(FirewallSettings.id))
@@ -858,6 +1032,11 @@ def configure_firewall(enabled: bool) -> str:
 
 
 def set_maintenance_isolation(enabled: bool) -> dict[str, Any]:
+    """Update maintenance isolation.
+
+    Returns:
+        The set maintenance isolation result.
+    """
     action = "disable-services" if enabled else "restore-services"
     result = _run([str(HELPER_PATH), "console", action, "--real"], timeout=60, check=True)
     payload_lines = [line for line in result.stdout.splitlines() if line.strip().startswith("{")]
@@ -874,6 +1053,11 @@ def set_maintenance_isolation(enabled: bool) -> dict[str, Any]:
 
 
 def schedule_power(action: str) -> str:
+    """Return schedule power.
+
+    Raises:
+        ConsoleOperationError: If the operation encounters an invalid state.
+    """
     if action not in {"reboot", "shutdown"}:
         raise ConsoleOperationError("Unsupported appliance power action.")
     job_id = f"job_{uuid4().hex[:12]}"
@@ -938,6 +1122,11 @@ def schedule_power(action: str) -> str:
 
 
 def record_console_shell(action: str) -> None:
+    """Persist console shell.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     if action not in {"open", "close"}:
         raise ValueError("Unsupported console shell audit action.")
     with SessionLocal() as db:
@@ -953,7 +1142,16 @@ def record_console_shell(action: str) -> None:
 
 
 class CursesConsole:
+    """Represent curses console.
+
+    Attributes:
+        curses: Curses maintained by this cursesconsole.
+        stdscr: Stdscr maintained by this cursesconsole.
+        message: Message maintained by this cursesconsole.
+        message_error: Message error maintained by this cursesconsole.
+    """
     def __init__(self, stdscr: Any) -> None:
+        """Initialize the curses console."""
         import curses
 
         self.curses = curses
@@ -966,6 +1164,7 @@ class CursesConsole:
         self._initialize_screen()
 
     def _initialize_screen(self) -> None:
+        """Handle initialize screen."""
         curses = self.curses
         curses.curs_set(0)
         curses.noecho()
@@ -1038,6 +1237,15 @@ class CursesConsole:
         return [now + 1, now + 3, now + 8]
 
     def _safe_add(self, y: int, x: int, text: str, attr: int = 0, width: int | None = None) -> None:
+        """Handle safe add.
+
+        Args:
+            y: Y supplied by the caller.
+            x: X supplied by the caller.
+            text: Text to parse, render, or persist.
+            attr: Attr supplied by the caller.
+            width: Width supplied by the caller.
+        """
         height, screen_width = self.stdscr.getmaxyx()
         if y < 0 or y >= height or x < 0 or x >= screen_width:
             return
@@ -1048,16 +1256,19 @@ class CursesConsole:
             pass
 
     def _fill_line(self, y: int, attr: int) -> None:
+        """Handle fill line."""
         _, width = self.stdscr.getmaxyx()
         self._safe_add(y, 0, " " * width, attr, width + 1)
 
     def _refresh_screen(self) -> None:
+        """Handle refresh screen."""
         if self._force_redraw:
             self.stdscr.touchwin()
             self._force_redraw = False
         self.stdscr.refresh()
 
     def draw_main(self) -> None:
+        """Handle draw main."""
         curses = self.curses
         if self._force_clear:
             self.stdscr.clear()
@@ -1164,6 +1375,7 @@ class CursesConsole:
         return grid_last_row < message_row
 
     def _service_attr(self, service: ServiceStatus) -> int:
+        """Return service attr."""
         curses = self.curses
         if service.runtime_label == "failed":
             return curses.color_pair(7) | curses.A_BOLD
@@ -1178,6 +1390,7 @@ class CursesConsole:
         return curses.color_pair(6)
 
     def _load_attr(self, severity: str) -> int:
+        """Return attr."""
         curses = self.curses
         return {
             "warning": curses.color_pair(6) | curses.A_BOLD,
@@ -1186,11 +1399,13 @@ class CursesConsole:
 
     @staticmethod
     def _service_cell(service: ServiceStatus, width: int) -> str:
+        """Return service cell."""
         label_width = min(21, max(width - 3, 1))
         return f"{service.label:<{label_width}} {service.display_label}"[: max(width - 1, 1)].rstrip()
 
     @staticmethod
     def _service_summary(services: tuple[ServiceStatus, ...]) -> str:
+        """Return service summary."""
         counts = {label: sum(service.runtime_label == label for service in services) for label in ("running", "failed", "stopped", "unavailable")}
         firewall = next((service.enabled_label for service in services if service.label == "Firewall"), "unavailable")
         return (
@@ -1234,6 +1449,7 @@ class CursesConsole:
         return f"{label:<{label_width}}{value}"[:content_width].rstrip()
 
     def _draw_footer(self, height: int, width: int) -> None:
+        """Handle draw footer."""
         curses = self.curses
         self._fill_line(height - 1, curses.color_pair(3))
         self._safe_add(height - 1, 1, "<F1> Help", curses.color_pair(3) | curses.A_BOLD)
@@ -1244,6 +1460,7 @@ class CursesConsole:
         self._safe_add(height - 1, max(width - len(label) - 2, 54), label, curses.color_pair(3) | curses.A_BOLD)
 
     def show_help(self) -> None:
+        """Handle show help."""
         curses = self.curses
         height, width = self.stdscr.getmaxyx()
         box_width = min(74, width - 4)
@@ -1311,6 +1528,7 @@ class CursesConsole:
                     return
 
     def _draw_dialog_title(self, window: Any, title: str, box_width: int) -> None:
+        """Handle draw dialog title."""
         framed_title = f" {title} "
         window.addnstr(
             0,
@@ -1321,6 +1539,7 @@ class CursesConsole:
         )
 
     def _dialog(self, title: str, lines: list[str], options: list[str]) -> int:
+        """Return dialog."""
         curses = self.curses
         height, width = self.stdscr.getmaxyx()
         box_width = min(max(max([len(title), *[len(line) for line in lines], *[len(option) for option in options]]) + 8, 48), width - 4)
@@ -1361,6 +1580,7 @@ class CursesConsole:
                 return len(options) - 1
 
     def _prompt(self, title: str, label: str, initial: str = "", *, secret: bool = False) -> str | None:
+        """Return prompt."""
         curses = self.curses
         height, width = self.stdscr.getmaxyx()
         box_width = min(max(len(label) + 8, 64), width - 4)
@@ -1430,6 +1650,7 @@ class CursesConsole:
         return self._edit_text(value, cursor, key, limit=limit)
 
     def _edit_text(self, value: str, cursor: int, key: int, *, limit: int = 500) -> tuple[str, int]:
+        """Return edit text."""
         curses = self.curses
         if key == curses.KEY_LEFT:
             return value, max(cursor - 1, 0)
@@ -1448,6 +1669,7 @@ class CursesConsole:
         return value, cursor
 
     def _management_form(self, status: ConsoleStatus) -> tuple[str, str, str, str, str, str, str] | None:
+        """Return management form."""
         curses = self.curses
         height, width = self.stdscr.getmaxyx()
         box_height = min(20, height - 2)
@@ -1482,6 +1704,7 @@ class CursesConsole:
         modes = {"ipv4_method": ("dhcp", "static"), "ipv6_mode": ("disabled", "automatic", "static")}
 
         def enabled(name: str) -> bool:
+            """Return enabled."""
             if name in {"ipv4_cidr", "gateway"}:
                 return values["ipv4_method"] == "static"
             if name in {"ipv6_cidr", "ipv6_gateway"}:
@@ -1489,6 +1712,7 @@ class CursesConsole:
             return True
 
         def move(delta: int) -> None:
+            """Handle move."""
             nonlocal selected
             for _ in order:
                 selected = (selected + delta) % len(order)
@@ -1594,6 +1818,7 @@ class CursesConsole:
                 )
 
     def _require_authentication(self) -> bool:
+        """Return require authentication."""
         password = self._prompt("Photon OS root authentication", "Root password:", secret=True)
         if password is None:
             return False
@@ -1612,6 +1837,7 @@ class CursesConsole:
         return authenticated
 
     def _apply_action(self, operation: Callable[[], str | dict[str, Any] | None], success: str) -> None:
+        """Update action."""
         try:
             result = operation()
             suffix = f" ({result})" if isinstance(result, str) else ""
@@ -1626,6 +1852,11 @@ class CursesConsole:
             self._force_clear = True
 
     def _run_interactive(self, command: list[str], label: str) -> int | None:
+        """Run interactive.
+
+        Returns:
+            The run interactive result.
+        """
         curses = self.curses
         try:
             curses.def_prog_mode()
@@ -1700,6 +1931,7 @@ class CursesConsole:
                 self.message_error = True
 
     def customize(self) -> None:
+        """Handle customize."""
         if not self._require_authentication():
             return
         while True:
@@ -1775,6 +2007,7 @@ class CursesConsole:
         self.draw_main()
 
     def power_menu(self) -> None:
+        """Handle power menu."""
         if not self._require_authentication():
             return
         choice = self._dialog(
@@ -1790,6 +2023,7 @@ class CursesConsole:
                 self._apply_action(lambda: schedule_power("shutdown"), "Shutdown scheduled")
 
     def run(self) -> None:
+        """Run operation."""
         curses = self.curses
         self.draw_main()
         last_refresh = time.monotonic()
@@ -1835,6 +2069,11 @@ class CursesConsole:
 
 
 def main() -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        The main result.
+    """
     if os.name != "posix":
         print("Atlaso appliance console is available only on the Photon OS appliance.", file=sys.stderr)
         return 2

@@ -1,3 +1,5 @@
+"""Construct the FastAPI application and manage process lifecycle hooks."""
+
 from contextlib import asynccontextmanager
 import asyncio
 import logging
@@ -58,16 +60,28 @@ APPLIANCE_LOCK_EXEMPT_PATHS = {
 
 
 def configure_logging(db: Session | None = None) -> None:
+    """Update logging.
+
+    Args:
+        db: Active database session.
+    """
     configure_operational_logging(db)
 
 
 def refresh_startup_host_inventory(db: Session, *, environment: str) -> None:
+    """Handle refresh startup host inventory.
+
+    Args:
+        db: Active database session.
+        environment: Environment supplied by the caller.
+    """
     if environment == "appliance":
         sync_host_physical_interfaces(db)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Manage application startup and shutdown."""
     settings = get_settings()
     cleanup_transient_secret_staging_files()
     configure_logging()
@@ -102,6 +116,11 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    """Create app.
+
+    Returns:
+        The created app.
+    """
     settings = get_settings()
     appliance_mutation_lock = asyncio.Lock()
     app = FastAPI(
@@ -131,6 +150,12 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def appliance_apply_lock_middleware(request: Request, call_next):
+        """Return appliance apply lock middleware.
+
+        Args:
+            request: Incoming HTTP request.
+            call_next: Call next supplied by the caller.
+        """
         if request.method.upper() in {"GET", "HEAD", "OPTIONS"}:
             return await call_next(request)
         async with appliance_mutation_lock:
@@ -158,6 +183,12 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def request_id_middleware(request: Request, call_next):
+        """Return request id middleware.
+
+        Args:
+            request: Incoming HTTP request.
+            call_next: Call next supplied by the caller.
+        """
         request.state.request_id = request.headers.get("X-Request-ID", f"req_{uuid4().hex[:12]}")
         try:
             response = await call_next(request)

@@ -1,3 +1,5 @@
+"""Test third party notices behavior."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -13,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_module():
+    """Return module."""
     spec = importlib.util.spec_from_file_location(
         "generate_third_party_notices", ROOT / "scripts/generate_third_party_notices.py"
     )
@@ -23,6 +26,12 @@ def load_module():
 
 
 def write_wheel(path: Path, *, license_name: str = "MIT") -> None:
+    """Persist wheel.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        license_name: License name supplied by the caller.
+    """
     metadata = "\n".join(
         [
             "Metadata-Version: 2.4",
@@ -42,6 +51,7 @@ def write_wheel(path: Path, *, license_name: str = "MIT") -> None:
 
 
 def test_generator_uses_locked_wheel_metadata_and_is_deterministic(monkeypatch, tmp_path):
+    """Verify that generator uses locked wheel metadata and is deterministic."""
     module = load_module()
     wheelhouse = tmp_path / "wheelhouse"
     wheelhouse.mkdir()
@@ -97,6 +107,7 @@ def test_generator_uses_locked_wheel_metadata_and_is_deterministic(monkeypatch, 
 
 
 def test_generator_rejects_wheel_without_license(monkeypatch, tmp_path):
+    """Verify that generator rejects wheel without license."""
     module = load_module()
     wheelhouse = tmp_path / "wheelhouse"
     wheelhouse.mkdir()
@@ -134,6 +145,7 @@ def test_installed_records_ignore_nested_vendored_distribution_metadata(
     tmp_path,
     site_packages_relative,
 ):
+    """Verify that installed records ignore nested vendored distribution metadata."""
     module = load_module()
     environment = tmp_path / "environment"
     site_packages = environment / site_packages_relative

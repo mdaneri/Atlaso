@@ -22,6 +22,13 @@ HASH_RE = re.compile(r"--hash=sha256:[0-9a-f]{64}")
 
 @dataclass(frozen=True)
 class LockPolicy:
+    """Represent lock policy.
+
+    Attributes:
+        path: Path maintained by this lockpolicy.
+        inputs: Inputs maintained by this lockpolicy.
+        allow_unsafe: Whether unsafe is permitted.
+    """
     path: str
     inputs: tuple[str, ...]
     allow_unsafe: bool
@@ -48,6 +55,7 @@ LOCK_POLICIES = (
 
 
 def _pip_update_block(lines: list[str]) -> list[str]:
+    """Return pip update block."""
     start = next(
         (
             index
@@ -70,6 +78,7 @@ def _pip_update_block(lines: list[str]) -> list[str]:
 
 
 def _lock_command(lines: list[str]) -> list[str]:
+    """Return lock command."""
     command_line = next(
         (line.removeprefix("#    ") for line in lines if line.startswith("#    pip-compile ")),
         "",
@@ -78,6 +87,11 @@ def _lock_command(lines: list[str]) -> list[str]:
 
 
 def validate(root: Path = ROOT) -> list[str]:
+    """Validate operation.
+
+    Returns:
+        The validate result.
+    """
     errors: list[str] = []
     dependabot_path = root / ".github" / "dependabot.yml"
     try:
@@ -171,6 +185,11 @@ def validate(root: Path = ROOT) -> list[str]:
 
 
 def main() -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        The main result.
+    """
     errors = validate()
     if errors:
         print("\n".join(errors), file=sys.stderr)

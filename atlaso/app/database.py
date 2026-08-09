@@ -1,3 +1,5 @@
+"""Configure database sessions and perform bounded startup reconciliation."""
+
 from collections.abc import Generator
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,10 +12,12 @@ from atlaso.app.config import get_settings
 
 
 class Base(DeclarativeBase):
+    """Represent base."""
     pass
 
 
 def _engine_url() -> str:
+    """Return engine url."""
     settings = get_settings()
     url = settings.database_url
     if url.startswith("sqlite:///"):
@@ -32,6 +36,7 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expi
 
 @event.listens_for(Engine, "connect")
 def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
+    """Handle enable sqlite foreign keys."""
     if dbapi_connection.__class__.__module__.split(".", 1)[0] != "sqlite3":
         return
     cursor = dbapi_connection.cursor()
@@ -56,6 +61,13 @@ DNS_AUTHORITY_SERIAL_FIELDS = {
 
 @event.listens_for(Session, "before_flush")
 def _advance_dns_authoritative_serial(session: Session, _flush_context, _instances) -> None:
+    """Handle advance dns authoritative serial.
+
+    Args:
+        session: Active database or protocol session.
+        _flush_context:  flush context supplied by the caller.
+        _instances:  instances supplied by the caller.
+    """
     from atlaso.app.models import DnsRecord, DnsSettings
 
     record_changed = any(isinstance(item, DnsRecord) for item in session.new | session.deleted)
@@ -89,6 +101,7 @@ def _advance_dns_authoritative_serial(session: Session, _flush_context, _instanc
 
 
 def init_db() -> None:
+    """Handle init db."""
     from atlaso.app import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
@@ -274,6 +287,7 @@ def init_db() -> None:
 
 
 def get_db() -> Generator[Session, None, None]:
+    """Return db."""
     db = SessionLocal()
     try:
         yield db

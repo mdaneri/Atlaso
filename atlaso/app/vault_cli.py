@@ -1,3 +1,5 @@
+"""Implement vault cli behavior."""
+
 from __future__ import annotations
 
 import argparse
@@ -11,6 +13,11 @@ VAULT_CREDENTIAL_NAME = "atlaso-vault"
 
 
 def _credential_path() -> Path:
+    """Return credential path.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     directory = os.environ.get("CREDENTIALS_DIRECTORY", "")
     if not directory:
         raise ValueError("Atlaso vault access is available only inside a scoped managed-script run.")
@@ -22,6 +29,11 @@ def _credential_path() -> Path:
 
 
 def _values() -> dict[str, str]:
+    """Return values.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     payload = json.loads(_credential_path().read_text(encoding="utf-8"))
     values = payload.get("values")
     if payload.get("version") != 1 or not isinstance(values, dict):
@@ -32,6 +44,14 @@ def _values() -> dict[str, str]:
 
 
 def main() -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        The main result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     parser = argparse.ArgumentParser(prog="atlaso-vault")
     subparsers = parser.add_subparsers(dest="command", required=True)
     get_parser = subparsers.add_parser("get", help="retrieve one value from the run-scoped vault")

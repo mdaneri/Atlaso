@@ -1,3 +1,5 @@
+"""Implement network boot service behavior."""
+
 from __future__ import annotations
 
 import hashlib
@@ -101,6 +103,20 @@ WAKE_ON_LAN_PORT = 9
 
 @dataclass(frozen=True)
 class EnvironmentCatalogEntry:
+    """Represent environment catalog entry.
+
+    Attributes:
+        key: Key maintained by this environmentcatalogentry.
+        label: Label maintained by this environmentcatalogentry.
+        description: Operator-facing purpose or context for the resource.
+        risk: Risk maintained by this environmentcatalogentry.
+        license_name: License name maintained by this environmentcatalogentry.
+        verification_method: Verification method maintained by this environmentcatalogentry.
+        source_label: Source label maintained by this environmentcatalogentry.
+        release_page: Release page maintained by this environmentcatalogentry.
+        signing_fingerprint: Signing fingerprint maintained by this environmentcatalogentry.
+        signing_key_url: URL used for signing key.
+    """
     key: str
     label: str
     description: str
@@ -178,6 +194,16 @@ class NetworkBootMediaSyncCancelled(RuntimeError):
 
 @dataclass(frozen=True)
 class ActiveNetworkBootMedia:
+    """Represent active network boot media.
+
+    Attributes:
+        environment_key: Environment key maintained by this activenetworkbootmedia.
+        version: Version maintained by this activenetworkbootmedia.
+        public_version: Public version maintained by this activenetworkbootmedia.
+        installed_path: Filesystem path used for installed.
+        manifest_json: Serialized JSON representation of manifest.
+        artifact_sha256: Artifact sha256 maintained by this activenetworkbootmedia.
+    """
     environment_key: str
     version: str
     public_version: str
@@ -188,6 +214,17 @@ class ActiveNetworkBootMedia:
 
 @dataclass
 class DeferredNetworkBootMediaSync:
+    """Represent deferred network boot media sync.
+
+    Attributes:
+        media: Media maintained by this deferrednetworkbootmediasync.
+        final_dir: Final dir maintained by this deferrednetworkbootmediasync.
+        backup_dir: Backup dir maintained by this deferrednetworkbootmediasync.
+        superseded_dirs: Superseded dirs maintained by this deferrednetworkbootmediasync.
+        journal_path: Filesystem path used for journal.
+        filesystem_changed: Filesystem changed maintained by this deferrednetworkbootmediasync.
+        recovery_lock: Recovery lock maintained by this deferrednetworkbootmediasync.
+    """
     media: NetworkBootMedia
     final_dir: Path
     backup_dir: Path | None
@@ -197,6 +234,7 @@ class DeferredNetworkBootMediaSync:
     recovery_lock: _MediaSwapRecoveryLock | None = None
 
     def commit_filesystem(self) -> None:
+        """Handle commit filesystem."""
         try:
             if self.backup_dir is not None and self.backup_dir.exists():
                 shutil.rmtree(self.backup_dir)
@@ -211,6 +249,7 @@ class DeferredNetworkBootMediaSync:
             self._release_recovery_lock()
 
     def rollback_filesystem(self) -> None:
+        """Handle rollback filesystem."""
         try:
             if not self.filesystem_changed:
                 return
@@ -226,16 +265,26 @@ class DeferredNetworkBootMediaSync:
             self._release_recovery_lock()
 
     def _release_recovery_lock(self) -> None:
+        """Handle release recovery lock."""
         if self.recovery_lock is not None:
             self.recovery_lock.release()
             self.recovery_lock = None
 
 
 def _as_utc(value: datetime) -> datetime:
+    """Return as utc."""
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
 
 
 def ensure_environment_rows(db: Session) -> list[NetworkBootEnvironment]:
+    """Ensure environment rows.
+
+    Args:
+        db: Active database session.
+
+    Returns:
+        The ensure environment rows result.
+    """
     existing = {
         row.key: row
         for row in db.execute(select(NetworkBootEnvironment)).scalars().all()
@@ -254,6 +303,11 @@ def ensure_environment_rows(db: Session) -> list[NetworkBootEnvironment]:
 
 
 def catalog_rows(db: Session) -> list[dict[str, Any]]:
+    """Return catalog rows.
+
+    Args:
+        db: Active database session.
+    """
     states = {row.key: row for row in ensure_environment_rows(db)}
     media = db.execute(
         select(NetworkBootMedia).order_by(
@@ -298,6 +352,11 @@ def catalog_rows(db: Session) -> list[dict[str, Any]]:
 
 
 def desired_environment_manifest_rows(db: Session) -> list[dict[str, Any]]:
+    """Return desired environment manifest rows.
+
+    Args:
+        db: Active database session.
+    """
     states = ensure_environment_rows(db)
     rows: list[dict[str, Any]] = []
     for state in states:
@@ -326,6 +385,11 @@ def desired_environment_manifest_rows(db: Session) -> list[dict[str, Any]]:
 
 
 def mark_network_boot_environments_applied(db: Session) -> None:
+    """Handle mark network boot environments applied.
+
+    Args:
+        db: Active database session.
+    """
     for state in ensure_environment_rows(db):
         state.active_version = state.desired_version if state.enabled else ""
         state.updated_at = utcnow()
@@ -337,6 +401,18 @@ def register_bundled_inventory_media(
     *,
     media_root: Path = NETWORK_BOOT_MEDIA_ROOT,
 ) -> NetworkBootMedia | None:
+    """Create bundled inventory media.
+
+    Args:
+        db: Active database session.
+        media_root: Media root supplied by the caller.
+
+    Returns:
+        The register bundled inventory media result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     inventory_root = media_root / "inventory"
     if not inventory_root.is_dir():
         return None
@@ -405,6 +481,7 @@ def register_bundled_inventory_media(
 
 
 def media_to_dict(row: NetworkBootMedia) -> dict[str, Any]:
+    """Return media to dict."""
     try:
         manifest = json.loads(row.manifest_json or "{}")
     except json.JSONDecodeError:
@@ -425,6 +502,14 @@ def media_to_dict(row: NetworkBootMedia) -> dict[str, Any]:
 
 
 def normalize_environment_key(value: str) -> str:
+    """Normalize environment key.
+
+    Returns:
+        The normalize environment key result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     key = (value or "").strip().lower()
     if key not in CATALOG_BY_KEY:
         raise ValueError("Boot environment is not in the Atlaso allowlist.")
@@ -432,6 +517,14 @@ def normalize_environment_key(value: str) -> str:
 
 
 def normalize_version(value: str) -> str:
+    """Normalize version.
+
+    Returns:
+        The normalize version result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     version = (value or "").strip()
     if not VERSION_PATTERN.fullmatch(version):
         raise ValueError("Boot media version is invalid.")
@@ -439,6 +532,7 @@ def normalize_version(value: str) -> str:
 
 
 def _natural_version_key(value: str) -> tuple[tuple[int, int | str], ...]:
+    """Return natural version key."""
     return tuple(
         (0, int(part)) if part.isdigit() else (1, part.casefold())
         for part in re.split(r"([0-9]+)", value)
@@ -453,6 +547,20 @@ def set_environment_desired_state(
     enabled: bool,
     desired_version: str = "",
 ) -> NetworkBootEnvironment:
+    """Update environment desired state.
+
+    Args:
+        db: Active database session.
+        environment_key: Stable key identifying the Network Boot environment.
+        enabled: Whether the requested behavior is enabled.
+        desired_version: Desired version supplied by the caller.
+
+    Returns:
+        The set environment desired state result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     key = normalize_environment_key(environment_key)
     state = next(row for row in ensure_environment_rows(db) if row.key == key)
     version = normalize_version(desired_version) if desired_version else ""
@@ -483,6 +591,14 @@ def set_environment_desired_state(
 
 
 def normalize_mac(value: Any, *, required: bool = False) -> str:
+    """Normalize mac.
+
+    Returns:
+        The normalize mac result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     raw = str(value or "").strip().lower().replace("-", ":")
     if not raw:
         if required:
@@ -497,6 +613,11 @@ def normalize_mac(value: Any, *, required: bool = False) -> str:
 
 
 def _normalize_optional_inventory_mac(value: Any) -> str:
+    """Normalize optional inventory mac.
+
+    Returns:
+        The normalize optional inventory mac result.
+    """
     raw = str(value or "").strip().lower().replace("-", ":")
     if raw.replace(":", "") in {"000000000000", "ffffffffffff"}:
         return ""
@@ -504,6 +625,11 @@ def _normalize_optional_inventory_mac(value: Any) -> str:
 
 
 def normalize_dmi_uuid(value: Any) -> str:
+    """Normalize dmi uuid.
+
+    Returns:
+        The normalize dmi uuid result.
+    """
     raw = str(value or "").strip().lower()
     if not raw:
         return ""
@@ -515,6 +641,11 @@ def normalize_dmi_uuid(value: Any) -> str:
 
 
 def _bounded_string(value: Any, field: str, *, maximum: int = 512) -> str:
+    """Return bounded string.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     normalized = str(value or "").strip()
     if len(normalized) > maximum:
         raise ValueError(f"{field} must be {maximum} characters or fewer.")
@@ -528,6 +659,11 @@ def _bounded_integer(
     minimum: int = 0,
     maximum: int = 2**63 - 1,
 ) -> int:
+    """Return bounded integer.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     if isinstance(value, bool):
         raise ValueError(f"{field} must be an integer.")
     if value in (None, ""):
@@ -544,6 +680,11 @@ def _bounded_integer(
 
 
 def _string_list(value: Any, field: str, *, maximum_items: int, maximum_length: int = 128) -> list[str]:
+    """Return string list.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     if value in (None, ""):
         return []
     if not isinstance(value, list) or len(value) > maximum_items:
@@ -552,6 +693,11 @@ def _string_list(value: Any, field: str, *, maximum_items: int, maximum_length: 
 
 
 def _bounded_bool(value: Any, field: str) -> bool:
+    """Return bounded bool.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     if isinstance(value, bool):
         return value
     if value in (0, 1):
@@ -560,6 +706,11 @@ def _bounded_bool(value: Any, field: str) -> bool:
 
 
 def _object_list(value: Any, field: str, *, maximum_items: int) -> list[dict[str, Any]]:
+    """Return object list.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     if value in (None, ""):
         return []
     if not isinstance(value, list) or len(value) > maximum_items:
@@ -571,10 +722,16 @@ def _object_list(value: Any, field: str, *, maximum_items: int) -> list[dict[str
 
 
 def _hardware_string(value: Any, field: str, *, maximum: int = 240) -> str:
+    """Return hardware string."""
     return _bounded_string(value, field, maximum=maximum)
 
 
 def _pci_id(value: Any, field: str) -> str:
+    """Return pci id.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     normalized = _bounded_string(value, field, maximum=6).lower().removeprefix("0x")
     if normalized and not re.fullmatch(r"[0-9a-f]{4}", normalized):
         raise ValueError(f"{field} must contain four hexadecimal digits.")
@@ -582,6 +739,11 @@ def _pci_id(value: Any, field: str) -> str:
 
 
 def _pci_class_id(value: Any, field: str) -> str:
+    """Return pci class id.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     normalized = _bounded_string(value, field, maximum=8).lower().removeprefix("0x")
     if normalized and not re.fullmatch(r"[0-9a-f]{6}", normalized):
         raise ValueError(f"{field} must contain six hexadecimal digits.")
@@ -589,14 +751,24 @@ def _pci_class_id(value: Any, field: str) -> str:
 
 
 def _usb_id(value: Any, field: str) -> str:
+    """Return usb id."""
     return _pci_id(value, field)
 
 
 def _human_size(value: Any, field: str) -> str:
+    """Return human size."""
     return _bounded_string(value, field, maximum=32)
 
 
 def normalize_inventory_report(payload: Any) -> dict[str, Any]:
+    """Normalize inventory report.
+
+    Returns:
+        The normalize inventory report result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     if not isinstance(payload, dict):
         raise ValueError("Inventory report must be a JSON object.")
     encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
@@ -917,6 +1089,7 @@ def normalize_inventory_report(payload: Any) -> dict[str, Any]:
 
 
 def report_identity(report: dict[str, Any]) -> tuple[str, str, list[str]]:
+    """Return report identity."""
     dmi_uuid = str(report["system"].get("dmi_uuid") or "")
     boot_mac = str(report.get("boot_mac") or "")
     macs = sorted(
@@ -936,6 +1109,7 @@ def report_identity(report: dict[str, Any]) -> tuple[str, str, list[str]]:
 
 
 def _macs(row: NetworkBootDiscoveredHost) -> set[str]:
+    """Return macs."""
     try:
         values = json.loads(row.macs_json or "[]")
     except json.JSONDecodeError:
@@ -948,6 +1122,15 @@ def _prune_inventory_storage(
     *,
     preserve_host_id: int,
 ) -> None:
+    """Handle prune inventory storage.
+
+    Args:
+        db: Active database session.
+        preserve_host_id: Identifier of the preserve host.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     now = utcnow()
     heartbeat_cutoff = now - NETWORK_BOOT_ONLINE_THRESHOLD
     protected_host_ids = {
@@ -1047,6 +1230,19 @@ def store_inventory_report(
     session: NetworkBootInventorySession,
     payload: Any,
 ) -> tuple[NetworkBootDiscoveredHost, NetworkBootInventoryReport]:
+    """Persist inventory report.
+
+    Args:
+        db: Active database session.
+        session: Active database or protocol session.
+        payload: Validated request or operation payload.
+
+    Returns:
+        The store inventory report result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     if session.report_submitted_at is not None:
         raise ValueError("This inventory session has already submitted its report.")
     report = normalize_inventory_report(payload)
@@ -1129,6 +1325,14 @@ def store_inventory_report(
 
 
 def issue_inventory_session(db: Session) -> tuple[NetworkBootInventorySession, str]:
+    """Return issue inventory session.
+
+    Args:
+        db: Active database session.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     token = secrets.token_urlsafe(32)
     now = utcnow()
     db.execute(
@@ -1194,6 +1398,16 @@ def inventory_session_for_token(
     *,
     require_report: bool = False,
 ) -> NetworkBootInventorySession:
+    """Return inventory session for token.
+
+    Args:
+        db: Active database session.
+        token: Token supplied by the caller.
+        require_report: Require report supplied by the caller.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     token_hash = hashlib.sha256((token or "").encode()).hexdigest()
     session = db.execute(
         select(NetworkBootInventorySession).where(
@@ -1213,12 +1427,27 @@ def touch_inventory_heartbeat(
     *,
     identity_key: str = "",
 ) -> None:
+    """Handle touch inventory heartbeat.
+
+    Args:
+        session: Active database or protocol session.
+        identity_key: Identity key supplied by the caller.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     if identity_key and session.bound_identity_key != identity_key:
         raise ValueError("Inventory heartbeat identity does not match this session.")
     session.heartbeat_at = utcnow()
 
 
 def host_is_online(host: NetworkBootDiscoveredHost, session: NetworkBootInventorySession | None) -> bool:
+    """Return host is online.
+
+    Args:
+        host: Host targeted by the operation.
+        session: Active database or protocol session.
+    """
     return bool(
         session
         and session.revoked_at is None
@@ -1233,6 +1462,12 @@ def latest_live_session(
     db: Session,
     host_id: int,
 ) -> NetworkBootInventorySession | None:
+    """Return latest live session.
+
+    Args:
+        db: Active database session.
+        host_id: Identifier of the host.
+    """
     candidates = db.execute(
         select(NetworkBootInventorySession)
         .where(
@@ -1253,6 +1488,16 @@ def queue_reboot_command(
     host: NetworkBootDiscoveredHost,
     requested_by: str,
 ) -> NetworkBootInventoryCommand:
+    """Return queue reboot command.
+
+    Args:
+        db: Active database session.
+        host: Host targeted by the operation.
+        requested_by: Requested by supplied by the caller.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     session = latest_live_session(db, host.id)
     if session is None:
         raise ValueError("Host does not have a live inventory session.")
@@ -1284,6 +1529,12 @@ def poll_inventory_command(
     *,
     session: NetworkBootInventorySession,
 ) -> NetworkBootInventoryCommand | None:
+    """Return poll inventory command.
+
+    Args:
+        db: Active database session.
+        session: Active database or protocol session.
+    """
     now = utcnow()
     command = db.execute(
         select(NetworkBootInventoryCommand)
@@ -1310,6 +1561,16 @@ def acknowledge_inventory_command(
     session: NetworkBootInventorySession,
     command_id: str,
 ) -> NetworkBootInventoryCommand:
+    """Return acknowledge inventory command.
+
+    Args:
+        db: Active database session.
+        session: Active database or protocol session.
+        command_id: Identifier of the command.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     command = db.get(NetworkBootInventoryCommand, command_id)
     if (
         command is None
@@ -1333,6 +1594,14 @@ def host_to_dict(
     include_report: bool = False,
     assignments_by_mac: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    """Return host to dict.
+
+    Args:
+        db: Active database session.
+        host: Host targeted by the operation.
+        include_report: Include report supplied by the caller.
+        assignments_by_mac: Assignments by mac supplied by the caller.
+    """
     session = latest_live_session(db, host.id)
     if assignments_by_mac is None:
         assignments_by_mac = esxi_host_assignments_by_mac(db)
@@ -1380,6 +1649,11 @@ def host_to_dict(
 
 
 def esxi_host_assignments_by_mac(db: Session) -> dict[str, dict[str, Any]]:
+    """Return esxi host assignments by mac.
+
+    Args:
+        db: Active database session.
+    """
     assignments: dict[str, dict[str, Any]] = {}
     rows = db.execute(select(EsxiPxeHost).order_by(EsxiPxeHost.hostname, EsxiPxeHost.id)).scalars().all()
     for host in rows:
@@ -1401,6 +1675,12 @@ def report_history(
     db: Session,
     host_id: int,
 ) -> list[dict[str, Any]]:
+    """Return report history.
+
+    Args:
+        db: Active database session.
+        host_id: Identifier of the host.
+    """
     rows = db.execute(
         select(NetworkBootInventoryReport)
         .where(NetworkBootInventoryReport.host_id == host_id)
@@ -1429,9 +1709,15 @@ def wake_on_lan_packet(mac_address: str) -> bytes:
 
 
 class WakeOnLanDeliveryError(OSError):
-    """Record broadcasts sent before a later UDP delivery failed."""
+    """Record broadcasts sent before a later UDP delivery failed.
+
+    Attributes:
+        failed_target: Failed target maintained by this wakeonlandeliveryerror.
+        sent_targets: Sent targets maintained by this wakeonlandeliveryerror.
+    """
 
     def __init__(self, failed_target: str, sent_targets: list[str], cause: OSError):
+        """Initialize the wake on lan delivery error."""
         super().__init__(str(cause))
         self.failed_target = failed_target
         self.sent_targets = list(sent_targets)
@@ -1492,6 +1778,11 @@ def send_wake_on_lan(
 
 
 def _applied_esxi_pxe_manifest(db: Session) -> dict[str, Any]:
+    """Return applied esxi pxe manifest.
+
+    Args:
+        db: Active database session.
+    """
     setting = db.execute(
         select(Setting).where(Setting.key == APPLIANCE_APPLY_BASELINES_KEY)
     ).scalar_one_or_none()
@@ -1516,6 +1807,11 @@ def _applied_esxi_pxe_manifest(db: Session) -> dict[str, Any]:
 
 
 def _has_explicit_esxi_pxe_runtime_preview(db: Session) -> bool:
+    """Return whether explicit esxi pxe runtime preview.
+
+    Args:
+        db: Active database session.
+    """
     setting = db.execute(
         select(Setting).where(Setting.key == APPLIANCE_APPLY_BASELINES_KEY)
     ).scalar_one_or_none()
@@ -1534,6 +1830,13 @@ def _applied_network_boot_media(
     environment_key: str,
     version: str,
 ) -> ActiveNetworkBootMedia | None:
+    """Return applied network boot media.
+
+    Args:
+        db: Active database session.
+        environment_key: Stable key identifying the Network Boot environment.
+        version: Version identifier to validate or publish.
+    """
     manifest = _applied_esxi_pxe_manifest(db)
     network_boot = manifest.get("network_boot")
     environments = (
@@ -1570,6 +1873,13 @@ def active_network_boot_media(
     environment_key: str,
     public_version: str = "",
 ) -> ActiveNetworkBootMedia | NetworkBootMedia | None:
+    """Return active network boot media.
+
+    Args:
+        db: Active database session.
+        environment_key: Stable key identifying the Network Boot environment.
+        public_version: Public version supplied by the caller.
+    """
     state = db.get(NetworkBootEnvironment, environment_key)
     if state is None or not state.active_version:
         return None
@@ -1605,6 +1915,11 @@ def active_network_boot_media(
 def _active_media(
     db: Session,
 ) -> dict[str, ActiveNetworkBootMedia | NetworkBootMedia]:
+    """Return active media.
+
+    Args:
+        db: Active database session.
+    """
     states = ensure_environment_rows(db)
     result: dict[str, ActiveNetworkBootMedia | NetworkBootMedia] = {}
     for state in states:
@@ -1620,6 +1935,11 @@ def _active_media(
 
 
 def _applied_esxi_pxe_runtime(db: Session) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Return applied esxi pxe runtime.
+
+    Args:
+        db: Active database session.
+    """
     manifest = _applied_esxi_pxe_manifest(db)
     if (
         not isinstance(manifest.get("boot"), dict)
@@ -1635,6 +1955,7 @@ def _chain_line(
     *,
     http_origin: str,
 ) -> str:
+    """Return chain line."""
     manifest = json.loads(media.manifest_json or "{}")
     boot = manifest.get("boot") if isinstance(manifest.get("boot"), dict) else {}
     kernel = str(boot.get("kernel") or "")
@@ -1670,6 +1991,7 @@ def _chain_line(
 
 
 def _request_http_origin(boot: dict[str, Any], requested_origin: str) -> str:
+    """Return request http origin."""
     default_base = esxi_http_base_url(boot)
     default = urllib.parse.urlsplit(default_base)
     fallback = (
@@ -1716,6 +2038,18 @@ def render_network_boot_menu(
     request_origin: str = "",
     default_environment_key: str = "",
 ) -> str:
+    """Render network boot menu.
+
+    Args:
+        db: Active database session.
+        mac_address: MAC address identifying the host or interface.
+        firmware: Firmware supplied by the caller.
+        request_origin: Request origin supplied by the caller.
+        default_environment_key: Default environment key supplied by the caller.
+
+    Returns:
+        The rendered network boot menu.
+    """
     mac = normalize_mac(mac_address) if mac_address else ""
     mac_key = normalize_pxe_mac(mac) if mac else ""
     boot, artifacts = _applied_esxi_pxe_runtime(db)
@@ -1759,6 +2093,7 @@ def render_network_boot_menu(
         *,
         label: str,
     ) -> list[str]:
+        """Return esxi loader lines."""
         mac_key = str(artifact.get("mac_key") or "default")
         normalized_firmware = firmware.strip().lower()
         uefi_lines = [
@@ -1893,6 +2228,15 @@ def request_host_boot_override(
     environment_key: str,
     requested_by: str,
 ) -> NetworkBootHostBootOverride:
+    """Return request host boot override.
+
+    Args:
+        db: Active database session.
+        host_id: Identifier of the host.
+        mac_address: MAC address identifying the host or interface.
+        environment_key: Stable key identifying the Network Boot environment.
+        requested_by: Requested by supplied by the caller.
+    """
     now = utcnow()
     override = db.get(NetworkBootHostBootOverride, host_id)
     if override is None:
@@ -1913,6 +2257,12 @@ def claim_host_boot_override(
     *,
     mac_address: str,
 ) -> str:
+    """Return claim host boot override.
+
+    Args:
+        db: Active database session.
+        mac_address: MAC address identifying the host or interface.
+    """
     if not mac_address:
         return ""
     now = utcnow()
@@ -1942,11 +2292,30 @@ def claim_host_boot_override(
 
 
 class _BoundedHttpsRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Represent bounded https redirect handler.
+
+    Attributes:
+        max_redirects: Maximum accepted redirects.
+    """
     def __init__(self, max_redirects: int):
+        """Initialize the bounded https redirect handler."""
         super().__init__()
         self.max_redirects = max_redirects
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
+        """Return redirect request.
+
+        Args:
+            req: Req supplied by the caller.
+            fp: Fp supplied by the caller.
+            code: Code supplied by the caller.
+            msg: Msg supplied by the caller.
+            headers: Headers supplied by the caller.
+            newurl: Newurl supplied by the caller.
+
+        Raises:
+            ValueError: If an input value is invalid.
+        """
         redirects = int(req.headers.get("X-Atlaso-Redirect-Count", "0")) + 1
         if redirects > self.max_redirects:
             raise ValueError("Boot media download exceeded the redirect limit.")
@@ -1961,6 +2330,14 @@ class _BoundedHttpsRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 
 class BoundedHttpsDownloader:
+    """Represent bounded https downloader.
+
+    Attributes:
+        max_bytes: Max size in bytes.
+        timeout_seconds: Timeout duration in seconds.
+        max_redirects: Maximum accepted redirects.
+        open_attempts: Open attempts maintained by this boundedhttpsdownloader.
+    """
     def __init__(
         self,
         *,
@@ -1969,6 +2346,14 @@ class BoundedHttpsDownloader:
         max_redirects: int = 5,
         open_attempts: int = 3,
     ):
+        """Initialize the bounded https downloader.
+
+        Args:
+            max_bytes: Maximum accepted payload size in bytes.
+            timeout_seconds: Maximum time to wait, in seconds.
+            max_redirects: Max redirects supplied by the caller.
+            open_attempts: Open attempts supplied by the caller.
+        """
         self.max_bytes = max_bytes
         self.timeout_seconds = timeout_seconds
         self.max_redirects = max_redirects
@@ -1981,6 +2366,12 @@ class BoundedHttpsDownloader:
         *,
         cancelled: Callable[[], bool] | None = None,
     ) -> tuple[str, str]:
+        """Return download.
+
+        Raises:
+            NetworkBootMediaSyncCancelled: If the operation encounters an invalid state.
+            ValueError: If an input value is invalid.
+        """
         if cancelled and cancelled():
             raise NetworkBootMediaSyncCancelled(
                 "Network Boot media task was cancelled."
@@ -2038,6 +2429,11 @@ class BoundedHttpsDownloader:
 
 
 def checksum_for_filename(checksum_text: str, filename: str) -> str:
+    """Return checksum for filename.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     for raw_line in checksum_text.splitlines():
         parts = raw_line.strip().split()
         if len(parts) < 2:
@@ -2056,6 +2452,11 @@ def verify_gpg_signature(
     fingerprint: str,
     keyring_path: Path,
 ) -> None:
+    """Validate gpg signature.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     gpg = shutil.which("gpg")
     if not gpg:
         raise ValueError("GnuPG is required to verify signed boot media checksums.")
@@ -2094,6 +2495,11 @@ def verify_signed_checksum(
     *,
     fingerprint: str,
 ) -> None:
+    """Validate signed checksum.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     gpg = shutil.which("gpg")
     if not gpg:
         raise ValueError("GnuPG is required to verify signed boot media checksums.")
@@ -2135,6 +2541,7 @@ def verify_signed_checksum(
 
 
 def safe_archive_member(member_name: str) -> bool:
+    """Return safe archive member."""
     path = PurePosixPath(member_name.replace("\\", "/"))
     return bool(
         member_name
@@ -2154,6 +2561,23 @@ def record_verified_media(
     installed_path: str,
     manifest: dict[str, Any],
 ) -> NetworkBootMedia:
+    """Persist verified media.
+
+    Args:
+        db: Active database session.
+        environment_key: Stable key identifying the Network Boot environment.
+        version: Version identifier to validate or publish.
+        source_url: URL for the source.
+        artifact_sha256: Artifact sha256 supplied by the caller.
+        installed_path: Filesystem path for the installed.
+        manifest: Manifest supplied by the caller.
+
+    Returns:
+        The record verified media result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     key = normalize_environment_key(environment_key)
     normalized_version = normalize_version(version)
     entry = CATALOG_BY_KEY[key]
@@ -2186,6 +2610,12 @@ def record_verified_media(
 
 
 def _fetch_https_bytes(url: str, *, max_bytes: int = 2 * 1024 * 1024) -> bytes:
+    """Return https bytes.
+
+    Args:
+        url: URL of the target resource or service.
+        max_bytes: Maximum accepted payload size in bytes.
+    """
     with tempfile.TemporaryDirectory(prefix="atlaso-network-boot-resolve-") as temp_dir:
         path = Path(temp_dir) / "response"
         BoundedHttpsDownloader(
@@ -2197,10 +2627,21 @@ def _fetch_https_bytes(url: str, *, max_bytes: int = 2 * 1024 * 1024) -> bytes:
 
 
 def _fetch_https_text(url: str, *, max_bytes: int = 2 * 1024 * 1024) -> str:
+    """Return https text.
+
+    Args:
+        url: URL of the target resource or service.
+        max_bytes: Maximum accepted payload size in bytes.
+    """
     return _fetch_https_bytes(url, max_bytes=max_bytes).decode("utf-8")
 
 
 def _release_descriptor(environment_key: str) -> dict[str, str]:
+    """Return release descriptor.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     key = normalize_environment_key(environment_key)
     if key == "inventory":
         try:
@@ -2384,6 +2825,11 @@ def _extract_zip_allowlist(
     *,
     allowed_names: dict[str, str],
 ) -> list[str]:
+    """Return extract zip allowlist.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     extracted: list[str] = []
     with zipfile.ZipFile(archive) as rows:
         members = {info.filename: info for info in rows.infolist()}
@@ -2406,6 +2852,11 @@ def _extract_shredos_kernel(
     archive: Path,
     destination: Path,
 ) -> list[str]:
+    """Return extract shredos kernel.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     iso = pycdlib.PyCdlib()
     opened = False
     try:
@@ -2451,6 +2902,11 @@ def _media_boot_manifest(
     *,
     extracted: Iterable[str],
 ) -> dict[str, Any]:
+    """Return media boot manifest.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     base = f"/pxe/media/{environment_key}/{version}"
     files = list(extracted)
     if environment_key == "inventory":
@@ -2513,6 +2969,7 @@ def _enumerated_media_directory(
     version: str,
     media_root: Path,
 ) -> Path | None:
+    """Return enumerated media directory."""
     environment_root = (media_root / normalize_environment_key(environment_key)).resolve()
     if not environment_root.is_dir() or environment_root.is_symlink():
         return None
@@ -2532,6 +2989,7 @@ def _enumerated_media_directory(
 
 
 def _enumerated_regular_files(root: Path) -> dict[str, Path] | None:
+    """Return enumerated regular files."""
     files: dict[str, Path] = {}
     pending = [root]
     visited = 0
@@ -2558,6 +3016,7 @@ def _verified_cached_media(
     *,
     media_root: Path,
 ) -> Path | None:
+    """Return verified cached media."""
     environment_root = (
         media_root / normalize_environment_key(media.environment_key)
     ).resolve()
@@ -2731,6 +3190,19 @@ def _write_media_swap_journal(
     transaction_id: str,
     staging_directory: str,
 ) -> Path:
+    """Persist media swap journal.
+
+    Args:
+        environment_root: Environment root supplied by the caller.
+        environment_key: Stable key identifying the Network Boot environment.
+        version: Version identifier to validate or publish.
+        final_directory: Final directory supplied by the caller.
+        transaction_id: Identifier of the transaction.
+        staging_directory: Staging directory supplied by the caller.
+
+    Returns:
+        The write media swap journal result.
+    """
     journal_path = environment_root / f".atlaso-media-sync-{transaction_id}.json"
     with journal_path.open("x", encoding="utf-8") as journal:
         json.dump(
@@ -2751,6 +3223,7 @@ def _write_media_swap_journal(
 
 
 def _fsync_directory(directory: Path) -> None:
+    """Handle fsync directory."""
     if os.name == "nt":
         return
     directory_fd = os.open(
@@ -2764,6 +3237,11 @@ def _fsync_directory(directory: Path) -> None:
 
 
 def _fsync_media_tree(root: Path) -> None:
+    """Handle fsync media tree.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     files = _enumerated_regular_files(root)
     if files is None:
         raise ValueError("Boot media staging tree is unsafe.")
@@ -2788,13 +3266,27 @@ def _fsync_media_tree(root: Path) -> None:
 
 
 class _MediaSwapRecoveryLock:
+    """Represent media swap recovery lock.
+
+    Attributes:
+        lock_path: Filesystem path used for lock.
+        lock_fd: Lock fd maintained by this mediaswaprecoverylock.
+        thread_acquired: Thread acquired maintained by this mediaswaprecoverylock.
+        process_acquired: Process acquired maintained by this mediaswaprecoverylock.
+    """
     def __init__(self, media_root: Path):
+        """Initialize the media swap recovery lock."""
         self.lock_path = media_root / ".atlaso-media-swap-recovery.lock"
         self.lock_fd: int | None = None
         self.thread_acquired = False
         self.process_acquired = False
 
     def acquire(self) -> None:
+        """Handle acquire.
+
+        Raises:
+            ValueError: If an input value is invalid.
+        """
         _MEDIA_SWAP_THREAD_LOCK.acquire()
         self.thread_acquired = True
         lock_acquired = False
@@ -2823,6 +3315,7 @@ class _MediaSwapRecoveryLock:
             raise
 
     def release(self) -> None:
+        """Handle release."""
         if (
             fcntl is not None
             and self.process_acquired
@@ -2836,20 +3329,37 @@ class _MediaSwapRecoveryLock:
         self._release_thread()
 
     def _release_thread(self) -> None:
+        """Handle release thread."""
         if self.thread_acquired:
             self.thread_acquired = False
             _MEDIA_SWAP_THREAD_LOCK.release()
 
     def __enter__(self):
+        """Enter the managed context.
+
+        Returns:
+            The enter result.
+        """
         self.acquire()
         return self
 
     def __exit__(self, _exc_type, _exc_value, _traceback):
+        """Exit the managed context without suppressing exceptions."""
         self.release()
 
 
 class _MediaStagingLease:
+    """Represent media staging lease.
+
+    Attributes:
+        staging_directory: Staging directory maintained by this mediastaginglease.
+        lock_path: Filesystem path used for lock.
+        lock_fd: Lock fd maintained by this mediastaginglease.
+        process_acquired: Process acquired maintained by this mediastaginglease.
+        identity: Identity maintained by this mediastaginglease.
+    """
     def __init__(self, staging_directory: Path):
+        """Initialize the media staging lease."""
         self.staging_directory = staging_directory
         self.lock_path = staging_directory / ".atlaso-staging.lock"
         self.lock_fd: int | None = None
@@ -2857,6 +3367,14 @@ class _MediaStagingLease:
         self.identity = str(staging_directory.resolve())
 
     def __enter__(self):
+        """Enter the managed context.
+
+        Returns:
+            The enter result.
+
+        Raises:
+            ValueError: If an input value is invalid.
+        """
         flags = (
             os.O_CREAT
             | os.O_EXCL
@@ -2889,9 +3407,11 @@ class _MediaStagingLease:
             publication_lock.release()
 
     def __exit__(self, _exc_type, _exc_value, _traceback):
+        """Exit the managed context without suppressing exceptions."""
         self._release()
 
     def _release(self) -> None:
+        """Handle release."""
         with _MEDIA_STAGING_THREAD_LOCK:
             _ACTIVE_MEDIA_STAGING_DIRECTORIES.discard(self.identity)
         if (
@@ -2911,6 +3431,11 @@ def _remove_orphan_media_staging_directories(
     *,
     environment_key: str,
 ) -> int:
+    """Remove orphan media staging directories.
+
+    Returns:
+        The remove orphan media staging directories result.
+    """
     staging_pattern = re.compile(
         rf"^\.atlaso-{re.escape(environment_key)}-[0-9a-f]{{32}}-"
         r"[A-Za-z0-9_-]{1,64}$"
@@ -2970,6 +3495,12 @@ def recover_interrupted_network_boot_media_swaps(
     *,
     media_root: Path = NETWORK_BOOT_MEDIA_ROOT,
 ) -> int:
+    """Return recover interrupted network boot media swaps.
+
+    Args:
+        db: Active database session.
+        media_root: Media root supplied by the caller.
+    """
     if media_root.is_symlink() or not media_root.is_dir():
         return 0
     with _MediaSwapRecoveryLock(media_root):
@@ -2984,6 +3515,12 @@ def _recover_interrupted_network_boot_media_swaps(
     *,
     media_root: Path,
 ) -> int:
+    """Return recover interrupted network boot media swaps.
+
+    Args:
+        db: Active database session.
+        media_root: Media root supplied by the caller.
+    """
     recovered = 0
     journal_pattern = re.compile(r"^\.atlaso-media-sync-([0-9a-f]{32})\.json$")
     for entry in ENVIRONMENT_CATALOG:
@@ -3103,6 +3640,11 @@ def _recover_interrupted_network_boot_media_swaps(
 
 
 def _file_sha256(path: Path) -> str:
+    """Return file sha256.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+    """
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
@@ -3112,6 +3654,11 @@ def network_boot_upload_path(
     *,
     upload_root: Path | None = None,
 ) -> Path:
+    """Return network boot upload path.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     if not re.fullmatch(r"job_[0-9a-f]{32}", job_id):
         raise ValueError("Network Boot upload task identifier is invalid.")
     return (upload_root or NETWORK_BOOT_UPLOAD_ROOT).resolve() / job_id / "artifact"
@@ -3122,6 +3669,7 @@ def cleanup_network_boot_upload(
     *,
     upload_root: Path | None = None,
 ) -> None:
+    """Remove network boot upload."""
     upload_path = network_boot_upload_path(job_id, upload_root=upload_root)
     upload_path.unlink(missing_ok=True)
     try:
@@ -3137,6 +3685,20 @@ def remove_inactive_network_boot_media(
     version: str,
     ignore_job_id: str = "",
 ) -> dict[str, Any]:
+    """Remove inactive network boot media.
+
+    Args:
+        db: Active database session.
+        environment_key: Stable key identifying the Network Boot environment.
+        version: Version identifier to validate or publish.
+        ignore_job_id: Identifier of the ignore job.
+
+    Returns:
+        The remove inactive network boot media result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     if environment_key == "inventory":
         raise ValueError("Bundled Inventory Linux cannot be removed.")
     state = db.get(NetworkBootEnvironment, environment_key)
@@ -3224,7 +3786,26 @@ def sync_network_boot_media(
     cancelled: Callable[[], bool] | None = None,
     defer_filesystem_commit: bool = False,
 ) -> NetworkBootMedia | DeferredNetworkBootMediaSync:
+    """Return sync network boot media.
+
+    Args:
+        db: Active database session.
+        environment_key: Stable key identifying the Network Boot environment.
+        media_root: Media root supplied by the caller.
+        uploaded_artifact: Uploaded artifact supplied by the caller.
+        uploaded_filename: Uploaded filename supplied by the caller.
+        cancelled: Callback that reports whether cancellation was requested.
+        defer_filesystem_commit: Defer filesystem commit supplied by the caller.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     def raise_if_cancelled() -> None:
+        """Handle raise if cancelled.
+
+        Raises:
+            NetworkBootMediaSyncCancelled: If the operation encounters an invalid state.
+        """
         if cancelled and cancelled():
             raise NetworkBootMediaSyncCancelled(
                 "Network Boot media task was cancelled."

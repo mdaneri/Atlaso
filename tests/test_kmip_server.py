@@ -1,3 +1,5 @@
+"""Test kmip server behavior."""
+
 from __future__ import annotations
 
 import hashlib
@@ -45,6 +47,7 @@ from atlaso.app.kmip.trace import validate_trace
 
 
 def test_load_secrets_key_from_systemd_credential(monkeypatch, tmp_path):
+    """Verify that load secrets key from systemd credential."""
     credential = tmp_path / "atlaso-secrets-key"
     credential.write_text("credential-secret\n", encoding="utf-8")
     monkeypatch.setenv("ATLASO_SECRETS_KEY", "shared-environment-secret")
@@ -54,6 +57,7 @@ def test_load_secrets_key_from_systemd_credential(monkeypatch, tmp_path):
 
 
 def test_load_secrets_key_rejects_missing_systemd_credential(monkeypatch, tmp_path):
+    """Verify that load secrets key rejects missing systemd credential."""
     monkeypatch.setenv("ATLASO_SECRETS_KEY_FILE", str(tmp_path / "missing"))
 
     with pytest.raises(ConfigurationError, match="runtime credential is unavailable"):
@@ -68,6 +72,15 @@ def certificate(
     issuer_certificate: x509.Certificate | None = None,
     client: bool = False,
 ) -> tuple[Path, Path, rsa.RSAPrivateKey, x509.Certificate]:
+    """Return certificate.
+
+    Args:
+        tmp_path: Filesystem path for the tmp.
+        name: Name of the target object.
+        issuer_key: Issuer key supplied by the caller.
+        issuer_certificate: Issuer certificate supplied by the caller.
+        client: Client used to invoke the external or application interface.
+    """
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, name)])
     issuer_key = issuer_key or key
@@ -153,6 +166,7 @@ def certificate(
 
 
 def material(tmp_path: Path) -> dict[str, Path]:
+    """Return material."""
     ca_cert, _ca_key_path, ca_key, ca = certificate(tmp_path, "ca")
     server_cert, server_key, _server_private, _server = certificate(
         tmp_path,
@@ -186,6 +200,7 @@ def material(tmp_path: Path) -> dict[str, Path]:
 
 
 def service_config(tmp_path: Path, materials: dict[str, Path]) -> ServiceConfig:
+    """Return service config."""
     provider_id = str(uuid.uuid4())
     return ServiceConfig(
         enabled=True,
@@ -214,6 +229,7 @@ def service_config(tmp_path: Path, materials: dict[str, Path]) -> ServiceConfig:
 
 
 def discover_versions_request() -> bytes:
+    """Return discover versions request."""
     return encode(
         structure(
             Tag.REQUEST_MESSAGE,
@@ -243,6 +259,11 @@ def discover_versions_request() -> bytes:
 
 
 def create_request() -> bytes:
+    """Create request.
+
+    Returns:
+        The created request.
+    """
     return encode(
         structure(
             Tag.REQUEST_MESSAGE,
@@ -284,6 +305,7 @@ def create_request() -> bytes:
 
 
 def client_context(materials: dict[str, Path], *, trusted: bool) -> ssl.SSLContext:
+    """Return client context."""
     context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile=materials["ca_cert"])
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     prefix = "client" if trusted else "untrusted"
@@ -292,6 +314,7 @@ def client_context(materials: dict[str, Path], *, trusted: bool) -> ssl.SSLConte
 
 
 def test_mtls_server_accepts_mapped_fingerprint_and_writes_redacted_trace(tmp_path: Path) -> None:
+    """Verify that mtls server accepts mapped fingerprint and writes redacted trace."""
     materials = material(tmp_path)
     server = build_server(service_config(tmp_path, materials), secrets_key="appliance-secrets-key")
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -324,6 +347,7 @@ def test_mtls_server_accepts_mapped_fingerprint_and_writes_redacted_trace(tmp_pa
 
 
 def test_mtls_server_rejects_ca_valid_but_unmapped_client(tmp_path: Path) -> None:
+    """Verify that mtls server rejects ca valid but unmapped client."""
     materials = material(tmp_path)
     server = build_server(service_config(tmp_path, materials), secrets_key="appliance-secrets-key")
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -344,6 +368,7 @@ def test_mtls_server_rejects_ca_valid_but_unmapped_client(tmp_path: Path) -> Non
 
 
 def test_stalled_tls_handshake_does_not_block_other_connections(tmp_path: Path) -> None:
+    """Verify that stalled tls handshake does not block other connections."""
     materials = material(tmp_path)
     server = build_server(service_config(tmp_path, materials), secrets_key="appliance-secrets-key")
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -370,6 +395,7 @@ def test_stalled_tls_handshake_does_not_block_other_connections(tmp_path: Path) 
 
 
 def test_server_close_waits_for_request_threads_before_zeroing_kek(tmp_path: Path) -> None:
+    """Verify that server close waits for request threads before zeroing kek."""
     materials = material(tmp_path)
     server = build_server(service_config(tmp_path, materials), secrets_key="appliance-secrets-key")
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -397,6 +423,7 @@ def test_server_close_waits_for_request_threads_before_zeroing_kek(tmp_path: Pat
 
 
 def test_configuration_rejects_ambiguous_client_provider_mapping(tmp_path: Path) -> None:
+    """Verify that configuration rejects ambiguous client provider mapping."""
     materials = material(tmp_path)
     fingerprint = certificate_sha256(materials["client_cert"])
     document = {
@@ -440,6 +467,7 @@ def test_configuration_rejects_ambiguous_client_provider_mapping(tmp_path: Path)
 
 
 def test_certificate_fingerprint_is_der_sha256(tmp_path: Path) -> None:
+    """Verify that certificate fingerprint is der sha256."""
     materials = material(tmp_path)
     certificate_value = x509.load_pem_x509_certificate(materials["client_cert"].read_bytes())
 
@@ -449,6 +477,7 @@ def test_certificate_fingerprint_is_der_sha256(tmp_path: Path) -> None:
 
 
 def test_disabled_configuration_accepts_no_provider(tmp_path: Path) -> None:
+    """Verify that disabled configuration accepts no provider."""
     document = {
         "schema_version": 1,
         "enabled": False,
@@ -497,6 +526,14 @@ def test_configuration_rejects_coerced_json_types(
     value: object,
     message: str,
 ) -> None:
+    """Verify that configuration rejects coerced json types.
+
+    Args:
+        tmp_path: Filesystem path for the tmp.
+        path: Filesystem or URL path to read, validate, or update.
+        value: Value to process.
+        message: Public-safe status or error message.
+    """
     materials = material(tmp_path)
     document: dict[str, object] = {
         "schema_version": 1,
@@ -537,6 +574,7 @@ def test_configuration_rejects_coerced_json_types(
 
 
 def test_trace_records_create_parameters_from_request(tmp_path: Path) -> None:
+    """Verify that trace records create parameters from request."""
     provider_id = str(uuid.uuid4())
     store = WrappedKeyStore(
         tmp_path / "store.db",
@@ -566,6 +604,7 @@ def test_trace_records_create_parameters_from_request(tmp_path: Path) -> None:
 
 
 def test_trace_skips_invalid_create_without_suppressing_failed_response(tmp_path: Path) -> None:
+    """Verify that trace skips invalid create without suppressing failed response."""
     provider_id = str(uuid.uuid4())
     store = WrappedKeyStore(
         tmp_path / "store.db",
@@ -609,9 +648,11 @@ def test_trace_skips_invalid_create_without_suppressing_failed_response(tmp_path
 
 
 def test_tcp_server_selects_ipv6_address_family_before_binding(monkeypatch, tmp_path: Path) -> None:
+    """Verify that tcp server selects ipv6 address family before binding."""
     observed: dict[str, object] = {}
 
     def fake_init(server, address, handler):
+        """Handle fake init."""
         observed["family"] = server.address_family
         observed["address"] = address
         observed["handler"] = handler

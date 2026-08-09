@@ -30,6 +30,14 @@ DECLARATION_HASH_RE = re.compile(r"^# atlaso-declarations-sha256: [0-9a-f]{64}$"
 
 @dataclass(frozen=True)
 class LockTarget:
+    """Represent lock target.
+
+    Attributes:
+        output: Output maintained by this locktarget.
+        inputs: Inputs maintained by this locktarget.
+        allow_unsafe: Whether unsafe is permitted.
+        strip_extras: Strip extras maintained by this locktarget.
+    """
     output: str
     inputs: tuple[str, ...]
     allow_unsafe: bool
@@ -60,6 +68,7 @@ LOCK_TARGETS = (
 
 
 def _toolchain_error() -> str:
+    """Return toolchain error."""
     if sys.version_info[:2] != EXPECTED_PYTHON:
         return (
             f"Python {EXPECTED_PYTHON[0]}.{EXPECTED_PYTHON[1]} is required; "
@@ -87,6 +96,7 @@ def _compile_command(
     upgrade: bool,
     index_url: str = DEFAULT_INDEX_URL,
 ) -> list[str]:
+    """Return compile command."""
     command = [
         sys.executable,
         "-m",
@@ -111,6 +121,11 @@ def _compile_command(
 
 
 def _validated_index_url(index_url: str) -> str:
+    """Return validated index url.
+
+    Raises:
+        RuntimeError: If the operation cannot be completed safely.
+    """
     parsed = urlsplit(index_url)
     if parsed.scheme != "https" or not parsed.netloc:
         raise RuntimeError("the package index must use an absolute HTTPS URL")
@@ -120,6 +135,11 @@ def _validated_index_url(index_url: str) -> str:
 
 
 def _assert_index_provides_upload_times(index_url: str) -> None:
+    """Check index provides upload times.
+
+    Raises:
+        RuntimeError: If the operation cannot be completed safely.
+    """
     request = urllib.request.Request(
         f"{index_url}/pip/",
         headers={"Accept": "application/vnd.pypi.simple.v1+json"},
@@ -142,6 +162,7 @@ def _assert_index_provides_upload_times(index_url: str) -> None:
 
 
 def _compile_environment() -> dict[str, str]:
+    """Return compile environment."""
     environment = os.environ.copy()
     for name in (
         "PIP_EXTRA_INDEX_URL",
@@ -155,6 +176,7 @@ def _compile_environment() -> dict[str, str]:
 
 
 def _appliance_declaration_hash() -> str:
+    """Return appliance declaration hash."""
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
         "project"
     ]
@@ -179,6 +201,11 @@ def _appliance_declaration_hash() -> str:
 
 
 def _record_appliance_declaration_hash() -> None:
+    """Persist appliance declaration hash.
+
+    Raises:
+        RuntimeError: If the operation cannot be completed safely.
+    """
     path = ROOT / "requirements-appliance.lock"
     lines = [
         line
@@ -203,6 +230,11 @@ def _record_appliance_declaration_hash() -> None:
 
 
 def main() -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        The main result.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--upgrade",

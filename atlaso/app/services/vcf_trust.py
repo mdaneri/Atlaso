@@ -1,3 +1,5 @@
+"""Implement vcf trust service behavior."""
+
 from __future__ import annotations
 
 import json
@@ -18,17 +20,32 @@ VCF_SUPPORTED_ROLES = {"VcfInstaller", "SddcManager"}
 
 
 class VcfTrustError(RuntimeError):
+    """Report a vcf trust error."""
     pass
 
 
 @dataclass(frozen=True)
 class VcfTrustCredentials:
+    """Represent vcf trust credentials.
+
+    Attributes:
+        api_username: Api username maintained by this vcftrustcredentials.
+        api_password: Api password maintained by this vcftrustcredentials.
+    """
     api_username: str
     api_password: str
 
 
 @dataclass(frozen=True)
 class RootCaInfo:
+    """Represent root ca info.
+
+    Attributes:
+        pem: Pem maintained by this rootcainfo.
+        subject: Subject maintained by this rootcainfo.
+        expires_at: UTC timestamp after which the resource is no longer valid.
+        fingerprint: Fingerprint maintained by this rootcainfo.
+    """
     pem: str
     subject: str
     expires_at: str
@@ -36,10 +53,16 @@ class RootCaInfo:
 
 
 def colon_fingerprint(raw: bytes) -> str:
+    """Return colon fingerprint."""
     return ":".join(f"{value:02X}" for value in raw)
 
 
 def root_ca_info(settings: CaSettings) -> RootCaInfo:
+    """Return root ca info.
+
+    Raises:
+        VcfTrustError: If the operation encounters an invalid state.
+    """
     if not settings.enabled:
         raise VcfTrustError("The Atlaso certificate authority must be enabled.")
     pem = (settings.root_certificate_pem or "").strip()
@@ -67,6 +90,11 @@ def root_ca_info(settings: CaSettings) -> RootCaInfo:
 
 
 def pem_fingerprint(pem: str) -> str:
+    """Return pem fingerprint.
+
+    Raises:
+        VcfTrustError: If the operation encounters an invalid state.
+    """
     try:
         certificate = x509.load_pem_x509_certificate(pem.encode("utf-8"))
     except ValueError as exc:
@@ -75,6 +103,15 @@ def pem_fingerprint(pem: str) -> str:
 
 
 class VcfApiClient:
+    """Represent vcf api client.
+
+    Attributes:
+        base_url: URL used for base.
+        username: Username maintained by this vcfapiclient.
+        password: Password maintained by this vcfapiclient.
+        client: Client maintained by this vcfapiclient.
+        token: Token maintained by this vcfapiclient.
+    """
     def __init__(
         self,
         address: str,
@@ -85,6 +122,19 @@ class VcfApiClient:
         timeout: float = 30.0,
         expected_fingerprint: str = "",
     ):
+        """Initialize the vcf api client.
+
+        Args:
+            address: Network address of the target service or interface.
+            username: Account name used for authentication or lookup.
+            password: Password supplied for the immediate authenticated operation.
+            port: TCP or UDP port of the target service.
+            timeout: Maximum time to wait for completion.
+            expected_fingerprint: Certificate fingerprint explicitly confirmed by the operator.
+
+        Raises:
+            VcfTrustError: If the operation encounters an invalid state.
+        """
         normalized = address.strip().strip("[]")
         if expected_fingerprint and tls_sha256_fingerprint(normalized, port).upper() != expected_fingerprint.upper():
             raise VcfTrustError("The VCF appliance TLS certificate changed after confirmation.")
@@ -103,6 +153,14 @@ class VcfApiClient:
         self.token = ""
 
     def __enter__(self) -> "VcfApiClient":
+        """Enter the managed context.
+
+        Returns:
+            The enter result.
+
+        Raises:
+            VcfTrustError: If the operation encounters an invalid state.
+        """
         response = self.client.post("/v1/tokens", json={"username": self.username, "password": self.password})
         self._raise(response, "VCF API authentication failed")
         self.token = str(response.json().get("accessToken") or "")
@@ -112,10 +170,16 @@ class VcfApiClient:
         return self
 
     def __exit__(self, *_args: object) -> None:
+        """Exit the managed context without suppressing exceptions."""
         self.client.close()
 
     @staticmethod
     def _raise(response: httpx.Response, message: str) -> None:
+        """Handle raise.
+
+        Raises:
+            VcfTrustError: If the operation encounters an invalid state.
+        """
         if response.is_success:
             return
         detail = ""
@@ -128,6 +192,11 @@ class VcfApiClient:
         raise VcfTrustError(message + suffix)
 
     def appliance_info(self) -> dict[str, str]:
+        """Return appliance info.
+
+        Raises:
+            VcfTrustError: If the operation encounters an invalid state.
+        """
         response = self.client.get("/v1/system/appliance-info")
         self._raise(response, "Could not read VCF appliance information")
         payload = response.json()
@@ -140,12 +209,14 @@ class VcfApiClient:
         return {"role": role, "version": version}
 
     def trusted_certificates(self) -> list[dict[str, Any]]:
+        """Return trusted certificates."""
         response = self.client.get("/v1/sddc-manager/trusted-certificates")
         self._raise(response, "Could not read the VCF trusted-certificate store")
         payload = response.json()
         return list(payload.get("elements") or [])
 
     def add_trusted_certificate(self, pem: str) -> None:
+        """Create trusted certificate."""
         response = self.client.post(
             "/v1/sddc-manager/trusted-certificates",
             json={"certificate": pem, "certificateUsageType": "TRUSTED_FOR_OUTBOUND"},
@@ -154,6 +225,7 @@ class VcfApiClient:
 
 
 def find_trusted_certificate(certificates: list[dict[str, Any]], fingerprint: str) -> dict[str, Any] | None:
+    """Return trusted certificate."""
     for item in certificates:
         pem = str(item.get("certificate") or "")
         if not pem:
@@ -173,6 +245,14 @@ def inspect_vcf_trust_target(
     *,
     expected_fingerprint: str = "",
 ) -> dict[str, Any]:
+    """Return inspect vcf trust target.
+
+    Args:
+        address: Network address of the target service or interface.
+        port: TCP or UDP port of the target service.
+        credentials: Credential bundle used for the immediate external request.
+        expected_fingerprint: Certificate fingerprint explicitly confirmed by the operator.
+    """
     with VcfApiClient(
         address,
         credentials.api_username,
@@ -192,6 +272,22 @@ def execute_vcf_trust(
     ca: RootCaInfo,
     progress: Callable[[int, str], None] | None = None,
 ) -> dict[str, Any]:
+    """Run vcf trust.
+
+    Args:
+        address: Network address of the target service or interface.
+        port: TCP or UDP port of the target service.
+        expected_tls_fingerprint: Expected tls fingerprint supplied by the caller.
+        credentials: Credential bundle used for the immediate external request.
+        ca: Ca supplied by the caller.
+        progress: Progress supplied by the caller.
+
+    Returns:
+        The execute vcf trust result.
+
+    Raises:
+        VcfTrustError: If the operation encounters an invalid state.
+    """
     update = progress or (lambda _percent, _state: None)
     update(10, "authenticating")
     with VcfApiClient(
@@ -214,6 +310,15 @@ def execute_vcf_trust(
 
 
 def sanitized_result(*, address: str, port: int, ca: RootCaInfo, state: str, **values: Any) -> str:
+    """Return sanitized result.
+
+    Args:
+        address: Network address of the target service or interface.
+        port: TCP or UDP port of the target service.
+        ca: Ca supplied by the caller.
+        state: Lifecycle or job state to persist.
+        values: Values to normalize, validate, or persist.
+    """
     return json.dumps(
         {
             "target": address,

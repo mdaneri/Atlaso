@@ -1,3 +1,5 @@
+"""Test vcf sddc deployment behavior."""
+
 import hashlib
 import io
 import tarfile
@@ -34,6 +36,12 @@ DISK = b"disk"
 
 
 def write_ova(path: Path, *, corrupt_manifest: bool = False) -> None:
+    """Persist ova.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        corrupt_manifest: Corrupt manifest supplied by the caller.
+    """
     ovf_digest = hashlib.sha256(OVF).hexdigest()
     disk_digest = "0" * 64 if corrupt_manifest else hashlib.sha256(DISK).hexdigest()
     manifest = f"SHA256(test.ovf)= {ovf_digest}\nSHA256(disk.vmdk)= {disk_digest}\n".encode()
@@ -45,6 +53,7 @@ def write_ova(path: Path, *, corrupt_manifest: bool = False) -> None:
 
 
 def test_inspect_ova_exposes_only_user_configurable_properties(tmp_path):
+    """Verify that inspect ova exposes only user configurable properties."""
     ova = tmp_path / "SDDC.OVA"
     write_ova(ova)
     descriptor = inspect_ova(ova, root=tmp_path)
@@ -59,6 +68,7 @@ def test_inspect_ova_exposes_only_user_configurable_properties(tmp_path):
 
 
 def test_ova_path_and_manifest_validation_are_strict(tmp_path):
+    """Verify that ova path and manifest validation are strict."""
     root = tmp_path / "root"
     root.mkdir()
     outside = tmp_path / "outside.ova"
@@ -74,16 +84,35 @@ def test_ova_path_and_manifest_validation_are_strict(tmp_path):
 
 
 def test_nfc_upload_uses_stream_vmdk_post(monkeypatch):
+    """Verify that nfc upload uses stream vmdk post."""
     class Response:
+        """Represent response.
+
+        Attributes:
+            status: Current lifecycle or operation status.
+        """
         status = 200
 
         def read(self, _size=-1):
+            """Return operation."""
             return b""
 
     class Connection:
+        """Represent connection.
+
+        Attributes:
+            instances: Instances captured or supplied by this test helper.
+            host: Host captured or supplied by this test helper.
+            port: Port captured or supplied by this test helper.
+            method: Method captured or supplied by this test helper.
+            target: Target captured or supplied by this test helper.
+            headers: Headers captured or supplied by this test helper.
+            body: Body captured or supplied by this test helper.
+        """
         instances = []
 
         def __init__(self, host, port, **_kwargs):
+            """Initialize the connection."""
             self.host = host
             self.port = port
             self.method = ""
@@ -93,29 +122,42 @@ def test_nfc_upload_uses_stream_vmdk_post(monkeypatch):
             Connection.instances.append(self)
 
         def putrequest(self, method, target):
+            """Handle putrequest."""
             self.method = method
             self.target = target
 
         def putheader(self, name, value):
+            """Handle putheader."""
             self.headers[name] = value
 
         def endheaders(self):
+            """Handle endheaders."""
             pass
 
         def send(self, chunk):
+            """Handle send."""
             self.body += chunk
 
         def getresponse(self):
+            """Return getresponse."""
             return Response()
 
         def close(self):
+            """Handle close."""
             pass
 
     class Lease:
+        """Represent lease.
+
+        Attributes:
+            progress: Progress captured or supplied by this test helper.
+        """
         def __init__(self):
+            """Initialize the lease."""
             self.progress = []
 
         def HttpNfcLeaseProgress(self, percent):
+            """Handle http nfc lease progress."""
             self.progress.append(percent)
 
     monkeypatch.setattr("http.client.HTTPConnection", Connection)
@@ -144,15 +186,27 @@ def test_nfc_upload_uses_stream_vmdk_post(monkeypatch):
 
 
 def test_disk_provisioning_and_datastore_free_space_validation():
+    """Verify that disk provisioning and datastore free space validation."""
     assert normalize_disk_provisioning("") == "thin"
     assert normalize_disk_provisioning("thick") == "thick"
     with pytest.raises(VcfSddcDeploymentError, match="thin or thick"):
         normalize_disk_provisioning("eagerZeroedThick")
 
     class Summary:
+        """Represent summary.
+
+        Attributes:
+            freeSpace: Freespace captured or supplied by this test helper.
+        """
         freeSpace = 1024
 
     class Datastore:
+        """Represent datastore.
+
+        Attributes:
+            name: Operator-facing name of the resource.
+            summary: Summary captured or supplied by this test helper.
+        """
         name = "tiny-datastore"
         summary = Summary()
 
@@ -161,16 +215,33 @@ def test_disk_provisioning_and_datastore_free_space_validation():
 
 
 def test_imported_entity_is_captured_before_lease_completion():
+    """Verify that imported entity is captured before lease completion."""
     class Vm:
+        """Represent vm.
+
+        Attributes:
+            name: Operator-facing name of the resource.
+        """
         name = "sddcm"
 
     class Info:
+        """Represent info.
+
+        Attributes:
+            entity: Entity captured or supplied by this test helper.
+        """
         entity = Vm()
 
     class Lease:
+        """Represent lease.
+
+        Attributes:
+            info: Info captured or supplied by this test helper.
+        """
         info = Info()
 
         def HttpNfcLeaseComplete(self):
+            """Handle http nfc lease complete."""
             self.info = None
 
     lease = Lease()

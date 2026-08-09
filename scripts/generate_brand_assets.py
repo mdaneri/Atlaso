@@ -16,6 +16,7 @@ WHITE = "#FFFFFF"
 
 
 def _font(size: int, *, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    """Return font."""
     candidates = (
         Path("C:/Windows/Fonts/segoeuib.ttf" if bold else "C:/Windows/Fonts/segoeui.ttf"),
         Path(
@@ -39,6 +40,16 @@ def _fit_font(
     minimum_size: int,
     bold: bool = False,
 ) -> ImageFont.ImageFont:
+    """Return fit font.
+
+    Args:
+        draw: Draw supplied by the caller.
+        text: Text to parse, render, or persist.
+        max_width: Max width supplied by the caller.
+        start_size: Start size supplied by the caller.
+        minimum_size: Minimum size supplied by the caller.
+        bold: Bold supplied by the caller.
+    """
     for size in range(start_size, minimum_size - 1, -1):
         font = _font(size, bold=bold)
         box = draw.textbbox((0, 0), text, font=font)
@@ -48,6 +59,7 @@ def _fit_font(
 
 
 def generate_social_preview(output: Path, icon_path: Path) -> None:
+    """Build social preview."""
     image = Image.new("RGB", (1200, 630), NAVY)
     draw = ImageDraw.Draw(image)
 
@@ -109,6 +121,11 @@ def generate_social_preview(output: Path, icon_path: Path) -> None:
 
 
 def main() -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        The main result.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--social-preview",

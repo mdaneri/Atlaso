@@ -1,3 +1,5 @@
+"""Test kmip contract behavior."""
+
 from __future__ import annotations
 
 import json
@@ -19,6 +21,7 @@ SHA256 = "a" * 64
 
 
 def event(**overrides: object) -> str:
+    """Return event."""
     value: dict[str, object] = {
         "schema_version": 1,
         "timestamp": "2026-07-28T00:00:00Z",
@@ -45,6 +48,7 @@ def event(**overrides: object) -> str:
 
 
 def test_vcf_9_1_contract_is_explicitly_unverified() -> None:
+    """Verify that vcf 9 1 contract is explicitly unverified."""
     contract = load_contract()
 
     assert contract["target"] == {
@@ -58,6 +62,7 @@ def test_vcf_9_1_contract_is_explicitly_unverified() -> None:
 
 
 def test_trace_validator_summarizes_only_allowlisted_metadata() -> None:
+    """Verify that trace validator summarizes only allowlisted metadata."""
     summary = validate_trace(
         [
             event(),
@@ -97,16 +102,19 @@ def test_trace_validator_summarizes_only_allowlisted_metadata() -> None:
     ],
 )
 def test_trace_validator_fails_closed(overrides: dict[str, object], message: str) -> None:
+    """Verify that trace validator fails closed."""
     with pytest.raises(TraceValidationError, match=message):
         validate_trace([event(**overrides)])
 
 
 def test_trace_validator_rejects_empty_input() -> None:
+    """Verify that trace validator rejects empty input."""
     with pytest.raises(TraceValidationError, match="at least one event"):
         validate_trace([])
 
 
 def test_trace_validator_rejects_unvalidated_caller_contract() -> None:
+    """Verify that trace validator rejects unvalidated caller contract."""
     contract = load_contract()
     contract["status"] = "supported"
 
@@ -115,6 +123,7 @@ def test_trace_validator_rejects_unvalidated_caller_contract() -> None:
 
 
 def test_contract_validator_rejects_duplicate_allowlist_values() -> None:
+    """Verify that contract validator rejects duplicate allowlist values."""
     contract = load_contract()
     contract["candidate_operations"].append("Create")
 
@@ -123,6 +132,7 @@ def test_contract_validator_rejects_duplicate_allowlist_values() -> None:
 
 
 def test_documented_validator_runs_from_outside_the_checkout(tmp_path: Path) -> None:
+    """Verify that documented validator runs from outside the checkout."""
     root = Path(__file__).resolve().parents[1]
     trace = tmp_path / "trace.jsonl"
     trace.write_text(event(), encoding="utf-8")

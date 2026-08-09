@@ -92,6 +92,7 @@ ROUTE_TITLES = {
 
 
 def route_title(route: str) -> str:
+    """Return route title."""
     if route in ROUTE_TITLES:
         return ROUTE_TITLES[route]
     path, separator, fragment = route.partition("#")
@@ -102,6 +103,7 @@ def route_title(route: str) -> str:
 
 
 def figure(entry: dict[str, object]) -> list[str]:
+    """Return figure."""
     path = Path(str(entry["path"]))
     return [
         f"![{entry['alt']}](../assets/screenshots/{path.name})",
@@ -112,6 +114,11 @@ def figure(entry: dict[str, object]) -> list[str]:
 
 
 def remove_generated_sections(text: str) -> str:
+    """Remove generated sections.
+
+    Returns:
+        The remove generated sections result.
+    """
     overview = re.compile(
         rf"\n{re.escape(OVERVIEW_BEGIN)}\n.*?\n{re.escape(OVERVIEW_END)}\n?",
         re.DOTALL,
@@ -124,6 +131,14 @@ def remove_generated_sections(text: str) -> str:
 
 
 def insert_after_intro(text: str, section: str) -> str:
+    """Create after intro.
+
+    Returns:
+        The insert after intro result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     h1 = re.search(r"^# .+$", text, re.MULTILINE)
     if not h1:
         raise ValueError("page has no level-one heading")
@@ -137,6 +152,11 @@ def insert_after_intro(text: str, section: str) -> str:
 
 
 def main() -> None:
+    """Run the command-line entry point.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     payload = json.loads(MANIFEST.read_text(encoding="utf-8"))
     grouped: dict[str, list[dict[str, object]]] = defaultdict(list)
     for screenshot in payload["screenshots"]:

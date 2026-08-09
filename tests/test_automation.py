@@ -1,3 +1,5 @@
+"""Test automation behavior."""
+
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
@@ -10,6 +12,7 @@ from atlaso.app.services.automation import next_cron_run, parse_cron_expression,
 
 
 def login(client):
+    """Handle login."""
     page = client.get("/login")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
@@ -21,10 +24,12 @@ def login(client):
 
 
 def csrf_from_page(text: str) -> str:
+    """Return csrf from page."""
     return text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
 
 def test_cron_parser_supports_steps_ranges_and_sunday_alias():
+    """Verify that cron parser supports steps ranges and sunday alias."""
     minute, hour, day, month, weekday = parse_cron_expression("*/15 1-3 * * 5-7")
     assert minute == {0, 15, 30, 45}
     assert hour == {1, 2, 3}
@@ -34,6 +39,7 @@ def test_cron_parser_supports_steps_ranges_and_sunday_alias():
 
 
 def test_script_parameters_parse_interpreter_continuations_without_shell_evaluation():
+    """Verify that script parameters parse interpreter continuations without shell evaluation."""
     bash_parameters = "--server " + "\\" + "\n'vcf lab.example' " + "\\" + "\n--literal '$HOME'"
     assert parse_script_arguments(bash_parameters, "bash") == ["--server", "vcf lab.example", "--literal", "$HOME"]
     assert parse_script_arguments("-Server `\n'vcf lab.example' `\n-Literal '$HOME'", "powershell") == [
@@ -48,6 +54,7 @@ def test_script_parameters_parse_interpreter_continuations_without_shell_evaluat
 
 
 def test_cron_uses_selected_timezone_and_standard_day_or_weekday_behavior():
+    """Verify that cron uses selected timezone and standard day or weekday behavior."""
     after = datetime(2026, 7, 20, 12, 0, tzinfo=timezone.utc)
     assert next_cron_run("0 6 * * *", "America/Los_Angeles", after=after) == datetime(
         2026, 7, 20, 13, 0, tzinfo=timezone.utc
@@ -59,6 +66,7 @@ def test_cron_uses_selected_timezone_and_standard_day_or_weekday_behavior():
 
 
 def test_vcf_schedule_profile_selector_shows_disabled_profiles_and_actionable_guidance(client):
+    """Verify that vcf schedule profile selector shows disabled profiles and actionable guidance."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import VcfDepotDownloadProfile
 
@@ -92,6 +100,7 @@ def test_vcf_schedule_profile_selector_shows_disabled_profiles_and_actionable_gu
 
 
 def test_managed_script_rejects_content_larger_than_one_mibibyte(client):
+    """Verify that managed script rejects content larger than one mibibyte."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AutomationScript
     from atlaso.app.services.automation import create_script_revision
@@ -113,6 +122,7 @@ def test_managed_script_rejects_content_larger_than_one_mibibyte(client):
 
 
 def test_managed_script_normalizes_line_endings_and_rejects_a_malformed_bash_shebang(client):
+    """Verify that managed script normalizes line endings and rejects a malformed bash shebang."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AutomationScript
     from atlaso.app.services.automation import create_script_revision
@@ -144,6 +154,7 @@ def test_managed_script_normalizes_line_endings_and_rejects_a_malformed_bash_she
 
 
 def test_managed_script_wizard_reports_a_malformed_bash_shebang(client):
+    """Verify that managed script wizard reports a malformed bash shebang."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AutomationScript
 
@@ -173,6 +184,7 @@ def test_managed_script_wizard_reports_a_malformed_bash_shebang(client):
 
 @pytest.mark.parametrize("wizard_request", [True, False])
 def test_managed_script_source_validation_does_not_expose_backend_error(client, monkeypatch, wizard_request):
+    """Verify that managed script source validation does not expose backend error."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AutomationScript
 
@@ -180,6 +192,7 @@ def test_managed_script_source_validation_does_not_expose_backend_error(client, 
     csrf = csrf_from_page(client.get("/automation").text)
 
     def fail_source_validation(*_args, **_kwargs):
+        """Handle fail source validation."""
         raise ValueError("private source validation detail")
 
     monkeypatch.setattr("atlaso.app.ui.normalize_script_content", fail_source_validation)
@@ -206,6 +219,7 @@ def test_managed_script_source_validation_does_not_expose_backend_error(client, 
 
 
 def test_managed_script_wizard_does_not_expose_unexpected_validation_errors(client, monkeypatch):
+    """Verify that managed script wizard does not expose unexpected validation errors."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AutomationScript
 
@@ -213,6 +227,11 @@ def test_managed_script_wizard_does_not_expose_unexpected_validation_errors(clie
     csrf = csrf_from_page(client.get("/automation").text)
 
     def fail_revision(*_args, **_kwargs):
+        """Handle fail revision.
+
+        Raises:
+            ValueError: If an input value is invalid.
+        """
         raise ValueError("private implementation detail")
 
     monkeypatch.setattr("atlaso.app.ui.create_script_revision", fail_revision)
@@ -238,6 +257,7 @@ def test_managed_script_wizard_does_not_expose_unexpected_validation_errors(clie
 
 
 def test_managed_script_revision_is_immutable_enabled_and_run_by_worker(client):
+    """Verify that managed script revision is immutable enabled and run by worker."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AutomationScript, AutomationScriptRevision, Job
     from atlaso.app.worker import run_worker_once
@@ -422,6 +442,7 @@ def test_managed_script_revision_is_immutable_enabled_and_run_by_worker(client):
 
 
 def test_worker_normalizes_line_endings_for_an_existing_managed_script_revision(client, monkeypatch):
+    """Verify that worker normalizes line endings for an existing managed script revision."""
     from atlaso.app.adapters.system import AdapterResult, SystemAdapter
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AutomationScript, Job
@@ -431,6 +452,16 @@ def test_worker_normalizes_line_endings_for_an_existing_managed_script_revision(
     captured = {}
 
     def fake_run(_self, script_path, _interpreter, _timeout_seconds, _arguments, _vault_path):
+        """Return fake run.
+
+        Args:
+            _self:  self supplied by the caller.
+            script_path: Filesystem path for the script.
+            _interpreter:  interpreter supplied by the caller.
+            _timeout_seconds:  timeout seconds supplied by the caller.
+            _arguments:  arguments supplied by the caller.
+            _vault_path: Filesystem path for the vault.
+        """
         captured["content"] = Path(script_path).read_bytes()
         return AdapterResult(command=["atlaso-helper", "automation", "run"], dry_run=False, stdout="ok\n", stderr="", returncode=0)
 
@@ -466,6 +497,7 @@ def test_worker_normalizes_line_endings_for_an_existing_managed_script_revision(
 
 
 def test_manual_script_run_collects_parameters_and_exposes_revision_diff(client):
+    """Verify that manual script run collects parameters and exposes revision diff."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AutomationScript, AutomationScriptRevision, Job
 
@@ -551,11 +583,11 @@ def test_manual_script_run_collects_parameters_and_exposes_revision_diff(client)
 
 
 def test_due_schedule_queues_one_job_and_skips_overlap(client):
+    """Verify that due schedule queues one job and skips overlap."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStep, Schedule
     from atlaso.app.services.automation import enqueue_due_schedules
 
-    # Initialize and seed the fixture database.
     client.get("/login")
     now = datetime.now(timezone.utc)
     with SessionLocal() as db:
@@ -592,11 +624,17 @@ def test_due_schedule_queues_one_job_and_skips_overlap(client):
 
 
 def test_worker_rejects_queued_vcf_download_when_profile_was_disabled(client, monkeypatch):
+    """Verify that worker rejects queued vcf download when profile was disabled."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AuditEvent, Job, JobStatus, VcfDepotDownloadProfile
     from atlaso.app.worker import run_worker_once
 
     def reject_appliance_log_path(_path):
+        """Handle reject appliance log path.
+
+        Raises:
+            PermissionError: If the operation lacks the required permission.
+        """
         raise PermissionError("appliance log path unavailable")
 
     monkeypatch.setattr("atlaso.app.ui.filesystem_path", reject_appliance_log_path)
@@ -630,6 +668,7 @@ def test_worker_rejects_queued_vcf_download_when_profile_was_disabled(client, mo
 
 
 def test_due_vcf_schedules_share_global_download_lock_and_record_skipped_run(client):
+    """Verify that due vcf schedules share global download lock and record skipped run."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AuditEvent, Job, JobStatus, Schedule, VcfDepotDownloadProfile
     from atlaso.app.services.automation import enqueue_due_schedules
@@ -687,6 +726,7 @@ def test_due_vcf_schedules_share_global_download_lock_and_record_skipped_run(cli
 
 
 def test_vcf_download_database_guard_rejects_second_active_job(client):
+    """Verify that vcf download database guard rejects second active job."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import VcfDepotDownloadProfile
     from atlaso.app.services.vcf_depot_downloads import (
@@ -710,6 +750,7 @@ def test_vcf_download_database_guard_rejects_second_active_job(client):
 
 
 def test_vcf_download_database_guard_covers_software_id_and_appliance_apply(client):
+    """Verify that vcf download database guard covers software id and appliance apply."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, VcfDepotDownloadProfile
     from atlaso.app.services.vcf_depot_downloads import (
@@ -755,6 +796,7 @@ def test_vcf_download_database_guard_covers_software_id_and_appliance_apply(clie
 
 
 def test_due_vcf_schedule_records_software_id_collision_as_skipped(client):
+    """Verify that due vcf schedule records software id collision as skipped."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AuditEvent, Job, JobStatus, Schedule, VcfDepotDownloadProfile
     from atlaso.app.services.automation import enqueue_due_schedules
@@ -800,6 +842,7 @@ def test_due_vcf_schedule_records_software_id_collision_as_skipped(client):
 
 
 def test_disabling_vcf_profile_disables_schedules_and_delete_requires_detach(client):
+    """Verify that disabling vcf profile disables schedules and delete requires detach."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Schedule, VcfDepotDownloadProfile
 
@@ -855,6 +898,7 @@ def test_disabling_vcf_profile_disables_schedules_and_delete_requires_detach(cli
 
 
 def test_schedule_edit_run_now_and_script_dependency_guards(client):
+    """Verify that schedule edit run now and script dependency guards."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AutomationScript, AutomationScriptRevision, Job, Schedule
     from atlaso.app.worker import run_worker_once
@@ -924,6 +968,7 @@ def test_schedule_edit_run_now_and_script_dependency_guards(client):
 
 
 def test_settings_archive_restores_sources_and_automation_disabled(client):
+    """Verify that settings archive restores sources and automation disabled."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AutomationScript, AutomationScriptRevision, Schedule, UpdateSource
     from atlaso.app.services.automation import create_script_revision

@@ -1,3 +1,5 @@
+"""Implement appliance update service behavior."""
+
 from __future__ import annotations
 
 import configparser
@@ -43,6 +45,16 @@ def ensure_appliance_update_job_steps(
     job: Job,
     selected_streams: list[str] | tuple[str, ...],
 ) -> list[JobStep]:
+    """Ensure appliance update job steps.
+
+    Args:
+        db: Active database session.
+        job: Job being processed.
+        selected_streams: Update streams selected for the job.
+
+    Returns:
+        The ensure appliance update job steps result.
+    """
     selected = set(selected_update_streams(selected_streams))
     existing = {step.component_key: step for step in job.steps}
     steps: list[JobStep] = []
@@ -87,6 +99,7 @@ DEFAULT_UPDATE_SETTINGS = {
     "powershell_repository_url": "",
 }
 def _git_value(args: list[str]) -> str:
+    """Return git value."""
     try:
         result = subprocess.run(["git", *args], cwd=Path(__file__).resolve().parents[3], check=False, capture_output=True, text=True)
     except OSError:
@@ -98,6 +111,7 @@ def _git_value(args: list[str]) -> str:
 
 @lru_cache(maxsize=1)
 def _installed_record_sha256() -> str:
+    """Return installed record sha256."""
     try:
         distribution = importlib_metadata.distribution("atlaso")
     except importlib_metadata.PackageNotFoundError:
@@ -109,6 +123,7 @@ def _installed_record_sha256() -> str:
 
 
 def current_version_info() -> dict[str, str]:
+    """Return current version info."""
     full_commit = getattr(__import__("atlaso"), "__build_git_commit__", "") or _git_value(["rev-parse", "HEAD"])
     short_commit = full_commit[:12] if full_commit else ""
     built_at = getattr(__import__("atlaso"), "__build_time_utc__", "")
@@ -132,6 +147,7 @@ def current_version_info() -> dict[str, str]:
 
 
 def version_with_git(base_version: str, git_commit: str) -> str:
+    """Return version with git."""
     normalized = base_version.strip()
     if not normalized:
         normalized = "0.0.0"
@@ -142,6 +158,11 @@ def version_with_git(base_version: str, git_commit: str) -> str:
 
 
 def update_settings_from_json(raw_value: str) -> dict[str, Any]:
+    """Update settings from json.
+
+    Returns:
+        The update settings from json result.
+    """
     settings = dict(DEFAULT_UPDATE_SETTINGS)
     if raw_value:
         try:
@@ -157,6 +178,11 @@ def update_settings_from_json(raw_value: str) -> dict[str, Any]:
 
 
 def update_settings_to_json(settings: dict[str, Any]) -> str:
+    """Update settings to json.
+
+    Returns:
+        The update settings to json result.
+    """
     normalized = dict(DEFAULT_UPDATE_SETTINGS)
     for key in normalized:
         normalized[key] = str(settings.get(key) or "").strip()
@@ -164,6 +190,11 @@ def update_settings_to_json(settings: dict[str, Any]) -> str:
 
 
 def validate_update_url(value: str, label: str) -> list[str]:
+    """Validate update url.
+
+    Returns:
+        The validate update url result.
+    """
     if not value.strip():
         return []
     parsed = urlparse(value.strip())
@@ -175,6 +206,11 @@ def validate_update_url(value: str, label: str) -> list[str]:
 
 
 def validate_update_settings(settings: dict[str, Any]) -> list[str]:
+    """Validate update settings.
+
+    Returns:
+        The validate update settings result.
+    """
     errors: list[str] = []
     errors.extend(validate_update_url(settings.get("atlaso_manifest_url", ""), "Atlaso manifest URL"))
     release_url = urlparse(str(settings.get("atlaso_manifest_url") or ""))
@@ -185,12 +221,14 @@ def validate_update_settings(settings: dict[str, Any]) -> list[str]:
 
 
 def selected_update_streams(raw_streams: list[str] | tuple[str, ...]) -> list[str]:
+    """Return selected update streams."""
     normalized = set(raw_streams)
     selected = [stream for stream in UPDATE_STREAMS if stream in normalized]
     return selected
 
 
 def redact_url_userinfo(value: str) -> str:
+    """Return redact url userinfo."""
     parsed = urlparse(value or "")
     if not parsed.scheme or not parsed.netloc or not (parsed.username or parsed.password):
         return value
@@ -207,6 +245,17 @@ def render_update_manifest(
     actor: str,
     job_id: str = "",
 ) -> str:
+    """Render update manifest.
+
+    Args:
+        selected_streams: Update streams selected for the job.
+        settings: Desired or runtime settings consumed by the operation.
+        actor: Authenticated identity attributed to the audit record.
+        job_id: Identifier of the job.
+
+    Returns:
+        The rendered update manifest.
+    """
     payload = {
         "schema_version": 2,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -237,6 +286,11 @@ def render_update_manifest(
 
 
 def update_result_excerpt(value: str, *, limit: int = 4000) -> str:
+    """Update result excerpt.
+
+    Returns:
+        The update result excerpt result.
+    """
     text = str(value or "")
     if len(text) <= limit:
         return text
@@ -244,6 +298,11 @@ def update_result_excerpt(value: str, *, limit: int = 4000) -> str:
 
 
 def parse_latest_update_result(job: Job | None) -> dict[str, Any] | None:
+    """Parse latest update result.
+
+    Returns:
+        The parsed latest update result.
+    """
     if job is None or not job.result:
         return None
     try:
@@ -254,6 +313,7 @@ def parse_latest_update_result(job: Job | None) -> dict[str, Any] | None:
 
 
 def read_appliance_file(path_value: str) -> dict[str, Any]:
+    """Return appliance file."""
     path = Path(path_value)
     try:
         text = path.read_text(encoding="utf-8")
@@ -263,6 +323,7 @@ def read_appliance_file(path_value: str) -> dict[str, Any]:
 
 
 def photon_repository_details(repository_dir: Path | None = None) -> list[dict[str, str]]:
+    """Return photon repository details."""
     directory = repository_dir or PHOTON_REPOSITORY_DIR
     rows: list[dict[str, str]] = []
     try:
@@ -300,6 +361,7 @@ def photon_repository_details(repository_dir: Path | None = None) -> list[dict[s
 
 
 def photon_repository_summary(repository_dir: Path | None = None) -> str:
+    """Return photon repository summary."""
     rows = photon_repository_details(repository_dir)
     if not rows:
         return f"No enabled repositories found in {repository_dir or PHOTON_REPOSITORY_DIR}"

@@ -9,6 +9,11 @@ from pathlib import Path
 
 
 def overlay(built_docs: Path, pages_root: Path) -> None:
+    """Handle overlay.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     if not (built_docs / "index.html").is_file():
         raise ValueError(f"built documentation index is missing: {built_docs / 'index.html'}")
     destination = pages_root / "docs"
@@ -18,6 +23,11 @@ def overlay(built_docs: Path, pages_root: Path) -> None:
 
 
 def main() -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        The main result.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--built-docs", type=Path, required=True)
     parser.add_argument("--pages-root", type=Path, required=True)

@@ -1,3 +1,5 @@
+"""Expose bounded Network Boot media, inventory, and host-control APIs."""
+
 from __future__ import annotations
 
 import json
@@ -88,6 +90,7 @@ _MAX_MEDIA_FILES = 256
 
 
 def _media_job_config(job: Job) -> dict[str, Any]:
+    """Return media job config."""
     try:
         payload = json.loads(job.task_config_json or "{}")
     except (json.JSONDecodeError, TypeError):
@@ -101,6 +104,13 @@ def _active_media_job(
     environment_key: str,
     source: str,
 ) -> Job | None:
+    """Return active media job.
+
+    Args:
+        db: Active database session.
+        environment_key: Stable key identifying the Network Boot environment.
+        source: Source path, address, or record to process.
+    """
     active_jobs = db.execute(
         select(Job).where(
             Job.type == "pxe-media-sync",
@@ -118,6 +128,7 @@ def _active_media_job(
 
 
 def _installed_media_directory(media: Any) -> Path | None:
+    """Return installed media directory."""
     environment_root = _MEDIA_ENVIRONMENT_ROOTS.get(media.environment_key)
     if environment_root is None or not environment_root.is_dir():
         return None
@@ -142,6 +153,7 @@ def _allowlisted_media_file(
     requested_path: str,
     allowed_paths: set[str],
 ) -> Path | None:
+    """Return allowlisted media file."""
     normalized = requested_path.replace("\\", "/")
     parts = normalized.split("/")
     if (
@@ -169,6 +181,17 @@ def _allowlisted_media_file(
 
 
 def _bounded_rate_limit(request: Request, *, bucket: str, limit: int, window: int = 60) -> None:
+    """Handle bounded rate limit.
+
+    Args:
+        request: Incoming HTTP request.
+        bucket: Bucket supplied by the caller.
+        limit: Limit supplied by the caller.
+        window: Window supplied by the caller.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     remote = request.client.host if request.client else "unknown"
     try:
         if ip_address(remote).is_loopback:
@@ -197,6 +220,14 @@ def _bounded_rate_limit(request: Request, *, bucket: str, limit: int, window: in
 
 
 def _bearer_token(request: Request) -> str:
+    """Return bearer token.
+
+    Args:
+        request: Incoming HTTP request.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     authorization = request.headers.get("Authorization", "")
     scheme, _, token = authorization.partition(" ")
     if scheme.lower() != "bearer" or not token:
@@ -210,6 +241,16 @@ def _inventory_session(
     *,
     require_report: bool = False,
 ) -> NetworkBootInventorySession:
+    """Return inventory session.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session.
+        require_report: Require report supplied by the caller.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     try:
         return inventory_session_for_token(
             db,
@@ -228,7 +269,8 @@ def list_network_boot_environments(
     """List Network Boot environments.
 
     Uses the authentication posture documented for this endpoint. This read-only operation does not
-    change saved desired state or appliance runtime state."""
+    change saved desired state or appliance runtime state.
+    """
     return catalog_rows(db)
 
 
@@ -239,7 +281,8 @@ def list_available_network_boot_versions(
     """List downloadable Network Boot environment versions.
 
     Uses the authentication posture documented for this endpoint. This read-only operation does not
-    change saved desired state or appliance runtime state."""
+    change saved desired state or appliance runtime state.
+    """
     return available_network_boot_versions()
 
 
@@ -254,7 +297,8 @@ def update_network_boot_environment(
     """Update the desired state of a Network Boot environment.
 
     Uses the authentication posture documented for this endpoint. The operation updates saved Atlaso
-    state and does not bypass the documented global Appliance Apply or service lifecycle boundary."""
+    state and does not bypass the documented global Appliance Apply or service lifecycle boundary.
+    """
     if not isinstance(payload.get("enabled"), bool):
         raise HTTPException(status_code=422, detail="enabled must be a boolean.")
     try:
@@ -290,7 +334,8 @@ def sync_network_boot_environment(
 
     Uses the authentication posture documented for this endpoint. The action runs through the
     endpoint's existing audited adapter or task boundary; inspect the returned state before treating
-    the operation as complete."""
+    the operation as complete.
+    """
     rows = {row["key"]: row for row in catalog_rows(db)}
     if environment_key not in rows:
         raise HTTPException(
@@ -375,7 +420,8 @@ async def upload_network_boot_environment(
 
     Uses the authentication posture documented for this endpoint. The operation changes saved Atlaso
     application state; any appliance host enforcement remains subject to the documented apply or
-    task boundary for the resource."""
+    task boundary for the resource.
+    """
     rows = {row["key"]: row for row in catalog_rows(db)}
     if environment_key not in rows:
         raise HTTPException(
@@ -473,7 +519,8 @@ def remove_network_boot_media(
 
     Uses the authentication posture documented for this endpoint. Removal or revocation takes effect
     in Atlaso application state; appliance host changes remain subject to the documented apply
-    boundary for the resource."""
+    boundary for the resource.
+    """
     if environment_key == "inventory":
         raise HTTPException(status_code=422, detail="Bundled Inventory Linux cannot be removed.")
     state = db.get(NetworkBootEnvironment, environment_key)
@@ -561,7 +608,8 @@ def list_discovered_hosts(
     """List hosts discovered through Atlaso Inventory Linux.
 
     Uses the authentication posture documented for this endpoint. This read-only operation does not
-    change saved desired state or appliance runtime state."""
+    change saved desired state or appliance runtime state.
+    """
     rows = db.execute(
         select(NetworkBootDiscoveredHost).order_by(
             desc(NetworkBootDiscoveredHost.last_seen_at),
@@ -581,7 +629,8 @@ def get_discovered_host(
     """Get one discovered host and its current assignment state.
 
     Uses the authentication posture documented for this endpoint. This read-only operation does not
-    change saved desired state or appliance runtime state."""
+    change saved desired state or appliance runtime state.
+    """
     host = db.get(NetworkBootDiscoveredHost, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Discovered host not found.")
@@ -597,7 +646,8 @@ def get_discovered_host_history(
     """Get retained inventory-report history for a discovered host.
 
     Uses the authentication posture documented for this endpoint. This read-only operation does not
-    change saved desired state or appliance runtime state."""
+    change saved desired state or appliance runtime state.
+    """
     if db.get(NetworkBootDiscoveredHost, host_id) is None:
         raise HTTPException(status_code=404, detail="Discovered host not found.")
     return report_history(db, host_id)
@@ -613,7 +663,8 @@ def download_discovered_host_report(
     """Download one retained discovered-host inventory report.
 
     Uses the authentication posture documented for this endpoint. This read-only operation does not
-    change saved desired state or appliance runtime state."""
+    change saved desired state or appliance runtime state.
+    """
     host = db.get(NetworkBootDiscoveredHost, host_id)
     report = db.get(NetworkBootInventoryReport, report_id)
     if host is None or report is None or report.host_id != host.id:
@@ -665,7 +716,8 @@ def remove_discovered_host(
 
     Uses the authentication posture documented for this endpoint. Removal or revocation takes effect
     in Atlaso application state; appliance host changes remain subject to the documented apply
-    boundary for the resource."""
+    boundary for the resource.
+    """
     host = db.get(NetworkBootDiscoveredHost, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Discovered host not found.")
@@ -736,6 +788,19 @@ def _wake_host(
     resource_type: str,
     resource_id: str,
 ) -> Any:
+    """Return wake host.
+
+    Args:
+        db: Active database session.
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        mac_address: MAC address identifying the host or interface.
+        resource_type: Resource type supplied by the caller.
+        resource_id: Identifier of the resource.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     try:
         targets = wake_on_lan_broadcast_targets(db)
         display_mac = normalize_mac(mac_address, required=True)
@@ -830,7 +895,8 @@ def wake_discovered_host(
 
     Uses the authentication posture documented for this endpoint. The action runs through the
     endpoint's existing audited adapter or task boundary; inspect the returned state before treating
-    the operation as complete."""
+    the operation as complete.
+    """
     host = db.get(NetworkBootDiscoveredHost, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Discovered host not found.")
@@ -855,7 +921,8 @@ def reboot_discovered_host(
 
     Uses the authentication posture documented for this endpoint. The action runs through the
     endpoint's existing audited adapter or task boundary; inspect the returned state before treating
-    the operation as complete."""
+    the operation as complete.
+    """
     host = db.get(NetworkBootDiscoveredHost, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Discovered host not found.")
@@ -894,7 +961,8 @@ def get_inventory_command_status(
     """Get the terminal status of an Inventory Linux command.
 
     Uses the authentication posture documented for this endpoint. This read-only operation does not
-    change saved desired state or appliance runtime state."""
+    change saved desired state or appliance runtime state.
+    """
     command = db.get(NetworkBootInventoryCommand, command_id)
     if command is None:
         raise HTTPException(status_code=404, detail="Inventory command not found.")
@@ -925,7 +993,8 @@ def wake_esxi_host_reference(
 
     Uses the authentication posture documented for this endpoint. The action runs through the
     endpoint's existing audited adapter or task boundary; inspect the returned state before treating
-    the operation as complete."""
+    the operation as complete.
+    """
     host = db.get(EsxiPxeHost, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="ESXi host reference not found.")
@@ -953,7 +1022,8 @@ def boot_esxi_host_into_inventory_once(
 
     Uses the authentication posture documented for this endpoint. The operation changes saved Atlaso
     application state; any appliance host enforcement remains subject to the documented apply or
-    task boundary for the resource."""
+    task boundary for the resource.
+    """
     host = db.get(EsxiPxeHost, host_id)
     if host is None or not host.enabled:
         raise HTTPException(
@@ -1010,7 +1080,8 @@ def promote_discovered_host(
 
     Uses the authentication posture documented for this endpoint. The operation changes saved Atlaso
     application state; any appliance host enforcement remains subject to the documented apply or
-    task boundary for the resource."""
+    task boundary for the resource.
+    """
     discovered = db.get(NetworkBootDiscoveredHost, host_id)
     if discovered is None:
         raise HTTPException(status_code=404, detail="Discovered host not found.")
@@ -1112,6 +1183,20 @@ def network_boot_ipxe(
     firmware: str = "",
     db: Session = Depends(get_db),
 ) -> Response:
+    """Handle the network boot ipxe endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        mac: Mac supplied by the caller.
+        firmware: Firmware supplied by the caller.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     _bounded_rate_limit(request, bucket="menu", limit=120)
     try:
         default_environment_key = claim_host_boot_override(
@@ -1151,6 +1236,20 @@ def network_boot_media_file(
     file_path: str,
     db: Session = Depends(get_db),
 ) -> FileResponse:
+    """Handle the network boot media file endpoint.
+
+    Args:
+        environment_key: Stable key identifying the Network Boot environment.
+        version: Version identifier to validate or publish.
+        file_path: Filesystem path for the file.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     media = active_network_boot_media(
         db,
         environment_key=environment_key,
@@ -1185,6 +1284,19 @@ def create_inventory_session(
     response: Response,
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
+    """Handle the create inventory session endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        response: HTTP response being constructed.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     _bounded_rate_limit(request, bucket="session", limit=30)
     try:
         session, token = issue_inventory_session(db)
@@ -1208,6 +1320,19 @@ def submit_inventory_report(
     request: Request,
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
+    """Handle the submit inventory report endpoint.
+
+    Args:
+        payload: Validated request or operation payload.
+        request: Incoming HTTP request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     _bounded_rate_limit(request, bucket="report", limit=60)
     session = _inventory_session(request, db)
     try:
@@ -1242,6 +1367,19 @@ def inventory_heartbeat(
     request: Request,
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
+    """Handle the inventory heartbeat endpoint.
+
+    Args:
+        payload: Validated request or operation payload.
+        request: Incoming HTTP request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     _bounded_rate_limit(request, bucket="heartbeat", limit=360)
     session = _inventory_session(request, db, require_report=True)
     try:
@@ -1262,6 +1400,15 @@ def inventory_commands(
     request: Request,
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
+    """Handle the inventory commands endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     _bounded_rate_limit(request, bucket="commands", limit=360)
     session = _inventory_session(request, db, require_report=True)
     command = poll_inventory_command(db, session=session)
@@ -1295,6 +1442,19 @@ def acknowledge_inventory_command_route(
     request: Request,
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
+    """Handle the acknowledge inventory command route endpoint.
+
+    Args:
+        command_id: Identifier of the command.
+        request: Incoming HTTP request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     _bounded_rate_limit(request, bucket="ack", limit=120)
     session = _inventory_session(request, db, require_report=True)
     try:
