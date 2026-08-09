@@ -287,6 +287,20 @@ def managed_service_firewall_rules(
                     priority=65 + index,
                 )
             )
+            if ntp_settings.nts_server_enabled:
+                nts_rule_name = f"ntpd-nts-{interface_name}"
+                nts_ke_port = ntp_settings.nts_ke_port or 4460
+                rules.append(
+                    _service_firewall_rule(
+                        name=nts_rule_name,
+                        service="NTPsec NTS-KE",
+                        interface_name=interface_name,
+                        source=_managed_rule_source(nts_rule_name, interface_name, interface_networks, source_groups_by_id, source_group_assignments),
+                        protocol="tcp",
+                        ports=str(nts_ke_port),
+                        priority=68 + index,
+                    )
+                )
     if vcf_backup_settings.enabled:
         for index, interface_name in enumerate(split_interfaces(vcf_backup_settings.listen_interface), start=1):
             rules.append(

@@ -341,7 +341,7 @@ class NtpSettings(Base):
     upstream_servers: Mapped[str] = mapped_column(Text, default="time.cloudflare.com\nnts.netnod.se")
     upstream_sources_json: Mapped[str] = mapped_column(
         Text,
-        default='[{"description":"Cloudflare public NTP","enabled":true,"id":"cloudflare-ntp","source":"time.cloudflare.com","use_nts":false},{"description":"Netnod public NTP","enabled":true,"id":"netnod-ntp","source":"nts.netnod.se","use_nts":false}]',
+        default='[{"description":"Cloudflare public NTS","enabled":true,"id":"cloudflare-nts","source":"time.cloudflare.com","use_nts":true},{"description":"Netnod public NTS","enabled":true,"id":"netnod-nts","source":"nts.netnod.se","use_nts":true}]',
     )
     allow_clients: Mapped[str] = mapped_column(Text, default="any")
     nts_server_enabled: Mapped[bool] = mapped_column(Boolean, default=False)

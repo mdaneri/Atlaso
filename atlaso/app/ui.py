@@ -511,7 +511,6 @@ from atlaso.app.services.ntp import (
     NTP_DEFAULT_HOSTNAME,
     NTP_STAGED_CONFIG_PATH,
     default_ntp_upstream_fields,
-    disable_nts_state,
     duplicate_ntp_upstream_source,
     dump_ntp_upstream_sources,
     join_allow_clients,
@@ -970,6 +969,20 @@ def ca_service_cert_paths(service_dir: str, certificate_name: str) -> tuple[str,
     return f"{base}.crt", f"{base}.key", f"{base}-chain.pem"
 
 
+def ntp_nts_certificate_paths(settings: NtpSettings) -> tuple[str, str, str]:
+    hostname = normalize_dns_hostname(settings.hostname or NTP_DEFAULT_HOSTNAME)
+    return ca_service_cert_paths("ntp", hostname)
+
+
+def remove_ntp_nts_certificate_rows(db: Session) -> int:
+    certificates = db.execute(
+        select(CaCertificate).where(CaCertificate.managed_owner == "ntp:nts")
+    ).scalars().all()
+    for certificate in certificates:
+        db.delete(certificate)
+    return len(certificates)
+
+
 def kms_client_common_name(client: KmsClient) -> str:
     match = re.search(r"(?:^|,)CN=([^,]+)", client.certificate_subject or "")
     return match.group(1).strip() if match else client.name
@@ -1095,6 +1108,23 @@ def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
             )
         )
 
+    ntp_settings = get_ntp_settings_row(db)
+    if ntp_settings.nts_server_enabled:
+        cert_path, key_path, chain_path = ntp_nts_certificate_paths(ntp_settings)
+        specs.append(
+            ManagedCertificateSpec(
+                owner="ntp:nts",
+                common_name=normalize_dns_hostname(ntp_settings.hostname or NTP_DEFAULT_HOSTNAME),
+                dns_names=[normalize_dns_hostname(ntp_settings.hostname or NTP_DEFAULT_HOSTNAME)],
+                ip_addresses=split_addresses(ntp_settings.listen_address),
+                profile_name=CA_SERVER_PROFILE_NAME,
+                description="Managed NTPsec NTS server certificate.",
+                cert_path=cert_path,
+                key_path=key_path,
+                chain_path=chain_path,
+            )
+        )
+
     depot_settings = get_vcf_offline_depot_settings_row(db)
     if depot_settings.enabled:
         cert_path, key_path, chain_path = ca_service_cert_paths("vcf-offline-depot", depot_settings.server_certificate or depot_settings.hostname)
@@ -1210,9 +1240,6 @@ def get_ntp_settings_row(db: Session) -> NtpSettings:
             config_path=NTP_STAGED_CONFIG_PATH,
         )
         db.add(settings)
-        db.commit()
-        db.refresh(settings)
-    elif disable_nts_state(settings):
         db.commit()
         db.refresh(settings)
     return settings
@@ -1584,7 +1611,7 @@ def refresh_interface_dependent_addresses(
 
     for model, label in [
         (DnsSettings, "DNS"),
-        (NtpSettings, "NTP"),
+        (NtpSettings, "NTP / NTS"),
         (CaSettings, "Certificate Authority"),
         (KmsSettings, "KMS"),
         (LdapSettings, "LDAP"),
@@ -1849,14 +1876,98 @@ def vcf_backup_context(db: Session, *, reconcile: bool = True) -> dict:
     }
 
 
+def ntpd_capabilities_payload(result: AdapterResult) -> dict[str, Any]:
+    if result.returncode != 0:
+        return {}
+    text = result.stdout or ""
+    decoder = json.JSONDecoder()
+    index = 0
+    capabilities: dict[str, Any] = {}
+    while index < len(text):
+        while index < len(text) and text[index].isspace():
+            index += 1
+        if index >= len(text):
+            break
+        try:
+            payload, index = decoder.raw_decode(text, index)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(payload, dict) and "nts" in payload:
+            capabilities = payload
+    return capabilities
+
+
 def ntp_context(db: Session, *, include_runtime_health: bool = False, reconcile: bool = True) -> dict:
     settings = get_ntp_settings_row(db)
     if reconcile and normalize_service_bind_settings(db, settings):
         db.commit()
         db.refresh(settings)
+    capability_result = SystemAdapter().read_ntpd_capabilities()
+    ntp_capabilities = ntpd_capabilities_payload(capability_result)
+    ntp_nts_capability_known = "nts" in ntp_capabilities
+    ntp_nts_supported = ntp_capabilities.get("nts") is True
+    if ntp_nts_capability_known and not ntp_nts_supported:
+        upstream_sources = ntp_upstream_sources(settings)
+        nts_state_changed = settings.nts_server_enabled or any(bool(source.get("use_nts")) for source in upstream_sources)
+        if reconcile and nts_state_changed:
+            for source in upstream_sources:
+                source["use_nts"] = False
+            settings.nts_server_enabled = False
+            settings.nts_server_cert_path = ""
+            settings.nts_server_key_path = ""
+            settings.upstream_sources_json = dump_ntp_upstream_sources(upstream_sources)
+            settings.upstream_servers = join_servers([str(source["source"]) for source in upstream_sources if source.get("enabled")])
+            settings.updated_at = utcnow()
+            db.add(settings)
+            remove_ntp_nts_certificate_rows(db)
+            db.commit()
+            db.refresh(settings)
+            record_audit(
+                db,
+                actor="system",
+                action="disable_unsupported_ntp_nts",
+                resource_type="ntpd",
+                resource_id=str(settings.id),
+                detail="Installed ntpd does not include NTS support; NTS server and upstream flags were disabled.",
+            )
     available_interfaces = service_bind_options(db)
+    ntp_nts_cert_path, ntp_nts_key_path, ntp_nts_chain_path = ntp_nts_certificate_paths(settings)
+    if reconcile and settings.nts_server_enabled:
+        settings.nts_server_cert_path = ntp_nts_chain_path
+        settings.nts_server_key_path = ntp_nts_key_path
+        settings.nts_ke_port = 4460
+    elif reconcile:
+        removed_certificates = remove_ntp_nts_certificate_rows(db)
+        certificate_state_changed = bool(
+            settings.nts_server_cert_path or settings.nts_server_key_path or removed_certificates
+        )
+        settings.nts_server_cert_path = ""
+        settings.nts_server_key_path = ""
+        if certificate_state_changed:
+            settings.updated_at = utcnow()
+            db.add(settings)
+            db.commit()
+            db.refresh(settings)
     config_preview = render_ntp_config(settings)
-    validation_errors = validate_ntp_state(settings, {interface["name"] for interface in available_interfaces})
+    ca_state_errors = ensure_ca_state(db) if reconcile and settings.nts_server_enabled else []
+    validation_errors = [*ca_state_errors, *validate_ntp_state(settings, {interface["name"] for interface in available_interfaces})]
+    if settings.nts_server_enabled:
+        ca_settings = get_ca_settings_row(db)
+        if not ca_settings.enabled:
+            validation_errors.append("NTPsec NTS server mode requires Certificate Authority to be enabled.")
+        elif ca_state_errors:
+            validation_errors.append("NTPsec NTS server mode requires healthy Certificate Authority state.")
+        elif not ca_certificate_available(db, "ntp:nts"):
+            validation_errors.append("NTPsec NTS server mode requires an issued CA-managed server certificate before apply.")
+    nts_requested = settings.nts_server_enabled or any(
+        bool(source.get("enabled", True)) and bool(source.get("use_nts"))
+        for source in ntp_upstream_sources(settings)
+    )
+    if not ntp_nts_capability_known and nts_requested:
+        validation_errors.append(
+            "NTPsec NTS capability detection is temporarily unavailable; existing NTS desired state was preserved, "
+            "but appliance apply is blocked until detection succeeds."
+        )
     status_result = SystemAdapter().read_ntpd_status() if include_runtime_health else None
     return {
         "ntp_settings": settings,
@@ -1873,6 +1984,12 @@ def ntp_context(db: Session, *, include_runtime_health: bool = False, reconcile:
         "ntp_ntpq_status": status_result.stdout if status_result else "NTPsec source health is not loaded during page render.",
         "ntp_ntpq_status_error": status_result.stderr if status_result and status_result.returncode != 0 else "",
         "ntp_ntpq_status_dry_run": status_result.dry_run if status_result else False,
+        "ntp_nts_cert_path": ntp_nts_chain_path,
+        "ntp_nts_key_path": ntp_nts_key_path,
+        "ntp_nts_chain_path": ntp_nts_chain_path,
+        "ntp_nts_capability_known": ntp_nts_capability_known,
+        "ntp_nts_supported": ntp_nts_supported,
+        "ntp_nts_capabilities": ntp_capabilities,
     }
 
 
@@ -7919,7 +8036,7 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
         ),
         make_appliance_apply_unit(
             unit_id="ntpd",
-            label="NTP",
+            label="NTP / NTS",
             page_url="/ntp",
             context=ntp,
             summary=[
@@ -8067,7 +8184,7 @@ def ntpd_apply_status(db: Session, ntp: dict[str, Any]) -> dict[str, Any]:
     baselines = load_appliance_apply_baselines(db)
     unit = make_appliance_apply_unit(
         unit_id="ntpd",
-        label="NTP",
+        label="NTP / NTS",
         page_url="/ntp",
         context=ntp,
         summary=[
@@ -9434,7 +9551,7 @@ def log_sources_context(*, max_lines: int = 100) -> list[dict[str, Any]]:
             max_lines=line_count,
             path_label="slapd.service journal: LDAP and LDAPS directory events",
         ),
-        journal_log_source("ntp", "NTP", "ntpd.service", adapter.read_ntpd_logs(), max_lines=line_count),
+        journal_log_source("ntp", "NTP / NTS", "ntpd.service", adapter.read_ntpd_logs(), max_lines=line_count),
         journal_log_source("esx-storage", "ESX Storage NFS", "nfs-server.service", adapter.esx_storage_logs(), max_lines=line_count),
         journal_log_source("nginx", "Nginx", "nginx.service", adapter.read_nginx_logs(), max_lines=line_count),
         journal_log_source(
@@ -12166,6 +12283,14 @@ def submit_appliance_apply(
     refresh_vcf_depot_software_depot_id = bool(
         refresh_vcf_depot_software_depot_id and "vcf_offline_depot" in selected_ids
     )
+    ntp_settings_for_apply = unit_map.get("ntpd", {}).get("context", {}).get("ntp_settings")
+    ca_required_for_nts = bool(
+        "ntpd" in selected_ids
+        and getattr(ntp_settings_for_apply, "nts_server_enabled", False)
+        and "ca" in unit_map
+    )
+    if ca_required_for_nts:
+        selected_ids.add("ca")
     ldap_related_units = {"ca", "dnsmasq", "firewall", "ldap"}
     ldap_context_for_apply = unit_map.get("ldap", {}).get("context", {})
     ldap_dependency_active = bool(
@@ -16772,8 +16897,12 @@ def update_ntp_settings_from_ui(
     upstream_source: list[str] = Form(default_factory=list),
     upstream_sources_json: str = Form(""),
     upstream_enabled: list[str] = Form(default_factory=list),
+    upstream_use_nts: list[str] = Form(default_factory=list),
     upstream_description: list[str] = Form(default_factory=list),
     allow_clients: str = Form("any"),
+    nts_server_enabled: str | None = Form(None),
+    nts_server_cert_path: str = Form(""),
+    nts_server_key_path: str = Form(""),
     minsources: int | None = Form(None),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
@@ -16781,6 +16910,10 @@ def update_ntp_settings_from_ui(
 ) -> RedirectResponse | JSONResponse:
     verify_csrf(request, csrf)
     settings = get_ntp_settings_row(db)
+    capability_result = SystemAdapter().read_ntpd_capabilities()
+    ntp_capabilities = ntpd_capabilities_payload(capability_result)
+    ntp_nts_capability_known = "nts" in ntp_capabilities
+    ntp_nts_supported = ntp_capabilities.get("nts") is True
     selected_interfaces, selected_addresses = resolve_service_bind_targets(
         db,
         [*listen_interfaces, listen_interface],
@@ -16813,13 +16946,18 @@ def update_ntp_settings_from_ui(
                         "id": str(item.get("id") or f"source-{index}"),
                         "source": source,
                         "enabled": bool(item.get("enabled", True)),
-                        "use_nts": False,
+                        "use_nts": (
+                            bool(item.get("use_nts", False))
+                            if not ntp_nts_capability_known
+                            else ntp_nts_supported and bool(item.get("use_nts", False))
+                        ),
                         "description": str(item.get("description") or "").strip(),
                     }
                 )
     if not source_rows:
         max_rows = max(len(upstream_source), len(upstream_description))
         enabled_indexes = {int(value) for value in upstream_enabled if str(value).isdigit()}
+        nts_indexes = {int(value) for value in upstream_use_nts if str(value).isdigit()}
         for index in range(max_rows):
             source = upstream_source[index].strip() if index < len(upstream_source) else ""
             if not source:
@@ -16829,7 +16967,11 @@ def update_ntp_settings_from_ui(
                     "id": f"source-{index + 1}",
                     "source": source,
                     "enabled": index in enabled_indexes,
-                    "use_nts": False,
+                    "use_nts": (
+                        index in nts_indexes
+                        if not ntp_nts_capability_known
+                        else ntp_nts_supported and index in nts_indexes
+                    ),
                     "description": upstream_description[index].strip() if index < len(upstream_description) else "",
                 }
             )
@@ -16847,12 +16989,27 @@ def update_ntp_settings_from_ui(
     settings.upstream_sources_json = dump_ntp_upstream_sources(source_rows)
     settings.upstream_servers = join_servers([str(row["source"]) for row in source_rows if row.get("enabled")])
     settings.allow_clients = join_allow_clients(split_allow_clients(allow_clients))
-    disable_nts_state(settings)
+    settings.nts_server_enabled = (
+        settings.nts_server_enabled
+        if not ntp_nts_capability_known
+        else ntp_nts_supported and nts_server_enabled == "on"
+    )
+    _ntp_nts_cert_path, ntp_nts_key_path, ntp_nts_chain_path = ntp_nts_certificate_paths(settings)
+    if settings.nts_server_enabled:
+        settings.nts_server_cert_path = ntp_nts_chain_path
+        settings.nts_server_key_path = ntp_nts_key_path
+    else:
+        settings.nts_server_cert_path = ""
+        settings.nts_server_key_path = ""
+        remove_ntp_nts_certificate_rows(db)
+    settings.nts_ke_port = 4460
     settings.minsources = minsources if minsources and minsources > 0 else None
     settings.config_path = NTP_STAGED_CONFIG_PATH
     settings.updated_at = utcnow()
     db.add(settings)
     db.commit()
+    if settings.nts_server_enabled:
+        ensure_ca_state(db)
     record_audit(db, actor=identity.username, action="update_ntp_settings", resource_type="ntpd", resource_id=str(settings.id))
     if request.headers.get("X-Atlaso-Autosave") == "1":
         context = ntp_context(db)
@@ -16871,6 +17028,12 @@ def update_ntp_settings_from_ui(
                 "upstream_servers": context["ntp_settings_json"]["upstream_servers"],
                 "upstream_sources": context["ntp_settings_json"]["upstream_sources"],
                 "allow_clients": saved_settings.allow_clients,
+                "nts_server_enabled": saved_settings.nts_server_enabled,
+                "nts_server_cert_path": saved_settings.nts_server_cert_path,
+                "nts_server_key_path": saved_settings.nts_server_key_path,
+                "nts_ke_port": saved_settings.nts_ke_port,
+                "nts_supported": context["ntp_nts_supported"],
+                "nts_capability_known": context["ntp_nts_capability_known"],
                 "valid": not context["ntp_validation_errors"],
                 "validation_errors": context["ntp_validation_errors"],
                 "config_path": saved_settings.config_path,
