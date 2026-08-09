@@ -22,6 +22,7 @@ def test_initial_api_resources_are_documented(client):
     schema = client.get("/openapi.json").json()
     paths = schema["paths"]
     expected = [
+        "/api/v1/version",
         "/api/v1/auth/me",
         "/api/v1/api-tokens",
         "/api/v1/dashboard",
@@ -63,6 +64,19 @@ def test_initial_api_resources_are_documented(client):
     ]
     for path in expected:
         assert path in paths
+
+
+def test_appliance_version_openapi_contract_is_public(client):
+    schema = client.get("/openapi.json").json()
+    operation = schema["paths"]["/api/v1/version"]["get"]
+
+    assert operation["operationId"] == "getApplianceVersion"
+    assert operation["tags"] == ["Appliance"]
+    assert operation.get("security", []) == []
+    response_schema = operation["responses"]["200"]["content"]["application/json"]["schema"]
+    assert response_schema == {"$ref": "#/components/schemas/ApplianceVersionResponse"}
+    properties = schema["components"]["schemas"]["ApplianceVersionResponse"]["properties"]
+    assert set(properties) == {"version", "base_version", "git_commit", "built_at"}
 
 
 def test_esxi_custom_variable_openapi_contract(client):

@@ -12,6 +12,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from atlaso import __build_git_commit__, __build_time_utc__, __version__
 from atlaso.app.adapters.system import SystemAdapter
 from atlaso.app.audit import record_audit
 from atlaso.app.config import Settings, get_settings
@@ -62,6 +63,7 @@ from atlaso.app.models import (
     utcnow,
 )
 from atlaso.app.schemas import (
+    ApplianceVersionResponse,
     ApiTokenCreate,
     ApiTokenCreated,
     ApiTokenResponse,
@@ -744,6 +746,21 @@ def stage_api_dnsmasq_config(config_preview: str) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(config_preview, encoding="utf-8")
     return str(path)
+
+
+@router.get(
+    "/version",
+    response_model=ApplianceVersionResponse,
+    tags=["Appliance"],
+    operation_id="getApplianceVersion",
+)
+def get_appliance_version() -> ApplianceVersionResponse:
+    return ApplianceVersionResponse(
+        version=__version__,
+        base_version=__version__.split("+", 1)[0],
+        git_commit=__build_git_commit__,
+        built_at=__build_time_utc__,
+    )
 
 
 @router.post(

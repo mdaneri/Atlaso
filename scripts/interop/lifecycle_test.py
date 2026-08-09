@@ -2338,6 +2338,12 @@ def appliance_health(client: HttpClient, args: argparse.Namespace) -> dict[str, 
     openapi = client.request("GET", "/openapi.json")
     if openapi[0] >= 400:
         raise LifecycleError(f"/openapi.json failed with HTTP {openapi[0]}")
+    version = HttpClient(client.base_url).json_request("GET", "/api/v1/version")
+    expected_version_fields = {"version", "base_version", "git_commit", "built_at"}
+    if set(version) != expected_version_fields:
+        raise LifecycleError("/api/v1/version returned an unexpected response shape.")
+    if not str(version["version"]).strip() or not str(version["base_version"]).strip():
+        raise LifecycleError("/api/v1/version returned an empty appliance version.")
     api_login(client, args)
     dashboard = client.json_request("GET", "/api/v1/dashboard")
     ui_login(client, args)
@@ -2351,7 +2357,12 @@ def appliance_health(client: HttpClient, args: argparse.Namespace) -> dict[str, 
         role="appliance",
     )
     require_success(ssh, "appliance health SSH probe")
-    return {"openapi_status": openapi[0], "dashboard_keys": sorted(dashboard.keys()), "ssh": ssh}
+    return {
+        "openapi_status": openapi[0],
+        "version": version,
+        "dashboard_keys": sorted(dashboard.keys()),
+        "ssh": ssh,
+    }
 
 
 def direct_dns_a_query_command(name: str, server: str, expected_ip: str) -> str:
