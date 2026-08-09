@@ -92,6 +92,12 @@ Changing terminal interfaces should make these apply units pending:
 - `public_services` for selected non-management nginx listeners and directory entries;
 - `firewall` for interface-bound TCP/443 access.
 
+Submitting these global changes can also re-render an already changed DNS/DHCP unit. When DNS uses the management DHCP
+lease for upstream forwarding, Atlaso preserves those resolvers even though local DNS makes `resolvectl` show loopback.
+The exact management systemd-networkd lease remains the fallback source. DNS/DHCP validation stops the apply if that
+fallback is required but unavailable; unscoped IPv6 link-local lease resolvers are not considered usable. Renew the
+lease or configure explicit DNS upstreams before retrying.
+
 The Public Services renderer merges terminal routes into an existing HTTPS listener when CA or depot routes already use
 the same address. It must emit only one `/static/` location per nginx server block.
 
@@ -102,6 +108,9 @@ confirm `atlaso.service` is active, and verify the selected address separately:
 - `https://<address>/terminal` should redirect to login or open the terminal;
 - `https://<address>/dashboard` and `/openapi.json` must remain unavailable on an additional listener;
 - the management `/openapi.json` endpoint must remain reachable.
+
+When local DNS and management DHCP are in use, also verify one managed Atlaso name and one external name after the Web
+Terminal apply. This confirms the unrelated setting change did not remove effective DNS upstreams.
 
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states

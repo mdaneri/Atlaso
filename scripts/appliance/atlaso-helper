@@ -56,7 +56,7 @@ COMMANDS: dict[str, set[str]] = {
     "local-users": {"validate", "apply", "status", "authenticate"},
     "appliance-settings": {"validate", "apply"},
     "web-terminal": {"status", "sign"},
-    "network": {"validate", "apply"},
+    "network": {"validate", "apply", "dhcp-dns"},
     "firewall": {"validate", "apply"},
     "dnsmasq": {"validate", "apply", "reload", "leases", "logs"},
     "ca": {"validate", "apply"},
@@ -129,6 +129,7 @@ NON_PATH_ARGUMENT_ACTIONS = {
     ("ldap", "authenticate"),
     ("automation", "run"),
     ("vcf-offline-depot", "apply-ceip"),
+    ("network", "dhcp-dns"),
 }
 ATLASO_SERVICE_USER = "atlaso"
 ATLASO_STATE_DIR = Path("/var/lib/atlaso")
@@ -147,6 +148,8 @@ ATLASO_NOTICE_PATH = Path("/usr/share/doc/atlaso/THIRD_PARTY_NOTICES.md")
 ATLASO_UPDATE_TRUST_DIR = Path("/etc/atlaso/update-trust.d")
 ATLASO_UPDATE_BACKUP_DIR = ATLASO_STATE_DIR / "update-backups"
 ATLASO_DATABASE_PATH = ATLASO_STATE_DIR / "atlaso.db"
+SYSTEMD_NETWORK_INTERFACE_DIR = Path("/sys/class/net")
+SYSTEMD_NETWORK_LEASE_DIR = Path("/run/systemd/netif/leases")
 ATLASO_UPDATE_FINALIZER_PATH = ATLASO_STATE_DIR / "apply/appliance-update/finalizer-status.json"
 ATLASO_UPDATE_MAINTENANCE_PATH = Path("/run/atlaso-update-maintenance")
 ATLASO_POWERSHELL_HOME = ATLASO_STATE_DIR / "powershell"
@@ -936,10 +939,37 @@ def _handle_ca(action: str, args: list[str]) -> int:
 
 
 def _validate_dnsmasq_config(path: Path) -> subprocess.CompletedProcess[str]:
+    required_upstream_error = _dnsmasq_required_upstream_error(path)
+    if required_upstream_error:
+        return subprocess.CompletedProcess(
+            ["dnsmasq", "--test", f"--conf-file={path}"],
+            2,
+            "",
+            f"{required_upstream_error}\n",
+        )
     dnsmasq = shutil.which("dnsmasq")
     if dnsmasq is None:
         return subprocess.CompletedProcess(["dnsmasq", "--test", f"--conf-file={path}"], 127, "", "dnsmasq command not found\n")
     return _run([dnsmasq, "--test", f"--conf-file={path}"])
+
+
+def _dnsmasq_required_upstream_error(path: Path) -> str:
+    lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines()]
+    if "# atlaso-dhcp-upstream-required" not in lines:
+        return ""
+    for line in lines:
+        if not line.startswith("server="):
+            continue
+        candidate = line.split("=", 1)[1].strip()
+        if not candidate or candidate.startswith("/"):
+            continue
+        try:
+            parsed = ip_address(candidate)
+        except ValueError:
+            continue
+        if not parsed.is_loopback and not parsed.is_link_local:
+            return ""
+    return "dnsmasq requires a usable management DHCP upstream server, but none was rendered"
 
 
 def _dnsmasq_config_uses_dnssec(path: Path) -> bool:
@@ -5751,6 +5781,17 @@ def _install_systemd_networkd_files(path: Path) -> tuple[int, list[str], list[st
 
 
 def _handle_network(action: str, args: list[str]) -> int:
+    if action == "dhcp-dns":
+        if len(args) != 1:
+            print("network dhcp-dns requires exactly one interface name", file=sys.stderr)
+            return 2
+        try:
+            payload = _networkd_dhcp_dns_payload(args[0])
+        except (OSError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0
     if len(args) != 1:
         print(f"network {action} requires exactly one staged config path", file=sys.stderr)
         return 2
@@ -5801,6 +5842,45 @@ def _handle_network(action: str, args: list[str]) -> int:
         )
     )
     return 0
+
+
+def _networkd_dhcp_dns_payload(interface_name: str) -> dict[str, object]:
+    if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,15}", interface_name):
+        raise ValueError("network dhcp-dns interface name is invalid")
+    ifindex_path = SYSTEMD_NETWORK_INTERFACE_DIR / interface_name / "ifindex"
+    try:
+        ifindex = int(ifindex_path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"network dhcp-dns could not resolve interface {interface_name}") from exc
+    if ifindex <= 0:
+        raise ValueError(f"network dhcp-dns resolved an invalid ifindex for {interface_name}")
+    lease_path = SYSTEMD_NETWORK_LEASE_DIR / str(ifindex)
+    try:
+        lease_text = lease_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        lease_text = ""
+    servers: list[str] = []
+    seen: set[str] = set()
+    for raw_line in lease_text.splitlines():
+        key, separator, value = raw_line.partition("=")
+        if separator != "=" or key.strip() != "DNS":
+            continue
+        for token in re.split(r"[\s,]+", value.strip()):
+            if not token:
+                continue
+            candidate = token.split("#", 1)[0].split("%", 1)[0]
+            try:
+                parsed = ip_address(candidate)
+            except ValueError:
+                continue
+            if parsed.is_loopback or parsed.is_link_local:
+                continue
+            normalized = str(parsed)
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            servers.append(normalized)
+    return {"interface": interface_name, "ifindex": ifindex, "servers": servers}
 
 
 def _validate_wan_config_path(path_value: str) -> Path:

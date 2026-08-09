@@ -147,6 +147,17 @@ class SystemAdapter:
             )
         return helper_result
 
+    def read_networkd_dhcp_dns(self, interface_name: str) -> AdapterResult:
+        return self._helper_result(
+            "network",
+            "dhcp-dns",
+            interface_name,
+            dry_run_message="networkd DHCP DNS read recorded",
+            use_sudo=False,
+            timeout_seconds=2,
+            execute_in_dry_run=True,
+        )
+
     def apply_ca_config(self, config_path: str) -> AdapterResult:
         return self._helper_result("ca", "apply", config_path, dry_run_message="dry-run: CA apply command recorded")
 

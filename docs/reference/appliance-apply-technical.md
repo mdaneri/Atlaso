@@ -243,9 +243,14 @@ still generate matching dnsmasq PTR answers through `host-record`; explicit PTR 
 do not map directly to an address record.
 
 When Appliance Settings resolver mode is still DHCP and DNS upstreams are empty, the DNS/DHCP desired-state preview uses
-the management interface's observed DHCP DNS servers as fallback forwarders. Converting the management interface from
-DHCP to static preserves the observed lease addresses and copies DHCP-provided DNS servers into Appliance Settings
-external DNS and into DNS service upstreams when those settings were relying on DHCP fallback.
+the management interface's observed DHCP DNS servers as fallback forwarders. Atlaso first reads
+`resolvectl dns <management-interface>`; if local DNS has replaced that link state with loopback, the constrained helper
+resolves the same interface's ifindex and reads only `/run/systemd/netif/leases/<ifindex>`. Both sources reject loopback,
+duplicates, malformed addresses, and values from another interface. Explicit upstreams retain precedence. The renderer
+marks DHCP-required configs, and both control-plane and helper validation reject a config with no usable unconditional
+forwarder before dnsmasq is changed. Converting the management interface from DHCP to static preserves the observed
+lease addresses and copies DHCP-provided DNS servers into Appliance Settings external DNS and into DNS service upstreams
+when those settings were relying on DHCP fallback.
 
 #### DHCP addressing and leases
 

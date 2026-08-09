@@ -2975,6 +2975,74 @@ def test_dnsmasq_helper_validates_staged_config(monkeypatch, tmp_path):
     assert commands == [["/usr/sbin/dnsmasq", "--test", f"--conf-file={config_path}"]]
 
 
+def test_dnsmasq_helper_rejects_missing_required_dhcp_upstream(monkeypatch, tmp_path, capsys):
+    helper = load_helper_module()
+    apply_dir = tmp_path / "apply" / "dnsmasq"
+    apply_dir.mkdir(parents=True)
+    config_path = apply_dir / "atlaso.conf"
+    config_path.write_text(
+        "# atlaso-dhcp-upstream-required\nno-resolv\nserver=/atlaso.internal/127.0.0.1\nserver=fe80::53\n",
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(helper, "DNSMASQ_APPLY_DIR", apply_dir)
+    monkeypatch.setattr(helper, "_run", lambda command: commands.append(command))
+
+    assert helper._handle_dnsmasq("validate", [str(config_path)]) == 2
+    assert "requires a usable management DHCP upstream server" in capsys.readouterr().err
+    assert commands == []
+
+
+def test_dnsmasq_helper_accepts_rendered_required_dhcp_upstream(monkeypatch, tmp_path):
+    helper = load_helper_module()
+    apply_dir = tmp_path / "apply" / "dnsmasq"
+    apply_dir.mkdir(parents=True)
+    config_path = apply_dir / "atlaso.conf"
+    config_path.write_text(
+        "# atlaso-dhcp-upstream-required\nno-resolv\nserver=192.168.167.2\n",
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "dnsmasq: syntax check OK.\n", "")
+
+    monkeypatch.setattr(helper, "DNSMASQ_APPLY_DIR", apply_dir)
+    monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/sbin/dnsmasq" if command == "dnsmasq" else None)
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    assert helper._handle_dnsmasq("validate", [str(config_path)]) == 0
+    assert commands == [["/usr/sbin/dnsmasq", "--test", f"--conf-file={config_path}"]]
+
+
+def test_networkd_dhcp_dns_reads_only_requested_interface_lease(monkeypatch, tmp_path):
+    helper = load_helper_module()
+    interface_dir = tmp_path / "sys" / "class" / "net"
+    lease_dir = tmp_path / "run" / "systemd" / "netif" / "leases"
+    (interface_dir / "eth0").mkdir(parents=True)
+    lease_dir.mkdir(parents=True)
+    (interface_dir / "eth0" / "ifindex").write_text("2\n", encoding="utf-8")
+    (lease_dir / "2").write_text(
+        "ADDRESS=192.168.167.251\n"
+        "DNS=127.0.0.1 192.168.167.2 malformed 192.168.167.2 ::1 fe80::53 2001:4860:4860::8888\n",
+        encoding="utf-8",
+    )
+    (lease_dir / "3").write_text("DNS=192.168.99.99\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "SYSTEMD_NETWORK_INTERFACE_DIR", interface_dir)
+    monkeypatch.setattr(helper, "SYSTEMD_NETWORK_LEASE_DIR", lease_dir)
+
+    payload = helper._networkd_dhcp_dns_payload("eth0")
+
+    assert payload == {
+        "interface": "eth0",
+        "ifindex": 2,
+        "servers": ["192.168.167.2", "2001:4860:4860::8888"],
+    }
+    assert "192.168.99.99" not in payload["servers"]
+
+
 def test_dnsmasq_helper_prepares_dnssec_trust_anchors(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "dnsmasq"
