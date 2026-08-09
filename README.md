@@ -16,7 +16,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   sources in read-only repository tabs, then create or edit desired source state through the shared reviewed wizard
   before explicitly synchronizing package clients.
 - [Services](docs/services/index.md) — configure DNS, identity, storage, network boot, and VCF integrations.
-- [DNS](docs/services/dns.md) — preserve explicit forwarders or the management interface's exact DHCP lease resolvers
+- [DNS](docs/services/dns.md) — preserve explicit forwarders or usable resolvers from the management interface's exact
+  DHCP lease
   across global appliance applies, including applies triggered by unrelated settings such as Web Terminal.
 - [Network Boot](docs/services/ipxe.md) — discover unassigned hardware with
   independently released read-only Inventory Linux, download its latest package

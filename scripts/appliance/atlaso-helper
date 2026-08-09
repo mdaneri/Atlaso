@@ -967,7 +967,7 @@ def _dnsmasq_required_upstream_error(path: Path) -> str:
             parsed = ip_address(candidate)
         except ValueError:
             continue
-        if not parsed.is_loopback:
+        if not parsed.is_loopback and not parsed.is_link_local:
             return ""
     return "dnsmasq requires a usable management DHCP upstream server, but none was rendered"
 
@@ -5873,7 +5873,7 @@ def _networkd_dhcp_dns_payload(interface_name: str) -> dict[str, object]:
                 parsed = ip_address(candidate)
             except ValueError:
                 continue
-            if parsed.is_loopback:
+            if parsed.is_loopback or parsed.is_link_local:
                 continue
             normalized = str(parsed)
             if normalized in seen:

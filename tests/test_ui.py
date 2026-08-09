@@ -2964,7 +2964,7 @@ Global:
 Link 2 (eth0): 127.0.0.1 ::1 192.168.167.2 2001:4860:4860::8888 fe80::1%eth0 192.168.167.2
 """
 
-    assert parse_resolvectl_dns_servers(output) == ["192.168.167.2", "2001:4860:4860::8888", "fe80::1"]
+    assert parse_resolvectl_dns_servers(output) == ["192.168.167.2", "2001:4860:4860::8888"]
 
 
 def test_management_dhcp_dns_falls_back_to_exact_networkd_lease_after_local_dns(monkeypatch):
@@ -2989,7 +2989,7 @@ def test_management_dhcp_dns_falls_back_to_exact_networkd_lease_after_local_dns(
             dry_run=False,
             stdout=(
                 '{"group":"network","action":"dhcp-dns"}\n'
-                '{"interface":"eth0","ifindex":2,"servers":["127.0.0.1","192.168.167.2","bad","192.168.167.2"]}\n'
+                '{"interface":"eth0","ifindex":2,"servers":["127.0.0.1","fe80::53","192.168.167.2","bad","192.168.167.2"]}\n'
             ),
         )
 

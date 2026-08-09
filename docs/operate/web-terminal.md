@@ -95,7 +95,8 @@ Changing terminal interfaces should make these apply units pending:
 Submitting these global changes can also re-render an already changed DNS/DHCP unit. When DNS uses the management DHCP
 lease for upstream forwarding, Atlaso preserves those resolvers even though local DNS makes `resolvectl` show loopback.
 The exact management systemd-networkd lease remains the fallback source. DNS/DHCP validation stops the apply if that
-fallback is required but unavailable; renew the lease or configure explicit DNS upstreams before retrying.
+fallback is required but unavailable; unscoped IPv6 link-local lease resolvers are not considered usable. Renew the
+lease or configure explicit DNS upstreams before retrying.
 
 The Public Services renderer merges terminal routes into an existing HTTPS listener when CA or depot routes already use
 the same address. It must emit only one `/static/` location per nginx server block.

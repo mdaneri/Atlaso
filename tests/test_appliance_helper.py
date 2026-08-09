@@ -2981,7 +2981,7 @@ def test_dnsmasq_helper_rejects_missing_required_dhcp_upstream(monkeypatch, tmp_
     apply_dir.mkdir(parents=True)
     config_path = apply_dir / "atlaso.conf"
     config_path.write_text(
-        "# atlaso-dhcp-upstream-required\nno-resolv\nserver=/atlaso.internal/127.0.0.1\n",
+        "# atlaso-dhcp-upstream-required\nno-resolv\nserver=/atlaso.internal/127.0.0.1\nserver=fe80::53\n",
         encoding="utf-8",
     )
     commands: list[list[str]] = []
@@ -3026,7 +3026,7 @@ def test_networkd_dhcp_dns_reads_only_requested_interface_lease(monkeypatch, tmp
     (interface_dir / "eth0" / "ifindex").write_text("2\n", encoding="utf-8")
     (lease_dir / "2").write_text(
         "ADDRESS=192.168.167.251\n"
-        "DNS=127.0.0.1 192.168.167.2 malformed 192.168.167.2 ::1 2001:4860:4860::8888\n",
+        "DNS=127.0.0.1 192.168.167.2 malformed 192.168.167.2 ::1 fe80::53 2001:4860:4860::8888\n",
         encoding="utf-8",
     )
     (lease_dir / "3").write_text("DNS=192.168.99.99\n", encoding="utf-8")

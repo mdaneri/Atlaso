@@ -205,7 +205,7 @@ def parse_resolvectl_dns_servers(output: str) -> list[str]:
                 parsed = ip_address(candidate)
             except ValueError:
                 continue
-            if parsed.is_loopback:
+            if parsed.is_loopback or parsed.is_link_local:
                 continue
             server = str(parsed)
             if server in seen:
@@ -267,7 +267,7 @@ def management_dhcp_dns_context(interfaces: list[PhysicalInterface]) -> tuple[di
             parsed = ip_address(server)
         except ValueError:
             continue
-        if parsed.is_loopback:
+        if parsed.is_loopback or parsed.is_link_local:
             continue
         normalized = str(parsed)
         if normalized in seen:

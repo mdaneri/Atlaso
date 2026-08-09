@@ -600,10 +600,10 @@ def dns_settings_to_dict(settings: DnsSettings, conditional_forwarders: str | No
 
 
 def effective_dns_upstream_servers(settings: DnsSettings, fallback_servers: list[str] | None = None) -> list[str]:
-    configured = _non_loopback_servers(split_servers(settings.upstream_servers))
+    configured = _usable_upstream_servers(split_servers(settings.upstream_servers))
     if configured:
         return configured
-    return _non_loopback_servers([server.strip() for server in fallback_servers or [] if server.strip()])
+    return _usable_upstream_servers([server.strip() for server in fallback_servers or [] if server.strip()])
 
 
 def dhcp_dns_upstream_required(settings: DnsSettings, management_interface: dict[str, object]) -> bool:
@@ -756,6 +756,8 @@ def validate_dns_settings(
         parsed = _validate_ip(server, f"upstream server {server}", errors)
         if parsed and parsed.is_loopback:
             errors.append(f"upstream server {server} must not be a loopback address.")
+        if parsed and parsed.is_link_local:
+            errors.append(f"upstream server {server} must not be a link-local address.")
     if require_dhcp_upstream and not effective_dns_upstream_servers(settings, fallback_upstream_servers):
         errors.append(
             "DNS requires at least one usable management DHCP upstream server, but the systemd-networkd lease did not provide one."
@@ -1373,7 +1375,7 @@ def _validate_ip(value: str, label: str, errors: list[str], *, version: int | No
     return parsed
 
 
-def _non_loopback_servers(servers: list[str]) -> list[str]:
+def _usable_upstream_servers(servers: list[str]) -> list[str]:
     filtered: list[str] = []
     seen: set[str] = set()
     for server in servers:
@@ -1381,7 +1383,7 @@ def _non_loopback_servers(servers: list[str]) -> list[str]:
             parsed = ip_address(server)
         except ValueError:
             continue
-        if parsed.is_loopback:
+        if parsed.is_loopback or parsed.is_link_local:
             continue
         normalized = str(parsed)
         if normalized and normalized not in seen:

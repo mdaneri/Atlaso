@@ -246,7 +246,7 @@ def test_dnsmasq_renderer_uses_dhcp_upstreams_when_desired_upstreams_empty():
         dns_records=[],
         dhcp_settings=DhcpSettings(enabled=False),
         dhcp_reservations=[],
-        fallback_upstream_servers=["127.0.0.1", "::1", "192.168.167.2", "192.168.167.2"],
+        fallback_upstream_servers=["127.0.0.1", "::1", "fe80::53", "192.168.167.2", "192.168.167.2"],
         require_dhcp_upstream=True,
     )
 
@@ -254,6 +254,7 @@ def test_dnsmasq_renderer_uses_dhcp_upstreams_when_desired_upstreams_empty():
     assert config.count("server=192.168.167.2") == 1
     assert "server=127.0.0.1" not in config
     assert "server=::1" not in config
+    assert "server=fe80::53" not in config
     assert "# atlaso-dhcp-upstream-required" in config
 
 
@@ -263,7 +264,7 @@ def test_dnsmasq_validation_fails_closed_when_required_dhcp_upstream_is_unavaila
     errors = validate_dns_settings(
         settings,
         [],
-        fallback_upstream_servers=["127.0.0.1", "malformed"],
+        fallback_upstream_servers=["127.0.0.1", "fe80::53", "malformed"],
         require_dhcp_upstream=True,
     )
 
@@ -271,13 +272,13 @@ def test_dnsmasq_validation_fails_closed_when_required_dhcp_upstream_is_unavaila
     assert dhcp_dns_upstream_required(settings, {"ipv4_method": "dhcp"}) is True
 
 
-def test_dnsmasq_renderer_filters_loopback_configured_upstreams():
+def test_dnsmasq_renderer_filters_unusable_configured_upstreams():
     settings = DnsSettings(
         enabled=True,
         listen_interface="eth1",
         listen_address="192.168.87.200",
         domain="atlaso.internal",
-        upstream_servers="127.0.0.1\n::1\n192.168.167.2",
+        upstream_servers="127.0.0.1\n::1\nfe80::53\n192.168.167.2",
     )
     config = render_dnsmasq_config(
         dns_settings=settings,
@@ -289,6 +290,8 @@ def test_dnsmasq_renderer_filters_loopback_configured_upstreams():
 
     assert "server=192.168.167.2" in config
     assert "server=127.0.0.1" not in config
+    assert "server=fe80::53" not in config
+    assert "upstream server fe80::53 must not be a link-local address." in errors
 
 
 def test_ntp_renderer_disables_legacy_nts_state_and_preserves_hardening():

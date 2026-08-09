@@ -107,8 +107,9 @@ authoritative interface set.
 Explicit DNS upstreams always take precedence. When the management interface uses DHCP and upstreams are empty, Atlaso
 uses that interface's observed DHCP resolvers as dnsmasq forwarders. Local DNS intentionally changes
 `resolvectl dns <management-interface>` to loopback; after that transition Atlaso recovers the original resolvers from
-the exact systemd-networkd lease identified by the management interface's ifindex. Loopback, duplicate, malformed, and
-other-interface lease values are excluded.
+the exact systemd-networkd lease identified by the management interface's ifindex. Loopback, duplicate, malformed,
+unscoped IPv6 link-local, and other-interface lease values are excluded. Link-local lease values cannot be used safely
+because the lease does not retain the interface scope required to reach them.
 
 Every later global appliance apply, including an apply caused by enabling or disabling Web Terminal, reuses the same
 effective forwarders. If DHCP fallback is required and the management lease has no usable resolver, DNS/DHCP validation
