@@ -62,6 +62,7 @@ from atlaso.app.models import (
     utcnow,
 )
 from atlaso.app.schemas import (
+    ApplianceVersionResponse,
     ApiTokenCreate,
     ApiTokenCreated,
     ApiTokenResponse,
@@ -149,6 +150,7 @@ from atlaso.app.schemas import (
     WanPolicyResponse,
     WanStatusResponse,
 )
+from atlaso.app.services.appliance_update import current_version_info
 from atlaso.app.services.kms import ensure_kms_provider_id
 from atlaso.app.services.firewall import FIREWALL_SOURCE_GROUPS_SETTING_KEY, firewall_interface_networks, firewall_source_group_state
 from atlaso.app.services.esx_storage import (
@@ -744,6 +746,22 @@ def stage_api_dnsmasq_config(config_preview: str) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(config_preview, encoding="utf-8")
     return str(path)
+
+
+@router.get(
+    "/version",
+    response_model=ApplianceVersionResponse,
+    tags=["Appliance"],
+    operation_id="getApplianceVersion",
+)
+def get_appliance_version() -> ApplianceVersionResponse:
+    info = current_version_info()
+    return ApplianceVersionResponse(
+        version=info["version"],
+        base_version=info["base_version"],
+        git_commit=info["git_commit"],
+        built_at=info["built_at"],
+    )
 
 
 @router.post(

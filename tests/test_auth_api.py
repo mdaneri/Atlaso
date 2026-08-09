@@ -18,6 +18,32 @@ def test_unauthenticated_api_requests_are_rejected(client):
     assert response.json()["error_code"] == "HTTP_ERROR"
 
 
+def test_appliance_version_api_is_unauthenticated(client, monkeypatch):
+    import atlaso.app.api.v1 as api_v1
+
+    monkeypatch.setattr(
+        api_v1,
+        "current_version_info",
+        lambda: {
+            "version": "0.9.87+g0123456789ab",
+            "base_version": "0.9.87",
+            "git_commit": "0123456789abcdef0123456789abcdef01234567",
+            "built_at": "2026-08-09T20:15:00Z",
+            "platform": "excluded",
+        },
+    )
+
+    response = client.get("/api/v1/version")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "version": "0.9.87+g0123456789ab",
+        "base_version": "0.9.87",
+        "git_commit": "0123456789abcdef0123456789abcdef01234567",
+        "built_at": "2026-08-09T20:15:00Z",
+    }
+
+
 def test_invalid_jwt_is_rejected(client):
     response = client.get("/api/v1/dashboard", headers={"Authorization": "Bearer invalid"})
     assert response.status_code == 401

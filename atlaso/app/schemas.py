@@ -14,6 +14,13 @@ class ProblemDetails(BaseModel):
     request_id: str
 
 
+class ApplianceVersionResponse(BaseModel):
+    version: str
+    base_version: str
+    git_commit: str
+    built_at: str
+
+
 class IdentityResponse(BaseModel):
     username: str
     role: str
