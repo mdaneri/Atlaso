@@ -5,7 +5,7 @@ SERVICE_STATE_DEFAULTS = [
     {"service": "dhcp", "display_name": "DHCP", "running": False, "enabled": False, "health": "disabled"},
     {
         "service": "ntpd",
-        "display_name": "NTP",
+        "display_name": "NTP / NTS",
         "running": False,
         "enabled": False,
         "health": "disabled",
