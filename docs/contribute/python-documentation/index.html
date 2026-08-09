@@ -6,36 +6,42 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Operator-first documentation for the Atlaso virtualization lab appliance.">
+        <meta name="description" content="Write maintainable Python docstrings and implementation comments without duplicating type hints.">
       
       
         <meta name="author" content="Atlaso contributors">
       
       
+        <link rel="canonical" href="https://mdaneri.github.io/Atlaso/docs/contribute/python-documentation/">
       
+      
+        <link rel="prev" href="../documentation-authoring/">
+      
+      
+        <link rel="next" href="../api-authoring/">
       
       
         
       
       
-      <link rel="icon" href="/Atlaso/docs/assets/brand/favicon.ico">
+      <link rel="icon" href="../../assets/brand/favicon.ico">
       <meta name="generator" content="zensical-0.0.51">
     
     
       
-        <title>Atlaso Documentation</title>
+        <title>Python documentation - Atlaso Documentation</title>
       
     
     
       
         
       
-      <link rel="stylesheet" href="/Atlaso/docs/assets/stylesheets/modern/main.62c9b9cc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.62c9b9cc.min.css">
       
         
           
         
-        <link rel="stylesheet" href="/Atlaso/docs/assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
       
       
 
@@ -54,9 +60,9 @@
       
     
     
-      <link rel="stylesheet" href="/Atlaso/docs/assets/stylesheets/atlaso.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/atlaso.css">
     
-    <script>__md_scope=new URL("/Atlaso/docs",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    <script>__md_scope=new URL("../..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
     
       
 
@@ -80,7 +86,8 @@
     <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
     <div data-md-component="skip">
       
-        <a href="#__skip" class="md-skip">
+        
+        <a href="#python-documentation" class="md-skip">
           Skip to content
         </a>
       
@@ -96,9 +103,9 @@
 
 <header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="/Atlaso/docs/" title="Atlaso Documentation" class="md-header__button md-logo" aria-label="Atlaso Documentation" data-md-component="logo">
+    <a href="../.." title="Atlaso Documentation" class="md-header__button md-logo" aria-label="Atlaso Documentation" data-md-component="logo">
       
-  <img src="/Atlaso/docs/assets/brand/atlaso-logo-horizontal-dark.svg" alt="Atlaso Documentation">
+  <img src="../../assets/brand/atlaso-logo-horizontal-dark.svg" alt="Atlaso Documentation">
 
     </a>
     <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
@@ -115,7 +122,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              
+              Python documentation
             
           </span>
         </div>
@@ -193,7 +200,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="/Atlaso/docs/" class="md-tabs__link">
+      <a href="../.." class="md-tabs__link">
         
   
   Home
@@ -220,7 +227,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="/Atlaso/docs/getting-started/" class="md-tabs__link">
+        <a href="../../getting-started/" class="md-tabs__link">
           
   
   Getting started
@@ -276,7 +283,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="/Atlaso/docs/operate/" class="md-tabs__link">
+        <a href="../../operate/" class="md-tabs__link">
           
   
   Operate
@@ -338,7 +345,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="/Atlaso/docs/services/" class="md-tabs__link">
+        <a href="../../services/" class="md-tabs__link">
           
   
   Services
@@ -384,7 +391,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="/Atlaso/docs/reference/" class="md-tabs__link">
+        <a href="../../reference/" class="md-tabs__link">
           
   
   Reference
@@ -399,6 +406,8 @@
   
   
   
+    
+  
   
     
       
@@ -425,8 +434,8 @@
     
     
     
-      <li class="md-tabs__item">
-        <a href="/Atlaso/docs/contribute/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
           
   
   Contribute
@@ -470,7 +479,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="/Atlaso/docs/project/" class="md-tabs__link">
+        <a href="../../project/" class="md-tabs__link">
           
   
   Project
@@ -509,9 +518,9 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="/Atlaso/docs/" title="Atlaso Documentation" class="md-nav__button md-logo" aria-label="Atlaso Documentation" data-md-component="logo">
+    <a href="../.." title="Atlaso Documentation" class="md-nav__button md-logo" aria-label="Atlaso Documentation" data-md-component="logo">
       
-  <img src="/Atlaso/docs/assets/brand/atlaso-logo-horizontal-dark.svg" alt="Atlaso Documentation">
+  <img src="../../assets/brand/atlaso-logo-horizontal-dark.svg" alt="Atlaso Documentation">
 
     </a>
     Atlaso Documentation
@@ -538,7 +547,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/" class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   
@@ -594,7 +603,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="/Atlaso/docs/getting-started/" class="md-nav__link ">
+            <a href="../../getting-started/" class="md-nav__link ">
               
   
   
@@ -696,7 +705,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="/Atlaso/docs/operate/" class="md-nav__link ">
+            <a href="../../operate/" class="md-nav__link ">
               
   
   
@@ -745,7 +754,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/operate/dashboard/" class="md-nav__link">
+      <a href="../../operate/dashboard/" class="md-nav__link">
         
   
   
@@ -779,7 +788,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/operate/monitor/" class="md-nav__link">
+      <a href="../../operate/monitor/" class="md-nav__link">
         
   
   
@@ -813,7 +822,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/operate/logs/" class="md-nav__link">
+      <a href="../../operate/logs/" class="md-nav__link">
         
   
   
@@ -847,7 +856,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/operate/audit-log/" class="md-nav__link">
+      <a href="../../operate/audit-log/" class="md-nav__link">
         
   
   
@@ -881,7 +890,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/operate/tasks/" class="md-nav__link">
+      <a href="../../operate/tasks/" class="md-nav__link">
         
   
   
@@ -915,7 +924,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/operate/appliance-apply/" class="md-nav__link">
+      <a href="../../operate/appliance-apply/" class="md-nav__link">
         
   
   
@@ -949,7 +958,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/operate/appliance-settings/" class="md-nav__link">
+      <a href="../../operate/appliance-settings/" class="md-nav__link">
         
   
   
@@ -983,7 +992,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/operate/networking/" class="md-nav__link">
+      <a href="../../operate/networking/" class="md-nav__link">
         
   
   
@@ -1017,7 +1026,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/operate/appliance-console/" class="md-nav__link">
+      <a href="../../operate/appliance-console/" class="md-nav__link">
         
   
   
@@ -1051,7 +1060,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/operate/appliance-update/" class="md-nav__link">
+      <a href="../../operate/appliance-update/" class="md-nav__link">
         
   
   
@@ -1085,7 +1094,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/operate/backup-restore/" class="md-nav__link">
+      <a href="../../operate/backup-restore/" class="md-nav__link">
         
   
   
@@ -1119,7 +1128,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/operate/automation/" class="md-nav__link">
+      <a href="../../operate/automation/" class="md-nav__link">
         
   
   
@@ -1153,7 +1162,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/operate/api/" class="md-nav__link">
+      <a href="../../operate/api/" class="md-nav__link">
         
   
   
@@ -1187,7 +1196,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/operate/web-terminal/" class="md-nav__link">
+      <a href="../../operate/web-terminal/" class="md-nav__link">
         
   
   
@@ -1285,7 +1294,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="/Atlaso/docs/services/" class="md-nav__link ">
+            <a href="../../services/" class="md-nav__link ">
               
   
   
@@ -1334,7 +1343,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/services/dns/" class="md-nav__link">
+      <a href="../../services/dns/" class="md-nav__link">
         
   
   
@@ -1368,7 +1377,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/services/dhcp/" class="md-nav__link">
+      <a href="../../services/dhcp/" class="md-nav__link">
         
   
   
@@ -1402,7 +1411,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/services/firewall/" class="md-nav__link">
+      <a href="../../services/firewall/" class="md-nav__link">
         
   
   
@@ -1436,7 +1445,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/services/ntp/" class="md-nav__link">
+      <a href="../../services/ntp/" class="md-nav__link">
         
   
   
@@ -1470,7 +1479,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/services/certificate-authority/" class="md-nav__link">
+      <a href="../../services/certificate-authority/" class="md-nav__link">
         
   
   
@@ -1504,7 +1513,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/services/esx-storage/" class="md-nav__link">
+      <a href="../../services/esx-storage/" class="md-nav__link">
         
   
   
@@ -1538,7 +1547,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/services/ipxe/" class="md-nav__link">
+      <a href="../../services/ipxe/" class="md-nav__link">
         
   
   
@@ -1572,7 +1581,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/services/kms/" class="md-nav__link">
+      <a href="../../services/kms/" class="md-nav__link">
         
   
   
@@ -1606,7 +1615,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/services/local-users/" class="md-nav__link">
+      <a href="../../services/local-users/" class="md-nav__link">
         
   
   
@@ -1640,7 +1649,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/services/managed-ldap/" class="md-nav__link">
+      <a href="../../services/managed-ldap/" class="md-nav__link">
         
   
   
@@ -1674,7 +1683,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/services/oidc-provider/" class="md-nav__link">
+      <a href="../../services/oidc-provider/" class="md-nav__link">
         
   
   
@@ -1708,7 +1717,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/services/vcf-backups/" class="md-nav__link">
+      <a href="../../services/vcf-backups/" class="md-nav__link">
         
   
   
@@ -1742,7 +1751,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/services/vcf-helper/" class="md-nav__link">
+      <a href="../../services/vcf-helper/" class="md-nav__link">
         
   
   
@@ -1776,7 +1785,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/services/vaults/" class="md-nav__link">
+      <a href="../../services/vaults/" class="md-nav__link">
         
   
   
@@ -1810,7 +1819,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/services/vcf-offline-depot/" class="md-nav__link">
+      <a href="../../services/vcf-offline-depot/" class="md-nav__link">
         
   
   
@@ -1844,7 +1853,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/services/vcf-private-registry/" class="md-nav__link">
+      <a href="../../services/vcf-private-registry/" class="md-nav__link">
         
   
   
@@ -1878,7 +1887,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/services/vcf-trust/" class="md-nav__link">
+      <a href="../../services/vcf-trust/" class="md-nav__link">
         
   
   
@@ -1960,7 +1969,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="/Atlaso/docs/reference/" class="md-nav__link ">
+            <a href="../../reference/" class="md-nav__link ">
               
   
   
@@ -2009,7 +2018,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/reference/api/" class="md-nav__link">
+      <a href="../../reference/api/" class="md-nav__link">
         
   
   
@@ -2043,7 +2052,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/reference/interface-gallery/" class="md-nav__link">
+      <a href="../../reference/interface-gallery/" class="md-nav__link">
         
   
   
@@ -2077,7 +2086,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/reference/appliance-apply-technical/" class="md-nav__link">
+      <a href="../../reference/appliance-apply-technical/" class="md-nav__link">
         
   
   
@@ -2111,7 +2120,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/reference/appliance-console-technical/" class="md-nav__link">
+      <a href="../../reference/appliance-console-technical/" class="md-nav__link">
         
   
   
@@ -2145,7 +2154,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/reference/vsphere-key-provider-protocol/" class="md-nav__link">
+      <a href="../../reference/vsphere-key-provider-protocol/" class="md-nav__link">
         
   
   
@@ -2179,7 +2188,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/reference/vsphere-key-provider-security/" class="md-nav__link">
+      <a href="../../reference/vsphere-key-provider-security/" class="md-nav__link">
         
   
   
@@ -2213,7 +2222,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/reference/full-technical-reference/" class="md-nav__link">
+      <a href="../../reference/full-technical-reference/" class="md-nav__link">
         
   
   
@@ -2247,7 +2256,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/reference/hyperv-lifecycle-testing/" class="md-nav__link">
+      <a href="../../reference/hyperv-lifecycle-testing/" class="md-nav__link">
         
   
   
@@ -2281,7 +2290,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/reference/vmware-workstation-lifecycle-testing/" class="md-nav__link">
+      <a href="../../reference/vmware-workstation-lifecycle-testing/" class="md-nav__link">
         
   
   
@@ -2319,6 +2328,8 @@
       
   
   
+    
+  
   
   
     
@@ -2346,20 +2357,23 @@
     
     
       
+        
+        
+      
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="/Atlaso/docs/contribute/" class="md-nav__link ">
+            <a href="../" class="md-nav__link ">
               
   
   
@@ -2383,13 +2397,13 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -2408,7 +2422,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/contribute/dependency-management/" class="md-nav__link">
+      <a href="../dependency-management/" class="md-nav__link">
         
   
   
@@ -2442,7 +2456,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/contribute/documentation-authoring/" class="md-nav__link">
+      <a href="../documentation-authoring/" class="md-nav__link">
         
   
   
@@ -2473,10 +2487,43 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="/Atlaso/docs/contribute/python-documentation/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Python documentation
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
         
   
   
@@ -2498,6 +2545,60 @@
   
 
       </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#docstrings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Docstrings
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-comments" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Implementation comments
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Validation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2510,7 +2611,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/contribute/api-authoring/" class="md-nav__link">
+      <a href="../api-authoring/" class="md-nav__link">
         
   
   
@@ -2544,7 +2645,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/contribute/windows-image-build-wsl/" class="md-nav__link">
+      <a href="../windows-image-build-wsl/" class="md-nav__link">
         
   
   
@@ -2578,7 +2679,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/contribute/ui-design-guide/" class="md-nav__link">
+      <a href="../ui-design-guide/" class="md-nav__link">
         
   
   
@@ -2612,7 +2713,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/contribute/agent-policies/" class="md-nav__link">
+      <a href="../agent-policies/" class="md-nav__link">
         
   
   
@@ -2692,7 +2793,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="/Atlaso/docs/project/" class="md-nav__link ">
+            <a href="../../project/" class="md-nav__link ">
               
   
   
@@ -2741,7 +2842,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/project/github-project/" class="md-nav__link">
+      <a href="../../project/github-project/" class="md-nav__link">
         
   
   
@@ -2775,7 +2876,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/project/ui-compliance-matrix/" class="md-nav__link">
+      <a href="../../project/ui-compliance-matrix/" class="md-nav__link">
         
   
   
@@ -2809,7 +2910,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/project/branding/" class="md-nav__link">
+      <a href="../../project/branding/" class="md-nav__link">
         
   
   
@@ -2843,7 +2944,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/assets/brand/BRAND_GUIDE/" class="md-nav__link">
+      <a href="../../assets/brand/BRAND_GUIDE/" class="md-nav__link">
         
   
   
@@ -2877,7 +2978,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/project/ca-roadmap/" class="md-nav__link">
+      <a href="../../project/ca-roadmap/" class="md-nav__link">
         
   
   
@@ -2911,7 +3012,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/project/routing-wan-roadmap/" class="md-nav__link">
+      <a href="../../project/routing-wan-roadmap/" class="md-nav__link">
         
   
   
@@ -2945,7 +3046,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/project/appliance-console-design-qa/" class="md-nav__link">
+      <a href="../../project/appliance-console-design-qa/" class="md-nav__link">
         
   
   
@@ -2979,7 +3080,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/Atlaso/docs/project/monitor-apply-ux-design-qa/" class="md-nav__link">
+      <a href="../../project/monitor-apply-ux-design-qa/" class="md-nav__link">
         
   
   
@@ -3027,6 +3128,13 @@
                     
                     
                     
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
                     
                   
                   <div class="md-sidebar__inner">
@@ -3037,6 +3145,49 @@
   
   
   
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#docstrings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Docstrings
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-comments" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Implementation comments
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Validation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
   
 </nav>
                   </div>
@@ -3054,11 +3205,165 @@
   
 
 
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-path__item">
+        <a href="../" class="md-path__link">
+          
+  
+  <span class="md-ellipsis">
+    Contribute
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
               
               <article class="md-content__inner md-typeset">
                 
-  <h1>404 - Not found</h1>
+                  
+  
+    <a href="https://github.com/mdaneri/Atlaso/edit/main/docs/contribute/python-documentation.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-pen" viewBox="0 0 24 24"><path d="M12.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v9.34"/><path d="M14 2v5a1 1 0 0 0 1 1h5M10.378 12.622a1 1 0 0 1 3 3.003L8.36 20.637a2 2 0 0 1-.854.506l-2.867.837a.5.5 0 0 1-.62-.62l.836-2.869a2 2 0 0 1 .506-.853z"/></svg>
+    </a>
+  
+  
+    
+      
+    
+    <a href="https://github.com/mdaneri/Atlaso/raw/main/docs/contribute/python-documentation.md" title="View source of this page" class="md-content__button md-icon">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-code-2" viewBox="0 0 24 24"><path d="M4 12.15V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-3.35"/><path d="M14 2v5a1 1 0 0 0 1 1h5M5 16l-3 3 3 3M9 22l3-3-3-3"/></svg>
+    </a>
+  
 
+
+<h1 id="python-documentation">Python documentation<a class="headerlink" href="#python-documentation" title="Permanent link">&para;</a></h1>
+<p>Every tracked Python module, class, function, and method should explain its purpose at the point of definition. Atlaso
+uses PEP 257 docstrings with Google-style sections where a summary alone cannot express the contract.</p>
+<h2 id="docstrings">Docstrings<a class="headerlink" href="#docstrings" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Start with a concise imperative summary that describes observable behavior, such as <code>Return</code>, <code>Validate</code>, <code>Create</code>,
+  or <code>Render</code>.</li>
+<li>Document arguments when their meaning, units, trust boundary, or lifecycle role is not clear from the name and type
+  hint. Do not repeat type information from the signature.</li>
+<li>Describe a return value in the summary for a simple accessor or predicate. Use a <code>Returns</code> section when the returned
+  object, ownership, normalization, or state needs more explanation.</li>
+<li>List exceptions intentionally raised by the function under <code>Raises</code>. Describe the condition that triggers each
+  exception rather than restating its class name.</li>
+<li>Record important side effects, security boundaries, persistence behavior, cleanup guarantees, and ordering
+  constraints in the docstring body.</li>
+<li>Describe public class fields and initialized instance attributes in a Google-style <code>Attributes</code> section. Reuse
+  Pydantic field descriptions where they already define the API contract, and do not repeat Python type annotations.</li>
+<li>Document <code>@property</code> accessors on the accessor itself, including lifecycle or side-effect behavior that is not clear
+  from the property name.</li>
+<li>Keep test docstrings focused on the behavior or regression being verified. Test setup remains in fixtures and code,
+  not a narration of each statement.</li>
+</ul>
+<p>Use Google-style sections only when needed:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">create_host</span><span class="p">(</span><span class="n">hostname</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">mac_address</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">enabled</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Host</span><span class="p">:</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Create a PXE host.</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="sd">    Args:</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="sd">        hostname: DNS hostname assigned to the host.</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="sd">        mac_address: MAC address used to identify the provisioning target.</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="sd">        enabled: Whether provisioning is enabled for this host.</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="sd">    Returns:</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="sd">        The newly created host.</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="sd">    Raises:</span>
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="sd">        ValueError: If the MAC address is invalid.</span>
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="sd">        HostExistsError: If a host with the same identity already exists.</span>
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span></code></pre></div>
+<h2 id="implementation-comments">Implementation comments<a class="headerlink" href="#implementation-comments" title="Permanent link">&para;</a></h2>
+<p>Use <code>#</code> comments for rationale that cannot be made clear through naming or structure. Good subjects include protocol
+requirements, platform compatibility, security decisions, unusual limits, race prevention, lifecycle ordering, and
+workarounds with a still-relevant reason.</p>
+<p>Do not narrate the next statement or preserve old code in comments. Remove obsolete commented-out code and rely on Git
+history. Keep useful existing comments accurate when the surrounding implementation changes.</p>
+<h2 id="validation">Validation<a class="headerlink" href="#validation" title="Permanent link">&para;</a></h2>
+<p>Run the repository's normal Python and documentation checks after changing docstrings or comments:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">compileall</span> <span class="n">atlaso</span> <span class="n">scripts</span> <span class="n">tests</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">check_repo</span><span class="p">.</span><span class="n">py</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">npm</span> <span class="n">run</span> <span class="n">lint</span><span class="p">:</span><span class="n">markdown</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">check_docs</span><span class="p">.</span><span class="n">py</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">git</span> <span class="nb">diff </span><span class="p">-</span><span class="n">-check</span>
+</span></code></pre></div>
+<p>Review the rendered diff as prose as well as code. A docstring can be syntactically valid while still being redundant,
+misleading, or incomplete.</p>
+
+
+
+
+
+
+
+
+
+  
+  
+
+
+
+
+
+
+                
               </article>
             </div>
           
@@ -3076,6 +3381,44 @@
       
         <footer class="md-footer">
   
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../documentation-authoring/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Documentation authoring">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Documentation authoring
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../api-authoring/" class="md-footer__link md-footer__link--next" aria-label="Next: API authoring standard">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                API authoring standard
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </div>
+          </a>
+        
+      </nav>
     
   
   <div class="md-footer-meta md-typeset">
@@ -3107,10 +3450,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate":null,"base":"/Atlaso/docs","features":["content.action.edit","content.action.view","content.code.copy","navigation.footer","navigation.indexes","navigation.instant","navigation.instant.prefetch","navigation.path","navigation.sections","navigation.tabs","navigation.tabs.sticky","navigation.top","navigation.tracking","search.highlight"],"search":"/Atlaso/docs/assets/javascripts/workers/search.b6b7e04f.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["content.action.edit","content.action.view","content.code.copy","navigation.footer","navigation.indexes","navigation.instant","navigation.instant.prefetch","navigation.path","navigation.sections","navigation.tabs","navigation.tabs.sticky","navigation.top","navigation.tracking","search.highlight"],"search":"../../assets/javascripts/workers/search.b6b7e04f.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
     
     
-      <script src="/Atlaso/docs/assets/javascripts/bundle.d7f30b55.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7f30b55.min.js"></script>
       
     
   </body>
