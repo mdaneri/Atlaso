@@ -1,3 +1,4 @@
+import json
 from copy import deepcopy
 
 from sqlalchemy import select
@@ -161,6 +162,11 @@ def test_settings_archive_round_trips_enabled_nts_and_drops_disabled_server_cert
         assert enabled_archive["data"]["ntp_settings"][0]["nts_server_enabled"] is True
         assert enabled_archive["data"]["ntp_settings"][0]["upstream_sources_json"] == settings.upstream_sources_json
         assert [row["managed_owner"] for row in enabled_archive["data"]["ca_certificates"]].count("ntp:nts") == 1
+        assert [
+            row["value"]
+            for row in enabled_archive["data"]["settings"]
+            if row["key"] == NTP_NTS_RESTORATION_SETTING_KEY
+        ] == ["complete"]
 
         restore_settings_archive(db, enabled_archive)
         restored = db.execute(select(NtpSettings)).scalar_one()
@@ -174,10 +180,19 @@ def test_settings_archive_round_trips_enabled_nts_and_drops_disabled_server_cert
         disabled_archive["data"]["ntp_settings"][0]["nts_server_enabled"] = False
         disabled_archive["data"]["ntp_settings"][0]["nts_server_cert_path"] = ""
         disabled_archive["data"]["ntp_settings"][0]["nts_server_key_path"] = ""
+        disabled_sources = json.loads(disabled_archive["data"]["ntp_settings"][0]["upstream_sources_json"])
+        disabled_sources[0]["enabled"] = False
+        disabled_archive["data"]["ntp_settings"][0]["upstream_sources_json"] = dump_ntp_upstream_sources(disabled_sources)
+        disabled_archive["data"]["ntp_settings"][0]["upstream_servers"] = ""
         counts = restore_settings_archive(db, disabled_archive)
+        seed_initial_data(db, include_examples=False)
         disabled = db.execute(select(NtpSettings)).scalar_one()
         assert disabled.nts_server_enabled is False
         assert ntp_upstream_sources(disabled)[0]["use_nts"] is True
+        assert ntp_upstream_sources(disabled)[0]["enabled"] is False
+        assert db.execute(
+            select(Setting).where(Setting.key == NTP_NTS_RESTORATION_SETTING_KEY)
+        ).scalar_one().value == "complete"
         assert db.execute(
             select(CaCertificate).where(CaCertificate.managed_owner == "ntp:nts")
         ).scalar_one_or_none() is None

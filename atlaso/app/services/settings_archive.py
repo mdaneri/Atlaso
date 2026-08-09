@@ -70,7 +70,7 @@ from atlaso.app.models import (
     VlanInterface,
     WanPolicy,
 )
-from atlaso.app.seed import SEED_EXAMPLES_SETTING_KEY, seed_initial_data, seed_update_sources
+from atlaso.app.seed import NTP_NTS_RESTORATION_SETTING_KEY, SEED_EXAMPLES_SETTING_KEY, seed_initial_data, seed_update_sources
 from atlaso.app.services.dnsmasq import DNS_CONDITIONAL_FORWARDERS_SETTING_KEY
 from atlaso.app.services.esxi_pxe import (
     ESXI_PXE_CUSTOM_VARIABLES_KEY,
@@ -91,6 +91,7 @@ SAFE_SETTING_KEYS = {
     ESXI_PXE_CUSTOM_VARIABLES_KEY,
     FIREWALL_SOURCE_GROUPS_SETTING_KEY,
     LOCAL_USERS_PASSWORD_POLICY_KEY,
+    NTP_NTS_RESTORATION_SETTING_KEY,
 }
 
 SCALAR_TABLES = {

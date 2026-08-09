@@ -761,6 +761,12 @@ def _grant_kms_private_key_read(key_path: Path) -> None:
     os.chmod(key_path, 0o640)
 
 
+def _grant_ntpd_private_key_read(key_path: Path) -> None:
+    ntp_group = grp.getgrnam("ntp")
+    os.chown(key_path, 0, ntp_group.gr_gid)
+    os.chmod(key_path, 0o640)
+
+
 def _kms_service_identity_available() -> tuple[bool, bool]:
     try:
         grp.getgrnam(KMS_SERVICE_USER)
@@ -914,6 +920,12 @@ def _handle_ca_inner(action: str, args: list[str]) -> int:
                     _grant_kms_private_key_read(key_path)
                 except (LookupError, OSError, ValueError) as exc:
                     print(f"Could not preserve atlaso-kmip access to the KMIP private key: {exc}", file=sys.stderr)
+                    return 1
+            if key_path.is_relative_to(NTP_CERT_DIR.resolve()):
+                try:
+                    _grant_ntpd_private_key_read(key_path)
+                except (LookupError, OSError) as exc:
+                    print(f"Could not preserve ntpd access to the NTS private key: {exc}", file=sys.stderr)
                     return 1
             written.append(str(key_path))
     print(json.dumps({"ca": "apply complete", "config_path": str(config_path), "written_files": written, "removed_files": removed}, sort_keys=True))
@@ -3589,23 +3601,26 @@ def _ntpd_supports_nts() -> bool:
     return result.returncode == 0 and "ntpsec" in version_text
 
 
-def _ntpd_runtime_identity_errors() -> list[str]:
+def _ntpd_runtime_identity_result() -> tuple[list[str], list[str]]:
     errors: list[str] = []
+    probe_errors: list[str] = []
     rpm = shutil.which("rpm")
     if rpm is None:
         errors.append("rpm command not found; cannot verify the Photon ntpsec package.")
     else:
         try:
             package = _run([rpm, "-q", "ntpsec"], timeout=2)
-        except (OSError, subprocess.TimeoutExpired):
+        except (OSError, subprocess.TimeoutExpired) as exc:
             package = None
-        if package is None or package.returncode != 0:
+            probe_errors.append(f"Photon ntpsec package probe failed: {exc}")
+        if package is not None and package.returncode != 0:
             errors.append("Photon ntpsec package is required.")
         try:
             python_bindings = _run([rpm, "-q", "python3-ntp"], timeout=2)
-        except (OSError, subprocess.TimeoutExpired):
+        except (OSError, subprocess.TimeoutExpired) as exc:
             python_bindings = None
-        if python_bindings is None or python_bindings.returncode != 0:
+            probe_errors.append(f"Photon python3-ntp package probe failed: {exc}")
+        if python_bindings is not None and python_bindings.returncode != 0:
             errors.append("Photon python3-ntp package is required for ntpq.")
     ntpd = shutil.which("ntpd")
     if ntpd is None:
@@ -3613,12 +3628,18 @@ def _ntpd_runtime_identity_errors() -> list[str]:
     else:
         try:
             version = _run([ntpd, "--version"], timeout=2)
-        except (OSError, subprocess.TimeoutExpired):
+        except (OSError, subprocess.TimeoutExpired) as exc:
             version = None
+            probe_errors.append(f"installed ntpd identity probe failed: {exc}")
         version_text = f"{version.stdout}\n{version.stderr}".lower() if version is not None else ""
-        if version is None or version.returncode != 0 or "ntpsec" not in version_text:
+        if version is not None and (version.returncode != 0 or "ntpsec" not in version_text):
             errors.append("installed ntpd is not Photon NTPsec.")
-    return errors
+    return errors, probe_errors
+
+
+def _ntpd_runtime_identity_errors() -> list[str]:
+    errors, probe_errors = _ntpd_runtime_identity_result()
+    return [*errors, *probe_errors]
 
 
 def _install_ntpd_config(config_path: Path) -> None:
@@ -3675,11 +3696,9 @@ def _grant_ntpd_nts_server_key_read(config_path: Path) -> Path | None:
     if key_path is None or not key_path.exists():
         return key_path
     try:
-        ntp_group = grp.getgrnam("ntp")
+        _grant_ntpd_private_key_read(key_path)
     except KeyError as exc:
         raise RuntimeError("ntp group not found; cannot grant ntpd access to NTS server key") from exc
-    os.chown(key_path, 0, ntp_group.gr_gid)
-    os.chmod(key_path, 0o640)
     return key_path
 
 
@@ -3765,7 +3784,19 @@ def _ntpd_capabilities() -> int:
         )
         return 1
     version_text = f"{result.stdout}\n{result.stderr}".strip()
-    identity_errors = _ntpd_runtime_identity_errors()
+    identity_errors, identity_probe_errors = _ntpd_runtime_identity_result()
+    if identity_probe_errors:
+        print(
+            json.dumps(
+                {
+                    "error": "NTPsec capability identity probe failed",
+                    "errors": identity_probe_errors,
+                    "version": version_text,
+                },
+                sort_keys=True,
+            )
+        )
+        return 1
     print(json.dumps({"nts": "ntpsec" in version_text.lower() and not identity_errors, "version": version_text, "errors": identity_errors}, sort_keys=True))
     return 0
 

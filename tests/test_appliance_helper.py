@@ -2246,6 +2246,40 @@ def test_ca_helper_preserves_slapd_access_when_rewriting_ldap_key(monkeypatch, t
     assert modes == [(ldap_key_path, 0o600), (ldap_key_path, 0o640)]
 
 
+def test_ca_helper_preserves_ntpd_access_when_rewriting_nts_key(monkeypatch, tmp_path):
+    helper = load_helper_module()
+    apply_dir = tmp_path / "apply" / "ca"
+    managed_root = tmp_path / "etc" / "atlaso"
+    ntp_cert_dir = managed_root / "ntp" / "certs"
+    ntp_key_path = ntp_cert_dir / "ntp.atlaso.internal.key"
+    apply_dir.mkdir(parents=True)
+    payload = json.loads(ca_payload_text(managed_root))
+    payload["certificates"][0]["key_path"] = str(ntp_key_path)
+    config_path = apply_dir / "atlaso-ca.json"
+    config_path.write_text(json.dumps(payload), encoding="utf-8")
+    ownership: list[tuple[Path, int, int]] = []
+    modes: list[tuple[Path, int]] = []
+    real_chmod = helper.os.chmod
+
+    def track_nts_key_mode(path, mode, **kwargs):
+        real_chmod(path, mode, **kwargs)
+        if Path(path) == ntp_key_path:
+            modes.append((Path(path), mode))
+
+    monkeypatch.setattr(helper, "CA_APPLY_DIR", apply_dir)
+    monkeypatch.setattr(helper, "CA_MANAGED_PATH_BASE", managed_root)
+    monkeypatch.setattr(helper, "NTP_CERT_DIR", ntp_cert_dir)
+    monkeypatch.setattr(helper, "_ca_key_matches_certificate", lambda certificate_pem, private_key_pem: True)
+    monkeypatch.setattr(helper.grp, "getgrnam", lambda group: type("Group", (), {"gr_gid": 123})())
+    monkeypatch.setattr(helper.os, "chown", lambda path, uid, gid: ownership.append((Path(path), uid, gid)), raising=False)
+    monkeypatch.setattr(helper.os, "chmod", track_nts_key_mode)
+
+    assert helper._handle_ca("apply", [str(config_path)]) == 0
+
+    assert ownership == [(ntp_key_path, 0, 123)]
+    assert modes == [(ntp_key_path, 0o600), (ntp_key_path, 0o640)]
+
+
 def test_ca_helper_removes_stale_crl_when_publication_is_empty(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ca"
@@ -5629,6 +5663,32 @@ def test_ntpd_helper_capabilities_returns_unknown_when_version_probe_fails(monke
     payload = json.loads(capsys.readouterr().out)
     assert "nts" not in payload
     assert "timed out" in payload["error"]
+
+
+@pytest.mark.parametrize("failed_probe", ["rpm", "second-version"])
+def test_ntpd_helper_capabilities_returns_unknown_when_identity_probe_fails(monkeypatch, capsys, failed_probe):
+    helper = load_helper_module()
+    monkeypatch.setattr(helper.shutil, "which", lambda command: {"ntpd": "/usr/sbin/ntpd", "rpm": "/usr/bin/rpm"}.get(command))
+    version_calls = 0
+
+    def fake_run(command, timeout=None):
+        nonlocal version_calls
+        if "--version" in command:
+            version_calls += 1
+            if failed_probe == "second-version" and version_calls == 2:
+                raise subprocess.TimeoutExpired(command, timeout)
+            return subprocess.CompletedProcess(command, 0, "ntpd ntpsec-1.2.3\n", "")
+        if failed_probe == "rpm" and command[-1] == "ntpsec":
+            raise OSError("temporary rpm failure")
+        return subprocess.CompletedProcess(command, 0, f"{command[-1]}-1.2.3-15.ph5\n", "")
+
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    assert helper._handle_ntpd("capabilities", []) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert "nts" not in payload
+    assert payload["error"] == "NTPsec capability identity probe failed"
+    assert payload["errors"]
 
 
 def test_ntpd_helper_requires_photon_package_and_ntpsec_binary_identity(monkeypatch):

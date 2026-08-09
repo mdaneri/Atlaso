@@ -5379,6 +5379,7 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client):
 
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import EsxiKickstart, EsxiPxeHost, Setting
+    from atlaso.app.seed import NTP_NTS_RESTORATION_SETTING_KEY
     from atlaso.app.services.esxi_pxe import (
         ESXI_PXE_CUSTOM_VARIABLES_KEY,
         custom_variable_definitions,
@@ -5433,7 +5434,8 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client):
         {
             "key": ESXI_PXE_CUSTOM_VARIABLES_KEY,
             "value": '[{"default_value":"firstdisk","description":"Preferred installation disk","id":"install_disk","name":"install_disk"}]',
-        }
+        },
+        {"key": NTP_NTS_RESTORATION_SETTING_KEY, "value": "complete"},
     ]
 
     with SessionLocal() as db:
