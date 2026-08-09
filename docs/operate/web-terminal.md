@@ -13,6 +13,10 @@ appears under **Operations > Web terminal** on management after it is enabled in
 changes are applied. Selected additional listeners expose it through the Public Services portal instead of the admin
 shell.
 
+The `/terminal` page, ticket exchange, and WebSocket endpoints are browser and terminal protocol routes documented in
+this guide. They remain operational and are intentionally absent from Swagger rather than being `/api/v1` client
+contracts.
+
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 

@@ -53,6 +53,16 @@ status: current
   issue created or linked before implementation begins, exactly one applicable type label, relevant documentation
   updated in the same change, and a pull request linked with `Closes #<issue>`. Do not commit changes directly to
   `main`.
+
+## API authoring
+
+- Follow the [API authoring standard](api-authoring.md) for every new or changed `/api/v1` operation.
+- Keep route-local summaries, detailed purpose and authorization, effect boundaries, parameter descriptions, explicit
+  response meaning, and Pydantic schema-property descriptions synchronized with behavior.
+- Only `/api/v1` belongs in OpenAPI. Preserve supported browser and service-protocol routes at runtime with
+  `include_in_schema=False` and document them in their canonical guides.
+- Update the operator API guide and affected topic documentation, preserve compatible operation IDs and shapes, and run
+  `tests/test_openapi_contract.py` so new routes automatically enter the enforcement surface.
 - GitHub-managed version-update pull requests generated from `.github/dependabot.yml` are the only exception to the
   pre-existing issue and per-update documentation requirements. They must carry the `enhancement` type label plus
   `dependencies`, remain subject to the normal version, CI, review, and squash-merge gates, and must not weaken

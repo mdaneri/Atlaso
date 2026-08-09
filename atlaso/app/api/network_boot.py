@@ -6,11 +6,11 @@ import threading
 import time
 from collections import defaultdict, deque
 from ipaddress import ip_address
-from pathlib import Path
+from pathlib import Path as FileSystemPath
 from typing import Annotated, Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import ValidationError
 from sqlalchemy import delete, desc, func, select
@@ -31,6 +31,7 @@ from atlaso.app.models import (
     NetworkBootMedia,
     utcnow,
 )
+from atlaso.app.openapi import DocumentedAPIRoute
 from atlaso.app.security import Identity, require_api_or_session_scope
 from atlaso.app.schemas import EsxiPxeHostCreate
 from atlaso.app.services.esxi_pxe import (
@@ -69,7 +70,11 @@ from atlaso.app.services.network_boot import (
 )
 
 
-router = APIRouter(prefix="/api/v1/network-boot", tags=["network-boot"])
+router = APIRouter(
+    prefix="/api/v1/network-boot",
+    tags=["network-boot"],
+    route_class=DocumentedAPIRoute,
+)
 public_router = APIRouter(tags=["network-boot-public"])
 logger = logging.getLogger("uvicorn.error")
 _rate_lock = threading.Lock()
@@ -220,6 +225,10 @@ def list_network_boot_environments(
     _identity: Annotated[Identity, Depends(require_api_or_session_scope("read:pxe"))],
     db: Session = Depends(get_db),
 ) -> list[dict[str, Any]]:
+    """List Network Boot environments.
+
+    Uses the authentication posture documented for this endpoint. This read-only operation does not
+    change saved desired state or appliance runtime state."""
     return catalog_rows(db)
 
 
@@ -227,17 +236,25 @@ def list_network_boot_environments(
 def list_available_network_boot_versions(
     _identity: Annotated[Identity, Depends(require_api_or_session_scope("read:pxe"))],
 ) -> list[dict[str, str]]:
+    """List downloadable Network Boot environment versions.
+
+    Uses the authentication posture documented for this endpoint. This read-only operation does not
+    change saved desired state or appliance runtime state."""
     return available_network_boot_versions()
 
 
 @router.patch("/environments/{environment_key}")
 def update_network_boot_environment(
-    environment_key: str,
+    environment_key: Annotated[str, Path(description='Stable environment key identifying the resource addressed by this operation.')],
     payload: dict[str, Any],
     request: Request,
     identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
+    """Update the desired state of a Network Boot environment.
+
+    Uses the authentication posture documented for this endpoint. The operation updates saved Atlaso
+    state and does not bypass the documented global Appliance Apply or service lifecycle boundary."""
     if not isinstance(payload.get("enabled"), bool):
         raise HTTPException(status_code=422, detail="enabled must be a boolean.")
     try:
@@ -264,11 +281,16 @@ def update_network_boot_environment(
 
 @router.post("/environments/{environment_key}/sync", status_code=status.HTTP_202_ACCEPTED)
 def sync_network_boot_environment(
-    environment_key: str,
+    environment_key: Annotated[str, Path(description='Stable environment key identifying the resource addressed by this operation.')],
     request: Request,
     identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
+    """Queue synchronization of a Network Boot environment.
+
+    Uses the authentication posture documented for this endpoint. The action runs through the
+    endpoint's existing audited adapter or task boundary; inspect the returned state before treating
+    the operation as complete."""
     rows = {row["key"]: row for row in catalog_rows(db)}
     if environment_key not in rows:
         raise HTTPException(
@@ -340,15 +362,20 @@ def sync_network_boot_environment(
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def upload_network_boot_environment(
-    environment_key: str,
+    environment_key: Annotated[str, Path(description='Stable environment key identifying the resource addressed by this operation.')],
     request: Request,
-    artifact: Annotated[UploadFile, File()],
+    artifact: Annotated[UploadFile, File(description='Uploaded release artifact validated before it can enter Network Boot storage.')],
     identity: Annotated[
         Identity,
         Depends(require_api_or_session_scope("write:pxe")),
     ],
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
+    """Upload and validate Network Boot environment media.
+
+    Uses the authentication posture documented for this endpoint. The operation changes saved Atlaso
+    application state; any appliance host enforcement remains subject to the documented apply or
+    task boundary for the resource."""
     rows = {row["key"]: row for row in catalog_rows(db)}
     if environment_key not in rows:
         raise HTTPException(
@@ -366,7 +393,7 @@ async def upload_network_boot_environment(
             status_code=409,
             detail=f"Network Boot media task {active.id} is already active.",
         )
-    filename = Path(artifact.filename or "").name
+    filename = FileSystemPath(artifact.filename or "").name
     if not filename or len(filename) > 240:
         raise HTTPException(status_code=422, detail="Choose a named boot media file.")
     job_id = f"job_{uuid4().hex}"
@@ -436,12 +463,17 @@ async def upload_network_boot_environment(
     status_code=status.HTTP_202_ACCEPTED,
 )
 def remove_network_boot_media(
-    environment_key: str,
-    version: str,
+    environment_key: Annotated[str, Path(description='Stable environment key identifying the resource addressed by this operation.')],
+    version: Annotated[str, Path(description='Path value for version, identifying the resource addressed by `/api/v1/network-boot/environments/{environment_key}/media/{version}`.')],
     request: Request,
     identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
+    """Queue removal of an inactive Network Boot media version.
+
+    Uses the authentication posture documented for this endpoint. Removal or revocation takes effect
+    in Atlaso application state; appliance host changes remain subject to the documented apply
+    boundary for the resource."""
     if environment_key == "inventory":
         raise HTTPException(status_code=422, detail="Bundled Inventory Linux cannot be removed.")
     state = db.get(NetworkBootEnvironment, environment_key)
@@ -526,6 +558,10 @@ def list_discovered_hosts(
     _identity: Annotated[Identity, Depends(require_api_or_session_scope("read:pxe"))],
     db: Session = Depends(get_db),
 ) -> list[dict[str, Any]]:
+    """List hosts discovered through Atlaso Inventory Linux.
+
+    Uses the authentication posture documented for this endpoint. This read-only operation does not
+    change saved desired state or appliance runtime state."""
     rows = db.execute(
         select(NetworkBootDiscoveredHost).order_by(
             desc(NetworkBootDiscoveredHost.last_seen_at),
@@ -538,10 +574,14 @@ def list_discovered_hosts(
 
 @router.get("/hosts/{host_id}")
 def get_discovered_host(
-    host_id: int,
+    host_id: Annotated[int, Path(description='Unique identifier of the host record addressed by this operation.')],
     _identity: Annotated[Identity, Depends(require_api_or_session_scope("read:pxe"))],
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
+    """Get one discovered host and its current assignment state.
+
+    Uses the authentication posture documented for this endpoint. This read-only operation does not
+    change saved desired state or appliance runtime state."""
     host = db.get(NetworkBootDiscoveredHost, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Discovered host not found.")
@@ -550,10 +590,14 @@ def get_discovered_host(
 
 @router.get("/hosts/{host_id}/history")
 def get_discovered_host_history(
-    host_id: int,
+    host_id: Annotated[int, Path(description='Unique identifier of the host record addressed by this operation.')],
     _identity: Annotated[Identity, Depends(require_api_or_session_scope("read:pxe"))],
     db: Session = Depends(get_db),
 ) -> list[dict[str, Any]]:
+    """Get retained inventory-report history for a discovered host.
+
+    Uses the authentication posture documented for this endpoint. This read-only operation does not
+    change saved desired state or appliance runtime state."""
     if db.get(NetworkBootDiscoveredHost, host_id) is None:
         raise HTTPException(status_code=404, detail="Discovered host not found.")
     return report_history(db, host_id)
@@ -561,11 +605,15 @@ def get_discovered_host_history(
 
 @router.get("/hosts/{host_id}/reports/{report_id}/download")
 def download_discovered_host_report(
-    host_id: int,
-    report_id: int,
+    host_id: Annotated[int, Path(description='Unique identifier of the host record addressed by this operation.')],
+    report_id: Annotated[int, Path(description='Unique identifier of the report record addressed by this operation.')],
     _identity: Annotated[Identity, Depends(require_api_or_session_scope("read:pxe"))],
     db: Session = Depends(get_db),
 ) -> Response:
+    """Download one retained discovered-host inventory report.
+
+    Uses the authentication posture documented for this endpoint. This read-only operation does not
+    change saved desired state or appliance runtime state."""
     host = db.get(NetworkBootDiscoveredHost, host_id)
     report = db.get(NetworkBootInventoryReport, report_id)
     if host is None or report is None or report.host_id != host.id:
@@ -608,11 +656,16 @@ def download_discovered_host_report(
 
 @router.delete("/hosts/{host_id}")
 def remove_discovered_host(
-    host_id: int,
+    host_id: Annotated[int, Path(description='Unique identifier of the host record addressed by this operation.')],
     request: Request,
     identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
+    """Remove an unassigned discovered host and its retained reports.
+
+    Uses the authentication posture documented for this endpoint. Removal or revocation takes effect
+    in Atlaso application state; appliance host changes remain subject to the documented apply
+    boundary for the resource."""
     host = db.get(NetworkBootDiscoveredHost, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Discovered host not found.")
@@ -768,11 +821,16 @@ def _wake_host(
 
 @router.post("/hosts/{host_id}/wake")
 def wake_discovered_host(
-    host_id: int,
+    host_id: Annotated[int, Path(description='Unique identifier of the host record addressed by this operation.')],
     request: Request,
     identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
+    """Send one audited Wake-on-LAN packet for a discovered host.
+
+    Uses the authentication posture documented for this endpoint. The action runs through the
+    endpoint's existing audited adapter or task boundary; inspect the returned state before treating
+    the operation as complete."""
     host = db.get(NetworkBootDiscoveredHost, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Discovered host not found.")
@@ -788,11 +846,16 @@ def wake_discovered_host(
 
 @router.post("/hosts/{host_id}/reboot", status_code=status.HTTP_202_ACCEPTED)
 def reboot_discovered_host(
-    host_id: int,
+    host_id: Annotated[int, Path(description='Unique identifier of the host record addressed by this operation.')],
     request: Request,
     identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
+    """Queue an audited remote reboot for a discovered host.
+
+    Uses the authentication posture documented for this endpoint. The action runs through the
+    endpoint's existing audited adapter or task boundary; inspect the returned state before treating
+    the operation as complete."""
     host = db.get(NetworkBootDiscoveredHost, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Discovered host not found.")
@@ -824,10 +887,14 @@ def reboot_discovered_host(
 
 @router.get("/commands/{command_id}")
 def get_inventory_command_status(
-    command_id: str,
+    command_id: Annotated[str, Path(description='Unique identifier of the command record addressed by this operation.')],
     _identity: Annotated[Identity, Depends(require_api_or_session_scope("read:pxe"))],
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
+    """Get the terminal status of an Inventory Linux command.
+
+    Uses the authentication posture documented for this endpoint. This read-only operation does not
+    change saved desired state or appliance runtime state."""
     command = db.get(NetworkBootInventoryCommand, command_id)
     if command is None:
         raise HTTPException(status_code=404, detail="Inventory command not found.")
@@ -849,11 +916,16 @@ def get_inventory_command_status(
     "/esxi-hosts/{host_id}/wake",
 )
 def wake_esxi_host_reference(
-    host_id: int,
+    host_id: Annotated[int, Path(description='Unique identifier of the host record addressed by this operation.')],
     request: Request,
     identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
+    """Send one audited Wake-on-LAN packet for an ESXi Host Reference.
+
+    Uses the authentication posture documented for this endpoint. The action runs through the
+    endpoint's existing audited adapter or task boundary; inspect the returned state before treating
+    the operation as complete."""
     host = db.get(EsxiPxeHost, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="ESXi host reference not found.")
@@ -872,11 +944,16 @@ def wake_esxi_host_reference(
     status_code=status.HTTP_202_ACCEPTED,
 )
 def boot_esxi_host_into_inventory_once(
-    host_id: int,
+    host_id: Annotated[int, Path(description='Unique identifier of the host record addressed by this operation.')],
     request: Request,
     identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
+    """Request a one-time Inventory Linux boot for an ESXi Host Reference.
+
+    Uses the authentication posture documented for this endpoint. The operation changes saved Atlaso
+    application state; any appliance host enforcement remains subject to the documented apply or
+    task boundary for the resource."""
     host = db.get(EsxiPxeHost, host_id)
     if host is None or not host.enabled:
         raise HTTPException(
@@ -923,12 +1000,17 @@ def boot_esxi_host_into_inventory_once(
 
 @router.post("/hosts/{host_id}/promote", status_code=status.HTTP_201_CREATED)
 def promote_discovered_host(
-    host_id: int,
+    host_id: Annotated[int, Path(description='Unique identifier of the host record addressed by this operation.')],
     payload: dict[str, Any],
     request: Request,
     identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
+    """Promote a discovered host into an ESXi Host Reference.
+
+    Uses the authentication posture documented for this endpoint. The operation changes saved Atlaso
+    application state; any appliance host enforcement remains subject to the documented apply or
+    task boundary for the resource."""
     discovered = db.get(NetworkBootDiscoveredHost, host_id)
     if discovered is None:
         raise HTTPException(status_code=404, detail="Discovered host not found.")

@@ -939,28 +939,12 @@ Initial resource areas:
 Several future appliance resources are intentionally scaffolded as dry-run or status-only surfaces until their native
 Linux adapters are implemented.
 
-## API Token Example
+## API token use
 
-Create a bearer token from the bootstrap admin account:
-
-```bash
-curl -s \
-  -X POST \
-  "http://127.0.0.1:8000/api/v1/auth/login?username=admin&password=atlaso-admin" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "development token",
-    "scopes": [
-      "read:dashboard",
-      "read:monitoring",
-      "read:routes",
-      "read:wan",
-      "write:wan",
-      "read:services",
-      "read:audit"
-    ]
-  }'
-```
+Create least-privilege bearer tokens from **Authentication > API Tokens** and copy each one-time secret only into its
+intended secret store. The [API operator guide](../operate/api.md) documents Swagger authorization, safe curl and
+PowerShell examples, revocation, scopes, errors, request IDs, and apply boundaries. Credential-bearing query-string
+examples are intentionally excluded from the technical reference.
 
 Call the dashboard API:
 

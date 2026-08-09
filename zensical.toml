@@ -29,6 +29,7 @@ nav = [
     { "Appliance Update" = "operate/appliance-update.md" },
     { "Backup and restore" = "operate/backup-restore.md" },
     { "Automation" = "operate/automation.md" },
+    { "Use the API" = "operate/api.md" },
     { "Web Terminal" = "operate/web-terminal.md" },
   ] },
   { "Services" = [
@@ -67,6 +68,7 @@ nav = [
     { "Overview" = "contribute/index.md" },
     { "Dependency management" = "contribute/dependency-management.md" },
     { "Documentation authoring" = "contribute/documentation-authoring.md" },
+    { "API authoring standard" = "contribute/api-authoring.md" },
     { "Windows image-build WSL environment" = "contribute/windows-image-build-wsl.md" },
     { "UI design guide" = "contribute/ui-design-guide.md" },
     { "Detailed agent policies" = "contribute/agent-policies.md" },

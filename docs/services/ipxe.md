@@ -13,6 +13,10 @@ Atlaso Network Boot provides safe hardware discovery, verified interactive
 maintenance environments, and the existing ESX installation workflow from one
 service. The detailed Broadcom-aligned ESX reference remains later in this page.
 
+Public boot scripts, reports, and media under `/pxe` are Network Boot protocol routes documented in this guide. They
+remain operational and are intentionally absent from Swagger; administrative Network Boot operations under `/api/v1`
+remain part of the generated REST contract.
+
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 
