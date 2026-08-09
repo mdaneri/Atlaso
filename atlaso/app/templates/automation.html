@@ -15,9 +15,19 @@
     <div><h2>Schedules</h2><p class="muted">The durable worker evaluates schedules in UTC and records every execution as a normal Atlaso task.</p></div>
     <span class="status-pill {{ 'warn' if system_adapter_dry_run else 'good' }}">{{ 'dry-run' if system_adapter_dry_run else 'real' }}</span>
   </div>
-  <div id="automation-schedules-table" class="tabulator-grid compact-grid automation-fill-grid"></div>
+  <div id="automation-schedules-table" class="tabulator-grid compact-grid automation-fill-grid" data-fallback-id="automation-schedules-fallback"></div>
+  <table id="automation-schedules-fallback" class="data-table compact automation-schedules-fallback">
+    <thead><tr><th>Name</th><th>Task</th><th>Schedule</th><th>Timezone</th><th>Next run</th><th>Last task</th><th>State</th></tr></thead>
+    <tbody>
+      {% for schedule in automation_schedule_rows %}
+        <tr><td>{{ schedule.name }}</td><td>{{ schedule.task_type|replace('_', ' ') }}</td><td>{{ schedule.schedule }}</td><td>{{ schedule.timezone }}</td><td>{{ schedule.next_run_at or 'not scheduled' }}</td><td>{{ schedule.last_job_status or 'not run' }}</td><td>{{ 'enabled' if schedule.enabled else 'disabled' }}</td></tr>
+      {% else %}
+        <tr><td colspan="7" class="muted">No schedules are configured.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
   <script type="application/json" id="automation-schedules-data">{{ automation_schedule_rows|tojson }}</script>
-  <dialog id="automation-schedule-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="automation-schedule-modal-title">
+  <dialog id="automation-schedule-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="automation-schedule-modal-title" aria-describedby="automation-schedule-modal-description">
     <form id="automation-schedule-create-form" class="confirm-modal-panel vcf-sddc-wizard-panel" action="/automation/schedules" method="post" data-automation-schedule-form data-atlaso-wizard>
       <input type="hidden" name="csrf" value="{{ csrf_token }}">
       <aside class="vcf-sddc-wizard-rail" aria-label="Automation schedule steps">
@@ -36,7 +46,7 @@
           <div class="vcf-sddc-wizard-heading">
             <p class="kicker" data-automation-wizard-kicker data-atlaso-wizard-kicker>Step 1 of 5</p>
             <h3 data-automation-wizard-title data-atlaso-wizard-title>Name the schedule</h3>
-            <p class="muted" data-automation-wizard-description data-atlaso-wizard-description>Set the schedule identity and choose its allowlisted task type.</p>
+            <p id="automation-schedule-modal-description" class="muted" data-automation-wizard-description data-atlaso-wizard-description>Set the schedule identity and choose its allowlisted task type.</p>
           </div>
           <div class="alert error hidden" data-automation-wizard-errors data-atlaso-wizard-error></div>
           <section class="vcf-sddc-step-page" data-automation-wizard-step="identity" data-atlaso-wizard-step="identity">
@@ -126,13 +136,33 @@
     <div><h2>Executions</h2><p class="muted">Every task queued by a schedule. Open the associated task for full results, failures, component progress, and logs.</p></div>
     <span class="status-pill muted">{{ automation_execution_rows|length }} executions</span>
   </div>
-  <div id="automation-executions-table" class="tabulator-grid compact-grid automation-fill-grid"></div>
+  <div id="automation-executions-table" class="tabulator-grid compact-grid automation-fill-grid" data-fallback-id="automation-executions-fallback"></div>
+  <table id="automation-executions-fallback" class="data-table compact automation-executions-fallback">
+    <thead><tr><th>Schedule</th><th>Workflow</th><th>Trigger</th><th>Planned</th><th>Started</th><th>Finished</th><th>Associated task</th></tr></thead>
+    <tbody>
+      {% for execution in automation_execution_rows %}
+        <tr><td>{{ execution.schedule_name or 'removed schedule' }}</td><td>{{ execution.task_label }}</td><td>{{ execution.trigger_label }}</td><td>{{ execution.planned_for or 'not recorded' }}</td><td>{{ execution.started_at or 'not started' }}</td><td>{{ execution.finished_at or 'not finished' }}</td><td><a href="{{ execution.task_url }}"><code>{{ execution.id }}</code></a></td></tr>
+      {% else %}
+        <tr><td colspan="7" class="muted">No schedule executions have been recorded yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
   <script type="application/json" id="automation-executions-data">{{ automation_execution_rows|tojson }}</script>
 </div>
 
 <div id="scripts" class="tab-panel" role="tabpanel" hidden>
   <div class="panel-head"><div><h2>Managed Scripts</h2><p class="muted">Scripts are immutable revisions, must be explicitly enabled, and execute as the unprivileged appliance automation account.</p></div></div>
-  <div id="automation-scripts-table" class="tabulator-grid compact-grid"></div>
+  <div id="automation-scripts-table" class="tabulator-grid compact-grid" data-fallback-id="automation-scripts-fallback"></div>
+  <table id="automation-scripts-fallback" class="data-table compact automation-scripts-fallback">
+    <thead><tr><th>Name</th><th>Description</th><th>Interpreter</th><th>Revision</th><th>State</th><th>Schedules</th><th>Updated</th></tr></thead>
+    <tbody>
+      {% for script in automation_script_rows %}
+        <tr><td>{{ script.name }}</td><td>{{ script.description or 'Not set' }}</td><td>{{ script.interpreter }}</td><td>r{{ script.latest_revision }}</td><td>{{ 'enabled' if script.latest_enabled else 'disabled' }}</td><td>{{ script.schedule_count }}</td><td>{{ script.updated_at }}</td></tr>
+      {% else %}
+        <tr><td colspan="7" class="muted">No managed scripts are configured.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
   <p id="automation-script-grid-status" class="muted automation-grid-status hidden" role="status"></p>
   <script type="application/json" id="automation-scripts-data">{{ automation_script_rows|tojson }}</script>
   {% set automation_script_steps = [

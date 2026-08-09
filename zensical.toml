@@ -74,6 +74,7 @@ nav = [
   { "Project" = [
     { "Overview" = "project/index.md" },
     { "Development project" = "project/github-project.md" },
+    { "UI compliance matrix" = "project/ui-compliance-matrix.md" },
     { "Brand assets" = "project/branding.md" },
     { "Brand kit" = "assets/brand/BRAND_GUIDE.md" },
     { "CA roadmap" = "project/ca-roadmap.md" },

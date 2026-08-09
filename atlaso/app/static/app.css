@@ -7932,6 +7932,12 @@ dialog.has-expanded-monaco .confirm-modal-panel {
   transform: translateY(0);
 }
 
+.grid-status-toast.error {
+  border-color: #dc2626;
+  background: #fff1f2;
+  color: #991b1b;
+}
+
 .hidden {
   display: none !important;
 }

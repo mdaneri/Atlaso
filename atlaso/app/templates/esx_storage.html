@@ -135,7 +135,7 @@
 </section>
 
 {% if esx_storage_can_write %}
-<dialog id="esx-storage-volume-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="esx-storage-volume-modal-title">
+<dialog id="esx-storage-volume-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="esx-storage-volume-modal-title" aria-describedby="esx-storage-volume-modal-description">
   <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="/esx-storage/volumes" method="post" data-esx-storage-volume-form data-esx-storage-wizard="volume" data-atlaso-wizard>
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <aside class="vcf-sddc-wizard-rail" aria-label="Storage volume steps">
@@ -148,7 +148,7 @@
     </aside>
     <div class="vcf-sddc-wizard-main">
       <div class="confirm-modal-body vcf-sddc-wizard-body">
-        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-esx-storage-wizard-kicker data-atlaso-wizard-kicker>Step 1 of 3</p><h3 data-esx-storage-wizard-title data-atlaso-wizard-title>Name the volume</h3><p class="muted" data-esx-storage-wizard-description data-atlaso-wizard-description>Choose a stable Atlaso name and how storage is supplied.</p></div>
+        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-esx-storage-wizard-kicker data-atlaso-wizard-kicker>Step 1 of 3</p><h3 data-esx-storage-wizard-title data-atlaso-wizard-title>Name the volume</h3><p id="esx-storage-volume-modal-description" class="muted" data-esx-storage-wizard-description data-atlaso-wizard-description>Choose a stable Atlaso name and how storage is supplied.</p></div>
         <div class="alert error hidden" data-esx-storage-wizard-error data-atlaso-wizard-error></div>
         <section class="vcf-sddc-step-page" data-esx-storage-wizard-step data-atlaso-wizard-step="identity">
           <div class="form-grid">
@@ -173,7 +173,7 @@
   </form>
 </dialog>
 
-<dialog id="esx-storage-share-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="esx-storage-share-modal-title">
+<dialog id="esx-storage-share-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="esx-storage-share-modal-title" aria-describedby="esx-storage-share-modal-description">
   <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="/esx-storage/shares" method="post" data-esx-storage-share-form data-esx-storage-wizard="share" data-atlaso-wizard>
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <aside class="vcf-sddc-wizard-rail" aria-label="NFS datastore steps">
@@ -188,7 +188,7 @@
     </aside>
     <div class="vcf-sddc-wizard-main">
       <div class="confirm-modal-body vcf-sddc-wizard-body">
-        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-esx-storage-wizard-kicker data-atlaso-wizard-kicker>Step 1 of 5</p><h3 data-esx-storage-wizard-title data-atlaso-wizard-title>Define the datastore</h3><p class="muted" data-esx-storage-wizard-description data-atlaso-wizard-description>Choose its ESX identity and contained directory.</p></div>
+        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-esx-storage-wizard-kicker data-atlaso-wizard-kicker>Step 1 of 5</p><h3 data-esx-storage-wizard-title data-atlaso-wizard-title>Define the datastore</h3><p id="esx-storage-share-modal-description" class="muted" data-esx-storage-wizard-description data-atlaso-wizard-description>Choose its ESX identity and contained directory.</p></div>
         <div class="alert error hidden" data-esx-storage-wizard-error data-atlaso-wizard-error></div>
         <section class="vcf-sddc-step-page" data-esx-storage-wizard-step data-atlaso-wizard-step="identity"><div class="form-grid">
           <label><span class="field-label"><span>Datastore name</span><button class="help-icon" type="button" data-help="Name shown in ESX. Every host mounting this datastore must use this same name, NFS version, and the generated hostname for its selected family.">i</button></span><input name="datastore_name" required maxlength="120" placeholder="esx-nfs-01"></label>

@@ -1,4 +1,4 @@
-<dialog id="vcf-target-depot-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="vcf-target-depot-title">
+<dialog id="vcf-target-depot-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="vcf-target-depot-title" aria-describedby="vcf-target-depot-description">
   <form class="confirm-modal-panel vcf-sddc-wizard-panel" data-vcf-target-depot-form data-atlaso-wizard>
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <input type="hidden" name="confirmed_tls_fingerprint" data-vcf-target-depot-tls-fingerprint>
@@ -22,7 +22,7 @@
         <div class="vcf-sddc-wizard-heading">
           <p class="kicker" data-vcf-target-depot-step-kicker data-atlaso-wizard-kicker>Step 1 of 7</p>
           <h3 data-vcf-target-depot-step-title data-atlaso-wizard-title>Choose a credential source</h3>
-          <p class="muted" data-vcf-target-depot-step-description data-atlaso-wizard-description>Use a saved vault key or continue with a one-time manual login.</p>
+          <p id="vcf-target-depot-description" class="muted" data-vcf-target-depot-step-description data-atlaso-wizard-description>Use a saved vault key or continue with a one-time manual login.</p>
         </div>
         <div class="alert error hidden" data-vcf-target-depot-errors data-atlaso-wizard-error></div>
 
