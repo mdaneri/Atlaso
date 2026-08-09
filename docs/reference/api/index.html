@@ -2076,6 +2076,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#identify-the-appliance-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Identify the appliance version
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#compatibility" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3091,6 +3102,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#identify-the-appliance-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Identify the appliance version
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#compatibility" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3255,6 +3277,14 @@ at <code>/openapi.json</code> and is also the canonical application-readiness en
 <li>Verify the response status and schema; do not infer success from network reachability alone.</li>
 </ol>
 <p>Never paste production tokens, passwords, private keys, or authenticated URLs into screenshots or public issues.</p>
+<h2 id="identify-the-appliance-version">Identify the appliance version<a class="headerlink" href="#identify-the-appliance-version" title="Permanent link">&para;</a></h2>
+<p>Send an unauthenticated <code>GET</code> request to <code>/api/v1/version</code> through the management front door to identify the installed
+Atlaso build. The response contains the installed <code>version</code>, its <code>base_version</code>, the full source <code>git_commit</code>, and the
+UTC <code>built_at</code> timestamp. Source checkouts and development wheels return an empty string when commit or build-time
+metadata is unavailable. These values come only from package metadata embedded during the build; the request does not
+inspect a runtime Git checkout.</p>
+<p>This operation intentionally omits host-platform diagnostics and does not make management API routes available through
+additional Public Services listeners.</p>
 <h2 id="compatibility">Compatibility<a class="headerlink" href="#compatibility" title="Permanent link">&para;</a></h2>
 <p>Treat the published OpenAPI schema as a compatibility surface. Additive fields should preserve existing consumers, and
 behavior changes require synchronized operator documentation, tests, and media ownership. For broader implementation
