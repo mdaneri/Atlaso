@@ -1,13 +1,13 @@
 from datetime import datetime
 from ipaddress import ip_address, ip_interface, ip_network
 import json
-from pathlib import Path as FileSystemPath
+from pathlib import Path
 import re
 import socket
 from typing import Annotated, Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Path, Query, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Path as ApiPath, Query, Request, Response, UploadFile, status
 from sqlalchemy import desc, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
@@ -736,14 +736,14 @@ def firewall_validation_payload(db: Session) -> tuple[FirewallSettings, list[Fir
 
 
 def stage_api_firewall_config(config_preview: str) -> str:
-    path = FileSystemPath(FIREWALL_STAGED_CONFIG_PATH)
+    path = Path(FIREWALL_STAGED_CONFIG_PATH)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(config_preview, encoding="utf-8")
     return str(path)
 
 
 def stage_api_dnsmasq_config(config_preview: str) -> str:
-    path = FileSystemPath(DNSMASQ_STAGED_CONFIG_PATH)
+    path = Path(DNSMASQ_STAGED_CONFIG_PATH)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(config_preview, encoding="utf-8")
     return str(path)
@@ -859,7 +859,7 @@ def create_api_token(
 
 @router.get("/api-tokens/{token_id}", response_model=ApiTokenResponse, tags=["API Tokens"], operation_id="getApiToken")
 def get_api_token(
-    token_id: Annotated[int, Path(description='Unique identifier of the token record addressed by this operation.')],
+    token_id: Annotated[int, ApiPath(description='Unique identifier of the token record addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("read:dashboard"))],
     db: Session = Depends(get_db),
 ) -> ApiTokenResponse:
@@ -893,7 +893,7 @@ def revoke_token(db: Session, token: ApiToken, identity: Identity) -> ApiTokenRe
 
 @router.delete("/api-tokens/{token_id}", status_code=204, tags=["API Tokens"], operation_id="deleteApiToken")
 def delete_api_token(
-    token_id: Annotated[int, Path(description='Unique identifier of the token record addressed by this operation.')],
+    token_id: Annotated[int, ApiPath(description='Unique identifier of the token record addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("read:dashboard"))],
     db: Session = Depends(get_db),
 ) -> Response:
@@ -911,7 +911,7 @@ def delete_api_token(
 
 @router.post("/api-tokens/{token_id}/revoke", response_model=ApiTokenResponse, tags=["API Tokens"], operation_id="revokeApiToken")
 def revoke_api_token(
-    token_id: Annotated[int, Path(description='Unique identifier of the token record addressed by this operation.')],
+    token_id: Annotated[int, ApiPath(description='Unique identifier of the token record addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("read:dashboard"))],
     db: Session = Depends(get_db),
 ) -> ApiTokenResponse:
@@ -1002,7 +1002,7 @@ def list_physical_interfaces(
     operation_id="getPhysicalInterface",
 )
 def get_physical_interface(
-    name: Annotated[str, Path(description='Stable name identifying the resource addressed by this operation.')],
+    name: Annotated[str, ApiPath(description='Stable name identifying the resource addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("read:interfaces"))],
     db: Session = Depends(get_db),
 ) -> PhysicalInterfaceResponse:
@@ -1023,7 +1023,7 @@ def get_physical_interface(
     operation_id="updatePhysicalInterface",
 )
 def update_physical_interface(
-    name: Annotated[str, Path(description='Stable name identifying the resource addressed by this operation.')],
+    name: Annotated[str, ApiPath(description='Stable name identifying the resource addressed by this operation.')],
     payload: dict,
     identity: Annotated[Identity, Depends(require_scope("write:interfaces"))],
     db: Session = Depends(get_db),
@@ -1145,7 +1145,7 @@ def update_physical_interface(
 
 @router.post("/interfaces/physical/{name}/enable", response_model=PhysicalInterfaceResponse, tags=["Interfaces"], operation_id="enablePhysicalInterface")
 def enable_physical_interface(
-    name: Annotated[str, Path(description='Stable name identifying the resource addressed by this operation.')],
+    name: Annotated[str, ApiPath(description='Stable name identifying the resource addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("write:interfaces"))],
     db: Session = Depends(get_db),
 ) -> PhysicalInterfaceResponse:
@@ -1159,7 +1159,7 @@ def enable_physical_interface(
 
 @router.post("/interfaces/physical/{name}/disable", response_model=PhysicalInterfaceResponse, tags=["Interfaces"], operation_id="disablePhysicalInterface")
 def disable_physical_interface(
-    name: Annotated[str, Path(description='Stable name identifying the resource addressed by this operation.')],
+    name: Annotated[str, ApiPath(description='Stable name identifying the resource addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("write:interfaces"))],
     db: Session = Depends(get_db),
 ) -> PhysicalInterfaceResponse:
@@ -1226,7 +1226,7 @@ def create_vlan(
 
 @router.get("/vlans/{vlan_id}", response_model=VlanResponse, tags=["VLANs"], operation_id="getVlan")
 def get_vlan(
-    vlan_id: Annotated[int, Path(description='Unique identifier of the vlan record addressed by this operation.')],
+    vlan_id: Annotated[int, ApiPath(description='Unique identifier of the vlan record addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("read:vlans"))],
     db: Session = Depends(get_db),
 ) -> VlanResponse:
@@ -1242,7 +1242,7 @@ def get_vlan(
 
 @router.patch("/vlans/{vlan_id}", response_model=VlanResponse, tags=["VLANs"], operation_id="updateVlan")
 def update_vlan(
-    vlan_id: Annotated[int, Path(description='Unique identifier of the vlan record addressed by this operation.')],
+    vlan_id: Annotated[int, ApiPath(description='Unique identifier of the vlan record addressed by this operation.')],
     payload: VlanCreate,
     identity: Annotated[Identity, Depends(require_scope("write:vlans"))],
     db: Session = Depends(get_db),
@@ -1266,7 +1266,7 @@ def update_vlan(
 
 @router.delete("/vlans/{vlan_id}", status_code=204, tags=["VLANs"], operation_id="deleteVlan")
 def delete_vlan(
-    vlan_id: Annotated[int, Path(description='Unique identifier of the vlan record addressed by this operation.')],
+    vlan_id: Annotated[int, ApiPath(description='Unique identifier of the vlan record addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("write:vlans"))],
     db: Session = Depends(get_db),
 ) -> Response:
@@ -1284,7 +1284,7 @@ def delete_vlan(
 
 
 @router.post("/vlans/{vlan_id}/enable", response_model=VlanResponse, tags=["VLANs"], operation_id="enableVlan")
-def enable_vlan(vlan_id: Annotated[int, Path(description='Unique identifier of the vlan record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("write:vlans"))], db: Session = Depends(get_db)) -> VlanResponse:
+def enable_vlan(vlan_id: Annotated[int, ApiPath(description='Unique identifier of the vlan record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("write:vlans"))], db: Session = Depends(get_db)) -> VlanResponse:
     """Enable Vlan.
 
     Requires the `write:vlans` API scope. The operation changes saved Atlaso application state; any
@@ -1307,7 +1307,7 @@ def enable_vlan(vlan_id: Annotated[int, Path(description='Unique identifier of t
 
 
 @router.post("/vlans/{vlan_id}/disable", response_model=VlanResponse, tags=["VLANs"], operation_id="disableVlan")
-def disable_vlan(vlan_id: Annotated[int, Path(description='Unique identifier of the vlan record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("write:vlans"))], db: Session = Depends(get_db)) -> VlanResponse:
+def disable_vlan(vlan_id: Annotated[int, ApiPath(description='Unique identifier of the vlan record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("write:vlans"))], db: Session = Depends(get_db)) -> VlanResponse:
     """Disable Vlan.
 
     Requires the `write:vlans` API scope. The operation changes saved Atlaso application state; any
@@ -1324,7 +1324,7 @@ def disable_vlan(vlan_id: Annotated[int, Path(description='Unique identifier of 
 
 
 @router.post("/vlans/{vlan_id}/apply", response_model=VlanResponse, tags=["VLANs"], operation_id="applyVlan")
-def apply_vlan(vlan_id: Annotated[int, Path(description='Unique identifier of the vlan record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("write:vlans"))], db: Session = Depends(get_db)) -> VlanResponse:
+def apply_vlan(vlan_id: Annotated[int, ApiPath(description='Unique identifier of the vlan record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("write:vlans"))], db: Session = Depends(get_db)) -> VlanResponse:
     """Apply Vlan.
 
     Requires the `write:vlans` API scope. The action runs through the endpoint's existing audited
@@ -1408,7 +1408,7 @@ def create_route(payload: RouteCreate, identity: Annotated[Identity, Depends(req
 
 
 @router.get("/routes/{route_id}", response_model=RouteResponse, tags=["Routes"], operation_id="getRoute")
-def get_route(route_id: Annotated[int, Path(description='Unique identifier of the route record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("read:routes"))], db: Session = Depends(get_db)) -> RouteResponse:
+def get_route(route_id: Annotated[int, ApiPath(description='Unique identifier of the route record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("read:routes"))], db: Session = Depends(get_db)) -> RouteResponse:
     """Get Route.
 
     Requires the `read:routes` API scope. This read-only operation does not change saved desired
@@ -1420,7 +1420,7 @@ def get_route(route_id: Annotated[int, Path(description='Unique identifier of th
 
 
 @router.patch("/routes/{route_id}", response_model=RouteResponse, tags=["Routes"], operation_id="updateRoute")
-def update_route(route_id: Annotated[int, Path(description='Unique identifier of the route record addressed by this operation.')], payload: RouteCreate, identity: Annotated[Identity, Depends(require_scope("write:routes"))], db: Session = Depends(get_db)) -> RouteResponse:
+def update_route(route_id: Annotated[int, ApiPath(description='Unique identifier of the route record addressed by this operation.')], payload: RouteCreate, identity: Annotated[Identity, Depends(require_scope("write:routes"))], db: Session = Depends(get_db)) -> RouteResponse:
     """Update Route.
 
     Requires the `write:routes` API scope. The operation updates saved Atlaso state and does not
@@ -1437,7 +1437,7 @@ def update_route(route_id: Annotated[int, Path(description='Unique identifier of
 
 
 @router.delete("/routes/{route_id}", status_code=204, tags=["Routes"], operation_id="deleteRoute")
-def delete_route(route_id: Annotated[int, Path(description='Unique identifier of the route record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("write:routes"))], db: Session = Depends(get_db)) -> Response:
+def delete_route(route_id: Annotated[int, ApiPath(description='Unique identifier of the route record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("write:routes"))], db: Session = Depends(get_db)) -> Response:
     """Delete Route.
 
     Requires the `write:routes` API scope. Removal or revocation takes effect in Atlaso application
@@ -1452,7 +1452,7 @@ def delete_route(route_id: Annotated[int, Path(description='Unique identifier of
 
 
 @router.post("/routes/{route_id}/enable", response_model=RouteResponse, tags=["Routes"], operation_id="enableRoute")
-def enable_route(route_id: Annotated[int, Path(description='Unique identifier of the route record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("write:routes"))], db: Session = Depends(get_db)) -> RouteResponse:
+def enable_route(route_id: Annotated[int, ApiPath(description='Unique identifier of the route record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("write:routes"))], db: Session = Depends(get_db)) -> RouteResponse:
     """Enable Route.
 
     Requires the `write:routes` API scope. The operation changes saved Atlaso application state; any
@@ -1468,7 +1468,7 @@ def enable_route(route_id: Annotated[int, Path(description='Unique identifier of
 
 
 @router.post("/routes/{route_id}/disable", response_model=RouteResponse, tags=["Routes"], operation_id="disableRoute")
-def disable_route(route_id: Annotated[int, Path(description='Unique identifier of the route record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("write:routes"))], db: Session = Depends(get_db)) -> RouteResponse:
+def disable_route(route_id: Annotated[int, ApiPath(description='Unique identifier of the route record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("write:routes"))], db: Session = Depends(get_db)) -> RouteResponse:
     """Disable Route.
 
     Requires the `write:routes` API scope. The operation changes saved Atlaso application state; any
@@ -1485,7 +1485,7 @@ def disable_route(route_id: Annotated[int, Path(description='Unique identifier o
 
 @router.post("/routes/{route_id}/wan-policy", response_model=RouteResponse, tags=["Routes"], operation_id="assignRouteWanPolicy")
 def assign_route_wan_policy(
-    route_id: Annotated[int, Path(description='Unique identifier of the route record addressed by this operation.')],
+    route_id: Annotated[int, ApiPath(description='Unique identifier of the route record addressed by this operation.')],
     wan_policy_id: Annotated[int, Query(description='Unique identifier of the wan policy record addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("write:routes"))],
     db: Session = Depends(get_db),
@@ -1506,7 +1506,7 @@ def assign_route_wan_policy(
 
 
 @router.delete("/routes/{route_id}/wan-policy", response_model=RouteResponse, tags=["Routes"], operation_id="clearRouteWanPolicy")
-def clear_route_wan_policy(route_id: Annotated[int, Path(description='Unique identifier of the route record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("write:routes"))], db: Session = Depends(get_db)) -> RouteResponse:
+def clear_route_wan_policy(route_id: Annotated[int, ApiPath(description='Unique identifier of the route record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("write:routes"))], db: Session = Depends(get_db)) -> RouteResponse:
     """Clear Route Wan Policy.
 
     Requires the `write:routes` API scope. Removal or revocation takes effect in Atlaso application
@@ -1545,7 +1545,7 @@ def create_wan_policy(payload: WanPolicyCreate, identity: Annotated[Identity, De
 
 
 @router.get("/wan/policies/{policy_id}", response_model=WanPolicyResponse, tags=["WAN"], operation_id="getWanPolicy")
-def get_wan_policy(policy_id: Annotated[int, Path(description='Unique identifier of the policy record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("read:wan"))], db: Session = Depends(get_db)) -> WanPolicyResponse:
+def get_wan_policy(policy_id: Annotated[int, ApiPath(description='Unique identifier of the policy record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("read:wan"))], db: Session = Depends(get_db)) -> WanPolicyResponse:
     """Get Wan Policy.
 
     Requires the `read:wan` API scope. This read-only operation does not change saved desired state
@@ -1557,7 +1557,7 @@ def get_wan_policy(policy_id: Annotated[int, Path(description='Unique identifier
 
 
 @router.patch("/wan/policies/{policy_id}", response_model=WanPolicyResponse, tags=["WAN"], operation_id="updateWanPolicy")
-def update_wan_policy(policy_id: Annotated[int, Path(description='Unique identifier of the policy record addressed by this operation.')], payload: WanPolicyCreate, identity: Annotated[Identity, Depends(require_scope("write:wan"))], db: Session = Depends(get_db)) -> WanPolicyResponse:
+def update_wan_policy(policy_id: Annotated[int, ApiPath(description='Unique identifier of the policy record addressed by this operation.')], payload: WanPolicyCreate, identity: Annotated[Identity, Depends(require_scope("write:wan"))], db: Session = Depends(get_db)) -> WanPolicyResponse:
     """Update Wan Policy.
 
     Requires the `write:wan` API scope. The operation updates saved Atlaso state and does not bypass
@@ -1574,7 +1574,7 @@ def update_wan_policy(policy_id: Annotated[int, Path(description='Unique identif
 
 
 @router.delete("/wan/policies/{policy_id}", status_code=204, tags=["WAN"], operation_id="deleteWanPolicy")
-def delete_wan_policy(policy_id: Annotated[int, Path(description='Unique identifier of the policy record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("write:wan"))], db: Session = Depends(get_db)) -> Response:
+def delete_wan_policy(policy_id: Annotated[int, ApiPath(description='Unique identifier of the policy record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("write:wan"))], db: Session = Depends(get_db)) -> Response:
     """Delete Wan Policy.
 
     Requires the `write:wan` API scope. Removal or revocation takes effect in Atlaso application
@@ -1650,7 +1650,7 @@ def create_nat_rule(payload: NatRuleCreate, identity: Annotated[Identity, Depend
 
 
 @router.get("/nat/rules/{rule_id}", response_model=NatRuleResponse, tags=["NAT"], operation_id="getNatRule")
-def get_nat_rule(rule_id: Annotated[int, Path(description='Unique identifier of the rule record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("read:wan"))], db: Session = Depends(get_db)) -> NatRuleResponse:
+def get_nat_rule(rule_id: Annotated[int, ApiPath(description='Unique identifier of the rule record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("read:wan"))], db: Session = Depends(get_db)) -> NatRuleResponse:
     """Get Nat Rule.
 
     Requires the `read:wan` API scope. This read-only operation does not change saved desired state
@@ -1662,7 +1662,7 @@ def get_nat_rule(rule_id: Annotated[int, Path(description='Unique identifier of 
 
 
 @router.patch("/nat/rules/{rule_id}", response_model=NatRuleResponse, tags=["NAT"], operation_id="updateNatRule")
-def update_nat_rule(rule_id: Annotated[int, Path(description='Unique identifier of the rule record addressed by this operation.')], payload: NatRuleCreate, identity: Annotated[Identity, Depends(require_scope("write:wan"))], db: Session = Depends(get_db)) -> NatRuleResponse:
+def update_nat_rule(rule_id: Annotated[int, ApiPath(description='Unique identifier of the rule record addressed by this operation.')], payload: NatRuleCreate, identity: Annotated[Identity, Depends(require_scope("write:wan"))], db: Session = Depends(get_db)) -> NatRuleResponse:
     """Update Nat Rule.
 
     Requires the `write:wan` API scope. The operation updates saved Atlaso state and does not bypass
@@ -1684,7 +1684,7 @@ def update_nat_rule(rule_id: Annotated[int, Path(description='Unique identifier 
 
 
 @router.delete("/nat/rules/{rule_id}", status_code=204, tags=["NAT"], operation_id="deleteNatRule")
-def delete_nat_rule(rule_id: Annotated[int, Path(description='Unique identifier of the rule record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("write:wan"))], db: Session = Depends(get_db)) -> Response:
+def delete_nat_rule(rule_id: Annotated[int, ApiPath(description='Unique identifier of the rule record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("write:wan"))], db: Session = Depends(get_db)) -> Response:
     """Delete Nat Rule.
 
     Requires the `write:wan` API scope. Removal or revocation takes effect in Atlaso application
@@ -1966,7 +1966,7 @@ def create_dns_record(
 
 @router.patch("/dns/records/{record_id}", response_model=DnsRecordResponse, tags=["DNS"], operation_id="updateDnsRecord")
 def update_dns_record(
-    record_id: Annotated[int, Path(description='Unique identifier of the record record addressed by this operation.')],
+    record_id: Annotated[int, ApiPath(description='Unique identifier of the record record addressed by this operation.')],
     payload: DnsRecordCreate,
     identity: Annotated[Identity, Depends(require_scope("write:dns"))],
     db: Session = Depends(get_db),
@@ -2080,7 +2080,7 @@ def import_dns_hosts_file(
 
 @router.delete("/dns/records/{record_id}", status_code=204, tags=["DNS"], operation_id="deleteDnsRecord")
 def delete_dns_record(
-    record_id: Annotated[int, Path(description='Unique identifier of the record record addressed by this operation.')],
+    record_id: Annotated[int, ApiPath(description='Unique identifier of the record record addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("write:dns"))],
     db: Session = Depends(get_db),
 ) -> Response:
@@ -2273,7 +2273,7 @@ def create_dhcp_scope(
 
 @router.patch("/dhcp/scopes/{scope_id}", response_model=DhcpScopeResponse, tags=["DHCP"], operation_id="updateDhcpScope")
 def update_dhcp_scope(
-    scope_id: Annotated[int, Path(description='Unique identifier of the scope record addressed by this operation.')],
+    scope_id: Annotated[int, ApiPath(description='Unique identifier of the scope record addressed by this operation.')],
     payload: DhcpScopeCreate,
     identity: Annotated[Identity, Depends(require_scope("write:dhcp"))],
     db: Session = Depends(get_db),
@@ -2302,7 +2302,7 @@ def update_dhcp_scope(
 
 @router.delete("/dhcp/scopes/{scope_id}", status_code=204, tags=["DHCP"], operation_id="deleteDhcpScope")
 def delete_dhcp_scope(
-    scope_id: Annotated[int, Path(description='Unique identifier of the scope record addressed by this operation.')],
+    scope_id: Annotated[int, ApiPath(description='Unique identifier of the scope record addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("write:dhcp"))],
     db: Session = Depends(get_db),
 ) -> Response:
@@ -2353,7 +2353,7 @@ def create_dhcp_option(
 
 @router.patch("/dhcp/options/{option_id}", response_model=DhcpOptionResponse, tags=["DHCP"], operation_id="updateDhcpOption")
 def update_dhcp_option(
-    option_id: Annotated[int, Path(description='Unique identifier of the option record addressed by this operation.')],
+    option_id: Annotated[int, ApiPath(description='Unique identifier of the option record addressed by this operation.')],
     payload: DhcpOptionCreate,
     identity: Annotated[Identity, Depends(require_scope("write:dhcp"))],
     db: Session = Depends(get_db),
@@ -2378,7 +2378,7 @@ def update_dhcp_option(
 
 @router.delete("/dhcp/options/{option_id}", status_code=204, tags=["DHCP"], operation_id="deleteDhcpOption")
 def delete_dhcp_option(
-    option_id: Annotated[int, Path(description='Unique identifier of the option record addressed by this operation.')],
+    option_id: Annotated[int, ApiPath(description='Unique identifier of the option record addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("write:dhcp"))],
     db: Session = Depends(get_db),
 ) -> Response:
@@ -2439,7 +2439,7 @@ def create_dhcp_reservation(
 
 @router.delete("/dhcp/reservations/{reservation_id}", status_code=204, tags=["DHCP"], operation_id="deleteDhcpReservation")
 def delete_dhcp_reservation(
-    reservation_id: Annotated[int, Path(description='Unique identifier of the reservation record addressed by this operation.')],
+    reservation_id: Annotated[int, ApiPath(description='Unique identifier of the reservation record addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("write:dhcp"))],
     db: Session = Depends(get_db),
 ) -> Response:
@@ -2592,7 +2592,7 @@ def create_firewall_rule_api(
 
 @router.patch("/firewall/rules/{rule_id}", response_model=FirewallRuleResponse, tags=["Firewall"], operation_id="updateFirewallRule")
 def update_firewall_rule_api(
-    rule_id: Annotated[int, Path(description='Unique identifier of the rule record addressed by this operation.')],
+    rule_id: Annotated[int, ApiPath(description='Unique identifier of the rule record addressed by this operation.')],
     payload: FirewallRuleCreate,
     identity: Annotated[Identity, Depends(require_scope("write:firewall"))],
     db: Session = Depends(get_db),
@@ -2621,7 +2621,7 @@ def update_firewall_rule_api(
 
 @router.delete("/firewall/rules/{rule_id}", response_model=dict, tags=["Firewall"], operation_id="deleteFirewallRule")
 def delete_firewall_rule_api(
-    rule_id: Annotated[int, Path(description='Unique identifier of the rule record addressed by this operation.')],
+    rule_id: Annotated[int, ApiPath(description='Unique identifier of the rule record addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("write:firewall"))],
     db: Session = Depends(get_db),
 ) -> dict:
@@ -2695,7 +2695,7 @@ def list_services(identity: Annotated[Identity, Depends(require_scope("read:serv
 
 
 @router.get("/services/{service}", response_model=ServiceStateResponse, tags=["Services"], operation_id="getService")
-def get_service(service: Annotated[str, Path(description='Path value for service, identifying the resource addressed by `/api/v1/services/{service}`.')], identity: Annotated[Identity, Depends(require_scope("read:services"))], db: Session = Depends(get_db)) -> ServiceStateResponse:
+def get_service(service: Annotated[str, ApiPath(description='Path value for service, identifying the resource addressed by `/api/v1/services/{service}`.')], identity: Annotated[Identity, Depends(require_scope("read:services"))], db: Session = Depends(get_db)) -> ServiceStateResponse:
     """Get Service.
 
     Requires the `read:services` API scope. This read-only operation does not change saved desired
@@ -2739,7 +2739,7 @@ def service_action(service: str, action: str, identity: Identity, db: Session) -
 
 
 @router.post("/services/{service}/start", response_model=ServiceActionResponse, tags=["Services"], operation_id="startService")
-def start_service(service: Annotated[str, Path(description='Path value for service, identifying the resource addressed by `/api/v1/services/{service}/start`.')], identity: Annotated[Identity, Depends(require_scope("write:services"))], db: Session = Depends(get_db)) -> ServiceActionResponse:
+def start_service(service: Annotated[str, ApiPath(description='Path value for service, identifying the resource addressed by `/api/v1/services/{service}/start`.')], identity: Annotated[Identity, Depends(require_scope("write:services"))], db: Session = Depends(get_db)) -> ServiceActionResponse:
     """Start Service.
 
     Requires the `write:services` API scope. The action runs through the endpoint's existing audited
@@ -2748,7 +2748,7 @@ def start_service(service: Annotated[str, Path(description='Path value for servi
 
 
 @router.post("/services/{service}/stop", response_model=ServiceActionResponse, tags=["Services"], operation_id="stopService")
-def stop_service(service: Annotated[str, Path(description='Path value for service, identifying the resource addressed by `/api/v1/services/{service}/stop`.')], identity: Annotated[Identity, Depends(require_scope("write:services"))], db: Session = Depends(get_db)) -> ServiceActionResponse:
+def stop_service(service: Annotated[str, ApiPath(description='Path value for service, identifying the resource addressed by `/api/v1/services/{service}/stop`.')], identity: Annotated[Identity, Depends(require_scope("write:services"))], db: Session = Depends(get_db)) -> ServiceActionResponse:
     """Stop Service.
 
     Requires the `write:services` API scope. The action runs through the endpoint's existing audited
@@ -2757,7 +2757,7 @@ def stop_service(service: Annotated[str, Path(description='Path value for servic
 
 
 @router.post("/services/{service}/restart", response_model=ServiceActionResponse, tags=["Services"], operation_id="restartService")
-def restart_service(service: Annotated[str, Path(description='Path value for service, identifying the resource addressed by `/api/v1/services/{service}/restart`.')], identity: Annotated[Identity, Depends(require_scope("write:services"))], db: Session = Depends(get_db)) -> ServiceActionResponse:
+def restart_service(service: Annotated[str, ApiPath(description='Path value for service, identifying the resource addressed by `/api/v1/services/{service}/restart`.')], identity: Annotated[Identity, Depends(require_scope("write:services"))], db: Session = Depends(get_db)) -> ServiceActionResponse:
     """Restart Service.
 
     Requires the `write:services` API scope. The action runs through the endpoint's existing audited
@@ -2766,7 +2766,7 @@ def restart_service(service: Annotated[str, Path(description='Path value for ser
 
 
 @router.post("/services/{service}/enable", response_model=ServiceActionResponse, tags=["Services"], operation_id="enableService")
-def enable_service(service: Annotated[str, Path(description='Path value for service, identifying the resource addressed by `/api/v1/services/{service}/enable`.')], identity: Annotated[Identity, Depends(require_scope("write:services"))], db: Session = Depends(get_db)) -> ServiceActionResponse:
+def enable_service(service: Annotated[str, ApiPath(description='Path value for service, identifying the resource addressed by `/api/v1/services/{service}/enable`.')], identity: Annotated[Identity, Depends(require_scope("write:services"))], db: Session = Depends(get_db)) -> ServiceActionResponse:
     """Enable Service.
 
     Requires the `write:services` API scope. The operation changes saved Atlaso application state;
@@ -2776,7 +2776,7 @@ def enable_service(service: Annotated[str, Path(description='Path value for serv
 
 
 @router.post("/services/{service}/disable", response_model=ServiceActionResponse, tags=["Services"], operation_id="disableService")
-def disable_service(service: Annotated[str, Path(description='Path value for service, identifying the resource addressed by `/api/v1/services/{service}/disable`.')], identity: Annotated[Identity, Depends(require_scope("write:services"))], db: Session = Depends(get_db)) -> ServiceActionResponse:
+def disable_service(service: Annotated[str, ApiPath(description='Path value for service, identifying the resource addressed by `/api/v1/services/{service}/disable`.')], identity: Annotated[Identity, Depends(require_scope("write:services"))], db: Session = Depends(get_db)) -> ServiceActionResponse:
     """Disable Service.
 
     Requires the `write:services` API scope. The operation changes saved Atlaso application state;
@@ -2786,7 +2786,7 @@ def disable_service(service: Annotated[str, Path(description='Path value for ser
 
 
 @router.get("/services/{service}/logs", response_model=list[str], tags=["Services"], operation_id="getServiceLogs")
-def get_service_logs(service: Annotated[str, Path(description='Path value for service, identifying the resource addressed by `/api/v1/services/{service}/logs`.')], identity: Annotated[Identity, Depends(require_scope("read:logs"))]) -> list[str]:
+def get_service_logs(service: Annotated[str, ApiPath(description='Path value for service, identifying the resource addressed by `/api/v1/services/{service}/logs`.')], identity: Annotated[Identity, Depends(require_scope("read:logs"))]) -> list[str]:
     """Get Service Logs.
 
     Requires the `read:logs` API scope. This read-only operation does not change saved desired state
@@ -2806,7 +2806,7 @@ def list_logs(identity: Annotated[Identity, Depends(require_scope("read:logs"))]
 
 
 @router.get("/logs/{source}", response_model=list[str], tags=["Logs"], operation_id="getLogSource")
-def get_log_source(source: Annotated[str, Path(description='Path value for source, identifying the resource addressed by `/api/v1/logs/{source}`.')], identity: Annotated[Identity, Depends(require_scope("read:logs"))]) -> list[str]:
+def get_log_source(source: Annotated[str, ApiPath(description='Path value for source, identifying the resource addressed by `/api/v1/logs/{source}`.')], identity: Annotated[Identity, Depends(require_scope("read:logs"))]) -> list[str]:
     """Get Log Source.
 
     Requires the `read:logs` API scope. This read-only operation does not change saved desired state
@@ -2872,7 +2872,7 @@ def create_job(identity: Annotated[Identity, Depends(require_scope("admin:all"))
 
 
 @router.get("/jobs/{job_id}", response_model=JobResponse, tags=["Jobs"], operation_id="getJob")
-def get_job(job_id: Annotated[str, Path(description='Unique identifier of the job record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("read:dashboard"))], db: Session = Depends(get_db)) -> JobResponse:
+def get_job(job_id: Annotated[str, ApiPath(description='Unique identifier of the job record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("read:dashboard"))], db: Session = Depends(get_db)) -> JobResponse:
     """Get Job.
 
     Requires the `read:dashboard` API scope. This read-only operation does not change saved desired
@@ -2884,7 +2884,7 @@ def get_job(job_id: Annotated[str, Path(description='Unique identifier of the jo
 
 
 @router.post("/jobs/{job_id}/cancel", response_model=JobResponse, tags=["Jobs"], operation_id="cancelJob")
-def cancel_job(job_id: Annotated[str, Path(description='Unique identifier of the job record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("admin:all"))], db: Session = Depends(get_db)) -> JobResponse:
+def cancel_job(job_id: Annotated[str, ApiPath(description='Unique identifier of the job record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("admin:all"))], db: Session = Depends(get_db)) -> JobResponse:
     """Cancel Job.
 
     Requires the `admin:all` API scope. The operation changes saved Atlaso application state; any
@@ -3223,7 +3223,7 @@ def create_esx_storage_volume(
 
 @router.patch("/esx-storage/volumes/{volume_id}", response_model=EsxStorageVolumeResponse, tags=["ESX Storage"], operation_id="updateEsxStorageVolume")
 def update_esx_storage_volume(
-    volume_id: Annotated[int, Path(description='Unique identifier of the volume record addressed by this operation.')],
+    volume_id: Annotated[int, ApiPath(description='Unique identifier of the volume record addressed by this operation.')],
     payload: EsxStorageVolumeUpdate,
     identity: Annotated[Identity, Depends(require_scope("write:esx-storage"))],
     db: Session = Depends(get_db),
@@ -3315,7 +3315,7 @@ def create_esx_nfs_share(
 
 @router.patch("/esx-storage/shares/{share_id}", response_model=EsxNfsShareResponse, tags=["ESX Storage"], operation_id="updateEsxNfsShare")
 def update_esx_nfs_share(
-    share_id: Annotated[int, Path(description='Unique identifier of the share record addressed by this operation.')],
+    share_id: Annotated[int, ApiPath(description='Unique identifier of the share record addressed by this operation.')],
     payload: EsxNfsShareUpdate,
     identity: Annotated[Identity, Depends(require_scope("write:esx-storage"))],
     db: Session = Depends(get_db),
@@ -3339,7 +3339,7 @@ def update_esx_nfs_share(
 
 @router.delete("/esx-storage/shares/{share_id}", status_code=204, tags=["ESX Storage"], operation_id="deleteEsxNfsShare")
 def delete_esx_nfs_share(
-    share_id: Annotated[int, Path(description='Unique identifier of the share record addressed by this operation.')],
+    share_id: Annotated[int, ApiPath(description='Unique identifier of the share record addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("write:esx-storage"))],
     db: Session = Depends(get_db),
 ) -> Response:
@@ -3562,7 +3562,7 @@ def create_esxi_custom_variable(
     operation_id="updateEsxiCustomVariable",
 )
 def update_esxi_custom_variable(
-    variable_name: Annotated[str, Path(description='Stable variable name identifying the resource addressed by this operation.')],
+    variable_name: Annotated[str, ApiPath(description='Stable variable name identifying the resource addressed by this operation.')],
     payload: EsxiCustomVariableUpdate,
     identity: Annotated[Identity, Depends(require_scope("write:esxi-pxe"))],
     db: Session = Depends(get_db),
@@ -3604,7 +3604,7 @@ def update_esxi_custom_variable(
     operation_id="deleteEsxiCustomVariable",
 )
 def delete_esxi_custom_variable(
-    variable_name: Annotated[str, Path(description='Stable variable name identifying the resource addressed by this operation.')],
+    variable_name: Annotated[str, ApiPath(description='Stable variable name identifying the resource addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("write:esxi-pxe"))],
     db: Session = Depends(get_db),
 ) -> dict:
@@ -3688,7 +3688,7 @@ def create_esxi_kickstart(
     operation_id="getEsxiKickstart",
 )
 def get_esxi_kickstart(
-    kickstart_id: Annotated[int, Path(description='Unique identifier of the kickstart record addressed by this operation.')],
+    kickstart_id: Annotated[int, ApiPath(description='Unique identifier of the kickstart record addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("read:esxi-pxe"))],
     db: Session = Depends(get_db),
 ) -> EsxiKickstartResponse:
@@ -3709,7 +3709,7 @@ def get_esxi_kickstart(
     operation_id="updateEsxiKickstart",
 )
 def update_esxi_kickstart(
-    kickstart_id: Annotated[int, Path(description='Unique identifier of the kickstart record addressed by this operation.')],
+    kickstart_id: Annotated[int, ApiPath(description='Unique identifier of the kickstart record addressed by this operation.')],
     payload: EsxiKickstartUpdate,
     identity: Annotated[Identity, Depends(require_scope("write:esxi-pxe"))],
     db: Session = Depends(get_db),
@@ -3746,7 +3746,7 @@ def update_esxi_kickstart(
     operation_id="deleteEsxiKickstart",
 )
 def delete_esxi_kickstart(
-    kickstart_id: Annotated[int, Path(description='Unique identifier of the kickstart record addressed by this operation.')],
+    kickstart_id: Annotated[int, ApiPath(description='Unique identifier of the kickstart record addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("write:esxi-pxe"))],
     db: Session = Depends(get_db),
 ) -> dict:
@@ -3776,7 +3776,7 @@ def delete_esxi_kickstart(
     operation_id="duplicateEsxiKickstart",
 )
 def duplicate_esxi_kickstart(
-    kickstart_id: Annotated[int, Path(description='Unique identifier of the kickstart record addressed by this operation.')],
+    kickstart_id: Annotated[int, ApiPath(description='Unique identifier of the kickstart record addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("write:esxi-pxe"))],
     payload: EsxiKickstartDuplicateRequest | None = None,
     db: Session = Depends(get_db),
@@ -3818,7 +3818,7 @@ def duplicate_esxi_kickstart(
     operation_id="validateEsxiKickstart",
 )
 def validate_esxi_kickstart(
-    kickstart_id: Annotated[int, Path(description='Unique identifier of the kickstart record addressed by this operation.')],
+    kickstart_id: Annotated[int, ApiPath(description='Unique identifier of the kickstart record addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("read:esxi-pxe"))],
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
@@ -3851,7 +3851,7 @@ def validate_esxi_kickstart(
     operation_id="previewEsxiKickstart",
 )
 def preview_esxi_kickstart(
-    kickstart_id: Annotated[int, Path(description='Unique identifier of the kickstart record addressed by this operation.')],
+    kickstart_id: Annotated[int, ApiPath(description='Unique identifier of the kickstart record addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("read:esxi-pxe"))],
     db: Session = Depends(get_db),
 ) -> EsxiKickstartPreviewResponse:
@@ -3873,7 +3873,7 @@ def preview_esxi_kickstart(
     operation_id="downloadEsxiKickstart",
 )
 def download_esxi_kickstart(
-    kickstart_id: Annotated[int, Path(description='Unique identifier of the kickstart record addressed by this operation.')],
+    kickstart_id: Annotated[int, ApiPath(description='Unique identifier of the kickstart record addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("write:esxi-pxe"))],
     db: Session = Depends(get_db),
 ) -> Response:
@@ -3915,7 +3915,7 @@ async def upload_esxi_kickstart(
     resource."""
     raw = await upload_file.read()
     content = decode_kickstart_upload(raw, max_bytes=settings.esxi_kickstart_max_bytes)
-    candidate_name = name or FileSystemPath(upload_file.filename or "uploaded-kickstart").stem
+    candidate_name = name or Path(upload_file.filename or "uploaded-kickstart").stem
     kickstart = EsxiKickstart(name=normalize_kickstart_name(candidate_name), description=description or None, content=content, content_hash=content_hash(content), rendered_content=content, enabled=enabled)
     db.add(kickstart)
     db.flush()
@@ -4055,7 +4055,7 @@ def create_esxi_pxe_host(
     operation_id="updateEsxiPxeHost",
 )
 def update_esxi_pxe_host(
-    host_id: Annotated[int, Path(description='Unique identifier of the host record addressed by this operation.')],
+    host_id: Annotated[int, ApiPath(description='Unique identifier of the host record addressed by this operation.')],
     payload: EsxiPxeHostCreate,
     identity: Annotated[Identity, Depends(require_scope("write:esxi-pxe"))],
     db: Session = Depends(get_db),
@@ -4356,7 +4356,7 @@ def create_ldap_organization(
 
 @router.put("/ldap/organizations/{organization_id}", response_model=LdapOrganizationResponse, tags=["LDAP"], operation_id="updateLdapOrganization")
 def update_ldap_organization(
-    organization_id: Annotated[int, Path(description='Unique identifier of the organization record addressed by this operation.')],
+    organization_id: Annotated[int, ApiPath(description='Unique identifier of the organization record addressed by this operation.')],
     payload: LdapOrganizationCreate,
     identity: Annotated[Identity, Depends(require_scope("write:ldap"))],
     db: Session = Depends(get_db),
@@ -4394,7 +4394,7 @@ def update_ldap_organization(
 
 @router.delete("/ldap/organizations/{organization_id}", status_code=204, tags=["LDAP"], operation_id="deleteLdapOrganization")
 def delete_ldap_organization(
-    organization_id: Annotated[int, Path(description='Unique identifier of the organization record addressed by this operation.')],
+    organization_id: Annotated[int, ApiPath(description='Unique identifier of the organization record addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("write:ldap"))],
     db: Session = Depends(get_db),
 ) -> Response:
@@ -4418,7 +4418,7 @@ def delete_ldap_organization(
     operation_id="rotateLdapBindCredential",
 )
 def rotate_ldap_bind_credential(
-    organization_id: Annotated[int, Path(description='Unique identifier of the organization record addressed by this operation.')],
+    organization_id: Annotated[int, ApiPath(description='Unique identifier of the organization record addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("write:ldap"))],
     db: Session = Depends(get_db),
 ) -> LdapBindCredentialResponse:
@@ -4439,7 +4439,7 @@ def rotate_ldap_bind_credential(
 
 @router.get("/ldap/organizations/{organization_id}/users", response_model=list[LdapUserResponse], tags=["LDAP"], operation_id="listLdapUsers")
 def list_ldap_users(
-    organization_id: Annotated[int, Path(description='Unique identifier of the organization record addressed by this operation.')],
+    organization_id: Annotated[int, ApiPath(description='Unique identifier of the organization record addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("read:ldap"))],
     db: Session = Depends(get_db),
 ) -> list[LdapUserResponse]:
@@ -4473,7 +4473,7 @@ def _apply_ldap_user_payload(user: LdapUser, payload: LdapUserCreate) -> None:
     operation_id="createLdapUser",
 )
 def create_ldap_user(
-    organization_id: Annotated[int, Path(description='Unique identifier of the organization record addressed by this operation.')],
+    organization_id: Annotated[int, ApiPath(description='Unique identifier of the organization record addressed by this operation.')],
     payload: LdapUserCreate,
     identity: Annotated[Identity, Depends(require_scope("write:ldap"))],
     db: Session = Depends(get_db),
@@ -4505,7 +4505,7 @@ def create_ldap_user(
 
 @router.put("/ldap/users/{user_id}", response_model=LdapUserResponse, tags=["LDAP"], operation_id="updateLdapUser")
 def update_ldap_user(
-    user_id: Annotated[int, Path(description='Unique identifier of the user record addressed by this operation.')],
+    user_id: Annotated[int, ApiPath(description='Unique identifier of the user record addressed by this operation.')],
     payload: LdapUserCreate,
     identity: Annotated[Identity, Depends(require_scope("write:ldap"))],
     db: Session = Depends(get_db),
@@ -4533,7 +4533,7 @@ def update_ldap_user(
 
 @router.post("/ldap/users/{user_id}/password", response_model=LdapUserResponse, tags=["LDAP"], operation_id="resetLdapUserPassword")
 def reset_ldap_user_password(
-    user_id: Annotated[int, Path(description='Unique identifier of the user record addressed by this operation.')],
+    user_id: Annotated[int, ApiPath(description='Unique identifier of the user record addressed by this operation.')],
     payload: LdapPasswordResetRequest,
     identity: Annotated[Identity, Depends(require_scope("write:ldap"))],
     db: Session = Depends(get_db),
@@ -4557,7 +4557,7 @@ def reset_ldap_user_password(
 
 @router.post("/ldap/users/{user_id}/unlock", response_model=LdapUserResponse, tags=["LDAP"], operation_id="unlockLdapUser")
 def unlock_ldap_user(
-    user_id: Annotated[int, Path(description='Unique identifier of the user record addressed by this operation.')],
+    user_id: Annotated[int, ApiPath(description='Unique identifier of the user record addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("write:ldap"))],
     db: Session = Depends(get_db),
 ) -> LdapUserResponse:
@@ -4577,7 +4577,7 @@ def unlock_ldap_user(
 
 @router.delete("/ldap/users/{user_id}", status_code=204, tags=["LDAP"], operation_id="deleteLdapUser")
 def delete_ldap_user(
-    user_id: Annotated[int, Path(description='Unique identifier of the user record addressed by this operation.')],
+    user_id: Annotated[int, ApiPath(description='Unique identifier of the user record addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("write:ldap"))],
     db: Session = Depends(get_db),
 ) -> Response:
@@ -4620,7 +4620,7 @@ def _set_ldap_group_members(db: Session, group: LdapGroup, payload: LdapGroupCre
 
 @router.get("/ldap/organizations/{organization_id}/groups", response_model=list[LdapGroupResponse], tags=["LDAP"], operation_id="listLdapGroups")
 def list_ldap_groups(
-    organization_id: Annotated[int, Path(description='Unique identifier of the organization record addressed by this operation.')],
+    organization_id: Annotated[int, ApiPath(description='Unique identifier of the organization record addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("read:ldap"))],
     db: Session = Depends(get_db),
 ) -> list[LdapGroupResponse]:
@@ -4670,7 +4670,7 @@ def _ldap_group_response(db: Session, group_id: int) -> LdapGroupResponse:
     operation_id="createLdapGroup",
 )
 def create_ldap_group(
-    organization_id: Annotated[int, Path(description='Unique identifier of the organization record addressed by this operation.')],
+    organization_id: Annotated[int, ApiPath(description='Unique identifier of the organization record addressed by this operation.')],
     payload: LdapGroupCreate,
     identity: Annotated[Identity, Depends(require_scope("write:ldap"))],
     db: Session = Depends(get_db),
@@ -4709,7 +4709,7 @@ def create_ldap_group(
 
 @router.put("/ldap/groups/{group_id}", response_model=LdapGroupResponse, tags=["LDAP"], operation_id="updateLdapGroup")
 def update_ldap_group(
-    group_id: Annotated[int, Path(description='Unique identifier of the group record addressed by this operation.')],
+    group_id: Annotated[int, ApiPath(description='Unique identifier of the group record addressed by this operation.')],
     payload: LdapGroupCreate,
     identity: Annotated[Identity, Depends(require_scope("write:ldap"))],
     db: Session = Depends(get_db),
@@ -4742,7 +4742,7 @@ def update_ldap_group(
 
 @router.delete("/ldap/groups/{group_id}", status_code=204, tags=["LDAP"], operation_id="deleteLdapGroup")
 def delete_ldap_group(
-    group_id: Annotated[int, Path(description='Unique identifier of the group record addressed by this operation.')],
+    group_id: Annotated[int, ApiPath(description='Unique identifier of the group record addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("write:ldap"))],
     db: Session = Depends(get_db),
 ) -> Response:
@@ -4761,7 +4761,7 @@ def delete_ldap_group(
 
 @router.get("/ldap/organizations/{organization_id}/vcf-bundle", response_model=dict[str, Any], tags=["LDAP"], operation_id="getLdapVcfBundle")
 def get_ldap_vcf_bundle(
-    organization_id: Annotated[int, Path(description='Unique identifier of the organization record addressed by this operation.')],
+    organization_id: Annotated[int, ApiPath(description='Unique identifier of the organization record addressed by this operation.')],
     identity: Annotated[Identity, Depends(require_scope("read:ldap"))],
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
@@ -4793,7 +4793,7 @@ def _sanitize_vcf_ldap_settings(payload: dict[str, Any]) -> dict[str, Any]:
     operation_id="inspectLdapVcfConnection",
 )
 def inspect_ldap_vcf_connection(
-    organization_id: Annotated[int, Path(description='Unique identifier of the organization record addressed by this operation.')],
+    organization_id: Annotated[int, ApiPath(description='Unique identifier of the organization record addressed by this operation.')],
     payload: LdapVcfInspectRequest,
     identity: Annotated[Identity, Depends(require_scope("write:ldap"))],
     db: Session = Depends(get_db),
@@ -4852,7 +4852,7 @@ def inspect_ldap_vcf_connection(
     operation_id="configureLdapVcfConnection",
 )
 def configure_ldap_vcf_connection(
-    organization_id: Annotated[int, Path(description='Unique identifier of the organization record addressed by this operation.')],
+    organization_id: Annotated[int, ApiPath(description='Unique identifier of the organization record addressed by this operation.')],
     payload: LdapVcfConfigureRequest,
     identity: Annotated[Identity, Depends(require_scope("write:ldap"))],
     db: Session = Depends(get_db),
@@ -4935,7 +4935,7 @@ def export_ldap_recovery(
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource."""
     timestamp = utcnow().strftime("%Y%m%dT%H%M%SZ")
-    plain_path = FileSystemPath(LDAP_RECOVERY_DIR) / f"ldap-recovery-{timestamp}.tar.gz"
+    plain_path = Path(LDAP_RECOVERY_DIR) / f"ldap-recovery-{timestamp}.tar.gz"
     result = SystemAdapter().export_ldap_recovery(str(plain_path))
     if result.dry_run:
         raise HTTPException(status_code=409, detail="LDAP recovery export requires a live appliance with OpenLDAP applied.")

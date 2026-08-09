@@ -6,11 +6,11 @@ import threading
 import time
 from collections import defaultdict, deque
 from ipaddress import ip_address
-from pathlib import Path as FileSystemPath
+from pathlib import Path
 from typing import Annotated, Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Path as ApiPath, Query, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import ValidationError
 from sqlalchemy import delete, desc, func, select
@@ -245,7 +245,7 @@ def list_available_network_boot_versions(
 
 @router.patch("/environments/{environment_key}")
 def update_network_boot_environment(
-    environment_key: Annotated[str, Path(description='Stable environment key identifying the resource addressed by this operation.')],
+    environment_key: Annotated[str, ApiPath(description='Stable environment key identifying the resource addressed by this operation.')],
     payload: dict[str, Any],
     request: Request,
     identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
@@ -281,7 +281,7 @@ def update_network_boot_environment(
 
 @router.post("/environments/{environment_key}/sync", status_code=status.HTTP_202_ACCEPTED)
 def sync_network_boot_environment(
-    environment_key: Annotated[str, Path(description='Stable environment key identifying the resource addressed by this operation.')],
+    environment_key: Annotated[str, ApiPath(description='Stable environment key identifying the resource addressed by this operation.')],
     request: Request,
     identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
     db: Session = Depends(get_db),
@@ -362,7 +362,7 @@ def sync_network_boot_environment(
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def upload_network_boot_environment(
-    environment_key: Annotated[str, Path(description='Stable environment key identifying the resource addressed by this operation.')],
+    environment_key: Annotated[str, ApiPath(description='Stable environment key identifying the resource addressed by this operation.')],
     request: Request,
     artifact: Annotated[UploadFile, File(description='Uploaded release artifact validated before it can enter Network Boot storage.')],
     identity: Annotated[
@@ -393,7 +393,7 @@ async def upload_network_boot_environment(
             status_code=409,
             detail=f"Network Boot media task {active.id} is already active.",
         )
-    filename = FileSystemPath(artifact.filename or "").name
+    filename = Path(artifact.filename or "").name
     if not filename or len(filename) > 240:
         raise HTTPException(status_code=422, detail="Choose a named boot media file.")
     job_id = f"job_{uuid4().hex}"
@@ -463,8 +463,8 @@ async def upload_network_boot_environment(
     status_code=status.HTTP_202_ACCEPTED,
 )
 def remove_network_boot_media(
-    environment_key: Annotated[str, Path(description='Stable environment key identifying the resource addressed by this operation.')],
-    version: Annotated[str, Path(description='Path value for version, identifying the resource addressed by `/api/v1/network-boot/environments/{environment_key}/media/{version}`.')],
+    environment_key: Annotated[str, ApiPath(description='Stable environment key identifying the resource addressed by this operation.')],
+    version: Annotated[str, ApiPath(description='Path value for version, identifying the resource addressed by `/api/v1/network-boot/environments/{environment_key}/media/{version}`.')],
     request: Request,
     identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
     db: Session = Depends(get_db),
@@ -574,7 +574,7 @@ def list_discovered_hosts(
 
 @router.get("/hosts/{host_id}")
 def get_discovered_host(
-    host_id: Annotated[int, Path(description='Unique identifier of the host record addressed by this operation.')],
+    host_id: Annotated[int, ApiPath(description='Unique identifier of the host record addressed by this operation.')],
     _identity: Annotated[Identity, Depends(require_api_or_session_scope("read:pxe"))],
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
@@ -590,7 +590,7 @@ def get_discovered_host(
 
 @router.get("/hosts/{host_id}/history")
 def get_discovered_host_history(
-    host_id: Annotated[int, Path(description='Unique identifier of the host record addressed by this operation.')],
+    host_id: Annotated[int, ApiPath(description='Unique identifier of the host record addressed by this operation.')],
     _identity: Annotated[Identity, Depends(require_api_or_session_scope("read:pxe"))],
     db: Session = Depends(get_db),
 ) -> list[dict[str, Any]]:
@@ -605,8 +605,8 @@ def get_discovered_host_history(
 
 @router.get("/hosts/{host_id}/reports/{report_id}/download")
 def download_discovered_host_report(
-    host_id: Annotated[int, Path(description='Unique identifier of the host record addressed by this operation.')],
-    report_id: Annotated[int, Path(description='Unique identifier of the report record addressed by this operation.')],
+    host_id: Annotated[int, ApiPath(description='Unique identifier of the host record addressed by this operation.')],
+    report_id: Annotated[int, ApiPath(description='Unique identifier of the report record addressed by this operation.')],
     _identity: Annotated[Identity, Depends(require_api_or_session_scope("read:pxe"))],
     db: Session = Depends(get_db),
 ) -> Response:
@@ -656,7 +656,7 @@ def download_discovered_host_report(
 
 @router.delete("/hosts/{host_id}")
 def remove_discovered_host(
-    host_id: Annotated[int, Path(description='Unique identifier of the host record addressed by this operation.')],
+    host_id: Annotated[int, ApiPath(description='Unique identifier of the host record addressed by this operation.')],
     request: Request,
     identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
     db: Session = Depends(get_db),
@@ -821,7 +821,7 @@ def _wake_host(
 
 @router.post("/hosts/{host_id}/wake")
 def wake_discovered_host(
-    host_id: Annotated[int, Path(description='Unique identifier of the host record addressed by this operation.')],
+    host_id: Annotated[int, ApiPath(description='Unique identifier of the host record addressed by this operation.')],
     request: Request,
     identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
     db: Session = Depends(get_db),
@@ -846,7 +846,7 @@ def wake_discovered_host(
 
 @router.post("/hosts/{host_id}/reboot", status_code=status.HTTP_202_ACCEPTED)
 def reboot_discovered_host(
-    host_id: Annotated[int, Path(description='Unique identifier of the host record addressed by this operation.')],
+    host_id: Annotated[int, ApiPath(description='Unique identifier of the host record addressed by this operation.')],
     request: Request,
     identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
     db: Session = Depends(get_db),
@@ -887,7 +887,7 @@ def reboot_discovered_host(
 
 @router.get("/commands/{command_id}")
 def get_inventory_command_status(
-    command_id: Annotated[str, Path(description='Unique identifier of the command record addressed by this operation.')],
+    command_id: Annotated[str, ApiPath(description='Unique identifier of the command record addressed by this operation.')],
     _identity: Annotated[Identity, Depends(require_api_or_session_scope("read:pxe"))],
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
@@ -916,7 +916,7 @@ def get_inventory_command_status(
     "/esxi-hosts/{host_id}/wake",
 )
 def wake_esxi_host_reference(
-    host_id: Annotated[int, Path(description='Unique identifier of the host record addressed by this operation.')],
+    host_id: Annotated[int, ApiPath(description='Unique identifier of the host record addressed by this operation.')],
     request: Request,
     identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
     db: Session = Depends(get_db),
@@ -944,7 +944,7 @@ def wake_esxi_host_reference(
     status_code=status.HTTP_202_ACCEPTED,
 )
 def boot_esxi_host_into_inventory_once(
-    host_id: Annotated[int, Path(description='Unique identifier of the host record addressed by this operation.')],
+    host_id: Annotated[int, ApiPath(description='Unique identifier of the host record addressed by this operation.')],
     request: Request,
     identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
     db: Session = Depends(get_db),
@@ -1000,7 +1000,7 @@ def boot_esxi_host_into_inventory_once(
 
 @router.post("/hosts/{host_id}/promote", status_code=status.HTTP_201_CREATED)
 def promote_discovered_host(
-    host_id: Annotated[int, Path(description='Unique identifier of the host record addressed by this operation.')],
+    host_id: Annotated[int, ApiPath(description='Unique identifier of the host record addressed by this operation.')],
     payload: dict[str, Any],
     request: Request,
     identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
