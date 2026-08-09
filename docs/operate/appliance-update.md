@@ -101,11 +101,15 @@ during each update, and do not configure pip or report package-client synchroniz
 
 Synchronization resolves each enabled PowerShell repository host before invoking PowerShellGet. A DNS failure names the
 repository and unresolved host directly in the task error instead of presenting PowerShellGet's generic invalid-URI
-message or only an aggregate step failure.
+message or only an aggregate step failure. It also performs a repository lookup after registration, so a reachable host
+with an invalid API path fails synchronization. PowerShell module checks and installations require every referenced
+repository to have a successful synchronization result; saved edits cannot silently reuse stale package-client state.
 
 Each source detail presents repository identity first, then its location or discovered runtime data, followed by
 read-only **Repository behavior** values. Desired-state guidance and synchronization state remain together in a
 separated footer. The accessible edit and delete icon actions stay together in the identity header.
+After a successful create or edit, Atlaso reloads the server-rendered source details while preserving the Update Sources
+workspace and selected repository tab, so the read-only values immediately match the saved desired state.
 
 The peer **POWERSHELL · managed modules** disclosure uses the same section spacing, count badge, read-only detail
 hierarchy, and tab treatment as the repository disclosures. Each module tab presents identity, repository, version
@@ -114,6 +118,8 @@ together in the identity header. Both **+ Module** and **Edit module** open the 
 identity, version resolution, enablement, and final confirmation; saving it does not install the module.
 Server-side validation failures remain in the open wizard with the attempted values intact so an administrator can
 correct the entry without rebuilding it.
+Successful module saves use the same preserved-workspace reload so the read-only module detail immediately reflects the
+new policy and state.
 
 A single
 shared Tasks grid remains below both Appliance Update tab panels, so recent work stays visible from Update Streams and

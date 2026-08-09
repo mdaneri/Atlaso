@@ -7777,6 +7777,25 @@ def _appliance_update_config_errors(payload: dict, *, require_streams: bool = Tr
         )
     ):
         errors.append("powershell_modules must be a list of module objects with names and repositories.")
+    if "powershell_modules" in (selected or []) and isinstance(powershell_modules, list):
+        referenced_repositories = {
+            str(item.get("repository_name") or powershell_repository_name).strip()
+            for item in powershell_modules
+            if isinstance(item, dict) and str(item.get("repository_name") or powershell_repository_name).strip()
+        }
+        source_definitions = payload.get("source_definitions")
+        synchronized_repositories = {
+            str(source.get("name") or "").strip()
+            for source in source_definitions
+            if isinstance(source, dict)
+            and source.get("kind") == "powershell"
+            and source.get("enabled") is True
+            and source.get("validation_status") == "valid"
+        } if isinstance(source_definitions, list) else set()
+        for repository in sorted(referenced_repositories - synchronized_repositories):
+            errors.append(
+                f"PowerShell repository {repository} is not synchronized; run Synchronize repositories before checking or installing managed modules."
+            )
     policy = payload.get("policy") or {}
     if not isinstance(policy, dict):
         errors.append("policy must be an object.")
@@ -8211,18 +8230,24 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
             continue
         trusted = bool((source.get("settings") or {}).get("trusted")) if isinstance(source.get("settings"), dict) else False
         policy = "Trusted" if trusted else "Untrusted"
+        credential = _source_credential(source, credentials)
         script = (
             '$ErrorActionPreference = "Stop"; '
             f"$name = {_powershell_literal(name)}; $url = {_powershell_literal(url)}; "
+            "$credentialArgs = if ($env:LF_REPO_SECRET) { $credential = New-Object System.Management.Automation.PSCredential($env:LF_REPO_USER, (ConvertTo-SecureString $env:LF_REPO_SECRET -AsPlainText -Force)); @{Credential=$credential} } else { @{} }; "
             "$existing = Get-PSRepository -Name $name -ErrorAction SilentlyContinue; "
             f"if ($existing) {{ Set-PSRepository -Name $name -SourceLocation $url -InstallationPolicy {policy} }} "
             f"else {{ Register-PSRepository -Name $name -SourceLocation $url -InstallationPolicy {policy} }}; "
-            "Get-PSRepository -Name $name | Select-Object Name,SourceLocation,InstallationPolicy | ConvertTo-Json -Compress"
+            "$probe = Find-Module -Repository $name @credentialArgs -ErrorAction Stop | Select-Object -First 1; "
+            "Get-PSRepository -Name $name | Select-Object Name,SourceLocation,InstallationPolicy,@{Name='ProbeSucceeded';Expression={$true}} | ConvertTo-Json -Compress"
         )
+        env = _appliance_update_powershell_environment()
+        if credential:
+            env.update({"LF_REPO_USER": str(credential.get("username") or ""), "LF_REPO_SECRET": str(credential["secret"])})
         commands.append(
             _command_payload(
                 [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)],
-                env=_appliance_update_powershell_environment(),
+                env=env,
             )
         )
     if pwsh is not None:

@@ -18585,7 +18585,8 @@ function initializeApplianceUpdateSourceWizard() {
       } catch {
         // Reloading the page still shows the saved repository when storage is unavailable.
       }
-      window.location.assign("/appliance-update#update-sources");
+      window.history.replaceState(null, "", "/appliance-update#update-sources");
+      window.location.reload();
       return { valid: true };
     },
   });
@@ -18707,7 +18708,8 @@ function initializeManagedPackageWizard() {
       } catch {
         // Reloading the page still shows the saved module when storage is unavailable.
       }
-      window.location.assign("/appliance-update#managed-packages");
+      window.history.replaceState(null, "", "/appliance-update#managed-packages");
+      window.location.reload();
       return { valid: true };
     },
   });

@@ -138,6 +138,23 @@ def test_appliance_update_page_and_dry_run_job(client):
     assert "atlaso-helper appliance-update restart-service /var/lib/atlaso/apply/appliance-update/atlaso-update.json" in command_lines
 
 
+def test_powershell_update_requires_synchronized_referenced_repository(client):
+    login(client)
+    page = client.get("/appliance-update")
+    csrf = csrf_from_page(page.text)
+
+    response = client.post(
+        "/appliance-update/check",
+        headers={"Accept": "application/json"},
+        data={"csrf": csrf, "selected_streams": ["powershell_modules"]},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["errors"] == [
+        "Synchronize PowerShell repository PSGallery before checking or installing its managed modules."
+    ]
+
+
 def test_appliance_update_settings_validate_urls(client):
     login(client)
     page = client.get("/appliance-update")
@@ -573,6 +590,18 @@ def test_software_source_and_managed_module_lifecycle(client):
     assert 'wizard.open({ launcher, context: managedPackage });' in app_js
     assert '"X-Atlaso-Wizard": "1"' in app_js
     assert 'throw new Error(payload.detail || "The managed PowerShell module could not be saved.");' in app_js
+    assert 'window.history.replaceState(null, "", "/appliance-update#update-sources");' in app_js
+    assert 'window.history.replaceState(null, "", "/appliance-update#managed-packages");' in app_js
+    source_wizard_js = app_js.split("function initializeApplianceUpdateSourceWizard()", 1)[1].split(
+        "function initializeManagedPackageWizard()", 1
+    )[0]
+    package_wizard_js = app_js.split("function initializeManagedPackageWizard()", 1)[1].split(
+        "function initializeEsxStorageTables()", 1
+    )[0]
+    assert 'window.location.assign("/appliance-update#update-sources")' not in source_wizard_js
+    assert 'window.location.assign("/appliance-update#managed-packages")' not in package_wizard_js
+    assert "window.location.reload();" in source_wizard_js
+    assert "window.location.reload();" in package_wizard_js
     app_css = Path("atlaso/app/static/app.css").read_text(encoding="utf-8")
     assert ".detail-rail .detail-panel {\n  position: static;" in app_css
     assert ".detail-rail {\n  position: sticky;\n  top: 22px;" in app_css
@@ -784,6 +813,32 @@ def test_helper_rejects_retired_python_library_stream():
     assert errors == ["unsupported update stream python_libraries."]
 
 
+def test_helper_rejects_unsynchronized_powershell_repository():
+    helper = load_helper_module()
+    payload = {
+        "selected_streams": ["powershell_modules"],
+        "sources": {
+            "powershell_repository_name": "PSGallery",
+            "powershell_repository_url": "https://www.powershellgallery.com/api/v21",
+        },
+        "powershell_modules": [{"name": "VCF.PowerCLI", "repository_name": "PSGallery"}],
+        "source_definitions": [
+            {
+                "kind": "powershell",
+                "name": "PSGallery",
+                "enabled": True,
+                "validation_status": "not_checked",
+            }
+        ],
+    }
+
+    assert helper._appliance_update_config_errors(payload, require_streams=True) == [
+        "PowerShell repository PSGallery is not synchronized; run Synchronize repositories before checking or installing managed modules."
+    ]
+    payload["source_definitions"][0]["validation_status"] = "valid"
+    assert helper._appliance_update_config_errors(payload, require_streams=True) == []
+
+
 def test_helper_redacts_repository_credentials_from_package_client_output(monkeypatch):
     from types import SimpleNamespace
 
@@ -904,6 +959,48 @@ def test_helper_reports_unresolvable_powershell_repository_host(monkeypatch, tmp
     assert result["status"] == "failed"
     assert result["commands"][0]["command"] == ["resolve", "www.powershellgallery.com"]
     assert result["error"].startswith("PowerShell repository PSGallery host www.powershellgallery.com could not be resolved:")
+
+
+def test_helper_source_sync_probes_powershell_repository_endpoint(monkeypatch, tmp_path):
+    import base64
+
+    helper = load_helper_module()
+    scripts = []
+    monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", tmp_path / "update-sources.json")
+    monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
+    monkeypatch.setattr(helper.socket, "getaddrinfo", lambda *_args, **_kwargs: [(None, None, None, None, None)])
+
+    def fail_invalid_endpoint(command, *, success_codes=None, env=None):
+        scripts.append(base64.b64decode(command[-1]).decode("utf-16-le"))
+        return {
+            "command": command,
+            "returncode": 1,
+            "success": False,
+            "stdout": "",
+            "stderr": "No match was found for the specified search criteria and repository name PSGallery.",
+        }
+
+    monkeypatch.setattr(helper, "_command_payload", fail_invalid_endpoint)
+    result = helper._sync_appliance_update_sources(
+        {
+            "source_definitions": [
+                {
+                    "id": 1,
+                    "kind": "powershell",
+                    "name": "PSGallery",
+                    "url": "https://www.powershellgallery.com/api/v21",
+                    "enabled": True,
+                    "settings": {"trusted": False},
+                }
+            ]
+        }
+    )
+
+    assert result["status"] == "failed"
+    assert result["error"].startswith("No match was found")
+    assert "Set-PSRepository" in scripts[0]
+    assert "Find-Module -Repository $name" in scripts[0]
+    assert "https://www.powershellgallery.com/api/v21" in scripts[0]
 
 
 def test_appliance_update_failure_message_uses_actionable_command_stderr():

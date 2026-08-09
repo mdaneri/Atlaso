@@ -188,6 +188,7 @@ from atlaso.app.services.update_sources import (
     effective_update_settings,
     managed_package_rows,
     source_rows,
+    unsynchronized_powershell_repositories,
     update_source_payload,
     update_source_settings,
     validate_update_source,
@@ -10857,6 +10858,11 @@ def submit_appliance_update(
         errors.append("Configure a signed Atlaso release repository before selecting Atlaso Release.")
     if "powershell_modules" in selected and not str(settings.get("powershell_repository_url") or "").strip():
         errors.append("Configure an enabled PowerShell repository before selecting PowerShell Modules.")
+    if "powershell_modules" in selected:
+        for repository in unsynchronized_powershell_repositories(settings):
+            errors.append(
+                f"Synchronize PowerShell repository {repository} before checking or installing its managed modules."
+            )
     if errors:
         if wants_json:
             return JSONResponse({"status": "error", "errors": errors, "detail": " ".join(errors)}, status_code=422)
