@@ -37,7 +37,8 @@ Never paste production tokens, passwords, private keys, or authenticated URLs in
 Send an unauthenticated `GET` request to `/api/v1/version` through the management front door to identify the installed
 Atlaso build. The response contains the installed `version`, its `base_version`, the full source `git_commit`, and the
 UTC `built_at` timestamp. Source checkouts and development wheels return an empty string when commit or build-time
-metadata is unavailable.
+metadata is unavailable. These values come only from package metadata embedded during the build; the request does not
+inspect a runtime Git checkout.
 
 This operation intentionally omits host-platform diagnostics and does not make management API routes available through
 additional Public Services listeners.

@@ -21,17 +21,9 @@ def test_unauthenticated_api_requests_are_rejected(client):
 def test_appliance_version_api_is_unauthenticated(client, monkeypatch):
     import atlaso.app.api.v1 as api_v1
 
-    monkeypatch.setattr(
-        api_v1,
-        "current_version_info",
-        lambda: {
-            "version": "0.9.87+g0123456789ab",
-            "base_version": "0.9.87",
-            "git_commit": "0123456789abcdef0123456789abcdef01234567",
-            "built_at": "2026-08-09T20:15:00Z",
-            "platform": "excluded",
-        },
-    )
+    monkeypatch.setattr(api_v1, "__version__", "0.9.87+g0123456789ab")
+    monkeypatch.setattr(api_v1, "__build_git_commit__", "0123456789abcdef0123456789abcdef01234567")
+    monkeypatch.setattr(api_v1, "__build_time_utc__", "2026-08-09T20:15:00Z")
 
     response = client.get("/api/v1/version")
 

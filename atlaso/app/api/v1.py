@@ -12,6 +12,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from atlaso import __build_git_commit__, __build_time_utc__, __version__
 from atlaso.app.adapters.system import SystemAdapter
 from atlaso.app.audit import record_audit
 from atlaso.app.config import Settings, get_settings
@@ -150,7 +151,6 @@ from atlaso.app.schemas import (
     WanPolicyResponse,
     WanStatusResponse,
 )
-from atlaso.app.services.appliance_update import current_version_info
 from atlaso.app.services.kms import ensure_kms_provider_id
 from atlaso.app.services.firewall import FIREWALL_SOURCE_GROUPS_SETTING_KEY, firewall_interface_networks, firewall_source_group_state
 from atlaso.app.services.esx_storage import (
@@ -755,12 +755,11 @@ def stage_api_dnsmasq_config(config_preview: str) -> str:
     operation_id="getApplianceVersion",
 )
 def get_appliance_version() -> ApplianceVersionResponse:
-    info = current_version_info()
     return ApplianceVersionResponse(
-        version=info["version"],
-        base_version=info["base_version"],
-        git_commit=info["git_commit"],
-        built_at=info["built_at"],
+        version=__version__,
+        base_version=__version__.split("+", 1)[0],
+        git_commit=__build_git_commit__,
+        built_at=__build_time_utc__,
     )
 
 
