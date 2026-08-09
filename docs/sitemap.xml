@@ -46,6 +46,9 @@
         <loc>https://mdaneri.github.io/Atlaso/docs/operate/automation/</loc>
       </url>
       <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/operate/api/</loc>
+      </url>
+      <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/operate/web-terminal/</loc>
       </url>
       <url>
@@ -140,6 +143,9 @@
       </url>
       <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/contribute/documentation-authoring/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/api-authoring/</loc>
       </url>
       <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/contribute/windows-image-build-wsl/</loc>

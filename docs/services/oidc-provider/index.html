@@ -276,6 +276,8 @@
       
         
       
+        
+      
     
     
     
@@ -412,6 +414,8 @@
       
         
           
+        
+      
         
       
         
@@ -652,6 +656,8 @@
       
         
           
+        
+      
         
       
         
@@ -1128,6 +1134,40 @@
     
   
   Automation
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Use the API
 
     
   </span>
@@ -2513,6 +2553,8 @@
       
         
       
+        
+      
     
     
     
@@ -2621,6 +2663,40 @@
     
   
   Documentation authoring
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/api-authoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API authoring standard
 
     
   </span>
@@ -3441,6 +3517,9 @@ and protocol readiness.</p>
 <p><em>Figure: OIDC provider status and issuer information with service settings in the right column.</em></p>
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+<p>OIDC discovery, authorization, token, user-info, and key endpoints under <code>/identity</code> are protocol routes documented in
+this guide. They remain operational and are intentionally absent from Swagger; only OIDC administration operations
+under <code>/api/v1</code> belong to the generated REST contract.</p>
 <h2 id="architecture-and-trust-boundaries">Architecture and trust boundaries<a class="headerlink" href="#architecture-and-trust-boundaries" title="Permanent link">&para;</a></h2>
 <p>The canonical issuer is derived as <code>https://&lt;oidc-hostname&gt;[:port]/identity</code>; the default hostname is
 <code>oidc.atlaso.internal</code> and port 443 is omitted. It is never inferred from <code>Host</code>, <code>Forwarded</code>, or <code>X-Forwarded-*</code>

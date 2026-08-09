@@ -6,19 +6,19 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Open and audit constrained browser terminal sessions on the Atlaso appliance.">
+        <meta name="description" content="Authenticate safely, explore the versioned API, and interpret Atlaso responses and mutation boundaries.">
       
       
         <meta name="author" content="Atlaso contributors">
       
       
-        <link rel="canonical" href="https://mdaneri.github.io/Atlaso/docs/operate/web-terminal/">
+        <link rel="canonical" href="https://mdaneri.github.io/Atlaso/docs/operate/api/">
       
       
-        <link rel="prev" href="../api/">
+        <link rel="prev" href="../automation/">
       
       
-        <link rel="next" href="../../services/">
+        <link rel="next" href="../web-terminal/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>Web Terminal - Atlaso Documentation</title>
+        <title>Use the Atlaso API - Atlaso Documentation</title>
       
     
     
@@ -87,7 +87,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#web-terminal" class="md-skip">
+        <a href="#use-the-atlaso-api" class="md-skip">
           Skip to content
         </a>
       
@@ -122,7 +122,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Web Terminal
+              Use the Atlaso API
             
           </span>
         </div>
@@ -1162,40 +1162,6 @@
                 
   
   
-  
-  
-    <li class="md-nav__item">
-      <a href="../api/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Use the API
-
-    
-  </span>
-  
-  
-    
-  
-  
-    <span class="md-status md-status--current"></span>
-  
-
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
     
   
   
@@ -1215,7 +1181,7 @@
   <span class="md-ellipsis">
     
   
-  Web Terminal
+  Use the API
 
     
   </span>
@@ -1239,7 +1205,7 @@
   <span class="md-ellipsis">
     
   
-  Web Terminal
+  Use the API
 
     
   </span>
@@ -1272,10 +1238,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#interface-overview" class="md-nav__link">
+  <a href="#create-and-protect-an-api-token" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Interface overview
+        Create and protect an API token
       </span>
     </span>
   </a>
@@ -1283,10 +1249,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#configure-access" class="md-nav__link">
+  <a href="#call-the-api-safely" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Configure access
+        Call the API safely
       </span>
     </span>
   </a>
@@ -1294,10 +1260,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#session-behavior" class="md-nav__link">
+  <a href="#scopes-and-authorization" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Session behavior
+        Scopes and authorization
       </span>
     </span>
   </a>
@@ -1305,10 +1271,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#authentication-and-security-boundaries" class="md-nav__link">
+  <a href="#understand-responses" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Authentication and security boundaries
+        Understand responses
       </span>
     </span>
   </a>
@@ -1316,10 +1282,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#apply-and-troubleshooting" class="md-nav__link">
+  <a href="#immediate-and-applied-effects" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Apply and troubleshooting
+        Immediate and applied effects
       </span>
     </span>
   </a>
@@ -1327,30 +1293,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#additional-verified-states" class="md-nav__link">
+  <a href="#troubleshoot-clients" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Additional verified states
+        Troubleshoot clients
       </span>
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Additional verified states">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#web-terminal_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Web terminal
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -1358,6 +1307,40 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../web-terminal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Web Terminal
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
     </li>
   
 
@@ -3167,10 +3150,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#interface-overview" class="md-nav__link">
+  <a href="#create-and-protect-an-api-token" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Interface overview
+        Create and protect an API token
       </span>
     </span>
   </a>
@@ -3178,10 +3161,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#configure-access" class="md-nav__link">
+  <a href="#call-the-api-safely" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Configure access
+        Call the API safely
       </span>
     </span>
   </a>
@@ -3189,10 +3172,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#session-behavior" class="md-nav__link">
+  <a href="#scopes-and-authorization" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Session behavior
+        Scopes and authorization
       </span>
     </span>
   </a>
@@ -3200,10 +3183,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#authentication-and-security-boundaries" class="md-nav__link">
+  <a href="#understand-responses" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Authentication and security boundaries
+        Understand responses
       </span>
     </span>
   </a>
@@ -3211,10 +3194,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#apply-and-troubleshooting" class="md-nav__link">
+  <a href="#immediate-and-applied-effects" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Apply and troubleshooting
+        Immediate and applied effects
       </span>
     </span>
   </a>
@@ -3222,30 +3205,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#additional-verified-states" class="md-nav__link">
+  <a href="#troubleshoot-clients" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Additional verified states
+        Troubleshoot clients
       </span>
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Additional verified states">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#web-terminal_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Web terminal
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -3351,7 +3317,7 @@
                 
                   
   
-    <a href="https://github.com/mdaneri/Atlaso/edit/main/docs/operate/web-terminal.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/mdaneri/Atlaso/edit/main/docs/operate/api.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-pen" viewBox="0 0 24 24"><path d="M12.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v9.34"/><path d="M14 2v5a1 1 0 0 0 1 1h5M10.378 12.622a1 1 0 0 1 3 3.003L8.36 20.637a2 2 0 0 1-.854.506l-2.867.837a.5.5 0 0 1-.62-.62l.836-2.869a2 2 0 0 1 .506-.853z"/></svg>
     </a>
@@ -3360,111 +3326,138 @@
     
       
     
-    <a href="https://github.com/mdaneri/Atlaso/raw/main/docs/operate/web-terminal.md" title="View source of this page" class="md-content__button md-icon">
+    <a href="https://github.com/mdaneri/Atlaso/raw/main/docs/operate/api.md" title="View source of this page" class="md-content__button md-icon">
       
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-code-2" viewBox="0 0 24 24"><path d="M4 12.15V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-3.35"/><path d="M14 2v5a1 1 0 0 0 1 1h5M5 16l-3 3 3 3M9 22l3-3-3-3"/></svg>
     </a>
   
 
 
-<h1 id="web-terminal">Web Terminal<a class="headerlink" href="#web-terminal" title="Permanent link">&para;</a></h1>
-<p>Atlaso provides a permission-controlled browser terminal for the appliance shell. It is disabled globally by default and
-appears under <strong>Operations &gt; Web terminal</strong> on management after it is enabled in <strong>Settings</strong> and the related appliance
-changes are applied. Selected additional listeners expose it through the Public Services portal instead of the admin
-shell.</p>
-<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
-<h2 id="interface-overview">Interface overview<a class="headerlink" href="#interface-overview" title="Permanent link">&para;</a></h2>
-<p>This verified appliance view provides visual orientation before you begin.</p>
-<p><img alt="Atlaso Web terminal connected as the admin user in the desktop viewport." src="../../assets/screenshots/terminal-clean-desktop.webp" /></p>
-<p><em>Figure: Web terminal connected to the verified Photon appliance in the desktop viewport.</em></p>
-<!-- END GENERATED INTERFACE OVERVIEW -->
-
-<p>The <code>/terminal</code> page, ticket exchange, and WebSocket endpoints are browser and terminal protocol routes documented in
-this guide. They remain operational and are intentionally absent from Swagger rather than being <code>/api/v1</code> client
-contracts.</p>
-<p>Opening <strong>Web terminal</strong> while the feature is globally disabled keeps the authenticated Atlaso application shell and
-shows an unavailable status with links to <strong>Appliance Settings</strong> and pending appliance changes. The browser page does
-not expose an API-style JSON error. JSON errors remain appropriate for the terminal ticket API and WebSocket protocol.</p>
-<h2 id="configure-access">Configure access<a class="headerlink" href="#configure-access" title="Permanent link">&para;</a></h2>
+<h1 id="use-the-atlaso-api">Use the Atlaso API<a class="headerlink" href="#use-the-atlaso-api" title="Permanent link">&para;</a></h1>
+<p>Atlaso publishes its supported REST contract under <code>/api/v1</code>. Use the interactive Swagger UI at <code>/api/docs</code>, the
+alternative ReDoc view at <code>/api/redoc</code>, or the machine-readable OpenAPI 3.1 document at <code>/openapi.json</code>. The schema
+contains only versioned <code>/api/v1</code> operations; browser pages and service-specific protocol routes remain supported but
+are documented in their service guides instead of Swagger.</p>
+<h2 id="create-and-protect-an-api-token">Create and protect an API token<a class="headerlink" href="#create-and-protect-an-api-token" title="Permanent link">&para;</a></h2>
 <ol>
-<li>Enable <strong>Management UI HTTPS</strong>.</li>
-<li>Enable <strong>Web terminal access</strong>.</li>
-<li>Select any additional addressed interfaces in <strong>Web terminal interfaces</strong>. The management interface is always
-   selected and cannot be removed.</li>
-<li>Review and submit the changed <strong>Appliance Settings</strong>, <strong>Public Services</strong>, and <strong>Firewall</strong> units from the global
-   appliance-apply workflow.</li>
-<li>On <strong>Users</strong>, enable <strong>Web SSH</strong> for each local user who may open a terminal. The user must also be enabled, use an
-   interactive shell such as <code>/bin/bash</code> or <code>/usr/bin/pwsh</code>, and have a Photon password applied through Local Users.</li>
+<li>Sign in to the management UI and open <strong>Authentication &gt; API Tokens</strong>.</li>
+<li>Create a token with a clear purpose, the shortest practical lifetime, and only the scopes required by the client.</li>
+<li>Copy the token when it is shown. Atlaso displays the secret once and cannot recover it later.</li>
+<li>In <code>/api/docs</code>, select <strong>Authorize</strong>, paste the token value, and authorize the bearer scheme.</li>
+<li>Revoke the token when its client is retired or its value may have been exposed. Create a replacement instead of
+   trying to recover or reuse the old secret.</li>
 </ol>
-<p>Only enabled, addressed access/route physical interfaces and enabled VLANs are valid additional bindings. Missing,
-disabled, unused, trunk-only, or addressless interfaces fail validation. Atlaso has no WAN interface role and
-web-terminal exposure does not infer internet or WAN connectivity.</p>
-<p>On a selected non-management address, nginx exposes only the login/logout, terminal, WebSocket, and required
-static-asset routes. Management dashboard and API routes remain unavailable. The Public Services directory for that
-address includes a <strong>Web Terminal</strong> tile linked to <code>https://&lt;selected-address&gt;/terminal</code>; unselected interfaces do not
-show the tile. The terminal and its login page use the Public Services header, sign-out action, and footer rather than
-the admin application shell.</p>
-<h2 id="session-behavior">Session behavior<a class="headerlink" href="#session-behavior" title="Permanent link">&para;</a></h2>
+<p>Treat bearer tokens like passwords. Do not put them in command history, source files, screenshots, issue reports,
+authenticated URLs, or shared logs. Prefer a secret manager for automation and an environment variable for short-lived
+interactive work.</p>
+<h2 id="call-the-api-safely">Call the API safely<a class="headerlink" href="#call-the-api-safely" title="Permanent link">&para;</a></h2>
+<p>The examples below use the RFC 1918 lab address <code>192.168.50.10</code> and read the token from the environment. Replace the
+address with the appliance management address; do not replace the token variable with a literal secret.</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">curl</label><label for="__tabbed_1_2">PowerShell</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">ATLASO_TOKEN</span><span class="o">=</span><span class="s2">&quot;&lt;read securely from your secret manager&gt;&quot;</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>curl<span class="w"> </span>--fail-with-body<span class="w"> </span>--silent<span class="w"> </span>--show-error<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span>--header<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="si">${</span><span class="nv">ATLASO_TOKEN</span><span class="si">}</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span>--header<span class="w"> </span><span class="s2">&quot;Accept: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span>https://192.168.50.10/api/v1/dashboard
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nv">$headers</span> <span class="p">=</span> <span class="p">@{</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="n">Authorization</span> <span class="p">=</span> <span class="s2">&quot;Bearer $env:ATLASO_TOKEN&quot;</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">Accept</span> <span class="p">=</span> <span class="s2">&quot;application/json&quot;</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="p">}</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="nb">Invoke-RestMethod</span> <span class="n">-Uri</span> <span class="s2">&quot;https://192.168.50.10/api/v1/dashboard&quot;</span> <span class="n">-Headers</span> <span class="nv">$headers</span>
+</span></code></pre></div>
+</div>
+</div>
+</div>
+<p>Use a certificate trusted by the client. Do not disable TLS verification in saved automation. Examples that create or
+change resources should use RFC 1918 lab addresses such as <code>192.168.50.0/24</code> and be reviewed against the operation's
+documented authorization and apply behavior before execution.</p>
+<h2 id="scopes-and-authorization">Scopes and authorization<a class="headerlink" href="#scopes-and-authorization" title="Permanent link">&para;</a></h2>
+<p>Each Swagger operation describes its required Atlaso scope or authentication posture. A token can call only operations
+covered by its scopes; prefer a read-only token when the client does not mutate desired state. A valid token with
+insufficient scope receives <code>403 Forbidden</code>. Missing, invalid, expired, or revoked credentials receive
+<code>401 Unauthorized</code>.</p>
+<h2 id="understand-responses">Understand responses<a class="headerlink" href="#understand-responses" title="Permanent link">&para;</a></h2>
+<p>Successful responses use the operation's documented response model. Common failure statuses include:</p>
+<table>
+<thead>
+<tr>
+<th>Status</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>400 Bad Request</code></td>
+<td>The request is unsafe, inconsistent, or cannot be processed in its current form.</td>
+</tr>
+<tr>
+<td><code>401 Unauthorized</code></td>
+<td>Bearer authentication is missing or invalid.</td>
+</tr>
+<tr>
+<td><code>403 Forbidden</code></td>
+<td>The authenticated identity lacks the required scope or permission.</td>
+</tr>
+<tr>
+<td><code>404 Not Found</code></td>
+<td>The requested resource does not exist or is not visible to the caller.</td>
+</tr>
+<tr>
+<td><code>409 Conflict</code></td>
+<td>Current resource state conflicts with the requested transition.</td>
+</tr>
+<tr>
+<td><code>422 Unprocessable Content</code></td>
+<td>A parameter or request body failed Atlaso validation.</td>
+</tr>
+<tr>
+<td><code>423 Locked</code></td>
+<td>Another guarded operation owns the resource or global mutation boundary; wait for it to finish and retry.</td>
+</tr>
+<tr>
+<td><code>500 Internal Server Error</code></td>
+<td>An unexpected server failure occurred; correlate the request ID with appliance logs.</td>
+</tr>
+</tbody>
+</table>
+<p>Atlaso errors use the <code>ProblemDetails</code> contract:</p>
+<div class="language-text highlight"><pre><span></span><code>{
+  &quot;type&quot;: &quot;https://atlaso.example/problems/validation&quot;,
+  &quot;title&quot;: &quot;Request validation failed&quot;,
+  &quot;status&quot;: 422,
+  &quot;detail&quot;: &quot;One or more request values are invalid.&quot;,
+  &quot;instance&quot;: &quot;/api/v1/example&quot;,
+  &quot;error_code&quot;: &quot;request_validation_failed&quot;,
+  &quot;request_id&quot;: &quot;req_example123&quot;
+}
+</code></pre></div>
+<p>The <code>X-Request-ID</code> response header and the <code>request_id</code> problem field identify the same request for troubleshooting.
+Record them without recording credentials or sensitive payload values.</p>
+<h2 id="immediate-and-applied-effects">Immediate and applied effects<a class="headerlink" href="#immediate-and-applied-effects" title="Permanent link">&para;</a></h2>
+<p>Read each mutation's description before calling it. Some operations change application state immediately, some queue a
+durable job, and some save desired state only. Desired-state edits do not mutate the host by themselves:
+<code>/appliance-apply</code> remains the reviewed global host-mutation workflow. A successful save means Atlaso accepted the
+desired state, not that the corresponding service is already applied. Follow returned job identifiers through the Jobs
+or Tasks interfaces and verify terminal results.</p>
+<p>Legacy <code>/api/v1/dns/apply</code>, <code>/api/v1/dhcp/apply</code>, and <code>/api/v1/firewall/apply</code> routes remain available for compatibility
+but are intentionally absent from Swagger because they predate the reviewed global workflow. New clients must save
+desired state and use <code>/appliance-apply</code>; do not build new automation around the legacy direct-apply routes.</p>
+<h2 id="troubleshoot-clients">Troubleshoot clients<a class="headerlink" href="#troubleshoot-clients" title="Permanent link">&para;</a></h2>
 <ul>
-<li>The terminal connects automatically; there is no separate Connect button.</li>
-<li>One bounded server-side shell is retained per authorized user across page reloads and short WebSocket interruptions.</li>
-<li>Opening the terminal in another browser prompts for confirmation. Confirming moves the existing shell, current working
-  directory, buffered output, and input ownership to the new browser. The original browser shows an overlay with an
-  in-terminal reconnect action.</li>
-<li><code>Ctrl-D</code> and the <code>exit</code> command intentionally end the current shell. The disconnected transcript remains visible until
-  a new session is started.</li>
-<li>Copy and download icons in the terminal's top-right corner export the visible session transcript. Their success
-  notifications disappear automatically and remain above the application footer.</li>
-<li>A disconnected terminal uses a lighter background so stale output is visually distinct from an attached live shell.</li>
+<li>Confirm <code>/openapi.json</code> is reachable and every client URL begins with <code>/api/v1</code>.</li>
+<li>Check token expiry, revocation, and required scopes before replacing credentials.</li>
+<li>For <code>422</code>, compare parameter formats and allowed values with Swagger and inspect the returned <code>ProblemDetails</code>.</li>
+<li>For <code>423</code>, identify the active task and retry only after its terminal result.</li>
+<li>For unexpected failures, preserve the status, <code>error_code</code>, and request ID, then inspect Atlaso operational logs.</li>
 </ul>
-<h2 id="authentication-and-security-boundaries">Authentication and security boundaries<a class="headerlink" href="#authentication-and-security-boundaries" title="Permanent link">&para;</a></h2>
-<p>The web login session and the user's explicit Web SSH permission authorize access. On a Public Services listener,
-non-bootstrap local users authenticate against their applied Photon password. The local SSH connection then uses a
-one-use browser ticket, an ephemeral Ed25519 key, and a short-lived OpenSSH user certificate issued by the
-appliance-owned user CA. The certificate is restricted to loopback source and disables forwarding, agent forwarding,
-X11, and user RC processing. Host keys are pinned locally.</p>
-<p>This removes the SSH password prompt only. <code>sudo</code> continues to require the Photon OS account password according to the
-normal OS policy. Root certificates and passwordless sudo are not permitted.</p>
-<p>The service enforces bounded idle time, total lifetime, input, output, and retained transcript size. CA private keys
-never reach the browser or the Atlaso service account.</p>
-<p>Administrators can also open an SSH or SFTP URI from a Vault entry's row context menu. This path requires Web Terminal
-to be applied and ready. Atlaso first displays the remote server's SHA-256 host-key fingerprint for explicit
-confirmation, issues a 30-second one-use launch token, rechecks the key, and then decrypts the selected vault password
-only for server-side SSH authentication. The launch token is carried in a browser-only URL fragment and removed before
-the terminal connects, so it is not sent in the terminal page request. The browser receives neither the password nor an
-authenticated URI. Audit events identify only the vault entry and URI position. An SFTP URI opens the endpoint's
-interactive SSH shell.</p>
-<h2 id="apply-and-troubleshooting">Apply and troubleshooting<a class="headerlink" href="#apply-and-troubleshooting" title="Permanent link">&para;</a></h2>
-<p>Changing terminal interfaces should make these apply units pending:</p>
-<ul>
-<li><code>appliance_settings</code> for HTTPS and SSH user-CA configuration;</li>
-<li><code>public_services</code> for selected non-management nginx listeners and directory entries;</li>
-<li><code>firewall</code> for interface-bound TCP/443 access.</li>
-</ul>
-<p>Submitting these global changes can also re-render an already changed DNS/DHCP unit. When DNS uses the management DHCP
-lease for upstream forwarding, Atlaso preserves those resolvers even though local DNS makes <code>resolvectl</code> show loopback.
-The exact management systemd-networkd lease remains the fallback source. DNS/DHCP validation stops the apply if that
-fallback is required but unavailable; unscoped IPv6 link-local lease resolvers are not considered usable. Renew the
-lease or configure explicit DNS upstreams before retrying.</p>
-<p>The Public Services renderer merges terminal routes into an existing HTTPS listener when CA or depot routes already use
-the same address. It must emit only one <code>/static/</code> location per nginx server block.</p>
-<p>If apply fails, inspect the Public Services child task and validate
-<code>/var/lib/atlaso/apply/public-services/atlaso-public-services.conf</code>. On the appliance, validate nginx with <code>nginx -t</code>,
-confirm <code>atlaso.service</code> is active, and verify the selected address separately:</p>
-<ul>
-<li><code>https://&lt;address&gt;/terminal</code> should redirect to login or open the terminal;</li>
-<li><code>https://&lt;address&gt;/dashboard</code> and <code>/openapi.json</code> must remain unavailable on an additional listener;</li>
-<li>the management <code>/openapi.json</code> endpoint must remain reachable.</li>
-</ul>
-<p>When local DNS and management DHCP are in use, also verify one managed Atlaso name and one external name after the Web
-Terminal apply. This confirms the unrelated setting change did not remove effective DNS upstreams.</p>
-<!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
-<h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>
-<p>These captures show responsive layouts and useful operational states referenced by this page.</p>
-<h3 id="web-terminal_1">Web terminal<a class="headerlink" href="#web-terminal_1" title="Permanent link">&para;</a></h3>
-<p><img alt="Atlaso Web terminal connected as the admin user in the responsive viewport." src="../../assets/screenshots/terminal-clean-responsive.webp" /></p>
-<p><em>Figure: Web terminal connected to the verified Photon appliance in the responsive viewport.</em></p>
-<!-- END GENERATED ADDITIONAL SCREENSHOTS -->
+<p>Atlaso preserves existing operation IDs, request and response shapes, authentication behavior, and versioned paths
+within the published compatibility contract. Additive fields may appear. Clients should ignore unknown response fields
+and must not depend on browser pages or non-<code>/api/v1</code> protocol routes as generated REST-client contracts.</p>
 
 
 
@@ -3505,7 +3498,7 @@ Terminal apply. This confirms the unrelated setting change did not remove effect
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../api/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Use the API">
+          <a href="../automation/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Automation">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -3515,20 +3508,20 @@ Terminal apply. This confirms the unrelated setting change did not remove effect
                 Previous
               </span>
               <div class="md-ellipsis">
-                Use the API
+                Automation
               </div>
             </div>
           </a>
         
         
           
-          <a href="../../services/" class="md-footer__link md-footer__link--next" aria-label="Next: Overview">
+          <a href="../web-terminal/" class="md-footer__link md-footer__link--next" aria-label="Next: Web Terminal">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Overview
+                Web Terminal
               </div>
             </div>
             <div class="md-footer__button md-icon">

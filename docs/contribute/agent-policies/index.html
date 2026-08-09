@@ -276,6 +276,8 @@
       
         
       
+        
+      
     
     
     
@@ -412,6 +414,8 @@
       
         
           
+        
+      
         
       
         
@@ -652,6 +656,8 @@
       
         
           
+        
+      
         
       
         
@@ -1128,6 +1134,40 @@
     
   
   Automation
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Use the API
 
     
   </span>
@@ -2307,6 +2347,8 @@
       
         
       
+        
+      
     
     
     
@@ -2418,6 +2460,40 @@
     
   
   Documentation authoring
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api-authoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API authoring standard
 
     
   </span>
@@ -2611,6 +2687,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Repository Delivery Workflow
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api-authoring" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        API authoring
       </span>
     </span>
   </a>
@@ -3272,6 +3359,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#api-authoring" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        API authoring
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#data-classification-and-redaction" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3527,6 +3625,8 @@
       
         
       
+        
+      
     
     
     
@@ -3614,6 +3714,16 @@
   issue created or linked before implementation begins, exactly one applicable type label, relevant documentation
   updated in the same change, and a pull request linked with <code>Closes #&lt;issue&gt;</code>. Do not commit changes directly to
   <code>main</code>.</li>
+</ul>
+<h2 id="api-authoring">API authoring<a class="headerlink" href="#api-authoring" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Follow the <a href="../api-authoring/">API authoring standard</a> for every new or changed <code>/api/v1</code> operation.</li>
+<li>Keep route-local summaries, detailed purpose and authorization, effect boundaries, parameter descriptions, explicit
+  response meaning, and Pydantic schema-property descriptions synchronized with behavior.</li>
+<li>Only <code>/api/v1</code> belongs in OpenAPI. Preserve supported browser and service-protocol routes at runtime with
+  <code>include_in_schema=False</code> and document them in their canonical guides.</li>
+<li>Update the operator API guide and affected topic documentation, preserve compatible operation IDs and shapes, and run
+  <code>tests/test_openapi_contract.py</code> so new routes automatically enter the enforcement surface.</li>
 <li>GitHub-managed version-update pull requests generated from <code>.github/dependabot.yml</code> are the only exception to the
   pre-existing issue and per-update documentation requirements. They must carry the <code>enhancement</code> type label plus
   <code>dependencies</code>, remain subject to the normal version, CI, review, and squash-merge gates, and must not weaken

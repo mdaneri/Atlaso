@@ -276,6 +276,8 @@
       
         
       
+        
+      
     
     
     
@@ -412,6 +414,8 @@
       
         
           
+        
+      
         
       
         
@@ -652,6 +656,8 @@
       
         
           
+        
+      
         
       
         
@@ -1128,6 +1134,40 @@
     
   
   Automation
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Use the API
 
     
   </span>
@@ -2436,6 +2476,8 @@
       
         
       
+        
+      
     
     
     
@@ -2544,6 +2586,40 @@
     
   
   Documentation authoring
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/api-authoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API authoring standard
 
     
   </span>
@@ -3260,8 +3336,9 @@
 
 
 <h1 id="api-reference">API reference<a class="headerlink" href="#api-reference" title="Permanent link">&para;</a></h1>
-<p>Open <code>/api/docs</code> on an Atlaso appliance for the interactive Swagger interface. The machine-readable schema is available
-at <code>/openapi.json</code> and is also the canonical application-readiness endpoint.</p>
+<p>Open <code>/api/docs</code> on an Atlaso appliance for the interactive Swagger interface or <code>/api/redoc</code> for ReDoc. The
+machine-readable schema is available at <code>/openapi.json</code> and is also the canonical application-readiness endpoint. Only
+the supported <code>/api/v1</code> REST contract appears in these interfaces.</p>
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 <h2 id="interface-overview">Interface overview<a class="headerlink" href="#interface-overview" title="Permanent link">&para;</a></h2>
 <p>This verified appliance view provides visual orientation before you begin.</p>
@@ -3269,6 +3346,8 @@ at <code>/openapi.json</code> and is also the canonical application-readiness en
 <p><em>Figure: Swagger API reference in the verified clean-appliance desktop state.</em></p>
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+<p>For token creation, safe command examples, scopes, errors, request IDs, locking, and mutation boundaries, start with
+<a href="../../operate/api/">Use the Atlaso API</a>. This page remains the generated-contract reference.</p>
 <h2 id="use-the-interface">Use the interface<a class="headerlink" href="#use-the-interface" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Select an operation and inspect its parameters, request schema, responses, and required authorization.</li>
@@ -3289,6 +3368,8 @@ additional Public Services listeners.</p>
 <p>Treat the published OpenAPI schema as a compatibility surface. Additive fields should preserve existing consumers, and
 behavior changes require synchronized operator documentation, tests, and media ownership. For broader implementation
 details, see the <a href="../full-technical-reference/">full technical reference</a>.</p>
+<p>OIDC <code>/identity</code>, Network Boot <code>/pxe</code>, Web Terminal, and browser routes are intentionally absent from Swagger. Their
+runtime protocols remain supported and are documented in the corresponding service and operator guides.</p>
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 <h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>
 <p>These captures show responsive layouts and useful operational states referenced by this page.</p>
