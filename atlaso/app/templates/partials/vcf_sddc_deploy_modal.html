@@ -1,4 +1,4 @@
-<dialog id="vcf-sddc-deploy-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="vcf-sddc-deploy-title">
+<dialog id="vcf-sddc-deploy-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="vcf-sddc-deploy-title" aria-describedby="vcf-sddc-deploy-description">
   <form class="confirm-modal-panel vcf-sddc-wizard-panel" data-vcf-sddc-deploy-form data-atlaso-wizard data-ovas='{{ vcf_sddc_ovas | tojson }}' data-dhcp-assignment='{{ vcf_sddc_dhcp_assignment | tojson }}'>
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <input type="hidden" name="confirmed_tls_fingerprint" data-vcf-sddc-tls-fingerprint>
@@ -20,7 +20,7 @@
         <div class="vcf-sddc-wizard-heading">
           <p class="kicker" data-vcf-sddc-step-kicker data-atlaso-wizard-kicker>Step 1 of 5</p>
           <h3 data-vcf-sddc-step-title data-atlaso-wizard-title>vCenter / ESXi information</h3>
-          <p class="muted" data-vcf-sddc-step-description data-atlaso-wizard-description>Choose the SDDC Manager OVA and the vSphere endpoint used for discovery and import.</p>
+          <p id="vcf-sddc-deploy-description" class="muted" data-vcf-sddc-step-description data-atlaso-wizard-description>Choose the SDDC Manager OVA and the vSphere endpoint used for discovery and import.</p>
         </div>
         <div class="alert error hidden" data-vcf-sddc-errors data-atlaso-wizard-error></div>
         <div class="alert warn hidden" data-vcf-sddc-confirmation></div>

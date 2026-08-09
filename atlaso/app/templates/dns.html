@@ -154,8 +154,8 @@
                           <input type="hidden" name="csrf" value="{{ csrf_token }}">
                           <input type="hidden" name="domain" value="{{ group.domain }}">
                         </form>
-                        <button class="button tiny primary" type="submit" form="dns-record-edit-{{ record.id }}">Save</button>
-                        <form action="/dns/records/{{ record.id }}/delete" method="post">
+                        <button class="button tiny primary" type="submit" form="dns-record-edit-{{ record.id }}">Update DNS record</button>
+                        <form action="/dns/records/{{ record.id }}/delete" method="post" data-confirm-modal data-confirm-title="Delete {{ record.host_label or record.hostname or 'DNS record' }}?" data-confirm-message="This removes the DNS record from desired state. The appliance changes only after global appliance apply." data-confirm-label="Delete DNS record">
                           <input type="hidden" name="csrf" value="{{ csrf_token }}">
                           <button class="button tiny" type="submit">Delete</button>
                         </form>

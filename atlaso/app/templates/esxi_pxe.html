@@ -132,7 +132,7 @@
 </dialog>
 {% endif %}
 {% if esxi_can_write or network_boot_can_write %}
-<dialog id="network-boot-promote-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="network-boot-promote-title">
+<dialog id="network-boot-promote-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="network-boot-promote-title" aria-describedby="network-boot-promote-description">
   <form class="confirm-modal-panel vcf-sddc-wizard-panel" data-network-boot-promote-form data-atlaso-wizard novalidate>
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <input type="hidden" name="record_id">
@@ -148,7 +148,7 @@
     </aside>
     <div class="vcf-sddc-wizard-main">
       <div class="confirm-modal-body vcf-sddc-wizard-body">
-        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 4</p><h3 data-atlaso-wizard-title>Choose host identity</h3><p class="muted" data-atlaso-wizard-description>Select a discovered host or enter an explicit ESXi identity.</p></div>
+        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 4</p><h3 data-atlaso-wizard-title>Choose host identity</h3><p id="network-boot-promote-description" class="muted" data-atlaso-wizard-description>Select a discovered host or enter an explicit ESXi identity.</p></div>
         <div class="alert error hidden" data-atlaso-wizard-error></div>
         <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity"><div class="form-stack">
           <label data-esxi-host-source-field><span>Identity source</span><select name="host_source"><option value="discovered">Discovered Network Boot host</option><option value="manual">Manual host</option></select></label>
@@ -199,7 +199,7 @@
 </dialog>
 {% endif %}
 {% if esxi_can_write %}
-<dialog id="esxi-iso-upload-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="esxi-iso-upload-title">
+<dialog id="esxi-iso-upload-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="esxi-iso-upload-title" aria-describedby="esxi-iso-upload-description">
   <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="/esxi-pxe/isos/upload" method="post" enctype="multipart/form-data" data-esxi-iso-upload data-atlaso-wizard novalidate>
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <aside class="vcf-sddc-wizard-rail" aria-label="Add ESX ISO steps">
@@ -211,7 +211,7 @@
     </aside>
     <div class="vcf-sddc-wizard-main">
       <div class="confirm-modal-body vcf-sddc-wizard-body">
-        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 2</p><h3 data-atlaso-wizard-title>Choose an ESX installer ISO</h3><p class="muted" data-atlaso-wizard-description>Select one ISO to add to the shared ESX_HOST media folder.</p></div>
+        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 2</p><h3 data-atlaso-wizard-title>Choose an ESX installer ISO</h3><p id="esxi-iso-upload-description" class="muted" data-atlaso-wizard-description>Select one ISO to add to the shared ESX_HOST media folder.</p></div>
         <div class="alert error hidden" data-atlaso-wizard-error></div>
         <section class="vcf-sddc-step-page" data-atlaso-wizard-step="file">
           <label>
@@ -381,7 +381,7 @@
                       <a href="/esxi-pxe/kickstarts/{{ row.id }}/download">Download</a>
                       <form class="inline-form" action="/esxi-pxe/kickstarts/{{ row.id }}/duplicate" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">Duplicate</button></form>
                       <form class="inline-form" action="/esxi-pxe/kickstarts/{{ row.id }}/validate" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">Validate</button></form>
-                      <form class="inline-form" action="/esxi-pxe/kickstarts/{{ row.id }}/delete" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">Delete</button></form>
+                      <form class="inline-form" action="/esxi-pxe/kickstarts/{{ row.id }}/delete" method="post" data-confirm-modal data-confirm-title="Delete {{ row.name }}?" data-confirm-message="This removes the Kickstart from desired state and clears host references. Generated PXE files change only after global appliance apply." data-confirm-label="Delete Kickstart"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">Delete Kickstart</button></form>
                     </noscript>
                   {% endif %}
                 </td>
@@ -392,7 +392,7 @@
         </table>
         {% for row in esxi_kickstart_rows %}
           <form id="kickstart-duplicate-{{ row.id }}" action="/esxi-pxe/kickstarts/{{ row.id }}/duplicate" method="post" hidden><input type="hidden" name="csrf" value="{{ csrf_token }}"></form>
-          <form id="kickstart-delete-{{ row.id }}" action="/esxi-pxe/kickstarts/{{ row.id }}/delete" method="post" hidden><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit" data-confirm-modal data-confirm-title="Delete {{ row.name }}?" data-confirm-message="The database source is removed now. Generated runtime files change only after global appliance apply." data-confirm-action="Delete Kickstart">Delete</button></form>
+          <form id="kickstart-delete-{{ row.id }}" action="/esxi-pxe/kickstarts/{{ row.id }}/delete" method="post" hidden><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit" data-confirm-modal data-confirm-title="Delete {{ row.name }}?" data-confirm-message="The database source is removed now. Generated runtime files change only after global appliance apply." data-confirm-label="Delete Kickstart">Delete Kickstart</button></form>
         {% endfor %}
         {% if esxi_can_write %}
           <noscript>
@@ -545,8 +545,8 @@
                 <td><input name="default_value" value="{{ variable.default_value }}" form="custom-variable-{{ loop.index }}" aria-label="Custom variable default value" {{ "disabled" if not esxi_can_write else "" }}></td>
                 <td>
                   {% if esxi_can_write %}
-                    <form id="custom-variable-{{ loop.index }}" class="inline-form" action="/esxi-pxe/custom-variables/{{ variable.name }}" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">Save</button></form>
-                    <form class="inline-form" action="/esxi-pxe/custom-variables/{{ variable.name }}/delete" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">Delete</button></form>
+                    <form id="custom-variable-{{ loop.index }}" class="inline-form" action="/esxi-pxe/custom-variables/{{ variable.name }}" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">Save custom variable</button></form>
+                    <form class="inline-form" action="/esxi-pxe/custom-variables/{{ variable.name }}/delete" method="post" data-confirm-modal data-confirm-title="Remove {{ variable.name }}?" data-confirm-message="This removes the custom variable from desired state. Existing Kickstarts must no longer reference it." data-confirm-label="Remove custom variable"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">Remove custom variable</button></form>
                   {% endif %}
                 </td>
               </tr>
@@ -556,7 +556,7 @@
                 <td><input name="name" form="custom-variable-new" aria-label="New custom variable name" placeholder="+ Add custom variable"></td>
                 <td><input name="description" form="custom-variable-new" aria-label="New custom variable description"></td>
                 <td><input name="default_value" form="custom-variable-new" aria-label="New custom variable default value"></td>
-                <td><form id="custom-variable-new" action="/esxi-pxe/custom-variables" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">Add</button></form></td>
+                <td><form id="custom-variable-new" action="/esxi-pxe/custom-variables" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">Add custom variable</button></form></td>
               </tr>
             {% endif %}
           </tbody>
@@ -671,7 +671,7 @@
   </aside>
 </section>
 {% if esxi_can_write %}
-<dialog id="esxi-custom-variable-wizard-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="esxi-custom-variable-wizard-title">
+<dialog id="esxi-custom-variable-wizard-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="esxi-custom-variable-wizard-title" aria-describedby="esxi-custom-variable-wizard-description">
   <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="/esxi-pxe/custom-variables" method="post" data-esxi-custom-variable-wizard data-atlaso-wizard>
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <input type="hidden" name="record_id" value="">
@@ -684,7 +684,7 @@
     </aside>
     <div class="vcf-sddc-wizard-main">
       <div class="confirm-modal-body vcf-sddc-wizard-body">
-        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 2</p><h3 data-atlaso-wizard-title>Define the custom variable</h3><p class="muted" data-atlaso-wizard-description>Name and describe the non-secret value, then provide an optional default.</p></div>
+        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 2</p><h3 data-atlaso-wizard-title>Define the custom variable</h3><p id="esxi-custom-variable-wizard-description" class="muted" data-atlaso-wizard-description>Name and describe the non-secret value, then provide an optional default.</p></div>
         <div class="alert error hidden" data-atlaso-wizard-error></div>
         <section class="vcf-sddc-step-page" data-atlaso-wizard-step="definition">
           <div class="form-grid">
@@ -702,7 +702,7 @@
     </div>
   </form>
 </dialog>
-<dialog id="kickstart-wizard-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="kickstart-wizard-title">
+<dialog id="kickstart-wizard-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="kickstart-wizard-title" aria-describedby="kickstart-wizard-description">
   <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="/esxi-pxe/kickstarts" method="post" data-kickstart-wizard data-atlaso-wizard>
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <input type="hidden" name="record_id" value="">
@@ -717,7 +717,7 @@
     </aside>
     <div class="vcf-sddc-wizard-main">
       <div class="confirm-modal-body vcf-sddc-wizard-body">
-        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 4</p><h3 data-atlaso-wizard-title>Identify the Kickstart</h3><p class="muted" data-atlaso-wizard-description>Name and describe the database-owned source.</p></div>
+        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 4</p><h3 data-atlaso-wizard-title>Identify the Kickstart</h3><p id="kickstart-wizard-description" class="muted" data-atlaso-wizard-description>Name and describe the database-owned source.</p></div>
         <div class="alert error hidden" data-atlaso-wizard-error></div>
         <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity">
           <div class="form-grid">
