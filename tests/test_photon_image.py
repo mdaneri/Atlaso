@@ -1432,8 +1432,7 @@ def test_nocloud_seed_helper_writes_client_cloud_init_contract():
     assert "Either --public-key or --password is required" in script
     assert "openssl" in script
     assert "sshpass" in script
-    assert "chrony" in script
-    assert "chrony-nts" not in script
+    assert "chrony-nts" in script
     assert "atlaso-refresh-test-dhcp" in script
     assert "joliet_path=f\"/{name}\"" in script
 
@@ -1481,7 +1480,7 @@ def test_lifecycle_runner_plan_includes_ca_and_global_apply_units():
     assert plan["interfaces"]["client_ca_request"]["name"] == "eth3"
     assert plan["interfaces"]["client_ca_request"]["ip_cidr"] == "192.168.49.20/24"
     assert any("CA desired state" in check and "client-side verification" in check for check in plan["checks"])
-    assert any("Alpine chrony synchronization" in check for check in plan["checks"])
+    assert any("Alpine chrony-nts authenticated synchronization" in check for check in plan["checks"])
     assert "VCF Backup desired state, local user sync, SFTP listener, and client probe" in plan["checks"]
     assert "VCF Offline Depot browser login, curl/wget Basic auth, and Local Users password rotation" in plan["checks"]
     assert any("Managed LDAP desired state" in check for check in plan["checks"])

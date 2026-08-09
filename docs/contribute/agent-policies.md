@@ -557,13 +557,25 @@ status: current
   allow root certificates, forwarding, X11, agent use, user RC, or passwordless `sudo`.
 - Real NTPsec apply stages `/var/lib/atlaso/apply/ntpd/atlaso-ntp.conf` as the `atlaso` service user before invoking the
   root helper. NTPsec owns appliance time service behavior; Appliance Settings no longer owns the NTP client. Fresh
-  desired state uses the structured upstream grid with ordinary NTP sources and descriptions.
+  desired state uses the structured upstream grid with NTS-enabled `time.cloudflare.com` and `nts.netnod.se` rows,
+  including descriptions. Per-upstream NTS client mode renders `nts` on source lines; NTS server mode renders
+  `nts enable`, the CA-managed certificate chain and key, and persistent cookie storage under `/var/lib/ntp/nts-keys`.
   The renderer ignores every interface before explicitly listening on selected addresses, uses restrictive client rules
-  that still permit time service, and maps minimum sources to `tos minsane`. Firewall apply owns UDP/123 only. NTS is
-  disabled: normalize legacy desired state off, reject NTS directives, remove `/etc/atlaso/ntp/certs` and
-  `/var/lib/ntp/nts-keys` during every apply, and never add a CA dependency or TCP/4460 rule. The helper requires Photon
-  `ntpsec`, installs `/etc/ntp.conf`, disables competing daemons, enables/restarts `ntpd.service`, and exposes bounded
-  source health through `ntpq -pn` and `ntpq -c rv`.
+  that still permit time service, and maps minimum sources to `tos minsane`. Firewall apply owns TCP/4460 NTS-KE access
+  in addition to UDP/123. The helper requires Photon `ntpsec`, installs `/etc/ntp.conf`, grants the NTS key `root:ntp`
+  mode `0640`, disables competing daemons, enables/restarts `ntpd.service`, and exposes bounded source health through
+  `ntpq -pn`, `ntpq -c rv`, and `ntpq -c ntsinfo`. When NTS server mode is disabled, NTP apply removes the managed
+  server certificate/key and cookie directory without clearing authenticated client sources. The one-time
+  `ntp_nts_restoration_v1` reconciliation re-enables and normalizes only canonical Cloudflare and Netnod default rows,
+  records a value-free system audit, leaves custom sources unchanged, and never enables NTS server mode.
+- NTPsec NTS controls must reflect the installed `ntpd` feature set. Detect capability through the allowlisted
+  `atlaso-helper ntpd capabilities` path; when NTS is unavailable, disable the server switch and upstream NTS editors,
+  normalize saved NTS state off, reject NTS enable attempts, and keep ordinary NTP behavior available. A temporarily
+  unknown probe must preserve desired NTS state while blocking unsafe NTP apply. Do not imply that packaged/default
+  upstream choices guarantee local NTS support.
+- Appliance Settings and Web Terminal autosave own no NTP/NTS fields. Enabling or editing Web Terminal must not change
+  upstream NTS flags, NTS server state, `ntp:nts` certificate ownership, rendered NTP configuration, or NTP apply
+  selection.
 - The Logs page fixed source set is Atlaso App, KMS, NTPsec, Nginx, DNS, DHCP, TFTP, and Audit Events. DNS, DHCP, and
   TFTP must remain classified views of one allowlisted `dnsmasq.service` journal read, with `dnsmasq-dhcp` and
   `dnsmasq-tftp` lines routed to their protocol tabs and base/service lines routed to DNS. Keep logs read-only and
@@ -590,7 +602,8 @@ status: current
   CA interface is the explicit publication boundary for the portal, DNS, firewall, and public-service configuration.
   The public CA portal defaults to `ca.atlaso.internal`: `/` shows public trust material and `/requests` is the
   authenticated certificate request/revocation workflow. Do not put Certificate Requests in the primary Atlaso
-  sidebar; link it from CA-associated surfaces instead. NTP has no CA-managed certificate dependency.
+  sidebar; link it from CA-associated surfaces instead. Every selected NTS server apply automatically includes the CA
+  material unit and preserves CA-before-NTP execution order, even when the CA baseline appears current.
 - Real KMS apply stages strict JSON under `/var/lib/atlaso/apply/kms/server.json` as the `atlaso` service user before
   invoking the root helper. KMS can be activated only when CA desired state is enabled and healthy; the page derives
   IPv4 and IPv6 listen addresses from the selected access interface or enabled VLAN, creates app-owned DNS records for

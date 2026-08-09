@@ -503,7 +503,7 @@ def lifecycle_plan(args: argparse.Namespace) -> dict[str, Any]:
             "DNS and DHCP desired state",
             "firewall, routing, NAT, and WAN desired state",
             "CA desired state, root certificate download, atomic generated certificate request with explicit SAN verification, client CSR request, issued certificate download, and client-side verification",
-            "NTPsec desired state, NTS-disabled cleanup, ntpq health, UDP/123 compatibility, and Alpine chrony synchronization",
+            "NTPsec desired state, NTS upstream and server mode, ntpq health, UDP/123 compatibility, and Alpine chrony-nts authenticated synchronization",
             "KMS desired state, DNS/firewall apply, PyKMIP service, and TLS client-certificate probe",
             "Managed LDAP desired state, two isolated organization suffixes, duplicate uid support, nested groups, configurable LDAP/LDAPS listeners, management-interface exclusion, and CA hostname verification",
             "VCF Backup desired state, local user sync, SFTP listener, and client probe",
@@ -1082,8 +1082,8 @@ def configure_ntp(client: HttpClient, args: argparse.Namespace) -> dict[str, Any
     hostname = f"ntp.{args.domain}"
     sources = json.dumps(
         [
-            {"id": "cloudflare-ntp", "source": "time.cloudflare.com", "enabled": True, "use_nts": False, "description": "Cloudflare public NTP"},
-            {"id": "netnod-ntp", "source": "nts.netnod.se", "enabled": True, "use_nts": False, "description": "Netnod public NTP"},
+            {"id": "cloudflare-nts", "source": "time.cloudflare.com", "enabled": True, "use_nts": True, "description": "Cloudflare public NTS"},
+            {"id": "netnod-nts", "source": "nts.netnod.se", "enabled": True, "use_nts": True, "description": "Netnod public NTS"},
         ]
     )
     form = {
@@ -1094,6 +1094,7 @@ def configure_ntp(client: HttpClient, args: argparse.Namespace) -> dict[str, Any
         "port": "123",
         "upstream_sources_json": sources,
         "allow_clients": str(ip_interface(args.site_cidr).network),
+        "nts_server_enabled": "on",
         "minsources": "1",
         "csrf": csrf,
     }
@@ -1106,13 +1107,14 @@ def configure_ntp(client: HttpClient, args: argparse.Namespace) -> dict[str, Any
     if status >= 400:
         raise LifecycleError(f"NTP settings update failed with HTTP {status}: {response_body[:500]}")
     payload = json.loads(response_body)
-    if not payload.get("valid") or any(source.get("use_nts") for source in payload.get("upstream_sources", [])):
-        raise LifecycleError(f"NTP desired state is not ready: {payload.get('validation_errors')}")
+    if not payload.get("valid") or not payload.get("nts_server_enabled"):
+        raise LifecycleError(f"NTP/NTS desired state is not ready: {payload.get('validation_errors')}")
     return {
         "hostname": payload.get("hostname"),
         "listen_interfaces": payload.get("listen_interfaces"),
         "listen_addresses": payload.get("listen_addresses"),
         "upstream_sources": payload.get("upstream_sources"),
+        "nts_server_enabled": payload.get("nts_server_enabled"),
     }
 
 
@@ -2757,10 +2759,9 @@ def host_state_checks(args: argparse.Namespace) -> dict[str, Any]:
         "ca": "test -f /etc/atlaso/ca/ca-bundle.pem && openssl x509 -in /etc/atlaso/ca/root-ca.pem -noout -subject",
         "ntpsec": (
             "rpm -q ntpsec && systemctl is-active ntpd.service && "
-            "ntpq -pn && ntpq -c rv && "
-            "! grep -E '(^|[[:space:]])nts([[:space:]]|$)' /etc/ntp.conf && "
-            "test ! -e /etc/atlaso/ntp/certs && test ! -e /var/lib/ntp/nts-keys && "
-            "nft list ruleset | grep -F 'ntpd-' && ! nft list ruleset | grep -F 'ntpd-nts-'"
+            "ntpq -pn && ntpq -c rv && ntpq -c ntsinfo && "
+            f"test \"$(stat -c '%U:%G %a' /etc/atlaso/ntp/certs/ntp.{args.domain}.key)\" = 'root:ntp 640' && "
+            "nft list ruleset | grep -F 'ntpd-' && nft list ruleset | grep -F 'ntpd-nts-'"
         ),
         "kms_files": (
             "for path in "
@@ -3205,11 +3206,15 @@ def ntp_client_checks(args: argparse.Namespace) -> dict[str, Any]:
     command = (
         f"ELEV=\"$({elevate})\"; test -n \"$ELEV\"; "
         "command -v chronyd; chronyd -v; "
-        f"printf '%s\\n' 'server {hostname} iburst' 'driftfile /tmp/atlaso-chrony-ntp.drift' > /tmp/atlaso-chrony-ntp.conf; "
+        f"curl -ksS --connect-timeout 10 --max-time 30 https://{site_ip}/ca/downloads/root-ca.pem -o /tmp/atlaso-root-ca.pem; "
+        "grep -F 'BEGIN CERTIFICATE' /tmp/atlaso-root-ca.pem; "
+        f"printf '%s\\n' 'server {hostname} iburst nts' 'ntstrustedcerts /tmp/atlaso-root-ca.pem' 'driftfile /tmp/atlaso-chrony-nts.drift' > /tmp/atlaso-chrony-nts.conf; "
+        "$ELEV timeout 90 chronyd -Q -t 75 -f /tmp/atlaso-chrony-nts.conf; "
+        f"printf '%s\\n' 'server {site_ip} iburst' 'driftfile /tmp/atlaso-chrony-ntp.drift' > /tmp/atlaso-chrony-ntp.conf; "
         "$ELEV timeout 45 chronyd -Q -t 30 -f /tmp/atlaso-chrony-ntp.conf"
     )
     result = ssh_command(args.client_a_host, args, command, role="client")
-    require_success(result, "client A ordinary NTP probe")
+    require_success(result, "client A NTS-authenticated and ordinary NTP probes")
     return {"client_a": result, "hostname": hostname, "ordinary_ntp_target": site_ip}
 
 

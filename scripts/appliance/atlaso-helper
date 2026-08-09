@@ -761,6 +761,12 @@ def _grant_kms_private_key_read(key_path: Path) -> None:
     os.chmod(key_path, 0o640)
 
 
+def _grant_ntpd_private_key_read(key_path: Path) -> None:
+    ntp_group = grp.getgrnam("ntp")
+    os.chown(key_path, 0, ntp_group.gr_gid)
+    os.chmod(key_path, 0o640)
+
+
 def _kms_service_identity_available() -> tuple[bool, bool]:
     try:
         grp.getgrnam(KMS_SERVICE_USER)
@@ -914,6 +920,12 @@ def _handle_ca_inner(action: str, args: list[str]) -> int:
                     _grant_kms_private_key_read(key_path)
                 except (LookupError, OSError, ValueError) as exc:
                     print(f"Could not preserve atlaso-kmip access to the KMIP private key: {exc}", file=sys.stderr)
+                    return 1
+            if key_path.is_relative_to(NTP_CERT_DIR.resolve()):
+                try:
+                    _grant_ntpd_private_key_read(key_path)
+                except (LookupError, OSError) as exc:
+                    print(f"Could not preserve ntpd access to the NTS private key: {exc}", file=sys.stderr)
                     return 1
             written.append(str(key_path))
     print(json.dumps({"ca": "apply complete", "config_path": str(config_path), "written_files": written, "removed_files": removed}, sort_keys=True))
@@ -3448,6 +3460,10 @@ def _ntpd_config_errors(path: Path) -> list[str]:
     servers: list[str] = []
     listen_addresses: list[str] = []
     allow_entries: list[str] = []
+    nts_server_cert = ""
+    nts_server_key = ""
+    nts_cookie_dir = ""
+    nts_server_enabled = False
     nts_requested = False
     restrict_lines: list[list[str]] = []
     enabled = _ntpd_config_enabled(path)
@@ -3475,8 +3491,20 @@ def _ntpd_config_errors(path: Path) -> list[str]:
                 errors.append("ntpd interface listen lines must include one address.")
             else:
                 listen_addresses.append(parts[2])
-        elif lower.startswith("nts "):
+        elif lower == "nts enable":
+            nts_server_enabled = True
             nts_requested = True
+        elif lower.startswith("nts cert "):
+            nts_server_cert = line.split(maxsplit=2)[2].strip() if len(line.split(maxsplit=2)) == 3 else ""
+            nts_requested = True
+        elif lower.startswith("nts key "):
+            nts_server_key = line.split(maxsplit=2)[2].strip() if len(line.split(maxsplit=2)) == 3 else ""
+            nts_requested = True
+        elif lower.startswith("nts cookie "):
+            nts_cookie_dir = line.split(maxsplit=2)[2].strip() if len(line.split(maxsplit=2)) == 3 else ""
+            nts_requested = True
+        elif lower.startswith("nts "):
+            errors.append(f"unsupported ntpd NTS directive: {line}")
         elif lower.startswith("restrict "):
             restrict_lines.append(lower.split())
         elif lower.startswith("# atlaso ntp client allow list:"):
@@ -3491,12 +3519,14 @@ def _ntpd_config_errors(path: Path) -> list[str]:
                 continue
             server = parts[1]
             try:
-                _parse_ntpd_server(server)
+                _host, _port, is_ip = _parse_ntpd_server(server)
             except ValueError:
                 errors.append(
                     f"ntpd server {server} must be an IPv4 address, IPv6 address, or fully qualified DNS name with an optional port."
                 )
                 continue
+            if is_ip and "nts" in {part.lower() for part in parts[2:]}:
+                errors.append(f"NTS server {server} must use a certificate-valid DNS hostname, not an IP address.")
     if enabled and not listen_addresses:
         errors.append("enabled ntpd config must include at least one interface listen address.")
     if enabled and "interface ignore wildcard" not in path.read_text(encoding="utf-8").lower():
@@ -3506,8 +3536,25 @@ def _ntpd_config_errors(path: Path) -> list[str]:
             ip_address(address)
         except ValueError:
             errors.append(f"ntpd interface listen address {address} must be a valid IP address.")
-    if nts_requested:
-        errors.append("NTS is disabled; ntpd configuration must use ordinary NTP only.")
+    if nts_server_enabled or nts_server_cert or nts_server_key or nts_cookie_dir:
+        if not nts_server_enabled:
+            errors.append("ntpd NTS server config must include nts enable.")
+        if not nts_server_cert:
+            errors.append("ntpd NTS server config must include nts cert.")
+        if not nts_server_key:
+            errors.append("ntpd NTS server config must include nts key.")
+        for label, value in {"certificate": nts_server_cert, "key": nts_server_key}.items():
+            if value and not Path(value).is_absolute():
+                errors.append(f"ntpd NTS server {label} path must be absolute.")
+            elif value and not Path(value).is_file():
+                errors.append(f"ntpd NTS server {label} does not exist: {value}")
+    if nts_server_enabled or nts_server_cert or nts_server_key or nts_cookie_dir:
+        if not nts_cookie_dir:
+            errors.append("ntpd NTS server config must include nts cookie storage.")
+        elif not nts_cookie_dir.startswith("/"):
+            errors.append("ntpd NTS cookie storage path must be absolute.")
+    if enabled and nts_requested and not _ntpd_supports_nts():
+        errors.append("installed ntpd is not the required NTPsec implementation with NTS support.")
     if allow_entries:
         if "any" in allow_entries and len(allow_entries) > 1:
             errors.append("ntpd client allow list can use 'any' only by itself.")
@@ -3542,23 +3589,38 @@ def _ntpd_config_errors(path: Path) -> list[str]:
     return errors
 
 
-def _ntpd_runtime_identity_errors() -> list[str]:
+def _ntpd_supports_nts() -> bool:
+    ntpd = shutil.which("ntpd")
+    if ntpd is None:
+        return False
+    try:
+        result = _run([ntpd, "--version"], timeout=2)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    version_text = f"{result.stdout}\n{result.stderr}".lower()
+    return result.returncode == 0 and "ntpsec" in version_text
+
+
+def _ntpd_runtime_identity_result() -> tuple[list[str], list[str]]:
     errors: list[str] = []
+    probe_errors: list[str] = []
     rpm = shutil.which("rpm")
     if rpm is None:
         errors.append("rpm command not found; cannot verify the Photon ntpsec package.")
     else:
         try:
             package = _run([rpm, "-q", "ntpsec"], timeout=2)
-        except (OSError, subprocess.TimeoutExpired):
+        except (OSError, subprocess.TimeoutExpired) as exc:
             package = None
-        if package is None or package.returncode != 0:
+            probe_errors.append(f"Photon ntpsec package probe failed: {exc}")
+        if package is not None and package.returncode != 0:
             errors.append("Photon ntpsec package is required.")
         try:
             python_bindings = _run([rpm, "-q", "python3-ntp"], timeout=2)
-        except (OSError, subprocess.TimeoutExpired):
+        except (OSError, subprocess.TimeoutExpired) as exc:
             python_bindings = None
-        if python_bindings is None or python_bindings.returncode != 0:
+            probe_errors.append(f"Photon python3-ntp package probe failed: {exc}")
+        if python_bindings is not None and python_bindings.returncode != 0:
             errors.append("Photon python3-ntp package is required for ntpq.")
     ntpd = shutil.which("ntpd")
     if ntpd is None:
@@ -3566,12 +3628,18 @@ def _ntpd_runtime_identity_errors() -> list[str]:
     else:
         try:
             version = _run([ntpd, "--version"], timeout=2)
-        except (OSError, subprocess.TimeoutExpired):
+        except (OSError, subprocess.TimeoutExpired) as exc:
             version = None
+            probe_errors.append(f"installed ntpd identity probe failed: {exc}")
         version_text = f"{version.stdout}\n{version.stderr}".lower() if version is not None else ""
-        if version is None or version.returncode != 0 or "ntpsec" not in version_text:
+        if version is not None and (version.returncode != 0 or "ntpsec" not in version_text):
             errors.append("installed ntpd is not Photon NTPsec.")
-    return errors
+    return errors, probe_errors
+
+
+def _ntpd_runtime_identity_errors() -> list[str]:
+    errors, probe_errors = _ntpd_runtime_identity_result()
+    return [*errors, *probe_errors]
 
 
 def _install_ntpd_config(config_path: Path) -> None:
@@ -3594,7 +3662,14 @@ def _install_ntpd_config(config_path: Path) -> None:
     tmp_target.replace(NTP_CONFIG_PATH)
 
 
-def _remove_ntpd_nts_material() -> list[str]:
+def _ntpd_nts_server_enabled(config_path: Path) -> bool:
+    return any(
+        line.strip().lower() == "nts enable"
+        for line in config_path.read_text(encoding="utf-8").splitlines()
+    )
+
+
+def _remove_ntpd_nts_server_material() -> list[str]:
     removed: list[str] = []
     for path in (NTP_NTS_COOKIE_PATH, NTP_CERT_DIR):
         if path.is_symlink() or path.is_file():
@@ -3606,6 +3681,27 @@ def _remove_ntpd_nts_material() -> list[str]:
     return removed
 
 
+def _ntpd_nts_server_key_path(config_path: Path) -> Path | None:
+    for raw_line in config_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if line.lower().startswith("nts key "):
+            parts = line.split(maxsplit=2)
+            if len(parts) == 3 and parts[2].strip():
+                return Path(parts[2].strip())
+    return None
+
+
+def _grant_ntpd_nts_server_key_read(config_path: Path) -> Path | None:
+    key_path = _ntpd_nts_server_key_path(config_path)
+    if key_path is None or not key_path.exists():
+        return key_path
+    try:
+        _grant_ntpd_private_key_read(key_path)
+    except KeyError as exc:
+        raise RuntimeError("ntp group not found; cannot grant ntpd access to NTS server key") from exc
+    return key_path
+
+
 def _ntpd_status() -> int:
     ntpq = shutil.which("ntpq")
     if ntpq is None:
@@ -3615,6 +3711,7 @@ def _ntpd_status() -> int:
     for key, command in {
         "peers": [ntpq, "-pn"],
         "variables": [ntpq, "-c", "rv"],
+        "nts": [ntpq, "-c", "ntsinfo"],
     }.items():
         try:
             result = _run(command, timeout=1.5)
@@ -3666,7 +3763,41 @@ def _handle_nginx(action: str, args: list[str]) -> int:
 
 
 def _ntpd_capabilities() -> int:
-    print(json.dumps({"nts": False, "policy": "disabled"}, sort_keys=True))
+    ntpd = shutil.which("ntpd")
+    if ntpd is None:
+        print(json.dumps({"nts": False, "error": "ntpd command not found"}, sort_keys=True))
+        return 0
+    try:
+        result = _run([ntpd, "--version"], timeout=2)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        print(json.dumps({"error": str(exc)}, sort_keys=True))
+        return 1
+    if result.returncode != 0:
+        print(
+            json.dumps(
+                {
+                    "error": "ntpd version probe failed",
+                    "returncode": result.returncode,
+                },
+                sort_keys=True,
+            )
+        )
+        return 1
+    version_text = f"{result.stdout}\n{result.stderr}".strip()
+    identity_errors, identity_probe_errors = _ntpd_runtime_identity_result()
+    if identity_probe_errors:
+        print(
+            json.dumps(
+                {
+                    "error": "NTPsec capability identity probe failed",
+                    "errors": identity_probe_errors,
+                    "version": version_text,
+                },
+                sort_keys=True,
+            )
+        )
+        return 1
+    print(json.dumps({"nts": "ntpsec" in version_text.lower() and not identity_errors, "version": version_text, "errors": identity_errors}, sort_keys=True))
     return 0
 
 
@@ -3709,21 +3840,34 @@ def _handle_ntpd(action: str, args: list[str]) -> int:
         for error in errors:
             print(error, file=sys.stderr)
         return 2
-    try:
-        removed_nts_material = _remove_ntpd_nts_material()
-    except OSError as exc:
-        print(f"legacy NTS material cleanup failed: {exc}", file=sys.stderr)
-        return 2
+    removed_nts_server_material: list[str] = []
+    if not enabled or not _ntpd_nts_server_enabled(config_path):
+        try:
+            removed_nts_server_material = _remove_ntpd_nts_server_material()
+        except OSError as exc:
+            print(f"NTS server material cleanup failed: {exc}", file=sys.stderr)
+            return 2
     if not enabled:
         disable = _run(["systemctl", "disable", "--now", "ntpd.service"])
         print(disable.stdout, end="")
         print(disable.stderr, end="", file=sys.stderr)
         if disable.returncode != 0:
             return disable.returncode
-        print(json.dumps({"ntpd": "apply complete", "enabled": False, "service": "ntpd.service", "removed_nts_material": removed_nts_material}, sort_keys=True))
+        print(
+            json.dumps(
+                {
+                    "ntpd": "apply complete",
+                    "enabled": False,
+                    "service": "ntpd.service",
+                    "removed_nts_server_material": removed_nts_server_material,
+                },
+                sort_keys=True,
+            )
+        )
         return 0
     try:
         _install_ntpd_config(config_path)
+        _grant_ntpd_nts_server_key_read(config_path)
     except (OSError, RuntimeError) as exc:
         print(f"ntpd config installation failed: {exc}", file=sys.stderr)
         return 2
@@ -3738,7 +3882,18 @@ def _handle_ntpd(action: str, args: list[str]) -> int:
         print(result.stderr, end="", file=sys.stderr)
         if result.returncode != 0 and command[:3] != ["systemctl", "disable", "--now"]:
             return result.returncode
-    print(json.dumps({"ntpd": "apply complete", "enabled": True, "config_path": str(NTP_CONFIG_PATH), "service": "ntpd.service", "removed_nts_material": removed_nts_material}, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "ntpd": "apply complete",
+                "enabled": True,
+                "config_path": str(NTP_CONFIG_PATH),
+                "service": "ntpd.service",
+                "removed_nts_server_material": removed_nts_server_material,
+            },
+            sort_keys=True,
+        )
+    )
     return 0
 
 

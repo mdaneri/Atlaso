@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import re
 from ipaddress import ip_address, ip_network
+from pathlib import PurePosixPath
+
 from atlaso.app.models import NtpSettings
 from atlaso.app.services.dnsmasq import split_addresses, split_interfaces, split_servers
 
@@ -10,25 +12,25 @@ from atlaso.app.services.dnsmasq import split_addresses, split_interfaces, split
 NTP_DEFAULT_HOSTNAME = "ntp.atlaso.internal"
 NTP_DEFAULT_UPSTREAM_SOURCE_ROWS: list[dict[str, object]] = [
     {
-        "id": "cloudflare-ntp",
+        "id": "cloudflare-nts",
         "source": "time.cloudflare.com",
         "enabled": True,
-        "use_nts": False,
-        "description": "Cloudflare public NTP",
+        "use_nts": True,
+        "description": "Cloudflare public NTS",
     },
     {
-        "id": "netnod-ntp",
+        "id": "netnod-nts",
         "source": "nts.netnod.se",
         "enabled": True,
-        "use_nts": False,
-        "description": "Netnod public NTP",
+        "use_nts": True,
+        "description": "Netnod public NTS",
     },
     {
-        "id": "ptb-germany-ntp",
+        "id": "ptb-germany-nts",
         "source": "ptbtime1.ptb.de",
         "enabled": False,
-        "use_nts": False,
-        "description": "PTB Germany public NTP",
+        "use_nts": True,
+        "description": "PTB Germany public NTS",
     },
     {
         "id": "pool-0-ntp",
@@ -83,9 +85,11 @@ NTP_DEFAULT_UPSTREAM_SOURCE_ROWS: list[dict[str, object]] = [
 NTP_DEFAULT_UPSTREAM_SERVERS = "\n".join(
     str(source["source"]) for source in NTP_DEFAULT_UPSTREAM_SOURCE_ROWS if bool(source["enabled"])
 )
+NTP_DEFAULT_NTS_KE_PORT = 4460
 NTP_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/ntpd/atlaso-ntp.conf"
 NTP_EFFECTIVE_CONFIG_PATH = "/etc/ntp.conf"
 NTP_DRIFT_PATH = "/var/lib/ntp/ntp.drift"
+NTP_NTS_COOKIE_PATH = "/var/lib/ntp/nts-keys"
 
 HOSTNAME_PATTERN = re.compile(r"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 BRACKETED_SOURCE_PATTERN = re.compile(r"^\[([^\]]+)\](?::(\d+))?$")
@@ -175,7 +179,7 @@ def ntp_upstream_sources(settings: NtpSettings) -> list[dict[str, object]]:
                             "id": str(item.get("id") or f"source-{index}"),
                             "source": source,
                             "enabled": bool(item.get("enabled", True)),
-                            "use_nts": False,
+                            "use_nts": bool(item.get("use_nts", False)),
                             "description": str(item.get("description") or "").strip(),
                         }
                     )
@@ -200,7 +204,7 @@ def dump_ntp_upstream_sources(sources: list[dict[str, object]]) -> str:
                     "id": str(item.get("id") or f"source-{index}"),
                     "source": source,
                     "enabled": bool(item.get("enabled", True)),
-                    "use_nts": False,
+                    "use_nts": bool(item.get("use_nts", False)),
                     "description": str(item.get("description") or "").strip(),
                 }
             )
@@ -215,25 +219,6 @@ def default_ntp_upstream_fields(raw_servers: str | None = None) -> dict[str, str
     if not servers:
         return {"upstream_servers": NTP_DEFAULT_UPSTREAM_SERVERS, "upstream_sources_json": NTP_DEFAULT_UPSTREAM_SOURCES_JSON}
     return {"upstream_servers": "\n".join(servers), "upstream_sources_json": ""}
-
-
-def disable_nts_state(settings: NtpSettings) -> bool:
-    """Normalize legacy NTS desired state to Atlaso's supported NTP-only contract."""
-    sources = ntp_upstream_sources(settings)
-    normalized_sources = dump_ntp_upstream_sources(sources)
-    changed = any(
-        [
-            bool(settings.nts_server_enabled),
-            bool(settings.nts_server_cert_path),
-            bool(settings.nts_server_key_path),
-            settings.upstream_sources_json != normalized_sources,
-        ]
-    )
-    settings.nts_server_enabled = False
-    settings.nts_server_cert_path = ""
-    settings.nts_server_key_path = ""
-    settings.upstream_sources_json = normalized_sources
-    return changed
 
 
 def enabled_ntp_sources(settings: NtpSettings) -> list[dict[str, object]]:
@@ -272,6 +257,10 @@ def ntp_settings_to_dict(settings: NtpSettings) -> dict:
         "upstream_sources": ntp_upstream_sources(settings),
         "allow_clients": settings.allow_clients,
         "allow_client_entries": split_allow_clients(settings.allow_clients),
+        "nts_server_enabled": settings.nts_server_enabled,
+        "nts_server_cert_path": settings.nts_server_cert_path,
+        "nts_server_key_path": settings.nts_server_key_path,
+        "nts_ke_port": settings.nts_ke_port,
         "minsources": settings.minsources,
         "config_path": settings.config_path,
         "updated_at": settings.updated_at.isoformat() if settings.updated_at else "",
@@ -307,12 +296,23 @@ def validate_ntp_state(settings: NtpSettings, available_interfaces: set[str]) ->
         for source in sources:
             server = str(source.get("source") or "").strip()
             try:
-                parse_ntp_source(server)
+                _host, _port, is_ip = parse_ntp_source(server)
             except ValueError:
                 errors.append(f"NTP upstream server {server} must be an IPv4 address, IPv6 address, or fully qualified DNS name with an optional port.")
                 continue
+            if source.get("use_nts") and is_ip:
+                errors.append(f"NTS upstream {server} must use a certificate-valid DNS hostname, not an IP address.")
     if settings.port != 123:
         errors.append("NTP port must be UDP 123.")
+    if settings.nts_server_enabled:
+        for label, raw_path in {"certificate": settings.nts_server_cert_path, "key": settings.nts_server_key_path}.items():
+            path = raw_path.strip()
+            if not path:
+                errors.append(f"NTS server {label} path is required when NTS server mode is enabled.")
+            elif not PurePosixPath(path).is_absolute():
+                errors.append(f"NTS server {label} path must be absolute.")
+    if settings.nts_ke_port != NTP_DEFAULT_NTS_KE_PORT:
+        errors.append("NTS-KE port must be TCP 4460.")
     if settings.minsources is not None and settings.minsources < 1:
         errors.append("NTP minimum sources must be at least 1.")
     allow_entries = split_allow_clients(settings.allow_clients)
@@ -362,6 +362,15 @@ def render_ntp_config(settings: NtpSettings) -> str:
         lines.extend(_restrict_line(entry) for entry in allow_entries)
     if settings.minsources is not None:
         lines.append(f"tos minsane {settings.minsources}")
+    if settings.nts_server_enabled:
+        lines.extend(
+            [
+                "nts enable",
+                f"nts cert {settings.nts_server_cert_path.strip()}",
+                f"nts key {settings.nts_server_key_path.strip()}",
+                f"nts cookie {NTP_NTS_COOKIE_PATH}",
+            ]
+        )
     lines.append("")
     for source in sources:
         raw_source = str(source["source"]).strip()
@@ -370,6 +379,8 @@ def render_ntp_config(settings: NtpSettings) -> str:
         except ValueError:
             rendered_source = raw_source
         parts = ["server", rendered_source, "iburst"]
+        if source.get("use_nts"):
+            parts.append("nts")
         lines.append(" ".join(parts))
     lines.append("")
     return "\n".join(lines)

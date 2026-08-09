@@ -2246,6 +2246,40 @@ def test_ca_helper_preserves_slapd_access_when_rewriting_ldap_key(monkeypatch, t
     assert modes == [(ldap_key_path, 0o600), (ldap_key_path, 0o640)]
 
 
+def test_ca_helper_preserves_ntpd_access_when_rewriting_nts_key(monkeypatch, tmp_path):
+    helper = load_helper_module()
+    apply_dir = tmp_path / "apply" / "ca"
+    managed_root = tmp_path / "etc" / "atlaso"
+    ntp_cert_dir = managed_root / "ntp" / "certs"
+    ntp_key_path = ntp_cert_dir / "ntp.atlaso.internal.key"
+    apply_dir.mkdir(parents=True)
+    payload = json.loads(ca_payload_text(managed_root))
+    payload["certificates"][0]["key_path"] = str(ntp_key_path)
+    config_path = apply_dir / "atlaso-ca.json"
+    config_path.write_text(json.dumps(payload), encoding="utf-8")
+    ownership: list[tuple[Path, int, int]] = []
+    modes: list[tuple[Path, int]] = []
+    real_chmod = helper.os.chmod
+
+    def track_nts_key_mode(path, mode, **kwargs):
+        real_chmod(path, mode, **kwargs)
+        if Path(path) == ntp_key_path:
+            modes.append((Path(path), mode))
+
+    monkeypatch.setattr(helper, "CA_APPLY_DIR", apply_dir)
+    monkeypatch.setattr(helper, "CA_MANAGED_PATH_BASE", managed_root)
+    monkeypatch.setattr(helper, "NTP_CERT_DIR", ntp_cert_dir)
+    monkeypatch.setattr(helper, "_ca_key_matches_certificate", lambda certificate_pem, private_key_pem: True)
+    monkeypatch.setattr(helper.grp, "getgrnam", lambda group: type("Group", (), {"gr_gid": 123})())
+    monkeypatch.setattr(helper.os, "chown", lambda path, uid, gid: ownership.append((Path(path), uid, gid)), raising=False)
+    monkeypatch.setattr(helper.os, "chmod", track_nts_key_mode)
+
+    assert helper._handle_ca("apply", [str(config_path)]) == 0
+
+    assert ownership == [(ntp_key_path, 0, 123)]
+    assert modes == [(ntp_key_path, 0o600), (ntp_key_path, 0o640)]
+
+
 def test_ca_helper_removes_stale_crl_when_publication_is_empty(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ca"
@@ -4700,6 +4734,8 @@ def ntpd_config_text(
     server: str = "time1.google.com",
     listen_address: str = "192.168.50.1",
     allow_clients: str = "192.168.50.0/24",
+    nts_server_cert_path: str = "",
+    nts_server_key_path: str = "",
 ) -> str:
     restrict_lines = ["restrict default kod limited nomodify noquery"]
     if allow_clients != "any":
@@ -4726,6 +4762,7 @@ def ntpd_config_text(
             *([f"interface listen {listen_address}"] if listen_address else []),
             "restrict source kod limited nomodify noquery",
             *restrict_lines,
+            *(["nts enable", f"nts cert {nts_server_cert_path}", f"nts key {nts_server_key_path}", "nts cookie /var/lib/ntp/nts-keys"] if nts_server_cert_path and nts_server_key_path else []),
             "",
         ]
     )
@@ -5286,13 +5323,14 @@ def test_ntpd_helper_rejects_invalid_staged_config(monkeypatch, tmp_path):
     assert "ntpd client allow list can use 'any' only by itself." in errors
 
 
-def test_ntpd_helper_accepts_source_ports_and_rejects_nts(monkeypatch, tmp_path):
+def test_ntpd_helper_accepts_source_ports_and_rejects_invalid_or_nts_ip_sources(monkeypatch, tmp_path):
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_ntpd_supports_nts", lambda: True)
     valid_config = tmp_path / "valid-ntp.conf"
     valid_config.write_text(
         ntpd_config_text(server="time.example.com:7443").replace(
             "server time.example.com:7443 iburst",
-            "server time.example.com:7443 iburst\nserver [2001:db8::10]:123 iburst",
+            "server time.example.com:7443 iburst nts\nserver [2001:db8::10]:123 iburst",
         ),
         encoding="utf-8",
     )
@@ -5302,12 +5340,12 @@ def test_ntpd_helper_accepts_source_ports_and_rejects_nts(monkeypatch, tmp_path)
     invalid_port.write_text(ntpd_config_text(server="time.example.com:70000"), encoding="utf-8")
     assert "optional port" in "\n".join(helper._ntpd_config_errors(invalid_port))
 
-    nts_config = tmp_path / "nts.conf"
-    nts_config.write_text(
-        ntpd_config_text(server="time.example.com").replace(" iburst", " iburst nts"),
+    nts_ip = tmp_path / "nts-ip.conf"
+    nts_ip.write_text(
+        ntpd_config_text(server="192.0.2.10:4460").replace(" iburst", " iburst nts"),
         encoding="utf-8",
     )
-    assert "NTS is disabled" in "\n".join(helper._ntpd_config_errors(nts_config))
+    assert "certificate-valid DNS hostname" in "\n".join(helper._ntpd_config_errors(nts_ip))
 
 
 def test_ntpd_helper_apply_installs_config_and_switches_from_timesyncd(monkeypatch, tmp_path):
@@ -5316,9 +5354,14 @@ def test_ntpd_helper_apply_installs_config_and_switches_from_timesyncd(monkeypat
     config_path = apply_dir / "atlaso-ntp.conf"
     ntp_conf = tmp_path / "etc" / "ntp.conf"
     state_dir = tmp_path / "var" / "lib" / "ntp"
-    cert_dir = tmp_path / "etc" / "atlaso" / "ntp" / "certs"
     apply_dir.mkdir(parents=True)
-    config_path.write_text(ntpd_config_text(), encoding="utf-8")
+    config_path.write_text(
+        ntpd_config_text(server="time.cloudflare.com").replace(
+            "server time.cloudflare.com iburst",
+            "server time.cloudflare.com iburst nts",
+        ),
+        encoding="utf-8",
+    )
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -5330,45 +5373,151 @@ def test_ntpd_helper_apply_installs_config_and_switches_from_timesyncd(monkeypat
     monkeypatch.setattr(helper, "NTP_STATE_DIR", state_dir)
     monkeypatch.setattr(helper, "NTP_DRIFT_PATH", state_dir / "ntp.drift")
     monkeypatch.setattr(helper, "NTP_NTS_COOKIE_PATH", state_dir / "nts-keys")
-    monkeypatch.setattr(helper, "NTP_CERT_DIR", cert_dir)
+    monkeypatch.setattr(helper, "NTP_CERT_DIR", state_dir / "certs")
+    monkeypatch.setattr(helper, "_ntpd_supports_nts", lambda: True)
     monkeypatch.setattr(helper, "_ntpd_runtime_identity_errors", lambda: [])
     monkeypatch.setattr(helper.pwd, "getpwnam", lambda name: type("NtpUser", (), {"pw_uid": 123})())
     monkeypatch.setattr(helper.grp, "getgrnam", lambda name: type("NtpGroup", (), {"gr_gid": 44})())
     monkeypatch.setattr(helper.os, "chown", lambda *args: None, raising=False)
     monkeypatch.setattr(helper, "_run", fake_run)
     (state_dir / "nts-keys").mkdir(parents=True)
-    (state_dir / "nts-keys" / "legacy-cookie").write_text("legacy", encoding="utf-8")
-    cert_dir.mkdir(parents=True)
-    (cert_dir / "legacy.crt").write_text("legacy", encoding="utf-8")
+    (state_dir / "nts-keys" / "cookie.key").write_text("cookie", encoding="utf-8")
+    (state_dir / "certs").mkdir(parents=True)
+    (state_dir / "certs" / "server.crt").write_text("certificate", encoding="utf-8")
 
     assert helper._handle_ntpd("apply", [str(config_path)]) == 0
 
     assert ntp_conf.read_text(encoding="utf-8") == config_path.read_text(encoding="utf-8")
+    assert "server time.cloudflare.com iburst nts" in ntp_conf.read_text(encoding="utf-8")
     assert state_dir.exists()
     assert (state_dir / "ntp.drift").read_text(encoding="utf-8") == "0.0\n"
     assert not (state_dir / "nts-keys").exists()
-    assert not cert_dir.exists()
+    assert not (state_dir / "certs").exists()
     assert ["systemctl", "disable", "--now", "systemd-timesyncd"] in commands
     assert ["systemctl", "disable", "--now", "chronyd.service"] in commands
     assert ["systemctl", "enable", "ntpd.service"] in commands
     assert ["systemctl", "restart", "ntpd.service"] in commands
 
 
-def test_ntpd_helper_rejects_nts_server_directives(monkeypatch, tmp_path):
+def test_ntpd_helper_apply_grants_ntp_group_read_to_nts_key(monkeypatch, tmp_path):
+    helper = load_helper_module()
+    apply_dir = tmp_path / "apply" / "ntpd"
+    managed_root = tmp_path / "etc" / "atlaso"
+    config_path = apply_dir / "atlaso-ntp.conf"
+    ntp_conf = tmp_path / "etc" / "ntp.conf"
+    state_dir = tmp_path / "var" / "lib" / "ntp"
+    cert_path = managed_root / "ntp" / "certs" / "ntp.atlaso.internal.crt"
+    key_path = managed_root / "ntp" / "certs" / "ntp.atlaso.internal.key"
+    apply_dir.mkdir(parents=True)
+    cert_path.parent.mkdir(parents=True)
+    cert_path.write_text("-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----\n", encoding="utf-8")
+    key_path.write_text("-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----\n", encoding="utf-8")
+    key_path.chmod(0o600)
+    config_path.write_text(
+        ntpd_config_text(nts_server_cert_path=str(cert_path), nts_server_key_path=str(key_path)),
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+    chown_calls: list[tuple[Path, int, int]] = []
+
+    class NTPsecGroup:
+        gr_gid = 44
+
+    def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "NTP_APPLY_DIR", apply_dir)
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", ntp_conf)
+    monkeypatch.setattr(helper, "NTP_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "NTP_DRIFT_PATH", state_dir / "ntp.drift")
+    monkeypatch.setattr(helper, "NTP_NTS_COOKIE_PATH", state_dir / "nts-keys")
+    monkeypatch.setattr(helper, "NTP_CERT_DIR", cert_path.parent)
+    monkeypatch.setattr(helper.grp, "getgrnam", lambda name: NTPsecGroup())
+    monkeypatch.setattr(helper.pwd, "getpwnam", lambda name: type("NtpUser", (), {"pw_uid": 123})())
+    monkeypatch.setattr(helper.os, "chown", lambda path, uid, gid: chown_calls.append((Path(path), uid, gid)), raising=False)
+    monkeypatch.setattr(helper, "_ntpd_supports_nts", lambda: True)
+    monkeypatch.setattr(helper, "_ntpd_runtime_identity_errors", lambda: [])
+    monkeypatch.setattr(helper, "_run", fake_run)
+    (state_dir / "nts-keys").mkdir(parents=True)
+    (state_dir / "nts-keys" / "cookie.key").write_text("cookie", encoding="utf-8")
+
+    assert helper._handle_ntpd("apply", [str(config_path)]) == 0
+
+    assert (key_path, 0, 44) in chown_calls
+    assert cert_path.exists()
+    assert key_path.exists()
+    assert (state_dir / "nts-keys" / "cookie.key").exists()
+    if os.name != "nt":
+        assert oct(key_path.stat().st_mode & 0o777) == "0o640"
+    assert ["systemctl", "restart", "ntpd.service"] in commands
+
+
+def test_ntpd_helper_rejects_missing_nts_certificate_files(monkeypatch, tmp_path):
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ntpd"
     config_path = apply_dir / "atlaso-ntp.conf"
     apply_dir.mkdir(parents=True)
     config_path.write_text(
-        ntpd_config_text(server="time.cloudflare.com")
-        + "nts enable\nnts cert /etc/atlaso/ntp/certs/legacy.crt\nnts key /etc/atlaso/ntp/certs/legacy.key\n",
+        ntpd_config_text(
+            nts_server_cert_path=str(tmp_path / "missing.crt"),
+            nts_server_key_path=str(tmp_path / "missing.key"),
+        ),
         encoding="utf-8",
     )
     monkeypatch.setattr(helper, "NTP_APPLY_DIR", apply_dir)
+    monkeypatch.setattr(helper, "_ntpd_supports_nts", lambda: True)
 
     errors = helper._ntpd_config_errors(config_path)
 
-    assert "NTS is disabled" in "\n".join(errors)
+    assert f"ntpd NTS server certificate does not exist: {tmp_path / 'missing.crt'}" in errors
+    assert f"ntpd NTS server key does not exist: {tmp_path / 'missing.key'}" in errors
+
+
+def test_ntpd_helper_requires_complete_allowlisted_nts_server_directives(monkeypatch, tmp_path):
+    helper = load_helper_module()
+    monkeypatch.setattr(helper, "_ntpd_supports_nts", lambda: True)
+
+    enable_only = tmp_path / "enable-only.conf"
+    enable_only.write_text(f"{ntpd_config_text()}nts enable\n", encoding="utf-8")
+    enable_errors = helper._ntpd_config_errors(enable_only)
+    assert "ntpd NTS server config must include nts cert." in enable_errors
+    assert "ntpd NTS server config must include nts key." in enable_errors
+    assert "ntpd NTS server config must include nts cookie storage." in enable_errors
+
+    directives_without_enable = tmp_path / "directives-without-enable.conf"
+    directives_without_enable.write_text(
+        "\n".join(
+            [
+                ntpd_config_text(),
+                f"nts cert {tmp_path / 'server.crt'}",
+                f"nts key {tmp_path / 'server.key'}",
+                f"nts cookie {tmp_path / 'cookies'}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    errors_without_enable = helper._ntpd_config_errors(directives_without_enable)
+    assert "ntpd NTS server config must include nts enable." in errors_without_enable
+
+    unsupported = tmp_path / "unsupported.conf"
+    unsupported.write_text(f"{ntpd_config_text()}nts rotate-keys automatically\n", encoding="utf-8")
+    assert "unsupported ntpd NTS directive: nts rotate-keys automatically" in helper._ntpd_config_errors(unsupported)
+
+
+def test_ntpd_helper_rejects_nts_when_installed_binary_lacks_support(monkeypatch, tmp_path):
+    helper = load_helper_module()
+    apply_dir = tmp_path / "apply" / "ntpd"
+    config_path = apply_dir / "atlaso-ntp.conf"
+    apply_dir.mkdir(parents=True)
+    config_path.write_text(ntpd_config_text(server="time.cloudflare.com").replace(" iburst", " iburst nts"), encoding="utf-8")
+    monkeypatch.setattr(helper, "NTP_APPLY_DIR", apply_dir)
+    monkeypatch.setattr(helper, "_ntpd_supports_nts", lambda: False)
+
+    errors = helper._ntpd_config_errors(config_path)
+
+    assert "required NTPsec implementation with NTS support" in "\n".join(errors)
 
 
 def test_ntpd_helper_rejects_remote_control_or_blocked_time_service(monkeypatch, tmp_path):
@@ -5471,11 +5620,75 @@ def test_nginx_helper_reads_only_fixed_http_log_files(monkeypatch, tmp_path, cap
     assert "does not accept a path" in capsys.readouterr().err
 
 
-def test_ntpd_helper_capabilities_reports_nts_disabled(capsys):
+def test_ntpd_helper_capabilities_reports_supported_nts(monkeypatch, capsys):
     helper = load_helper_module()
+    monkeypatch.setattr(helper.shutil, "which", lambda command: {"ntpd": "/usr/sbin/ntpd", "rpm": "/usr/bin/rpm"}.get(command))
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command, timeout=None: subprocess.CompletedProcess(command, 0, "ntpd ntpsec-1.2.3\n" if "--version" in command else "ntpsec-1.2.3-15.ph5\n", ""),
+    )
 
     assert helper._handle_ntpd("capabilities", []) == 0
-    assert json.loads(capsys.readouterr().out) == {"nts": False, "policy": "disabled"}
+    assert json.loads(capsys.readouterr().out)["nts"] is True
+
+
+def test_ntpd_helper_capabilities_reports_unsupported_identity(monkeypatch, capsys):
+    helper = load_helper_module()
+    monkeypatch.setattr(helper.shutil, "which", lambda command: {"ntpd": "/usr/sbin/ntpd", "rpm": "/usr/bin/rpm"}.get(command))
+
+    def fake_run(command, timeout=None):
+        if "--version" in command:
+            return subprocess.CompletedProcess(command, 0, "ntpd 4.2.8p15\n", "")
+        return subprocess.CompletedProcess(command, 1, "", f"package {command[-1]} is not installed\n")
+
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    assert helper._handle_ntpd("capabilities", []) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["nts"] is False
+    assert payload["errors"]
+
+
+def test_ntpd_helper_capabilities_returns_unknown_when_version_probe_fails(monkeypatch, capsys):
+    helper = load_helper_module()
+    monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/sbin/ntpd" if command == "ntpd" else None)
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command, timeout=None: (_ for _ in ()).throw(subprocess.TimeoutExpired(command, timeout)),
+    )
+
+    assert helper._handle_ntpd("capabilities", []) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert "nts" not in payload
+    assert "timed out" in payload["error"]
+
+
+@pytest.mark.parametrize("failed_probe", ["rpm", "second-version"])
+def test_ntpd_helper_capabilities_returns_unknown_when_identity_probe_fails(monkeypatch, capsys, failed_probe):
+    helper = load_helper_module()
+    monkeypatch.setattr(helper.shutil, "which", lambda command: {"ntpd": "/usr/sbin/ntpd", "rpm": "/usr/bin/rpm"}.get(command))
+    version_calls = 0
+
+    def fake_run(command, timeout=None):
+        nonlocal version_calls
+        if "--version" in command:
+            version_calls += 1
+            if failed_probe == "second-version" and version_calls == 2:
+                raise subprocess.TimeoutExpired(command, timeout)
+            return subprocess.CompletedProcess(command, 0, "ntpd ntpsec-1.2.3\n", "")
+        if failed_probe == "rpm" and command[-1] == "ntpsec":
+            raise OSError("temporary rpm failure")
+        return subprocess.CompletedProcess(command, 0, f"{command[-1]}-1.2.3-15.ph5\n", "")
+
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    assert helper._handle_ntpd("capabilities", []) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert "nts" not in payload
+    assert payload["error"] == "NTPsec capability identity probe failed"
+    assert payload["errors"]
 
 
 def test_ntpd_helper_requires_photon_package_and_ntpsec_binary_identity(monkeypatch):
@@ -5511,21 +5724,11 @@ def test_ntpd_helper_disabled_apply_stops_ntpd_without_installing_config(monkeyp
 
     monkeypatch.setattr(helper, "NTP_APPLY_DIR", apply_dir)
     monkeypatch.setattr(helper, "NTP_CONFIG_PATH", ntp_conf)
-    legacy_cookies = tmp_path / "legacy-cookies"
-    legacy_certs = tmp_path / "legacy-certs"
-    legacy_cookies.mkdir()
-    legacy_certs.mkdir()
-    (legacy_cookies / "cookie").write_text("legacy", encoding="utf-8")
-    (legacy_certs / "certificate").write_text("legacy", encoding="utf-8")
-    monkeypatch.setattr(helper, "NTP_NTS_COOKIE_PATH", legacy_cookies)
-    monkeypatch.setattr(helper, "NTP_CERT_DIR", legacy_certs)
     monkeypatch.setattr(helper, "_run", fake_run)
 
     assert helper._handle_ntpd("apply", [str(config_path)]) == 0
 
     assert not ntp_conf.exists()
-    assert not legacy_cookies.exists()
-    assert not legacy_certs.exists()
     assert commands == [["systemctl", "disable", "--now", "ntpd.service"]]
 
 
@@ -5544,8 +5747,6 @@ def test_ntpd_helper_disabled_apply_allows_empty_upstream_list(monkeypatch, tmp_
 
     monkeypatch.setattr(helper, "NTP_APPLY_DIR", apply_dir)
     monkeypatch.setattr(helper, "NTP_CONFIG_PATH", ntp_conf)
-    monkeypatch.setattr(helper, "NTP_NTS_COOKIE_PATH", tmp_path / "legacy-cookies")
-    monkeypatch.setattr(helper, "NTP_CERT_DIR", tmp_path / "legacy-certs")
     monkeypatch.setattr(helper, "_run", fake_run)
 
     assert helper._handle_ntpd("apply", [str(config_path)]) == 0
@@ -5554,7 +5755,7 @@ def test_ntpd_helper_disabled_apply_allows_empty_upstream_list(monkeypatch, tmp_
     assert commands == [["systemctl", "disable", "--now", "ntpd.service"]]
 
 
-def test_ntpd_helper_status_reads_peers_and_variables(monkeypatch, capsys):
+def test_ntpd_helper_status_reads_peers_variables_and_nts(monkeypatch, capsys):
     helper = load_helper_module()
     commands: list[tuple[list[str], float | None]] = []
 
@@ -5571,9 +5772,11 @@ def test_ntpd_helper_status_reads_peers_and_variables(monkeypatch, capsys):
     payload = json.loads(captured.out)
     assert payload["peers"]["stdout"] == " ok\n"
     assert payload["variables"]["stdout"] == "rv ok\n"
+    assert payload["nts"]["stdout"] == "ntsinfo ok\n"
     assert commands == [
         (["/usr/bin/ntpq", "-pn"], 1.5),
         (["/usr/bin/ntpq", "-c", "rv"], 1.5),
+        (["/usr/bin/ntpq", "-c", "ntsinfo"], 1.5),
     ]
 
 
@@ -5591,6 +5794,7 @@ def test_ntpd_helper_status_reports_timeout_without_blocking(monkeypatch, capsys
     payload = json.loads(capsys.readouterr().out)
     assert payload["peers"]["returncode"] == 124
     assert payload["variables"]["returncode"] == 124
+    assert payload["nts"]["stderr"] == "ntpq status command timed out after 1.5 seconds"
 
 
 def test_appliance_settings_hostname_fallback_writes_etc_hostname(monkeypatch, tmp_path):

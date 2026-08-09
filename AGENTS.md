@@ -123,8 +123,12 @@ The following cross-cutting boundaries always apply:
   for the constrained helper execution window. Remove them on success, validation or apply failure, and startup
   recovery; read-only Local Users status must use a separate short-lived file.
 - Keep internal CA custody and managed service-certificate deployment available without a public CA listen interface.
-  Interface selection owns portal publication only. NTS is disabled: NTP apply must use ordinary UDP/123 sources,
-  reject NTS directives, remove legacy NTP certificate and cookie material, and never add a CA dependency or TCP/4460.
+  Interface selection owns portal publication only. Every selected NTS server apply includes the CA unit and executes
+  it before NTP/NTS validation so runtime certificate material is present even when the CA baseline is current. Turning
+  NTS server mode off removes its `ntp:nts` CA record and deployed certificate, key, and cookie material during apply
+  without changing per-upstream NTS client flags. The one-time `ntp_nts_restoration_v1` reconciliation may re-enable
+  only the canonical Cloudflare and Netnod default rows; it must not change operator-created sources or enable server
+  mode.
 - Require TLS 1.2 or newer for the KMS compatibility listener and pre-authentication certificate-fingerprint probes.
   Preserve explicit certificate-fingerprint confirmation as the trust decision for VCF Automation and vSphere probes.
 - Vault passwords are the narrow exception for an explicit administrator eye reveal: keep them masked by default,

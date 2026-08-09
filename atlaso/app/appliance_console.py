@@ -62,7 +62,7 @@ SERVICE_CATALOG = (
     ("Firewall", "firewall", "atlaso-firewall.service"),
     ("KMS / KMIP", "kms", "atlaso-kmip.service"),
     ("Managed LDAP", "ldap", "slapd.service"),
-    ("NTP", "ntpd", "ntpd.service"),
+    ("NTP / NTS", "ntpd", "ntpd.service"),
     ("Routing", "routing", None),
     ("VCF Backup SFTP", "vcf-backups", None),
     ("VCF Offline Depot", "repository", None),
