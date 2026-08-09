@@ -99,6 +99,9 @@ def test_ui_compliance_remediation_keeps_explicit_actions_and_focus_return():
     assert 'dismiss.className = "grid-status-toast-dismiss";' in app_js
     assert 'dismiss.textContent = "Dismiss";' in app_js
     assert "if (error) {\n    return;" in app_js
+    app_css = (ROOT / "atlaso" / "app" / "static" / "app.css").read_text(encoding="utf-8")
+    assert ".grid-status-toast.error.visible" in app_css
+    assert "pointer-events: auto;" in app_css[app_css.index(".grid-status-toast.error.visible"):]
     assert 'const submitter = event.submitter;' in app_js
     assert 'submitter.matches("[data-confirm-modal]")' in app_js
     assert "form.requestSubmit(submitter instanceof HTMLElement ? submitter : undefined);" in app_js

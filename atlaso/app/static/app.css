@@ -7941,6 +7941,10 @@ dialog.has-expanded-monaco .confirm-modal-panel {
   color: #991b1b;
 }
 
+.grid-status-toast.error.visible {
+  pointer-events: auto;
+}
+
 .grid-status-toast-dismiss {
   border: 0;
   border-bottom: 1px solid currentColor;
