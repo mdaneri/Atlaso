@@ -168,7 +168,7 @@ ROUTES = {
     "login": ("/login", "Appliance sign-in"),
     "logs": ("/logs", "Logs"),
     "monitor": ("/monitor", "Monitor"),
-    "ntp": ("/ntp", "NTP"),
+    "ntp": ("/ntp", "NTP and NTS"),
     "physical-interfaces": ("/physical-interfaces", "Physical Interfaces"),
     "routes-wan": ("/routes-wan", "Routes and WAN Simulation"),
     "services": ("/services", "Services"),

@@ -109,7 +109,10 @@ def test_ca_certificate_row_capabilities_follow_lifecycle_and_ownership():
 
 
 def test_managed_ca_specs_include_portal_https_certificate(client):
+    from sqlalchemy import select
+
     from atlaso.app.database import SessionLocal
+    from atlaso.app.models import NtpSettings
     from atlaso.app.ui import get_ca_settings_row, managed_ca_certificate_specs
 
     with SessionLocal() as db:
@@ -118,6 +121,13 @@ def test_managed_ca_specs_include_portal_https_certificate(client):
         settings.portal_hostname = "ca.atlaso.internal"
         settings.listen_interface = "eth2"
         settings.listen_address = "192.168.87.32"
+        ntp = db.execute(select(NtpSettings)).scalar_one_or_none()
+        if ntp is None:
+            ntp = NtpSettings()
+            db.add(ntp)
+        ntp.nts_server_enabled = True
+        ntp.hostname = "ntp.atlaso.internal"
+        ntp.listen_address = "192.168.87.33"
         db.commit()
 
         specs = {spec.owner: spec for spec in managed_ca_certificate_specs(db)}
@@ -129,4 +139,9 @@ def test_managed_ca_specs_include_portal_https_certificate(client):
     assert ca_portal.cert_path == "/etc/atlaso/ca-portal/certs/ca.atlaso.internal.crt"
     assert ca_portal.key_path == "/etc/atlaso/ca-portal/certs/ca.atlaso.internal.key"
     assert ca_portal.chain_path == "/etc/atlaso/ca-portal/certs/ca.atlaso.internal-chain.pem"
-    assert "ntp:nts" not in specs
+    ntp_nts = specs["ntp:nts"]
+    assert ntp_nts.common_name == "ntp.atlaso.internal"
+    assert ntp_nts.dns_names == ["ntp.atlaso.internal"]
+    assert ntp_nts.ip_addresses == ["192.168.87.33"]
+    assert ntp_nts.cert_path == "/etc/atlaso/ntp/certs/ntp.atlaso.internal.crt"
+    assert ntp_nts.key_path == "/etc/atlaso/ntp/certs/ntp.atlaso.internal.key"

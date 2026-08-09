@@ -14,7 +14,7 @@ access, Kickstart markers, connection URIs, VCF Helper imports, reveal auditing,
 - [DNS](dns.md)
 - [DHCP](dhcp.md)
 - [Firewall](firewall.md)
-- [NTP](ntp.md)
+- [NTP and NTS](ntp.md)
 - [Certificate Authority](certificate-authority.md)
 - [ESX storage over NFS](esx-storage.md)
 - [ESX network boot and scripted installation](ipxe.md)

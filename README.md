@@ -76,8 +76,11 @@ Enabled depot profiles can use the shared Automation scheduler. Manual and sched
 single-active task guard and execution-time prerequisite validation; schedule definitions contain no Broadcom secrets.
 
 The integrated CA can maintain trust and deploy managed service certificates without publishing its public portal on
-an access interface. Selecting a CA listen interface is the explicit portal-publication boundary. NTP uses ordinary
-UDP/123 sources; NTS is disabled and legacy NTP certificate and cookie material is removed during NTP apply.
+an access interface. Selecting a CA listen interface is the explicit portal-publication boundary. When NTS server
+changes are selected, global appliance apply automatically runs Certificate Authority before NTP/NTS so missing or
+stale runtime certificate files are repaired even when the CA desired-state baseline appears current. Disabling NTS
+server mode removes only its managed server certificate, key, cookie material, and TCP/4460 listener; authenticated NTS
+upstream clients remain available independently.
 
 ## Project
 

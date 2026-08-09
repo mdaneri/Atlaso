@@ -46,7 +46,7 @@ The management block uses stable columns for interface, IPv4 address/gateway/mod
 ## Desired and runtime service state
 
 The **Appliance services** projection covers Authentication, Certificate Authority, DHCP, DNS, ESX Storage NFS, ESXi
-PXE, Firewall, KMS/KMIP, Managed LDAP, NTP, Routing, VCF Backup SFTP, VCF Offline Depot, and VCF Private Registry.
+PXE, Firewall, KMS/KMIP, Managed LDAP, NTP/NTS, Routing, VCF Backup SFTP, VCF Offline Depot, and VCF Private Registry.
 
 Desired enablement and backing systemd state are evaluated independently:
 

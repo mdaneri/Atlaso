@@ -3,6 +3,7 @@ from ipaddress import ip_interface
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from atlaso.app.audit import record_audit
 from atlaso.app.config import get_settings
 from atlaso.app.models import (
     ApplianceSettings,
@@ -41,7 +42,13 @@ from atlaso.app.services.local_users import DEFAULT_LOCAL_USER_SHELL, POWERSHELL
 from atlaso.app.services.ldap import LDAP_DEFAULT_HOSTNAME, LDAP_STAGED_CONFIG_PATH
 from atlaso.app.services.dnsmasq import ensure_dns_authoritative_defaults, join_domains, split_domains, validate_dns_record
 from atlaso.app.services.networking import normalize_interface_mode, normalize_ipv4_method
-from atlaso.app.services.ntp import NTP_DEFAULT_HOSTNAME, NTP_STAGED_CONFIG_PATH, default_ntp_upstream_fields, disable_nts_state
+from atlaso.app.services.ntp import (
+    NTP_DEFAULT_HOSTNAME,
+    NTP_STAGED_CONFIG_PATH,
+    default_ntp_upstream_fields,
+    dump_ntp_upstream_sources,
+    ntp_upstream_sources,
+)
 from atlaso.app.services.service_registry import RETIRED_SERVICE_IDS, SERVICE_STATE_DEFAULTS
 from atlaso.app.services.vcf_backups import VCF_BACKUP_DEFAULT_USERNAME
 from atlaso.app.services.vcf_offline_depot import VCF_DEPOT_DEFAULT_USERNAME
@@ -51,9 +58,71 @@ from atlaso.app.security import ensure_appliance_instance_id
 VCF_BACKUP_USERNAME = VCF_BACKUP_DEFAULT_USERNAME
 VCF_DEPOT_USERNAME = VCF_DEPOT_DEFAULT_USERNAME
 SEED_EXAMPLES_SETTING_KEY = "seed.include_examples"
+NTP_NTS_RESTORATION_SETTING_KEY = "ntp.nts_restoration_v1"
+NTP_NTS_CANONICAL_DEFAULTS = {
+    "time.cloudflare.com": {
+        "ids": {"cloudflare-ntp", "cloudflare-nts"},
+        "id": "cloudflare-nts",
+        "enabled": True,
+        "description": "Cloudflare public NTS",
+    },
+    "nts.netnod.se": {
+        "ids": {"netnod-ntp", "netnod-nts"},
+        "id": "netnod-nts",
+        "enabled": True,
+        "description": "Netnod public NTS",
+    },
+    "ptbtime1.ptb.de": {
+        "ids": {"ptb-germany-ntp", "ptb-germany-nts"},
+        "id": "ptb-germany-nts",
+        "description": "PTB Germany public NTS",
+    },
+}
+
+
+def restore_canonical_nts_defaults_once(db: Session, settings: NtpSettings) -> bool:
+    marker = db.execute(
+        select(Setting).where(Setting.key == NTP_NTS_RESTORATION_SETTING_KEY)
+    ).scalar_one_or_none()
+    if marker is not None:
+        return False
+
+    sources = ntp_upstream_sources(settings)
+    changed = False
+    for source in sources:
+        source_name = str(source.get("source") or "").strip().rstrip(".").lower()
+        source_id = str(source.get("id") or "")
+        canonical = NTP_NTS_CANONICAL_DEFAULTS.get(source_name)
+        if canonical is None or source_id not in canonical["ids"]:
+            continue
+        canonical_enabled = canonical.get("enabled")
+        changed = changed or any(
+            [
+                source_id != canonical["id"],
+                canonical_enabled is not None and bool(source.get("enabled")) != canonical_enabled,
+                not bool(source.get("use_nts")),
+                str(source.get("description") or "") != canonical["description"],
+            ]
+        )
+        source["id"] = canonical["id"]
+        if canonical_enabled is not None:
+            source["enabled"] = canonical_enabled
+        source["use_nts"] = True
+        source["description"] = canonical["description"]
+
+    if changed:
+        settings.upstream_sources_json = dump_ntp_upstream_sources(sources)
+        settings.upstream_servers = "\n".join(
+            str(source["source"]) for source in sources if source.get("enabled")
+        )
+        db.add(settings)
+    db.add(Setting(key=NTP_NTS_RESTORATION_SETTING_KEY, value="complete"))
+    db.flush()
+    return changed
 
 
 def seed_initial_data(db: Session, *, include_examples: bool = True, appliance_mode: bool = False) -> None:
+    ntp_defaults_restored = False
     ensure_appliance_instance_id(db)
     if include_examples:
         seed_examples_setting = db.execute(select(Setting).where(Setting.key == SEED_EXAMPLES_SETTING_KEY)).scalar_one_or_none()
@@ -261,13 +330,12 @@ def seed_initial_data(db: Session, *, include_examples: bool = True, appliance_m
         )
         db.add(ntp_settings)
         db.flush()
+        if db.execute(
+            select(Setting).where(Setting.key == NTP_NTS_RESTORATION_SETTING_KEY)
+        ).scalar_one_or_none() is None:
+            db.add(Setting(key=NTP_NTS_RESTORATION_SETTING_KEY, value="complete"))
     else:
-        disable_nts_state(ntp_settings)
-    legacy_nts_certificate = db.execute(
-        select(CaCertificate).where(CaCertificate.managed_owner == "ntp:nts")
-    ).scalar_one_or_none()
-    if legacy_nts_certificate is not None:
-        db.delete(legacy_nts_certificate)
+        ntp_defaults_restored = restore_canonical_nts_defaults_once(db, ntp_settings)
 
     if db.execute(select(LdapSettings)).scalar_one_or_none() is None:
         db.add(
@@ -523,6 +591,15 @@ def seed_initial_data(db: Session, *, include_examples: bool = True, appliance_m
 
     seed_update_sources(db)
     db.commit()
+    if ntp_defaults_restored:
+        record_audit(
+            db,
+            actor="system",
+            action="restore_ntp_nts_defaults",
+            resource_type="ntpd",
+            resource_id=str(ntp_settings.id),
+            detail="Reconciled canonical NTS defaults.",
+        )
 
 
 def seed_update_sources(db: Session) -> None:
