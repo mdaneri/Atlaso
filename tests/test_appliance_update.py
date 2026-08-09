@@ -967,6 +967,7 @@ def test_helper_source_sync_probes_powershell_repository_endpoint(monkeypatch, t
     helper = load_helper_module()
     scripts = []
     monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", tmp_path / "update-sources.json")
+    monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", tmp_path / "powershell-home")
     monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
     monkeypatch.setattr(helper.socket, "getaddrinfo", lambda *_args, **_kwargs: [(None, None, None, None, None)])
 
