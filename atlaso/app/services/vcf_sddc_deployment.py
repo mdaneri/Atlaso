@@ -39,7 +39,11 @@ class VcfSddcDeploymentCancelled(VcfSddcDeploymentError):
 
 
 class VcfSddcPostImportError(VcfSddcDeploymentError):
-    """Report a vcf sddc post import error."""
+    """Report a vcf sddc post import error.
+
+    Attributes:
+        vm_result: Vm result maintained by this vcfsddcpostimporterror.
+    """
     def __init__(self, message: str, vm_result: dict[str, str]) -> None:
         """Initialize the vcf sddc post import error."""
         super().__init__(message)
@@ -57,7 +61,13 @@ def _check_cancelled(cancelled: CancelCheck | None) -> None:
 
 
 class _LeaseProgress:
-    """Represent lease progress."""
+    """Represent lease progress.
+
+    Attributes:
+        lease: Lease maintained by this leaseprogress.
+        value: Value maintained by this leaseprogress.
+        lock: Lock maintained by this leaseprogress.
+    """
     def __init__(self, lease: Any) -> None:
         """Initialize the lease progress."""
         self.lease = lease
@@ -81,7 +91,18 @@ class _LeaseProgress:
 
 @dataclass(frozen=True)
 class OvfProperty:
-    """Represent ovf property."""
+    """Represent ovf property.
+
+    Attributes:
+        key: Key maintained by this ovfproperty.
+        value_type: Value type maintained by this ovfproperty.
+        label: Label maintained by this ovfproperty.
+        description: Operator-facing purpose or context for the resource.
+        default: Default maintained by this ovfproperty.
+        qualifiers: Qualifiers maintained by this ovfproperty.
+        password: Password maintained by this ovfproperty.
+        user_configurable: User configurable maintained by this ovfproperty.
+    """
     key: str
     value_type: str
     label: str
@@ -94,7 +115,20 @@ class OvfProperty:
 
 @dataclass(frozen=True)
 class OvaDescriptor:
-    """Represent ova descriptor."""
+    """Represent ova descriptor.
+
+    Attributes:
+        path: Path maintained by this ovadescriptor.
+        relative_path: Filesystem path used for relative.
+        filename: Filename maintained by this ovadescriptor.
+        size_bytes: Size size in bytes.
+        vm_name: Vm name maintained by this ovadescriptor.
+        ovf_member: Ovf member maintained by this ovadescriptor.
+        manifest_member: Manifest member maintained by this ovadescriptor.
+        networks: Networks maintained by this ovadescriptor.
+        properties: Properties maintained by this ovadescriptor.
+        files: Files maintained by this ovadescriptor.
+    """
     path: str
     relative_path: str
     filename: str

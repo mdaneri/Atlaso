@@ -782,7 +782,12 @@ def test_remote_vault_uri_authenticates_server_side_after_rechecking_host_key(cl
             return b"verified-host-key"
 
     class FakeChannel:
-        """Represent fake channel."""
+        """Represent fake channel.
+
+        Attributes:
+            pty: Pty captured or supplied by this test helper.
+            shell_invoked: Shell invoked captured or supplied by this test helper.
+        """
         def __init__(self):
             """Initialize the fake channel."""
             self.pty = None
@@ -797,7 +802,13 @@ def test_remote_vault_uri_authenticates_server_side_after_rechecking_host_key(cl
             self.shell_invoked = True
 
     class FakeTransport:
-        """Represent fake transport."""
+        """Represent fake transport.
+
+        Attributes:
+            channel: Channel captured or supplied by this test helper.
+            authentication: Authentication captured or supplied by this test helper.
+            closed: Closed captured or supplied by this test helper.
+        """
         def __init__(self, _socket):
             """Initialize the fake transport."""
             self.channel = FakeChannel()
@@ -881,7 +892,11 @@ def test_vcf_import_discovers_sddc_manager_and_installer_passwords():
     )
 
     class FakeClient:
-        """Represent fake client."""
+        """Represent fake client.
+
+        Attributes:
+            payloads: Payloads captured or supplied by this test helper.
+        """
         def __init__(self, payloads):
             """Initialize the fake client."""
             self.payloads = payloads
@@ -896,7 +911,11 @@ def test_vcf_import_discovers_sddc_manager_and_installer_passwords():
             return httpx.Response(200, json=self.payloads[path])
 
     class FakeApi:
-        """Represent fake api."""
+        """Represent fake api.
+
+        Attributes:
+            client: Client captured or supplied by this test helper.
+        """
         def __init__(self, payloads):
             """Initialize the fake api."""
             self.client = FakeClient(payloads)

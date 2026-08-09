@@ -25,7 +25,13 @@ class VersionError(ValueError):
 
 @dataclass(frozen=True, order=True)
 class Version:
-    """Represent a three-part semantic version."""
+    """Represent a three-part semantic version.
+
+    Attributes:
+        major: Major maintained by this version.
+        minor: Minor maintained by this version.
+        patch: Patch maintained by this version.
+    """
     major: int
     minor: int
     patch: int

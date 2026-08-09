@@ -43,7 +43,19 @@ VLAN_ROLES = ["access", "management", "services", "storage", "route"]
 
 @dataclass(frozen=True)
 class HostPhysicalInterface:
-    """Represent host physical interface."""
+    """Represent host physical interface.
+
+    Attributes:
+        name: Operator-facing name of the resource.
+        mac_address: Mac address maintained by this hostphysicalinterface.
+        driver: Driver maintained by this hostphysicalinterface.
+        speed: Speed maintained by this hostphysicalinterface.
+        host_ip_cidr: Host ip cidr maintained by this hostphysicalinterface.
+        host_mtu: Host mtu maintained by this hostphysicalinterface.
+        host_admin_state: Host admin state maintained by this hostphysicalinterface.
+        oper_state: Oper state maintained by this hostphysicalinterface.
+        host_ipv6_cidr: Host ipv6 cidr maintained by this hostphysicalinterface.
+    """
     name: str
     mac_address: str
     driver: str | None

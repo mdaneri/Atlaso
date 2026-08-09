@@ -11,7 +11,17 @@ from atlaso.app.services.vcf_depot_target import VcfDepotApiClient, VcfDepotTarg
 
 @dataclass(frozen=True)
 class VcfPasswordCandidate:
-    """Represent vcf password candidate."""
+    """Represent vcf password candidate.
+
+    Attributes:
+        candidate_id: Identifier of the associated candidate.
+        key: Key maintained by this vcfpasswordcandidate.
+        description: Operator-facing purpose or context for the resource.
+        secret_type: Secret type maintained by this vcfpasswordcandidate.
+        username: Username maintained by this vcfpasswordcandidate.
+        resource_name: Resource name maintained by this vcfpasswordcandidate.
+        value: Value maintained by this vcfpasswordcandidate.
+    """
     candidate_id: str
     key: str
     description: str

@@ -37,7 +37,16 @@ CATEGORY_TITLES = (
 
 @dataclass(frozen=True)
 class ReleaseNotePlan:
-    """Represent release note plan."""
+    """Represent release note plan.
+
+    Attributes:
+        tag: Tag maintained by this releasenoteplan.
+        previous_tag: Previous tag maintained by this releasenoteplan.
+        original_body: Original body maintained by this releasenoteplan.
+        expected_body: Expected body maintained by this releasenoteplan.
+        action: Action maintained by this releasenoteplan.
+        identity: Identity maintained by this releasenoteplan.
+    """
     tag: str
     previous_tag: str
     original_body: str

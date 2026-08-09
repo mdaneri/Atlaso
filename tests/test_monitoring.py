@@ -25,7 +25,11 @@ from atlaso.app.services.monitoring import (
 
 
 class FakeMonitorCollector:
-    """Represent fake monitor collector."""
+    """Represent fake monitor collector.
+
+    Attributes:
+        snapshots: Snapshots captured or supplied by this test helper.
+    """
     def __init__(self, snapshots):
         """Initialize the fake monitor collector."""
         self.snapshots = list(snapshots)

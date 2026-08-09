@@ -253,7 +253,11 @@ def test_public_web_terminal_uses_public_shell_and_explicit_user_access(client, 
         user_id = user.id
 
     class LocalAuthenticationAdapter:
-        """Represent local authentication adapter."""
+        """Represent local authentication adapter.
+
+        Attributes:
+            dry_run: Dry run captured or supplied by this test helper.
+        """
         dry_run = False
 
         def authenticate_local_user(self, username: str, password: str) -> AdapterResult:
@@ -332,7 +336,14 @@ def test_web_terminal_uses_one_use_ticket_and_bridges_websocket_input(client, mo
     from atlaso.app.models import ApplianceSettings, User
 
     class FakeChannel:
-        """Represent fake channel."""
+        """Represent fake channel.
+
+        Attributes:
+            closed: Closed captured or supplied by this test helper.
+            sent: Sent captured or supplied by this test helper.
+            output_sent: Output sent captured or supplied by this test helper.
+            finished: Finished captured or supplied by this test helper.
+        """
         def __init__(self):
             """Initialize the fake channel."""
             self.closed = False
@@ -2072,7 +2083,11 @@ def test_local_user_status_uses_isolated_short_lived_staging(monkeypatch, tmp_pa
     seen_status_paths: list[Path] = []
 
     class StatusAdapter:
-        """Represent status adapter."""
+        """Represent status adapter.
+
+        Attributes:
+            dry_run: Dry run captured or supplied by this test helper.
+        """
         dry_run = False
 
         def local_users_status(self, config_path: str) -> AdapterResult:
@@ -9075,7 +9090,11 @@ def test_public_service_home_is_scoped_to_called_ip(client, tmp_path, monkeypatc
     authentication_calls: list[str] = []
 
     class DepotAuthenticationAdapter:
-        """Represent depot authentication adapter."""
+        """Represent depot authentication adapter.
+
+        Attributes:
+            dry_run: Dry run captured or supplied by this test helper.
+        """
         dry_run = False
 
         def authenticate_local_user(self, username: str, password: str) -> AdapterResult:
@@ -12354,7 +12373,11 @@ def test_disabled_ldap_apply_keeps_staged_user_password_pending(monkeypatch, tmp
     stage_ldap_user_password(user, "VeryStrong1!Directory", settings)
 
     class SuccessfulLdapAdapter:
-        """Represent successful ldap adapter."""
+        """Represent successful ldap adapter.
+
+        Attributes:
+            dry_run: Dry run captured or supplied by this test helper.
+        """
         dry_run = False
 
         @staticmethod
@@ -14930,7 +14953,11 @@ def test_secret_staging_cleanup_repairs_ownership_before_unlink(monkeypatch, tmp
     repairs: list[str] = []
 
     class RepairingAdapter:
-        """Represent repairing adapter."""
+        """Represent repairing adapter.
+
+        Attributes:
+            dry_run: Dry run captured or supplied by this test helper.
+        """
         dry_run = False
 
         def prepare_apply_staging_path(self, path: str) -> AdapterResult:

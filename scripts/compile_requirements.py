@@ -30,7 +30,14 @@ DECLARATION_HASH_RE = re.compile(r"^# atlaso-declarations-sha256: [0-9a-f]{64}$"
 
 @dataclass(frozen=True)
 class LockTarget:
-    """Represent lock target."""
+    """Represent lock target.
+
+    Attributes:
+        output: Output maintained by this locktarget.
+        inputs: Inputs maintained by this locktarget.
+        allow_unsafe: Whether unsafe is permitted.
+        strip_extras: Strip extras maintained by this locktarget.
+    """
     output: str
     inputs: tuple[str, ...]
     allow_unsafe: bool

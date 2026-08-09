@@ -201,7 +201,18 @@ SESSION_APPLIANCE_INSTANCE_SESSION_KEY = "appliance_instance_id"
 
 
 class Identity:
-    """Represent an authenticated identity and its granted permissions."""
+    """Represent an authenticated identity and its granted permissions.
+
+    Attributes:
+        username: Username maintained by this identity.
+        roles: Roles maintained by this identity.
+        role: Role maintained by this identity.
+        scopes: Scopes maintained by this identity.
+        user_id: Identifier of the associated user.
+        token_id: Identifier of the associated token.
+        token_jti: Token jti maintained by this identity.
+        auth_type: Auth type maintained by this identity.
+    """
     def __init__(
         self,
         username: str,

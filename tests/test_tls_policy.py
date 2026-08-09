@@ -17,7 +17,13 @@ def test_kms_context_requires_tls_1_2_or_newer(monkeypatch, tmp_path):
         path.write_text("test fixture", encoding="utf-8")
 
     class FakeContext:
-        """Represent fake context."""
+        """Represent fake context.
+
+        Attributes:
+            protocol: Protocol captured or supplied by this test helper.
+            minimum_version: Minimum version captured or supplied by this test helper.
+            verify_mode: Verify mode captured or supplied by this test helper.
+        """
         def __init__(self, protocol):
             """Initialize the fake context."""
             self.protocol = protocol

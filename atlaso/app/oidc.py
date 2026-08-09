@@ -125,8 +125,7 @@ def get_openid_configuration(
         The endpoint response.
 
     Raises:
-        HTTPException: If the request cannot be fulfilled.
-        _public_configuration_error: If the operation encounters an invalid state.
+        HTTPException: If OIDC is not configured or the request does not use HTTPS.
     """
     try:
         document = discovery_document(db)
@@ -149,8 +148,7 @@ def get_oidc_jwks(request: Request, db: Session = Depends(get_db)) -> JSONRespon
         The endpoint response.
 
     Raises:
-        HTTPException: If the request cannot be fulfilled.
-        _public_configuration_error: If the operation encounters an invalid state.
+        HTTPException: If OIDC is not configured or the request does not use HTTPS.
     """
     try:
         document = jwks_document(db)

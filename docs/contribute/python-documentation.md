@@ -24,6 +24,10 @@ uses PEP 257 docstrings with Google-style sections where a summary alone cannot 
   exception rather than restating its class name.
 - Record important side effects, security boundaries, persistence behavior, cleanup guarantees, and ordering
   constraints in the docstring body.
+- Describe public class fields and initialized instance attributes in a Google-style `Attributes` section. Reuse
+  Pydantic field descriptions where they already define the API contract, and do not repeat Python type annotations.
+- Document `@property` accessors on the accessor itself, including lifecycle or side-effect behavior that is not clear
+  from the property name.
 - Keep test docstrings focused on the behavior or regression being verified. Test setup remains in fixtures and code,
   not a narration of each statement.
 

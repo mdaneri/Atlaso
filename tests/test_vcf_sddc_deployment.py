@@ -86,7 +86,11 @@ def test_ova_path_and_manifest_validation_are_strict(tmp_path):
 def test_nfc_upload_uses_stream_vmdk_post(monkeypatch):
     """Verify that nfc upload uses stream vmdk post."""
     class Response:
-        """Represent response."""
+        """Represent response.
+
+        Attributes:
+            status: Current lifecycle or operation status.
+        """
         status = 200
 
         def read(self, _size=-1):
@@ -94,7 +98,17 @@ def test_nfc_upload_uses_stream_vmdk_post(monkeypatch):
             return b""
 
     class Connection:
-        """Represent connection."""
+        """Represent connection.
+
+        Attributes:
+            instances: Instances captured or supplied by this test helper.
+            host: Host captured or supplied by this test helper.
+            port: Port captured or supplied by this test helper.
+            method: Method captured or supplied by this test helper.
+            target: Target captured or supplied by this test helper.
+            headers: Headers captured or supplied by this test helper.
+            body: Body captured or supplied by this test helper.
+        """
         instances = []
 
         def __init__(self, host, port, **_kwargs):
@@ -133,7 +147,11 @@ def test_nfc_upload_uses_stream_vmdk_post(monkeypatch):
             pass
 
     class Lease:
-        """Represent lease."""
+        """Represent lease.
+
+        Attributes:
+            progress: Progress captured or supplied by this test helper.
+        """
         def __init__(self):
             """Initialize the lease."""
             self.progress = []
@@ -175,11 +193,20 @@ def test_disk_provisioning_and_datastore_free_space_validation():
         normalize_disk_provisioning("eagerZeroedThick")
 
     class Summary:
-        """Represent summary."""
+        """Represent summary.
+
+        Attributes:
+            freeSpace: Freespace captured or supplied by this test helper.
+        """
         freeSpace = 1024
 
     class Datastore:
-        """Represent datastore."""
+        """Represent datastore.
+
+        Attributes:
+            name: Operator-facing name of the resource.
+            summary: Summary captured or supplied by this test helper.
+        """
         name = "tiny-datastore"
         summary = Summary()
 
@@ -190,15 +217,27 @@ def test_disk_provisioning_and_datastore_free_space_validation():
 def test_imported_entity_is_captured_before_lease_completion():
     """Verify that imported entity is captured before lease completion."""
     class Vm:
-        """Represent vm."""
+        """Represent vm.
+
+        Attributes:
+            name: Operator-facing name of the resource.
+        """
         name = "sddcm"
 
     class Info:
-        """Represent info."""
+        """Represent info.
+
+        Attributes:
+            entity: Entity captured or supplied by this test helper.
+        """
         entity = Vm()
 
     class Lease:
-        """Represent lease."""
+        """Represent lease.
+
+        Attributes:
+            info: Info captured or supplied by this test helper.
+        """
         info = Info()
 
         def HttpNfcLeaseComplete(self):

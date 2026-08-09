@@ -73,7 +73,13 @@ class ConfigurationError(ValueError):
 
 @dataclass(frozen=True)
 class Provider:
-    """Represent provider."""
+    """Represent provider.
+
+    Attributes:
+        id: Unique database identifier for the resource.
+        name: Operator-facing name of the resource.
+        client_fingerprints: Client fingerprints maintained by this provider.
+    """
     id: str
     name: str
     client_fingerprints: tuple[str, ...]
@@ -81,7 +87,14 @@ class Provider:
 
 @dataclass(frozen=True)
 class ServiceLimits:
-    """Represent service limits."""
+    """Represent service limits.
+
+    Attributes:
+        max_request_bytes: Max request size in bytes.
+        max_connections: Maximum accepted connections.
+        idle_timeout_seconds: Idle timeout duration in seconds.
+        max_requests_per_connection: Maximum accepted requests per connection.
+    """
     max_request_bytes: int = MAX_MESSAGE_BYTES
     max_connections: int = 32
     idle_timeout_seconds: int = 30
@@ -90,7 +103,22 @@ class ServiceLimits:
 
 @dataclass(frozen=True)
 class ServiceConfig:
-    """Represent service config."""
+    """Represent service config.
+
+    Attributes:
+        enabled: Whether the resource is enabled.
+        host: Host maintained by this serviceconfig.
+        port: Port maintained by this serviceconfig.
+        certificate_path: Filesystem path used for certificate.
+        private_key_path: Filesystem path used for private key.
+        ca_path: Filesystem path used for ca.
+        database_path: Filesystem path used for database.
+        kek_path: Filesystem path used for kek.
+        limits: Limits maintained by this serviceconfig.
+        providers: Providers maintained by this serviceconfig.
+        interop_trace_path: Filesystem path used for interop trace.
+        fingerprint_providers: Return fingerprint providers.
+    """
     enabled: bool
     host: str
     port: int
@@ -372,7 +400,11 @@ def tls_context(config: ServiceConfig) -> ssl.SSLContext:
 
 
 class InteropTraceWriter:
-    """Append exact-schema, metadata-only events for an explicitly enabled acceptance run."""
+    """Append exact-schema, metadata-only events for an explicitly enabled acceptance run.
+
+    Attributes:
+        path: Path maintained by this interoptracewriter.
+    """
 
     def __init__(self, path: Path) -> None:
         """Initialize the interop trace writer.
@@ -548,7 +580,12 @@ def _receive_exact(sock: ssl.SSLSocket, size: int) -> bytes:
 
 
 class KmipRequestHandler(socketserver.BaseRequestHandler):
-    """Represent kmip request handler."""
+    """Represent kmip request handler.
+
+    Attributes:
+        server: Server maintained by this kmiprequesthandler.
+        request: Request maintained by this kmiprequesthandler.
+    """
     server: "KmipTcpServer"
     request: ssl.SSLSocket
 
@@ -608,7 +645,17 @@ class KmipRequestHandler(socketserver.BaseRequestHandler):
 
 
 class KmipTcpServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
-    """Represent kmip tcp server."""
+    """Represent kmip tcp server.
+
+    Attributes:
+        allow_reuse_address: Whether reuse address is permitted.
+        daemon_threads: Daemon threads maintained by this kmiptcpserver.
+        config: Config maintained by this kmiptcpserver.
+        dispatcher: Dispatcher maintained by this kmiptcpserver.
+        context: Context maintained by this kmiptcpserver.
+        trace_writer: Trace writer maintained by this kmiptcpserver.
+        address_family: Address family maintained by this kmiptcpserver.
+    """
     allow_reuse_address = True
     daemon_threads = False
 

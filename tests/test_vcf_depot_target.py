@@ -28,7 +28,12 @@ def test_depot_sanitization_never_returns_passwords():
 def test_configure_target_updates_syncs_and_verifies(monkeypatch):
     """Verify that configure target updates syncs and verifies."""
     class FakeClient:
-        """Represent fake client."""
+        """Represent fake client.
+
+        Attributes:
+            current: Current captured or supplied by this test helper.
+            sync_calls: Sync calls captured or supplied by this test helper.
+        """
         def __init__(self, *_args, **_kwargs):
             """Initialize the fake client."""
             self.current = remote()
@@ -126,7 +131,12 @@ def test_update_depot_uses_authenticated_fqdn_port_payload_without_url():
     captured: dict[str, object] = {}
 
     class FakeResponse:
-        """Represent fake response."""
+        """Represent fake response.
+
+        Attributes:
+            is_success: Whether the resource is success.
+            status_code: Status code captured or supplied by this test helper.
+        """
         is_success = True
         status_code = 200
 

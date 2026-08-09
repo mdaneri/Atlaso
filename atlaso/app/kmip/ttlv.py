@@ -18,7 +18,20 @@ class TtlvError(ValueError):
 
 
 class TtlvType(IntEnum):
-    """Represent ttlv type."""
+    """Represent ttlv type.
+
+    Attributes:
+        STRUCTURE: Symbolic value representing 1.
+        INTEGER: Symbolic value representing 2.
+        LONG_INTEGER: Symbolic value representing 3.
+        BIG_INTEGER: Symbolic value representing 4.
+        ENUMERATION: Symbolic value representing 5.
+        BOOLEAN: Symbolic value representing 6.
+        TEXT_STRING: Symbolic value representing 7.
+        BYTE_STRING: Symbolic value representing 8.
+        DATE_TIME: Symbolic value representing 9.
+        INTERVAL: Symbolic value representing 10.
+    """
     STRUCTURE = 0x01
     INTEGER = 0x02
     LONG_INTEGER = 0x03
@@ -33,7 +46,13 @@ class TtlvType(IntEnum):
 
 @dataclass(frozen=True)
 class Ttlv:
-    """Represent ttlv."""
+    """Represent ttlv.
+
+    Attributes:
+        tag: Tag maintained by this ttlv.
+        type: Type maintained by this ttlv.
+        value: Value maintained by this ttlv.
+    """
     tag: int
     type: TtlvType
     value: tuple["Ttlv", ...] | int | bool | str | bytes
@@ -156,7 +175,11 @@ def encode(node: Ttlv) -> bytes:
 
 @dataclass
 class _DecodeState:
-    """Represent decode state."""
+    """Represent decode state.
+
+    Attributes:
+        nodes: Nodes maintained by this decodestate.
+    """
     nodes: int = 0
 
 

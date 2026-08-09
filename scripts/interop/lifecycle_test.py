@@ -80,7 +80,16 @@ LIFECYCLE_LDAP_PASSWORD = "LifecycleLdap1!Strong"
 
 @dataclass
 class StepResult:
-    """Represent step result."""
+    """Represent step result.
+
+    Attributes:
+        name: Operator-facing name of the resource.
+        status: Current lifecycle or operation status.
+        evidence: Evidence maintained by this stepresult.
+        started_at: UTC timestamp associated with started.
+        finished_at: UTC timestamp associated with finished.
+        error: Failure detail recorded for the latest unsuccessful operation.
+    """
     name: str
     status: str
     evidence: dict[str, Any] = field(default_factory=dict)
@@ -176,7 +185,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 class HttpClient:
-    """Represent http client."""
+    """Represent http client.
+
+    Attributes:
+        base_url: URL used for base.
+        cookie_jar: Cookie jar maintained by this httpclient.
+        https_context: Https context maintained by this httpclient.
+        opener: Opener maintained by this httpclient.
+        bearer_token: Bearer token maintained by this httpclient.
+    """
     def __init__(self, base_url: str) -> None:
         """Initialize the http client."""
         self.base_url = base_url.rstrip("/")
@@ -3655,7 +3672,7 @@ def wan_packet_loss_check(client: HttpClient, args: argparse.Namespace) -> dict[
 
     Raises:
         LifecycleError: If the operation encounters an invalid state.
-        original_error: If the operation encounters an invalid state.
+        Exception: If a WAN loss check fails after the normal policy is restored.
     """
     if args.skip_client_checks:
         return {"skipped": "client checks disabled"}

@@ -145,6 +145,7 @@ def test_appliance_update_page_and_dry_run_job(client):
 
 
 def test_powershell_update_requires_synchronized_referenced_repository(client):
+    """Verify that powershell update requires synchronized referenced repository."""
     login(client)
     page = client.get("/appliance-update")
     csrf = csrf_from_page(page.text)
@@ -162,6 +163,7 @@ def test_powershell_update_requires_synchronized_referenced_repository(client):
 
 
 def test_photon_update_requires_synchronized_managed_repository(client):
+    """Verify that photon update requires synchronized managed repository."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import UpdateSource
 
@@ -237,7 +239,11 @@ def test_appliance_update_real_helper_failure_is_logged(client, monkeypatch, cap
     import atlaso.app.ui as ui
 
     class FailingUpdateAdapter:
-        """Represent failing update adapter."""
+        """Represent failing update adapter.
+
+        Attributes:
+            dry_run: Dry run captured or supplied by this test helper.
+        """
         dry_run = False
 
         def check_appliance_update_config(self, config_path: str) -> AdapterResult:
@@ -289,7 +295,11 @@ def test_appliance_update_staging_exception_records_failed_job_and_logs(client, 
     import atlaso.app.ui as ui
 
     class RealUpdateAdapter:
-        """Represent real update adapter."""
+        """Represent real update adapter.
+
+        Attributes:
+            dry_run: Dry run captured or supplied by this test helper.
+        """
         dry_run = False
 
     monkeypatch.setattr(ui, "SystemAdapter", lambda: RealUpdateAdapter())
@@ -577,6 +587,7 @@ def test_source_sync_is_queued_and_records_validation_status(client):
 
 
 def test_source_sync_preserves_per_repository_results(client):
+    """Verify that source sync preserves per repository results."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, UpdateSource
     from atlaso.app.ui import complete_appliance_update_task
@@ -629,6 +640,7 @@ def test_source_sync_preserves_per_repository_results(client):
 
 
 def test_source_sync_json_submission_queues_without_page_render(client):
+    """Verify that source sync json submission queues without page render."""
     login(client)
     page = client.get("/appliance-update")
     csrf = csrf_from_page(page.text)
@@ -646,6 +658,7 @@ def test_source_sync_json_submission_queues_without_page_render(client):
 
 
 def test_source_sync_helper_results_are_promoted_to_task_result(client, monkeypatch):
+    """Verify that source sync helper results are promoted to task result."""
     import atlaso.app.ui as ui
 
     from atlaso.app.database import SessionLocal
@@ -658,9 +671,15 @@ def test_source_sync_helper_results_are_promoted_to_task_result(client, monkeypa
         source_result = {"id": source.id, "kind": "powershell", "name": source.name, "success": True}
 
     class SourceSyncAdapter:
+        """Represent source sync adapter.
+
+        Attributes:
+            dry_run: Dry run captured or supplied by this test helper.
+        """
         dry_run = False
 
         def sync_appliance_update_sources(self, config_path: str) -> AdapterResult:
+            """Handle sync appliance update sources."""
             return AdapterResult(
                 command=["atlaso-helper", "appliance-update", "sync-sources", config_path],
                 dry_run=False,
@@ -993,6 +1012,7 @@ def test_helper_rejects_retired_python_library_stream():
 
 
 def test_helper_rejects_unsynchronized_powershell_repository():
+    """Verify that helper rejects unsynchronized powershell repository."""
     helper = load_helper_module()
     payload = {
         "selected_streams": ["powershell_modules"],
@@ -1019,6 +1039,7 @@ def test_helper_rejects_unsynchronized_powershell_repository():
 
 
 def test_helper_rejects_unsynchronized_managed_photon_repository():
+    """Verify that helper rejects unsynchronized managed photon repository."""
     helper = load_helper_module()
     payload = {
         "selected_streams": ["photon_os"],
@@ -1140,6 +1161,7 @@ def test_helper_syncs_only_owned_photon_and_powershell_sources(monkeypatch, tmp_
 
 
 def test_helper_reports_unresolvable_powershell_repository_host(monkeypatch, tmp_path):
+    """Verify that helper reports unresolvable powershell repository host."""
     import socket
 
     helper = load_helper_module()
@@ -1172,6 +1194,7 @@ def test_helper_reports_unresolvable_powershell_repository_host(monkeypatch, tmp
 
 
 def test_helper_source_sync_probes_powershell_repository_endpoint(monkeypatch, tmp_path):
+    """Verify that helper source sync probes powershell repository endpoint."""
     import base64
 
     helper = load_helper_module()
@@ -1182,6 +1205,7 @@ def test_helper_source_sync_probes_powershell_repository_endpoint(monkeypatch, t
     monkeypatch.setattr(helper.socket, "getaddrinfo", lambda *_args, **_kwargs: [(None, None, None, None, None)])
 
     def fail_invalid_endpoint(command, *, success_codes=None, env=None):
+        """Handle fail invalid endpoint."""
         scripts.append(base64.b64decode(command[-1]).decode("utf-16-le"))
         return {
             "command": command,
@@ -1218,6 +1242,7 @@ def test_helper_source_sync_probes_powershell_repository_endpoint(monkeypatch, t
 
 
 def test_appliance_update_failure_message_uses_actionable_command_stderr():
+    """Verify that appliance update failure message uses actionable command stderr."""
     from atlaso.app.ui import appliance_update_failure_message
 
     message = appliance_update_failure_message(
@@ -1237,6 +1262,7 @@ def test_appliance_update_failure_message_uses_actionable_command_stderr():
 
 
 def test_helper_promotes_source_sync_failure_to_stderr(monkeypatch, tmp_path, capsys):
+    """Verify that helper promotes source sync failure to stderr."""
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-update.json"
     config_path.write_text("{}\n", encoding="utf-8")

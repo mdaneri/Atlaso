@@ -26,14 +26,26 @@ class VcfTrustError(RuntimeError):
 
 @dataclass(frozen=True)
 class VcfTrustCredentials:
-    """Represent vcf trust credentials."""
+    """Represent vcf trust credentials.
+
+    Attributes:
+        api_username: Api username maintained by this vcftrustcredentials.
+        api_password: Api password maintained by this vcftrustcredentials.
+    """
     api_username: str
     api_password: str
 
 
 @dataclass(frozen=True)
 class RootCaInfo:
-    """Represent root ca info."""
+    """Represent root ca info.
+
+    Attributes:
+        pem: Pem maintained by this rootcainfo.
+        subject: Subject maintained by this rootcainfo.
+        expires_at: UTC timestamp after which the resource is no longer valid.
+        fingerprint: Fingerprint maintained by this rootcainfo.
+    """
     pem: str
     subject: str
     expires_at: str
@@ -91,7 +103,15 @@ def pem_fingerprint(pem: str) -> str:
 
 
 class VcfApiClient:
-    """Represent vcf api client."""
+    """Represent vcf api client.
+
+    Attributes:
+        base_url: URL used for base.
+        username: Username maintained by this vcfapiclient.
+        password: Password maintained by this vcfapiclient.
+        client: Client maintained by this vcfapiclient.
+        token: Token maintained by this vcfapiclient.
+    """
     def __init__(
         self,
         address: str,

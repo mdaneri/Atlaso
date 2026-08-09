@@ -103,7 +103,20 @@ WAKE_ON_LAN_PORT = 9
 
 @dataclass(frozen=True)
 class EnvironmentCatalogEntry:
-    """Represent environment catalog entry."""
+    """Represent environment catalog entry.
+
+    Attributes:
+        key: Key maintained by this environmentcatalogentry.
+        label: Label maintained by this environmentcatalogentry.
+        description: Operator-facing purpose or context for the resource.
+        risk: Risk maintained by this environmentcatalogentry.
+        license_name: License name maintained by this environmentcatalogentry.
+        verification_method: Verification method maintained by this environmentcatalogentry.
+        source_label: Source label maintained by this environmentcatalogentry.
+        release_page: Release page maintained by this environmentcatalogentry.
+        signing_fingerprint: Signing fingerprint maintained by this environmentcatalogentry.
+        signing_key_url: URL used for signing key.
+    """
     key: str
     label: str
     description: str
@@ -181,7 +194,16 @@ class NetworkBootMediaSyncCancelled(RuntimeError):
 
 @dataclass(frozen=True)
 class ActiveNetworkBootMedia:
-    """Represent active network boot media."""
+    """Represent active network boot media.
+
+    Attributes:
+        environment_key: Environment key maintained by this activenetworkbootmedia.
+        version: Version maintained by this activenetworkbootmedia.
+        public_version: Public version maintained by this activenetworkbootmedia.
+        installed_path: Filesystem path used for installed.
+        manifest_json: Serialized JSON representation of manifest.
+        artifact_sha256: Artifact sha256 maintained by this activenetworkbootmedia.
+    """
     environment_key: str
     version: str
     public_version: str
@@ -192,7 +214,17 @@ class ActiveNetworkBootMedia:
 
 @dataclass
 class DeferredNetworkBootMediaSync:
-    """Represent deferred network boot media sync."""
+    """Represent deferred network boot media sync.
+
+    Attributes:
+        media: Media maintained by this deferrednetworkbootmediasync.
+        final_dir: Final dir maintained by this deferrednetworkbootmediasync.
+        backup_dir: Backup dir maintained by this deferrednetworkbootmediasync.
+        superseded_dirs: Superseded dirs maintained by this deferrednetworkbootmediasync.
+        journal_path: Filesystem path used for journal.
+        filesystem_changed: Filesystem changed maintained by this deferrednetworkbootmediasync.
+        recovery_lock: Recovery lock maintained by this deferrednetworkbootmediasync.
+    """
     media: NetworkBootMedia
     final_dir: Path
     backup_dir: Path | None
@@ -1677,7 +1709,12 @@ def wake_on_lan_packet(mac_address: str) -> bytes:
 
 
 class WakeOnLanDeliveryError(OSError):
-    """Record broadcasts sent before a later UDP delivery failed."""
+    """Record broadcasts sent before a later UDP delivery failed.
+
+    Attributes:
+        failed_target: Failed target maintained by this wakeonlandeliveryerror.
+        sent_targets: Sent targets maintained by this wakeonlandeliveryerror.
+    """
 
     def __init__(self, failed_target: str, sent_targets: list[str], cause: OSError):
         """Initialize the wake on lan delivery error."""
@@ -2255,7 +2292,11 @@ def claim_host_boot_override(
 
 
 class _BoundedHttpsRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Represent bounded https redirect handler."""
+    """Represent bounded https redirect handler.
+
+    Attributes:
+        max_redirects: Maximum accepted redirects.
+    """
     def __init__(self, max_redirects: int):
         """Initialize the bounded https redirect handler."""
         super().__init__()
@@ -2289,7 +2330,14 @@ class _BoundedHttpsRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 
 class BoundedHttpsDownloader:
-    """Represent bounded https downloader."""
+    """Represent bounded https downloader.
+
+    Attributes:
+        max_bytes: Max size in bytes.
+        timeout_seconds: Timeout duration in seconds.
+        max_redirects: Maximum accepted redirects.
+        open_attempts: Open attempts maintained by this boundedhttpsdownloader.
+    """
     def __init__(
         self,
         *,
@@ -3218,7 +3266,14 @@ def _fsync_media_tree(root: Path) -> None:
 
 
 class _MediaSwapRecoveryLock:
-    """Represent media swap recovery lock."""
+    """Represent media swap recovery lock.
+
+    Attributes:
+        lock_path: Filesystem path used for lock.
+        lock_fd: Lock fd maintained by this mediaswaprecoverylock.
+        thread_acquired: Thread acquired maintained by this mediaswaprecoverylock.
+        process_acquired: Process acquired maintained by this mediaswaprecoverylock.
+    """
     def __init__(self, media_root: Path):
         """Initialize the media swap recovery lock."""
         self.lock_path = media_root / ".atlaso-media-swap-recovery.lock"
@@ -3294,7 +3349,15 @@ class _MediaSwapRecoveryLock:
 
 
 class _MediaStagingLease:
-    """Represent media staging lease."""
+    """Represent media staging lease.
+
+    Attributes:
+        staging_directory: Staging directory maintained by this mediastaginglease.
+        lock_path: Filesystem path used for lock.
+        lock_fd: Lock fd maintained by this mediastaginglease.
+        process_acquired: Process acquired maintained by this mediastaginglease.
+        identity: Identity maintained by this mediastaginglease.
+    """
     def __init__(self, staging_directory: Path):
         """Initialize the media staging lease."""
         self.staging_directory = staging_directory

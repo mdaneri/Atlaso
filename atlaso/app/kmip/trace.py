@@ -65,7 +65,17 @@ class TraceValidationError(ValueError):
 
 @dataclass(frozen=True)
 class TraceSummary:
-    """Deterministic metadata summary for a validated trace."""
+    """Deterministic metadata summary for a validated trace.
+
+    Attributes:
+        contract_id: Identifier of the associated contract.
+        contract_sha256: Contract sha256 maintained by this tracesummary.
+        event_count: Number of event items.
+        operations: Operations maintained by this tracesummary.
+        protocol_versions: Protocol versions maintained by this tracesummary.
+        providers: Providers maintained by this tracesummary.
+        result_statuses: Result statuses maintained by this tracesummary.
+    """
 
     contract_id: str
     contract_sha256: str

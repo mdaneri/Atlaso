@@ -49,7 +49,17 @@ OIDC_QUERY_SECRET_PATTERN = re.compile(
 
 @dataclass(frozen=True)
 class LoggingPreferences:
-    """Represent logging preferences."""
+    """Represent logging preferences.
+
+    Attributes:
+        level: Level maintained by this loggingpreferences.
+        syslog_enabled: Whether syslog is enabled.
+        syslog_host: Syslog host maintained by this loggingpreferences.
+        syslog_port: Network port used for syslog.
+        syslog_protocol: Syslog protocol maintained by this loggingpreferences.
+        syslog_facility: Syslog facility maintained by this loggingpreferences.
+        syslog_level: Syslog level maintained by this loggingpreferences.
+    """
     level: str = "INFO"
     syslog_enabled: bool = False
     syslog_host: str = ""

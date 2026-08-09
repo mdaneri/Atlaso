@@ -194,7 +194,19 @@ def _console_status_failure(
 
 @dataclass(frozen=True)
 class ServiceStatus:
-    """Represent service status."""
+    """Represent service status.
+
+    Attributes:
+        label: Label maintained by this servicestatus.
+        unit: Unit maintained by this servicestatus.
+        load_state: Load state maintained by this servicestatus.
+        unit_file_state: Unit file state maintained by this servicestatus.
+        active_state: Active state maintained by this servicestatus.
+        desired_enabled: Whether desired is enabled.
+        runtime_label: Return runtime label.
+        enabled_label: Return enabled label.
+        display_label: Return display label.
+    """
     label: str
     unit: str
     load_state: str
@@ -235,7 +247,31 @@ class ServiceStatus:
 
 @dataclass(frozen=True)
 class ConsoleStatus:
-    """Represent console status."""
+    """Represent console status.
+
+    Attributes:
+        hostname: Hostname maintained by this consolestatus.
+        release: Release maintained by this consolestatus.
+        architecture: Architecture maintained by this consolestatus.
+        version: Version maintained by this consolestatus.
+        kernel: Kernel maintained by this consolestatus.
+        cpu: Cpu maintained by this consolestatus.
+        memory: Memory maintained by this consolestatus.
+        load: Load maintained by this consolestatus.
+        load_severity: Load severity maintained by this consolestatus.
+        interface: Interface maintained by this consolestatus.
+        ipv4_method: Ipv4 method maintained by this consolestatus.
+        ipv4_cidr: Ipv4 cidr maintained by this consolestatus.
+        gateway: Gateway maintained by this consolestatus.
+        ipv6_mode: Ipv6 mode maintained by this consolestatus.
+        ipv6_cidr: Ipv6 cidr maintained by this consolestatus.
+        ipv6_gateway: Ipv6 gateway maintained by this consolestatus.
+        dns_servers: Dns servers maintained by this consolestatus.
+        firewall_enabled: Whether firewall is enabled.
+        maintenance_isolation: Maintenance isolation maintained by this consolestatus.
+        services: Services maintained by this consolestatus.
+        urls: Urls maintained by this consolestatus.
+    """
     hostname: str
     release: str
     architecture: str
@@ -1106,7 +1142,14 @@ def record_console_shell(action: str) -> None:
 
 
 class CursesConsole:
-    """Represent curses console."""
+    """Represent curses console.
+
+    Attributes:
+        curses: Curses maintained by this cursesconsole.
+        stdscr: Stdscr maintained by this cursesconsole.
+        message: Message maintained by this cursesconsole.
+        message_error: Message error maintained by this cursesconsole.
+    """
     def __init__(self, stdscr: Any) -> None:
         """Initialize the curses console."""
         import curses

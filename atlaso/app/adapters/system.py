@@ -10,7 +10,15 @@ from atlaso.app.config import get_settings
 
 @dataclass(frozen=True)
 class AdapterResult:
-    """Represent adapter result."""
+    """Represent adapter result.
+
+    Attributes:
+        command: Command maintained by this adapterresult.
+        dry_run: Dry run maintained by this adapterresult.
+        stdout: Stdout maintained by this adapterresult.
+        stderr: Stderr maintained by this adapterresult.
+        returncode: Returncode maintained by this adapterresult.
+    """
     command: list[str]
     dry_run: bool
     stdout: str = ""
@@ -19,7 +27,12 @@ class AdapterResult:
 
 
 class SystemAdapter:
-    """Safe MVP adapter that records approved command intent without executing it."""
+    """Safe MVP adapter that records approved command intent without executing it.
+
+    Attributes:
+        HELPER_PATH: Symbolic value representing '/opt/atlaso/bin/atlaso-helper'.
+        dry_run: Dry run maintained by this systemadapter.
+    """
 
     HELPER_PATH = "/opt/atlaso/bin/atlaso-helper"
 

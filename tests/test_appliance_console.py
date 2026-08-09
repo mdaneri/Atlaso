@@ -240,7 +240,7 @@ def test_console_does_not_hide_unrelated_database_errors(monkeypatch):
             """Enter the managed context.
 
             Raises:
-                error: If the operation encounters an invalid state.
+                SQLAlchemyOperationalError: Always, to exercise database-error propagation.
             """
             raise error
 
@@ -273,7 +273,11 @@ def test_console_unrelated_status_failures_are_not_hidden_during_startup():
 def test_console_draws_initializing_network_message_during_startup(monkeypatch):
     """Verify that console draws initializing network message during startup."""
     class FakeCurses:
-        """Represent fake curses."""
+        """Represent fake curses.
+
+        Attributes:
+            A_BOLD: Symbolic value representing 256.
+        """
         A_BOLD = 0x100
 
         @staticmethod
@@ -331,7 +335,16 @@ def test_console_draws_initializing_network_message_during_startup(monkeypatch):
 def test_console_text_editor_supports_cursor_navigation_insertion_and_deletion():
     """Verify that console text editor supports cursor navigation insertion and deletion."""
     class FakeCurses:
-        """Represent fake curses."""
+        """Represent fake curses.
+
+        Attributes:
+            KEY_LEFT: Symbolic value representing 1.
+            KEY_RIGHT: Symbolic value representing 2.
+            KEY_HOME: Symbolic value representing 3.
+            KEY_END: Symbolic value representing 4.
+            KEY_BACKSPACE: Symbolic value representing 5.
+            KEY_DC: Symbolic value representing 6.
+        """
         KEY_LEFT = 1
         KEY_RIGHT = 2
         KEY_HOME = 3
@@ -392,7 +405,22 @@ def test_console_management_form_uses_field_navigation_and_cursor_editing():
             return keys.pop(0)
 
     class FakeCurses:
-        """Represent fake curses."""
+        """Represent fake curses.
+
+        Attributes:
+            A_BOLD: Symbolic value representing 1.
+            A_REVERSE: Symbolic value representing 2.
+            KEY_LEFT: Symbolic value representing 1.
+            KEY_DOWN: Symbolic value representing 2.
+            KEY_RIGHT: Symbolic value representing 3.
+            KEY_HOME: Symbolic value representing 4.
+            KEY_END: Symbolic value representing 5.
+            KEY_BACKSPACE: Symbolic value representing 6.
+            KEY_DC: Symbolic value representing 7.
+            KEY_UP: Symbolic value representing 8.
+            KEY_BTAB: Symbolic value representing 353.
+            KEY_ENTER: Symbolic value representing 343.
+        """
         A_BOLD = 1
         A_REVERSE = 2
         KEY_LEFT = 1
@@ -570,7 +598,17 @@ def test_console_password_prompt_uses_light_network_field_style():
             return "\x1b"
 
     class FakeCurses:
-        """Represent fake curses."""
+        """Represent fake curses.
+
+        Attributes:
+            A_BOLD: Symbolic value representing 1.
+            KEY_LEFT: Symbolic value representing 1.
+            KEY_RIGHT: Symbolic value representing 2.
+            KEY_UP: Symbolic value representing 3.
+            KEY_DOWN: Symbolic value representing 4.
+            KEY_BTAB: Symbolic value representing 353.
+            KEY_ENTER: Symbolic value representing 343.
+        """
         A_BOLD = 1
         KEY_LEFT = 1
         KEY_RIGHT = 2
@@ -640,7 +678,17 @@ def test_console_password_prompt_preserves_literal_root_password_characters():
             return next(keys)
 
     class FakeCurses:
-        """Represent fake curses."""
+        """Represent fake curses.
+
+        Attributes:
+            A_BOLD: Symbolic value representing 1.
+            KEY_LEFT: Symbolic value representing 1.
+            KEY_RIGHT: Symbolic value representing 2.
+            KEY_UP: Symbolic value representing 3.
+            KEY_DOWN: Symbolic value representing 4.
+            KEY_BTAB: Symbolic value representing 353.
+            KEY_ENTER: Symbolic value representing 343.
+        """
         A_BOLD = 1
         KEY_LEFT = 1
         KEY_RIGHT = 2
@@ -767,7 +815,21 @@ def test_console_help_modal_pages_forward_and_closes():
             return next(keys)
 
     class FakeCurses:
-        """Represent fake curses."""
+        """Represent fake curses.
+
+        Attributes:
+            A_BOLD: Symbolic value representing 1.
+            KEY_F1: Symbolic value representing 265.
+            KEY_RESIZE: Symbolic value representing 410.
+            KEY_LEFT: Symbolic value representing 260.
+            KEY_RIGHT: Symbolic value representing 261.
+            KEY_UP: Symbolic value representing 259.
+            KEY_DOWN: Symbolic value representing 258.
+            KEY_PPAGE: Symbolic value representing 339.
+            KEY_NPAGE: Symbolic value representing 338.
+            KEY_BTAB: Symbolic value representing 353.
+            KEY_ENTER: Symbolic value representing 343.
+        """
         A_BOLD = 1
         KEY_F1 = 265
         KEY_RESIZE = 410

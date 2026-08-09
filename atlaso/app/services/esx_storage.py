@@ -29,7 +29,13 @@ NFS_VERSIONS = ("3", "4.1")
 
 @dataclass(frozen=True)
 class StorageInterface:
-    """Represent storage interface."""
+    """Represent storage interface.
+
+    Attributes:
+        name: Operator-facing name of the resource.
+        ipv4: Ipv4 maintained by this storageinterface.
+        ipv6: Ipv6 maintained by this storageinterface.
+    """
     name: str
     ipv4: tuple[str, ...] = ()
     ipv6: tuple[str, ...] = ()

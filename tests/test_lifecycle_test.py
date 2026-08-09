@@ -137,7 +137,11 @@ def test_set_lifecycle_wan_policy_updates_duplicate_restored_rows():
     lifecycle = load_lifecycle_module()
 
     class FakeClient:
-        """Represent fake client."""
+        """Represent fake client.
+
+        Attributes:
+            patched: Patched captured or supplied by this test helper.
+        """
         def __init__(self) -> None:
             """Initialize the fake client."""
             self.patched: list[tuple[str, dict[str, object]]] = []
@@ -181,7 +185,11 @@ def test_appliance_health_checks_version_before_authentication(monkeypatch):
     }
 
     class FakeClient:
-        """Represent fake client."""
+        """Represent fake client.
+
+        Attributes:
+            base_url: URL used for base.
+        """
         base_url = "https://192.0.2.10"
 
         def request(self, method, path):  # type: ignore[no-untyped-def]
@@ -366,7 +374,11 @@ def test_apply_units_requires_and_submits_esx_format_confirmation(monkeypatch):
     lifecycle = load_lifecycle_module()
 
     class FakeClient:
-        """Represent fake client."""
+        """Represent fake client.
+
+        Attributes:
+            form: Form captured or supplied by this test helper.
+        """
         def __init__(self) -> None:
             """Initialize the fake client."""
             self.form = []
@@ -444,7 +456,11 @@ def test_apply_units_retries_once_when_desired_state_drifts(monkeypatch):
     lifecycle = load_lifecycle_module()
 
     class FakeClient:
-        """Represent fake client."""
+        """Represent fake client.
+
+        Attributes:
+            submissions: Submissions captured or supplied by this test helper.
+        """
         def __init__(self) -> None:
             """Initialize the fake client."""
             self.submissions = 0
@@ -664,7 +680,12 @@ def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():
     )
 
     class FakeClient:
-        """Represent fake client."""
+        """Represent fake client.
+
+        Attributes:
+            boot_form: Boot form captured or supplied by this test helper.
+            host_payload: Host payload captured or supplied by this test helper.
+        """
         def __init__(self):
             """Initialize the fake client."""
             self.boot_form = []

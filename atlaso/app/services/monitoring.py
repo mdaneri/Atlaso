@@ -49,14 +49,25 @@ VIRTUAL_FILESYSTEMS = {
 
 @dataclass(frozen=True)
 class CpuCounters:
-    """Represent cpu counters."""
+    """Represent cpu counters.
+
+    Attributes:
+        total: Total maintained by this cpucounters.
+        idle: Idle maintained by this cpucounters.
+    """
     total: int
     idle: int
 
 
 @dataclass(frozen=True)
 class CpuCoreCounters:
-    """Represent cpu core counters."""
+    """Represent cpu core counters.
+
+    Attributes:
+        name: Operator-facing name of the resource.
+        total: Total maintained by this cpucorecounters.
+        idle: Idle maintained by this cpucorecounters.
+    """
     name: str
     total: int
     idle: int
@@ -64,7 +75,20 @@ class CpuCoreCounters:
 
 @dataclass(frozen=True)
 class NetworkCounters:
-    """Represent network counters."""
+    """Represent network counters.
+
+    Attributes:
+        name: Operator-facing name of the resource.
+        rx_bytes: Rx size in bytes.
+        tx_bytes: Tx size in bytes.
+        rx_packets: Rx packets maintained by this networkcounters.
+        tx_packets: Tx packets maintained by this networkcounters.
+        rx_errors: Rx errors maintained by this networkcounters.
+        tx_errors: Tx errors maintained by this networkcounters.
+        rx_dropped: Rx dropped maintained by this networkcounters.
+        tx_dropped: Tx dropped maintained by this networkcounters.
+        oper_state: Oper state maintained by this networkcounters.
+    """
     name: str
     rx_bytes: int
     tx_bytes: int
@@ -79,7 +103,13 @@ class NetworkCounters:
 
 @dataclass(frozen=True)
 class DiskCounters:
-    """Represent disk counters."""
+    """Represent disk counters.
+
+    Attributes:
+        device: Device maintained by this diskcounters.
+        read_bytes: Read size in bytes.
+        write_bytes: Write size in bytes.
+    """
     device: str
     read_bytes: int
     write_bytes: int
@@ -87,7 +117,19 @@ class DiskCounters:
 
 @dataclass(frozen=True)
 class DiskUsage:
-    """Represent disk usage."""
+    """Represent disk usage.
+
+    Attributes:
+        mount_point: Mount point maintained by this diskusage.
+        device: Device maintained by this diskusage.
+        filesystem: Filesystem maintained by this diskusage.
+        total_bytes: Total size in bytes.
+        used_bytes: Used size in bytes.
+        free_bytes: Free size in bytes.
+        used_percent: Used expressed as a percentage.
+        read_bytes: Read size in bytes.
+        write_bytes: Write size in bytes.
+    """
     mount_point: str
     device: str
     filesystem: str
@@ -101,7 +143,22 @@ class DiskUsage:
 
 @dataclass(frozen=True)
 class MonitorSnapshot:
-    """Represent monitor snapshot."""
+    """Represent monitor snapshot.
+
+    Attributes:
+        sampled_at: UTC timestamp associated with sampled.
+        cpu: Cpu maintained by this monitorsnapshot.
+        cpus: Cpus maintained by this monitorsnapshot.
+        cpu_count: Number of cpu items.
+        load: Load maintained by this monitorsnapshot.
+        memory_total_bytes: Memory total size in bytes.
+        memory_available_bytes: Memory available size in bytes.
+        memory_used_percent: Memory used expressed as a percentage.
+        swap_total_bytes: Swap total size in bytes.
+        swap_used_bytes: Swap used size in bytes.
+        networks: Networks maintained by this monitorsnapshot.
+        disks: Disks maintained by this monitorsnapshot.
+    """
     sampled_at: datetime
     cpu: CpuCounters | None = None
     cpus: list[CpuCoreCounters] = field(default_factory=list)
@@ -285,7 +342,13 @@ def rate_per_second(previous_value: int, current_value: int, elapsed_seconds: fl
 
 
 class SystemMetricsCollector:
-    """Represent system metrics collector."""
+    """Represent system metrics collector.
+
+    Attributes:
+        proc_path: Filesystem path used for proc.
+        sys_path: Filesystem path used for sys.
+        settings: Settings maintained by this systemmetricscollector.
+    """
     def __init__(self, *, proc_path: Path | None = None, sys_path: Path | None = None, settings: Settings | None = None) -> None:
         """Initialize the system metrics collector."""
         self.proc_path = proc_path or Path("/proc")
@@ -864,7 +927,11 @@ def _disks(samples: list[MonitorSample]) -> list[dict[str, Any]]:
 
 
 class MonitorSampler:
-    """Represent monitor sampler."""
+    """Represent monitor sampler.
+
+    Attributes:
+        interval_seconds: Interval duration in seconds.
+    """
     def __init__(self, *, interval_seconds: int | None = None) -> None:
         """Initialize the monitor sampler."""
         settings = get_settings()

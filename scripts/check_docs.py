@@ -24,7 +24,13 @@ IMAGE_RE = re.compile(r"!\[[^\]]+\]\(([^)]+)\)")
 
 @dataclass(frozen=True)
 class Finding:
-    """Represent finding."""
+    """Represent finding.
+
+    Attributes:
+        path: Path maintained by this finding.
+        message: Message maintained by this finding.
+        line: Line maintained by this finding.
+    """
     path: Path
     message: str
     line: int | None = None

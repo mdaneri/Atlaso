@@ -50,7 +50,18 @@ class KeyStateError(KeyStoreError):
 
 @dataclass(frozen=True)
 class StoredKey:
-    """Represent stored key."""
+    """Represent stored key.
+
+    Attributes:
+        provider_id: Identifier of the associated provider.
+        key_id: Identifier of the associated key.
+        algorithm: Algorithm maintained by this storedkey.
+        length: Length maintained by this storedkey.
+        name: Operator-facing name of the resource.
+        state: Current lifecycle state.
+        created_at: UTC timestamp when the resource was created.
+        activated_at: UTC timestamp associated with activated.
+    """
     provider_id: str
     key_id: str
     algorithm: str
@@ -63,7 +74,15 @@ class StoredKey:
 
 @dataclass(frozen=True)
 class _KekEnvelope:
-    """Represent kek envelope."""
+    """Represent kek envelope.
+
+    Attributes:
+        kek: Kek maintained by this kekenvelope.
+        generation: Generation maintained by this kekenvelope.
+        commitment: Commitment maintained by this kekenvelope.
+        pending_generation: Pending generation maintained by this kekenvelope.
+        pending_commitment: Pending commitment maintained by this kekenvelope.
+    """
     kek: bytes
     generation: int
     commitment: str
@@ -306,7 +325,12 @@ def _store_commitment(connection: sqlite3.Connection) -> str:
 
 
 class WrappedKeyStore:
-    """SQLite metadata store whose only key material is AES-GCM wrapped."""
+    """SQLite metadata store whose only key material is AES-GCM wrapped.
+
+    Attributes:
+        database_path: Filesystem path used for database.
+        kek_path: Filesystem path used for kek.
+    """
 
     def __init__(self, database_path: Path, kek_path: Path, *, secrets_key: str) -> None:
         """Initialize the wrapped key store.

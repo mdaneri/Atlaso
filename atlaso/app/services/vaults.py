@@ -25,7 +25,20 @@ VAULT_URI_LIMIT = 9
 
 @dataclass(frozen=True)
 class VaultEntryInput:
-    """Represent vault entry input."""
+    """Represent vault entry input.
+
+    Attributes:
+        key: Key maintained by this vaultentryinput.
+        secret_type: Secret type maintained by this vaultentryinput.
+        value: Value maintained by this vaultentryinput.
+        description: Operator-facing purpose or context for the resource.
+        username: Username maintained by this vaultentryinput.
+        resource_name: Resource name maintained by this vaultentryinput.
+        source_type: Source type maintained by this vaultentryinput.
+        source_endpoint: Source endpoint maintained by this vaultentryinput.
+        uris: Uris maintained by this vaultentryinput.
+        imported_at: UTC timestamp associated with imported.
+    """
     key: str
     secret_type: str
     value: str

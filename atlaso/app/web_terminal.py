@@ -65,7 +65,19 @@ MAX_OUTPUT_BACKLOG = 1024 * 1024
 
 @dataclass
 class TerminalTicket:
-    """Represent terminal ticket."""
+    """Represent terminal ticket.
+
+    Attributes:
+        user_id: Identifier of the associated user.
+        username: Username maintained by this terminalticket.
+        csrf_token: Csrf token maintained by this terminalticket.
+        browser_session_id: Identifier of the associated browser session.
+        takeover: Takeover maintained by this terminalticket.
+        expires_at: UTC timestamp after which the resource is no longer valid.
+        remote_entry_id: Identifier of the associated remote entry.
+        remote_uri_index: Remote uri index maintained by this terminalticket.
+        remote_fingerprint: Remote fingerprint maintained by this terminalticket.
+    """
     user_id: int
     username: str
     csrf_token: str
@@ -79,7 +91,15 @@ class TerminalTicket:
 
 @dataclass
 class RemoteTerminalLaunch:
-    """Represent remote terminal launch."""
+    """Represent remote terminal launch.
+
+    Attributes:
+        user_id: Identifier of the associated user.
+        entry_id: Identifier of the associated entry.
+        uri_index: Uri index maintained by this remoteterminallaunch.
+        fingerprint: Fingerprint maintained by this remoteterminallaunch.
+        expires_at: UTC timestamp after which the resource is no longer valid.
+    """
     user_id: int
     entry_id: int
     uri_index: int
@@ -89,7 +109,26 @@ class RemoteTerminalLaunch:
 
 @dataclass
 class ActiveTerminalSession:
-    """Represent active terminal session."""
+    """Represent active terminal session.
+
+    Attributes:
+        user_id: Identifier of the associated user.
+        username: Username maintained by this activeterminalsession.
+        display_username: Display username maintained by this activeterminalsession.
+        target_key: Target key maintained by this activeterminalsession.
+        browser_session_id: Identifier of the associated browser session.
+        session_id: Identifier of the associated session.
+        transport: Transport maintained by this activeterminalsession.
+        channel: Channel maintained by this activeterminalsession.
+        started: Started maintained by this activeterminalsession.
+        last_input: Last input maintained by this activeterminalsession.
+        detached_at: UTC timestamp associated with detached.
+        websocket: Websocket maintained by this activeterminalsession.
+        output: Output maintained by this activeterminalsession.
+        send_lock: Send lock maintained by this activeterminalsession.
+        close_reason: Close reason maintained by this activeterminalsession.
+        reader_task: Reader task maintained by this activeterminalsession.
+    """
     user_id: int
     username: str
     display_username: str

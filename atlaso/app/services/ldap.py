@@ -52,7 +52,17 @@ LDAP_PENDING_RECOVERY_PAYLOADS: dict[int, bytes] = {}
 
 @dataclass(frozen=True)
 class VcfLdapInspection:
-    """Represent vcf ldap inspection."""
+    """Represent vcf ldap inspection.
+
+    Attributes:
+        target_url: URL used for target.
+        organization_id: Identifier of the associated organization.
+        organization_name: Organization name maintained by this vcfldapinspection.
+        tls_fingerprint: Tls fingerprint maintained by this vcfldapinspection.
+        current_settings: Current settings maintained by this vcfldapinspection.
+        proposed_settings: Proposed settings maintained by this vcfldapinspection.
+        changed: Changed maintained by this vcfldapinspection.
+    """
     target_url: str
     organization_id: str
     organization_name: str
@@ -872,7 +882,20 @@ def tls_sha256_fingerprint(target_url: str, *, timeout_seconds: float = 10) -> s
 
 
 class VcfAutomationLdapClient:
-    """Represent vcf automation ldap client."""
+    """Represent vcf automation ldap client.
+
+    Attributes:
+        API_VERSION: Symbolic value representing '9.1.0'.
+        target_url: URL used for target.
+        username: Username maintained by this vcfautomationldapclient.
+        password: Password maintained by this vcfautomationldapclient.
+        organization_id: Identifier of the associated organization.
+        confirmed_tls_fingerprint: Confirmed tls fingerprint maintained by this
+            vcfautomationldapclient.
+        timeout_seconds: Timeout duration in seconds.
+        token: Token maintained by this vcfautomationldapclient.
+        headers: Return headers.
+    """
     API_VERSION = "9.1.0"
 
     def __init__(

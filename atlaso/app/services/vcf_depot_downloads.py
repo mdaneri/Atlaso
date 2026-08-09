@@ -20,7 +20,11 @@ VCF_DEPOT_TASK_LOG_DIR = "/var/lib/atlaso/vcfDownloadTool/task-logs"
 
 
 class ActiveVcfDepotDownloadError(ValueError):
-    """Report a active vcf depot download error."""
+    """Report a active vcf depot download error.
+
+    Attributes:
+        active_job_id: Identifier of the associated active job.
+    """
     def __init__(self, active_job_id: str) -> None:
         """Initialize the active vcf depot download error."""
         self.active_job_id = active_job_id

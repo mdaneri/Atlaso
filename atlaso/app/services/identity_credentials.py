@@ -22,7 +22,17 @@ from atlaso.app.services.ldap import ldap_user_dn
 
 @dataclass(frozen=True)
 class VerifiedIdentity:
-    """Represent verified identity."""
+    """Represent verified identity.
+
+    Attributes:
+        source: Source maintained by this verifiedidentity.
+        source_record_id: Identifier of the associated source record.
+        username: Username maintained by this verifiedidentity.
+        display_name: Display name maintained by this verifiedidentity.
+        email: Email maintained by this verifiedidentity.
+        organization_id: Identifier of the associated organization.
+        organization_name: Organization name maintained by this verifiedidentity.
+    """
     source: str
     source_record_id: int
     username: str

@@ -31,7 +31,19 @@ SAFE_NAME_PATTERN = re.compile(r"[^A-Za-z0-9_.-]+")
 
 @dataclass(frozen=True)
 class ManagedCertificateSpec:
-    """Represent managed certificate spec."""
+    """Represent managed certificate spec.
+
+    Attributes:
+        owner: Owner maintained by this managedcertificatespec.
+        common_name: Common name maintained by this managedcertificatespec.
+        dns_names: Dns names maintained by this managedcertificatespec.
+        ip_addresses: Ip addresses maintained by this managedcertificatespec.
+        profile_name: Profile name maintained by this managedcertificatespec.
+        description: Operator-facing purpose or context for the resource.
+        cert_path: Filesystem path used for cert.
+        key_path: Filesystem path used for key.
+        chain_path: Filesystem path used for chain.
+    """
     owner: str
     common_name: str
     dns_names: list[str]

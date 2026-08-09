@@ -22,7 +22,13 @@ HASH_RE = re.compile(r"--hash=sha256:[0-9a-f]{64}")
 
 @dataclass(frozen=True)
 class LockPolicy:
-    """Represent lock policy."""
+    """Represent lock policy.
+
+    Attributes:
+        path: Path maintained by this lockpolicy.
+        inputs: Inputs maintained by this lockpolicy.
+        allow_unsafe: Whether unsafe is permitted.
+    """
     path: str
     inputs: tuple[str, ...]
     allow_unsafe: bool

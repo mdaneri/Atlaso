@@ -29,7 +29,48 @@ from atlaso.app.kmip.ttlv import (
 
 
 class Tag(IntEnum):
-    """Represent tag."""
+    """Represent tag.
+
+    Attributes:
+        ACTIVATION_DATE: Symbolic value representing 4325377.
+        ATTRIBUTE: Symbolic value representing 4325384.
+        ATTRIBUTE_NAME: Symbolic value representing 4325386.
+        ATTRIBUTE_VALUE: Symbolic value representing 4325387.
+        BATCH_COUNT: Symbolic value representing 4325389.
+        BATCH_ITEM: Symbolic value representing 4325391.
+        CRYPTOGRAPHIC_ALGORITHM: Symbolic value representing 4325416.
+        CRYPTOGRAPHIC_LENGTH: Symbolic value representing 4325418.
+        CRYPTOGRAPHIC_USAGE_MASK: Symbolic value representing 4325420.
+        KEY_BLOCK: Symbolic value representing 4325440.
+        KEY_FORMAT_TYPE: Symbolic value representing 4325442.
+        KEY_MATERIAL: Symbolic value representing 4325443.
+        KEY_VALUE: Symbolic value representing 4325445.
+        MAXIMUM_RESPONSE_SIZE: Symbolic value representing 4325456.
+        NAME: Symbolic value representing 4325459.
+        NAME_TYPE: Symbolic value representing 4325460.
+        NAME_VALUE: Symbolic value representing 4325461.
+        OBJECT_TYPE: Symbolic value representing 4325463.
+        OPERATION: Symbolic value representing 4325468.
+        PROTOCOL_VERSION: Symbolic value representing 4325481.
+        PROTOCOL_VERSION_MAJOR: Symbolic value representing 4325482.
+        PROTOCOL_VERSION_MINOR: Symbolic value representing 4325483.
+        QUERY_FUNCTION: Symbolic value representing 4325492.
+        REQUEST_HEADER: Symbolic value representing 4325495.
+        REQUEST_MESSAGE: Symbolic value representing 4325496.
+        REQUEST_PAYLOAD: Symbolic value representing 4325497.
+        RESPONSE_HEADER: Symbolic value representing 4325498.
+        RESPONSE_MESSAGE: Symbolic value representing 4325499.
+        RESPONSE_PAYLOAD: Symbolic value representing 4325500.
+        RESULT_MESSAGE: Symbolic value representing 4325501.
+        RESULT_REASON: Symbolic value representing 4325502.
+        RESULT_STATUS: Symbolic value representing 4325503.
+        STATE: Symbolic value representing 4325517.
+        SYMMETRIC_KEY: Symbolic value representing 4325519.
+        TEMPLATE_ATTRIBUTE: Symbolic value representing 4325521.
+        TIME_STAMP: Symbolic value representing 4325522.
+        UNIQUE_IDENTIFIER: Symbolic value representing 4325524.
+        VENDOR_IDENTIFICATION: Symbolic value representing 4325533.
+    """
     ACTIVATION_DATE = 0x420001
     ATTRIBUTE = 0x420008
     ATTRIBUTE_NAME = 0x42000A
@@ -71,7 +112,18 @@ class Tag(IntEnum):
 
 
 class Operation(IntEnum):
-    """Represent operation."""
+    """Represent operation.
+
+    Attributes:
+        CREATE: Symbolic value representing 1.
+        LOCATE: Symbolic value representing 8.
+        GET: Symbolic value representing 10.
+        GET_ATTRIBUTES: Symbolic value representing 11.
+        GET_ATTRIBUTE_LIST: Symbolic value representing 12.
+        ACTIVATE: Symbolic value representing 18.
+        QUERY: Symbolic value representing 24.
+        DISCOVER_VERSIONS: Symbolic value representing 30.
+    """
     CREATE = 0x00000001
     LOCATE = 0x00000008
     GET = 0x0000000A
@@ -83,13 +135,28 @@ class Operation(IntEnum):
 
 
 class ResultStatus(IntEnum):
-    """Represent result status."""
+    """Represent result status.
+
+    Attributes:
+        SUCCESS: Symbolic value representing 0.
+        OPERATION_FAILED: Symbolic value representing 1.
+    """
     SUCCESS = 0
     OPERATION_FAILED = 1
 
 
 class ResultReason(IntEnum):
-    """Represent result reason."""
+    """Represent result reason.
+
+    Attributes:
+        ITEM_NOT_FOUND: Symbolic value representing 1.
+        INVALID_MESSAGE: Symbolic value representing 4.
+        OPERATION_NOT_SUPPORTED: Symbolic value representing 5.
+        MISSING_DATA: Symbolic value representing 6.
+        INVALID_FIELD: Symbolic value representing 7.
+        KEY_FORMAT_TYPE_NOT_SUPPORTED: Symbolic value representing 16.
+        GENERAL_FAILURE: Symbolic value representing 256.
+    """
     ITEM_NOT_FOUND = 1
     INVALID_MESSAGE = 4
     OPERATION_NOT_SUPPORTED = 5
@@ -100,7 +167,13 @@ class ResultReason(IntEnum):
 
 
 class QueryFunction(IntEnum):
-    """Represent query function."""
+    """Represent query function.
+
+    Attributes:
+        OPERATIONS: Symbolic value representing 1.
+        OBJECTS: Symbolic value representing 2.
+        SERVER_INFORMATION: Symbolic value representing 3.
+    """
     OPERATIONS = 1
     OBJECTS = 2
     SERVER_INFORMATION = 3
@@ -128,7 +201,12 @@ ATTRIBUTE_TAGS = {
 
 @dataclass(frozen=True)
 class ProtocolFailure(Exception):
-    """Represent protocol failure."""
+    """Represent protocol failure.
+
+    Attributes:
+        reason: Reason maintained by this protocolfailure.
+        message: Message maintained by this protocolfailure.
+    """
     reason: ResultReason
     message: str
 
@@ -351,7 +429,11 @@ def _unique_identifier(payload: Ttlv) -> str:
 
 
 class KmipDispatcher:
-    """Dispatch the exact candidate operation set inside one provider namespace."""
+    """Dispatch the exact candidate operation set inside one provider namespace.
+
+    Attributes:
+        store: Store maintained by this kmipdispatcher.
+    """
 
     def __init__(self, store: WrappedKeyStore) -> None:
         """Initialize the kmip dispatcher."""

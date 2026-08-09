@@ -3687,7 +3687,12 @@ def test_local_users_helper_authenticates_shadow_password_without_leaking(monkey
     helper = load_helper_module()
 
     class FakeCrypt:
-        """Represent fake crypt."""
+        """Represent fake crypt.
+
+        Attributes:
+            argtypes: Argtypes captured or supplied by this test helper.
+            restype: Restype captured or supplied by this test helper.
+        """
         argtypes = None
         restype = None
 
@@ -3701,7 +3706,11 @@ def test_local_users_helper_authenticates_shadow_password_without_leaking(monkey
             return password_hash if password == b"Depot-user1!" else b"$6$not-a-match"
 
     class FakeCryptLibrary:
-        """Represent fake crypt library."""
+        """Represent fake crypt library.
+
+        Attributes:
+            crypt: Crypt captured or supplied by this test helper.
+        """
         crypt = FakeCrypt()
 
     monkeypatch.setattr(helper, "_shadow_hash_for_user", lambda username: "$6$rounds=5000$valid-hash")
@@ -3727,7 +3736,13 @@ def test_ldap_helper_authenticates_with_mode_0600_password_file_and_redacts(monk
     seen: dict[str, object] = {}
 
     class ManagedTemporaryFile:
-        """Represent managed temporary file."""
+        """Represent managed temporary file.
+
+        Attributes:
+            path: Path captured or supplied by this test helper.
+            handle: Handle captured or supplied by this test helper.
+            name: Operator-facing name of the resource.
+        """
         def __init__(self, **_kwargs):
             """Initialize the managed temporary file."""
             self.path = tmp_path / "ldap-password"
@@ -3811,7 +3826,12 @@ def test_local_users_helper_authentication_rejects_locked_missing_and_unsupporte
         assert helper.main(["atlaso-helper", "local-users", "authenticate", "--real", "vcf-depot"]) == 1
 
     class UnsupportedCrypt:
-        """Represent unsupported crypt."""
+        """Represent unsupported crypt.
+
+        Attributes:
+            argtypes: Argtypes captured or supplied by this test helper.
+            restype: Restype captured or supplied by this test helper.
+        """
         argtypes = None
         restype = None
 
@@ -4705,7 +4725,13 @@ def test_vcf_offline_depot_helper_prepares_atlaso_vcfdt_home(monkeypatch, tmp_pa
     chowned: list[tuple[Path, int, int]] = []
 
     class Account:
-        """Represent account."""
+        """Represent account.
+
+        Attributes:
+            pw_dir: Pw dir captured or supplied by this test helper.
+            pw_uid: Pw uid captured or supplied by this test helper.
+            pw_gid: Pw gid captured or supplied by this test helper.
+        """
         pw_dir = str(state_home)
         pw_uid = 1200
         pw_gid = 1200
@@ -4919,7 +4945,12 @@ def test_vcf_offline_depot_helper_applies_vcfdt_application_properties(monkeypat
     chmodded: list[tuple[Path, int]] = []
 
     class Account:
-        """Represent account."""
+        """Represent account.
+
+        Attributes:
+            pw_uid: Pw uid captured or supplied by this test helper.
+            pw_gid: Pw gid captured or supplied by this test helper.
+        """
         pw_uid = 1200
         pw_gid = 1200
 
@@ -5818,7 +5849,11 @@ def test_ntpd_helper_apply_grants_ntp_group_read_to_nts_key(monkeypatch, tmp_pat
     chown_calls: list[tuple[Path, int, int]] = []
 
     class NTPsecGroup:
-        """Represent ntpsec group."""
+        """Represent ntpsec group.
+
+        Attributes:
+            gr_gid: Gr gid captured or supplied by this test helper.
+        """
         gr_gid = 44
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:

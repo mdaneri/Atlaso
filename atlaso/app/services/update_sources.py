@@ -142,6 +142,7 @@ def effective_update_settings(db: Session, *, stored: dict[str, str] | None = No
 
 
 def unsynchronized_powershell_repositories(settings: dict[str, Any]) -> list[str]:
+    """Handle unsynchronized powershell repositories."""
     modules = settings.get("powershell_modules")
     referenced = {
         str(module.get("repository_name") or "").strip()
@@ -163,6 +164,7 @@ def unsynchronized_powershell_repositories(settings: dict[str, Any]) -> list[str
 
 
 def unsynchronized_photon_repositories(settings: dict[str, Any]) -> list[str]:
+    """Handle unsynchronized photon repositories."""
     definitions = settings.get("source_definitions")
     if not isinstance(definitions, list):
         return []

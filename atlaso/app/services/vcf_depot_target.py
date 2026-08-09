@@ -28,7 +28,14 @@ class VcfDepotTargetPartialError(VcfDepotTargetError):
 
 @dataclass(frozen=True)
 class LocalDepotEndpoint:
-    """Represent local depot endpoint."""
+    """Represent local depot endpoint.
+
+    Attributes:
+        hostname: Hostname maintained by this localdepotendpoint.
+        port: Port maintained by this localdepotendpoint.
+        url: Url maintained by this localdepotendpoint.
+        username: Username maintained by this localdepotendpoint.
+    """
     hostname: str
     port: int
     url: str
@@ -68,7 +75,13 @@ def depot_matches(remote: dict[str, Any], local: LocalDepotEndpoint) -> bool:
 
 
 class VcfDepotApiClient:
-    """Represent vcf depot api client."""
+    """Represent vcf depot api client.
+
+    Attributes:
+        client: Client maintained by this vcfdepotapiclient.
+        username: Username maintained by this vcfdepotapiclient.
+        password: Password maintained by this vcfdepotapiclient.
+    """
     def __init__(self, address: str, username: str, password: str, *, port: int = 443, timeout: float = 30.0, expected_fingerprint: str = ""):
         """Initialize the vcf depot api client.
 

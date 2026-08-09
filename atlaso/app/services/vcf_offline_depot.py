@@ -108,7 +108,13 @@ VCF_DEPOT_INVALID_ARCHIVE_MESSAGE = "VCF Download Tool archive appears incomplet
 
 @dataclass(frozen=True)
 class SecretState:
-    """Represent secret state."""
+    """Represent secret state.
+
+    Attributes:
+        present: Present maintained by this secretstate.
+        filename: Filename maintained by this secretstate.
+        updated_at: UTC timestamp when the resource was last updated.
+    """
     present: bool
     filename: str = ""
     updated_at: str = ""
@@ -116,7 +122,14 @@ class SecretState:
 
 @dataclass(frozen=True)
 class SoftwareDepotIdResult:
-    """Represent software depot id result."""
+    """Represent software depot id result.
+
+    Attributes:
+        success: Success maintained by this softwaredepotidresult.
+        software_depot_id: Identifier of the associated software depot.
+        command: Command maintained by this softwaredepotidresult.
+        error: Failure detail recorded for the latest unsuccessful operation.
+    """
     success: bool
     software_depot_id: str
     command: list[str]

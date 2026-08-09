@@ -16,7 +16,12 @@ ENCRYPTED_VALUE_PREFIX = "fernet:v1:"
 
 @dataclass(frozen=True)
 class SecretKeyStatus:
-    """Represent secret key status."""
+    """Represent secret key status.
+
+    Attributes:
+        dedicated: Dedicated maintained by this secretkeystatus.
+        source: Source maintained by this secretkeystatus.
+    """
     dedicated: bool
     source: str
 

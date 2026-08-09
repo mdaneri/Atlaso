@@ -3243,7 +3243,11 @@ def test_boot_media_downloader_rejects_https_downgrade_redirect():
 def test_boot_media_downloader_rejects_declared_oversize(monkeypatch, tmp_path):
     """Verify that boot media downloader rejects declared oversize."""
     class FakeResponse:
-        """Represent fake response."""
+        """Represent fake response.
+
+        Attributes:
+            headers: Headers captured or supplied by this test helper.
+        """
         headers = {"Content-Length": "11"}
 
         def geturl(self):
@@ -3274,7 +3278,11 @@ def test_boot_media_downloader_rejects_declared_oversize(monkeypatch, tmp_path):
 def test_boot_media_downloader_retries_transient_open_failure(monkeypatch, tmp_path):
     """Verify that boot media downloader retries transient open failure."""
     class FakeResponse:
-        """Represent fake response."""
+        """Represent fake response.
+
+        Attributes:
+            headers: Headers captured or supplied by this test helper.
+        """
         headers = {"Content-Length": "5"}
 
         def geturl(self):
@@ -4190,7 +4198,11 @@ def test_media_sync_fsyncs_tree_and_published_directory_before_database_record(
     use_test_shredos_extractor(monkeypatch)
 
     class RecordingLock:
-        """Represent recording lock."""
+        """Represent recording lock.
+
+        Attributes:
+            held: Held captured or supplied by this test helper.
+        """
         def __init__(self, _media_root):
             """Initialize the recording lock."""
             self.held = False

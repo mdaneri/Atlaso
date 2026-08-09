@@ -7,7 +7,17 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ProblemDetails(BaseModel):
-    """Validated fields used by the Atlaso problem details API contract."""
+    """Validated fields used by the Atlaso problem details API contract.
+
+    Attributes:
+        type: Stable URI identifying the problem or resource type.
+        title: Short human-readable summary of the response or problem.
+        status: Returned status value for this problem details resource.
+        detail: Human-readable detail explaining the current state or failure.
+        instance: Request path associated with this problem response.
+        error_code: Stable Atlaso error identifier suitable for programmatic handling.
+        request_id: Request correlation identifier included in responses and operational logs.
+    """
 
     type: Annotated[str, Field(description='Stable URI identifying the problem or resource type.')]
     title: Annotated[str, Field(description='Short human-readable summary of the response or problem.')]
@@ -19,7 +29,14 @@ class ProblemDetails(BaseModel):
 
 
 class ApplianceVersionResponse(BaseModel):
-    """Public build identity returned by the appliance version endpoint."""
+    """Public build identity returned by the appliance version endpoint.
+
+    Attributes:
+        version: Full Atlaso package version, including build metadata when present.
+        base_version: Semantic Atlaso release version without local build metadata.
+        git_commit: Source Git commit recorded when this Atlaso build was produced.
+        built_at: UTC build timestamp recorded in the installed Atlaso package metadata.
+    """
 
     version: Annotated[str, Field(description='Full Atlaso package version, including build metadata when present.')]
     base_version: Annotated[str, Field(description='Semantic Atlaso release version without local build metadata.')]
@@ -28,7 +45,16 @@ class ApplianceVersionResponse(BaseModel):
 
 
 class IdentityResponse(BaseModel):
-    """Fields returned by the Atlaso identity API."""
+    """Fields returned by the Atlaso identity API.
+
+    Attributes:
+        username: Returned username value for this identity resource.
+        role: Primary compatibility role for the identity; authorization uses the complete roles
+            collection.
+        roles: Normalized Atlaso roles assigned to or effective for the identity.
+        scopes: Normalized Atlaso API scopes granted to the identity or token.
+        auth_type: Authentication mechanism that established the current identity.
+    """
 
     username: Annotated[str, Field(description='Returned username value for this identity resource.')]
     role: Annotated[str, Field(description='Primary compatibility role for the identity; authorization uses the complete roles collection.')]
@@ -38,7 +64,14 @@ class IdentityResponse(BaseModel):
 
 
 class ApiTokenCreate(BaseModel):
-    """Fields accepted when creating a api token resource."""
+    """Fields accepted when creating a api token resource.
+
+    Attributes:
+        name: Stable operator-facing name of this resource.
+        description: Operator-facing purpose or context for this resource.
+        expires_at: UTC timestamp after which the resource or credential is no longer accepted.
+        scopes: Normalized Atlaso API scopes granted to the identity or token.
+    """
 
     name: Annotated[str, Field(description='Stable operator-facing name of this resource.')] = Field(min_length=1, max_length=120)
     description: Annotated[str | None, Field(description='Operator-facing purpose or context for this resource.')] = None
@@ -47,7 +80,29 @@ class ApiTokenCreate(BaseModel):
 
 
 class ApiTokenResponse(BaseModel):
-    """Fields returned by the Atlaso api token API."""
+    """Fields returned by the Atlaso api token API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+        jti: Unique JWT identifier used to track and revoke the issued token.
+        name: Stable operator-facing name of this resource.
+        description: Operator-facing purpose or context for this resource.
+        owner_user_id: Stable identifier of the related owner user resource.
+        owner_username: Returned owner username value for this api token resource.
+        token_type: Returned token type value for this api token resource.
+        role: Primary compatibility role for the identity; authorization uses the complete roles
+            collection.
+        roles: Normalized Atlaso roles assigned to or effective for the identity.
+        scopes: Normalized Atlaso API scopes granted to the identity or token.
+        created_at: UTC timestamp when the resource was created.
+        expires_at: UTC timestamp after which the resource or credential is no longer accepted.
+        last_used_at: UTC timestamp of the token's most recent successful use, or null when it has
+            never been used.
+        revoked_at: UTC timestamp when the credential or resource was revoked, or null while active.
+        revoked_by: Atlaso account name that revoked the resource, or null when it remains active.
+        enabled: Whether the resource is enabled in saved Atlaso state.
+        signing_key_id: Stable identifier of the related signing key resource.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -71,14 +126,29 @@ class ApiTokenResponse(BaseModel):
 
 
 class ApiTokenCreated(BaseModel):
-    """Fields returned by the Atlaso api token API."""
+    """Fields returned by the Atlaso api token API.
+
+    Attributes:
+        token: Structured metadata describing the API token associated with this response.
+        raw_token: One-time plaintext bearer token returned only at creation; store it securely
+            because Atlaso cannot show it again.
+    """
 
     token: Annotated[ApiTokenResponse, Field(description='Structured metadata describing the API token associated with this response.')]
     raw_token: Annotated[str, Field(description='One-time plaintext bearer token returned only at creation; store it securely because Atlaso cannot show it again.')]
 
 
 class ServiceStateResponse(BaseModel):
-    """Fields returned by the Atlaso service state API."""
+    """Fields returned by the Atlaso service state API.
+
+    Attributes:
+        service: Returned service value for this service state resource.
+        display_name: Returned display name value for this service state resource.
+        running: Whether the backing runtime service is currently reported as running.
+        enabled: Whether the resource is enabled in saved Atlaso state.
+        health: Returned health value for this service state resource.
+        detail: Human-readable detail explaining the current state or failure.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -91,7 +161,21 @@ class ServiceStateResponse(BaseModel):
 
 
 class FirewallSettingsUpdate(BaseModel):
-    """Fields accepted when updating or operating on a firewall settings resource."""
+    """Fields accepted when updating or operating on a firewall settings resource.
+
+    Attributes:
+        enabled: Whether the resource is enabled in saved Atlaso state.
+        default_input_policy: Requested default input policy value for this firewall settings
+            resource.
+        default_forward_policy: Requested default forward policy value for this firewall settings
+            resource.
+        default_output_policy: Requested default output policy value for this firewall settings
+            resource.
+        allow_established: Whether allow established is enabled for this firewall settings resource.
+        allow_loopback: Whether allow loopback is enabled for this firewall settings resource.
+        allow_icmp: Whether allow icmp is enabled for this firewall settings resource.
+        log_dropped: Whether log dropped is enabled for this firewall settings resource.
+    """
 
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')] = False
     default_input_policy: Annotated[str, Field(description='Requested default input policy value for this firewall settings resource.')] = "drop"
@@ -104,7 +188,14 @@ class FirewallSettingsUpdate(BaseModel):
 
 
 class FirewallSettingsResponse(FirewallSettingsUpdate):
-    """Fields returned by the Atlaso firewall settings API."""
+    """Fields returned by the Atlaso firewall settings API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+        config_path: Appliance path where the rendered configuration is staged or installed; it is
+            not a free-form input.
+        updated_at: UTC timestamp when the resource was last updated.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -114,7 +205,22 @@ class FirewallSettingsResponse(FirewallSettingsUpdate):
 
 
 class FirewallRuleCreate(BaseModel):
-    """Fields accepted when creating a firewall rule resource."""
+    """Fields accepted when creating a firewall rule resource.
+
+    Attributes:
+        name: Stable operator-facing name of this resource.
+        direction: Requested direction value for this firewall rule resource.
+        action: Requested action value for this firewall rule resource.
+        protocol: Requested protocol value for this firewall rule resource.
+        source: Validated network or address value for source in this firewall rule resource.
+        destination: Validated network or address value for destination in this firewall rule
+            resource.
+        destination_port: TCP or UDP destination port in the valid 1 through 65535 range.
+        interface_name: Requested interface name value for this firewall rule resource.
+        priority: Requested priority value for this firewall rule resource.
+        enabled: Whether the resource is enabled in saved Atlaso state.
+        description: Operator-facing purpose or context for this resource.
+    """
 
     name: Annotated[str, Field(description='Stable operator-facing name of this resource.')] = Field(min_length=1, max_length=120)
     direction: Annotated[str, Field(description='Requested direction value for this firewall rule resource.')] = "input"
@@ -130,7 +236,13 @@ class FirewallRuleCreate(BaseModel):
 
 
 class FirewallRuleResponse(FirewallRuleCreate):
-    """Fields returned by the Atlaso firewall rule API."""
+    """Fields returned by the Atlaso firewall rule API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+        created_at: UTC timestamp when the resource was created.
+        updated_at: UTC timestamp when the resource was last updated.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -140,7 +252,16 @@ class FirewallRuleResponse(FirewallRuleCreate):
 
 
 class FirewallStatusResponse(BaseModel):
-    """Fields returned by the Atlaso firewall status API."""
+    """Fields returned by the Atlaso firewall status API.
+
+    Attributes:
+        enabled: Whether the resource is enabled in saved Atlaso state.
+        service: Returned service value for this firewall status resource.
+        rule_count: Number of rule records represented by this firewall status response.
+        config_path: Appliance path where the rendered configuration is staged or installed; it is
+            not a free-form input.
+        dry_run: Whether the operation reports command intent without mutating appliance host state.
+    """
 
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')]
     service: Annotated[ServiceStateResponse | None, Field(description='Returned service value for this firewall status resource.')]
@@ -150,7 +271,23 @@ class FirewallStatusResponse(BaseModel):
 
 
 class VcfBackupStatusResponse(BaseModel):
-    """Fields returned by the Atlaso vcf backup status API."""
+    """Fields returned by the Atlaso vcf backup status API.
+
+    Attributes:
+        enabled: Whether the resource is enabled in saved Atlaso state.
+        service: Returned service value for this vcf backup status resource.
+        listen_interface: Saved access interface or enabled VLAN used as the service bind target.
+        listen_address: Derived IP address on which the service listens; operators select an
+            interface rather than entering this value directly.
+        port: TCP or UDP port in the valid 1 through 65535 range.
+        sftp_username: Returned sftp username value for this vcf backup status resource.
+        storage_path: Canonical filesystem or HTTP storage path used by Atlaso; callers must not
+            treat it as an unrestricted path.
+        remote_directory: Returned remote directory value for this vcf backup status resource.
+        config_path: Appliance path where the rendered configuration is staged or installed; it is
+            not a free-form input.
+        dry_run: Whether the operation reports command intent without mutating appliance host state.
+    """
 
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')]
     service: Annotated[ServiceStateResponse | None, Field(description='Returned service value for this vcf backup status resource.')]
@@ -165,14 +302,28 @@ class VcfBackupStatusResponse(BaseModel):
 
 
 class EsxStorageSettingsUpdate(BaseModel):
-    """Fields accepted when updating or operating on a esx storage settings resource."""
+    """Fields accepted when updating or operating on a esx storage settings resource.
+
+    Attributes:
+        enabled: Whether the resource is enabled in saved Atlaso state.
+        hostname: DNS hostname associated with the resource, normalized according to the endpoint
+            contract.
+    """
 
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')] = False
     hostname: Annotated[str, Field(description='DNS hostname associated with the resource, normalized according to the endpoint contract.')] = Field(default="nfs.atlaso.internal", min_length=1, max_length=253)
 
 
 class EsxStorageVolumeCreate(BaseModel):
-    """Fields accepted when creating a esx storage volume resource."""
+    """Fields accepted when creating a esx storage volume resource.
+
+    Attributes:
+        name: Stable operator-facing name of this resource.
+        source_type: Requested source type value for this esx storage volume resource.
+        stable_device_id: Stable identifier of the related stable device resource.
+        mount_path: Canonical filesystem or HTTP mount path used by Atlaso; callers must not treat
+            it as an unrestricted path.
+    """
 
     name: Annotated[str, Field(description='Stable operator-facing name of this resource.')] = Field(min_length=1, max_length=120)
     source_type: Annotated[Literal["blank_disk", "mounted_ext4"], Field(description='Requested source type value for this esx storage volume resource.')] = "blank_disk"
@@ -181,7 +332,14 @@ class EsxStorageVolumeCreate(BaseModel):
 
 
 class EsxStorageVolumeUpdate(BaseModel):
-    """Fields accepted when updating or operating on a esx storage volume resource."""
+    """Fields accepted when updating or operating on a esx storage volume resource.
+
+    Attributes:
+        name: Stable operator-facing name of this resource.
+        stable_device_id: Stable identifier of the related stable device resource.
+        mount_path: Canonical filesystem or HTTP mount path used by Atlaso; callers must not treat
+            it as an unrestricted path.
+    """
 
     name: Annotated[str | None, Field(description='Stable operator-facing name of this resource.')] = Field(default=None, min_length=1, max_length=120)
     stable_device_id: Annotated[str | None, Field(description='Stable identifier of the related stable device resource.')] = Field(default=None, max_length=500)
@@ -189,7 +347,28 @@ class EsxStorageVolumeUpdate(BaseModel):
 
 
 class EsxStorageVolumeResponse(BaseModel):
-    """Fields returned by the Atlaso esx storage volume API."""
+    """Fields returned by the Atlaso esx storage volume API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+        name: Stable operator-facing name of this resource.
+        source_type: Returned source type value for this esx storage volume resource.
+        stable_device_id: Stable identifier of the related stable device resource.
+        device_path: Canonical filesystem or HTTP device path used by Atlaso; callers must not treat
+            it as an unrestricted path.
+        device_model: Returned device model value for this esx storage volume resource.
+        device_serial: Returned device serial value for this esx storage volume resource.
+        device_wwn: Returned device wwn value for this esx storage volume resource.
+        capacity_bytes: Capacity bytes, measured in bytes.
+        filesystem_uuid: Returned filesystem uuid value for this esx storage volume resource.
+        filesystem_label: Returned filesystem label value for this esx storage volume resource.
+        mount_path: Canonical filesystem or HTTP mount path used by Atlaso; callers must not treat
+            it as an unrestricted path.
+        state: Returned state value for this esx storage volume resource.
+        applied: Whether applied is enabled for this esx storage volume resource.
+        created_at: UTC timestamp when the resource was created.
+        updated_at: UTC timestamp when the resource was last updated.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -212,7 +391,24 @@ class EsxStorageVolumeResponse(BaseModel):
 
 
 class EsxNfsShareCreate(BaseModel):
-    """Fields accepted when creating a esx nfs share resource."""
+    """Fields accepted when creating a esx nfs share resource.
+
+    Attributes:
+        datastore_name: Requested datastore name value for this esx nfs share resource.
+        volume_id: Stable identifier of the related volume resource.
+        relative_path: Canonical filesystem or HTTP relative path used by Atlaso; callers must not
+            treat it as an unrestricted path.
+        preferred_nfs_version: Requested preferred nfs version value for this esx nfs share
+            resource.
+        interface_name: Requested interface name value for this esx nfs share resource.
+        address_families: Ordered collection of address families values represented by this esx nfs
+            share schema.
+        ipv4_clients: Ordered collection of ipv4 clients values represented by this esx nfs share
+            schema.
+        ipv6_clients: Ordered collection of ipv6 clients values represented by this esx nfs share
+            schema.
+        enabled: Whether the resource is enabled in saved Atlaso state.
+    """
 
     datastore_name: Annotated[str, Field(description='Requested datastore name value for this esx nfs share resource.')] = Field(min_length=1, max_length=120)
     volume_id: Annotated[int, Field(description='Stable identifier of the related volume resource.')]
@@ -226,7 +422,24 @@ class EsxNfsShareCreate(BaseModel):
 
 
 class EsxNfsShareUpdate(BaseModel):
-    """Fields accepted when updating or operating on a esx nfs share resource."""
+    """Fields accepted when updating or operating on a esx nfs share resource.
+
+    Attributes:
+        datastore_name: Requested datastore name value for this esx nfs share resource.
+        volume_id: Stable identifier of the related volume resource.
+        relative_path: Canonical filesystem or HTTP relative path used by Atlaso; callers must not
+            treat it as an unrestricted path.
+        preferred_nfs_version: Requested preferred nfs version value for this esx nfs share
+            resource.
+        interface_name: Requested interface name value for this esx nfs share resource.
+        address_families: Ordered collection of address families values represented by this esx nfs
+            share schema.
+        ipv4_clients: Ordered collection of ipv4 clients values represented by this esx nfs share
+            schema.
+        ipv6_clients: Ordered collection of ipv6 clients values represented by this esx nfs share
+            schema.
+        enabled: Whether the resource is enabled in saved Atlaso state.
+    """
 
     datastore_name: Annotated[str | None, Field(description='Requested datastore name value for this esx nfs share resource.')] = Field(default=None, min_length=1, max_length=120)
     volume_id: Annotated[int | None, Field(description='Stable identifier of the related volume resource.')] = None
@@ -240,7 +453,36 @@ class EsxNfsShareUpdate(BaseModel):
 
 
 class EsxNfsShareResponse(BaseModel):
-    """Fields returned by the Atlaso esx nfs share API."""
+    """Fields returned by the Atlaso esx nfs share API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+        datastore_name: Returned datastore name value for this esx nfs share resource.
+        volume_id: Stable identifier of the related volume resource.
+        volume_name: Returned volume name value for this esx nfs share resource.
+        relative_path: Canonical filesystem or HTTP relative path used by Atlaso; callers must not
+            treat it as an unrestricted path.
+        preferred_nfs_version: Returned preferred nfs version value for this esx nfs share resource.
+        interface_name: Returned interface name value for this esx nfs share resource.
+        address_families: Ordered collection of address families values represented by this esx nfs
+            share schema.
+        ipv4_clients: Ordered collection of ipv4 clients values represented by this esx nfs share
+            schema.
+        ipv6_clients: Ordered collection of ipv6 clients values represented by this esx nfs share
+            schema.
+        listeners: Ordered collection of listeners values represented by this esx nfs share schema.
+        target_hostnames: Ordered collection of target hostnames values represented by this esx nfs
+            share schema.
+        local_path: Canonical filesystem or HTTP local path used by Atlaso; callers must not treat
+            it as an unrestricted path.
+        remote_path: Canonical filesystem or HTTP remote path used by Atlaso; callers must not treat
+            it as an unrestricted path.
+        connection_commands: Ordered collection of connection commands values represented by this
+            esx nfs share schema.
+        powercli_commands: Ordered collection of powercli commands values represented by this esx
+            nfs share schema.
+        enabled: Whether the resource is enabled in saved Atlaso state.
+    """
 
     id: Annotated[int, Field(description='Unique database identifier assigned to this resource.')]
     datastore_name: Annotated[str, Field(description='Returned datastore name value for this esx nfs share resource.')]
@@ -262,7 +504,22 @@ class EsxNfsShareResponse(BaseModel):
 
 
 class EsxStorageStatusResponse(BaseModel):
-    """Fields returned by the Atlaso esx storage status API."""
+    """Fields returned by the Atlaso esx storage status API.
+
+    Attributes:
+        enabled: Whether the resource is enabled in saved Atlaso state.
+        hostname: DNS hostname associated with the resource, normalized according to the endpoint
+            contract.
+        valid: Whether the represented desired state passed Atlaso validation.
+        validation_errors: Actionable validation failures that must be corrected before the state
+            can be applied.
+        validation_warnings: Non-blocking validation warnings that the operator should review.
+        volume_count: Number of volume records represented by this esx storage status response.
+        share_count: Number of share records represented by this esx storage status response.
+        active_share_count: Number of active share records represented by this esx storage status
+            response.
+        dry_run: Whether the operation reports command intent without mutating appliance host state.
+    """
 
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')]
     hostname: Annotated[str, Field(description='DNS hostname associated with the resource, normalized according to the endpoint contract.')]
@@ -276,7 +533,25 @@ class EsxStorageStatusResponse(BaseModel):
 
 
 class EsxStorageDiskResponse(BaseModel):
-    """Fields returned by the Atlaso esx storage disk API."""
+    """Fields returned by the Atlaso esx storage disk API.
+
+    Attributes:
+        candidate_type: Returned candidate type value for this esx storage disk resource.
+        stable_device_id: Stable identifier of the related stable device resource.
+        device_path: Canonical filesystem or HTTP device path used by Atlaso; callers must not treat
+            it as an unrestricted path.
+        model: Returned model value for this esx storage disk resource.
+        serial: Returned serial value for this esx storage disk resource.
+        wwn: Returned wwn value for this esx storage disk resource.
+        size_bytes: Size bytes, measured in bytes.
+        filesystem_type: Returned filesystem type value for this esx storage disk resource.
+        filesystem_uuid: Returned filesystem uuid value for this esx storage disk resource.
+        filesystem_label: Returned filesystem label value for this esx storage disk resource.
+        mount_path: Canonical filesystem or HTTP mount path used by Atlaso; callers must not treat
+            it as an unrestricted path.
+        eligible: Whether eligible is enabled for this esx storage disk resource.
+        eligibility_reason: Returned eligibility reason value for this esx storage disk resource.
+    """
 
     candidate_type: Annotated[Literal["blank_disk", "mounted_ext4", ""], Field(description='Returned candidate type value for this esx storage disk resource.')] = ""
     stable_device_id: Annotated[str, Field(description='Stable identifier of the related stable device resource.')]
@@ -294,7 +569,28 @@ class EsxStorageDiskResponse(BaseModel):
 
 
 class VcfPrivateRegistryStatusResponse(BaseModel):
-    """Fields returned by the Atlaso vcf private registry status API."""
+    """Fields returned by the Atlaso vcf private registry status API.
+
+    Attributes:
+        enabled: Whether the resource is enabled in saved Atlaso state.
+        service: Returned service value for this vcf private registry status resource.
+        hostname: DNS hostname associated with the resource, normalized according to the endpoint
+            contract.
+        endpoint: Validated endpoint used for this vcf private registry status integration.
+        listen_interface: Saved access interface or enabled VLAN used as the service bind target.
+        listen_address: Derived IP address on which the service listens; operators select an
+            interface rather than entering this value directly.
+        port: TCP or UDP port in the valid 1 through 65535 range.
+        harbor_project: Returned harbor project value for this vcf private registry status resource.
+        storage_path: Canonical filesystem or HTTP storage path used by Atlaso; callers must not
+            treat it as an unrestricted path.
+        config_path: Appliance path where the rendered configuration is staged or installed; it is
+            not a free-form input.
+        bundle_count: Number of bundle records represented by this vcf private registry status
+            response.
+        valid: Whether the represented desired state passed Atlaso validation.
+        dry_run: Whether the operation reports command intent without mutating appliance host state.
+    """
 
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')]
     service: Annotated[ServiceStateResponse | None, Field(description='Returned service value for this vcf private registry status resource.')]
@@ -312,7 +608,48 @@ class VcfPrivateRegistryStatusResponse(BaseModel):
 
 
 class VcfOfflineDepotStatusResponse(BaseModel):
-    """Fields returned by the Atlaso vcf offline depot status API."""
+    """Fields returned by the Atlaso vcf offline depot status API.
+
+    Attributes:
+        enabled: Whether the resource is enabled in saved Atlaso state.
+        service: Returned service value for this vcf offline depot status resource.
+        hostname: DNS hostname associated with the resource, normalized according to the endpoint
+            contract.
+        endpoint: Validated endpoint used for this vcf offline depot status integration.
+        listen_interface: Saved access interface or enabled VLAN used as the service bind target.
+        listen_address: Derived IP address on which the service listens; operators select an
+            interface rather than entering this value directly.
+        port: TCP or UDP port in the valid 1 through 65535 range.
+        http_username: Returned http username value for this vcf offline depot status resource.
+        allow_unauthenticated_access: Whether allow unauthenticated access is enabled for this vcf
+            offline depot status resource.
+        depot_store_path: Canonical filesystem or HTTP depot store path used by Atlaso; callers must
+            not treat it as an unrestricted path.
+        tool_archive_name: Returned tool archive name value for this vcf offline depot status
+            resource.
+        tool_version: Returned tool version value for this vcf offline depot status resource.
+        software_depot_id: Stable identifier of the related software depot resource.
+        software_depot_id_generated_at: UTC timestamp for software depot id generated at on this vcf
+            offline depot status resource.
+        software_depot_id_error: Returned software depot id error value for this vcf offline depot
+            status resource.
+        download_token_present: Whether download token is securely staged without exposing its
+            value.
+        activation_code_present: Whether activation code is securely staged without exposing its
+            value.
+        application_properties_present: Whether application properties is securely staged without
+            exposing its value.
+        application_properties_source: Returned application properties source value for this vcf
+            offline depot status resource.
+        application_properties_updated_at: UTC timestamp for application properties updated at on
+            this vcf offline depot status resource.
+        profile_count: Number of profile records represented by this vcf offline depot status
+            response.
+        config_path: Appliance path where the rendered configuration is staged or installed; it is
+            not a free-form input.
+        valid: Whether the represented desired state passed Atlaso validation.
+        dry_run: Whether the operation reports command intent without mutating appliance host state.
+    """
 
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')]
     service: Annotated[ServiceStateResponse | None, Field(description='Returned service value for this vcf offline depot status resource.')]
@@ -341,7 +678,26 @@ class VcfOfflineDepotStatusResponse(BaseModel):
 
 
 class LdapPasswordPolicy(BaseModel):
-    """Validated fields used by the Atlaso ldap password policy API contract."""
+    """Validated fields used by the Atlaso ldap password policy API contract.
+
+    Attributes:
+        min_length: Returned min length value for this ldap password policy resource.
+        require_uppercase: Whether require uppercase is enabled for this ldap password policy
+            resource.
+        require_lowercase: Whether require lowercase is enabled for this ldap password policy
+            resource.
+        require_number: Whether require number is enabled for this ldap password policy resource.
+        require_special: Whether require special is enabled for this ldap password policy resource.
+        disallow_username: Whether disallow username is enabled for this ldap password policy
+            resource.
+        max_failures: Returned max failures value for this ldap password policy resource.
+        lockout_minutes: Lockout minutes, measured in minutes, for this ldap password policy
+            resource.
+        failure_window_minutes: Failure window minutes, measured in minutes, for this ldap password
+            policy resource.
+        history: Returned history value for this ldap password policy resource.
+        max_age_days: Max age days, measured in days, for this ldap password policy resource.
+    """
 
     min_length: Annotated[int, Field(description='Returned min length value for this ldap password policy resource.')] = Field(default=14, ge=8, le=128)
     require_uppercase: Annotated[bool, Field(description='Whether require uppercase is enabled for this ldap password policy resource.')] = True
@@ -357,7 +713,20 @@ class LdapPasswordPolicy(BaseModel):
 
 
 class LdapSettingsUpdate(BaseModel):
-    """Fields accepted when updating or operating on a ldap settings resource."""
+    """Fields accepted when updating or operating on a ldap settings resource.
+
+    Attributes:
+        enabled: Whether the resource is enabled in saved Atlaso state.
+        hostname: DNS hostname associated with the resource, normalized according to the endpoint
+            contract.
+        listen_interfaces: Saved access interfaces or enabled VLANs used as service bind targets.
+        listen_addresses: Derived IPv4 and IPv6 listener addresses for the selected interfaces.
+        ldaps_enabled: Whether LDAPs enabled is enabled for this ldap settings resource.
+        port: TCP or UDP port in the valid 1 through 65535 range.
+        ldap_enabled: Whether LDAP enabled is enabled for this ldap settings resource.
+        ldap_port: TCP or UDP LDAP port in the valid 1 through 65535 range.
+        password_policy: Requested password policy value for this ldap settings resource.
+    """
 
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')] = False
     hostname: Annotated[str, Field(description='DNS hostname associated with the resource, normalized according to the endpoint contract.')] = Field(default="ldap.atlaso.internal", min_length=1, max_length=180)
@@ -371,7 +740,26 @@ class LdapSettingsUpdate(BaseModel):
 
 
 class LdapSettingsResponse(LdapSettingsUpdate):
-    """Fields returned by the Atlaso ldap settings API."""
+    """Fields returned by the Atlaso ldap settings API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+        config_path: Appliance path where the rendered configuration is staged or installed; it is
+            not a free-form input.
+        certificate_path: Canonical filesystem or HTTP certificate path used by Atlaso; callers must
+            not treat it as an unrestricted path.
+        key_path: Canonical filesystem or HTTP key path used by Atlaso; callers must not treat it as
+            an unrestricted path.
+        chain_path: Canonical filesystem or HTTP chain path used by Atlaso; callers must not treat
+            it as an unrestricted path.
+        root_ca_path: Canonical filesystem or HTTP root ca path used by Atlaso; callers must not
+            treat it as an unrestricted path.
+        valid: Whether the represented desired state passed Atlaso validation.
+        validation_errors: Actionable validation failures that must be corrected before the state
+            can be applied.
+        validation_warnings: Non-blocking validation warnings that the operator should review.
+        updated_at: UTC timestamp when the resource was last updated.
+    """
 
     id: Annotated[int, Field(description='Unique database identifier assigned to this resource.')]
     config_path: Annotated[str, Field(description='Appliance path where the rendered configuration is staged or installed; it is not a free-form input.')]
@@ -386,7 +774,14 @@ class LdapSettingsResponse(LdapSettingsUpdate):
 
 
 class LdapOrganizationCreate(BaseModel):
-    """Fields accepted when creating a ldap organization resource."""
+    """Fields accepted when creating a ldap organization resource.
+
+    Attributes:
+        name: Stable operator-facing name of this resource.
+        slug: Requested slug value for this ldap organization resource.
+        suffix_dn: Requested suffix dn value for this ldap organization resource.
+        enabled: Whether the resource is enabled in saved Atlaso state.
+    """
 
     name: Annotated[str, Field(description='Stable operator-facing name of this resource.')] = Field(min_length=1, max_length=128)
     slug: Annotated[str, Field(description='Requested slug value for this ldap organization resource.')] = Field(default="", max_length=80)
@@ -395,7 +790,35 @@ class LdapOrganizationCreate(BaseModel):
 
 
 class LdapOrganizationResponse(BaseModel):
-    """Fields returned by the Atlaso ldap organization API."""
+    """Fields returned by the Atlaso ldap organization API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+        name: Stable operator-facing name of this resource.
+        slug: Returned slug value for this ldap organization resource.
+        suffix_dn: Returned suffix dn value for this ldap organization resource.
+        users_base_dn: Returned users base dn value for this ldap organization resource.
+        groups_base_dn: Returned groups base dn value for this ldap organization resource.
+        service_accounts_base_dn: Returned service accounts base dn value for this ldap organization
+            resource.
+        bind_dn: Returned bind dn value for this ldap organization resource.
+        bind_secret_present: Whether bind secret is securely staged without exposing its value.
+        enabled: Whether the resource is enabled in saved Atlaso state.
+        user_count: Number of user records represented by this ldap organization response.
+        group_count: Number of group records represented by this ldap organization response.
+        vcf_target_url: Validated VCF target url used for this ldap organization integration.
+        vcf_org_id: Stable identifier of the related VCF org resource.
+        vcf_org_name: Returned VCF org name value for this ldap organization resource.
+        vcf_tls_fingerprint: Returned VCF tls fingerprint value for this ldap organization resource.
+        vcf_last_status: Returned VCF last status value for this ldap organization resource.
+        vcf_last_message: Returned VCF last message value for this ldap organization resource.
+        vcf_last_verified_at: UTC timestamp for VCF last verified at on this ldap organization
+            resource.
+        created_at: UTC timestamp when the resource was created.
+        updated_at: UTC timestamp when the resource was last updated.
+        raw_bind_password: One-time LDAP bind password returned only by the credential-rotation
+            response.
+    """
 
     id: Annotated[int, Field(description='Unique database identifier assigned to this resource.')]
     name: Annotated[str, Field(description='Stable operator-facing name of this resource.')]
@@ -422,7 +845,19 @@ class LdapOrganizationResponse(BaseModel):
 
 
 class LdapUserCreate(BaseModel):
-    """Fields accepted when creating a ldap user resource."""
+    """Fields accepted when creating a ldap user resource.
+
+    Attributes:
+        uid: Requested uid value for this ldap user resource.
+        given_name: Requested given name value for this ldap user resource.
+        surname: Requested surname value for this ldap user resource.
+        display_name: Requested display name value for this ldap user resource.
+        email: Requested email value for this ldap user resource.
+        telephone: Requested telephone value for this ldap user resource.
+        enabled: Whether the resource is enabled in saved Atlaso state.
+        password: Sensitive account password accepted only for this request; the plaintext value is
+            never returned.
+    """
 
     uid: Annotated[str, Field(description='Requested uid value for this ldap user resource.')] = Field(min_length=1, max_length=100)
     given_name: Annotated[str, Field(description='Requested given name value for this ldap user resource.')] = Field(default="", max_length=120)
@@ -435,7 +870,25 @@ class LdapUserCreate(BaseModel):
 
 
 class LdapUserResponse(BaseModel):
-    """Fields returned by the Atlaso ldap user API."""
+    """Fields returned by the Atlaso ldap user API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+        organization_id: Stable identifier of the related organization resource.
+        uid: Returned uid value for this ldap user resource.
+        dn: Returned dn value for this ldap user resource.
+        given_name: Returned given name value for this ldap user resource.
+        surname: Returned surname value for this ldap user resource.
+        display_name: Returned display name value for this ldap user resource.
+        email: Returned email value for this ldap user resource.
+        telephone: Returned telephone value for this ldap user resource.
+        enabled: Whether the resource is enabled in saved Atlaso state.
+        password_status: Returned password status value for this ldap user resource.
+        password_applied_at: UTC timestamp for password applied at on this ldap user resource.
+        unlock_requested: Whether unlock requested is enabled for this ldap user resource.
+        created_at: UTC timestamp when the resource was created.
+        updated_at: UTC timestamp when the resource was last updated.
+    """
 
     id: Annotated[int, Field(description='Unique database identifier assigned to this resource.')]
     organization_id: Annotated[int, Field(description='Stable identifier of the related organization resource.')]
@@ -455,20 +908,37 @@ class LdapUserResponse(BaseModel):
 
 
 class LdapPasswordResetRequest(BaseModel):
-    """Fields accepted when updating or operating on a ldap password reset resource."""
+    """Fields accepted when updating or operating on a ldap password reset resource.
+
+    Attributes:
+        password: Sensitive account password accepted only for this request; the plaintext value is
+            never returned.
+    """
 
     password: Annotated[str, Field(description='Sensitive account password accepted only for this request; the plaintext value is never returned.')] = Field(min_length=1, max_length=512)
 
 
 class LdapGroupMember(BaseModel):
-    """Validated fields used by the Atlaso ldap group member API contract."""
+    """Validated fields used by the Atlaso ldap group member API contract.
+
+    Attributes:
+        type: Stable URI identifying the problem or resource type.
+        id: Unique database identifier assigned to this resource.
+    """
 
     type: Annotated[Literal["user", "group"], Field(description='Stable URI identifying the problem or resource type.')]
     id: Annotated[int, Field(description='Unique database identifier assigned to this resource.')]
 
 
 class LdapGroupCreate(BaseModel):
-    """Fields accepted when creating a ldap group resource."""
+    """Fields accepted when creating a ldap group resource.
+
+    Attributes:
+        name: Stable operator-facing name of this resource.
+        description: Operator-facing purpose or context for this resource.
+        enabled: Whether the resource is enabled in saved Atlaso state.
+        members: Ordered collection of members values represented by this ldap group schema.
+    """
 
     name: Annotated[str, Field(description='Stable operator-facing name of this resource.')] = Field(min_length=1, max_length=120)
     description: Annotated[str, Field(description='Operator-facing purpose or context for this resource.')] = ""
@@ -477,7 +947,19 @@ class LdapGroupCreate(BaseModel):
 
 
 class LdapGroupResponse(BaseModel):
-    """Fields returned by the Atlaso ldap group API."""
+    """Fields returned by the Atlaso ldap group API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+        organization_id: Stable identifier of the related organization resource.
+        name: Stable operator-facing name of this resource.
+        dn: Returned dn value for this ldap group resource.
+        description: Operator-facing purpose or context for this resource.
+        enabled: Whether the resource is enabled in saved Atlaso state.
+        members: Ordered collection of members values represented by this ldap group schema.
+        created_at: UTC timestamp when the resource was created.
+        updated_at: UTC timestamp when the resource was last updated.
+    """
 
     id: Annotated[int, Field(description='Unique database identifier assigned to this resource.')]
     organization_id: Annotated[int, Field(description='Stable identifier of the related organization resource.')]
@@ -491,14 +973,31 @@ class LdapGroupResponse(BaseModel):
 
 
 class LdapBindCredentialResponse(BaseModel):
-    """Fields returned by the Atlaso ldap bind credential API."""
+    """Fields returned by the Atlaso ldap bind credential API.
+
+    Attributes:
+        organization: Returned organization value for this ldap bind credential resource.
+        raw_bind_password: One-time LDAP bind password returned only by the credential-rotation
+            response.
+    """
 
     organization: Annotated[LdapOrganizationResponse, Field(description='Returned organization value for this ldap bind credential resource.')]
     raw_bind_password: Annotated[str, Field(description='One-time LDAP bind password returned only by the credential-rotation response.')]
 
 
 class LdapVcfInspectRequest(BaseModel):
-    """Fields accepted when updating or operating on a ldap vcf inspect resource."""
+    """Fields accepted when updating or operating on a ldap vcf inspect resource.
+
+    Attributes:
+        target_url: Validated target url used for this ldap vcf inspect integration.
+        organization_id: Stable identifier of the related organization resource.
+        organization_name: Requested organization name value for this ldap vcf inspect resource.
+        username: Requested username value for this ldap vcf inspect resource.
+        password: Sensitive account password accepted only for this request; the plaintext value is
+            never returned.
+        confirmed_tls_fingerprint: Requested confirmed tls fingerprint value for this ldap vcf
+            inspect resource.
+    """
 
     target_url: Annotated[str, Field(description='Validated target url used for this ldap vcf inspect integration.')] = Field(min_length=1, max_length=500)
     organization_id: Annotated[str, Field(description='Stable identifier of the related organization resource.')] = Field(min_length=1, max_length=240)
@@ -509,13 +1008,32 @@ class LdapVcfInspectRequest(BaseModel):
 
 
 class LdapVcfConfigureRequest(LdapVcfInspectRequest):
-    """Fields accepted when updating or operating on a ldap vcf configure resource."""
+    """Fields accepted when updating or operating on a ldap vcf configure resource.
+
+    Attributes:
+        replace_existing: Whether replace existing is enabled for this ldap vcf configure resource.
+    """
 
     replace_existing: Annotated[bool, Field(description='Whether replace existing is enabled for this ldap vcf configure resource.')] = False
 
 
 class LdapVcfInspectionResponse(BaseModel):
-    """Fields returned by the Atlaso ldap vcf inspection API."""
+    """Fields returned by the Atlaso ldap vcf inspection API.
+
+    Attributes:
+        target_url: Validated target url used for this ldap vcf inspection integration.
+        organization_id: Stable identifier of the related organization resource.
+        organization_name: Returned organization name value for this ldap vcf inspection resource.
+        tls_fingerprint: Returned tls fingerprint value for this ldap vcf inspection resource.
+        current_settings: Structured current settings values represented by this ldap vcf inspection
+            schema.
+        proposed_settings: Structured proposed settings values represented by this ldap vcf
+            inspection schema.
+        changed: Whether changed is enabled for this ldap vcf inspection resource.
+        test_result: Structured test result values represented by this ldap vcf inspection schema.
+        user_count: Number of user records represented by this ldap vcf inspection response.
+        group_count: Number of group records represented by this ldap vcf inspection response.
+    """
 
     target_url: Annotated[str, Field(description='Validated target url used for this ldap vcf inspection integration.')]
     organization_id: Annotated[str, Field(description='Stable identifier of the related organization resource.')]
@@ -530,7 +1048,27 @@ class LdapVcfInspectionResponse(BaseModel):
 
 
 class LdapHealthResponse(BaseModel):
-    """Fields returned by the Atlaso ldap health API."""
+    """Fields returned by the Atlaso ldap health API.
+
+    Attributes:
+        enabled: Whether the resource is enabled in saved Atlaso state.
+        running: Whether the backing runtime service is currently reported as running.
+        health: Returned health value for this ldap health resource.
+        ldaps_only: Whether LDAPs only is enabled for this ldap health resource.
+        ldaps_enabled: Whether LDAPs enabled is enabled for this ldap health resource.
+        ldaps_port: TCP or UDP LDAPs port in the valid 1 through 65535 range.
+        ldap_enabled: Whether LDAP enabled is enabled for this ldap health resource.
+        ldap_port: TCP or UDP LDAP port in the valid 1 through 65535 range.
+        hostname: DNS hostname associated with the resource, normalized according to the endpoint
+            contract.
+        port: TCP or UDP port in the valid 1 through 65535 range.
+        organization_count: Number of organization records represented by this ldap health response.
+        user_count: Number of user records represented by this ldap health response.
+        group_count: Number of group records represented by this ldap health response.
+        validation_errors: Actionable validation failures that must be corrected before the state
+            can be applied.
+        validation_warnings: Non-blocking validation warnings that the operator should review.
+    """
 
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')]
     running: Annotated[bool, Field(description='Whether the backing runtime service is currently reported as running.')]
@@ -550,13 +1088,28 @@ class LdapHealthResponse(BaseModel):
 
 
 class LdapRecoveryExportRequest(BaseModel):
-    """Fields accepted when updating or operating on a ldap recovery export resource."""
+    """Fields accepted when updating or operating on a ldap recovery export resource.
+
+    Attributes:
+        passphrase: Sensitive passphrase used to encrypt or decrypt the recovery archive; Atlaso
+            does not retain it.
+    """
 
     passphrase: Annotated[str, Field(description='Sensitive passphrase used to encrypt or decrypt the recovery archive; Atlaso does not retain it.')] = Field(min_length=12, max_length=512)
 
 
 class LdapRecoveryImportResponse(BaseModel):
-    """Fields returned by the Atlaso ldap recovery import API."""
+    """Fields returned by the Atlaso ldap recovery import API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+        filename: Returned filename value for this ldap recovery import resource.
+        sha256: Lowercase SHA-256 content-integrity digest of the referenced artifact.
+        state: Returned state value for this ldap recovery import resource.
+        organization_count: Number of organization records represented by this ldap recovery import
+            response.
+        created_at: UTC timestamp when the resource was created.
+    """
 
     id: Annotated[int, Field(description='Unique database identifier assigned to this resource.')]
     filename: Annotated[str, Field(description='Returned filename value for this ldap recovery import resource.')]
@@ -567,7 +1120,13 @@ class LdapRecoveryImportResponse(BaseModel):
 
 
 class EsxiCustomVariableCreate(BaseModel):
-    """Fields accepted when creating a esxi custom variable resource."""
+    """Fields accepted when creating a esxi custom variable resource.
+
+    Attributes:
+        name: Stable operator-facing name of this resource.
+        description: Operator-facing purpose or context for this resource.
+        default_value: Requested default value value for this esxi custom variable resource.
+    """
 
     name: Annotated[str, Field(description='Stable operator-facing name of this resource.')] = Field(min_length=1, max_length=80)
     description: Annotated[str, Field(description='Operator-facing purpose or context for this resource.')] = Field(default="", max_length=500)
@@ -581,13 +1140,25 @@ class EsxiCustomVariableUpdate(EsxiCustomVariableCreate):
 
 
 class EsxiCustomVariableResponse(EsxiCustomVariableCreate):
-    """Fields returned by the Atlaso esxi custom variable API."""
+    """Fields returned by the Atlaso esxi custom variable API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+    """
 
     id: Annotated[str, Field(description='Unique database identifier assigned to this resource.')]
 
 
 class EsxiKickstartCreate(BaseModel):
-    """Fields accepted when creating a esxi kickstart resource."""
+    """Fields accepted when creating a esxi kickstart resource.
+
+    Attributes:
+        name: Stable operator-facing name of this resource.
+        description: Operator-facing purpose or context for this resource.
+        content: Configuration or document content governed by the validation and redaction rules
+            for this resource.
+        enabled: Whether the resource is enabled in saved Atlaso state.
+    """
 
     name: Annotated[str, Field(description='Stable operator-facing name of this resource.')] = Field(min_length=1, max_length=120)
     description: Annotated[str | None, Field(description='Operator-facing purpose or context for this resource.')] = None
@@ -602,7 +1173,26 @@ class EsxiKickstartUpdate(EsxiKickstartCreate):
 
 
 class EsxiKickstartResponse(BaseModel):
-    """Fields returned by the Atlaso esxi kickstart API."""
+    """Fields returned by the Atlaso esxi kickstart API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+        name: Stable operator-facing name of this resource.
+        description: Operator-facing purpose or context for this resource.
+        content_hash: SHA-256 content-integrity digest of the non-secret stored content.
+        rendered_hash: Returned rendered hash value for this esxi kickstart resource.
+        http_path: Canonical filesystem or HTTP http path used by Atlaso; callers must not treat it
+            as an unrestricted path.
+        enabled: Whether the resource is enabled in saved Atlaso state.
+        created_at: UTC timestamp when the resource was created.
+        updated_at: UTC timestamp when the resource was last updated.
+        last_rendered_at: UTC timestamp for last rendered at on this esxi kickstart resource.
+        last_applied_at: UTC timestamp for last applied at on this esxi kickstart resource.
+        redacted_preview: Preview text with credentials and other secret-bearing values removed.
+        drift_state: Returned drift state value for this esxi kickstart resource.
+        content: Configuration or document content governed by the validation and redaction rules
+            for this resource.
+    """
 
     id: Annotated[int, Field(description='Unique database identifier assigned to this resource.')]
     name: Annotated[str, Field(description='Stable operator-facing name of this resource.')]
@@ -621,7 +1211,14 @@ class EsxiKickstartResponse(BaseModel):
 
 
 class EsxiKickstartValidationResponse(BaseModel):
-    """Fields returned by the Atlaso esxi kickstart validation API."""
+    """Fields returned by the Atlaso esxi kickstart validation API.
+
+    Attributes:
+        valid: Whether the represented desired state passed Atlaso validation.
+        errors: Actionable errors produced while validating or processing the request.
+        warnings: Non-blocking warnings produced while validating or processing the request.
+        redacted_preview: Preview text with credentials and other secret-bearing values removed.
+    """
 
     valid: Annotated[bool, Field(description='Whether the represented desired state passed Atlaso validation.')]
     errors: Annotated[list[str], Field(description='Actionable errors produced while validating or processing the request.')] = Field(default_factory=list)
@@ -630,7 +1227,14 @@ class EsxiKickstartValidationResponse(BaseModel):
 
 
 class EsxiKickstartPreviewResponse(BaseModel):
-    """Fields returned by the Atlaso esxi kickstart preview API."""
+    """Fields returned by the Atlaso esxi kickstart preview API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+        redacted_preview: Preview text with credentials and other secret-bearing values removed.
+        content_hash: SHA-256 content-integrity digest of the non-secret stored content.
+        drift_state: Returned drift state value for this esxi kickstart preview resource.
+    """
 
     id: Annotated[int, Field(description='Unique database identifier assigned to this resource.')]
     redacted_preview: Annotated[str, Field(description='Preview text with credentials and other secret-bearing values removed.')]
@@ -639,13 +1243,29 @@ class EsxiKickstartPreviewResponse(BaseModel):
 
 
 class EsxiKickstartDuplicateRequest(BaseModel):
-    """Fields accepted when updating or operating on a esxi kickstart duplicate resource."""
+    """Fields accepted when updating or operating on a esxi kickstart duplicate resource.
+
+    Attributes:
+        name: Stable operator-facing name of this resource.
+    """
 
     name: Annotated[str | None, Field(description='Stable operator-facing name of this resource.')] = Field(default=None, max_length=120)
 
 
 class EsxiPxeHostCreate(BaseModel):
-    """Fields accepted when creating a esxi pxe host resource."""
+    """Fields accepted when creating a esxi pxe host resource.
+
+    Attributes:
+        hostname: DNS hostname associated with the resource, normalized according to the endpoint
+            contract.
+        mac_address: Normalized hardware MAC address used to identify the network interface or host.
+        ip_address: IPv4 or IPv6 address associated with the resource.
+        kickstart_id: Stable identifier of the related kickstart resource.
+        installer_iso_path: Canonical filesystem or HTTP installer iso path used by Atlaso; callers
+            must not treat it as an unrestricted path.
+        variables: Structured variables values represented by this esxi pxe host schema.
+        enabled: Whether the resource is enabled in saved Atlaso state.
+    """
 
     hostname: Annotated[str, Field(description='DNS hostname associated with the resource, normalized according to the endpoint contract.')] = Field(min_length=1, max_length=120)
     mac_address: Annotated[str, Field(description='Normalized hardware MAC address used to identify the network interface or host.')] = Field(min_length=1, max_length=32)
@@ -657,7 +1277,15 @@ class EsxiPxeHostCreate(BaseModel):
 
 
 class EsxiPxeHostResponse(EsxiPxeHostCreate):
-    """Fields returned by the Atlaso esxi pxe host API."""
+    """Fields returned by the Atlaso esxi pxe host API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+        kickstart_name: Returned kickstart name value for this esxi pxe host resource.
+        installer_iso_name: Returned installer iso name value for this esxi pxe host resource.
+        created_at: UTC timestamp when the resource was created.
+        updated_at: UTC timestamp when the resource was last updated.
+    """
 
     id: Annotated[int, Field(description='Unique database identifier assigned to this resource.')]
     kickstart_name: Annotated[str, Field(description='Returned kickstart name value for this esxi pxe host resource.')] = ""
@@ -667,7 +1295,19 @@ class EsxiPxeHostResponse(EsxiPxeHostCreate):
 
 
 class EsxiInstallerIsoResponse(BaseModel):
-    """Fields returned by the Atlaso esxi installer iso API."""
+    """Fields returned by the Atlaso esxi installer iso API.
+
+    Attributes:
+        name: Stable operator-facing name of this resource.
+        path: Canonical filesystem or HTTP path used by Atlaso; callers must not treat it as an
+            unrestricted path.
+        relative_path: Canonical filesystem or HTTP relative path used by Atlaso; callers must not
+            treat it as an unrestricted path.
+        esx_version: Returned esx version value for this esxi installer iso resource.
+        esx_build: Returned esx build value for this esxi installer iso resource.
+        size_bytes: Size bytes, measured in bytes.
+        updated_at: UTC timestamp when the resource was last updated.
+    """
 
     name: Annotated[str, Field(description='Stable operator-facing name of this resource.')]
     path: Annotated[str, Field(description='Canonical filesystem or HTTP path used by Atlaso; callers must not treat it as an unrestricted path.')]
@@ -679,7 +1319,39 @@ class EsxiInstallerIsoResponse(BaseModel):
 
 
 class PhysicalInterfaceResponse(BaseModel):
-    """Fields returned by the Atlaso physical interface API."""
+    """Fields returned by the Atlaso physical interface API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+        name: Stable operator-facing name of this resource.
+        mac_address: Normalized hardware MAC address used to identify the network interface or host.
+        driver: Returned driver value for this physical interface resource.
+        speed: Returned speed value for this physical interface resource.
+        host_ip_cidr: Validated network or address value for host ip cidr in this physical interface
+            resource.
+        host_ipv6_cidr: Validated network or address value for host ipv6 cidr in this physical
+            interface resource.
+        host_mtu: Returned host mtu value for this physical interface resource.
+        host_admin_state: Returned host admin state value for this physical interface resource.
+        ip_cidr: Validated network or address value for ip cidr in this physical interface resource.
+        gateway: Returned gateway value for this physical interface resource.
+        ipv4_method: Returned ipv4 method value for this physical interface resource.
+        ipv6_enabled: Whether ipv6 enabled is enabled for this physical interface resource.
+        ipv6_cidr: Validated network or address value for ipv6 cidr in this physical interface
+            resource.
+        ipv6_gateway: Returned ipv6 gateway value for this physical interface resource.
+        mtu: Returned mtu value for this physical interface resource.
+        admin_state: Returned admin state value for this physical interface resource.
+        oper_state: Returned oper state value for this physical interface resource.
+        role: Primary compatibility role for the identity; authorization uses the complete roles
+            collection.
+        mode: Returned mode value for this physical interface resource.
+        inventory_source: Returned inventory source value for this physical interface resource.
+        desired_state_source: Returned desired state source value for this physical interface
+            resource.
+        last_seen_at: UTC timestamp for last seen at on this physical interface resource.
+        missing_since: Returned missing since value for this physical interface resource.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -710,7 +1382,18 @@ class PhysicalInterfaceResponse(BaseModel):
 
 
 class VlanCreate(BaseModel):
-    """Fields accepted when creating a vlan resource."""
+    """Fields accepted when creating a vlan resource.
+
+    Attributes:
+        parent_interface: Requested parent interface value for this vlan resource.
+        vlan_id: Stable identifier of the related vlan resource.
+        ip_cidr: Validated network or address value for ip cidr in this vlan resource.
+        ipv6_cidr: Validated network or address value for ipv6 cidr in this vlan resource.
+        mtu: Requested mtu value for this vlan resource.
+        role: Primary compatibility role for the identity; authorization uses the complete roles
+            collection.
+        enabled: Whether the resource is enabled in saved Atlaso state.
+    """
 
     parent_interface: Annotated[str, Field(description='Requested parent interface value for this vlan resource.')]
     vlan_id: Annotated[int, Field(description='Stable identifier of the related vlan resource.')] = Field(ge=1, le=4094)
@@ -722,7 +1405,12 @@ class VlanCreate(BaseModel):
 
 
 class VlanResponse(VlanCreate):
-    """Fields returned by the Atlaso vlan API."""
+    """Fields returned by the Atlaso vlan API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+        name: Stable operator-facing name of this resource.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -731,7 +1419,20 @@ class VlanResponse(VlanCreate):
 
 
 class WanPolicyCreate(BaseModel):
-    """Fields accepted when creating a wan policy resource."""
+    """Fields accepted when creating a wan policy resource.
+
+    Attributes:
+        name: Stable operator-facing name of this resource.
+        description: Operator-facing purpose or context for this resource.
+        enabled: Whether the resource is enabled in saved Atlaso state.
+        latency_ms: Latency ms, measured in milliseconds, for this wan policy resource.
+        jitter_ms: Jitter ms, measured in milliseconds, for this wan policy resource.
+        packet_loss_percent: Packet loss percent, expressed as a percentage from 0 through 100.
+        bandwidth_mbit: Bandwidth mbit, measured in megabits per second.
+        corrupt_percent: Corrupt percent, expressed as a percentage from 0 through 100.
+        duplicate_percent: Duplicate percent, expressed as a percentage from 0 through 100.
+        reorder_percent: Reorder percent, expressed as a percentage from 0 through 100.
+    """
 
     name: Annotated[str, Field(description='Stable operator-facing name of this resource.')] = Field(min_length=1, max_length=120)
     description: Annotated[str | None, Field(description='Operator-facing purpose or context for this resource.')] = None
@@ -746,7 +1447,11 @@ class WanPolicyCreate(BaseModel):
 
 
 class WanPolicyResponse(WanPolicyCreate):
-    """Fields returned by the Atlaso wan policy API."""
+    """Fields returned by the Atlaso wan policy API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -754,7 +1459,18 @@ class WanPolicyResponse(WanPolicyCreate):
 
 
 class RouteCreate(BaseModel):
-    """Fields accepted when creating a route resource."""
+    """Fields accepted when creating a route resource.
+
+    Attributes:
+        destination_cidr: Validated network or address value for destination cidr in this route
+            resource.
+        gateway: Requested gateway value for this route resource.
+        interface_name: Requested interface name value for this route resource.
+        metric: Requested metric value for this route resource.
+        enabled: Whether the resource is enabled in saved Atlaso state.
+        wan_policy_id: Stable identifier of the related wan policy resource.
+        wan_mode: Requested wan mode value for this route resource.
+    """
 
     destination_cidr: Annotated[str, Field(description='Validated network or address value for destination cidr in this route resource.')]
     gateway: Annotated[str | None, Field(description='Requested gateway value for this route resource.')] = None
@@ -766,7 +1482,12 @@ class RouteCreate(BaseModel):
 
 
 class RouteResponse(RouteCreate):
-    """Fields returned by the Atlaso route API."""
+    """Fields returned by the Atlaso route API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+        wan_policy: Returned wan policy value for this route resource.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -775,7 +1496,17 @@ class RouteResponse(RouteCreate):
 
 
 class NatRuleCreate(BaseModel):
-    """Fields accepted when creating a nat rule resource."""
+    """Fields accepted when creating a nat rule resource.
+
+    Attributes:
+        name: Stable operator-facing name of this resource.
+        enabled: Whether the resource is enabled in saved Atlaso state.
+        source: Validated network or address value for source in this nat rule resource.
+        outbound_interface: Requested outbound interface value for this nat rule resource.
+        masquerade: Whether masquerade is enabled for this nat rule resource.
+        priority: Requested priority value for this nat rule resource.
+        description: Operator-facing purpose or context for this resource.
+    """
 
     name: Annotated[str, Field(description='Stable operator-facing name of this resource.')] = Field(min_length=1, max_length=120)
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')] = True
@@ -787,7 +1518,11 @@ class NatRuleCreate(BaseModel):
 
 
 class NatRuleResponse(NatRuleCreate):
-    """Fields returned by the Atlaso nat rule API."""
+    """Fields returned by the Atlaso nat rule API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -795,7 +1530,15 @@ class NatRuleResponse(NatRuleCreate):
 
 
 class WanStatusResponse(BaseModel):
-    """Fields returned by the Atlaso wan status API."""
+    """Fields returned by the Atlaso wan status API.
+
+    Attributes:
+        active_policy_count: Number of active policy records represented by this wan status
+            response.
+        managed_interfaces: Ordered collection of managed interfaces values represented by this wan
+            status schema.
+        dry_run: Whether the operation reports command intent without mutating appliance host state.
+    """
 
     active_policy_count: Annotated[int, Field(description='Number of active policy records represented by this wan status response.')]
     managed_interfaces: Annotated[list[str], Field(description='Ordered collection of managed interfaces values represented by this wan status schema.')]
@@ -803,14 +1546,46 @@ class WanStatusResponse(BaseModel):
 
 
 class DnsConditionalForwarder(BaseModel):
-    """Validated fields used by the Atlaso dns conditional forwarder API contract."""
+    """Validated fields used by the Atlaso dns conditional forwarder API contract.
+
+    Attributes:
+        domain: Returned domain value for this dns conditional forwarder resource.
+        server: Validated server used for this dns conditional forwarder integration.
+    """
 
     domain: Annotated[str, Field(description='Returned domain value for this dns conditional forwarder resource.')] = Field(min_length=1, max_length=120)
     server: Annotated[str, Field(description='Validated server used for this dns conditional forwarder integration.')] = Field(min_length=1, max_length=120)
 
 
 class DnsSettingsUpdate(BaseModel):
-    """Fields accepted when updating or operating on a dns settings resource."""
+    """Fields accepted when updating or operating on a dns settings resource.
+
+    Attributes:
+        enabled: Whether the resource is enabled in saved Atlaso state.
+        listen_interface: Saved access interface or enabled VLAN used as the service bind target.
+        listen_address: Derived IP address on which the service listens; operators select an
+            interface rather than entering this value directly.
+        domain: Requested domain value for this dns settings resource.
+        upstream_servers: Ordered collection of upstream servers values represented by this dns
+            settings schema.
+        conditional_forwarders: Ordered collection of conditional forwarders values represented by
+            this dns settings schema.
+        cache_size: Requested cache size value for this dns settings resource.
+        expand_hosts: Whether expand hosts is enabled for this dns settings resource.
+        authoritative: Whether authoritative is enabled for this dns settings resource.
+        authoritative_server: Requested authoritative server value for this dns settings resource.
+        authoritative_contact: Requested authoritative contact value for this dns settings resource.
+        authoritative_ttl: Requested authoritative ttl value for this dns settings resource.
+        authoritative_refresh: Requested authoritative refresh value for this dns settings resource.
+        authoritative_retry: Requested authoritative retry value for this dns settings resource.
+        authoritative_expire: Requested authoritative expire value for this dns settings resource.
+        dnssec_enabled: Whether dnssec enabled is enabled for this dns settings resource.
+        rebind_protection_enabled: Whether rebind protection enabled is enabled for this dns
+            settings resource.
+        rebind_domain_exemptions: Whether rebind domain exemptions is enabled for this dns settings
+            resource.
+        query_logging_mode: Requested query logging mode value for this dns settings resource.
+    """
 
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')] = False
     listen_interface: Annotated[str, Field(description='Saved access interface or enabled VLAN used as the service bind target.')] = Field(default="eth2", min_length=1, max_length=80)
@@ -834,7 +1609,15 @@ class DnsSettingsUpdate(BaseModel):
 
 
 class DnsSettingsResponse(DnsSettingsUpdate):
-    """Fields returned by the Atlaso dns settings API."""
+    """Fields returned by the Atlaso dns settings API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+        authoritative_serial: Returned authoritative serial value for this dns settings resource.
+        config_path: Appliance path where the rendered configuration is staged or installed; it is
+            not a free-form input.
+        updated_at: UTC timestamp when the resource was last updated.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -845,7 +1628,16 @@ class DnsSettingsResponse(DnsSettingsUpdate):
 
 
 class DnsRecordCreate(BaseModel):
-    """Fields accepted when creating a dns record resource."""
+    """Fields accepted when creating a dns record resource.
+
+    Attributes:
+        hostname: DNS hostname associated with the resource, normalized according to the endpoint
+            contract.
+        record_type: Requested record type value for this dns record resource.
+        address: Requested address value for this dns record resource.
+        description: Operator-facing purpose or context for this resource.
+        enabled: Whether the resource is enabled in saved Atlaso state.
+    """
 
     hostname: Annotated[str, Field(description='DNS hostname associated with the resource, normalized according to the endpoint contract.')] = Field(min_length=1, max_length=120)
     record_type: Annotated[str, Field(description='Requested record type value for this dns record resource.')] = Field(default="A", min_length=1, max_length=20)
@@ -855,7 +1647,13 @@ class DnsRecordCreate(BaseModel):
 
 
 class DnsRecordResponse(DnsRecordCreate):
-    """Fields returned by the Atlaso dns record API."""
+    """Fields returned by the Atlaso dns record API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+        record_data_json: Returned record data json value for this dns record resource.
+        created_at: UTC timestamp when the resource was created.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -865,14 +1663,26 @@ class DnsRecordResponse(DnsRecordCreate):
 
 
 class DnsHostsImportRequest(BaseModel):
-    """Fields accepted when updating or operating on a dns hosts import resource."""
+    """Fields accepted when updating or operating on a dns hosts import resource.
+
+    Attributes:
+        hosts_text: Requested hosts text value for this dns hosts import resource.
+        replace_existing: Whether replace existing is enabled for this dns hosts import resource.
+    """
 
     hosts_text: Annotated[str, Field(description='Requested hosts text value for this dns hosts import resource.')] = Field(min_length=1)
     replace_existing: Annotated[bool, Field(description='Whether replace existing is enabled for this dns hosts import resource.')] = True
 
 
 class DnsHostsImportResponse(BaseModel):
-    """Fields returned by the Atlaso dns hosts import API."""
+    """Fields returned by the Atlaso dns hosts import API.
+
+    Attributes:
+        imported_count: Number of imported records represented by this dns hosts import response.
+        replaced_existing: Whether replaced existing is enabled for this dns hosts import resource.
+        errors: Actionable errors produced while validating or processing the request.
+        records: Ordered collection of records values represented by this dns hosts import schema.
+    """
 
     imported_count: Annotated[int, Field(description='Number of imported records represented by this dns hosts import response.')]
     replaced_existing: Annotated[bool, Field(description='Whether replaced existing is enabled for this dns hosts import resource.')]
@@ -881,7 +1691,18 @@ class DnsHostsImportResponse(BaseModel):
 
 
 class DhcpSettingsUpdate(BaseModel):
-    """Fields accepted when updating or operating on a dhcp settings resource."""
+    """Fields accepted when updating or operating on a dhcp settings resource.
+
+    Attributes:
+        enabled: Whether the resource is enabled in saved Atlaso state.
+        interface_name: Requested interface name value for this dhcp settings resource.
+        site_address: Requested site address value for this dhcp settings resource.
+        prefix_length: Requested prefix length value for this dhcp settings resource.
+        lease_time: Requested lease time value for this dhcp settings resource.
+        domain_name: Requested domain name value for this dhcp settings resource.
+        dns_server: Requested dns server value for this dhcp settings resource.
+        authoritative: Whether authoritative is enabled for this dhcp settings resource.
+    """
 
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')] = False
     interface_name: Annotated[str, Field(description='Requested interface name value for this dhcp settings resource.')] = Field(default="eth2", min_length=1, max_length=80)
@@ -894,7 +1715,14 @@ class DhcpSettingsUpdate(BaseModel):
 
 
 class DhcpSettingsResponse(DhcpSettingsUpdate):
-    """Fields returned by the Atlaso dhcp settings API."""
+    """Fields returned by the Atlaso dhcp settings API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+        config_path: Appliance path where the rendered configuration is staged or installed; it is
+            not a free-form input.
+        updated_at: UTC timestamp when the resource was last updated.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -904,7 +1732,22 @@ class DhcpSettingsResponse(DhcpSettingsUpdate):
 
 
 class DhcpScopeCreate(BaseModel):
-    """Fields accepted when creating a dhcp scope resource."""
+    """Fields accepted when creating a dhcp scope resource.
+
+    Attributes:
+        name: Stable operator-facing name of this resource.
+        address_family: Requested address family value for this dhcp scope resource.
+        interface_name: Requested interface name value for this dhcp scope resource.
+        site_address: Requested site address value for this dhcp scope resource.
+        prefix_length: Requested prefix length value for this dhcp scope resource.
+        range_expression: Requested range expression value for this dhcp scope resource.
+        lease_time: Requested lease time value for this dhcp scope resource.
+        domain_name: Requested domain name value for this dhcp scope resource.
+        dns_server: Requested dns server value for this dhcp scope resource.
+        ntp_server: Requested ntp server value for this dhcp scope resource.
+        enabled: Whether the resource is enabled in saved Atlaso state.
+        description: Operator-facing purpose or context for this resource.
+    """
 
     name: Annotated[str, Field(description='Stable operator-facing name of this resource.')] = Field(min_length=1, max_length=120)
     address_family: Annotated[str, Field(description='Requested address family value for this dhcp scope resource.')] = Field(default="ipv4", pattern="^(ipv4|ipv6)$")
@@ -921,7 +1764,13 @@ class DhcpScopeCreate(BaseModel):
 
 
 class DhcpScopeResponse(DhcpScopeCreate):
-    """Fields returned by the Atlaso dhcp scope API."""
+    """Fields returned by the Atlaso dhcp scope API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+        created_at: UTC timestamp when the resource was created.
+        updated_at: UTC timestamp when the resource was last updated.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -931,7 +1780,15 @@ class DhcpScopeResponse(DhcpScopeCreate):
 
 
 class DhcpOptionCreate(BaseModel):
-    """Fields accepted when creating a dhcp option resource."""
+    """Fields accepted when creating a dhcp option resource.
+
+    Attributes:
+        scope_id: Stable identifier of the related scope resource.
+        option_code: Requested option code value for this dhcp option resource.
+        value: Requested value value for this dhcp option resource.
+        description: Operator-facing purpose or context for this resource.
+        enabled: Whether the resource is enabled in saved Atlaso state.
+    """
 
     scope_id: Annotated[int | None, Field(description='Stable identifier of the related scope resource.')] = None
     option_code: Annotated[str, Field(description='Requested option code value for this dhcp option resource.')] = Field(min_length=1, max_length=80)
@@ -941,7 +1798,13 @@ class DhcpOptionCreate(BaseModel):
 
 
 class DhcpOptionResponse(DhcpOptionCreate):
-    """Fields returned by the Atlaso dhcp option API."""
+    """Fields returned by the Atlaso dhcp option API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+        created_at: UTC timestamp when the resource was created.
+        updated_at: UTC timestamp when the resource was last updated.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -951,7 +1814,16 @@ class DhcpOptionResponse(DhcpOptionCreate):
 
 
 class DhcpReservationCreate(BaseModel):
-    """Fields accepted when creating a dhcp reservation resource."""
+    """Fields accepted when creating a dhcp reservation resource.
+
+    Attributes:
+        hostname: DNS hostname associated with the resource, normalized according to the endpoint
+            contract.
+        mac_address: Normalized hardware MAC address used to identify the network interface or host.
+        ip_address: IPv4 or IPv6 address associated with the resource.
+        description: Operator-facing purpose or context for this resource.
+        enabled: Whether the resource is enabled in saved Atlaso state.
+    """
 
     hostname: Annotated[str, Field(description='DNS hostname associated with the resource, normalized according to the endpoint contract.')] = Field(min_length=1, max_length=120)
     mac_address: Annotated[str, Field(description='Normalized hardware MAC address used to identify the network interface or host.')] = Field(min_length=1, max_length=32)
@@ -961,7 +1833,12 @@ class DhcpReservationCreate(BaseModel):
 
 
 class DhcpReservationResponse(DhcpReservationCreate):
-    """Fields returned by the Atlaso dhcp reservation API."""
+    """Fields returned by the Atlaso dhcp reservation API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+        created_at: UTC timestamp when the resource was created.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -970,7 +1847,17 @@ class DhcpReservationResponse(DhcpReservationCreate):
 
 
 class DhcpLeaseResponse(BaseModel):
-    """Fields returned by the Atlaso dhcp lease API."""
+    """Fields returned by the Atlaso dhcp lease API.
+
+    Attributes:
+        expires_at: UTC timestamp after which the resource or credential is no longer accepted.
+        mac_address: Normalized hardware MAC address used to identify the network interface or host.
+        ip_address: IPv4 or IPv6 address associated with the resource.
+        hostname: DNS hostname associated with the resource, normalized according to the endpoint
+            contract.
+        client_id: Stable identifier of the related client resource.
+        status: Returned status value for this dhcp lease resource.
+    """
 
     expires_at: Annotated[datetime | None, Field(description='UTC timestamp after which the resource or credential is no longer accepted.')]
     mac_address: Annotated[str, Field(description='Normalized hardware MAC address used to identify the network interface or host.')]
@@ -981,7 +1868,19 @@ class DhcpLeaseResponse(BaseModel):
 
 
 class ConfigValidationResponse(BaseModel):
-    """Fields returned by the Atlaso config validation API."""
+    """Fields returned by the Atlaso config validation API.
+
+    Attributes:
+        valid: Whether the represented desired state passed Atlaso validation.
+        dry_run: Whether the operation reports command intent without mutating appliance host state.
+        command: Ordered collection of command values represented by this config validation schema.
+        config_path: Appliance path where the rendered configuration is staged or installed; it is
+            not a free-form input.
+        config_preview: Redacted rendered configuration preview for operator review; secret values
+            are never included.
+        errors: Actionable errors produced while validating or processing the request.
+        warnings: Non-blocking warnings produced while validating or processing the request.
+    """
 
     valid: Annotated[bool, Field(description='Whether the represented desired state passed Atlaso validation.')]
     dry_run: Annotated[bool, Field(description='Whether the operation reports command intent without mutating appliance host state.')]
@@ -993,13 +1892,30 @@ class ConfigValidationResponse(BaseModel):
 
 
 class ConfigApplyResponse(ConfigValidationResponse):
-    """Fields returned by the Atlaso config apply API."""
+    """Fields returned by the Atlaso config apply API.
+
+    Attributes:
+        reloaded: Whether reloaded is enabled for this config apply resource.
+    """
 
     reloaded: Annotated[bool, Field(description='Whether reloaded is enabled for this config apply resource.')] = False
 
 
 class DnsStatusResponse(BaseModel):
-    """Fields returned by the Atlaso dns status API."""
+    """Fields returned by the Atlaso dns status API.
+
+    Attributes:
+        enabled: Whether the resource is enabled in saved Atlaso state.
+        service: Returned service value for this dns status resource.
+        listen_interface: Saved access interface or enabled VLAN used as the service bind target.
+        listen_address: Derived IP address on which the service listens; operators select an
+            interface rather than entering this value directly.
+        domain: Returned domain value for this dns status resource.
+        record_count: Number of record records represented by this dns status response.
+        config_path: Appliance path where the rendered configuration is staged or installed; it is
+            not a free-form input.
+        dry_run: Whether the operation reports command intent without mutating appliance host state.
+    """
 
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')]
     service: Annotated[ServiceStateResponse | None, Field(description='Returned service value for this dns status resource.')]
@@ -1012,7 +1928,18 @@ class DnsStatusResponse(BaseModel):
 
 
 class DhcpStatusResponse(BaseModel):
-    """Fields returned by the Atlaso dhcp status API."""
+    """Fields returned by the Atlaso dhcp status API.
+
+    Attributes:
+        enabled: Whether the resource is enabled in saved Atlaso state.
+        service: Returned service value for this dhcp status resource.
+        interface_name: Returned interface name value for this dhcp status resource.
+        range_expression: Returned range expression value for this dhcp status resource.
+        reservation_count: Number of reservation records represented by this dhcp status response.
+        config_path: Appliance path where the rendered configuration is staged or installed; it is
+            not a free-form input.
+        dry_run: Whether the operation reports command intent without mutating appliance host state.
+    """
 
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')]
     service: Annotated[ServiceStateResponse | None, Field(description='Returned service value for this dhcp status resource.')]
@@ -1024,7 +1951,19 @@ class DhcpStatusResponse(BaseModel):
 
 
 class DashboardResponse(BaseModel):
-    """Fields returned by the Atlaso dashboard API."""
+    """Fields returned by the Atlaso dashboard API.
+
+    Attributes:
+        appliance: Structured appliance values represented by this dashboard schema.
+        service_health: Ordered collection of service health values represented by this dashboard
+            schema.
+        interfaces: Ordered collection of interfaces values represented by this dashboard schema.
+        active_wan_policies: Ordered collection of active wan policies values represented by this
+            dashboard schema.
+        disk_usage: Structured disk usage values represented by this dashboard schema.
+        recent_audit_events: Ordered collection of recent audit events values represented by this
+            dashboard schema.
+    """
 
     appliance: Annotated[dict[str, Any], Field(description='Structured appliance values represented by this dashboard schema.')]
     service_health: Annotated[list[ServiceStateResponse], Field(description='Ordered collection of service health values represented by this dashboard schema.')]
@@ -1035,7 +1974,28 @@ class DashboardResponse(BaseModel):
 
 
 class MonitorResponse(BaseModel):
-    """Fields returned by the Atlaso monitor API."""
+    """Fields returned by the Atlaso monitor API.
+
+    Attributes:
+        enabled: Whether the resource is enabled in saved Atlaso state.
+        window_hours: Window hours, measured in hours, for this monitor resource.
+        sample_interval_seconds: Sample interval seconds, measured in seconds, for this monitor
+            resource.
+        generated_at: UTC timestamp for generated at on this monitor resource.
+        last_sample_at: UTC timestamp for last sample at on this monitor resource.
+        sample_count: Number of sample records represented by this monitor response.
+        summary: Structured summary values represented by this monitor schema.
+        virtualization: Structured virtualization values represented by this monitor schema.
+        cpu: Ordered collection of cpu values represented by this monitor schema.
+        cpu_cores: Ordered collection of cpu cores values represented by this monitor schema.
+        memory: Ordered collection of memory values represented by this monitor schema.
+        network_totals: Ordered collection of network totals values represented by this monitor
+            schema.
+        networks: Ordered collection of networks values represented by this monitor schema.
+        disk_io: Ordered collection of disk io values represented by this monitor schema.
+        disk_devices: Ordered collection of disk devices values represented by this monitor schema.
+        disks: Ordered collection of disks values represented by this monitor schema.
+    """
 
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')] = True
     window_hours: Annotated[int, Field(description='Window hours, measured in hours, for this monitor resource.')]
@@ -1056,7 +2016,19 @@ class MonitorResponse(BaseModel):
 
 
 class AuditEventResponse(BaseModel):
-    """Fields returned by the Atlaso audit event API."""
+    """Fields returned by the Atlaso audit event API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+        created_at: UTC timestamp when the resource was created.
+        actor: Returned actor value for this audit event resource.
+        action: Returned action value for this audit event resource.
+        resource_type: Returned resource type value for this audit event resource.
+        resource_id: Stable identifier of the related resource resource.
+        success: Whether success is enabled for this audit event resource.
+        detail: Human-readable detail explaining the current state or failure.
+        request_id: Request correlation identifier included in responses and operational logs.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1072,7 +2044,20 @@ class AuditEventResponse(BaseModel):
 
 
 class JobResponse(BaseModel):
-    """Fields returned by the Atlaso job API."""
+    """Fields returned by the Atlaso job API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+        type: Stable URI identifying the problem or resource type.
+        status: Returned status value for this job resource.
+        created_by: Returned created by value for this job resource.
+        created_at: UTC timestamp when the resource was created.
+        started_at: UTC timestamp for started at on this job resource.
+        finished_at: UTC timestamp for finished at on this job resource.
+        progress_percent: Progress percent, expressed as a percentage from 0 through 100.
+        result: Returned result value for this job resource.
+        error: Returned error value for this job resource.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1089,7 +2074,14 @@ class JobResponse(BaseModel):
 
 
 class ServiceActionResponse(BaseModel):
-    """Fields returned by the Atlaso service action API."""
+    """Fields returned by the Atlaso service action API.
+
+    Attributes:
+        service: Returned service value for this service action resource.
+        action: Returned action value for this service action resource.
+        dry_run: Whether the operation reports command intent without mutating appliance host state.
+        command: Ordered collection of command values represented by this service action schema.
+    """
 
     service: Annotated[str, Field(description='Returned service value for this service action resource.')]
     action: Annotated[str, Field(description='Returned action value for this service action resource.')]
@@ -1098,7 +2090,40 @@ class ServiceActionResponse(BaseModel):
 
 
 class SettingsResponse(BaseModel):
-    """Fields returned by the Atlaso settings API."""
+    """Fields returned by the Atlaso settings API.
+
+    Attributes:
+        app_name: Returned app name value for this settings resource.
+        appliance_hostname: Returned appliance hostname value for this settings resource.
+        dry_run_system_adapters: Whether dry run system adapters is enabled for this settings
+            resource.
+        repository_path: Canonical filesystem or HTTP repository path used by Atlaso; callers must
+            not treat it as an unrestricted path.
+        vcf_backup_path: Canonical filesystem or HTTP VCF backup path used by Atlaso; callers must
+            not treat it as an unrestricted path.
+        appliance_fqdn: Returned appliance fqdn value for this settings resource.
+        management_https_enabled: Whether management https enabled is enabled for this settings
+            resource.
+        management_https_cert_available: Whether management https cert available is enabled for this
+            settings resource.
+        web_terminal_enabled: Whether web terminal enabled is enabled for this settings resource.
+        web_terminal_interfaces: Ordered collection of web terminal interfaces values represented by
+            this settings schema.
+        root_ssh_enabled: Whether root ssh enabled is enabled for this settings resource.
+        external_dns_servers: Ordered collection of external dns servers values represented by this
+            settings schema.
+        appliance_settings_config_path: Canonical filesystem or HTTP appliance settings config path
+            used by Atlaso; callers must not treat it as an unrestricted path.
+        local_dns_enabled: Whether local dns enabled is enabled for this settings resource.
+        management_interface: Returned management interface value for this settings resource.
+        management_ip: Returned management ip value for this settings resource.
+        valid: Whether the represented desired state passed Atlaso validation.
+        validation_errors: Actionable validation failures that must be corrected before the state
+            can be applied.
+        validation_warnings: Non-blocking validation warnings that the operator should review.
+        config_preview: Redacted rendered configuration preview for operator review; secret values
+            are never included.
+    """
 
     app_name: Annotated[str, Field(description='Returned app name value for this settings resource.')]
     appliance_hostname: Annotated[str, Field(description='Returned appliance hostname value for this settings resource.')]
@@ -1123,7 +2148,19 @@ class SettingsResponse(BaseModel):
 
 
 class SettingsUpdate(BaseModel):
-    """Fields accepted when updating or operating on a settings resource."""
+    """Fields accepted when updating or operating on a settings resource.
+
+    Attributes:
+        appliance_fqdn: Requested appliance fqdn value for this settings resource.
+        management_https_enabled: Whether management https enabled is enabled for this settings
+            resource.
+        web_terminal_enabled: Whether web terminal enabled is enabled for this settings resource.
+        web_terminal_interfaces: Ordered collection of web terminal interfaces values represented by
+            this settings schema.
+        root_ssh_enabled: Whether root ssh enabled is enabled for this settings resource.
+        external_dns_servers: Ordered collection of external dns servers values represented by this
+            settings schema.
+    """
 
     appliance_fqdn: Annotated[str, Field(description='Requested appliance fqdn value for this settings resource.')] = Field(default="core.atlaso.internal", min_length=1, max_length=180)
     management_https_enabled: Annotated[bool, Field(description='Whether management https enabled is enabled for this settings resource.')] = False
@@ -1134,7 +2171,26 @@ class SettingsUpdate(BaseModel):
 
 
 class OidcProviderSettingsUpdate(BaseModel):
-    """Fields accepted when updating or operating on a oidc provider settings resource."""
+    """Fields accepted when updating or operating on a oidc provider settings resource.
+
+    Attributes:
+        enabled: Whether the resource is enabled in saved Atlaso state.
+        hostname: DNS hostname associated with the resource, normalized according to the endpoint
+            contract.
+        listen_interfaces: Saved access interfaces or enabled VLANs used as service bind targets.
+        port: TCP or UDP port in the valid 1 through 65535 range.
+        issuer_url: Validated issuer url used for this oidc provider settings integration.
+        access_token_lifetime_seconds: Access token lifetime seconds, measured in seconds, for this
+            oidc provider settings resource.
+        id_token_lifetime_seconds: Id token lifetime seconds, measured in seconds, for this oidc
+            provider settings resource.
+        authorization_code_lifetime_seconds: Authorization code lifetime seconds, measured in
+            seconds, for this oidc provider settings resource.
+        clock_skew_seconds: Clock skew seconds, measured in seconds, for this oidc provider settings
+            resource.
+        signing_key_overlap_seconds: Signing key overlap seconds, measured in seconds, for this oidc
+            provider settings resource.
+    """
 
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')] = False
     hostname: Annotated[str, Field(description='DNS hostname associated with the resource, normalized according to the endpoint contract.')] = Field(default="oidc.atlaso.internal", min_length=1, max_length=180)
@@ -1149,7 +2205,25 @@ class OidcProviderSettingsUpdate(BaseModel):
 
 
 class OidcProviderSettingsResponse(OidcProviderSettingsUpdate):
-    """Fields returned by the Atlaso oidc provider settings API."""
+    """Fields returned by the Atlaso oidc provider settings API.
+
+    Attributes:
+        listen_addresses: Derived IPv4 and IPv6 listener addresses for the selected interfaces.
+        authorization_flow_available: Whether authorization flow available is enabled for this oidc
+            provider settings resource.
+        valid: Whether the represented desired state passed Atlaso validation.
+        validation_errors: Actionable validation failures that must be corrected before the state
+            can be applied.
+        discovery_url: Validated discovery url used for this oidc provider settings integration.
+        authorization_endpoint: Returned authorization endpoint value for this oidc provider
+            settings resource.
+        token_endpoint: Returned token endpoint value for this oidc provider settings resource.
+        userinfo_endpoint: Returned userinfo endpoint value for this oidc provider settings
+            resource.
+        jwks_uri: Returned jwks uri value for this oidc provider settings resource.
+        end_session_endpoint: Returned end session endpoint value for this oidc provider settings
+            resource.
+    """
 
     listen_addresses: Annotated[list[str], Field(description='Derived IPv4 and IPv6 listener addresses for the selected interfaces.')] = Field(default_factory=list)
     authorization_flow_available: Annotated[bool, Field(description='Whether authorization flow available is enabled for this oidc provider settings resource.')]
@@ -1164,7 +2238,28 @@ class OidcProviderSettingsResponse(OidcProviderSettingsUpdate):
 
 
 class OidcClientCreate(BaseModel):
-    """Fields accepted when creating a oidc client resource."""
+    """Fields accepted when creating a oidc client resource.
+
+    Attributes:
+        name: Stable operator-facing name of this resource.
+        description: Operator-facing purpose or context for this resource.
+        organization_id: Stable identifier of the related organization resource.
+        redirect_uris: Ordered collection of redirect uris values represented by this oidc client
+            schema.
+        post_logout_redirect_uris: Ordered collection of post logout redirect uris values
+            represented by this oidc client schema.
+        allowed_scopes: OIDC scopes this client is permitted to request; `openid` is always
+            required.
+        allow_loopback_redirects: Whether allow loopback redirects is enabled for this oidc client
+            resource.
+        access_token_lifetime_seconds: Access token lifetime seconds, measured in seconds, for this
+            oidc client resource.
+        id_token_lifetime_seconds: Id token lifetime seconds, measured in seconds, for this oidc
+            client resource.
+        authorization_code_lifetime_seconds: Authorization code lifetime seconds, measured in
+            seconds, for this oidc client resource.
+        enabled: Whether the resource is enabled in saved Atlaso state.
+    """
 
     name: Annotated[str, Field(description='Stable operator-facing name of this resource.')] = Field(min_length=1, max_length=160)
     description: Annotated[str, Field(description='Operator-facing purpose or context for this resource.')] = Field(default="", max_length=1000)
@@ -1189,7 +2284,35 @@ class OidcClientUpdate(OidcClientCreate):
 
 
 class OidcClientResponse(BaseModel):
-    """Fields returned by the Atlaso oidc client API."""
+    """Fields returned by the Atlaso oidc client API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+        name: Stable operator-facing name of this resource.
+        description: Operator-facing purpose or context for this resource.
+        client_id: Stable identifier of the related client resource.
+        organization_id: Stable identifier of the related organization resource.
+        organization_slug: Returned organization slug value for this oidc client resource.
+        redirect_uris: Ordered collection of redirect uris values represented by this oidc client
+            schema.
+        post_logout_redirect_uris: Ordered collection of post logout redirect uris values
+            represented by this oidc client schema.
+        allowed_scopes: OIDC scopes this client is permitted to request; `openid` is always
+            required.
+        token_endpoint_auth_method: Returned token endpoint auth method value for this oidc client
+            resource.
+        access_token_lifetime_seconds: Access token lifetime seconds, measured in seconds, for this
+            oidc client resource.
+        id_token_lifetime_seconds: Id token lifetime seconds, measured in seconds, for this oidc
+            client resource.
+        authorization_code_lifetime_seconds: Authorization code lifetime seconds, measured in
+            seconds, for this oidc client resource.
+        allow_loopback_redirects: Whether allow loopback redirects is enabled for this oidc client
+            resource.
+        enabled: Whether the resource is enabled in saved Atlaso state.
+        created_at: UTC timestamp when the resource was created.
+        updated_at: UTC timestamp when the resource was last updated.
+    """
 
     id: Annotated[int, Field(description='Unique database identifier assigned to this resource.')]
     name: Annotated[str, Field(description='Stable operator-facing name of this resource.')]
@@ -1211,21 +2334,56 @@ class OidcClientResponse(BaseModel):
 
 
 class OidcClientCreated(BaseModel):
-    """Fields returned by the Atlaso oidc client API."""
+    """Fields returned by the Atlaso oidc client API.
+
+    Attributes:
+        client: Returned client value for this oidc client resource.
+        client_secret: One-time OIDC client secret returned only at creation or rotation; only its
+            verifier is retained.
+    """
 
     client: Annotated[OidcClientResponse, Field(description='Returned client value for this oidc client resource.')]
     client_secret: Annotated[str, Field(description='One-time OIDC client secret returned only at creation or rotation; only its verifier is retained.')]
 
 
 class OidcClientSecretRotated(BaseModel):
-    """Validated fields used by the Atlaso oidc client secret rotated API contract."""
+    """Validated fields used by the Atlaso oidc client secret rotated API contract.
+
+    Attributes:
+        client_id: Stable identifier of the related client resource.
+        client_secret: One-time OIDC client secret returned only at creation or rotation; only its
+            verifier is retained.
+    """
 
     client_id: Annotated[str, Field(description='Stable identifier of the related client resource.')]
     client_secret: Annotated[str, Field(description='One-time OIDC client secret returned only at creation or rotation; only its verifier is retained.')]
 
 
 class OidcIntegrationExport(BaseModel):
-    """Validated fields used by the Atlaso oidc integration API contract."""
+    """Validated fields used by the Atlaso oidc integration API contract.
+
+    Attributes:
+        issuer: Validated issuer used for this oidc integration integration.
+        discovery_url: Validated discovery url used for this oidc integration integration.
+        authorization_endpoint: Returned authorization endpoint value for this oidc integration
+            resource.
+        token_endpoint: Returned token endpoint value for this oidc integration resource.
+        userinfo_endpoint: Returned userinfo endpoint value for this oidc integration resource.
+        jwks_uri: Returned jwks uri value for this oidc integration resource.
+        end_session_endpoint: Returned end session endpoint value for this oidc integration
+            resource.
+        client_id: Stable identifier of the related client resource.
+        token_endpoint_auth_method: Returned token endpoint auth method value for this oidc
+            integration resource.
+        allowed_scopes: OIDC scopes this client is permitted to request; `openid` is always
+            required.
+        redirect_uris: Ordered collection of redirect uris values represented by this oidc
+            integration schema.
+        post_logout_redirect_uris: Ordered collection of post logout redirect uris values
+            represented by this oidc integration schema.
+        organization: Returned organization value for this oidc integration resource.
+        enabled: Whether the resource is enabled in saved Atlaso state.
+    """
 
     issuer: Annotated[str, Field(description='Validated issuer used for this oidc integration integration.')]
     discovery_url: Annotated[str, Field(description='Validated discovery url used for this oidc integration integration.')]
@@ -1244,13 +2402,26 @@ class OidcIntegrationExport(BaseModel):
 
 
 class OidcClientEnabledUpdate(BaseModel):
-    """Fields accepted when updating or operating on a oidc client enabled resource."""
+    """Fields accepted when updating or operating on a oidc client enabled resource.
+
+    Attributes:
+        enabled: Whether the resource is enabled in saved Atlaso state.
+    """
 
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')]
 
 
 class OidcGroupMappingCreate(BaseModel):
-    """Fields accepted when creating a oidc group mapping resource."""
+    """Fields accepted when creating a oidc group mapping resource.
+
+    Attributes:
+        source_type: Requested source type value for this oidc group mapping resource.
+        local_role: Requested local role value for this oidc group mapping resource.
+        ldap_group_id: Stable identifier of the related LDAP group resource.
+        oidc_client_id: Stable identifier of the related OIDC client resource.
+        external_group_name: Requested external group name value for this oidc group mapping
+            resource.
+    """
 
     source_type: Annotated[Literal["local_role", "ldap_group"], Field(description='Requested source type value for this oidc group mapping resource.')]
     local_role: Annotated[str, Field(description='Requested local role value for this oidc group mapping resource.')] = Field(default="", max_length=50)
@@ -1260,14 +2431,36 @@ class OidcGroupMappingCreate(BaseModel):
 
 
 class OidcGroupMappingUpdate(BaseModel):
-    """Fields accepted when updating or operating on a oidc group mapping resource."""
+    """Fields accepted when updating or operating on a oidc group mapping resource.
+
+    Attributes:
+        oidc_client_id: Stable identifier of the related OIDC client resource.
+        external_group_name: Requested external group name value for this oidc group mapping
+            resource.
+    """
 
     oidc_client_id: Annotated[int | None, Field(description='Stable identifier of the related OIDC client resource.')] = None
     external_group_name: Annotated[str, Field(description='Requested external group name value for this oidc group mapping resource.')] = Field(min_length=1, max_length=160)
 
 
 class OidcGroupMappingResponse(BaseModel):
-    """Fields returned by the Atlaso oidc group mapping API."""
+    """Fields returned by the Atlaso oidc group mapping API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+        source_type: Returned source type value for this oidc group mapping resource.
+        source_name: Returned source name value for this oidc group mapping resource.
+        local_role: Returned local role value for this oidc group mapping resource.
+        ldap_group_id: Stable identifier of the related LDAP group resource.
+        organization_id: Stable identifier of the related organization resource.
+        organization_name: Returned organization name value for this oidc group mapping resource.
+        oidc_client_id: Stable identifier of the related OIDC client resource.
+        oidc_client_name: Returned OIDC client name value for this oidc group mapping resource.
+        external_group_name: Returned external group name value for this oidc group mapping
+            resource.
+        created_at: UTC timestamp when the resource was created.
+        updated_at: UTC timestamp when the resource was last updated.
+    """
 
     id: Annotated[int, Field(description='Unique database identifier assigned to this resource.')]
     source_type: Annotated[Literal["local_role", "ldap_group"], Field(description='Returned source type value for this oidc group mapping resource.')]
@@ -1284,7 +2477,19 @@ class OidcGroupMappingResponse(BaseModel):
 
 
 class OidcSigningKeyResponse(BaseModel):
-    """Fields returned by the Atlaso oidc signing key API."""
+    """Fields returned by the Atlaso oidc signing key API.
+
+    Attributes:
+        id: Unique database identifier assigned to this resource.
+        kid: Returned kid value for this oidc signing key resource.
+        algorithm: Returned algorithm value for this oidc signing key resource.
+        status: Returned status value for this oidc signing key resource.
+        key_type: Returned key type value for this oidc signing key resource.
+        created_at: UTC timestamp when the resource was created.
+        activated_at: UTC timestamp for activated at on this oidc signing key resource.
+        retired_at: UTC timestamp for retired at on this oidc signing key resource.
+        publish_until: Returned publish until value for this oidc signing key resource.
+    """
 
     id: Annotated[int, Field(description='Unique database identifier assigned to this resource.')]
     kid: Annotated[str, Field(description='Returned kid value for this oidc signing key resource.')]
@@ -1298,7 +2503,16 @@ class OidcSigningKeyResponse(BaseModel):
 
 
 class OidcSubjectResponse(BaseModel):
-    """Fields returned by the Atlaso oidc subject API."""
+    """Fields returned by the Atlaso oidc subject API.
+
+    Attributes:
+        subject: Returned subject value for this oidc subject resource.
+        source: Validated network or address value for source in this oidc subject resource.
+        username: Returned username value for this oidc subject resource.
+        organization_id: Stable identifier of the related organization resource.
+        organization_name: Returned organization name value for this oidc subject resource.
+        created_at: UTC timestamp when the resource was created.
+    """
 
     subject: Annotated[str, Field(description='Returned subject value for this oidc subject resource.')]
     source: Annotated[str, Field(description='Validated network or address value for source in this oidc subject resource.')]
