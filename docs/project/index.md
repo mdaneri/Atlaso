@@ -12,6 +12,7 @@ status: current
 ## Current project guidance
 
 - [Atlaso Development Project](github-project.md)
+- [Appliance UI compliance matrix](ui-compliance-matrix.md)
 - [Atlaso Brand Assets](branding.md)
 - [Atlaso Brand Kit](../assets/brand/BRAND_GUIDE.md)
 
