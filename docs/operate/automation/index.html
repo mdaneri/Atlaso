@@ -3454,8 +3454,10 @@ removes its stored revisions but preserves existing task history.</p>
 </ul>
 <p>Atlaso canonicalizes imported and pasted source to Unix LF line endings before storing and again before execution, so
 scripts authored on Windows do not pass carriage returns to Bash. A Bash shebang is optional because Atlaso invokes the
-selected interpreter explicitly; when supplied, it must begin with <code>#!</code> (for example, <code>#!/bin/bash</code>). The editor reports
-a leading <code>!/</code> as a missing <code>#</code> before the revision can be created.</p>
+selected interpreter explicitly; when supplied, it must begin with <code>#!</code> (for example, <code>#!/bin/bash</code>). A malformed Bash
+shebang reports the stable recovery guidance <strong>A Bash shebang must start with #!; add the missing # or remove the shebang
+line.</strong> Other source validation failures use bounded generic guidance. Neither response includes backend exception
+detail, and Atlaso does not create a rejected revision.</p>
 <p>Scripts receive no Atlaso credentials by default. A schedule or manual run may select one named VCF/ESX password vault.
 Atlaso stages that vault as a transient systemd credential and provides <code>atlaso-vault get --key &lt;key&gt;</code> to Bash/Python
 and <code>Get-AtlasoVault -Key &lt;key&gt;</code> to PowerShell. The helper fails outside the scoped process and exact injected values are
