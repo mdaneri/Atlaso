@@ -4321,9 +4321,14 @@ next first valid selected target and stale app-owned generated records are remov
 still generate matching dnsmasq PTR answers through <code>host-record</code>; explicit PTR rows are for custom reverse names that
 do not map directly to an address record.</p>
 <p>When Appliance Settings resolver mode is still DHCP and DNS upstreams are empty, the DNS/DHCP desired-state preview uses
-the management interface's observed DHCP DNS servers as fallback forwarders. Converting the management interface from
-DHCP to static preserves the observed lease addresses and copies DHCP-provided DNS servers into Appliance Settings
-external DNS and into DNS service upstreams when those settings were relying on DHCP fallback.</p>
+the management interface's observed DHCP DNS servers as fallback forwarders. Atlaso first reads
+<code>resolvectl dns &lt;management-interface&gt;</code>; if local DNS has replaced that link state with loopback, the constrained helper
+resolves the same interface's ifindex and reads only <code>/run/systemd/netif/leases/&lt;ifindex&gt;</code>. Both sources reject loopback,
+duplicates, malformed addresses, and values from another interface. Explicit upstreams retain precedence. The renderer
+marks DHCP-required configs, and both control-plane and helper validation reject a config with no usable unconditional
+forwarder before dnsmasq is changed. Converting the management interface from DHCP to static preserves the observed
+lease addresses and copies DHCP-provided DNS servers into Appliance Settings external DNS and into DNS service upstreams
+when those settings were relying on DHCP fallback.</p>
 <h4 id="dhcp-addressing-and-leases">DHCP addressing and leases<a class="headerlink" href="#dhcp-addressing-and-leases" title="Permanent link">&para;</a></h4>
 <p>DHCP IP zones can be IPv4 or IPv6. IPv4 zones bind only to valid IPv4 service targets, and IPv6 zones bind only to valid
 IPv6 service targets: access physical interfaces or enabled VLAN interfaces must have the matching CIDR family. Trunk

@@ -1431,6 +1431,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Apply and verification">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dhcp-upstream-preservation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        DHCP upstream preservation
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3154,6 +3171,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Apply and verification">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dhcp-upstream-preservation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        DHCP upstream preservation
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3392,6 +3426,18 @@ existing PTR behavior and configured upstream recursion remain available on a no
 addresses and names with the appliance's selected listener and managed data. To provide recursion on an external
 address, leave Authoritative off for that listener or select a separate DNS interface that is not part of the
 authoritative interface set.</p>
+<h3 id="dhcp-upstream-preservation">DHCP upstream preservation<a class="headerlink" href="#dhcp-upstream-preservation" title="Permanent link">&para;</a></h3>
+<p>Explicit DNS upstreams always take precedence. When the management interface uses DHCP and upstreams are empty, Atlaso
+uses that interface's observed DHCP resolvers as dnsmasq forwarders. Local DNS intentionally changes
+<code>resolvectl dns &lt;management-interface&gt;</code> to loopback; after that transition Atlaso recovers the original resolvers from
+the exact systemd-networkd lease identified by the management interface's ifindex. Loopback, duplicate, malformed,
+unscoped IPv6 link-local, and other-interface lease values are excluded. Link-local lease values cannot be used safely
+because the lease does not retain the interface scope required to reach them.</p>
+<p>Every later global appliance apply, including an apply caused by enabling or disabling Web Terminal, reuses the same
+effective forwarders. If DHCP fallback is required and the management lease has no usable resolver, DNS/DHCP validation
+fails before dnsmasq is changed. Restore or renew the management DHCP lease, or configure explicit upstreams, then
+review and resubmit the DNS/DHCP unit. After apply, confirm both an Atlaso-managed name and an external name resolve with
+<code>getent hosts</code> or direct <code>dig @127.0.0.1</code> queries.</p>
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 <h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>
 <p>These captures show responsive layouts and useful operational states referenced by this page.</p>
