@@ -141,4 +141,6 @@ def test_every_autosave_form_has_a_nearby_status_target():
             status = re.search(r'data-autosave-status-id="([^"]+)"', attributes)
             assert status is not None, f"{template}:{source.count(chr(10), 0, match.start()) + 1}"
             assert f'id="{status.group(1)}"' in source, f"{template}:{status.group(1)}"
-    assert autosave_count == 19
+    # Managed PowerShell modules use a read-only view with a wizard-backed editor,
+    # so they are intentionally excluded from the remaining direct autosave forms.
+    assert autosave_count == 18
