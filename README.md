@@ -12,6 +12,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - [Documentation](https://mdaneri.github.io/Atlaso/docs/) — install, configure, operate, and troubleshoot Atlaso.
 - [Getting started](docs/getting-started/index.md) — choose an appliance path and complete initial setup.
 - [Operations](docs/operate/index.md) — run the appliance and review desired-state changes.
+- [Use the Atlaso API](docs/operate/api.md) — create least-privilege tokens, call the versioned REST contract safely,
+  and interpret responses, request IDs, locks, and apply boundaries.
 - [Appliance Update](docs/operate/appliance-update.md) — inspect configured Photon, PowerShell, and signed Atlaso
   sources in read-only repository tabs, then create or edit desired source state through the shared reviewed wizard
   before explicitly synchronizing package clients.
@@ -46,6 +48,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   published packages that approved mirrors may not have synchronized.
 - [UI Design Guide](docs/contribute/ui-design-guide.md) — approved Atlaso patterns and the shared
   `AtlasoUiPatterns.createGrid(...)` / `createWizard(...)` foundation used by every grid and wizard.
+- [API authoring standard](docs/contribute/api-authoring.md) — required operation, parameter, schema, authorization,
+  response, compatibility, and topic documentation for every `/api/v1` change.
 - [Windows image-build WSL environment](docs/contribute/windows-image-build-wsl.md) — provision and select the pinned,
   isolated `Atlaso-Build` host used by Inventory Linux and Photon image wrappers.
 

@@ -24,6 +24,10 @@ This verified appliance view provides visual orientation before you begin.
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+The `/terminal` page, ticket exchange, and WebSocket endpoints are browser and terminal protocol routes documented in
+this guide. They remain operational and are intentionally absent from Swagger rather than being `/api/v1` client
+contracts.
+
 Opening **Web terminal** while the feature is globally disabled keeps the authenticated Atlaso application shell and
 shows an unavailable status with links to **Appliance Settings** and pending appliance changes. The browser page does
 not expose an API-style JSON error. JSON errors remain appropriate for the terminal ticket API and WebSocket protocol.

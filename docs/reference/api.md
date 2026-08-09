@@ -9,8 +9,9 @@ status: current
 
 # API reference
 
-Open `/api/docs` on an Atlaso appliance for the interactive Swagger interface. The machine-readable schema is available
-at `/openapi.json` and is also the canonical application-readiness endpoint.
+Open `/api/docs` on an Atlaso appliance for the interactive Swagger interface or `/api/redoc` for ReDoc. The
+machine-readable schema is available at `/openapi.json` and is also the canonical application-readiness endpoint. Only
+the supported `/api/v1` REST contract appears in these interfaces.
 
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
@@ -22,6 +23,9 @@ This verified appliance view provides visual orientation before you begin.
 *Figure: Swagger API reference in the verified clean-appliance desktop state.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
+
+For token creation, safe command examples, scopes, errors, request IDs, locking, and mutation boundaries, start with
+[Use the Atlaso API](../operate/api.md). This page remains the generated-contract reference.
 
 ## Use the interface
 
@@ -48,6 +52,9 @@ additional Public Services listeners.
 Treat the published OpenAPI schema as a compatibility surface. Additive fields should preserve existing consumers, and
 behavior changes require synchronized operator documentation, tests, and media ownership. For broader implementation
 details, see the [full technical reference](full-technical-reference.md).
+
+OIDC `/identity`, Network Boot `/pxe`, Web Terminal, and browser routes are intentionally absent from Swagger. Their
+runtime protocols remain supported and are documented in the corresponding service and operator guides.
 
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states

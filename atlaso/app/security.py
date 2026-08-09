@@ -186,7 +186,14 @@ UI_PATH_SCOPES = [
     ("/monitor", "read:monitoring", "read:monitoring"),
 ]
 
-bearer_scheme = HTTPBearer(auto_error=False)
+bearer_scheme = HTTPBearer(
+    auto_error=False,
+    bearerFormat="JWT",
+    description=(
+        "Atlaso API token issued from Authentication. Send the one-time plaintext value in the "
+        "`Authorization: Bearer <token>` header and grant only the scopes required by the operation."
+    ),
+)
 SESSION_APPLIANCE_INSTANCE_SETTING_KEY = "appliance.instance_id.v1"
 SESSION_APPLIANCE_INSTANCE_SESSION_KEY = "appliance_instance_id"
 

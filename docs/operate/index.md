@@ -21,6 +21,7 @@ Use these guides for day-to-day appliance work:
 - [Appliance Update](appliance-update.md) — signed Atlaso, PowerShell, and Photon update streams.
 - [Backup and restore](backup-restore.md) — protect and recover Atlaso settings.
 - [Automation](automation.md) — schedules, executions, and immutable managed scripts.
+- [Use the Atlaso API](api.md) — create scoped tokens, call `/api/v1`, and interpret errors and apply boundaries.
 - [Web Terminal](web-terminal.md) — constrained browser terminal sessions.
 
 Editing desired state and enforcing it are separate actions. Routine forms autosave safely; host mutation occurs only

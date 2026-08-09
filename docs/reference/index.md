@@ -10,7 +10,7 @@ status: current
 
 # Reference
 
-- [API reference](api.md)
+- [API reference](api.md) — generated `/api/v1` contract; begin with the [operator API guide](../operate/api.md).
 - [Verified interface gallery](interface-gallery.md)
 - [Appliance Apply technical reference](appliance-apply-technical.md)
 - [Local console technical reference](appliance-console-technical.md)
