@@ -1,0 +1,118 @@
+---
+title: Use the Atlaso API
+description: Authenticate safely, explore the versioned API, and interpret Atlaso responses and mutation boundaries.
+audience:
+  - operator
+  - maintainer
+status: current
+---
+
+# Use the Atlaso API
+
+Atlaso publishes its supported REST contract under `/api/v1`. Use the interactive Swagger UI at `/api/docs`, the
+alternative ReDoc view at `/api/redoc`, or the machine-readable OpenAPI 3.1 document at `/openapi.json`. The schema
+contains only versioned `/api/v1` operations; browser pages and service-specific protocol routes remain supported but
+are documented in their service guides instead of Swagger.
+
+## Create and protect an API token
+
+1. Sign in to the management UI and open **Authentication > API Tokens**.
+2. Create a token with a clear purpose, the shortest practical lifetime, and only the scopes required by the client.
+3. Copy the token when it is shown. Atlaso displays the secret once and cannot recover it later.
+4. In `/api/docs`, select **Authorize**, paste the token value, and authorize the bearer scheme.
+5. Revoke the token when its client is retired or its value may have been exposed. Create a replacement instead of
+   trying to recover or reuse the old secret.
+
+Treat bearer tokens like passwords. Do not put them in command history, source files, screenshots, issue reports,
+authenticated URLs, or shared logs. Prefer a secret manager for automation and an environment variable for short-lived
+interactive work.
+
+## Call the API safely
+
+The examples below use the RFC 1918 lab address `192.168.50.10` and read the token from the environment. Replace the
+address with the appliance management address; do not replace the token variable with a literal secret.
+
+=== "curl"
+
+    ```bash
+    export ATLASO_TOKEN="<read securely from your secret manager>"
+    curl --fail-with-body --silent --show-error \
+      --header "Authorization: Bearer ${ATLASO_TOKEN}" \
+      --header "Accept: application/json" \
+      https://192.168.50.10/api/v1/dashboard
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    $headers = @{
+        Authorization = "Bearer $env:ATLASO_TOKEN"
+        Accept = "application/json"
+    }
+    Invoke-RestMethod -Uri "https://192.168.50.10/api/v1/dashboard" -Headers $headers
+    ```
+
+Use a certificate trusted by the client. Do not disable TLS verification in saved automation. Examples that create or
+change resources should use RFC 1918 lab addresses such as `192.168.50.0/24` and be reviewed against the operation's
+documented authorization and apply behavior before execution.
+
+## Scopes and authorization
+
+Each Swagger operation describes its required Atlaso scope or authentication posture. A token can call only operations
+covered by its scopes; prefer a read-only token when the client does not mutate desired state. A valid token with
+insufficient scope receives `403 Forbidden`. Missing, invalid, expired, or revoked credentials receive
+`401 Unauthorized`.
+
+## Understand responses
+
+Successful responses use the operation's documented response model. Common failure statuses include:
+
+| Status | Meaning |
+| --- | --- |
+| `400 Bad Request` | The request is unsafe, inconsistent, or cannot be processed in its current form. |
+| `401 Unauthorized` | Bearer authentication is missing or invalid. |
+| `403 Forbidden` | The authenticated identity lacks the required scope or permission. |
+| `404 Not Found` | The requested resource does not exist or is not visible to the caller. |
+| `409 Conflict` | Current resource state conflicts with the requested transition. |
+| `422 Unprocessable Content` | A parameter or request body failed Atlaso validation. |
+| `423 Locked` | Another guarded operation owns the resource or global mutation boundary; wait for it to finish and retry. |
+| `500 Internal Server Error` | An unexpected server failure occurred; correlate the request ID with appliance logs. |
+
+Atlaso errors use the `ProblemDetails` contract:
+
+    {
+      "type": "https://atlaso.example/problems/validation",
+      "title": "Request validation failed",
+      "status": 422,
+      "detail": "One or more request values are invalid.",
+      "instance": "/api/v1/example",
+      "error_code": "request_validation_failed",
+      "request_id": "req_example123"
+    }
+
+The `X-Request-ID` response header and the `request_id` problem field identify the same request for troubleshooting.
+Record them without recording credentials or sensitive payload values.
+
+## Immediate and applied effects
+
+Read each mutation's description before calling it. Some operations change application state immediately, some queue a
+durable job, and some save desired state only. Desired-state edits do not mutate the host by themselves:
+`/appliance-apply` remains the reviewed global host-mutation workflow. A successful save means Atlaso accepted the
+desired state, not that the corresponding service is already applied. Follow returned job identifiers through the Jobs
+or Tasks interfaces and verify terminal results.
+
+Legacy `/api/v1/dns/apply`, `/api/v1/dhcp/apply`, and `/api/v1/firewall/apply` routes remain available for compatibility
+but are intentionally absent from Swagger because they predate the reviewed global workflow. New clients must save
+desired state and use `/appliance-apply`; do not build new automation around the legacy direct-apply routes.
+
+## Troubleshoot clients
+
+- Confirm `/openapi.json` is reachable and every client URL begins with `/api/v1`.
+- Check token expiry, revocation, and required scopes before replacing credentials.
+- For `422`, compare parameter formats and allowed values with Swagger and inspect the returned `ProblemDetails`.
+- For `423`, identify the active task and retry only after its terminal result.
+- For unexpected failures, preserve the status, `error_code`, and request ID, then inspect Atlaso operational logs.
+
+Atlaso preserves existing operation IDs, request and response shapes, authentication behavior, and versioned paths
+within the published compatibility contract. Additive fields may appear. Clients should ignore unknown response fields
+and must not depend on browser pages or non-`/api/v1` protocol routes as generated REST-client contracts.

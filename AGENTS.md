@@ -49,6 +49,11 @@ Markdown is the canonical documentation source. Follow the
 update affected pages and media manifests whenever behavior or UI changes. Follow the
 [Atlaso Brand Kit](docs/assets/brand/BRAND_GUIDE.md) for documentation, screenshots, video, and promotional claims.
 
+Every new or changed `/api/v1` operation must follow the
+[API authoring standard](docs/contribute/api-authoring.md), including operation, authorization, parameter,
+schema-property, response, compatibility, enforcement-test, and topic-documentation requirements. Keep supported
+non-`/api/v1` browser and protocol routes out of OpenAPI and documented in their canonical guides.
+
 ## Canonical implementation policies
 
 Read [Detailed agent policies](docs/contribute/agent-policies.md) before appliance, UI, networking, service, image,

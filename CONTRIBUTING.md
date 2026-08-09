@@ -95,6 +95,14 @@ Use `window.AtlasoUiPatterns.createWizard(...)` and the generic `data-atlaso-wiz
 changed wizard. Raw Tabulator constructors outside the shared foundation are forbidden. Primary resource collections
 must not fall back to custom interactive native tables; retain semantic tables only for the reviewed summary exemptions.
 
+## API contributions
+
+Every new or changed `/api/v1` operation must follow the [API authoring standard](docs/contribute/api-authoring.md).
+Ship the operation summary and detailed purpose, authorization posture, parameter descriptions, recursively exposed
+schema-property descriptions, explicit response meaning, compatibility assessment, and affected topic documentation in
+the same pull request. Only `/api/v1` belongs in OpenAPI; keep supported browser and protocol routes operational but
+documented in their canonical guides with `include_in_schema=False`.
+
 ## Automated contributors and coding agents
 
 Every automated contributor, coding agent, subagent, and delegated agent must complete the Mandatory Agent Startup Gate.

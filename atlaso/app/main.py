@@ -19,6 +19,7 @@ from atlaso.app.database import SessionLocal, init_db
 from atlaso.app.operational_logging import configure_operational_logging
 from atlaso.app.oidc import admin_router as oidc_admin_router
 from atlaso.app.oidc import public_router as oidc_public_router
+from atlaso.app.openapi import API_VALIDATION_RESPONSES, OPENAPI_TAGS
 from atlaso.app.problem import install_problem_handlers
 from atlaso.app.seed import seed_initial_data
 from atlaso.app.services.monitoring import start_monitor_sampler
@@ -107,7 +108,14 @@ def create_app() -> FastAPI:
         title="Atlaso API",
         version=__version__,
         summary="REST API for the Atlaso Linux infrastructure appliance.",
+        description=(
+            "Manage the Atlaso appliance through the versioned `/api/v1` REST API. "
+            "Create a least-privilege bearer token in the Authentication interface, then use the operation "
+            "descriptions and schemas below to inspect or change Atlaso state. Browser UI routes and service "
+            "protocol endpoints remain documented in their operator guides and are intentionally excluded here."
+        ),
         openapi_version="3.1.0",
+        openapi_tags=OPENAPI_TAGS,
         docs_url="/api/docs",
         redoc_url="/api/redoc",
         lifespan=lifespan,
@@ -166,13 +174,13 @@ def create_app() -> FastAPI:
 
     install_problem_handlers(app)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-    app.include_router(api_v1_router)
-    app.include_router(network_boot_api_router)
-    app.include_router(network_boot_public_router)
-    app.include_router(oidc_admin_router)
-    app.include_router(oidc_public_router)
-    app.include_router(web_terminal_router)
-    app.include_router(ui_router)
+    app.include_router(api_v1_router, responses=API_VALIDATION_RESPONSES)
+    app.include_router(network_boot_api_router, responses=API_VALIDATION_RESPONSES)
+    app.include_router(network_boot_public_router, include_in_schema=False)
+    app.include_router(oidc_admin_router, responses=API_VALIDATION_RESPONSES)
+    app.include_router(oidc_public_router, include_in_schema=False)
+    app.include_router(web_terminal_router, include_in_schema=False)
+    app.include_router(ui_router, include_in_schema=False)
 
     return app
 
