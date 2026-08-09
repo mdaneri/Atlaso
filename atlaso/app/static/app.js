@@ -12372,12 +12372,25 @@ function setApplianceUpdateSourceSyncDisabled(disabled) {
 }
 
 function updateApplianceUpdateSourceSyncState(task) {
-  if (!task || task.is_step || task.result?.mode !== "source_sync" || taskStatusActive(task.status)) {
+  if (
+    !task
+    || task.id !== atlasoNewTaskId
+    || task.is_step
+    || task.result?.mode !== "source_sync"
+    || taskStatusActive(task.status)
+  ) {
     return;
   }
-  const ready = task.status === "succeeded";
   document.querySelectorAll('[data-appliance-update-source-sync-required="true"]').forEach((input) => {
     if (input instanceof HTMLInputElement) {
+      const stream = input.value;
+      const kind = stream === "photon_os" ? "photon" : stream === "powershell_modules" ? "powershell" : "";
+      const results = Array.isArray(task.result?.source_results)
+        ? task.result.source_results.filter((result) => result?.kind === kind)
+        : [];
+      const ready = results.length
+        ? results.every((result) => result.success === true)
+        : task.status === "succeeded";
       input.dataset.applianceUpdateSourceSyncReady = ready ? "true" : "false";
     }
   });

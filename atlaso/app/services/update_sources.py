@@ -138,7 +138,9 @@ def unsynchronized_photon_repositories(settings: dict[str, Any]) -> list[str]:
         if isinstance(source, dict)
         and source.get("kind") == "photon"
         and source.get("enabled") is True
-        and source.get("validation_status") == "invalid"
+        and isinstance(source.get("settings"), dict)
+        and source["settings"].get("managed") is True
+        and source.get("validation_status") != "valid"
     )
 
 

@@ -7959,7 +7959,9 @@ def _appliance_update_config_errors(payload: dict, *, require_streams: bool = Tr
             if isinstance(source, dict)
             and source.get("kind") == "photon"
             and source.get("enabled") is True
-            and source.get("validation_status") == "invalid"
+            and isinstance(source.get("settings"), dict)
+            and source["settings"].get("managed") is True
+            and source.get("validation_status") != "valid"
         ] if isinstance(source_definitions, list) else []
         for repository in sorted(unsynchronized_photon):
             errors.append(
@@ -8310,6 +8312,17 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
     if not isinstance(definitions, list):
         raise ValueError("source_definitions must be a list")
     commands: list[dict] = []
+    source_results: list[dict] = []
+
+    def record_source_result(source: dict, *, success: bool) -> None:
+        source_results.append(
+            {
+                "id": source.get("id"),
+                "kind": str(source.get("kind") or ""),
+                "name": str(source.get("name") or ""),
+                "success": success,
+            }
+        )
 
     managed_photon = [
         source
@@ -8352,6 +8365,8 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
         photon_path.write_text("\n\n".join(sections) + "\n", encoding="utf-8")
         photon_path.chmod(0o600 if any(_source_credential(source, credentials) for source in managed_photon) else 0o644)
         commands.append({"command": ["write", str(photon_path)], "returncode": 0, "success": True, "stdout": f"wrote {len(managed_photon)} managed Photon repositories", "stderr": ""})
+        for source in managed_photon:
+            record_source_result(source, success=True)
     elif photon_path.exists():
         photon_path.unlink()
         commands.append({"command": ["remove", str(photon_path)], "returncode": 0, "success": True, "stdout": "removed managed Photon repository file", "stderr": ""})
@@ -8370,6 +8385,7 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
             continue
         if pwsh is None:
             commands.append({"command": ["pwsh"], "returncode": 127, "success": False, "stdout": "", "stderr": "pwsh command not found"})
+            record_source_result(source, success=False)
             continue
         name = str(source.get("name") or "").strip()
         url = str(source.get("url") or "").strip()
@@ -8396,6 +8412,7 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
                     "stderr": f"PowerShell repository {name} host {host} could not be resolved: {exc}",
                 }
             )
+            record_source_result(source, success=False)
             continue
         trusted = bool((source.get("settings") or {}).get("trusted")) if isinstance(source.get("settings"), dict) else False
         policy = "Trusted" if trusted else "Untrusted"
@@ -8413,12 +8430,12 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
         env = _appliance_update_powershell_environment()
         if credential:
             env.update({"LF_REPO_USER": str(credential.get("username") or ""), "LF_REPO_SECRET": str(credential["secret"])})
-        commands.append(
-            _command_payload(
-                [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)],
-                env=env,
-            )
+        command = _command_payload(
+            [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)],
+            env=env,
         )
+        commands.append(command)
+        record_source_result(source, success=bool(command.get("success")))
     if pwsh is not None:
         for name in sorted(previous_powershell_names - current_powershell_names):
             script = (
@@ -8441,7 +8458,11 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
     )
     UPDATE_SOURCE_STATE_PATH.chmod(0o600)
     failed_commands = [command for command in commands if not command.get("success")]
-    result = {"status": "failed" if failed_commands else "succeeded", "commands": commands}
+    result = {
+        "status": "failed" if failed_commands else "succeeded",
+        "commands": commands,
+        "source_results": source_results,
+    }
     if failed_commands:
         result["error"] = str(failed_commands[0].get("stderr") or failed_commands[0].get("stdout") or "Repository synchronization failed.").strip()
     return result

@@ -97,9 +97,12 @@ explicitly writes only Atlaso-owned tdnf and PowerShell client configuration thr
 repository sync** task. Starting synchronization keeps the Update Sources workspace in place and refreshes only the
 shared **Recent update tasks** grid while the task runs. **Saved, not synchronized** means the
 desired repository is stored in Atlaso but has not yet been validated or written into its appliance package client.
-After repository synchronization fails, Atlaso disables the check and install actions while an affected Photon OS or
-PowerShell Modules stream is selected. Streams that do not depend on the failed package synchronization remain
-available when selected independently.
+Atlaso records synchronization results per repository. A managed Photon repository must have a successful result before
+Photon OS checks or installation can use it, including immediately after the repository is created or edited. When one
+repository fails, other repositories that synchronized successfully remain ready. Atlaso disables the check and install
+actions only while a selected stream still depends on an unsynchronized repository. Selecting an older task for detail
+never changes current readiness; only completion of the synchronization task just submitted from the page updates the
+actions in place. Streams that do not depend on the failed package synchronization remain available independently.
 Source details also show when synchronization succeeded or failed. Signed Atlaso sources are read directly, are checked
 during each update, and do not configure pip or report package-client synchronization state.
 

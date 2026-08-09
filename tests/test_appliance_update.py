@@ -155,15 +155,23 @@ def test_powershell_update_requires_synchronized_referenced_repository(client):
     ]
 
 
-def test_photon_update_is_blocked_after_repository_sync_failure(client):
+def test_photon_update_requires_synchronized_managed_repository(client):
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import UpdateSource
 
     login(client)
     with SessionLocal() as db:
-        source = db.execute(select(UpdateSource).where(UpdateSource.kind == "photon")).scalars().first()
+        source = UpdateSource(
+            kind="photon",
+            name="Managed Photon",
+            url="https://packages.example.test/photon",
+            enabled=True,
+            settings_json=json.dumps({"managed": True, "gpgcheck": True, "tls_verify": True}),
+            validation_status="not_checked",
+        )
+        db.add(source)
+        db.flush()
         source_name = source.name
-        source.validation_status = "invalid"
         db.commit()
 
     page = client.get("/appliance-update")
@@ -536,6 +544,58 @@ def test_source_sync_is_queued_and_records_validation_status(client):
     assert ">invalid<" not in page.text
 
 
+def test_source_sync_preserves_per_repository_results(client):
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, UpdateSource
+    from atlaso.app.ui import complete_appliance_update_task
+
+    with SessionLocal() as db:
+        sources = db.execute(
+            select(UpdateSource).where(UpdateSource.kind == "powershell").order_by(UpdateSource.id)
+        ).scalars().all()
+        succeeded_source = sources[0]
+        failed_source = UpdateSource(
+            kind="powershell",
+            name="UnavailableGallery",
+            url="https://unavailable.example.test/api/v2",
+            enabled=True,
+            settings_json=json.dumps({"trusted": False}),
+            validation_status="not_checked",
+        )
+        db.add(failed_source)
+        db.flush()
+        job = Job(
+            id="job_partial_source_sync",
+            type="appliance-update",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+            result="{}",
+        )
+        db.add(job)
+        db.flush()
+        complete_appliance_update_task(
+            db,
+            job=job,
+            update_result={
+                "mode": "source_sync",
+                "status": JobStatus.FAILED.value,
+                "success": False,
+                "dry_run": False,
+                "commands": [],
+                "source_results": [
+                    {"id": succeeded_source.id, "kind": "powershell", "name": succeeded_source.name, "success": True},
+                    {"id": failed_source.id, "kind": "powershell", "name": failed_source.name, "success": False},
+                ],
+            },
+        )
+        db.refresh(succeeded_source)
+        db.refresh(failed_source)
+        assert succeeded_source.validation_status == "valid"
+        assert failed_source.validation_status == "invalid"
+        assert "synchronized" in succeeded_source.validation_message
+        assert "failed" in failed_source.validation_message
+
+
 def test_source_sync_json_submission_queues_without_page_render(client):
     login(client)
     page = client.get("/appliance-update")
@@ -551,6 +611,44 @@ def test_source_sync_json_submission_queues_without_page_render(client):
     assert response.json()["status"] == "pending"
     assert response.json()["mode"] == "source_sync"
     assert response.json()["job_id"].startswith("job_")
+
+
+def test_source_sync_helper_results_are_promoted_to_task_result(client, monkeypatch):
+    import atlaso.app.ui as ui
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import UpdateSource
+    from atlaso.app.services.update_sources import effective_update_settings
+
+    with SessionLocal() as db:
+        settings = effective_update_settings(db)
+        source = db.execute(select(UpdateSource).where(UpdateSource.kind == "powershell")).scalars().first()
+        source_result = {"id": source.id, "kind": "powershell", "name": source.name, "success": True}
+
+    class SourceSyncAdapter:
+        dry_run = False
+
+        def sync_appliance_update_sources(self, config_path: str) -> AdapterResult:
+            return AdapterResult(
+                command=["atlaso-helper", "appliance-update", "sync-sources", config_path],
+                dry_run=False,
+                stdout=json.dumps({"status": "succeeded", "commands": [], "source_results": [source_result]}),
+                stderr="",
+                returncode=0,
+            )
+
+    monkeypatch.setattr(ui, "SystemAdapter", lambda: SourceSyncAdapter())
+    monkeypatch.setattr(ui, "stage_appliance_apply_config", lambda _path, _preview: "atlaso-update.json")
+
+    result = ui.execute_appliance_update_job(
+        selected_stream_ids=[],
+        settings=settings,
+        actor="admin",
+        mode="source_sync",
+    )
+
+    assert result["success"] is True
+    assert result["source_results"] == [source_result]
 
 
 def test_software_source_and_managed_module_lifecycle(client):
@@ -884,7 +982,7 @@ def test_helper_rejects_unsynchronized_powershell_repository():
     assert helper._appliance_update_config_errors(payload, require_streams=True) == []
 
 
-def test_helper_rejects_photon_stream_after_repository_sync_failure():
+def test_helper_rejects_unsynchronized_managed_photon_repository():
     helper = load_helper_module()
     payload = {
         "selected_streams": ["photon_os"],
@@ -894,7 +992,8 @@ def test_helper_rejects_photon_stream_after_repository_sync_failure():
                 "kind": "photon",
                 "name": "System Photon repositories",
                 "enabled": True,
-                "validation_status": "invalid",
+                "settings": {"managed": True},
+                "validation_status": "not_checked",
             }
         ],
     }
@@ -902,7 +1001,7 @@ def test_helper_rejects_photon_stream_after_repository_sync_failure():
     assert helper._appliance_update_config_errors(payload, require_streams=True) == [
         "Photon repository System Photon repositories is not synchronized; run Synchronize repositories before checking or installing Photon OS updates."
     ]
-    payload["source_definitions"][0]["validation_status"] = "not_checked"
+    payload["source_definitions"][0]["validation_status"] = "valid"
     assert helper._appliance_update_config_errors(payload, require_streams=True) == []
 
 
@@ -1066,6 +1165,9 @@ def test_helper_source_sync_probes_powershell_repository_endpoint(monkeypatch, t
 
     assert result["status"] == "failed"
     assert result["error"].startswith("No match was found")
+    assert result["source_results"] == [
+        {"id": 1, "kind": "powershell", "name": "PSGallery", "success": False}
+    ]
     assert "Set-PSRepository" in scripts[0]
     assert "Find-Module -Repository $name" in scripts[0]
     assert "https://www.powershellgallery.com/api/v21" in scripts[0]

@@ -9163,6 +9163,23 @@ def execute_appliance_update_job(
             Path(credentials_path).unlink(missing_ok=True)
 
     succeeded = all(result.returncode == 0 for result in results)
+    source_results: list[dict[str, Any]] = []
+    if mode == "source_sync":
+        for result in results:
+            if result.dry_run:
+                continue
+            for line in reversed(result.stdout.splitlines()):
+                try:
+                    helper_payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(helper_payload, dict) and isinstance(helper_payload.get("source_results"), list):
+                    source_results.extend(
+                        source_result
+                        for source_result in helper_payload["source_results"]
+                        if isinstance(source_result, dict)
+                    )
+                break
     finalizer = read_appliance_file(APPLIANCE_UPDATE_FINALIZER_PATH)
     release_transaction: dict[str, Any] = {}
     if finalizer.get("available"):
@@ -9190,6 +9207,7 @@ def execute_appliance_update_job(
         "config_path": config_path,
         "config_preview": manifest_preview,
         "release_transaction": release_transaction,
+        "source_results": source_results,
     }
 
 
@@ -9258,18 +9276,25 @@ def aggregate_appliance_update_results(
 def complete_appliance_update_task(db: Session, *, job: Job, update_result: dict[str, Any]) -> Job:
     now = utcnow()
     if update_result.get("mode") == "source_sync":
+        reported_results = {
+            str(result.get("id")): result
+            for result in update_result.get("source_results", [])
+            if isinstance(result, dict) and result.get("id") is not None
+        }
         for source in db.execute(
             select(UpdateSource).where(
                 UpdateSource.enabled.is_(True),
                 UpdateSource.kind.in_(["photon", "powershell"]),
             )
         ).scalars().all():
-            source.validation_status = "valid" if update_result["success"] else "invalid"
+            reported = reported_results.get(str(source.id))
+            source_succeeded = bool(reported.get("success")) if reported is not None else bool(update_result["success"])
+            source.validation_status = "valid" if source_succeeded else "invalid"
             source.validation_message = (
                 "Source definition validated in dry-run; host package clients were not changed."
-                if update_result["success"] and update_result.get("dry_run")
+                if source_succeeded and update_result.get("dry_run")
                 else "Repository synchronized with its appliance package client."
-                if update_result["success"]
+                if source_succeeded
                 else "Source synchronization failed. Review the task output."
             )
             source.validated_at = now
