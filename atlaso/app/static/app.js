@@ -1078,22 +1078,41 @@ function showDhcpReservationMessage(message, type = "error") {
   element.classList.remove("hidden");
 }
 
-function showTransientGridStatus(message) {
+function showTransientGridStatus(message, { error = false } = {}) {
   let toast = document.getElementById("grid-status-toast");
   if (!toast) {
     toast = document.createElement("div");
     toast.id = "grid-status-toast";
     toast.className = "grid-status-toast";
-    toast.setAttribute("role", "status");
-    toast.setAttribute("aria-live", "polite");
     document.body.appendChild(toast);
   }
-  toast.textContent = message;
-  toast.classList.add("visible");
+  toast.setAttribute("role", error ? "alert" : "status");
+  toast.setAttribute("aria-live", error ? "assertive" : "polite");
+  toast.classList.toggle("error", error);
   window.clearTimeout(showTransientGridStatus.timeoutId);
+  if (error) {
+    const text = document.createElement("span");
+    text.textContent = message;
+    const dismiss = document.createElement("button");
+    dismiss.type = "button";
+    dismiss.className = "grid-status-toast-dismiss";
+    dismiss.textContent = "Dismiss";
+    dismiss.addEventListener("click", () => toast.classList.remove("visible"), { once: true });
+    toast.replaceChildren(text, dismiss);
+  } else {
+    toast.textContent = message;
+  }
+  toast.classList.add("visible");
+  if (error) {
+    return;
+  }
   showTransientGridStatus.timeoutId = window.setTimeout(() => {
     toast.classList.remove("visible");
   }, 1400);
+}
+
+function showTransientGridError(message) {
+  showTransientGridStatus(message, { error: true });
 }
 
 async function atlasoGridWizardRequest(url, formData, { expectJson = true } = {}) {
@@ -10026,6 +10045,9 @@ function requestConfirmation(options = {}) {
   if (!(modal instanceof HTMLDialogElement) || !(title instanceof HTMLElement) || !(message instanceof HTMLElement) || !(confirmButton instanceof HTMLButtonElement)) {
     return Promise.resolve(false);
   }
+  const activeLauncher = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const enclosingMenuLauncher = activeLauncher?.closest("details")?.querySelector("summary");
+  const launcher = enclosingMenuLauncher instanceof HTMLElement ? enclosingMenuLauncher : activeLauncher;
 
   title.textContent = options.title || "Confirm action";
   message.textContent = options.message || "This action cannot be undone.";
@@ -10042,6 +10064,9 @@ function requestConfirmation(options = {}) {
       modal.classList.remove("has-confirm-detail");
       if (detailGroup instanceof HTMLElement) detailGroup.classList.add("hidden");
       if (detail instanceof HTMLElement) detail.textContent = "";
+      if (launcher?.isConnected) {
+        requestAnimationFrame(() => launcher.focus({ preventScroll: true }));
+      }
       resolve(modal.returnValue === "confirm");
     };
     modal.addEventListener("close", handleClose);
@@ -10085,6 +10110,12 @@ function initializeAccountMenu() {
     aboutClose.addEventListener("click", () => aboutModal.close());
   }
   if (aboutModal instanceof HTMLDialogElement) {
+    const accountTrigger = menu.querySelector(".account-menu-trigger");
+    aboutModal.addEventListener("close", () => {
+      if (accountTrigger instanceof HTMLElement && accountTrigger.isConnected) {
+        accountTrigger.focus({ preventScroll: true });
+      }
+    });
     aboutModal.addEventListener("click", (event) => {
       if (event.target === aboutModal) {
         aboutModal.close();
@@ -10094,7 +10125,14 @@ function initializeAccountMenu() {
 }
 
 function initializeConfirmationModals() {
-  document.querySelectorAll("form[data-confirm-modal]").forEach((form) => {
+  const confirmationForms = new Set(document.querySelectorAll("form[data-confirm-modal]"));
+  document.querySelectorAll("form [data-confirm-modal]").forEach((control) => {
+    const form = control.closest("form");
+    if (form instanceof HTMLFormElement) {
+      confirmationForms.add(form);
+    }
+  });
+  confirmationForms.forEach((form) => {
     if (!(form instanceof HTMLFormElement)) {
       return;
     }
@@ -10103,21 +10141,28 @@ function initializeConfirmationModals() {
     }
     form.dataset.confirmModalInitialized = "true";
     form.addEventListener("submit", async (event) => {
+      const submitter = event.submitter;
+      const confirmationSource = submitter instanceof HTMLElement && submitter.matches("[data-confirm-modal]")
+        ? submitter
+        : form.matches("[data-confirm-modal]") ? form : null;
+      if (!(confirmationSource instanceof HTMLElement)) {
+        return;
+      }
       if (form.dataset.confirmed === "1") {
         delete form.dataset.confirmed;
         return;
       }
       event.preventDefault();
       const confirmed = await requestConfirmation({
-        title: form.dataset.confirmTitle,
-        message: form.dataset.confirmMessage,
-        label: form.dataset.confirmLabel,
+        title: confirmationSource.dataset.confirmTitle,
+        message: confirmationSource.dataset.confirmMessage,
+        label: confirmationSource.dataset.confirmLabel || confirmationSource.dataset.confirmAction,
       });
       if (!confirmed) {
         return;
       }
       form.dataset.confirmed = "1";
-      form.requestSubmit();
+      form.requestSubmit(submitter instanceof HTMLElement ? submitter : undefined);
     });
   });
 }
@@ -12641,7 +12686,7 @@ function initializeTasksPage() {
             if (!task.can_cancel) {
               return;
             }
-            cancelTask(task.id).catch((error) => window.alert(error instanceof Error ? error.message : "Unable to cancel task."));
+            cancelTask(task.id).catch((error) => showTransientGridError(error instanceof Error ? error.message : "Unable to cancel task."));
           },
         },
       ],
@@ -12731,7 +12776,7 @@ function initializeTasksPage() {
   });
   document.querySelector("[data-task-detail-cancel]")?.addEventListener("click", () => {
     if (atlasoSelectedTaskId) {
-      cancelTask(atlasoSelectedTaskId).catch((error) => window.alert(error instanceof Error ? error.message : "Unable to cancel task."));
+      cancelTask(atlasoSelectedTaskId).catch((error) => showTransientGridError(error instanceof Error ? error.message : "Unable to cancel task."));
     }
   });
   if (!atlasoTasksTable) {
@@ -13002,7 +13047,7 @@ function initializeApplianceUpdateSubmission() {
       await refreshTasksPage();
     } catch (error) {
       updateApplianceUpdateActions();
-      window.alert(error instanceof Error ? error.message : "Unable to start the appliance update task.");
+      showTransientGridError(error instanceof Error ? error.message : "Unable to start the appliance update task.");
     }
   });
 }

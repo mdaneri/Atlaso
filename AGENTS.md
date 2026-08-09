@@ -134,3 +134,7 @@ The following cross-cutting boundaries always apply:
   Kickstart-to-vault selector or expose resolved values in browser state or completion metadata.
 - Browser navigation to a globally disabled Web Terminal must render the authenticated Atlaso unavailable-state page;
   reserve JSON and protocol errors for ticket, API, and WebSocket consumers.
+- When local DNS points the management resolver to loopback, recover empty DNS service upstreams from the exact
+  management interface's systemd-networkd DHCP lease. Reject loopback, unscoped IPv6 link-local, duplicate, malformed,
+  and other-interface lease values, preserve explicit upstream precedence, and fail both desired-state and helper
+  validation when DHCP fallback is required but unavailable.

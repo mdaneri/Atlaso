@@ -216,7 +216,7 @@
   </table>
 </section>
 
-<dialog id="oidc-client-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="oidc-client-dialog-title">
+<dialog id="oidc-client-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="oidc-client-dialog-title" aria-describedby="oidc-client-dialog-description">
   <form class="confirm-modal-panel vcf-sddc-wizard-panel" data-oidc-client-form data-atlaso-wizard>
     <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="client_record_id">
     <aside class="vcf-sddc-wizard-rail" aria-label="OIDC client steps">
@@ -230,7 +230,7 @@
     </aside>
     <div class="vcf-sddc-wizard-main">
       <div class="confirm-modal-body vcf-sddc-wizard-body">
-          <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 4</p><h3 data-atlaso-wizard-title>Register confidential client</h3><p class="muted" data-atlaso-wizard-description>Set its identity and validated authentication source.</p></div>
+          <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 4</p><h3 data-atlaso-wizard-title>Register confidential client</h3><p id="oidc-client-dialog-description" class="muted" data-atlaso-wizard-description>Set its identity and validated authentication source.</p></div>
         <div class="alert error hidden" data-atlaso-wizard-error></div>
         <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity"><div class="form-stack">
           <div class="form-grid">
@@ -275,7 +275,7 @@
   </form>
 </dialog>
 
-<dialog id="oidc-key-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="oidc-key-dialog-title">
+<dialog id="oidc-key-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="oidc-key-dialog-title" aria-describedby="oidc-key-dialog-description">
   <form class="confirm-modal-panel vcf-sddc-wizard-panel" data-oidc-key-form data-atlaso-wizard>
     <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="rotate" value="{{ 'true' if oidc_keys else 'false' }}">
     <aside class="vcf-sddc-wizard-rail" aria-label="OIDC signing-key steps">
@@ -287,7 +287,7 @@
     </aside>
     <div class="vcf-sddc-wizard-main">
       <div class="confirm-modal-body vcf-sddc-wizard-body">
-        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 2</p><h3 data-atlaso-wizard-title>Prepare signing key</h3><p class="muted" data-atlaso-wizard-description>Review private-key custody and public-key publication.</p></div>
+        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 2</p><h3 data-atlaso-wizard-title>Prepare signing key</h3><p id="oidc-key-dialog-description" class="muted" data-atlaso-wizard-description>Review private-key custody and public-key publication.</p></div>
         <div class="alert error hidden" data-atlaso-wizard-error></div>
         <section class="vcf-sddc-step-page" data-atlaso-wizard-step="operation"><p>Atlaso generates a 3072-bit RSA key for RS256. Private PKCS#8 material remains encrypted; only the public JWK is published.</p></section>
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review"><p>{{ "The active key will be retired and remain published through the greater of the configured overlap or the longest token lifetime plus clock skew." if oidc_keys else "The first active signing key will make provider readiness possible after the remaining checks pass." }}</p><p class="muted">No appliance apply is required.</p></section>

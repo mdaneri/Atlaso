@@ -434,9 +434,13 @@ status: current
   interface-bound `auth-server` plus shared SOA policy and generated NS/glue; dnsmasq treats those selected listeners as
   authoritative-only, while loopback and other non-authoritative listeners retain PTR and upstream-recursive behavior.
   When Appliance Settings resolver mode is DHCP and DNS upstreams are empty, use the management interface's observed
-  DHCP DNS servers as dnsmasq forwarder fallback; when converting the management DHCP lease to static, copy those
-  observed DNS servers into Appliance Settings external DNS and DNS service upstreams if those settings were relying on
-  DHCP. DHCP lease readback must use the allowlisted helper path for `/var/lib/atlaso/dnsmasq/dhcp.leases`, not
+  DHCP DNS servers as dnsmasq forwarder fallback. If local DNS makes resolvectl loopback-only, resolve the exact
+  management interface ifindex and read only its systemd-networkd lease through the constrained helper; filter loopback,
+  unscoped IPv6 link-local, duplicate, malformed, and other-interface values, preserve explicit upstream precedence,
+  and fail control-plane plus helper validation when DHCP fallback is required but unavailable. When converting the
+  management DHCP lease to static, copy those observed DNS servers into Appliance Settings external DNS and DNS service
+  upstreams if those settings were relying on DHCP. DHCP lease readback must use the allowlisted helper path for
+  `/var/lib/atlaso/dnsmasq/dhcp.leases`, not
   arbitrary file reads. Validate actual DNS with direct queries against both the selected authoritative listener and a
   non-authoritative recursive listener such as appliance loopback, plus in-guest `getent hosts <name>` for
   appliance-local resolution, not only the UI preview.

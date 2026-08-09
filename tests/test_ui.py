@@ -846,9 +846,9 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
-    assert "/static/app.css?v=appliance-update-261-primary-grids-20260808-2" in service_worker.text
+    assert "/static/app.css?v=appliance-update-261-ui-120-20260809-1" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
-    assert "/static/app.js?v=appliance-update-261-primary-grids-20260808-2" in service_worker.text
+    assert "/static/app.js?v=appliance-update-261-ui-120-20260809-1" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
 
     registration = client.get("/static/pwa.js")
@@ -858,7 +858,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=appliance-update-261-primary-grids-20260808-2" in offline.text
+    assert "/static/app.css?v=appliance-update-261-ui-120-20260809-1" in offline.text
 
 
 def test_shared_ui_pattern_shell_and_wizard_contracts(client):
@@ -869,8 +869,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=appliance-update-261-primary-grids-20260808-2"),
-        (public_base, "/static/app.js?v=appliance-update-261-primary-grids-20260808-2"),
+        (base, "/static/app.js?v=appliance-update-261-ui-120-20260809-1"),
+        (public_base, "/static/app.js?v=appliance-update-261-ui-120-20260809-1"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8"
@@ -1442,9 +1442,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "Loading devices" not in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=appliance-update-261-primary-grids-20260808-2" in page.text
+    assert "/static/app.css?v=appliance-update-261-ui-120-20260809-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=appliance-update-261-primary-grids-20260808-2" in page.text
+    assert "/static/app.js?v=appliance-update-261-ui-120-20260809-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -2964,33 +2964,44 @@ Global:
 Link 2 (eth0): 127.0.0.1 ::1 192.168.167.2 2001:4860:4860::8888 fe80::1%eth0 192.168.167.2
 """
 
-    assert parse_resolvectl_dns_servers(output) == ["192.168.167.2", "2001:4860:4860::8888", "fe80::1"]
+    assert parse_resolvectl_dns_servers(output) == ["192.168.167.2", "2001:4860:4860::8888"]
 
 
-def test_management_dhcp_dns_falls_back_to_systemd_networkd_lease(monkeypatch, tmp_path):
-    from atlaso.app.services import appliance_settings
+def test_management_dhcp_dns_falls_back_to_exact_networkd_lease_after_local_dns(monkeypatch):
+    import subprocess
 
-    sys_class_net = tmp_path / "sys" / "class" / "net"
-    leases = tmp_path / "run" / "systemd" / "netif" / "leases"
-    (sys_class_net / "eth0").mkdir(parents=True)
-    leases.mkdir(parents=True)
-    (sys_class_net / "eth0" / "ifindex").write_text("2\n", encoding="utf-8")
-    (leases / "2").write_text("ADDRESS=192.168.167.251\nDNS=127.0.0.1 192.168.167.2\n", encoding="utf-8")
-    monkeypatch.setattr(appliance_settings, "SYS_CLASS_NET_DIR", sys_class_net)
-    monkeypatch.setattr(appliance_settings, "SYSTEMD_NETWORK_LEASES_DIR", leases)
-    monkeypatch.setattr(
-        appliance_settings.subprocess,
-        "run",
-        lambda *_args, **_kwargs: type("Result", (), {"returncode": 0, "stdout": "Link 2 (eth0): 127.0.0.1\n"})(),
+    from atlaso.app.adapters.system import AdapterResult, SystemAdapter
+    from atlaso.app.services.appliance_settings import (
+        observed_management_dhcp_dns_servers,
+        parse_networkd_dhcp_dns_payload,
     )
 
-    assert appliance_settings.observed_management_dhcp_dns_servers("eth0") == ["192.168.167.2"]
     monkeypatch.setattr(
-        appliance_settings.subprocess,
-        "run",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(appliance_settings.subprocess.TimeoutExpired("resolvectl", 2)),
+        "atlaso.app.services.appliance_settings.subprocess.run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0, "Link 2 (eth0): 127.0.0.1 ::1\n", ""),
     )
-    assert appliance_settings.observed_management_dhcp_dns_servers("eth0") == ["192.168.167.2"]
+    calls: list[str] = []
+
+    def fake_read_networkd_dhcp_dns(_self, interface_name: str) -> AdapterResult:
+        calls.append(interface_name)
+        return AdapterResult(
+            command=["atlaso-helper", "network", "dhcp-dns", interface_name],
+            dry_run=False,
+            stdout=(
+                '{"group":"network","action":"dhcp-dns"}\n'
+                '{"interface":"eth0","ifindex":2,"servers":["127.0.0.1","fe80::53","192.168.167.2","bad","192.168.167.2"]}\n'
+            ),
+        )
+
+    monkeypatch.setattr(SystemAdapter, "read_networkd_dhcp_dns", fake_read_networkd_dhcp_dns)
+
+    assert observed_management_dhcp_dns_servers("eth0") == ["192.168.167.2"]
+    assert observed_management_dhcp_dns_servers("eth0") == ["192.168.167.2"]
+    assert calls == ["eth0", "eth0"]
+    assert parse_networkd_dhcp_dns_payload(
+        '{"interface":"eth1","servers":["192.168.99.99"]}\n',
+        "eth0",
+    ) == []
 
 
 def test_settings_management_dhcp_allows_empty_external_dns(client, monkeypatch):
@@ -3092,6 +3103,34 @@ def test_dns_page_uses_management_dhcp_dns_when_upstreams_are_empty(client, monk
     assert payload["observed_dhcp_upstream_servers"] == ["192.168.167.2"]
     assert payload["effective_upstream_servers"] == ["192.168.167.2"]
     assert "server=192.168.167.2" in payload["config_preview"]
+
+
+def test_dns_page_fails_closed_when_management_dhcp_lease_has_no_upstream(client, monkeypatch):
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsSettings, PhysicalInterface
+
+    login(client)
+    monkeypatch.setattr("atlaso.app.services.appliance_settings.observed_management_dhcp_dns_servers", lambda _name: [])
+    with SessionLocal() as db:
+        dns_settings = db.execute(select(DnsSettings)).scalar_one()
+        dns_settings.enabled = True
+        dns_settings.upstream_servers = ""
+        eth0 = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == "eth0")).scalar_one()
+        eth0.role = "management"
+        eth0.ipv4_method = "dhcp"
+        eth0.ip_cidr = None
+        eth0.host_ip_cidr = "192.168.167.219/24"
+        db.commit()
+
+    page = client.get("/dns")
+
+    assert page.status_code == 200
+    assert "systemd-networkd lease did not provide one" in page.text
+    assert "# atlaso-dhcp-upstream-required" in page.text
+    assert "server=127.0.0.1" not in page.text
+    assert "server=::1" not in page.text
 
 
 def test_settings_management_https_requires_ca_managed_certificate(client):

@@ -212,6 +212,7 @@ from atlaso.app.services.dnsmasq import (
     DNS_CONDITIONAL_FORWARDERS_SETTING_KEY,
     dhcp_bind_target_families,
     dhcp_bind_target_names,
+    dhcp_dns_upstream_required,
     dns_domain_warnings,
     dns_settings_to_dict,
     dnsmasq_test_command,
@@ -1541,7 +1542,19 @@ def set_setting_value(db: Session, key: str, value: str) -> Setting:
     return setting
 
 
-def get_dnsmasq_state(db: Session) -> tuple[DnsSettings, list[DnsRecord], DhcpSettings, list[DhcpScope], list[DhcpOption], list[DhcpReservation], str]:
+def get_dnsmasq_state(
+    db: Session,
+) -> tuple[
+    DnsSettings,
+    list[DnsRecord],
+    DhcpSettings,
+    list[DhcpScope],
+    list[DhcpOption],
+    list[DhcpReservation],
+    list[str],
+    bool,
+    str,
+]:
     dns_settings = get_dns_settings_row(db)
     conditional_forwarders = setting_value(db, DNS_CONDITIONAL_FORWARDERS_SETTING_KEY)
     dns_records = db.execute(select(DnsRecord).order_by(DnsRecord.hostname)).scalars().all()
@@ -1550,8 +1563,9 @@ def get_dnsmasq_state(db: Session) -> tuple[DnsSettings, list[DnsRecord], DhcpSe
     dhcp_options = db.execute(select(DhcpOption).order_by(DhcpOption.scope_id, DhcpOption.option_code)).scalars().all()
     dhcp_reservations = db.execute(select(DhcpReservation).order_by(DhcpReservation.hostname)).scalars().all()
     physical_interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
-    _management_interface, observed_dhcp_upstream_servers = management_dhcp_dns_context(physical_interfaces)
+    management_interface, observed_dhcp_upstream_servers = management_dhcp_dns_context(physical_interfaces)
     fallback_upstream_servers = observed_dhcp_upstream_servers if not effective_dns_upstream_servers(dns_settings) else []
+    require_dhcp_upstream = dhcp_dns_upstream_required(dns_settings, management_interface)
     config_preview = render_dnsmasq_config(
         dns_settings=dns_settings,
         dns_records=dns_records,
@@ -1561,9 +1575,20 @@ def get_dnsmasq_state(db: Session) -> tuple[DnsSettings, list[DnsRecord], DhcpSe
         dhcp_options=dhcp_options,
         conditional_forwarders=conditional_forwarders,
         fallback_upstream_servers=fallback_upstream_servers,
+        require_dhcp_upstream=require_dhcp_upstream,
         esxi_pxe_boot=esxi_pxe_boot_settings(db),
     )
-    return dns_settings, dns_records, dhcp_settings, dhcp_scopes, dhcp_options, dhcp_reservations, config_preview
+    return (
+        dns_settings,
+        dns_records,
+        dhcp_settings,
+        dhcp_scopes,
+        dhcp_options,
+        dhcp_reservations,
+        fallback_upstream_servers,
+        require_dhcp_upstream,
+        config_preview,
+    )
 
 
 def ensure_dns_for_dhcp_reservation(db: Session, reservation: DhcpReservation, actor: str) -> None:
@@ -1828,14 +1853,30 @@ def delete_dns_record(
 
 
 def dnsmasq_validation_response(db: Session) -> ConfigValidationResponse:
-    dns_settings, dns_records, dhcp_settings, dhcp_scopes, dhcp_options, dhcp_reservations, config_preview = get_dnsmasq_state(db)
+    (
+        dns_settings,
+        dns_records,
+        dhcp_settings,
+        dhcp_scopes,
+        dhcp_options,
+        dhcp_reservations,
+        fallback_upstream_servers,
+        require_dhcp_upstream,
+        config_preview,
+    ) = get_dnsmasq_state(db)
     conditional_forwarders = setting_value(db, DNS_CONDITIONAL_FORWARDERS_SETTING_KEY)
     physical_interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     vlan_interfaces = db.execute(select(VlanInterface).order_by(VlanInterface.name)).scalars().all()
     bind_targets = dhcp_bind_target_names(physical_interfaces, vlan_interfaces)
     bind_target_families = dhcp_bind_target_families(physical_interfaces, vlan_interfaces)
     errors = (
-        validate_dns_settings(dns_settings, dns_records, conditional_forwarders)
+        validate_dns_settings(
+            dns_settings,
+            dns_records,
+            conditional_forwarders,
+            fallback_upstream_servers=fallback_upstream_servers,
+            require_dhcp_upstream=require_dhcp_upstream,
+        )
         + validate_dns_listen_targets(dns_settings, bind_targets)
         + validate_dhcp_bind_targets(dhcp_settings, dhcp_scopes, bind_target_families)
         + validate_dhcp_settings(

@@ -215,6 +215,7 @@ from atlaso.app.services.dnsmasq import (
     dump_dns_record_data,
     compact_dhcp_range_expression,
     dhcp_bind_target_families,
+    dhcp_dns_upstream_required,
     dns_domain_warnings,
     dns_reverse_records,
     dhcp_option_to_dict,
@@ -4281,6 +4282,7 @@ def dnsmasq_context(db: Session, *, reconcile: bool = True) -> dict:
     physical_interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     management_interface, observed_dhcp_upstream_servers = management_dhcp_dns_context(physical_interfaces)
     fallback_upstream_servers = observed_dhcp_upstream_servers if not split_servers(dns_settings.upstream_servers) else []
+    require_dhcp_upstream = dhcp_dns_upstream_required(dns_settings, management_interface)
     effective_upstream_servers = effective_dns_upstream_servers(dns_settings, fallback_upstream_servers)
     vlan_interfaces = db.execute(select(VlanInterface).order_by(VlanInterface.name)).scalars().all()
     config_preview = render_dnsmasq_config(
@@ -4292,10 +4294,17 @@ def dnsmasq_context(db: Session, *, reconcile: bool = True) -> dict:
         dhcp_options=dhcp_options,
         conditional_forwarders=conditional_forwarders,
         fallback_upstream_servers=fallback_upstream_servers,
+        require_dhcp_upstream=require_dhcp_upstream,
         esxi_pxe_boot=esxi_boot,
     )
     validation_errors = (
-        validate_dns_settings(dns_settings, dns_records, conditional_forwarders)
+        validate_dns_settings(
+            dns_settings,
+            dns_records,
+            conditional_forwarders,
+            fallback_upstream_servers=fallback_upstream_servers,
+            require_dhcp_upstream=require_dhcp_upstream,
+        )
         + validate_dns_listen_targets(dns_settings, {interface["name"] for interface in available_interfaces})
         + validate_dhcp_bind_targets(
             dhcp_settings,
