@@ -736,17 +736,15 @@ def firewall_validation_payload(db: Session) -> tuple[FirewallSettings, list[Fir
 
 
 def stage_api_firewall_config(config_preview: str) -> str:
-    path = Path(FIREWALL_STAGED_CONFIG_PATH)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(config_preview, encoding="utf-8")
-    return str(path)
+    from atlaso.app.ui import stage_appliance_apply_config
+
+    return stage_appliance_apply_config(FIREWALL_STAGED_CONFIG_PATH, config_preview)
 
 
 def stage_api_dnsmasq_config(config_preview: str) -> str:
-    path = Path(DNSMASQ_STAGED_CONFIG_PATH)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(config_preview, encoding="utf-8")
-    return str(path)
+    from atlaso.app.ui import stage_appliance_apply_config
+
+    return stage_appliance_apply_config(DNSMASQ_STAGED_CONFIG_PATH, config_preview)
 
 
 @router.get(
