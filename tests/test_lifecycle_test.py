@@ -145,6 +145,52 @@ def test_set_lifecycle_wan_policy_updates_duplicate_restored_rows():
     assert result["updated_count"] == 2
 
 
+def test_appliance_health_checks_version_before_authentication(monkeypatch):
+    lifecycle = load_lifecycle_module()
+    calls: list[tuple[str, str]] = []
+    version_payload = {
+        "version": "0.9.87",
+        "base_version": "0.9.87",
+        "git_commit": "0123456789abcdef0123456789abcdef01234567",
+        "built_at": "2026-08-09T20:15:00Z",
+    }
+
+    class FakeClient:
+        base_url = "https://192.0.2.10"
+
+        def request(self, method, path):  # type: ignore[no-untyped-def]
+            calls.append((method, path))
+            return 200, "{}", {}
+
+        def json_request(self, method, path):  # type: ignore[no-untyped-def]
+            calls.append((method, path))
+            assert path == "/api/v1/dashboard"
+            return {"services": []}
+
+    class AnonymousVersionClient:
+        def __init__(self, base_url):  # type: ignore[no-untyped-def]
+            assert base_url == FakeClient.base_url
+
+        def json_request(self, method, path):  # type: ignore[no-untyped-def]
+            calls.append((method, path))
+            assert path == "/api/v1/version"
+            return version_payload
+
+    monkeypatch.setattr(lifecycle, "HttpClient", AnonymousVersionClient)
+    monkeypatch.setattr(lifecycle, "api_login", lambda client, args: calls.append(("AUTH", "api")))
+    monkeypatch.setattr(lifecycle, "ui_login", lambda client, args: calls.append(("AUTH", "ui")))
+    monkeypatch.setattr(
+        lifecycle,
+        "ssh_command",
+        lambda *args, **kwargs: {"returncode": 0, "stdout": "", "stderr": "", "command": "redacted"},
+    )
+
+    evidence = lifecycle.appliance_health(FakeClient(), argparse.Namespace(appliance_ssh_host="192.0.2.10"))
+
+    assert calls.index(("GET", "/api/v1/version")) < calls.index(("AUTH", "api"))
+    assert evidence["version"] == version_payload
+
+
 def test_routing_wan_only_plan_and_routing_rule_payload():
     lifecycle = load_lifecycle_module()
     args = lifecycle.parse_args(["--password", "test", "--routing-wan-only", "--plan-only"])
