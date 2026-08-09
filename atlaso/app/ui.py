@@ -11085,10 +11085,15 @@ def _automation_render_error(request: Request, identity: Identity, db: Session, 
 def _automation_script_validation_message(interpreter: str, content: str, timeout_seconds: int) -> str | None:
     if interpreter not in SCRIPT_INTERPRETERS:
         return "Interpreter must be bash, python, or powershell."
+    first_line = (
+        content.removeprefix("\ufeff").replace("\r\n", "\n").replace("\r", "\n").split("\n", 1)[0].strip()
+    )
     try:
         normalized_content = normalize_script_content(content, interpreter)
-    except ValueError as exc:
-        return str(exc)
+    except ValueError:
+        if interpreter == "bash" and first_line.startswith("!/"):
+            return "A Bash shebang must start with #!; add the missing # or remove the shebang line."
+        return "Managed script source is invalid. Review the interpreter and source, then try again."
     if not normalized_content.strip():
         return "Script content is required."
     if len(normalized_content.encode("utf-8")) > MAX_SCRIPT_CONTENT_BYTES:

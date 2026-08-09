@@ -109,8 +109,10 @@ Interpreters are allowlisted to Bash, system Python, and PowerShell. The helper 
 
 Atlaso canonicalizes imported and pasted source to Unix LF line endings before storing and again before execution, so
 scripts authored on Windows do not pass carriage returns to Bash. A Bash shebang is optional because Atlaso invokes the
-selected interpreter explicitly; when supplied, it must begin with `#!` (for example, `#!/bin/bash`). The editor reports
-a leading `!/` as a missing `#` before the revision can be created.
+selected interpreter explicitly; when supplied, it must begin with `#!` (for example, `#!/bin/bash`). A malformed Bash
+shebang reports the stable recovery guidance **A Bash shebang must start with #!; add the missing # or remove the shebang
+line.** Other source validation failures use bounded generic guidance. Neither response includes backend exception
+detail, and Atlaso does not create a rejected revision.
 
 Scripts receive no Atlaso credentials by default. A schedule or manual run may select one named VCF/ESX password vault.
 Atlaso stages that vault as a transient systemd credential and provides `atlaso-vault get --key <key>` to Bash/Python
